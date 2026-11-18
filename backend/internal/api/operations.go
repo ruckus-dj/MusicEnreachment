@@ -12,6 +12,10 @@ import (
 
 type OperationsInput struct {
 	State string `query:"state" enum:"queued,running,failed"`
+	// ActiveSourceScans selects the Sources discovery read: only queued or
+	// running scan_source operations that own a source root. When set, state is
+	// ignored and no other operation is listed.
+	ActiveSourceScans bool `query:"active_source_scans" doc:"Return only queued or running source scans that own a source root; state is ignored."`
 }
 
 type OperationsOutput struct {
@@ -79,6 +83,13 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
+		if input.ActiveSourceScans {
+			snapshots, err := operations.ListActiveSourceScanSnapshots(ctx)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("failed to list active source scans")
+			}
+			return &OperationsOutput{Body: OperationsBody{Operations: operationResponses(snapshots)}}, nil
+		}
 		states := []string(nil)
 		if input.State != "" {
 			states = append(states, input.State)
@@ -87,11 +98,7 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list operations")
 		}
-		result := make([]OperationResponse, 0, len(snapshots))
-		for _, snapshot := range snapshots {
-			result = append(result, operationResponse(snapshot))
-		}
-		return &OperationsOutput{Body: OperationsBody{Operations: result}}, nil
+		return &OperationsOutput{Body: OperationsBody{Operations: operationResponses(snapshots)}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -186,6 +193,14 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		}
 		return nil, nil
 	})
+}
+
+func operationResponses(snapshots []service.OperationSnapshot) []OperationResponse {
+	result := make([]OperationResponse, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		result = append(result, operationResponse(snapshot))
+	}
+	return result
 }
 
 func operationResponse(snapshot service.OperationSnapshot) OperationResponse {

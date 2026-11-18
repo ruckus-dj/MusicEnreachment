@@ -2579,6 +2579,10 @@ offset: number;
 
 export type ListOperationsParams = {
 state?: ListOperationsState;
+/**
+ * Return only queued or running source scans that own a source root; state is ignored.
+ */
+active_source_scans?: boolean;
 };
 
 export type ListOperationsState = typeof ListOperationsState[keyof typeof ListOperationsState];

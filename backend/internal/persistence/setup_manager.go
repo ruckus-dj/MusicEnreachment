@@ -1094,6 +1094,29 @@ func (repository *SetupManagerRepository) ListOperations(ctx context.Context, st
 	return operations, nil
 }
 
+// ListActiveSourceScanOperations is the SQL-filtered read behind Sources scan
+// discovery. It selects only queued or running scans that own a source root, so
+// the complete operation history and its snapshots are never loaded. The
+// projection omits input_snapshot: a scan snapshot only repeats the root, which
+// the caller already receives as target_source_root_id.
+func (repository *SetupManagerRepository) ListActiveSourceScanOperations(ctx context.Context) ([]Operation, error) {
+	operations := make([]Operation, 0)
+	err := repository.db.NewSelect().
+		Model(&operations).
+		Column("id", "kind", "state", "stage", "target_source_root_id",
+			"bytes_completed", "bytes_total", "safe_error",
+			"created_at", "started_at", "finished_at", "updated_at").
+		Where("kind = ?", sourceScanOperationKind).
+		Where("state IN (?)", bun.List([]string{"queued", "running"})).
+		Where("target_source_root_id IS NOT NULL").
+		Order("created_at DESC", "id DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active source scan operations: %w", err)
+	}
+	return operations, nil
+}
+
 func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, operation *Operation) error {
 	operation.UpdatedAt = time.Now().UTC()
 	_, err := repository.db.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx)

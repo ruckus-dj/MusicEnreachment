@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  createSource,
-  listSources,
-  startSourceScan,
-} from "../../api/generated/client";
+import { Radio, RadioGroup } from "react-aria-components";
+import { createSource, listSources } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
@@ -12,7 +9,9 @@ import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
-import { type SourceMessage, sourceMessage } from "./sourceMessages";
+import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import { sourceMessage } from "./sourceMessages";
+import { SourceScansProvider, useSourceScans } from "./sourceScans";
 import {
   inventoryAvailabilityNote,
   inventoryEmptyNote,
@@ -21,9 +20,7 @@ import {
   lastScanLabel,
   message,
   renderSourceError,
-  sourceError,
   sourceFailure,
-  statusLabel,
 } from "./sourcesApi";
 import "./sources.css";
 import {
@@ -35,7 +32,11 @@ import {
 // AppShell supplies its parsed route, so the mounted application has only one
 // hash subscription. The standalone entry remains useful for embedding/tests.
 export function SourcesScreen({ route }: { route?: SourcesRoute } = {}) {
-  return route ? <SourcesView route={route} /> : <StandaloneSourcesScreen />;
+  return (
+    <SourceScansProvider>
+      {route ? <SourcesView route={route} /> : <StandaloneSourcesScreen />}
+    </SourceScansProvider>
+  );
 }
 
 function StandaloneSourcesScreen() {
@@ -60,32 +61,71 @@ function SourcesView({ route }: { route: SourcesRoute }) {
   }
 }
 
-function InventoryCell({
-  root,
-  locale,
-}: {
-  root: SourceRootResponse;
-  locale: "en" | "ru";
-}) {
-  const notes = [
-    inventoryAvailabilityNote(root, locale),
-    inventoryScopeNote(root, locale),
-    inventoryEmptyNote(root, locale),
-  ].filter((note) => note.length > 0);
-  return (
-    <>
-      {inventoryLabel(root, locale)}
-      {notes.map((note) => (
-        <span key={note} className="sources-note">
-          {note}
-        </span>
-      ))}
-    </>
-  );
-}
+// Registration copy follows the approved prototype wording. It stays local to
+// this screen because the approved directory list already owns its own copy.
+const registrationCopy = {
+  en: {
+    newSource: "New source",
+    name: "Source name",
+    namePlaceholder: "For example, Music library",
+    serverDirectory: "Server directory",
+    onlyDirectory: "Choose a directory; files are not uploaded.",
+    processingMode: "Processing mode · choose explicitly",
+    inPlace: "In place",
+    inPlaceHelp: "Analysis reads the original file without modifying it.",
+    staged: "Using a work copy",
+    stagedHelp:
+      "Processing uses an application-owned audio copy in the shared server work directory. The directory is required for processing, not for adding or scanning a source.",
+    sourcePolicy: "Analysis does not modify originals.",
+    nameRequired: "Enter a source name.",
+    directoryRequired: "Choose a server directory.",
+    modeRequired:
+      "Choose a processing mode explicitly: In place or Using a work copy.",
+    sourceTableHelp:
+      "Analysis leaves original files unchanged. Mode changes apply to future processing.",
+    addSource: "Add source",
+    cancel: "Cancel",
+  },
+  ru: {
+    newSource: "Новый источник",
+    name: "Имя источника",
+    namePlaceholder: "Например, Музыкальная библиотека",
+    serverDirectory: "Каталог на сервере",
+    onlyDirectory: "Выберите каталог; файлы не загружаются.",
+    processingMode: "Режим обработки · выберите явно",
+    inPlace: "На месте",
+    inPlaceHelp: "Анализ читает исходный файл, не изменяя его.",
+    staged: "Через рабочую копию",
+    stagedHelp:
+      "Для обработки используется принадлежащая приложению рабочая копия аудио в общей рабочей папке сервера. Папка требуется для обработки, но не для добавления или сканирования источника.",
+    sourcePolicy: "Анализ не изменяет исходники.",
+    nameRequired: "Укажите имя источника.",
+    directoryRequired: "Выберите каталог на сервере.",
+    modeRequired:
+      "Явно выберите режим обработки: «На месте» или «Через рабочую копию».",
+    sourceTableHelp:
+      "Анализ не изменяет исходные файлы. Изменение режима применяется к будущей обработке.",
+    addSource: "Добавить источник",
+    cancel: "Отмена",
+  },
+} as const;
+
+const modeChoice =
+  "sources-inline group inline-flex min-h-8 cursor-pointer items-center gap-[7px] rounded-md border border-[var(--line)] px-3 py-[10px] text-xs data-[selected]:border-[var(--accent)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
+const modeHelp = "m-0 ml-[25px] text-[11px] text-[var(--muted)]";
+const radioIndicator =
+  "size-4 flex-none rounded-full border border-[var(--control)] bg-[var(--surface)] group-data-[selected]:border-[5px] group-data-[selected]:border-[var(--accent)]";
+
+type RegistrationError =
+  | ReturnType<typeof message>
+  | "nameRequired"
+  | "directoryRequired"
+  | "modeRequired";
 
 function SourceListScreen() {
   const { locale } = useI18n();
+  const copy = registrationCopy[locale];
+  const scans = useSourceScans();
   const t = (
     key: Parameters<typeof sourceMessage>[1],
     values?: Record<string, string | number>,
@@ -99,57 +139,63 @@ function SourceListScreen() {
   >("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReturnType<typeof message> | null>(null);
-  const [formError, setFormError] = useState<ReturnType<typeof message> | null>(
-    null,
-  );
-  const [notice, setNotice] = useState<SourceMessage | null>(null);
-  const [partialSuccess, setPartialSuccess] = useState<SourceMessage | null>(
-    null,
-  );
-  const [partialSourceId, setPartialSourceId] = useState("");
+  const [formError, setFormError] = useState<RegistrationError | null>(null);
+  const [saving, setSaving] = useState(false);
   const registering = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
-  const listHeading = useRef<HTMLHeadingElement>(null);
-  const alert = useRef<HTMLParagraphElement>(null);
   const formAlert = useRef<HTMLParagraphElement>(null);
+  const loadRequest = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    loadRequest.current?.abort();
+    const request = new AbortController();
+    loadRequest.current = request;
     setBusy(true);
     setError(null);
     try {
-      const response = await listSources({ cache: "no-store" });
+      const response = await listSources({
+        cache: "no-store",
+        signal: request.signal,
+      });
+      if (request.signal.aborted) return;
       if (response.status !== 200) throw sourceFailure("list", response);
       setSources(response.data.sources || []);
     } catch (reason) {
-      setError(message(reason));
+      if (!request.signal.aborted) setError(message(reason));
     } finally {
-      setBusy(false);
+      if (!request.signal.aborted) setBusy(false);
     }
   }, []);
 
   useEffect(() => {
     heading.current?.focus();
-    void load();
-  }, [load]);
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A scan revision explicitly requests an authoritative reread.
   useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
+    void load();
+    return () => loadRequest.current?.abort();
+  }, [load, scans.revision]);
   useEffect(() => {
     if (formError) formAlert.current?.focus();
   }, [formError]);
 
   async function register() {
     if (registering.current) return;
-    if (!name.trim() || !path.trim() || !processingMode) {
-      setFormError(sourceError("invalidCreate"));
+    if (!name.trim()) {
+      setFormError("nameRequired");
+      return;
+    }
+    if (!path.trim()) {
+      setFormError("directoryRequired");
+      return;
+    }
+    if (!processingMode) {
+      setFormError("modeRequired");
       return;
     }
     registering.current = true;
-    setBusy(true);
+    setSaving(true);
     setFormError(null);
-    setNotice(null);
-    setPartialSuccess(null);
-    setPartialSourceId("");
     try {
       const response = await createSource({
         display_name: name.trim(),
@@ -162,226 +208,219 @@ function SourceListScreen() {
       setName("");
       setPath("");
       setProcessingMode("");
-      try {
-        // Registration is an explicit operator action that admits exactly one
-        // initial scan. The detail screen adopts this operation by discovery.
-        const scan = await startSourceScan(registered.id);
-        if (scan.status !== 200) {
-          setPartialSuccess({
-            key: "manualScanSuccess",
-            values: { name: registered.display_name },
-          });
-          setPartialSourceId(registered.id);
-          await load();
-          listHeading.current?.focus();
-          return;
-        }
-        window.location.hash = `/sources/${encodeURIComponent(registered.id)}`;
-      } catch {
-        setPartialSuccess({
-          key: "manualScanFailure",
-          values: { name: registered.display_name },
-        });
-        setPartialSourceId(registered.id);
-        await load();
-        listHeading.current?.focus();
-      }
+      // Registration only opens the new source. It never starts a scan.
+      window.location.hash = `/sources/${encodeURIComponent(registered.id)}`;
     } catch (reason) {
       setFormError(message(reason));
     } finally {
       registering.current = false;
-      setBusy(false);
+      setSaving(false);
     }
   }
 
   function cancelCreate() {
     setCreating(false);
     setFormError(null);
-    setPartialSuccess(null);
-    setPartialSourceId("");
     setName("");
     setPath("");
     setProcessingMode("");
   }
 
+  function startScan(rootId: string) {
+    // The scan provider records a rejection per root; the alert below the
+    // approved list renders it in the current locale.
+    void scans.start(rootId);
+  }
+
+  const rows: SourceRootListRow[] = (sources ?? []).map((root) => {
+    const notes = [
+      inventoryAvailabilityNote(root, locale),
+      inventoryScopeNote(root, locale),
+      inventoryEmptyNote(root, locale),
+    ].filter((note) => note.length > 0);
+    return {
+      id: root.id,
+      name: root.display_name,
+      path: root.configured_path,
+      mode: root.processing_mode,
+      availability: root.status,
+      lastSuccessfulScan: root.last_successful_scan_at
+        ? {
+            label: lastScanLabel(root, locale),
+            dateTime: root.last_successful_scan_at,
+          }
+        : undefined,
+      inventory: {
+        label: inventoryLabel(root, locale),
+        notes: notes.length > 0 ? notes : undefined,
+      },
+      scanning: scans.scanning(root.id),
+      href: `#/sources/${encodeURIComponent(root.id)}`,
+    };
+  });
+
+  const scanErrors = (sources ?? []).flatMap((root) => {
+    const scanError = scans.error(root.id);
+    return scanError ? [{ root, scanError }] : [];
+  });
+
+  // Discovery must finish before a scan can be accepted. Keep the approved
+  // list rendering unchanged, but disable its controls meanwhile instead of
+  // showing an active-looking button whose press is ignored.
+  const scanUnavailable = scans.checking || scans.discoveryError !== null;
+
+  const listState =
+    sources === undefined
+      ? error
+        ? {
+            kind: "error" as const,
+            message: renderSourceError(error, locale),
+            onRetry: () => void load(),
+          }
+        : { kind: "loading" as const }
+      : undefined;
+
   return (
     <section
       aria-labelledby="sources-title"
+      aria-busy={scans.checking || undefined}
       className="sources-screen mx-auto max-w-5xl py-3"
     >
-      <h1 ref={heading} tabIndex={-1} id="sources-title">
-        {t("title")}
-      </h1>
-      <p className="sources-help">{t("description")}</p>
-      {busy && sources && <p role="status">{t("requestRunning")}</p>}
-      {notice && (
-        <p role="status">{sourceMessage(locale, notice.key, notice.values)}</p>
-      )}
-      {partialSuccess && (
-        <div className="sources-partial-success" role="alert">
-          <p>
-            {sourceMessage(locale, partialSuccess.key, partialSuccess.values)}
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-3">
+        <div className="min-w-0">
+          <h1 ref={heading} tabIndex={-1} id="sources-title">
+            {t("title")}
+          </h1>
+          <p className="m-0 max-w-[75ch] text-xs text-[var(--muted)]">
+            {t("description")}
           </p>
+        </div>
+        {!creating && (
           <AppButton
             onPress={() => {
-              window.location.hash = `/sources/${encodeURIComponent(partialSourceId)}`;
+              setFormError(null);
+              setCreating(true);
             }}
           >
-            {t("openManualScan")}
+            {copy.addSource}
+          </AppButton>
+        )}
+      </header>
+      {creating && (
+        <form
+          aria-labelledby="source-create-title"
+          className="mb-4 grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void register();
+          }}
+        >
+          <h2 id="source-create-title" className="m-0 text-sm font-semibold">
+            {copy.newSource}
+          </h2>
+          <label className="grid min-w-0 gap-1 text-xs font-semibold">
+            {copy.name}
+            <input
+              value={name}
+              placeholder={copy.namePlaceholder}
+              disabled={saving}
+              onChange={(event) => setName(event.target.value)}
+              className="min-h-8 min-w-0 w-full rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
+            />
+          </label>
+          <DirectoryPathField
+            id="source-create-path"
+            label={copy.serverDirectory}
+            value={path}
+            onSelect={setPath}
+            disabled={saving}
+            description={copy.onlyDirectory}
+          />
+          <RadioGroup
+            className="grid gap-1"
+            aria-label={copy.processingMode}
+            value={processingMode}
+            isDisabled={saving}
+            onChange={(value) =>
+              setProcessingMode(value as typeof processingMode)
+            }
+          >
+            <Radio className={modeChoice} value="in_place">
+              <span aria-hidden="true" className={radioIndicator} />
+              {copy.inPlace}
+            </Radio>
+            <p className={modeHelp}>{copy.inPlaceHelp}</p>
+            <Radio className={modeChoice} value="staged">
+              <span aria-hidden="true" className={radioIndicator} />
+              {copy.staged}
+            </Radio>
+            <p className={modeHelp}>{copy.stagedHelp}</p>
+          </RadioGroup>
+          <p className="m-0 text-xs text-[var(--muted)]">{copy.sourcePolicy}</p>
+          {formError && (
+            <p ref={formAlert} tabIndex={-1} role="alert" className="m-0">
+              {typeof formError === "string"
+                ? copy[formError]
+                : renderSourceError(formError, locale)}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <AppButton type="submit" isDisabled={saving}>
+              {copy.addSource}
+            </AppButton>
+            <AppButton onPress={cancelCreate} isDisabled={saving}>
+              {copy.cancel}
+            </AppButton>
+          </div>
+        </form>
+      )}
+      {busy && sources && (
+        <p role="status" className="m-0 text-xs text-[var(--muted)]">
+          {t("requestRunning")}
+        </p>
+      )}
+      {error && sources && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <p className="m-0">{renderSourceError(error, locale)}</p>
+          <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
+        </div>
+      )}
+      {scanErrors.length > 0 && (
+        <div role="alert" className="grid gap-1">
+          {scanErrors.map(({ root, scanError }) => (
+            <p key={root.id} className="m-0">
+              {root.display_name}: {renderSourceError(scanError, locale)}
+            </p>
+          ))}
+        </div>
+      )}
+      {scans.discoveryError && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="alert" className="m-0">
+            {renderSourceError(scans.discoveryError, locale)}
+          </p>
+          <AppButton onPress={() => void scans.discover()}>
+            {t("retryLoad")}
           </AppButton>
         </div>
       )}
-      {error && (
-        <>
-          <p ref={alert} tabIndex={-1} role="alert">
-            {renderSourceError(error, locale)}
-          </p>
-          <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
-        </>
-      )}
-      {!sources && !error && <p role="status">{t("loading")}</p>}
       {sources && (
-        <>
-          {creating ? (
-            <form
-              aria-labelledby="source-create-title"
-              className="sources-panel"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void register();
-              }}
-            >
-              <h2 id="source-create-title">{t("createTitle")}</h2>
-              <label>
-                {t("name")}
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-              <DirectoryPathField
-                id="source-create-path"
-                label={t("serverPath")}
-                value={path}
-                onSelect={setPath}
-                disabled={busy}
-              />
-              <label>
-                {t("processingMode")}
-                <select
-                  className="sources-select"
-                  required
-                  value={processingMode}
-                  onChange={(event) =>
-                    setProcessingMode(
-                      event.target.value as typeof processingMode,
-                    )
-                  }
-                >
-                  <option value="">{t("chooseMode")}</option>
-                  <option value="in_place">{t("inPlace")}</option>
-                  <option value="staged">{t("staged")}</option>
-                </select>
-              </label>
-              <p className="sources-help">{t("sourcePolicy")}</p>
-              {formError && (
-                <p ref={formAlert} tabIndex={-1} role="alert">
-                  {renderSourceError(formError, locale)}
-                </p>
-              )}
-              <AppButton type="submit" isDisabled={busy}>
-                {t("register")}
-              </AppButton>
-              <AppButton onPress={cancelCreate}>{t("cancel")}</AppButton>
-            </form>
-          ) : (
-            <AppButton
-              onPress={() => {
-                setFormError(null);
-                setNotice(null);
-                setCreating(true);
-              }}
-            >
-              {t("addSource")}
-            </AppButton>
-          )}
-          <section
-            aria-labelledby="sources-list-title"
-            className="sources-panel"
-          >
-            <h2 ref={listHeading} tabIndex={-1} id="sources-list-title">
-              {t("connectedSources")}
-            </h2>
-            {sources.length === 0 ? (
-              <p role="status">{t("noneRegistered")}</p>
-            ) : (
-              <div className="sources-table-wrap">
-                <table className="sources-table">
-                  <caption className="sources-visually-hidden">
-                    {t("sourceCaption")}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("nameColumn")}</th>
-                      <th scope="col">{t("pathColumn")}</th>
-                      <th scope="col">{t("availability")}</th>
-                      <th scope="col">{t("enabled")}</th>
-                      <th scope="col">{t("lastScan")}</th>
-                      <th scope="col">{t("inventory")}</th>
-                      <th scope="col">{t("actions")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sources.map((root) => (
-                      <tr key={root.id}>
-                        <th scope="row" data-label={t("nameColumn")}>
-                          {root.display_name}
-                        </th>
-                        <td data-label={t("pathColumn")}>
-                          <code>{root.configured_path}</code>
-                        </td>
-                        <td data-label={t("availability")}>
-                          <span
-                            className="sources-chip"
-                            data-status={root.status}
-                          >
-                            {statusLabel(root.status, locale)}
-                          </span>
-                          {root.status === "unavailable" && root.safe_error && (
-                            <span className="sources-note">
-                              {root.safe_error}
-                            </span>
-                          )}
-                        </td>
-                        <td data-label={t("enabled")}>
-                          {root.enabled ? t("enabledYes") : t("enabledNo")}
-                        </td>
-                        <td data-label={t("lastScan")}>
-                          {lastScanLabel(root, locale)}
-                        </td>
-                        <td data-label={t("inventory")}>
-                          <InventoryCell root={root} locale={locale} />
-                        </td>
-                        <td data-label={t("actions")}>
-                          <AppButton
-                            onPress={() => {
-                              window.location.hash = `/sources/${encodeURIComponent(root.id)}`;
-                            }}
-                          >
-                            {t("openSource", { name: root.display_name })}
-                          </AppButton>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p className="sources-note">{t("unavailableInventory")}</p>
-          </section>
-          <SourceArtifactCleanupPanel />
-        </>
+        <p className="my-2 text-xs text-[var(--muted)]">
+          {copy.sourceTableHelp}
+        </p>
       )}
+      <fieldset
+        disabled={scanUnavailable && listState === undefined}
+        className="m-0 min-w-0 border-0 p-0"
+      >
+        <SourceRootList
+          rows={rows}
+          locale={locale}
+          state={listState}
+          onScan={startScan}
+        />
+      </fieldset>
+      {sources && <SourceArtifactCleanupPanel />}
     </section>
   );
 }

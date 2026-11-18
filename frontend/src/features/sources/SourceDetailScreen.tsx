@@ -19,6 +19,7 @@ import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys"
 import { SourceLocations } from "./SourceLocations";
 import { SourceScanControl } from "./SourceScanControl";
 import { type SourceMessage, sourceMessage } from "./sourceMessages";
+import { useSourceScans } from "./sourceScans";
 import {
   fileCount,
   inventoryLabel,
@@ -40,6 +41,8 @@ type EditForm = {
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const { locale } = useI18n();
   const queryClient = useQueryClient();
+  const scanRevision = useSourceScans().rootRevision(sourceId);
+  const rootRead = useRef<AbortController | null>(null);
   const t = (
     key: Parameters<typeof sourceMessage>[1],
     values?: Record<string, string | number>,
@@ -78,7 +81,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }, []);
 
   // The shell mirrors the visible group count outside the Incoming screens. A
-  // root change or scan completion can leave that number stale, so refresh only
+  // root edit or removal can leave that number stale, so refresh only
   // the exact count entry instead of the review screen's group-list request.
   const refreshIncomingGroupCount = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -88,28 +91,37 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }, [queryClient]);
 
   const load = useCallback(async () => {
+    rootRead.current?.abort();
+    const request = new AbortController();
+    rootRead.current = request;
     setBusy(true);
     setError(null);
     try {
-      const response = await getSource(sourceId, { cache: "no-store" });
+      const response = await getSource(sourceId, {
+        cache: "no-store",
+        signal: request.signal,
+      });
+      if (request.signal.aborted) return;
       if (response.status !== 200) throw sourceFailure("read", response);
       applyRoot(response.data);
     } catch (reason) {
-      setError(message(reason));
+      if (!request.signal.aborted) setError(message(reason));
     } finally {
-      setBusy(false);
+      if (!request.signal.aborted) {
+        rootRead.current = null;
+        setBusy(false);
+      }
     }
   }, [sourceId, applyRoot]);
 
-  const handleScanCompleted = useCallback(() => {
-    refreshIncomingGroupCount();
-    return load();
-  }, [refreshIncomingGroupCount, load]);
-
   useEffect(() => {
     heading.current?.focus();
+    return () => rootRead.current?.abort();
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A scan revision explicitly requests an authoritative reread.
+  useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, scanRevision]);
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
@@ -281,10 +293,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             </dl>
             <p className="sources-help">{t("sourceReadOnly")}</p>
           </section>
-          <SourceScanControl
-            root={root}
-            onScanCompleted={handleScanCompleted}
-          />
+          <SourceScanControl root={root} />
           <SourceLocations
             sourceId={sourceId}
             root={root}

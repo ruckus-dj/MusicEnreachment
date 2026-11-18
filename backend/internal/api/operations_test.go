@@ -86,6 +86,39 @@ func TestOperationEndpointsExposeTheScanTargetSourceRootID(t *testing.T) {
 	}
 }
 
+func TestListOperationsCanRequestOnlyActiveSourceScans(t *testing.T) {
+	rootID := uuid.New()
+	scan := persistence.Operation{
+		ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued",
+		TargetSourceRootID: &rootID,
+	}
+	repository := &activeSourceScanAPIRepository{
+		transitionOperationsRepository: &transitionOperationsRepository{},
+		scan:                           scan,
+	}
+	router := chi.NewRouter()
+	api.RegisterAll(api.New(router), api.Dependencies{Operations: service.NewOperations(repository)})
+
+	response := decodeOperationBody(t, transitionRequest(t, router, http.MethodGet, "/operations?active_source_scans=true", ""))
+	operations, ok := response["operations"].([]any)
+	if !ok || len(operations) != 1 {
+		t.Fatalf("operations=%#v, want one active scan", response["operations"])
+	}
+	operation, ok := operations[0].(map[string]any)
+	if !ok || operation["id"] != scan.ID.String() || operation["target_source_root_id"] != rootID.String() {
+		t.Fatalf("operation=%#v, want scan %s for root %s", operations[0], scan.ID, rootID)
+	}
+}
+
+type activeSourceScanAPIRepository struct {
+	*transitionOperationsRepository
+	scan persistence.Operation
+}
+
+func (repository *activeSourceScanAPIRepository) ListActiveSourceScanOperations(context.Context) ([]persistence.Operation, error) {
+	return []persistence.Operation{repository.scan}, nil
+}
+
 func TestCleanupOperationDetailUsesOneConsistentRead(t *testing.T) {
 	operationID, artifactID := uuid.New(), uuid.New()
 	repository := &operationDetailRepository{

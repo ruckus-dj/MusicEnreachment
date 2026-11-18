@@ -7,6 +7,7 @@ import type {
   SourceLocationResponse,
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
 
@@ -60,6 +61,7 @@ export function scanFixture() {
     rootReads: 0,
     locationReads: 0,
     refused: false,
+    retryRequests: 0,
   };
   server.use(
     http.get("/api/sources", () =>
@@ -81,11 +83,13 @@ export function scanFixture() {
         : HttpResponse.json(fixture.operation),
     ),
     http.post(`${operationPath}/retry`, () => {
+      fixture.retryRequests += 1;
       fixture.operation = {
         ...fixture.operation,
         state: "queued",
         stage: "queued",
         safe_error: undefined,
+        target_source_root_id: fixture.root.id,
       };
       return HttpResponse.json(fixture.operation);
     }),
@@ -125,7 +129,9 @@ export async function openDetail() {
   window.location.hash = "/sources/root-refresh";
   const view = render(
     <QueryClientProvider client={new QueryClient()}>
-      <SourcesScreen />
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
     </QueryClientProvider>,
   );
   await act(async () => root);
@@ -142,7 +148,9 @@ export async function startScan() {
   });
   const read = nextResponse(operationPath);
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сканировать каталог" }),
+    );
   });
   await act(async () => read);
   return connected;

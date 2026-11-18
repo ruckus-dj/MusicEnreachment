@@ -82,6 +82,13 @@ type currentOperationsRepository interface {
 	ListCurrentOperations(context.Context, persistence.CurrentOperationsFilter) ([]persistence.CurrentOperationRow, int, error)
 }
 
+// activeSourceScanRepository is the narrow read slice used by Sources scan
+// discovery. It is asserted separately so the complete operation listing is not
+// the only available path, and repositories without it stay valid.
+type activeSourceScanRepository interface {
+	ListActiveSourceScanOperations(context.Context) ([]persistence.Operation, error)
+}
+
 type operationEnqueuingRepository interface {
 	OperationRepository
 	CreateOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
@@ -200,6 +207,25 @@ func (s *Operations) Snapshot(ctx context.Context, id uuid.UUID) (OperationSnaps
 
 func (s *Operations) ListSnapshots(ctx context.Context, states ...string) ([]OperationSnapshot, error) {
 	operations, err := s.repository.ListOperations(ctx, states...)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]OperationSnapshot, 0, len(operations))
+	for index := range operations {
+		snapshots = append(snapshots, operationSnapshot(&operations[index]))
+	}
+	return snapshots, nil
+}
+
+// ListActiveSourceScanSnapshots lists only queued or running scans that own a
+// source root. Sources discovery uses it instead of the complete operation
+// listing, whose snapshots are large and unrelated to scan progress.
+func (s *Operations) ListActiveSourceScanSnapshots(ctx context.Context) ([]OperationSnapshot, error) {
+	repository, ok := s.repository.(activeSourceScanRepository)
+	if !ok {
+		return nil, fmt.Errorf("active source scan repository is unavailable")
+	}
+	operations, err := repository.ListActiveSourceScanOperations(ctx)
 	if err != nil {
 		return nil, err
 	}

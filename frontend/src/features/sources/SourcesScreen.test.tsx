@@ -1,6 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -148,9 +156,11 @@ it("shows the original source path when selecting and confirming a copy", async 
   );
   window.location.hash = "/sources";
   render(
-    <I18nProvider>
-      <SourcesScreen />
-    </I18nProvider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 
   fireEvent.click(
@@ -169,13 +179,7 @@ it("shows the original source path when selecting and confirming a copy", async 
 });
 
 describe("source root creation", () => {
-  it("registers a server path and reloads the list", async () => {
-    vi.stubGlobal(
-      "EventSource",
-      class extends EventTarget {
-        close() {}
-      },
-    );
+  it("registers a server path without scanning and reloads the list", async () => {
     const registered = root({
       id: "root-disk",
       display_name: "Диск",
@@ -189,16 +193,6 @@ describe("source root creation", () => {
     });
     const created: SourceRootResponse[] = [];
     let sourceListRequests = 0;
-    const scan = {
-      id: "scan-new-root",
-      kind: "scan_source",
-      state: "queued",
-      stage: "queued",
-      target_source_root_id: "root-disk",
-      bytes_completed: 0,
-      created_at: "2026-09-30T00:00:00Z",
-      updated_at: "2026-09-30T00:00:00Z",
-    };
     let scanRequests = 0;
     server.use(
       http.get("/api/sources", () => {
@@ -207,14 +201,13 @@ describe("source root creation", () => {
       }),
       http.get("/api/sources/root-disk", () => HttpResponse.json(registered)),
       locationsHandler([]),
-      http.get("/api/operations", () =>
-        HttpResponse.json({ operations: scanRequests ? [scan] : [] }),
-      ),
-      http.get("/api/operations/scan-new-root", () => HttpResponse.json(scan)),
       http.post("/api/sources/root-disk/scan", () => {
         scanRequests += 1;
-        return HttpResponse.json(scan);
+        return new HttpResponse(null, { status: 500 });
       }),
+      http.get("/api/source-analysis/artifacts/cleanup", () =>
+        HttpResponse.json({ candidates: [], count: 0 }),
+      ),
       http.post("/api/sources", async ({ request }) => {
         expect(await request.json()).toEqual({
           display_name: "Диск",
@@ -239,58 +232,138 @@ describe("source root creation", () => {
     expect(
       await screen.findByText("Ни один каталог не зарегистрирован."),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Добавить каталог" }));
-    fireEvent.change(screen.getByLabelText("Имя каталога"), {
+    fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
+    fireEvent.change(screen.getByLabelText("Имя источника"), {
       target: { value: "Диск" },
     });
-    await selectDirectoryPath("Путь на сервере", "/srv/disk");
-    expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Режим обработки"), {
-      target: { value: "staged" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Зарегистрировать каталог" }),
+    await selectDirectoryPath("Каталог на сервере", "/srv/disk");
+    const staged = screen.getByRole("radio", { name: "Через рабочую копию" });
+    expect(staged).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "На месте" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Явно выберите режим обработки",
     );
+    expect(created).toHaveLength(0);
+    fireEvent.click(staged);
+    fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "Диск" }),
     ).toBeVisible();
     expect(
-      await screen.findByText("Сканирование поставлено в очередь."),
+      screen.getByRole("button", { name: "Сканировать каталог" }),
     ).toBeVisible();
-    expect(scanRequests).toBe(1);
+    expect(scanRequests).toBe(0);
     expect(window.location.hash).toBe("#/sources/root-disk");
     fireEvent.click(screen.getByRole("button", { name: "К списку каталогов" }));
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toHaveFocus();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Добавить каталог" }),
+      await screen.findByRole("button", { name: "Добавить источник" }),
     );
-    expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Имя каталога"), {
+    expect(
+      screen.getByRole("radio", { name: "Через рабочую копию" }),
+    ).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Имя источника"), {
       target: { value: "Unsaved source draft" },
     });
-    fireEvent.change(screen.getByLabelText("Режим обработки"), {
-      target: { value: "staged" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Зарегистрировать каталог" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
+      "Выберите каталог на сервере.",
     );
     const requestsBeforeLocaleChange = sourceListRequests;
     fireEvent.click(screen.getByRole("button", { name: "Switch to English" }));
     expect(
-      await screen.findByRole("button", { name: "Register source" }),
+      await screen.findByRole("button", { name: "Add source" }),
     ).toBeVisible();
     expect(screen.getByLabelText("Source name")).toHaveValue(
       "Unsaved source draft",
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Enter a source name, an absolute server path, and a processing mode.",
+      "Choose a server directory.",
     );
     expect(sourceListRequests).toBe(requestsBeforeLocaleChange);
   });
+});
+
+it("shares a pending row scan with the detail card without starting it twice", async () => {
+  const source = root();
+  const scan = {
+    id: "scan-list",
+    kind: "scan_source",
+    state: "queued",
+    stage: "queued",
+    target_source_root_id: source.id,
+    bytes_completed: 0,
+    created_at: "2026-09-30T00:00:00Z",
+    updated_at: "2026-09-30T00:00:00Z",
+  };
+  let releaseAdmission = () => {};
+  const admission = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  let scans = 0;
+  let discoveries = 0;
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventTarget {
+      close() {}
+    },
+  );
+  server.use(
+    http.get("/api/sources", () => json([source])),
+    http.get("/api/source-analysis/artifacts/cleanup", () =>
+      HttpResponse.json({ candidates: [], count: 0 }),
+    ),
+    http.get("/api/sources/root-1", () => HttpResponse.json(source)),
+    locationsHandler([]),
+    http.get("/api/operations", () => {
+      discoveries += 1;
+      return HttpResponse.json({ operations: [] });
+    }),
+    http.get("/api/operations/scan-list", () => HttpResponse.json(scan)),
+    http.post("/api/sources/root-1/scan", async () => {
+      scans += 1;
+      await admission;
+      return HttpResponse.json(scan);
+    }),
+  );
+  window.location.hash = "/sources";
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+
+  const grid = within(
+    await screen.findByRole("grid", { name: "Подключённые каталоги" }),
+  );
+  const start = await grid.findByRole("button", {
+    name: "Сканировать: Входящие",
+  });
+  await waitFor(() => expect(start).toBeEnabled());
+  fireEvent.click(start);
+  expect(
+    grid.getByRole("button", { name: "Сканируется…: Входящие" }),
+  ).toBeDisabled();
+  expect(window.location.hash).toBe("#/sources");
+  act(() => {
+    window.history.pushState(null, "", "/#/sources/root-1");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  const detailStart = await screen.findByRole("button", {
+    name: "Сканировать каталог",
+  });
+  expect(detailStart).toBeDisabled();
+  fireEvent.click(detailStart);
+  releaseAdmission();
+  expect(
+    await screen.findByText("Сканирование поставлено в очередь."),
+  ).toBeVisible();
+  expect(scans).toBe(1);
+  expect(discoveries).toBe(1);
 });

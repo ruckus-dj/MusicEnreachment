@@ -173,6 +173,7 @@ describe("AppShell sources routing", () => {
   it("loads source roots through the production App root without a supplied query context", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
       http.get("/api/sources", () =>
         HttpResponse.json({ sources: [sourceRoot] }),
       ),
@@ -182,7 +183,10 @@ describe("AppShell sources routing", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
-    expect(await screen.findByText("/srv/inbox")).toBeVisible();
+    const grid = within(
+      await screen.findByRole("grid", { name: "Подключённые каталоги" }),
+    );
+    expect(await grid.findByText("/srv/inbox")).toBeVisible();
   });
 
   it("guards dirty Settings drafts across anchor and browser navigation attempts", async () => {
