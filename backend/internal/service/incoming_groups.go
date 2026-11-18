@@ -50,6 +50,10 @@ func NewIncomingGroups(store incomingGroupingStore) *IncomingGroups {
 }
 
 func (groups *IncomingGroups) Snapshot(ctx context.Context) (IncomingGroupingSnapshot, error) {
+	return groups.snapshot(ctx, true)
+}
+
+func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (IncomingGroupingSnapshot, error) {
 	if groups == nil || groups.store == nil {
 		return IncomingGroupingSnapshot{}, fmt.Errorf("incoming grouping store is unavailable")
 	}
@@ -58,6 +62,9 @@ func (groups *IncomingGroups) Snapshot(ctx context.Context) (IncomingGroupingSna
 		return IncomingGroupingSnapshot{}, err
 	}
 	if state.NeedsRefresh {
+		if !refresh {
+			return IncomingGroupingSnapshot{}, ErrMatchingEvaluationDeferred
+		}
 		if err := groups.Refresh(ctx); err != nil {
 			return IncomingGroupingSnapshot{}, err
 		}

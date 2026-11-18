@@ -278,6 +278,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const requestId = useRef(0);
   const seededGroup = useRef("");
   const appliedRouteGroup = useRef("");
+  const observedEvaluation = useRef<MatchingReview | undefined>(undefined);
   const authorityRevisionByGroup = useRef(new Map<string, number>());
   const matchingHeadingRef = useRef<HTMLHeadingElement>(null);
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -358,6 +359,12 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     },
     enabled:
       Boolean(groupId) && groups.some((candidate) => candidate.id === groupId),
+    // The backend publishes a new evaluation revision asynchronously when
+    // provider data changes. Re-read the saved evaluation only while the
+    // matching view is visible; a hidden tab and every other screen stay idle.
+    // Focus refetch keeps its default behavior.
+    refetchInterval: matchingActive ? 10_000 : false,
+    refetchIntervalInBackground: false,
   });
   const review = reviewQuery.data;
   evaluationRevisionRef.current = review?.evaluation_revision ?? "";
@@ -387,6 +394,47 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     setConfirmIntent(undefined);
     setAuthorityIntent(undefined);
   }, [groupId, review, selectedReleaseId]);
+
+  // A same-group evaluation revision replaced by the periodic read invalidates
+  // a preview and its confirmation retry: both belong to the revision that
+  // produced their digest. Drafts stay intact and pending responses are fenced
+  // by the revision embedded in the request scope.
+  useEffect(() => {
+    if (!groupId || review?.group_id !== groupId) return;
+    const previous = observedEvaluation.current;
+    observedEvaluation.current = review;
+    if (
+      previous?.group_id !== groupId ||
+      previous.evaluation_revision === review.evaluation_revision
+    )
+      return;
+    setPreview(undefined);
+    setConfirmIntent(undefined);
+    const editedRelease = (item: MatchingReview) =>
+      item.releases?.find(
+        (candidate) => candidate.provider_release_id === selectedReleaseId,
+      );
+    const oldPositions = editedRelease(previous)?.positions ?? [];
+    const newPositions = editedRelease(review)?.positions ?? [];
+    const key = `${groupId}:${selectedReleaseId}`;
+    const editedTracks = [
+      ...Object.values(drafts[key] ?? {}).filter(Boolean),
+      ...Object.keys(tagOverrideDrafts[key] ?? {}),
+    ];
+    if (
+      editedTracks.some((id) => {
+        const oldPosition = oldPositions.find((item) => item.track_id === id);
+        const newPosition = newPositions.find((item) => item.track_id === id);
+        return (
+          oldPosition &&
+          (!newPosition ||
+            oldPosition.medium !== newPosition.medium ||
+            oldPosition.position !== newPosition.position)
+        );
+      })
+    )
+      setNotice({ key: "draftTargetsChanged" });
+  }, [drafts, groupId, review, selectedReleaseId, tagOverrideDrafts]);
 
   useEffect(() => {
     if (!preparedReleaseMBID || !groupId) return;
@@ -455,11 +503,14 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const assignmentsByMember = useMemo(() => {
     const merged: Record<string, string> = { ...savedAssignments };
     for (const [memberId, trackId] of Object.entries(drafts[draftKey] ?? {})) {
-      if (trackId) merged[memberId] = trackId;
+      // Keep a missing target in the draft without replacing it with a new
+      // suggestion. The file is unassigned in the current layout.
+      if (release?.positions?.some((item) => item.track_id === trackId))
+        merged[memberId] = trackId;
       else delete merged[memberId];
     }
     return merged;
-  }, [drafts, draftKey, savedAssignments]);
+  }, [drafts, draftKey, release, savedAssignments]);
   const tagOverridesByTrack = tagOverrideDrafts[draftKey] ?? {};
   const files = groupsQuery.data?.files ?? [];
   const groupFiles = useMemo(() => {
@@ -667,19 +718,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     )
       return;
     invalidateIntent();
-    setDrafts((current) => {
-      const draft = { ...(current[draftKey] ?? {}) };
-      if (trackId === (savedAssignments[memberId] ?? ""))
-        delete draft[memberId];
-      else draft[memberId] = trackId;
-      if (Object.keys(draft).length) {
-        return { ...current, [draftKey]: draft };
-      }
-      if (current[draftKey] === undefined) return current;
-      const next = { ...current };
-      delete next[draftKey];
-      return next;
-    });
+    // Record every explicit decision as a patch over the saved solver work,
+    // including a value that currently equals the baseline. A later solver
+    // revision must not silently reinterpret an explicit edit as "automatic".
+    setDrafts((current) => ({
+      ...current,
+      [draftKey]: { ...(current[draftKey] ?? {}), [memberId]: trackId },
+    }));
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);

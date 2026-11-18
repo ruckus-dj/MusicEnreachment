@@ -233,6 +233,8 @@ func Run(ctx context.Context, config Config) error {
 	genreCatalogWorker := jobs.NewGenreCatalogWorker(genreCatalog)
 	genreCatalogRefreshDispatchWorker := jobs.NewGenreCatalogRefreshDispatchWorker(genreCatalog)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
+	artistMatchingReviewRefresh := service.NewArtistMatchingReviewRefreshDetector(setupManagerRepository, matchingEvaluation, setupManagerRepository)
+	artistMatchingReviewRefreshWorker := jobs.NewArtistMatchingReviewRefreshWorker(artistMatchingReviewRefresh)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
@@ -339,6 +341,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, genreCatalogRefreshDispatchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
+		river.AddWorker(workers, artistMatchingReviewRefreshWorker)
 		river.AddWorker(workers, publicationWorker)
 		registerLibraryDeletionWorker(workers, libraryDeletionWorker)
 		river.AddWorker(workers, obsoleteOutputCleanupWorker)
@@ -353,7 +356,7 @@ func Run(ctx context.Context, config Config) error {
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob(), jobs.NewArtistMatchingReviewRefreshPeriodicJob())
 	if err != nil {
 		return err
 	}

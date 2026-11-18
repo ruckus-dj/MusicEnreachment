@@ -45,6 +45,8 @@ export const incomingMessages = {
       "Group or matching mode changed. Refresh them before trying again.",
     confirmConflict:
       "Evaluation or group data changed. Your draft is saved; refresh the evaluation manually before creating a new preview.",
+    draftTargetsChanged:
+      "Some edited positions moved or are missing in the refreshed evaluation. Your edits are saved. Review the new layout before previewing.",
     groupsLoadError: "Could not load groups.",
     refreshAuthority: "Refresh group and mode data",
     refreshEvaluation: "Refresh saved evaluation",
@@ -186,6 +188,8 @@ export const incomingMessages = {
       "Данные группы или режима изменились. Обновите их вручную перед новой попыткой.",
     confirmConflict:
       "Данные оценки или группы изменились. Черновик сохранён; обновите оценку вручную перед новым предпросмотром.",
+    draftTargetsChanged:
+      "В обновлённой оценке некоторые изменённые позиции переместились или исчезли. Черновик сохранён. Проверьте новую раскладку перед предпросмотром.",
     groupsLoadError: "Не удалось загрузить группы.",
     refreshAuthority: "Обновить данные группы и режима",
     refreshEvaluation: "Обновить сохранённую оценку",

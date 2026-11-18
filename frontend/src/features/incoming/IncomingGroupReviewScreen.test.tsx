@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -8,8 +9,10 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getGetIncomingGroupMatchingQueryKey } from "../../api/generated/client";
 import type {
   IncomingGroupsBody,
+  MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
   MatchingReview,
@@ -277,6 +280,7 @@ function setup(
       </I18nProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 function IncomingRouteHarness() {
@@ -722,5 +726,83 @@ describe("incoming manual group review", () => {
         name: /Снять .* с позиции/,
       }),
     ).toBeNull();
+  });
+
+  it("invalidates the old preview after a background revision and keeps the explicit draft", async () => {
+    const previewBodies: MatchingManualBody[] = [];
+    const queryClient = setup(review(), "ru", undefined, false, {
+      view: "matching",
+      groupId: ids.group,
+    });
+    server.use(
+      http.post(
+        "/api/incoming-groups/:groupId/matching/preview",
+        async ({ request }) => {
+          previewBodies.push((await request.json()) as MatchingManualBody);
+          return HttpResponse.json(preview(1));
+        },
+      ),
+    );
+    await chooseRelease();
+    const repeatedPosition = "Диск 2 · трек 2 · Открытие (повтор записи)";
+    assignFromRail("folder/01.flac", repeatedPosition);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Предпросмотр полного назначения",
+    });
+    expect(previewBodies[0]).toMatchObject({
+      expected_evaluation_revision: "evaluation-1",
+      assignments: [
+        {
+          file_member_id: ids.memberOne,
+          provider_track_id: ids.trackOneAgain,
+          medium: 2,
+          position: 1,
+        },
+      ],
+    });
+
+    act(() => {
+      queryClient.setQueryData(
+        getGetIncomingGroupMatchingQueryKey(ids.group),
+        review({ evaluation_revision: "evaluation-2" }),
+      );
+    });
+
+    // The digest belongs to the replaced revision, so the old preview and its
+    // confirmation must disappear while the explicit draft survives.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", {
+          name: "Предпросмотр полного назначения",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Явно подтвердить" }),
+    ).not.toBeInTheDocument();
+    expectAssigned("folder/01.flac", repeatedPosition);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Предпросмотр полного назначения",
+    });
+    expect(previewBodies).toHaveLength(2);
+    expect(previewBodies[1]).toMatchObject({
+      expected_evaluation_revision: "evaluation-2",
+      assignments: [
+        {
+          file_member_id: ids.memberOne,
+          provider_track_id: ids.trackOneAgain,
+          medium: 2,
+          position: 1,
+        },
+      ],
+    });
   });
 });

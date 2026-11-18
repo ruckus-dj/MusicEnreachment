@@ -170,6 +170,13 @@ func (repository *SetupManagerRepository) enqueueEligibleMatchingApplies(ctx con
 		if err := tx.NewRaw(`SELECT evaluation_revision, evaluation_evidence FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Scan(ctx, &header); err != nil {
 			return fmt.Errorf("read persisted decision for group %s: %w", group.GroupID, err)
 		}
+		reviewOnly, err := matchingProviderRefreshReviewOnly(header.Evidence)
+		if err != nil {
+			return fmt.Errorf("read persisted decision for group %s: %w", group.GroupID, err)
+		}
+		if reviewOnly {
+			continue
+		}
 		outcome, err := decodeMatchingApplyOutcome(header.Evidence)
 		if err != nil {
 			return fmt.Errorf("decode persisted decision for group %s: %w", group.GroupID, err)

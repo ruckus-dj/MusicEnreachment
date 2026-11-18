@@ -56,6 +56,15 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if header.EvaluationRevision != expectedEvaluationRevision {
 		return ErrIncomingMatchConflict
 	}
+	reviewOnly, err := matchingProviderRefreshReviewOnly(header.EvaluationEvidence)
+	if err != nil {
+		return fmt.Errorf("apply matching evaluation: %w", err)
+	}
+	if reviewOnly {
+		// The provider-refresh review path keeps automatic authority for display
+		// and audit, but explicitly revokes the authority to materialize it.
+		return fmt.Errorf("apply matching evaluation: provider refresh review requires explicit review: %w", ErrIncomingMatchConflict)
+	}
 	var fence IncomingMatchProviderFence
 	if err := json.Unmarshal(header.ProviderFences, &fence); err != nil {
 		return fmt.Errorf("apply matching evaluation: decode provider fences: %w", err)
