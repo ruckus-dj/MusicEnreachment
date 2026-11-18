@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { originalReleases } from "../../catalogData";
 import type { DeletionOperation } from "../../DeletionRequest";
@@ -62,11 +62,16 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 		</I18nProvider>,
 	);
 
-	expect(screen.getByText("Queued")).toBeVisible();
+	expect(screen.queryByText(track.title)).toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: /status/i }));
+	fireEvent.click(screen.getByRole("option", { name: /^All$/ }));
+	fireEvent.click(screen.getByRole("button", { name: /kind/i }));
+	fireEvent.click(screen.getByRole("option", { name: "Removal" }));
+	expect(screen.getByText(track.title)).toBeVisible();
 	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
 
 	advance(demoOperationStartDelayMs);
-	expect(screen.getByText("Running")).toBeVisible();
+	expect(within(screen.getByRole("grid")).getByText("Running")).toBeVisible();
 	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
 	expect(settleDeletion).not.toHaveBeenCalled();
 
@@ -79,10 +84,10 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 	);
 
 	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-	expect(screen.getByText("Queued")).toBeVisible();
+	expect(screen.getByText(track.title)).toBeVisible();
 	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
 	advance(demoOperationStartDelayMs);
-	expect(screen.getByText("Running")).toBeVisible();
+	expect(within(screen.getByRole("grid")).getByText("Running")).toBeVisible();
 	advance(demoOperationSettleDelayMs);
 	expect(settleDeletion).toHaveBeenCalledTimes(2);
 	expect(settleDeletion).toHaveBeenNthCalledWith(2, operation);

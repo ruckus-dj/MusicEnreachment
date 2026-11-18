@@ -1012,7 +1012,29 @@ export function CatalogDemo({
 	if (route === "operations")
 		return (
 			<main className={screenLayout}>
-				<OperationsScreen deletions={deletions} provider={operationsProvider} />
+				<OperationsScreen
+					deletions={deletions}
+					provider={operationsProvider}
+					isTargetCurrent={(href) => {
+						const [route, id] = href.slice(1).split("/");
+						switch (route) {
+							case "track":
+								return releases.some((release) =>
+									release.tracks.some((track) => track.id === id),
+								);
+							case "release":
+								return releases.some((release) => release.id === id);
+							case "artist":
+								return artists.some((artist) => artist.id === id);
+							case "match":
+								return incoming.groups.some(
+									(group) => group.id === id && !group.processed,
+								);
+							default:
+								return false;
+						}
+					}}
+				/>
 			</main>
 		);
 	if (route && route !== "library")

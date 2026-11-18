@@ -24,11 +24,19 @@ const copy: OperationsListCopy = {
 	error: "Error",
 	actions: "Actions",
 	footnote: "Completed operations are hidden.",
+	search: "Search by target",
+	statusFilter: "Status",
+	kindFilter: "Operation type",
+	details: "Details",
+	close: "Close",
+	previous: "Previous",
+	next: "Next",
 };
 
 const row: OperationsListRow = {
 	id: "publication-1",
 	target: "Northern Lines · position 01",
+	targetHref: "#track/north-t1",
 	operation: "Publish position",
 	state: "Running",
 	stateTone: "info",
@@ -42,13 +50,18 @@ const row: OperationsListRow = {
 it("renders an operation row and forwards row actions and refresh", () => {
 	const onRefresh = vi.fn();
 	render(<OperationsList copy={copy} rows={[row]} onRefresh={onRefresh} />);
-	expect(screen.getByText("Northern Lines · position 01")).toBeVisible();
+	expect(
+		screen.getByRole("link", { name: "Northern Lines · position 01" }),
+	).toHaveAttribute("href", "#track/north-t1");
 	expect(screen.getByText("Preparing result")).toBeVisible();
 	expect(screen.getByText("42%")).toBeVisible();
 	expect(screen.getByText("12:04")).toBeVisible();
-	expect(
-		screen.getByText("EACCES: no write access to the temporary directory"),
-	).toBeVisible();
+	fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+	const details = screen.getByRole("dialog");
+	expect(details).toHaveTextContent(
+		"EACCES: no write access to the temporary directory",
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Close" }));
 	fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
 	expect(row.actions?.[0]?.onPress).toHaveBeenCalledTimes(1);
 	fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
