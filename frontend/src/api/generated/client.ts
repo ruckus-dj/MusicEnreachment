@@ -32,6 +32,7 @@ import type {
   CheckPathsBody,
   CheckPathsInputBody,
   CreateSourceBody,
+  CurrentOperationsBody,
   DeleteSourceBody,
   ErrorModel,
   GenreCatalogSearchBody,
@@ -72,6 +73,7 @@ import type {
   LibraryReleaseOptionsPageLibraryRecordingOption,
   LibraryReleaseOptionsPageLibrarySourceVariantOption,
   LibraryReleasePage,
+  ListCurrentOperationsParams,
   ListInstallationsParams,
   ListLibraryArtistsParams,
   ListLibraryCoverCandidatesParams,
@@ -7497,6 +7499,140 @@ export function useListOperations<TData = Awaited<ReturnType<typeof listOperatio
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListOperationsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type listCurrentOperationsResponse200 = {
+  data: CurrentOperationsBody
+  status: 200
+}
+
+export type listCurrentOperationsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listCurrentOperationsResponseSuccess = (listCurrentOperationsResponse200) & {
+  headers: Headers;
+};
+export type listCurrentOperationsResponseError = (listCurrentOperationsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listCurrentOperationsResponse = (listCurrentOperationsResponseSuccess | listCurrentOperationsResponseError)
+
+export const getListCurrentOperationsUrl = (params?: ListCurrentOperationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/operations/current?${stringifiedParams}` : `/api/operations/current`
+}
+
+/**
+ * @summary List current operation snapshots with attention filter
+ */
+export const listCurrentOperations = async (params?: ListCurrentOperationsParams, options?: RequestInit): Promise<listCurrentOperationsResponse> => {
+
+  const res = await fetch(getListCurrentOperationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listCurrentOperationsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listCurrentOperationsResponse
+}
+
+
+
+
+
+export const getListCurrentOperationsQueryKey = (params?: ListCurrentOperationsParams,) => {
+    return [
+    `/api/operations/current`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListCurrentOperationsQueryOptions = <TData = Awaited<ReturnType<typeof listCurrentOperations>>, TError = ErrorModel>(params?: ListCurrentOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListCurrentOperationsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listCurrentOperations>>> = ({ signal }) => listCurrentOperations(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListCurrentOperationsQueryResult = NonNullable<Awaited<ReturnType<typeof listCurrentOperations>>>
+export type ListCurrentOperationsQueryError = ErrorModel
+
+
+export function useListCurrentOperations<TData = Awaited<ReturnType<typeof listCurrentOperations>>, TError = ErrorModel>(
+ params: undefined |  ListCurrentOperationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCurrentOperations>>,
+          TError,
+          Awaited<ReturnType<typeof listCurrentOperations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListCurrentOperations<TData = Awaited<ReturnType<typeof listCurrentOperations>>, TError = ErrorModel>(
+ params?: ListCurrentOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCurrentOperations>>,
+          TError,
+          Awaited<ReturnType<typeof listCurrentOperations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListCurrentOperations<TData = Awaited<ReturnType<typeof listCurrentOperations>>, TError = ErrorModel>(
+ params?: ListCurrentOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List current operation snapshots with attention filter
+ */
+
+export function useListCurrentOperations<TData = Awaited<ReturnType<typeof listCurrentOperations>>, TError = ErrorModel>(
+ params?: ListCurrentOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listCurrentOperations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListCurrentOperationsQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

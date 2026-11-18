@@ -317,7 +317,7 @@ export function LibraryScreen() {
   }
 
   return (
-    <main className="library-catalog" aria-labelledby="catalog-title">
+    <section className="library-catalog" aria-labelledby="catalog-title">
       <header className="catalog-header">
         <div>
           <h1 id="catalog-title">{copy.title}</h1>
@@ -500,7 +500,7 @@ export function LibraryScreen() {
           </nav>
         </>
       )}
-    </main>
+    </section>
   );
 }
 

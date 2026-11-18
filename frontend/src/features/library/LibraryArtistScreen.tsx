@@ -199,7 +199,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     releasesQuery.data?.status === 200 ? releasesQuery.data.data : undefined;
 
   return (
-    <main className="library-catalog" aria-labelledby="artist-title">
+    <section className="library-catalog" aria-labelledby="artist-title">
       <a className="catalog-back" href={libraryRouteHref(route)}>
         {copy.backToLibrary}
       </a>
@@ -394,7 +394,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
           )}
         </>
       ) : null}
-    </main>
+    </section>
   );
 }
 

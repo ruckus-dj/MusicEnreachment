@@ -404,7 +404,7 @@ export function OperationsList({
 			className="grid min-w-0 gap-[14px]"
 			aria-busy={status === "loading" || undefined}
 		>
-			<header className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--line)] pb-[14px]">
+			<div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--line)] pb-[14px]">
 				<div className="grid min-w-0 gap-[5px]">
 					<h1
 						ref={headingRef}
@@ -428,7 +428,7 @@ export function OperationsList({
 							: copy.refresh}
 					</AriaButton>
 				)}
-			</header>
+			</div>
 			{notice && (
 				<p
 					className="m-0 rounded-[var(--control-radius)] bg-[var(--accent-soft)] px-3 py-2 text-[var(--ink)]"

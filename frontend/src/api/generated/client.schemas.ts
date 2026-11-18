@@ -116,6 +116,54 @@ export interface CreateSourceBody {
   processing_mode: CreateSourceBodyProcessingMode;
 }
 
+export interface SourceAnalysisArtifactCleanupItemResult {
+  artifact_id: string;
+  safe_error?: string;
+  state: string;
+}
+
+export interface OperationTargetRef {
+  artist_id?: string;
+  group_id?: string;
+  kind: string;
+  location_id?: string;
+  position_id?: string;
+  release_id?: string;
+  root_id?: string;
+}
+
+export interface OperationResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bytes_completed: number;
+  bytes_total?: number;
+  /** @nullable */
+  cleanup_results?: SourceAnalysisArtifactCleanupItemResult[] | null;
+  created_at: string;
+  finished_at?: string;
+  id: string;
+  kind: string;
+  safe_error?: string;
+  stage: string;
+  started_at?: string;
+  state: string;
+  target_identity?: string;
+  target_installation_id?: string;
+  target_label?: string;
+  target_ref?: OperationTargetRef;
+  target_source_location_id?: string;
+  target_source_root_id?: string;
+  updated_at: string;
+}
+
+export interface CurrentOperationsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  operations: OperationResponse[] | null;
+  total: number;
+}
+
 export interface DeleteSourceBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1687,34 +1735,6 @@ export interface MovePreflightInputBody {
   remove_old_files: boolean;
 }
 
-export interface SourceAnalysisArtifactCleanupItemResult {
-  artifact_id: string;
-  safe_error?: string;
-  state: string;
-}
-
-export interface OperationResponse {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  bytes_completed: number;
-  bytes_total?: number;
-  /** @nullable */
-  cleanup_results?: SourceAnalysisArtifactCleanupItemResult[] | null;
-  created_at: string;
-  finished_at?: string;
-  id: string;
-  kind: string;
-  safe_error?: string;
-  stage: string;
-  started_at?: string;
-  state: string;
-  target_identity?: string;
-  target_installation_id?: string;
-  target_source_location_id?: string;
-  target_source_root_id?: string;
-  updated_at: string;
-}
-
 export interface OperationsBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2492,6 +2512,41 @@ export const ListOperationsState = {
   queued: 'queued',
   running: 'running',
   failed: 'failed',
+} as const;
+
+export type ListCurrentOperationsParams = {
+status?: ListCurrentOperationsStatus;
+kind?: ListCurrentOperationsKind;
+/**
+ * @maxLength 200
+ */
+q?: string;
+/**
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
+};
+
+export type ListCurrentOperationsStatus = typeof ListCurrentOperationsStatus[keyof typeof ListCurrentOperationsStatus];
+
+
+export const ListCurrentOperationsStatus = {
+  attention: 'attention',
+  all: 'all',
+  failed: 'failed',
+  running: 'running',
+  queued: 'queued',
+} as const;
+
+export type ListCurrentOperationsKind = typeof ListCurrentOperationsKind[keyof typeof ListCurrentOperationsKind];
+
+
+export const ListCurrentOperationsKind = {
+  publication: 'publication',
+  analysis: 'analysis',
+  removal: 'removal',
+  matching: 'matching',
 } as const;
 
 export type ListLocalProviderArtistsParams = {

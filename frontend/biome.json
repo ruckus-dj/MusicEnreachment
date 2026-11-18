@@ -4,5 +4,14 @@
   "linter": { "enabled": true },
   "files": {
     "includes": ["src/**/*.ts", "src/**/*.tsx", "*.ts", "!src/api/generated"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/features/operations/OperationsList.tsx",
+        "src/routes/ShellView.tsx"
+      ],
+      "formatter": { "indentStyle": "tab" }
+    }
+  ]
 }

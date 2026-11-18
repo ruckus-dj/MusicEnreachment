@@ -140,19 +140,19 @@ export function MatchingScreen({
 	const group = state.groups.find((item) => item.id === activeGroupId);
 	if (!group)
 		return (
-			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
+			<section className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
 				<h1>{matchingMessage(locale, "groupNotFound")}</h1>
 				<a href="#review">{matchingMessage(locale, "backToIncoming")}</a>
-			</main>
+			</section>
 		);
 	state.groupId = group.id;
 	const target = findTarget(group, releases, providers);
 	if (!target)
 		return (
-			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
+			<section className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
 				<h1>{matchingMessage(locale, "targetNotFound")}</h1>
 				<a href="#review">{matchingMessage(locale, "backToIncoming")}</a>
-			</main>
+			</section>
 		);
 	const tracks = target.tracks;
 	const assignments = getDraft(group, files, providers, releases);
@@ -519,7 +519,8 @@ export function MatchingScreen({
 		commitState();
 	};
 	return (
-		<main
+		<section
+			data-matching-screen
 			className="relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 pb-[110px] text-[var(--ink)] max-[800px]:px-3 max-[800px]:pt-3.5 max-[800px]:pb-[120px] min-[1400px]:flex min-[1400px]:h-full min-[1400px]:min-h-0 min-[1400px]:flex-col"
 			onKeyDown={(event) => {
 				if (event.key === "Escape" && state.selectedFile) {
@@ -1026,6 +1027,6 @@ export function MatchingScreen({
 					</div>
 				</Dialog>
 			</Modal>
-		</main>
+		</section>
 	);
 }

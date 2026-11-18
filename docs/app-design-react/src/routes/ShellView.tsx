@@ -46,7 +46,7 @@ export function ShellView({
 	setupLink,
 	children,
 }: ShellViewProps) {
-	const content = useRef<HTMLDivElement>(null);
+	const content = useRef<HTMLElement>(null);
 	const activeLabel =
 		sectionLabel ??
 		navigation.find((item) => item.current)?.label ??
@@ -57,11 +57,7 @@ export function ShellView({
 			<button
 				type="button"
 				className="fixed left-3 top-[-80px] z-[200] border-0 bg-[var(--surface)] p-2 focus:top-2"
-				onClick={() => {
-					const target =
-						content.current?.querySelector<HTMLElement>("main[tabindex]");
-					(target ?? content.current)?.focus();
-				}}
+				onClick={() => content.current?.focus()}
 			>
 				{skipLabel}
 			</button>
@@ -119,7 +115,15 @@ export function ShellView({
 				</aside>
 				<header className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[12px] text-[var(--muted)] max-[599px]:min-h-[42px] max-[599px]:flex-wrap">
 					<span>
-						<span className="hidden max-[599px]:inline">{brand.label} · </span>
+						<span className="hidden max-[599px]:inline">
+							<a
+								href={brand.href}
+								className="no-underline underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2"
+							>
+								{brand.label}
+							</a>{" "}
+							·{" "}
+						</span>
 						{activeLabel}
 					</span>
 					<div className="flex items-center gap-2">
@@ -127,14 +131,14 @@ export function ShellView({
 						{controls.theme}
 					</div>
 				</header>
-				<div
+				<main
 					id="content"
 					ref={content}
 					tabIndex={-1}
 					className="min-h-0 min-w-0 overflow-auto max-[599px]:overflow-visible"
 				>
 					{children}
-				</div>
+				</main>
 			</div>
 		</>
 	);

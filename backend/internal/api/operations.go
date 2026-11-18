@@ -22,6 +22,22 @@ type OperationsBody struct {
 	Operations []OperationResponse `json:"operations"`
 }
 
+type CurrentOperationsInput struct {
+	Status string `query:"status" default:"attention" enum:"attention,all,failed,running,queued"`
+	Kind   string `query:"kind" required:"false" enum:"publication,analysis,removal,matching"`
+	Query  string `query:"q" maxLength:"200"`
+	Offset int    `query:"offset" minimum:"0" maximum:"1000000"`
+}
+
+type CurrentOperationsOutput struct {
+	Body CurrentOperationsBody `json:"body"`
+}
+
+type CurrentOperationsBody struct {
+	Operations []OperationResponse `json:"operations"`
+	Total      int                 `json:"total"`
+}
+
 type OperationInput struct {
 	ID uuid.UUID `path:"operation_id"`
 }
@@ -39,6 +55,8 @@ type OperationResponse struct {
 	TargetSourceRootID     *uuid.UUID                                        `json:"target_source_root_id,omitempty"`
 	TargetSourceLocationID *uuid.UUID                                        `json:"target_source_location_id,omitempty"`
 	TargetIdentity         string                                            `json:"target_identity,omitempty"`
+	TargetLabel            string                                            `json:"target_label,omitempty"`
+	TargetRef              *service.OperationTargetRef                       `json:"target_ref,omitempty"`
 	BytesCompleted         int64                                             `json:"bytes_completed"`
 	BytesTotal             *int64                                            `json:"bytes_total,omitempty"`
 	SafeError              *string                                           `json:"safe_error,omitempty"`
@@ -70,6 +88,24 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 			result = append(result, operationResponse(snapshot))
 		}
 		return &OperationsOutput{Body: OperationsBody{Operations: result}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "list-current-operations", Method: http.MethodGet, Path: "/operations/current",
+		Summary: "List current operation snapshots with attention filter", Tags: []string{"Operations"},
+	}, func(ctx context.Context, input *CurrentOperationsInput) (*CurrentOperationsOutput, error) {
+		if operations == nil {
+			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
+		}
+		snapshots, total, err := operations.ListCurrentSnapshots(ctx, input.Status, input.Kind, input.Query, input.Offset)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to list current operations")
+		}
+		result := make([]OperationResponse, 0, len(snapshots))
+		for _, snapshot := range snapshots {
+			result = append(result, operationResponse(snapshot))
+		}
+		return &CurrentOperationsOutput{Body: CurrentOperationsBody{Operations: result, Total: total}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -147,6 +183,8 @@ func operationResponse(snapshot service.OperationSnapshot) OperationResponse {
 		TargetInstallationID: snapshot.TargetInstallationID, TargetSourceRootID: snapshot.TargetSourceRootID,
 		TargetSourceLocationID: snapshot.TargetSourceLocationID,
 		TargetIdentity:         snapshot.TargetIdentity,
+		TargetLabel:            snapshot.TargetLabel,
+		TargetRef:              snapshot.TargetRef,
 		BytesCompleted:         snapshot.BytesCompleted, BytesTotal: snapshot.BytesTotal,
 		SafeError: snapshot.SafeError, CreatedAt: snapshot.CreatedAt,
 		StartedAt: snapshot.StartedAt, FinishedAt: snapshot.FinishedAt, UpdatedAt: snapshot.UpdatedAt,

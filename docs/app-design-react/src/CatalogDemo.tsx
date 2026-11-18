@@ -580,7 +580,7 @@ export function CatalogDemo({
 	];
 	if (preview || route === "publication-preview")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				{previewToken ? (
 					<PublicationPreview
 						mode={previewMode}
@@ -612,11 +612,11 @@ export function CatalogDemo({
 						<a href="#library">{msg("goToLibrary")}</a>
 					</>
 				)}
-			</main>
+			</section>
 		);
 	if (route === "publications")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<ContextPublicationPreview
 					destination={publicationDestination}
 					plan={incoming.plan}
@@ -649,7 +649,7 @@ export function CatalogDemo({
 							: "library";
 					}}
 				/>
-			</main>
+			</section>
 		);
 	if (route.startsWith("artist/")) {
 		const [artistPath, queryString = ""] = route.split("?");
@@ -661,7 +661,7 @@ export function CatalogDemo({
 				: undefined;
 		const releaseId = params.get("release") ?? undefined;
 		return (
-			<main className={`demo-shell ${catalogueStyles.dockScreen}`}>
+			<section className={`demo-shell ${catalogueStyles.dockScreen}`}>
 				<ArtistScreen
 					key={route}
 					artistId={artistPath.slice(7)}
@@ -708,7 +708,7 @@ export function CatalogDemo({
 					}}
 					onQueueDeletion={queueDeletion}
 				/>
-			</main>
+			</section>
 		);
 	}
 	if (route.startsWith("tags/")) {
@@ -718,7 +718,7 @@ export function CatalogDemo({
 				? requestedScope
 				: "track";
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<TagsScreen
 					key={route}
 					trackId={id}
@@ -730,21 +730,21 @@ export function CatalogDemo({
 						openPreview(ids);
 					}}
 				/>
-			</main>
+			</section>
 		);
 	}
 	if (route === "components")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<ComponentsScreen />
-			</main>
+			</section>
 		);
 	if (route.startsWith("release/")) {
 		const release = releases.find(
 			(item) => item.id === route.slice("release/".length),
 		);
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<h1>
 					{!release
 						? msg("libraryNotFound")
@@ -753,7 +753,7 @@ export function CatalogDemo({
 							: msg("artistMissing")}
 				</h1>
 				<a href="#library">{msg("goToLibrary")}</a>
-			</main>
+			</section>
 		);
 	}
 	if (route.startsWith("track/")) {
@@ -764,10 +764,10 @@ export function CatalogDemo({
 		const track = release?.tracks.find((item) => item.id === trackId);
 		if (!release || !track)
 			return (
-				<main className={screenLayout}>
+				<section className={screenLayout}>
 					<h1>{msg("trackNotFound")}</h1>
 					<a href="#library">{msg("goToLibrary")}</a>
-				</main>
+				</section>
 			);
 		const identity = recordingIdentity(track);
 		const recordingPositions = identity
@@ -789,7 +789,7 @@ export function CatalogDemo({
 					)
 				: [];
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<TrackScreen
 					files={files}
 					artists={artists}
@@ -853,7 +853,7 @@ export function CatalogDemo({
 						)
 					}
 				/>
-			</main>
+			</section>
 		);
 	}
 	if (route === "local")
@@ -916,7 +916,7 @@ export function CatalogDemo({
 		);
 	if (routeName === "settings")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<SettingsScreen
 					settings={settings}
 					sourceRoots={sourceRoots.map((root) => root.path)}
@@ -948,22 +948,22 @@ export function CatalogDemo({
 						}));
 					}}
 				/>
-			</main>
+			</section>
 		);
 	if (route === "setup")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<SetupScreen
 					settings={settings}
 					onSettings={setSettings}
 					step={setupStep}
 					onStepChange={setSetupStep}
 				/>
-			</main>
+			</section>
 		);
 	if (route === "sources")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<SourcesScreen
 					roots={sourceRoots}
 					onRoots={setSourceRoots}
@@ -1007,11 +1007,11 @@ export function CatalogDemo({
 						setRemovedRoots((previous) => new Set([...previous, id]));
 					}}
 				/>
-			</main>
+			</section>
 		);
 	if (route === "operations")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<OperationsScreen
 					deletions={deletions}
 					provider={operationsProvider}
@@ -1035,17 +1035,17 @@ export function CatalogDemo({
 						}
 					}}
 				/>
-			</main>
+			</section>
 		);
 	if (route && route !== "library")
 		return (
-			<main className={screenLayout}>
+			<section className={screenLayout}>
 				<h1>{msg("screenNotMoved")}</h1>
 				<p>{msg("routeNotMoved", { route })}</p>
 				<p>
 					<a href="#library">{msg("goToReactLibrary")}</a>
 				</p>
-			</main>
+			</section>
 		);
 	const visibleArtists = fixture.artists.filter((artist) =>
 		catalogArtistMatches(
@@ -1080,7 +1080,7 @@ export function CatalogDemo({
 		),
 	);
 	return (
-		<main
+		<section
 			className={`demo-shell ${catalogueStyles.shell} ${catalogueStyles.dockScreen}`}
 		>
 			<header className={catalogueStyles.pageHeader}>
@@ -1254,6 +1254,6 @@ export function CatalogDemo({
 				}}
 				onQueueDeletion={queueDeletion}
 			/>
-		</main>
+		</section>
 	);
 }

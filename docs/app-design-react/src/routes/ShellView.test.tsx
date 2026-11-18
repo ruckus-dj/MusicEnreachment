@@ -25,7 +25,7 @@ function shell(incomingCount: number, withSetupLink: boolean) {
 				withSetupLink ? { href: "#setup", label: "First run" } : undefined
 			}
 		>
-			{withSetupLink ? <main tabIndex={-1}>Content</main> : <p>Content</p>}
+			<p>Content</p>
 		</ShellView>
 	);
 }
@@ -48,12 +48,16 @@ it("keeps the footer slot and skip focus while the provider count and setup link
 	expect(within(reviewLink).getByText("0")).toBeInTheDocument();
 
 	const content = screen.getByRole("main");
+	const mobileBrand = within(screen.getByRole("banner")).getByRole("link", {
+		name: "MeloTrove",
+	});
+	expect(mobileBrand).toHaveAttribute("href", brand.href);
 	fireEvent.click(screen.getByRole("button", { name: "Skip to content" }));
 	expect(content).toHaveFocus();
 
 	rerender(shell(3, false));
 	fireEvent.click(screen.getByRole("button", { name: "Skip to content" }));
-	expect(screen.getByText("Content").parentElement).toHaveFocus();
+	expect(content).toHaveFocus();
 
 	const updatedLink = within(
 		screen.getByRole("navigation", { name: "Main navigation" }),

@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { act } from "react";
@@ -98,7 +99,13 @@ beforeEach(() => {
   resetSettingsDraftMemory();
   server.use(
     http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    http.get("/api/incoming-groups", () =>
+      HttpResponse.json({ epoch: 0, revision: "", groups: [], files: [] }),
+    ),
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+    http.get("/api/operations/current", () =>
+      HttpResponse.json({ operations: [], total: 0 }),
+    ),
     http.get("/api/sources/:sourceId/locations", () =>
       HttpResponse.json({ locations: [] }),
     ),
@@ -132,24 +139,28 @@ describe("AppShell sources routing", () => {
     expect(
       screen.getByRole("link", { name: "Операции", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Операции", { selector: ".app-section-label" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toHaveTextContent("Операции");
 
     fireEvent.click(screen.getByRole("button", { name: /Язык интерфейса/ }));
     fireEvent.click(await screen.findByRole("option", { name: "English" }));
     expect(
       await screen.findByRole("navigation", { name: "Application sections" }),
-    ).toHaveTextContent("IncomingLibraryOwn catalogSourcesOperationsSettings");
+    ).toHaveTextContent(
+      /Incoming\d*LibraryOwn catalogSourcesOperationsSettings/,
+    );
     expect(
       screen.getByRole("link", { name: "Operations", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Operations", { selector: ".app-section-label" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toHaveTextContent("Operations");
     expect(setupRequests).toHaveBeenCalledTimes(1);
 
-    const content = document.querySelector("#app-content");
+    const content = screen.getByRole("main");
+    expect(content).toHaveAttribute("id", "content");
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "MeloTrove",
+      }),
+    ).toHaveAttribute("href", "#/");
     expect(content).toHaveAttribute("tabindex", "-1");
     fireEvent.click(screen.getByRole("button", { name: "Skip to content" }));
     expect(document.activeElement).toBe(content);
@@ -355,6 +366,15 @@ describe("AppShell sources routing", () => {
         name: /Сопоставление/,
       }),
     ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(
+          within(
+            screen.getByRole("navigation", { name: "Разделы приложения" }),
+          ).getByRole("link", { name: /Входящие/ }),
+        ).getByText("1"),
+      ).toBeInTheDocument(),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("link", { name: "← Все входящие группы" }),

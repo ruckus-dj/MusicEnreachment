@@ -1,35 +1,20 @@
 .setup-shell {
-  --setup-canvas: #f2f3ef;
-  --setup-surface: #fff;
-  --setup-raised: #f7f8f5;
-  --setup-ink: #26332b;
-  --setup-muted: #59675d;
-  --setup-line: #d7ded5;
-  --setup-control: #7c8a7e;
-  --setup-accent: #226740;
-  --setup-accent-soft: #e5f1e7;
-  --setup-error: #a13535;
-  --setup-error-soft: #fde9e8;
+  --setup-canvas: var(--canvas);
+  --setup-surface: var(--surface);
+  --setup-raised: var(--raised);
+  --setup-ink: var(--ink);
+  --setup-muted: var(--muted);
+  --setup-line: var(--line);
+  --setup-control: var(--control);
+  --setup-accent: var(--accent);
+  --setup-accent-soft: var(--accent-soft);
+  --setup-error: var(--error);
+  --setup-error-soft: var(--error-soft);
   background: var(--setup-canvas);
   color: var(--setup-ink);
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   padding: 12px;
   min-height: 100dvh;
-}
-@media (prefers-color-scheme: dark) {
-  .setup-shell {
-    --setup-canvas: #111512;
-    --setup-surface: #191e1a;
-    --setup-raised: #222923;
-    --setup-ink: #e3eae3;
-    --setup-muted: #a7b5a9;
-    --setup-line: #354138;
-    --setup-control: #718376;
-    --setup-accent: #83dca0;
-    --setup-accent-soft: #233e2c;
-    --setup-error: #ffa09b;
-    --setup-error-soft: #3a2425;
-  }
 }
 .setup-shell header { background: var(--setup-surface); border-color: var(--setup-line); padding: 8px 12px; }
 .setup-shell h1 { font-size: 20px; line-height: 26px; font-weight: 650; }
@@ -57,11 +42,10 @@
 .setup-shell .setup-tool { border: 1px solid var(--setup-line); background: var(--setup-raised); border-radius: 5px; padding: 8px; margin: 8px 0; }
 .setup-shell .setup-tool .react-aria-Label { display: block; }
 .setup-shell .setup-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 148px; margin: 4px 0; }
-.setup-select-popover { --select-surface: #fff; --select-ink: #26332b; --select-line: #d7ded5; --select-highlight: #e5f1e7; color: var(--select-ink); background: var(--select-surface); border: 1px solid var(--select-line); border-radius: 4px; padding: 4px; max-height: 240px; overflow: auto; }
+.setup-select-popover { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 4px; max-height: 240px; overflow: auto; }
 .setup-select-popover .react-aria-ListBoxItem { min-height: 28px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-.setup-select-popover .react-aria-ListBoxItem[data-focused], .setup-select-popover .react-aria-ListBoxItem[data-selected] { background: var(--select-highlight); }
-.setup-select-popover .react-aria-ListBoxItem[data-focus-visible] { outline: 2px solid var(--select-ink); outline-offset: -2px; }
-@media (prefers-color-scheme: dark) { .setup-select-popover { --select-surface: #191e1a; --select-ink: #e3eae3; --select-line: #354138; --select-highlight: #233e2c; } }
+.setup-select-popover .react-aria-ListBoxItem[data-focused], .setup-select-popover .react-aria-ListBoxItem[data-selected] { background: var(--accent-soft); }
+.setup-select-popover .react-aria-ListBoxItem[data-focus-visible] { outline: 2px solid var(--ink); outline-offset: -2px; }
 .setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
 @media (max-width: 599px) { .setup-shell button, .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
 

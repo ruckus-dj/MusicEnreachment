@@ -51,13 +51,35 @@ type OperationSnapshot struct {
 	TargetSourceRootID     *uuid.UUID
 	TargetSourceLocationID *uuid.UUID
 	TargetIdentity         string
-	BytesCompleted         int64
-	BytesTotal             *int64
-	SafeError              *string
-	CreatedAt              time.Time
-	StartedAt              *time.Time
-	FinishedAt             *time.Time
-	UpdatedAt              time.Time
+	// TargetLabel and TargetRef describe the current-operations target. They are
+	// empty on the legacy snapshot path.
+	TargetLabel    string
+	TargetRef      *OperationTargetRef
+	BytesCompleted int64
+	BytesTotal     *int64
+	SafeError      *string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	UpdatedAt      time.Time
+}
+
+// OperationTargetRef is the JSON shape of a current-operation target identity.
+// It mirrors the persistence row without importing persistence into the API.
+type OperationTargetRef struct {
+	Kind       string     `json:"kind"`
+	RootID     *uuid.UUID `json:"root_id,omitempty"`
+	LocationID *uuid.UUID `json:"location_id,omitempty"`
+	ReleaseID  *uuid.UUID `json:"release_id,omitempty"`
+	PositionID *uuid.UUID `json:"position_id,omitempty"`
+	GroupID    *uuid.UUID `json:"group_id,omitempty"`
+	ArtistID   *uuid.UUID `json:"artist_id,omitempty"`
+}
+
+// currentOperationsRepository is the narrow read slice used by the
+// current-operations listing. It is asserted so other repositories stay valid.
+type currentOperationsRepository interface {
+	ListCurrentOperations(context.Context, persistence.CurrentOperationsFilter) ([]persistence.CurrentOperationRow, int, error)
 }
 
 type operationEnqueuingRepository interface {
@@ -186,6 +208,41 @@ func (s *Operations) ListSnapshots(ctx context.Context, states ...string) ([]Ope
 		snapshots = append(snapshots, operationSnapshot(&operations[index]))
 	}
 	return snapshots, nil
+}
+
+// ListCurrentSnapshots lists operations filtered by attention state, kind, and
+// free-text query. The repository that owns the operation read model implements
+// the current-operations listing; a repository without it is unavailable.
+func (s *Operations) ListCurrentSnapshots(ctx context.Context, status, kind, query string, offset int) ([]OperationSnapshot, int, error) {
+	repository, ok := s.repository.(currentOperationsRepository)
+	if !ok {
+		return nil, 0, fmt.Errorf("current operations repository is unavailable")
+	}
+	rows, total, err := repository.ListCurrentOperations(ctx, persistence.CurrentOperationsFilter{
+		Status: status, Kind: kind, Query: query, Offset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	snapshots := make([]OperationSnapshot, 0, len(rows))
+	for index := range rows {
+		snapshot := operationSnapshot(&rows[index].Operation)
+		snapshot.TargetLabel = rows[index].TargetLabel
+		snapshot.TargetRef = operationTargetRef(rows[index].TargetRef)
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, total, nil
+}
+
+func operationTargetRef(ref *persistence.OperationTargetRef) *OperationTargetRef {
+	if ref == nil {
+		return nil
+	}
+	return &OperationTargetRef{
+		Kind: ref.Kind, RootID: ref.RootID, LocationID: ref.LocationID,
+		ReleaseID: ref.ReleaseID, PositionID: ref.PositionID,
+		GroupID: ref.GroupID, ArtistID: ref.ArtistID,
+	}
 }
 
 func operationSnapshot(operation *persistence.Operation) OperationSnapshot {

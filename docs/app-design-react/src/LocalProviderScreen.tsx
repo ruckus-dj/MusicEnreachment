@@ -792,7 +792,7 @@ export function LocalProviderScreen({
 			["ISRC", selected.isrcs || "—"],
 		];
 	return (
-		<main className="mx-auto max-w-none p-3">
+		<section className="mx-auto max-w-none p-3">
 			<header className={styles.pageHeader}>
 				<p className="m-0 text-xs">{t("localProvider.manualLocalRecords")}</p>
 				<h1 className={styles.pageTitle}>{t("localProvider.ownCatalog")}</h1>
@@ -1230,6 +1230,6 @@ export function LocalProviderScreen({
 			<div className={styles.localNotice} role="status" aria-live="polite">
 				{noticeText || t("localProvider.changesSavedNotice")}
 			</div>
-		</main>
+		</section>
 	);
 }

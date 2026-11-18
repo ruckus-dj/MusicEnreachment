@@ -163,11 +163,7 @@ export function IncomingScreen({
 		updateState();
 	};
 	return (
-		<main
-			className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3"
-			id="content"
-			tabIndex={-1}
-		>
+		<section className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3">
 			<PageHeader className="mb-[10px] min-w-0">
 				<p className="mb-[3px] text-xs text-[var(--muted)]">
 					{msg("workflow")}
@@ -491,6 +487,6 @@ export function IncomingScreen({
 					</table>
 				</div>
 			</Panel>
-		</main>
+		</section>
 	);
 }

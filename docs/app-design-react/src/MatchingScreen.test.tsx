@@ -130,7 +130,7 @@ it("uses the compact publication inspector and scrolls its heading into focus on
 
 it("reserves a bounded inspector grid row and keeps the target list independently scrollable on wide desktop", () => {
 	const { container } = render(<MatchingHarness />);
-	const main = container.querySelector<HTMLElement>("main");
+	const main = container.querySelector<HTMLElement>("[data-matching-screen]");
 	const layout = container.querySelector<HTMLElement>(
 		"[data-matching-workspace]",
 	);

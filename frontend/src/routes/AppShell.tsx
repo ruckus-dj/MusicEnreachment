@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { getSetupState, useListSources } from "../api/generated/client";
+import { useQuery } from "@tanstack/react-query";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import packageMetadata from "../../package.json";
+import {
+  getGetIncomingGroupsQueryKey,
+  getIncomingGroups,
+  getSetupState,
+  useListSources,
+} from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
 import { LanguageControl } from "../components/LanguageControl";
@@ -20,15 +33,14 @@ import {
 } from "../features/library/libraryRoute";
 import { OperationsScreen } from "../features/operations/OperationsScreen";
 import { OwnCatalogScreen } from "../features/own-catalog/OwnCatalogScreen";
-import { useI18n } from "../i18n/I18nProvider";
-import "./app-shell.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
 import { parseSourcesRoute } from "../features/sources/sourcesRoute";
-import type { Locale } from "../i18n/locale";
+import { useI18n } from "../i18n/I18nProvider";
 import { type ShellMessageKey, shellMessages } from "../i18n/shellMessages";
 import { useHashLocation } from "../navigation/hashLocation";
+import { type ShellNavigationItem, ShellView } from "./ShellView";
 
 type ShellError = { message: string } | { fallback: true };
 
@@ -45,6 +57,12 @@ type Route =
   | `/library/artists/${string}`
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
+
+const shellContentClass = "min-w-0 p-2.5 [&>:first-child]:mt-0 min-[600px]:p-3";
+const skipLinkClass =
+  "fixed left-3 top-[-80px] z-[200] border-0 bg-[var(--surface)] p-2 focus:top-2";
+const rootLandingActionClass =
+  "inline-flex min-h-[34px] items-center rounded border border-[var(--button)] bg-[var(--button)] px-3.5 py-1.5 font-semibold text-[var(--button-text)] no-underline hover:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 
 function currentRoute(
   hash: string,
@@ -139,80 +157,42 @@ export function AppShell() {
       diagnosticRef.current?.focus();
   }, [loading, state]);
 
+  const content = renderRouteContent();
+
+  if (productAvailable)
+    return <ProductShell route={route}>{content}</ProductShell>;
+
   return (
-    <main
-      className={`app-shell ${
-        !productAvailable
-          ? "setup-shell"
-          : route === "/sources"
-            ? "sources-screen sources-shell"
-            : "settings-screen settings-shell"
-      }`}
-    >
+    <main className="setup-shell">
       <button
         type="button"
-        className="app-skip-link"
+        className={skipLinkClass}
         onClick={() => {
           contentRef.current?.focus();
         }}
       >
         {copy.skip}
       </button>
-      {productAvailable ? (
-        <>
-          <aside className="app-sidebar" aria-label={copy.navigation}>
-            <a className="app-brand" href="#/" aria-label={copy.brandHome}>
-              <strong>MeloTrove</strong>
-              <span>{copy.library}</span>
-            </a>
-            <ShellNavigation route={route} locale={locale} />
-          </aside>
-          <div className="app-workspace">
-            <header className="app-topbar">
-              <a className="app-brand app-brand--compact" href="#/">
-                <strong>MeloTrove</strong>
-                <span>{copy.library}</span>
-              </a>
-              <span className="app-section-label">
-                {sectionLabel(route, copy)}
-              </span>
-              <div className="flex items-center gap-2">
-                <LanguageControl />
-                <ThemeControl />
-              </div>
-            </header>
-            <section
-              ref={contentRef}
-              id="app-content"
-              className="app-content"
-              tabIndex={-1}
-            >
-              {renderRouteContent()}
-            </section>
-          </div>
-        </>
-      ) : (
-        <>
-          <header className="app-setup-header">
-            <div className="app-brand">
-              <strong>MeloTrove</strong>
-              <span>{copy.library}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <LanguageControl />
-              <ThemeControl />
-            </div>
-          </header>
-          <section
-            ref={contentRef}
-            id="app-content"
-            className="app-content app-content--setup"
-            tabIndex={-1}
-          >
-            {renderRouteContent()}
-          </section>
-        </>
-      )}
+      <header className="m-0 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-px p-1">
+          <strong className="text-[15px] leading-5">MeloTrove</strong>
+          <span className="text-[11px] leading-4 text-[var(--muted)]">
+            {copy.library}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <LanguageControl />
+          <ThemeControl />
+        </div>
+      </header>
+      <section
+        ref={contentRef}
+        id="app-content"
+        className="min-w-0 pt-3"
+        tabIndex={-1}
+      >
+        {content}
+      </section>
     </main>
   );
 
@@ -269,6 +249,91 @@ export function AppShell() {
   }
 }
 
+function ProductShell({
+  route,
+  children,
+}: {
+  route: Route;
+  children: ReactNode;
+}) {
+  const { locale } = useI18n();
+  const copy = shellMessages[locale];
+  const { data: incomingGroups } = useQuery({
+    queryKey: getGetIncomingGroupsQueryKey(),
+    retry: false,
+    // The Incoming review screen caches the body, not the HTTP response.
+    queryFn: async ({ signal }) => {
+      const response = await getIncomingGroups({ signal, cache: "no-store" });
+      if (response.status !== 200)
+        throw new Error("incoming groups unavailable");
+      return response.data;
+    },
+  });
+  const incomingCount =
+    incomingGroups === undefined
+      ? undefined
+      : (incomingGroups.groups?.length ?? 0);
+  const navigation: ShellNavigationItem[] = [
+    {
+      id: "incoming",
+      label: copy.incoming,
+      href: "#/incoming-groups",
+      current:
+        route === "/incoming-groups" || route.startsWith("/incoming-groups/"),
+      count: incomingCount,
+    },
+    {
+      id: "library",
+      label: copy.library,
+      href: "#/library",
+      current: route === "/library" || route.startsWith("/library/"),
+    },
+    {
+      id: "own-catalog",
+      label: copy.ownCatalog,
+      href: "#/own-catalog",
+      current: route === "/own-catalog",
+    },
+    {
+      id: "sources",
+      label: copy.sources,
+      href: "#/sources",
+      current: route === "/sources",
+    },
+    {
+      id: "operations",
+      label: copy.operations,
+      href: "#/operations",
+      current: route === "/operations",
+    },
+    {
+      id: "settings",
+      label: copy.settings,
+      href: "#/settings",
+      current: route === "/settings",
+    },
+  ];
+
+  return (
+    <div className="font-[system-ui,sans-serif] text-[13px]/[1.4]">
+      <ShellView
+        brand={{ href: "#/", label: "MeloTrove", mark: "mt" }}
+        skipLabel={copy.skip}
+        navigationLabel={copy.sections}
+        sectionLabel={sectionLabel(route, copy)}
+        navigation={navigation}
+        controls={{
+          language: <LanguageControl />,
+          theme: <ThemeControl />,
+        }}
+        footerText={`v${packageMetadata.version}`}
+      >
+        <div className={shellContentClass}>{children}</div>
+      </ShellView>
+    </div>
+  );
+}
+
 function RootLanding() {
   const { locale } = useI18n();
   const copy = shellMessages[locale];
@@ -313,7 +378,7 @@ function RootLanding() {
     <section aria-labelledby="home-title">
       <h1 id="home-title">{copy.addSourceTitle}</h1>
       <p>{copy.addSourceDescription}</p>
-      <a className="root-landing-action" href="#/sources">
+      <a className={rootLandingActionClass} href="#/sources">
         {copy.addSource}
       </a>
     </section>
@@ -333,46 +398,4 @@ function sectionLabel(
   if (route === "/operations") return copy.operations;
   if (route === "/settings") return copy.settings;
   return copy.home;
-}
-
-function ShellNavigation({ route, locale }: { route: Route; locale: Locale }) {
-  const copy = shellMessages[locale];
-  const items = [
-    {
-      label: copy.incoming,
-      href: "#/incoming-groups",
-      active:
-        route === "/incoming-groups" || route.startsWith("/incoming-groups/"),
-    },
-    {
-      label: copy.library,
-      href: "#/library",
-      active: route === "/library" || route.startsWith("/library/"),
-    },
-    {
-      label: copy.ownCatalog,
-      href: "#/own-catalog",
-      active: route === "/own-catalog",
-    },
-    { label: copy.sources, href: "#/sources", active: route === "/sources" },
-    {
-      label: copy.operations,
-      href: "#/operations",
-      active: route === "/operations",
-    },
-    { label: copy.settings, href: "#/settings", active: route === "/settings" },
-  ];
-  return (
-    <nav className="app-navigation" aria-label={copy.sections}>
-      {items.map((item) => (
-        <a
-          key={item.href}
-          href={item.href}
-          aria-current={item.active ? "page" : undefined}
-        >
-          {item.label}
-        </a>
-      ))}
-    </nav>
-  );
 }

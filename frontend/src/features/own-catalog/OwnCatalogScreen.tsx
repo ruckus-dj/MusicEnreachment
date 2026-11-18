@@ -499,7 +499,7 @@ export function OwnCatalogScreen() {
   }
 
   return (
-    <main
+    <section
       className="library-catalog own-catalog"
       aria-labelledby="own-catalog-title"
     >
@@ -1017,7 +1017,7 @@ export function OwnCatalogScreen() {
           {notice}
         </p>
       )}
-    </main>
+    </section>
   );
 
   function reorderTracks(index: number, direction: -1 | 1) {
