@@ -41,6 +41,9 @@ const en = {
     `${count} ${count === 1 ? "free source" : "free sources"}`,
   sourcesInstructions:
     "Select a free file, then add it to a position. Dragging works with a mouse or keyboard.",
+  sortLabel: "Sort",
+  sortByTrack: "By disc and track",
+  sortByName: "By file name",
   allAssigned: "Every group file is assigned.",
   selectSourceHint: "Select a file to add it to a position.",
   selectedSource: (file: string) =>
@@ -83,6 +86,9 @@ const ru: typeof en = {
     `${count} ${russianCount(count, ["свободный файл", "свободных файла", "свободных файлов"])}`,
   sourcesInstructions:
     "Выберите свободный файл и добавьте его к позиции. Перетаскивание работает мышью и с клавиатуры.",
+  sortLabel: "Сортировка",
+  sortByTrack: "По диску и треку",
+  sortByName: "По имени файла",
   allAssigned: "Все файлы группы назначены.",
   selectSourceHint: "Выберите файл, чтобы добавить его к позиции.",
   selectedSource: (file) => `Выбран ${file}. Нажмите «Добавить» у позиции.`,

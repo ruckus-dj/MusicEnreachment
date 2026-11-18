@@ -1,4 +1,4 @@
-import { trackNumberLabel, type OriginalRelease } from "./catalogData";
+import { type OriginalRelease, trackNumberLabel } from "./catalogData";
 import {
 	type Assignment,
 	type IncomingFiles,
@@ -6,6 +6,7 @@ import {
 	usableFile,
 } from "./incomingModel";
 import type { MatchingBoardProps } from "./matching-workspace/MatchingBoard";
+import { readSourceTrackOrder } from "./matching-workspace/sourceFileOrder";
 
 export function fixtureMatchingBoard(
 	groupId: string,
@@ -50,6 +51,8 @@ export function fixtureMatchingBoard(
 						{
 							id,
 							label: file.name,
+							fileName: file.name,
+							...readSourceTrackOrder(file.tags),
 							detail: [file.tags.ARTIST?.[0], file.tags.TITLE?.[0]]
 								.filter(Boolean)
 								.join(" · "),

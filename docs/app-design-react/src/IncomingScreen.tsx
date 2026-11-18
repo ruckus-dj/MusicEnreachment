@@ -18,6 +18,10 @@ import {
 	runAutomaticMatching,
 } from "./incomingModel";
 import { incomingOverviewRows } from "./incomingOverview";
+import {
+	compareSourceFiles,
+	readSourceTrackOrder,
+} from "./matching-workspace/sourceFileOrder";
 import { Button, Link, PageHeader, Panel } from "./ui";
 import { formatUiNotice } from "./uiNotice";
 
@@ -82,6 +86,22 @@ export function IncomingScreen({
 		return () => window.removeEventListener("hashchange", onHashChange);
 	}, []);
 	const files = givenFiles ?? localFiles;
+	const fileNames = new Intl.Collator(locale, {
+		numeric: true,
+		sensitivity: "base",
+	});
+	function sortedMembers(fileIds: readonly string[]) {
+		return fileIds
+			.map((id) => {
+				const file = files[id];
+				return {
+					id,
+					name: file?.name ?? "",
+					...readSourceTrackOrder(file?.tags),
+				};
+			})
+			.sort((a, b) => compareSourceFiles(a, b, "track", fileNames));
+	}
 	const releases = givenReleases ?? localReleases;
 	const providers = givenProviders ?? providerReleases;
 	const updateState = () => {
@@ -394,7 +414,8 @@ export function IncomingScreen({
 													className="border-b border-[var(--line)] px-2 py-1.5"
 												>
 													<ul className="m-0 list-none p-0">
-														{group.fileIds.map((id) => {
+														{sortedMembers(group.fileIds).map((row) => {
+															const { id, trackNumber } = row;
 															const file = files[id];
 															const tag = (key: string) =>
 																file?.tags?.[key]?.join(" · ");
@@ -419,7 +440,9 @@ export function IncomingScreen({
 																		setDropTarget("");
 																	}}
 																>
-																	<span>{tag("TRACKNUMBER") || "—"}</span>
+																	<span>
+																		{trackNumber ?? (tag("TRACKNUMBER") || "—")}
+																	</span>
 																	<strong>
 																		{tag("TITLE") || labels.title}
 																	</strong>
