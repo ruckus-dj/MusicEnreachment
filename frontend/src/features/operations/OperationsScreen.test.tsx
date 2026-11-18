@@ -16,6 +16,14 @@ import { OperationsScreen } from "./OperationsScreen";
 const releaseId = "123e4567-e89b-42d3-a456-426614174000";
 const positionId = "223e4567-e89b-42d3-a456-426614174000";
 
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function LocaleSwitcher() {
   const { locale, setPreference } = useI18n();
   return (
@@ -28,13 +36,15 @@ function LocaleSwitcher() {
   );
 }
 
-function renderScreen(withLocaleSwitcher = false) {
+function renderScreen(
+  withLocaleSwitcher = false,
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  }),
+) {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
   vi.stubGlobal("localStorage", storage);
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
   return render(
     <QueryClientProvider client={client}>
       <I18nProvider>
@@ -134,6 +144,62 @@ it("shows loading then current operations with target links, diagnostics and fai
   expect(
     screen.queryByRole("button", { name: "Retry" }),
   ).not.toBeInTheDocument();
+});
+
+it("refreshes the active filter after a retry completes across navigation", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const retry = deferred();
+  const firstRead = deferred();
+  const staleRead = deferred();
+  const operation = {
+    id: "failed-id",
+    kind: "scan_source",
+    state: "failed",
+    stage: "scan_files",
+    bytes_completed: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:01:00Z",
+  };
+  let queuedReads = 0;
+  server.use(
+    http.get("/api/operations/current", async ({ request }) => {
+      const status = new URL(request.url).searchParams.get("status");
+      if (status !== "queued") {
+        return HttpResponse.json({ operations: [operation], total: 1 });
+      }
+      if (++queuedReads === 1) {
+        firstRead.resolve();
+        await staleRead.promise;
+        return HttpResponse.json({ operations: [], total: 0 });
+      }
+      return HttpResponse.json({
+        operations: [
+          { ...operation, state: "queued", target_label: "Retried source" },
+        ],
+        total: 1,
+      });
+    }),
+    http.post("/api/operations/failed-id/retry", async () => {
+      await retry.promise;
+      return HttpResponse.json({ ...operation, state: "queued" });
+    }),
+  );
+
+  const first = renderScreen(false, client);
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  first.unmount();
+  window.location.hash = "#/operations?status=queued";
+  renderScreen(false, client);
+  try {
+    await firstRead.promise;
+    retry.resolve();
+    expect(await screen.findByText("Retried source")).toBeInTheDocument();
+  } finally {
+    retry.resolve();
+    staleRead.resolve();
+  }
 });
 
 it.each([

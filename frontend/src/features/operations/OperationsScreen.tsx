@@ -561,7 +561,7 @@ export function OperationsScreen() {
         setNotice("dismissed");
         restoreHeadingFocus(trigger);
       }
-      await operationsQuery.refetch();
+      await queryClient.invalidateQueries({ queryKey: operationsListQueryKey });
     } catch (reason) {
       setActionError({ action, reason });
     } finally {
