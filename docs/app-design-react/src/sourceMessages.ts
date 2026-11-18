@@ -112,6 +112,15 @@ export const sourcesMessages = createNamespace({
 			"An unavailable source does not remove existing managed publications.",
 		rootActionLabel: "Remove source {name}",
 		deleteDialogLabel: "Remove source confirmation",
+		backToSources: "Back to sources",
+		sourceNotFound: "Source not found",
+		sourceSummary: "Source",
+		lastSuccessfulScan: "Last successful scan",
+		inventory: "Inventory",
+		neverScanned: "Not scanned yet",
+		inventoryCount: "Inventory records: {count}",
+		scanFailedFixture:
+			"This demo source fails its first scan to show retry behavior. Retry to scan it again.",
 	},
 	ru: {
 		title: "Источники",
@@ -224,6 +233,15 @@ export const sourcesMessages = createNamespace({
 			"Недоступность источника не удаляет существующие управляемые публикации.",
 		rootActionLabel: "Удалить источник {name}",
 		deleteDialogLabel: "Подтверждение удаления источника",
+		backToSources: "К списку источников",
+		sourceNotFound: "Источник не найден",
+		sourceSummary: "Источник",
+		lastSuccessfulScan: "Последнее успешное сканирование",
+		inventory: "Инвентарь",
+		neverScanned: "Ещё не сканировался",
+		inventoryCount: "Записей в инвентаре: {count}",
+		scanFailedFixture:
+			"Первый скан этого демонстрационного источника завершается ошибкой, чтобы показать повтор. Запустите сканирование ещё раз.",
 	},
 });
 

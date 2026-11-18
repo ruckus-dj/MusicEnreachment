@@ -1,18 +1,22 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { SourceFiles } from "./catalogData";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
+import {
+	SourceRootList,
+	type SourceRootListRow,
+} from "./features/sources/SourceRootList";
+import { SourceScanPanel } from "./features/sources/SourceScanPanel";
+import type { SourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider";
 import { formStyles as styles } from "./formStyles";
-import { useI18n } from "./i18n";
+import { type Locale, useI18n } from "./i18n";
 import { retainedCopyLabel } from "./retainedCopyPath";
 import { rootLocations } from "./sourceInventory";
 import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
 	blockStagedSourceQueue,
 	canRemoveSourceRoot,
-	createSourceScan,
 	eligibleSourceCopies,
-	initialSourceProcessingState,
 	processSourceQueue,
 	type RetainedSourceCopy,
 	removeEligibleCopy,
@@ -47,6 +51,10 @@ export interface SourceRoot {
 	mode: Mode;
 	available: boolean | null;
 	checked: string;
+	/** Set only after an explicit successful scan in this prototype session. */
+	lastSuccessfulScanAt?: string;
+	/** Inventory generation recorded by that same scan. */
+	inventoryCount?: number;
 }
 export const initialSourceRoots: SourceRoot[] = [
 	{
@@ -85,28 +93,36 @@ export const initialSourceRoots: SourceRoot[] = [
 
 type RootRemoval = { id: string; path: string; locations: string[] };
 
+const scanDate = (locale: Locale, value: string) =>
+	new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
+		dateStyle: "short",
+		timeStyle: "short",
+	}).format(new Date(value));
+
 export function SourcesScreen({
 	roots,
 	onRoots,
 	files,
-	removed,
 	onRemove,
+	selectedRootId,
 	workDirectory = "",
 	toolsPath = "",
 	currentOutput = "",
-	initialProcessingState = initialSourceProcessingState,
+	processing,
+	scans,
 	onProcessingState,
 }: {
 	roots: SourceRoot[];
 	onRoots: (roots: SourceRoot[]) => void;
 	files: SourceFiles;
-	removed: Set<string>;
 	onRemove: (rootId: string) => void;
+	selectedRootId?: string;
 	workDirectory?: string;
 	toolsPath?: string;
 	currentOutput?: string;
-	initialProcessingState?: SourceProcessingState;
-	onProcessingState?: (state: SourceProcessingState) => void;
+	processing: SourceProcessingState;
+	scans: SourceScanDemoProvider;
+	onProcessingState: (state: SourceProcessingState) => void;
 }) {
 	const { locale } = useI18n();
 	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
@@ -124,33 +140,26 @@ export function SourcesScreen({
 		key: SourceMessageKey,
 		values?: Record<string, string | number>,
 	) => setNotice({ key, values });
-	const [processing, setProcessing] = useState(initialProcessingState);
 	const [removal, setRemoval] = useState<RootRemoval | null>(null);
 	const [copyRemoval, setCopyRemoval] = useState<{
 		id: string;
 		path: string;
 	} | null>(null);
+	const root = selectedRootId
+		? roots.find((item) => item.id === selectedRootId)
+		: undefined;
+	const demoScanState = root ? scans.states[root.id] : undefined;
+	const rootFiles = root
+		? processing.files.filter((file) => file.rootId === root.id)
+		: [];
+	const rootCopies = root
+		? processing.copies.filter((copy) => copy.rootId === root.id)
+		: [];
 
-	useEffect(
-		() => onProcessingState?.(processing),
-		[onProcessingState, processing],
-	);
-	useEffect(() => {
-		if (!workDirectory) return;
-		setProcessing((current) => {
-			if (
-				!current.files.some(
-					(file) => file.blockedReason === "work_directory_required",
-				)
-			)
-				return current;
-			return processSourceQueue(current);
-		});
-	}, [workDirectory]);
-
-	const updateProcessing = (next: SourceProcessingState) => setProcessing(next);
+	const updateRoots = onRoots;
+	const updateProcessing = onProcessingState;
 	const hasActiveRootWork = (rootId: string) =>
-		!canRemoveSourceRoot(processing, rootId);
+		scans.active(rootId) || !canRemoveSourceRoot(processing, rootId);
 	const statusLabel = (status: string) => {
 		const key: Record<string, SourceMessageKey> = {
 			queued: "statusQueued",
@@ -183,326 +192,205 @@ export function SourcesScreen({
 				.sort(),
 		});
 	};
-	const scanAndProcess = (root: SourceRoot) => {
-		if (root.available !== true) return;
-		const scanned = createSourceScan(processing, root.id, root.mode, files);
-		const queued = scanned.files.filter(
-			(file) =>
-				file.rootId === root.id &&
-				file.status === "queued" &&
-				file.steps.some((step) => step.status === "queued"),
-		);
-		if (root.mode === "staged" && !workDirectory) {
-			updateProcessing(blockStagedSourceQueue(scanned, root.id));
-			notify("workDirectoryRequired");
-			return;
-		}
-		updateProcessing(processSourceQueue(scanned, root.id));
-		if (queued.length)
-			notify("scanStarted", { path: root.path, count: queued.length });
-		else notify("noInventory");
-	};
+	const startScan = (root: SourceRoot) => scans.start(root);
+
+	const scanLabel = root?.lastSuccessfulScanAt
+		? scanDate(locale, root.lastSuccessfulScanAt)
+		: m("neverScanned");
+	const inventoryLabel = root?.lastSuccessfulScanAt
+		? m("inventoryCount", { count: root.inventoryCount ?? 0 })
+		: m("neverScanned");
+
+	const rows: SourceRootListRow[] = roots.map((item) => ({
+		id: item.id,
+		name: item.name,
+		path: item.path,
+		mode: item.mode,
+		availability:
+			item.available === true
+				? "available"
+				: item.available === false
+					? "unavailable"
+					: "unknown",
+		lastSuccessfulScan: item.lastSuccessfulScanAt
+			? {
+					label: scanDate(locale, item.lastSuccessfulScanAt),
+					dateTime: item.lastSuccessfulScanAt,
+				}
+			: undefined,
+		inventory: item.lastSuccessfulScanAt
+			? {
+					label: m("inventoryCount", { count: item.inventoryCount ?? 0 }),
+					notes: item.inventoryCount === 0 ? [m("noInventory")] : undefined,
+				}
+			: { label: m("neverScanned") },
+		href: `#sources/${encodeURIComponent(item.id)}`,
+	}));
+
+	const availabilityLabel = (item: SourceRoot) =>
+		item.available === null
+			? m("notChecked")
+			: item.available
+				? m("available")
+				: m("unavailable");
+
+	const noticeNode = notice ? (
+		<p className={styles.formNotice} role="status">
+			{m(notice.key, notice.values)}
+		</p>
+	) : null;
 
 	return (
 		<section className={styles.page}>
-			<header
-				className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
-			>
-				<div>
-					<h1 className={styles.pageTitle}>{m("title")}</h1>
-					<p className={styles.pageDescription}>{m("description")}</p>
-				</div>
-				<div className={styles.objectActions}>
-					<Button
-						onPress={() => {
-							setAdding(true);
-							setName("");
-							setPath("/mnt/music");
-							setMode("");
-						}}
-					>
-						{m("addSource")}
-					</Button>
-				</div>
-			</header>
-			{notice && (
-				<p className={styles.formNotice} role="status">
-					{m(notice.key, notice.values)}
-				</p>
-			)}
-			{adding && (
-				<section className={styles.panel}>
-					<h2>{m("newSource")}</h2>
-					<TextField
-						className={`${styles.searchField} max-w-none`}
-						value={name}
-						onChange={setName}
-					>
-						<Label>{m("name")}</Label>
-						<Input placeholder={m("namePlaceholder")} />
-					</TextField>
-					<TextField
-						className={`${styles.searchField} max-w-none`}
-						value={path}
-						isReadOnly
-					>
-						<Label>{m("serverDirectory")}</Label>
-						<Input />
-					</TextField>
-					<Button onPress={() => setPicker(true)}>{m("chooseFolder")}</Button>
-					<p>{m("onlyDirectory")}</p>
-					<RadioGroup
-						className="my-3 grid gap-1"
-						aria-label={m("processingMode")}
-						value={mode}
-						onChange={(value) => setMode(value as Mode)}
-					>
-						<Radio className={styles.modeChoice} value="in_place">
-							{m("inPlace")}
-						</Radio>
-						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-							{m("inPlaceHelp")}
-						</p>
-						<Radio className={styles.modeChoice} value="staged">
-							{m("staged")}
-						</Radio>
-						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-							{m("stagedHelp")}
-						</p>
-					</RadioGroup>
-					<p>{m("sourcePolicy")}</p>
-					<div className={styles.objectActions}>
-						<Button
-							onPress={() => {
-								if (!name.trim()) {
-									notify("nameRequired");
-									return;
-								}
-								if (!mode) {
-									notify("modeRequired");
-									return;
-								}
-								if (
-									overlapsAnyDemoPath(path, [
-										workDirectory,
-										toolsPath,
-										currentOutput,
-									])
-								) {
-									notify("pathOverlap");
-									return;
-								}
-								onRoots([
-									...roots,
-									{
-										id: `root-${crypto.randomUUID()}`,
-										name: name.trim(),
-										path,
-										mode,
-										available: null,
-										checked: "—",
-									},
-								]);
-								setAdding(false);
-								notify("sourceAdded");
-							}}
+			{selectedRootId ? (
+				root ? (
+					<>
+						<header
+							className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
 						>
-							{m("addSource")}
-						</Button>
-						<Button onPress={() => setAdding(false)}>{m("cancel")}</Button>
-					</div>
-				</section>
-			)}
-			<section className={styles.panel}>
-				<h2>{m("connectedFolders")}</h2>
-				<p className="my-2 text-xs text-[var(--muted)]">
-					{m("sourceTableHelp")}
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={`${styles.table} table-fixed min-w-[1040px]`}>
-						<colgroup>
-							<col className="w-[14%]" />
-							<col className="w-[26%]" />
-							<col className="w-[22%]" />
-							<col className="w-[12%]" />
-							<col className="w-[12%]" />
-							<col className="w-[14%]" />
-						</colgroup>
-						<thead>
-							<tr>
-								{[
-									m("nameColumn"),
-									m("pathColumn"),
-									m("modeColumn"),
-									m("availabilityColumn"),
-									m("checkedColumn"),
-									m("actionsColumn"),
-								].map((label) => (
-									<th key={label} scope="col" className="!whitespace-normal">
-										{label}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody>
-							{roots.map((root) => (
-								<tr key={root.id}>
-									<td>{root.name}</td>
-									<td>
-										<code className="block min-w-0 [overflow-wrap:anywhere]">
-											{root.path}
-										</code>
-									</td>
-									<td>
-										<div className="grid min-w-0 gap-[5px] text-xs text-[var(--muted)]">
-											<Select
-												selectedKey={root.mode}
-												aria-label={m("modeFor", { name: root.name })}
-												onSelectionChange={(key) => {
-													const next = String(key) as Mode;
-													onRoots(
-														roots.map((item) =>
-															item.id === root.id
-																? { ...item, mode: next }
-																: item,
-														),
-													);
-												}}
-											>
-												<Button>
-													<SelectValue />
-												</Button>
-												<Popover>
-													<ListBox>
-														<ListBoxItem id="in_place">
-															{m("inPlace")}
-														</ListBoxItem>
-														<ListBoxItem id="staged">{m("staged")}</ListBoxItem>
-													</ListBox>
-												</Popover>
-											</Select>
-										</div>
-										{root.mode === "staged" && (
-											<p>
-												{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-												<a href="#settings">{m("configure")}</a>
-											</p>
-										)}
-									</td>
-									<td>
-										{root.available === null
-											? m("notChecked")
-											: root.available
-												? m("available")
-												: m("unavailable")}
-									</td>
-									<td>{root.checked}</td>
-									<td>
-										<div className="flex flex-wrap items-center gap-2">
-											{removed.has(root.id) ? (
-												<span>{m("rootRemoved")}</span>
-											) : (
-												<>
-													{root.available === true && (
-														<a href="#review">{m("reviewGroups")}</a>
-													)}
-													<Button
-														isDisabled={root.available !== true}
-														onPress={() => scanAndProcess(root)}
-													>
-														{m("scan")}
-													</Button>
-													<Button
-														aria-label={m("rootActionLabel", {
-															name: root.name,
-														})}
-														onPress={() => requestRootRemoval(root)}
-													>
-														{m("removeRoot")}
-													</Button>
-													{root.available === false && (
-														<p className="basis-full text-xs text-[var(--muted)]">
-															{m("checkUnavailable")}
-														</p>
-													)}
-												</>
-											)}
-										</div>
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			</section>
-			<section
-				className={styles.panel}
-				aria-labelledby="source-processing-title"
-			>
-				<h2 id="source-processing-title">{m("processingTitle")}</h2>
-				<p>{m("processingDescription")}</p>
-				<p className="text-xs text-[var(--muted)]">{m("freshness")}</p>
-				{processing.files.length === 0 ? (
-					<p>{m("noFiles")}</p>
-				) : (
-					<ul className="m-0 grid gap-3 pl-5">
-						{processing.files.map((file) => (
-							<li key={file.id}>
-								<strong>{file.path}</strong> ·{" "}
-								{m("fileStatus", { status: statusLabel(file.status) })}
-								{file.blockedReason && (
-									<p role="status">
-										{file.blockedReason === "output_reset"
-											? m("outputResetCancelled")
-											: m("workDirectoryRequired")}{" "}
-										{file.blockedReason === "work_directory_required" && (
-											<a href="#settings">{m("configureInSettings")}</a>
-										)}
-									</p>
+							<div className="min-w-0">
+								<a href="#sources">{m("backToSources")}</a>
+								<h1 className={styles.pageTitle}>{root.name}</h1>
+								<p className={styles.pageDescription}>
+									<code className="[overflow-wrap:anywhere]">{root.path}</code>
+								</p>
+							</div>
+							<div className={styles.objectActions}>
+								{root.available === true && (
+									<a href="#review">{m("reviewGroups")}</a>
 								)}
-								{file.blockedReason === "output_reset" && (
-									<Button
-										onPress={() => {
-											const retried = retryCancelledSourceFile(
-												processing,
-												file.id,
-											);
-											if (file.mode === "staged" && !workDirectory) {
-												updateProcessing(
-													blockStagedSourceQueue(retried, file.rootId),
-												);
-												notify("workDirectoryRequired");
-												return;
-											}
-											updateProcessing(
-												processSourceQueue(retried, file.rootId),
+							</div>
+						</header>
+						{noticeNode}
+						<SourceScanPanel
+							locale={locale}
+							state={
+								demoScanState?.kind === "fixtureFailure"
+									? { kind: "failed", message: m("scanFailedFixture") }
+									: (demoScanState ?? { kind: "idle" })
+							}
+							onStart={() => startScan(root)}
+							onRetry={() => startScan(root)}
+							startDisabled={root.available === false}
+						/>
+						<section className={styles.panel}>
+							<h2>{m("sourceSummary")}</h2>
+							<dl className="m-0 grid grid-cols-[minmax(130px,.3fr)_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs max-[600px]:grid-cols-1">
+								<dt className="text-[var(--muted)]">{m("nameColumn")}</dt>
+								<dd className="m-0 min-w-0 [overflow-wrap:anywhere]">
+									{root.name}
+								</dd>
+								<dt className="text-[var(--muted)]">{m("pathColumn")}</dt>
+								<dd className="m-0 min-w-0">
+									<code className="[overflow-wrap:anywhere]">{root.path}</code>
+								</dd>
+								<dt className="text-[var(--muted)]">{m("modeColumn")}</dt>
+								<dd className="m-0 min-w-0">
+									<Select
+										selectedKey={root.mode}
+										aria-label={m("modeFor", { name: root.name })}
+										onSelectionChange={(key) => {
+											const next = String(key) as Mode;
+											updateRoots(
+												roots.map((item) =>
+													item.id === root.id ? { ...item, mode: next } : item,
+												),
 											);
 										}}
 									>
-										{m("retryCancelled")}
-									</Button>
-								)}
-								<ul className="grid gap-2 pl-5">
-									{file.steps.map((step) => (
-										<li key={step.id}>
-											{step.id === "audio_inspection"
-												? m("stepAudio")
-												: m("stepFingerprint")}
-											: {audioStepLabel(step)}
-											{step.error && <p role="alert">{m(step.error)}</p>}
-											{step.status === "failed" && (
+										<Button>
+											<SelectValue />
+										</Button>
+										<Popover>
+											<ListBox>
+												<ListBoxItem id="in_place">{m("inPlace")}</ListBoxItem>
+												<ListBoxItem id="staged">{m("staged")}</ListBoxItem>
+											</ListBox>
+										</Popover>
+									</Select>
+									<p className="my-1 text-xs text-[var(--muted)]">
+										{m("futureMode")}
+									</p>
+									{root.mode === "staged" && (
+										<p className="my-1 text-xs text-[var(--muted)]">
+											{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+											<a href="#settings">{m("configure")}</a>
+										</p>
+									)}
+								</dd>
+								<dt className="text-[var(--muted)]">
+									{m("availabilityColumn")}
+								</dt>
+								<dd className="m-0 min-w-0">
+									{availabilityLabel(root)}
+									{root.available === false && (
+										<p className="my-1 text-xs text-[var(--muted)]">
+											{m("checkUnavailable")}
+										</p>
+									)}
+								</dd>
+								<dt className="text-[var(--muted)]">
+									{m("lastSuccessfulScan")}
+								</dt>
+								<dd className="m-0 min-w-0">
+									{root.lastSuccessfulScanAt ? (
+										<time dateTime={root.lastSuccessfulScanAt}>
+											{scanLabel}
+										</time>
+									) : (
+										scanLabel
+									)}
+								</dd>
+								<dt className="text-[var(--muted)]">{m("inventory")}</dt>
+								<dd className="m-0 min-w-0">
+									{inventoryLabel}
+									{root.lastSuccessfulScanAt && root.inventoryCount === 0 && (
+										<span className="mt-1 block text-xs text-[var(--muted)]">
+											{m("noInventory")}
+										</span>
+									)}
+								</dd>
+							</dl>
+							<div className={styles.objectActions}>
+								<Button
+									aria-label={m("rootActionLabel", { name: root.name })}
+									onPress={() => requestRootRemoval(root)}
+								>
+									{m("removeRoot")}
+								</Button>
+							</div>
+						</section>
+						<section
+							className={styles.panel}
+							aria-labelledby="source-processing-title"
+						>
+							<h2 id="source-processing-title">{m("processingTitle")}</h2>
+							<p>{m("processingDescription")}</p>
+							<p className="text-xs text-[var(--muted)]">{m("freshness")}</p>
+							{rootFiles.length === 0 ? (
+								<p>{m("noFiles")}</p>
+							) : (
+								<ul className="m-0 grid gap-3 pl-5">
+									{rootFiles.map((file) => (
+										<li key={file.id}>
+											<strong>{file.path}</strong> ·{" "}
+											{m("fileStatus", { status: statusLabel(file.status) })}
+											{file.blockedReason && (
+												<p role="status">
+													{file.blockedReason === "output_reset"
+														? m("outputResetCancelled")
+														: m("workDirectoryRequired")}{" "}
+													{file.blockedReason === "work_directory_required" && (
+														<a href="#settings">{m("configureInSettings")}</a>
+													)}
+												</p>
+											)}
+											{file.blockedReason === "output_reset" && (
 												<Button
-													aria-label={m("retryStep", {
-														step:
-															step.id === "audio_inspection"
-																? m("stepAudio")
-																: m("stepFingerprint"),
-													})}
 													onPress={() => {
-														const retried = retrySourceStep(
+														const retried = retryCancelledSourceFile(
 															processing,
 															file.id,
-															step.id,
 														);
 														if (file.mode === "staged" && !workDirectory) {
 															updateProcessing(
@@ -516,50 +404,234 @@ export function SourcesScreen({
 														);
 													}}
 												>
-													{m("retry")}
+													{m("retryCancelled")}
 												</Button>
 											)}
+											<ul className="grid gap-2 pl-5">
+												{file.steps.map((step) => (
+													<li key={step.id}>
+														{step.id === "audio_inspection"
+															? m("stepAudio")
+															: m("stepFingerprint")}
+														: {audioStepLabel(step)}
+														{step.error && <p role="alert">{m(step.error)}</p>}
+														{step.status === "failed" && (
+															<Button
+																aria-label={m("retryStep", {
+																	step:
+																		step.id === "audio_inspection"
+																			? m("stepAudio")
+																			: m("stepFingerprint"),
+																})}
+																onPress={() => {
+																	const retried = retrySourceStep(
+																		processing,
+																		file.id,
+																		step.id,
+																	);
+																	if (
+																		file.mode === "staged" &&
+																		!workDirectory
+																	) {
+																		updateProcessing(
+																			blockStagedSourceQueue(
+																				retried,
+																				file.rootId,
+																			),
+																		);
+																		notify("workDirectoryRequired");
+																		return;
+																	}
+																	updateProcessing(
+																		processSourceQueue(retried, file.rootId),
+																	);
+																}}
+															>
+																{m("retry")}
+															</Button>
+														)}
+													</li>
+												))}
+											</ul>
 										</li>
 									))}
 								</ul>
-							</li>
-						))}
-					</ul>
-				)}
-				<h3>{m("retainedCopies")}</h3>
-				<p>{m("copyOwnership")}</p>
-				{processing.copies.length === 0 ? (
-					<p>{m("noCopies")}</p>
+							)}
+							<h3>{m("retainedCopies")}</h3>
+							<p>{m("copyOwnership")}</p>
+							{rootCopies.length === 0 ? (
+								<p>{m("noCopies")}</p>
+							) : (
+								<ul className="m-0 grid gap-2 pl-5">
+									{rootCopies.map((copy) => {
+										const copyPath = copyPathLabel(copy);
+										const eligible = eligibleSourceCopies(processing).some(
+											(item) => item.id === copy.id,
+										);
+										return (
+											<li key={copy.id}>
+												<code className="wrap-anywhere">{copyPath}</code> ·{" "}
+												{eligible ? m("copyEligible") : m("copyProtected")}
+												{eligible && (
+													<Button
+														aria-label={m("copyActionLabel", {
+															path: copyPath,
+														})}
+														onPress={() =>
+															setCopyRemoval({ id: copy.id, path: copyPath })
+														}
+													>
+														{m("removeCopy")}
+													</Button>
+												)}
+											</li>
+										);
+									})}
+								</ul>
+							)}
+						</section>
+						<p>{m("unavailablePublications")}</p>
+					</>
 				) : (
-					<ul className="m-0 grid gap-2 pl-5">
-						{processing.copies.map((copy) => {
-							const path = copyPathLabel(copy);
-							const eligible = eligibleSourceCopies(processing).some(
-								(item) => item.id === copy.id,
-							);
-							return (
-								<li key={copy.id}>
-									<code className="wrap-anywhere">{path}</code> ·{" "}
-									{eligible ? m("copyEligible") : m("copyProtected")}
-									{eligible && (
-										<Button
-											aria-label={m("copyActionLabel", { path })}
-											onPress={() => setCopyRemoval({ id: copy.id, path })}
-										>
-											{m("removeCopy")}
-										</Button>
-									)}
-								</li>
-							);
-						})}
-					</ul>
-				)}
-			</section>
-			<p>{m("unavailablePublications")}</p>
-			<p>
-				{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-				<a href="#settings">{m("configureInSettings")}</a>
-			</p>
+					<>
+						<header className={styles.pageHeader}>
+							<div>
+								<h1 className={styles.pageTitle}>{m("sourceNotFound")}</h1>
+								<p className={styles.pageDescription}>
+									<code className="[overflow-wrap:anywhere]">
+										{selectedRootId}
+									</code>
+								</p>
+							</div>
+						</header>
+						<p>
+							<a href="#sources">{m("backToSources")}</a>
+						</p>
+					</>
+				)
+			) : (
+				<>
+					<header
+						className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
+					>
+						<div>
+							<h1 className={styles.pageTitle}>{m("title")}</h1>
+							<p className={styles.pageDescription}>{m("description")}</p>
+						</div>
+						<div className={styles.objectActions}>
+							<Button
+								onPress={() => {
+									setAdding(true);
+									setName("");
+									setPath("/mnt/music");
+									setMode("");
+								}}
+							>
+								{m("addSource")}
+							</Button>
+						</div>
+					</header>
+					{noticeNode}
+					{adding && (
+						<section className={styles.panel}>
+							<h2>{m("newSource")}</h2>
+							<TextField
+								className={`${styles.searchField} max-w-none`}
+								value={name}
+								onChange={setName}
+							>
+								<Label>{m("name")}</Label>
+								<Input placeholder={m("namePlaceholder")} />
+							</TextField>
+							<TextField
+								className={`${styles.searchField} max-w-none`}
+								value={path}
+								isReadOnly
+							>
+								<Label>{m("serverDirectory")}</Label>
+								<Input />
+							</TextField>
+							<Button onPress={() => setPicker(true)}>
+								{m("chooseFolder")}
+							</Button>
+							<p>{m("onlyDirectory")}</p>
+							<RadioGroup
+								className="my-3 grid gap-1"
+								aria-label={m("processingMode")}
+								value={mode}
+								onChange={(value) => setMode(value as Mode)}
+							>
+								<Radio className={styles.modeChoice} value="in_place">
+									{m("inPlace")}
+								</Radio>
+								<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
+									{m("inPlaceHelp")}
+								</p>
+								<Radio className={styles.modeChoice} value="staged">
+									{m("staged")}
+								</Radio>
+								<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
+									{m("stagedHelp")}
+								</p>
+							</RadioGroup>
+							<p>{m("sourcePolicy")}</p>
+							<div className={styles.objectActions}>
+								<Button
+									onPress={() => {
+										if (!name.trim()) {
+											notify("nameRequired");
+											return;
+										}
+										if (!mode) {
+											notify("modeRequired");
+											return;
+										}
+										if (
+											overlapsAnyDemoPath(path, [
+												workDirectory,
+												toolsPath,
+												currentOutput,
+											])
+										) {
+											notify("pathOverlap");
+											return;
+										}
+										const id = `root-${crypto.randomUUID()}`;
+										updateRoots([
+											...roots,
+											{
+												id,
+												name: name.trim(),
+												path,
+												mode,
+												available: null,
+												checked: "—",
+											},
+										]);
+										setAdding(false);
+										notify("sourceAdded");
+										// Registration only opens the root. Registering never
+										// scans, processes, or invents scan results.
+										window.location.hash = `sources/${encodeURIComponent(id)}`;
+									}}
+								>
+									{m("addSource")}
+								</Button>
+								<Button onPress={() => setAdding(false)}>{m("cancel")}</Button>
+							</div>
+						</section>
+					)}
+					<p className="my-2 text-xs text-[var(--muted)]">
+						{m("sourceTableHelp")}
+					</p>
+					<SourceRootList rows={rows} locale={locale} />
+					<p>{m("unavailablePublications")}</p>
+					<p>
+						{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+						<a href="#settings">{m("configureInSettings")}</a>
+					</p>
+				</>
+			)}
 			{picker && (
 				<DirectoryPicker
 					initialPath={path}
@@ -647,6 +719,7 @@ export function SourcesScreen({
 							onRemove(removal.id);
 							notify("rootRemoved");
 							setRemoval(null);
+							window.location.hash = "sources";
 						}}
 					>
 						{m("confirm")}

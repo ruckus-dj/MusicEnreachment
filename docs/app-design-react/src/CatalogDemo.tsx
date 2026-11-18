@@ -28,10 +28,10 @@ import {
 import type { DeletionOperation } from "./DeletionRequest";
 import {
 	combineLibraryAlbumEntries,
+	LibraryPagination,
 	libraryArtistPositionIds,
 	libraryPageCount,
 	libraryPageSlice,
-	LibraryPagination,
 	libraryTrackPositionIds,
 	sliceTrackReleasePage,
 	splitLibraryAlbumEntries,
@@ -39,6 +39,7 @@ import {
 } from "./features/library";
 import { OperationsScreen } from "./features/operations/OperationsScreen";
 import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
+import { useSourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider";
 import { IncomingScreen } from "./IncomingScreen";
 import { useI18n } from "./i18n";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
@@ -110,6 +111,14 @@ const subscribeRoute = (listener: () => void) => {
 		window.removeEventListener("hashchange", notifyForCurrentHash);
 		window.removeEventListener("popstate", notifyForCurrentHash);
 	};
+};
+
+const routeId = (value: string) => {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 };
 
 type View = "artists" | "albums" | "tracks";
@@ -205,9 +214,12 @@ export function CatalogDemo({
 	const [sourceProcessing, setSourceProcessing] = useState(() =>
 		structuredClone(initialSourceProcessingState),
 	);
-	const [removedRoots, setRemovedRoots] = useState<Set<string>>(
-		() => new Set(),
-	);
+	const sourceScans = useSourceScanDemoProvider({
+		files,
+		workDirectory: settings.workDirectory,
+		updateRoots: setSourceRoots,
+		updateProcessing: setSourceProcessing,
+	});
 	const hasAudio = (track: {
 		published: unknown;
 		sourceIds?: string[];
@@ -1059,18 +1071,23 @@ export function CatalogDemo({
 				/>
 			</section>
 		);
-	if (route === "sources")
+	if (routeName === "sources" || routeName.startsWith("sources/"))
 		return (
 			<section className={screenLayout}>
 				<SourcesScreen
 					roots={sourceRoots}
 					onRoots={setSourceRoots}
 					files={files}
-					removed={removedRoots}
+					selectedRootId={
+						routeName.startsWith("sources/")
+							? routeId(routeName.slice("sources/".length))
+							: undefined
+					}
 					workDirectory={settings.workDirectory}
 					toolsPath={settings.toolsPath}
 					currentOutput={settings.currentOutput ?? "/srv/music"}
-					initialProcessingState={sourceProcessing}
+					processing={sourceProcessing}
+					scans={sourceScans}
 					onProcessingState={setSourceProcessing}
 					onRemove={(id) => {
 						const next = removeRootFromInventory(files, releases, id);
@@ -1102,7 +1119,6 @@ export function CatalogDemo({
 						setSourceRoots((previous) =>
 							previous.filter((root) => root.id !== id),
 						);
-						setRemovedRoots((previous) => new Set([...previous, id]));
 					}}
 				/>
 			</section>
