@@ -1,6 +1,7 @@
 # Local IDE, agent, and generated state
 .codegraph/
 .omo/
+.playwright/
 .playwright-mcp/
 .idea/
 .aider*
