@@ -7,21 +7,17 @@ runtime files are not retained or copied here. Markdown here describes presentat
 and prototype boundaries only; the sole current product contract is
 `../design/decisions.md`. Do not duplicate its rules in prototype prose.
 
-For prototype-only tasks, keep production `frontend/` unchanged. The owner has
-explicitly approved porting prototype presentation modules into production with
-production API/controllers, while keeping this prototype standalone. UI/UX
-improvements are synchronized in both surfaces. Preserve approved behavior,
-fields, identities, data and product semantics. Do not add screenshot artifacts.
+For prototype-only tasks, keep production `frontend/` unchanged. Follow the
+UI transfer rule in [`../design/decisions.md`](../design/decisions.md#интерфейс):
+design and production integration are separate tasks. Do not add screenshot
+artifacts.
 
 ## Approved prototype-to-production port
 
-- Copy/adapt presentation modules into production; production code must not import
-  from `docs/app-design-react/`, and must not use prototype demo fixtures or
-  prototype execution/data models. Connect the port to production APIs and
-  controllers.
-- Prefer controlled view extraction with production-owned adapters. Port prototype
-  `ui/index.tsx`, static style modules, tokens in `index.html`, i18n,
-  metadata editor, `MatchingDnD`, and `LocalProviderScreen` where suitable.
+- Keep fixture imports and demo execution behind the prototype data provider so
+  the approved UI modules can be copied without changes. Production code must
+  not import from `docs/app-design-react/` or use prototype fixtures or
+  execution models.
 - Preserve production concurrency/SSE behavior and directory controllers. Do not
   replace them with prototype workflows. No blanket shared-package prerequisite
   is required before porting.
