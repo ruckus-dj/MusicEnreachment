@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { originalReleases } from "../../catalogData";
 import type { DeletionOperation } from "../../DeletionRequest";
+import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import {
 	demoOperationSettleDelayMs,
 	demoOperationStartDelayMs,
@@ -78,10 +79,16 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 	advance(demoOperationSettleDelayMs);
 	expect(settleDeletion).toHaveBeenCalledTimes(1);
 	expect(settleDeletion).toHaveBeenNthCalledWith(1, operation);
-	expect(screen.getByText("Removal is still pending")).toBeVisible();
-	expect(screen.getByRole("status")).toHaveTextContent(
-		"Removal is incomplete. Retry to verify the managed path and finish removal; an unavailable path is not treated as an absent file.",
-	);
+	const removalError =
+		"Removal is incomplete. Retry to verify the managed path and finish removal; an unavailable path is not treated as an absent file.";
+	expect(screen.getByRole("status")).toHaveTextContent(removalError);
+	const grid = screen.getByRole("grid");
+	const failedRow = within(grid)
+		.getByRole("link", { name: track.title })
+		.closest("tr");
+	if (!failedRow) throw new Error("Missing failed operation row");
+	expect(within(failedRow).getByText("Removal is still pending")).toBeVisible();
+	expect(within(failedRow).queryByText(removalError)).toBeNull();
 
 	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 	expect(screen.getByText(track.title)).toBeVisible();
@@ -106,4 +113,38 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 		screen.getByText("The confirmed removal scope was completed."),
 	).toBeVisible();
 	expect(dismissDeletion).not.toHaveBeenCalled();
+});
+
+it("sorts the whole filtered queue before pagination and returns to page one", () => {
+	render(
+		<I18nProvider>
+			<OperationsHarness
+				deletions={[]}
+				settleDeletion={() => "completed"}
+				dismissDeletion={vi.fn()}
+				recover={() => false}
+				initialState={{ signals: "succeeded", recovery: "succeeded" }}
+			/>
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: /status/i }));
+	fireEvent.click(screen.getByRole("option", { name: "Queued" }));
+	const grid = screen.getByRole("grid");
+	const created = within(grid).getByRole("columnheader", { name: "Created" });
+	expect(created).toHaveAttribute("aria-sort", "descending");
+	fireEvent.click(screen.getByRole("button", { name: "Next" }));
+	expect(screen.getByText("51–100 of 2,400")).toBeVisible();
+	fireEvent.click(created);
+	expect(created).toHaveAttribute("aria-sort", "ascending");
+	expect(screen.getByText("1–50 of 2,400")).toBeVisible();
+	const oldest = queuedOperationFixtures.at(-1);
+	if (!oldest) throw new Error("Missing queue fixture");
+	const first = within(grid).getAllByRole("row")[1];
+	expect(first).toHaveTextContent(oldest.target);
+	expect(first).toHaveTextContent(
+		new Intl.DateTimeFormat("en", {
+			dateStyle: "short",
+			timeStyle: "short",
+		}).format(oldest.createdAt),
+	);
 });

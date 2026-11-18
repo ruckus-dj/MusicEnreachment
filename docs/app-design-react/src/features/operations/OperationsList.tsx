@@ -18,6 +18,8 @@ import {
 	Table as AriaTable,
 	TableBody as AriaTableBody,
 	TableHeader as AriaTableHeader,
+	type SortDescriptor,
+	type SortDirection,
 } from "react-aria-components";
 
 /**
@@ -32,6 +34,13 @@ import {
  * The caller owns page slicing: rows are expected to be one page (50 items per
  * the product contract) and `pagination.label` describes that page.
  */
+
+/** Columns whose headers can change the row order. `actions` is not sortable. */
+export type OperationsListSortColumn =
+	| "target"
+	| "operation"
+	| "state"
+	| "created";
 
 export interface OperationsListCopy {
 	title: string;
@@ -131,6 +140,16 @@ export interface OperationsListProps {
 	isRefreshing?: boolean;
 	filters?: OperationsListFilters;
 	pagination?: OperationsListPagination;
+	/**
+	 * Controlled sort state, using React Aria's `SortDescriptor`.
+	 * `column` is one of `OperationsListSortColumn` for changes initiated here.
+	 */
+	sortDescriptor?: SortDescriptor;
+	/**
+	 * Enables sortable headers for `target`, `operation`, `state` and `created`.
+	 * The caller sorts its full filtered set, then passes the current page.
+	 */
+	onSortChange?: (descriptor: SortDescriptor) => void;
 }
 
 const panelClass =
@@ -148,7 +167,14 @@ const badgeClass =
 const tableClass =
 	"w-full min-w-[760px] table-fixed border-separate border-spacing-0 text-xs [font-variant-numeric:tabular-nums]";
 const headCellClass =
-	"border-b border-[var(--line)] bg-[var(--raised)] px-1.5 py-1 text-[11px] font-semibold tracking-[.04em] text-[var(--muted)] uppercase";
+	"border-b border-[var(--line)] bg-[var(--raised)] px-1.5 py-1.5 text-[11px] leading-[1.4] font-semibold tracking-[.04em] text-[var(--muted)] uppercase";
+const sortableHeadCellClass = `${headCellClass} cursor-pointer select-none transition-colors hover:bg-[var(--accent-soft)] data-[pressed]:bg-[var(--accent-soft)] data-[sort-direction]:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-[-2px]`;
+const sortableWidths: Record<OperationsListSortColumn, string> = {
+	target: "w-[27%]",
+	operation: "w-[16%]",
+	state: "w-[21%]",
+	created: "w-[14%]",
+};
 const cellClass = "border-b border-[var(--line)] px-1.5 py-[3px] align-middle";
 const selectButtonClass =
 	"react-aria-Button flex min-h-[30px] min-w-[104px] cursor-pointer items-center justify-between gap-1.5 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-left text-xs text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
@@ -163,6 +189,40 @@ const stateToneClass: Record<OperationsStateTone, string> = {
 	warning: "bg-[var(--warning-soft)] text-[var(--warning)]",
 	error: "bg-[var(--error-soft)] text-[var(--error)]",
 };
+
+function SortHeaderLabel({
+	label,
+	direction,
+}: {
+	label: string;
+	direction?: SortDirection;
+}) {
+	return (
+		<span className="grid grid-cols-[minmax(0,1fr)_12px] items-center gap-1">
+			<span>{label}</span>
+			<svg
+				aria-hidden="true"
+				viewBox="0 0 12 12"
+				className={`size-3 ${direction ? "text-[var(--accent)]" : "text-[var(--control)]"}`}
+			>
+				<path
+					d={
+						direction === "ascending"
+							? "M3 7.5 6 4.5 9 7.5"
+							: direction === "descending"
+								? "M3 4.5 6 7.5 9 4.5"
+								: "M3.5 4.25 6 1.75 8.5 4.25 M3.5 7.75 6 10.25 8.5 7.75"
+					}
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		</span>
+	);
+}
 
 function StateBadge({
 	state,
@@ -342,9 +402,9 @@ function OperationDetails({
 								)}
 							</span>
 						</DetailField>
-						<DetailField label={copy.progress}>
-							{row.progress || "—"}
-						</DetailField>
+						{row.progress && (
+							<DetailField label={copy.progress}>{row.progress}</DetailField>
+						)}
 						<DetailField label={copy.created}>{row.created || "—"}</DetailField>
 						<DetailField label={copy.error}>
 							{row.error ? (
@@ -386,6 +446,8 @@ export function OperationsList({
 	isRefreshing = false,
 	filters,
 	pagination,
+	sortDescriptor,
+	onSortChange,
 }: OperationsListProps) {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const sectionRef = useRef<HTMLElement>(null);
@@ -505,30 +567,41 @@ export function OperationsList({
 						</div>
 					) : (
 						<div className="w-full overflow-x-auto [overscroll-behavior-inline:contain]">
-							<AriaTable aria-label={copy.title} className={tableClass}>
+							<AriaTable
+								aria-label={copy.title}
+								className={tableClass}
+								sortDescriptor={sortDescriptor}
+								onSortChange={onSortChange}
+							>
 								<AriaTableHeader>
-									<AriaColumn
-										isRowHeader
-										className={`${headCellClass} w-[23%] text-left`}
-									>
-										{copy.target}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[13%] text-left`}>
-										{copy.operation}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[16%] text-left`}>
-										{copy.stateStage}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[7%] text-left`}>
-										{copy.progress}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[8%] text-left`}>
-										{copy.created}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[16%] text-left`}>
-										{copy.error}
-									</AriaColumn>
-									<AriaColumn className={`${headCellClass} w-[17%] text-right`}>
+									{(
+										[
+											["target", copy.target],
+											["operation", copy.operation],
+											["state", copy.stateStage],
+											["created", copy.created],
+										] as const
+									).map(([column, label]) => (
+										<AriaColumn
+											key={column}
+											id={column}
+											isRowHeader={column === "target"}
+											allowsSorting={onSortChange !== undefined}
+											className={`${onSortChange ? sortableHeadCellClass : headCellClass} ${sortableWidths[column]} text-left`}
+										>
+											{({ allowsSorting, sortDirection }) =>
+												allowsSorting ? (
+													<SortHeaderLabel
+														label={label}
+														direction={sortDirection}
+													/>
+												) : (
+													label
+												)
+											}
+										</AriaColumn>
+									))}
+									<AriaColumn className={`${headCellClass} w-[22%] text-right`}>
 										{copy.actions}
 									</AriaColumn>
 								</AriaTableHeader>
@@ -589,17 +662,6 @@ export function OperationsList({
 											</AriaCell>
 											<AriaCell className={cellClass}>
 												<span
-													className={
-														row.progress
-															? "block whitespace-nowrap"
-															: "block whitespace-nowrap text-[var(--muted)]"
-													}
-												>
-													{row.progress || "—"}
-												</span>
-											</AriaCell>
-											<AriaCell className={cellClass}>
-												<span
 													title={row.created}
 													className={
 														row.created
@@ -608,18 +670,6 @@ export function OperationsList({
 													}
 												>
 													{row.created || "—"}
-												</span>
-											</AriaCell>
-											<AriaCell className={cellClass}>
-												<span
-													title={row.error}
-													className={
-														row.error
-															? "block min-w-0 truncate text-[var(--error)]"
-															: "block text-[var(--muted)]"
-													}
-												>
-													{row.error || "—"}
 												</span>
 											</AriaCell>
 											<AriaCell className={`${cellClass} text-right`}>

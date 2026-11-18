@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { SortDescriptor } from "react-aria-components";
 import { recoveryFixture } from "../../catalogData";
 import type { DeletionOperation } from "../../DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
@@ -11,6 +12,7 @@ import { OperationsList, type OperationsListRow } from "./OperationsList";
 import { operationMessages } from "./operationMessages";
 
 const pageSize = 50;
+const latestQueueSample = queuedOperationFixtures[0]?.createdAt ?? 0;
 
 type OperationStatusFilter =
 	| "attention"
@@ -27,7 +29,18 @@ interface ScreenRow {
 	list: OperationsListRow;
 	status: VisibleOperationStatus;
 	kind: OperationKind;
+	createdAt: number;
 }
+
+const defaultSort: SortDescriptor = {
+	column: "created",
+	direction: "descending",
+};
+const statusOrder: Record<VisibleOperationStatus, number> = {
+	failed: 0,
+	running: 1,
+	queued: 2,
+};
 
 const statusFilters: OperationStatusFilter[] = [
 	"attention",
@@ -74,8 +87,26 @@ export function OperationsScreen({
 	const [status, setStatus] = useState<OperationStatusFilter>("attention");
 	const [kind, setKind] = useState<OperationKind | "all">("all");
 	const [page, setPage] = useState(0);
-	const deletionIds = useRef(new WeakMap<DeletionOperation, string>());
+	const [sort, setSort] = useState(defaultSort);
+	const [demoStartedAt] = useState(() =>
+		Math.max(Date.now(), latestQueueSample + 60_000),
+	);
+	const deletionRows = useRef(
+		new WeakMap<DeletionOperation, { id: string; createdAt: number }>(),
+	);
 	const nextDeletionId = useRef(0);
+	const dates = useMemo(
+		() =>
+			new Intl.DateTimeFormat(locale, {
+				dateStyle: "short",
+				timeStyle: "short",
+			}),
+		[locale],
+	);
+	const collator = useMemo(
+		() => new Intl.Collator(locale, { sensitivity: "base", numeric: true }),
+		[locale],
+	);
 
 	const rows = useMemo(() => {
 		const result: ScreenRow[] = [];
@@ -89,13 +120,16 @@ export function OperationsScreen({
 			rowStatus: DemoOperationStatus,
 			rowKind: OperationKind,
 			row: Omit<OperationsListRow, "state" | "stateTone">,
+			createdAt = demoStartedAt,
 		) {
 			if (rowStatus === "succeeded") return;
 			result.push({
 				status: rowStatus,
 				kind: rowKind,
+				createdAt,
 				list: {
 					...row,
+					created: dates.format(createdAt),
 					targetHref: currentHref(row.targetHref),
 					error: rowStatus === "failed" ? row.error : undefined,
 					actions: rowStatus === "failed" ? row.actions : undefined,
@@ -127,10 +161,16 @@ export function OperationsScreen({
 		});
 
 		for (const operation of deletions) {
-			let id = deletionIds.current.get(operation);
-			if (!id) {
-				id = `removal-${++nextDeletionId.current}`;
-				deletionIds.current.set(operation, id);
+			let identity = deletionRows.current.get(operation);
+			if (!identity) {
+				identity = {
+					id: `removal-${++nextDeletionId.current}`,
+					createdAt: Math.max(
+						Date.now(),
+						demoStartedAt + nextDeletionId.current,
+					),
+				};
+				deletionRows.current.set(operation, identity);
 			}
 			const state = provider.deletionStates.get(operation);
 			const failure = state?.failure;
@@ -139,54 +179,60 @@ export function OperationsScreen({
 				operation.libraryTrackIds?.length === 1
 					? operation.libraryTrackIds[0]
 					: undefined;
-			addRow(state?.status ?? "queued", "removal", {
-				id,
-				target: operation.target || copy.unknownTarget,
-				targetDetail: operation.scope,
-				targetHref: singleTrackId ? `#track/${singleTrackId}` : undefined,
-				operation:
-					operation.kind === "publication"
-						? copy.removePublications
-						: operation.kind === "artist"
-							? copy.removeArtist
-							: copy.removeLibrary,
-				error:
-					failure === "stale"
-						? copy.removalStale
-						: failure === "conflict"
-							? copy.removalConflict
-							: copy.removalRetry,
-				stage:
-					failure === "stale"
-						? copy.staleScope
-						: failure === "conflict"
-							? copy.removalStateConflict
-							: failure === "retry"
-								? copy.removalStateRetry
-								: undefined,
-				actions:
-					failure === "stale"
-						? [
-								{
-									id: "review",
-									label: copy.returnAndConfirm,
-									href: "#library",
-								},
-							]
-						: [
-								{
-									id: "retry",
-									label: copy.retry,
-									onPress: () => provider.retryDeletion(operation),
-								},
-							],
-			});
+			addRow(
+				state?.status ?? "queued",
+				"removal",
+				{
+					id: identity.id,
+					target: operation.target || copy.unknownTarget,
+					targetDetail: operation.scope,
+					targetHref: singleTrackId ? `#track/${singleTrackId}` : undefined,
+					operation:
+						operation.kind === "publication"
+							? copy.removePublications
+							: operation.kind === "artist"
+								? copy.removeArtist
+								: copy.removeLibrary,
+					error:
+						failure === "stale"
+							? copy.removalStale
+							: failure === "conflict"
+								? copy.removalConflict
+								: copy.removalRetry,
+					stage:
+						failure === "stale"
+							? copy.staleScope
+							: failure === "conflict"
+								? copy.removalStateConflict
+								: failure === "retry"
+									? copy.removalStateRetry
+									: undefined,
+					actions:
+						failure === "stale"
+							? [
+									{
+										id: "review",
+										label: copy.returnAndConfirm,
+										href: "#library",
+									},
+								]
+							: [
+									{
+										id: "retry",
+										label: copy.retry,
+										onPress: () => provider.retryDeletion(operation),
+									},
+								],
+				},
+				identity.createdAt,
+			);
 		}
 
 		for (const fixture of queuedOperationFixtures) {
 			result.push({
 				status: "queued",
 				kind: fixture.kind,
+				createdAt: fixture.createdAt,
 				list: {
 					id: fixture.id,
 					target: fixture.target,
@@ -195,7 +241,7 @@ export function OperationsScreen({
 					operation: copy[fixture.operation],
 					state: copy.queued,
 					stateTone: "info",
-					created: fixture.created,
+					created: dates.format(fixture.createdAt),
 				},
 			});
 		}
@@ -203,6 +249,8 @@ export function OperationsScreen({
 		return result;
 	}, [
 		copy,
+		dates,
+		demoStartedAt,
 		deletions,
 		isTargetCurrent,
 		provider.deletionStates,
@@ -270,7 +318,28 @@ export function OperationsScreen({
 
 	const numberFormat = useMemo(() => new Intl.NumberFormat(locale), [locale]);
 	const start = pageIndex * pageSize;
-	const pageRows = filteredRows.slice(start, start + pageSize);
+	const sortedRows = useMemo(() => {
+		const direction = sort.direction === "ascending" ? 1 : -1;
+		return [...filteredRows].sort((left, right) => {
+			switch (sort.column) {
+				case "target":
+				case "operation":
+					return (
+						direction *
+						collator.compare(left.list[sort.column], right.list[sort.column])
+					);
+				case "state":
+					return (
+						direction * (statusOrder[left.status] - statusOrder[right.status])
+					);
+				case "created":
+					return direction * (left.createdAt - right.createdAt);
+				default:
+					return 0;
+			}
+		});
+	}, [collator, filteredRows, sort]);
+	const pageRows = sortedRows.slice(start, start + pageSize);
 
 	const changeQuery = (value: string) => {
 		setQuery(value);
@@ -290,6 +359,11 @@ export function OperationsScreen({
 		<OperationsList
 			copy={copy}
 			rows={pageRows.map((row) => row.list)}
+			sortDescriptor={sort}
+			onSortChange={(value) => {
+				setSort(value);
+				setPage(0);
+			}}
 			notice={provider.notice ? copy[provider.notice] : undefined}
 			onRefresh={provider.refresh}
 			isRefreshing={provider.isRefreshing}

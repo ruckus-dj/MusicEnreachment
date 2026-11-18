@@ -160,8 +160,8 @@ export const operationMessages = createNamespace({
 		emptyDescription:
 			"Здесь появятся операции в процессе и неудачные операции.",
 		target: "Объект",
-		stateStage: "Состояние / этап",
-		progress: "Ход выполнения",
+		stateStage: "Статус / этап",
+		progress: "Прогресс",
 		created: "Создано",
 		error: "Ошибка",
 		actions: "Действия",

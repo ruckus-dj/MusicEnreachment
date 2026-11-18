@@ -35,7 +35,7 @@ export interface QueuedOperationFixture {
 	target: string;
 	targetDetail?: string;
 	targetHref?: string;
-	created: string;
+	createdAt: number;
 }
 
 interface QueueObject {
@@ -104,12 +104,6 @@ const queueSize = 2400;
 // Fixed baseline so the queue timeline is identical on every render.
 const baseline = Date.UTC(2026, 10, 18, 10, 0);
 
-function formatCreated(timestamp: number) {
-	const date = new Date(timestamp);
-	const pad = (value: number) => String(value).padStart(2, "0");
-	return `${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}.${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
-}
-
 export const queuedOperationFixtures: QueuedOperationFixture[] = Array.from(
 	{ length: queueSize },
 	(_, index) => {
@@ -117,7 +111,7 @@ export const queuedOperationFixtures: QueuedOperationFixture[] = Array.from(
 		return {
 			id: `queue-${index + 1}`,
 			...object,
-			created: formatCreated(baseline - index * 60_000),
+			createdAt: baseline - index * 60_000,
 		};
 	},
 );

@@ -54,10 +54,15 @@ it("renders an operation row and forwards row actions and refresh", () => {
 		screen.getByRole("link", { name: "Northern Lines · position 01" }),
 	).toHaveAttribute("href", "#track/north-t1");
 	expect(screen.getByText("Preparing result")).toBeVisible();
-	expect(screen.getByText("42%")).toBeVisible();
+	expect(screen.queryByText("42%")).not.toBeInTheDocument();
+	expect(screen.queryByText(row.error ?? "")).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("columnheader", { name: /progress|error/i }),
+	).not.toBeInTheDocument();
 	expect(screen.getByText("12:04")).toBeVisible();
 	fireEvent.click(screen.getByRole("button", { name: /Details/ }));
 	const details = screen.getByRole("dialog");
+	expect(details).toHaveTextContent("42%");
 	expect(details).toHaveTextContent(
 		"EACCES: no write access to the temporary directory",
 	);
