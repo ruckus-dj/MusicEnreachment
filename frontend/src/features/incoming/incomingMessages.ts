@@ -64,7 +64,8 @@ export const incomingMessages = {
       "Evaluation has not been run. Automatic matching does not start here.",
     authorityHeading: "Current matching authority",
     modeLabel: "Mode:",
-    revisionLabel: "revision:",
+    manualMatching: "Manual",
+    automaticMatching: "Automatic",
     savedEvaluationExplanation:
       "The saved current evaluation and its evidence are shown separately below. Source deletion is performed outside this screen.",
     returnAutomatic: "Return to automatic matching",
@@ -96,8 +97,6 @@ export const incomingMessages = {
     savedEvaluation: "Saved evaluation",
     releaseSelectionLabel: "Release (manual selection)",
     chooseRelease: "Choose a release…",
-    reviewRevisionParticipants: (revision: string, count: number) =>
-      `Revision: ${revision} · participants: ${count}`,
     savedRelease: "This release is saved in the server evaluation.",
     savedCandidatesHeading: "Saved candidates",
     releaseOutsideLayout: "Release outside the saved layout",
@@ -130,7 +129,8 @@ export const incomingMessages = {
     incomingFileMetadata: "Incoming group file metadata",
     groupDiagnostics: "Group diagnostics",
     noFilesInGroup: "There are no files in this group.",
-    inspectorFileMissing: "no file selected",
+    inspectAssignment:
+      "Select a file on a release position to see the match for that pair.",
     assignmentActions: "Assignment actions",
     processing: "Processing…",
     previewAll: "Preview all assignments",
@@ -205,7 +205,8 @@ export const incomingMessages = {
       "Оценка ещё не выполнялась. Автоматическое сопоставление здесь не запускается.",
     authorityHeading: "Текущий режим управления сопоставлением",
     modeLabel: "Режим:",
-    revisionLabel: "ревизия:",
+    manualMatching: "Ручное",
+    automaticMatching: "Автоматическое",
     savedEvaluationExplanation:
       "Сохранённая текущая оценка и её доказательства показаны отдельно ниже. Удаление источников выполняется вне этого экрана.",
     returnAutomatic: "Вернуть к автоматическому сопоставлению",
@@ -237,8 +238,6 @@ export const incomingMessages = {
     savedEvaluation: "Сохраненная оценка",
     releaseSelectionLabel: "Издание (выбор вручную)",
     chooseRelease: "Выберите издание…",
-    reviewRevisionParticipants: (revision: string, count: number) =>
-      `Ревизия: ${revision} · участников: ${count}`,
     savedRelease: "Это издание сохранено в оценке сервера.",
     savedCandidatesHeading: "Сохранённые кандидаты",
     releaseOutsideLayout: "Издание вне сохранённого макета",
@@ -270,7 +269,8 @@ export const incomingMessages = {
     incomingFileMetadata: "Метаданные файла из входящей группы",
     groupDiagnostics: "Диагностика группы",
     noFilesInGroup: "В группе нет файлов.",
-    inspectorFileMissing: "файл не выбран",
+    inspectAssignment:
+      "Выберите файл в позиции релиза, чтобы увидеть совпадение для этой пары.",
     assignmentActions: "Действия с назначением",
     processing: "Обработка…",
     previewAll: "Предпросмотр всего назначения",

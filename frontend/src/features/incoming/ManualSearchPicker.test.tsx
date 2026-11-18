@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, it, vi } from "vitest";
+import { subscribeToOperation } from "../../api/client/operations";
 import { getGetIncomingGroupManualPickerSearchQueryKey } from "../../api/generated/client";
 import type { ManualPickerSearchBody } from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
@@ -9,9 +10,13 @@ import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { ManualSearchPicker } from "./ManualSearchPicker";
 
+const { unsubscribe } = vi.hoisted(() => ({ unsubscribe: vi.fn() }));
+
 vi.mock("../../api/client/operations", () => ({
-  subscribeToOperation: vi.fn(() => vi.fn()),
+  subscribeToOperation: vi.fn(() => unsubscribe),
 }));
+
+const freeformQuery = "anacondaz выходи за меня";
 
 function LocaleToggle() {
   const { locale, setPreference } = useI18n();
@@ -29,7 +34,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("localizes picker validation without resetting search state or refetching", async () => {
+it("sends the freeform release query unchanged and keeps pagination, results, and locale state", async () => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
   vi.stubGlobal("localStorage", storage);
@@ -39,6 +44,7 @@ it("localizes picker validation without resetting search state or refetching", a
   let resultReads = 0;
   const startBodies: ManualPickerSearchBody[] = [];
   const resultOperations: string[] = [];
+  const onSelectRelease = vi.fn();
   server.use(
     http.post(
       "/api/incoming-groups/group-1/manual-search",
@@ -76,20 +82,52 @@ it("localizes picker validation without resetting search state or refetching", a
               : {
                   count: 6,
                   offset: firstPage ? 0 : 2,
-                  releases: [
-                    {
-                      id: firstPage
-                        ? "11111111-1111-4111-8111-111111111111"
-                        : "33333333-3333-4333-8333-333333333333",
-                      title: firstPage ? "Blue album one" : "Blue album three",
-                    },
-                    {
-                      id: firstPage
-                        ? "22222222-2222-4222-8222-222222222222"
-                        : "44444444-4444-4444-8444-444444444444",
-                      title: firstPage ? "Blue album two" : "Blue album four",
-                    },
-                  ],
+                  releases: firstPage
+                    ? [
+                        {
+                          id: "11111111-1111-4111-8111-111111111111",
+                          title: "Выходи за меня",
+                          disambiguation: "deluxe edition",
+                          "artist-credit": [{ name: "Anacondaz" }],
+                          date: "2019-05-17",
+                          country: "RU",
+                          "track-count": 12,
+                          media: [{ format: "CD", "track-count": 12 }],
+                          "label-info": [
+                            {
+                              label: { name: "Warner Music Russia" },
+                              "catalog-number": "5054197-1",
+                            },
+                          ],
+                          score: 100,
+                        },
+                        {
+                          id: "22222222-2222-4222-8222-222222222222",
+                          title: "Выходи за меня",
+                          "artist-credit": [{ name: "Anacondaz" }],
+                          date: "2020-03-06",
+                          media: [{ format: "Vinyl" }, { format: "CD" }],
+                          score: 98,
+                        },
+                      ]
+                    : [
+                        {
+                          id: "33333333-3333-4333-8333-333333333333",
+                          title: "Выходи за меня (live)",
+                          "artist-credit": [{ name: "Anacondaz" }],
+                          date: "2021-11-12",
+                          media: [{ format: "CD" }],
+                          score: 87,
+                        },
+                        {
+                          id: "44444444-4444-4444-8444-444444444444",
+                          title: "Паганини",
+                          "artist-credit": [{ name: "Anacondaz" }],
+                          date: "2011-04-01",
+                          media: [{ format: "CD" }],
+                          score: 71,
+                        },
+                      ],
                 },
         });
       },
@@ -106,24 +144,51 @@ it("localizes picker validation without resetting search state or refetching", a
         <ManualSearchPicker
           groupId="group-1"
           groupRevision="revision-1"
-          onSelectRelease={vi.fn()}
+          onSelectRelease={onSelectRelease}
         />
       </QueryClientProvider>
     </I18nProvider>,
   );
 
-  fireEvent.change(screen.getByRole("combobox", { name: "Search type" }), {
-    target: { value: "release" },
-  });
-  fireEvent.change(screen.getByRole("textbox", { name: "Search query" }), {
-    target: { value: "Blue" },
-  });
+  expect(screen.queryByRole("combobox")).toBeNull();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Artist and release title" }),
+    { target: { value: freeformQuery } },
+  );
   fireEvent.change(
     screen.getByRole("spinbutton", { name: "Number of results" }),
     { target: { value: "2" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByText("Results 1–2 of 6");
+
+  expect(screen.getAllByText("Выходи за меня")).toHaveLength(2);
+  expect(screen.getByText("(deluxe edition)")).toBeInTheDocument();
+  const cdDetails = screen.getByText(/Released: 2019-05-17/);
+  expect(cdDetails).toHaveTextContent("Country: RU");
+  expect(cdDetails).toHaveTextContent("Tracks: 12");
+  expect(cdDetails).toHaveTextContent("Format: CD");
+  expect(cdDetails).toHaveTextContent(
+    "Labels: Warner Music Russia (5054197-1)",
+  );
+  expect(cdDetails).toHaveTextContent("MusicBrainz score: 100");
+  expect(screen.getByText(/Format: Vinyl \/ CD · 2 discs/)).toHaveTextContent(
+    "MusicBrainz score: 98",
+  );
+  expect(
+    screen.getByRole("button", {
+      name: /Choose “Выходи за меня” \(Anacondaz,.*Format: CD/,
+    }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: /Choose “Выходи за меня” \(Anacondaz,.*Format: Vinyl \/ CD/,
+    }),
+  );
+  expect(onSelectRelease).toHaveBeenCalledWith(
+    "22222222-2222-4222-8222-222222222222",
+  );
+
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Results 3–4 of 6");
   await waitFor(() => {
@@ -139,6 +204,8 @@ it("localizes picker validation without resetting search state or refetching", a
     expect(starts).toBe(2);
     expect(operationReads).toBe(2);
     expect(queryClient.isFetching()).toBe(0);
+    expect(vi.mocked(subscribeToOperation)).toHaveBeenCalledTimes(2);
+    expect(unsubscribe).toHaveBeenCalledTimes(2);
   });
   const secondPageBaseline = {
     starts,
@@ -153,20 +220,24 @@ it("localizes picker validation without resetting search state or refetching", a
   expect(
     await screen.findByRole("heading", { name: "Поиск MusicBrainz" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Тип поиска" })).toHaveValue(
-    "release",
-  );
-  expect(screen.getByRole("textbox", { name: "Поисковый запрос" })).toHaveValue(
-    "Blue",
-  );
+  expect(
+    screen.getByRole("textbox", { name: "Артист и название издания" }),
+  ).toHaveValue(freeformQuery);
   expect(
     screen.getByRole("spinbutton", { name: "Количество результатов" }),
   ).toHaveValue(2);
   expect(await screen.findByText("Результаты 3–4 из 6")).toBeInTheDocument();
-  expect(screen.getByText("Blue album three")).toBeInTheDocument();
+  expect(screen.getByText("Выходи за меня (live)")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", {
+      name: /Выбрать «Выходи за меня \(live\)» \(Anacondaz,.*2021-11-12/,
+    }),
+  ).toBeInTheDocument();
   await waitFor(() => {
     expect(queryClient.isFetching()).toBe(0);
   });
+  expect(vi.mocked(subscribeToOperation)).toHaveBeenCalledTimes(2);
+  expect(unsubscribe).toHaveBeenCalledTimes(2);
   expect({
     starts,
     operationReads,
@@ -193,6 +264,8 @@ it("localizes picker validation without resetting search state or refetching", a
     expect(starts).toBe(3);
     expect(operationReads).toBe(3);
     expect(queryClient.isFetching()).toBe(0);
+    expect(vi.mocked(subscribeToOperation)).toHaveBeenCalledTimes(3);
+    expect(unsubscribe).toHaveBeenCalledTimes(3);
   });
   const thirdPageBaseline = {
     starts,
@@ -210,12 +283,9 @@ it("localizes picker validation without resetting search state or refetching", a
   expect(
     await screen.findByRole("heading", { name: "Search MusicBrainz" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Search type" })).toHaveValue(
-    "release",
-  );
-  expect(screen.getByRole("textbox", { name: "Search query" })).toHaveValue(
-    "Blue",
-  );
+  expect(
+    screen.getByRole("textbox", { name: "Artist and release title" }),
+  ).toHaveValue(freeformQuery);
   expect(
     screen.getByRole("spinbutton", { name: "Number of results" }),
   ).toHaveValue(2);
@@ -225,6 +295,8 @@ it("localizes picker validation without resetting search state or refetching", a
   await waitFor(() => {
     expect(queryClient.isFetching()).toBe(0);
   });
+  expect(vi.mocked(subscribeToOperation)).toHaveBeenCalledTimes(3);
+  expect(unsubscribe).toHaveBeenCalledTimes(3);
   expect({
     starts,
     operationReads,
@@ -243,19 +315,19 @@ it("localizes picker validation without resetting search state or refetching", a
   ).toEqual([
     {
       entity: "release",
-      query: "Blue",
+      query: freeformQuery,
       expected_group_revision: "revision-1",
       limit: 2,
     },
     {
       entity: "release",
-      query: "Blue",
+      query: freeformQuery,
       expected_group_revision: "revision-1",
       limit: 2,
     },
     {
       entity: "release",
-      query: "Blue",
+      query: freeformQuery,
       expected_group_revision: "revision-1",
       limit: 2,
     },
@@ -300,9 +372,10 @@ it("shows a localized fallback for a detail-less rejection without extra request
     </I18nProvider>,
   );
 
-  fireEvent.change(screen.getByRole("textbox", { name: "Search query" }), {
-    target: { value: "Blue" },
-  });
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Artist and release title" }),
+    { target: { value: freeformQuery } },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Search was not accepted (HTTP 503).",
@@ -312,6 +385,9 @@ it("shows a localized fallback for a detail-less rejection without extra request
   expect(
     await screen.findByRole("heading", { name: "Поиск MusicBrainz" }),
   ).toBeInTheDocument();
+  expect(
+    screen.getByRole("textbox", { name: "Артист и название издания" }),
+  ).toHaveValue(freeformQuery);
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Поиск не принят (HTTP 503).",
   );

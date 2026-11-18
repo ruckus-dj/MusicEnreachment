@@ -144,7 +144,7 @@ it("reserves a bounded inspector grid row and keeps the target list independentl
 	expect(inspector?.parentElement).toBe(layout);
 	expect(inspector?.className).toContain("min-[1400px]:col-span-3");
 	expect(inspector?.className).not.toContain("min-[1400px]:fixed");
-	expect(target?.className).toContain("min-[1400px]:overflow-y-auto");
+	expect(target?.className).toContain("min-[1024px]:overflow-y-auto");
 	expect(target?.className).toContain("min-[1400px]:min-h-0");
 });
 

@@ -46,6 +46,13 @@ func (service *ManualPickerSearchService) Start(ctx context.Context, groupID, re
 	} else if query == "" {
 		return nil, fmt.Errorf("%w: query is required", ErrManualPickerSearchInvalid)
 	}
+	// The durable request records what the user asked for. Only the provider
+	// operation carries the compiled release query, so an idempotent retry of
+	// the same request keeps the same admission digest.
+	admissionQuery := query
+	if kind == "release_search" {
+		query = compileReleaseSearchQuery(admissionQuery)
+	}
 	child, err := service.providers.PrepareOperation(ctx, providerKind, query, offset, limit, false)
 	if err != nil {
 		return nil, fmt.Errorf("prepare manual picker provider search: %w", err)
@@ -58,15 +65,37 @@ func (service *ManualPickerSearchService) Start(ctx context.Context, groupID, re
 		Query         string    `json:"query"`
 		Offset        int       `json:"offset"`
 		Limit         int       `json:"limit"`
-	}{groupID, expectedGroupRevision, kind, query, offset, limit})
+	}{groupID, expectedGroupRevision, kind, admissionQuery, offset, limit})
 	if err != nil {
 		return nil, err
 	}
 	digest := sha256.Sum256(canonical)
 	return service.repository.AdmitManualPickerSearch(ctx, service.river, persistence.ManualPickerSearchAdmission{
 		RequestID: requestID, GroupID: groupID, GroupRevision: expectedGroupRevision, Kind: kind, Digest: digest,
-		Query: query, Offset: offset, Limit: limit, Operation: child, Args: args,
+		Query: admissionQuery, Offset: offset, Limit: limit, Operation: child, Args: args,
 	})
+}
+
+// compileReleaseSearchQuery expands freeform manual release text into an
+// explicit MusicBrainz release query. An unfielded release search matches the
+// release title only, so an entered "artist title" pair silently loses the
+// artist and misses releases whose titles differ. Every distinct
+// whitespace-separated term is matched as a literal phrase against the release
+// title and both artist fields, and the terms are AND-ed so all of them still
+// have to occur. Expansion is bounded by the count of distinct terms: terms are
+// never truncated, however long the entered title is.
+func compileReleaseSearchQuery(freeform string) string {
+	seen := make(map[string]struct{})
+	clauses := make([]string, 0)
+	for _, term := range strings.Fields(freeform) {
+		if _, duplicate := seen[term]; duplicate {
+			continue
+		}
+		seen[term] = struct{}{}
+		phrase := `"` + escapeLucenePhrase(term) + `"`
+		clauses = append(clauses, "(artist:"+phrase+" OR artistname:"+phrase+" OR release:"+phrase+")")
+	}
+	return strings.Join(clauses, " AND ")
 }
 
 func (service *ManualPickerSearchService) Result(ctx context.Context, groupID, operationID uuid.UUID) (*persistence.ManualPickerSearchResult, error) {

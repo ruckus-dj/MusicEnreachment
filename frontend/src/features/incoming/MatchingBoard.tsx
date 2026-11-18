@@ -68,6 +68,12 @@ export type MatchingBoardProps = {
   onUnassign?: (memberId: string) => void;
   onInspectPosition?: (trackId: string) => void;
   onInspectSource?: (memberId: string) => void;
+  /**
+   * Paired inspection of one file and one position. When provided it replaces
+   * the separate source/position callbacks so a single pair can be inspected
+   * without the two handlers racing each other.
+   */
+  onInspectPair?: (memberId: string, trackId: string) => void;
   /** Per-position contextual content, for example a collapsed tag-override editor. */
   renderPositionMeta?: (context: MatchingBoardPositionContext) => ReactNode;
   renderSourceDetails?: (source: MatchingBoardSource) => ReactNode;
@@ -216,6 +222,7 @@ export function MatchingBoard({
   onUnassign,
   onInspectPosition,
   onInspectSource,
+  onInspectPair,
   renderPositionMeta,
   renderSourceDetails,
   className,
@@ -266,6 +273,10 @@ export function MatchingBoard({
   }
 
   function inspectAt(memberId: string, trackId: string) {
+    if (onInspectPair) {
+      onInspectPair(memberId, trackId);
+      return;
+    }
     onInspectSource?.(memberId);
     onInspectPosition?.(trackId);
   }
@@ -380,6 +391,20 @@ export function MatchingBoard({
                         {copy.disc(position.medium + 1)}
                       </span>
                     ) : null}
+                    <button
+                      type="button"
+                      className="matching-board-add"
+                      disabled={!canAddSelected}
+                      aria-label={addLabel}
+                      title={addLabel}
+                      onClick={() => {
+                        if (!selection || !canAddSelected) return;
+                        onAssign(selection, position.track_id);
+                        setSelection(null);
+                      }}
+                    >
+                      {copy.addSelected}
+                    </button>
                   </div>
                   <div className="matching-board-assigned">
                     {occupants.map((memberId) => {
@@ -464,7 +489,9 @@ export function MatchingBoard({
                           ) : null}
                         </>
                       );
-                      return onInspectSource || onInspectPosition ? (
+                      return onInspectSource ||
+                        onInspectPosition ||
+                        onInspectPair ? (
                         <button
                           key={memberId}
                           type="button"
@@ -489,20 +516,6 @@ export function MatchingBoard({
                         {copy.noFilesAssigned}
                       </span>
                     ) : null}
-                    <button
-                      type="button"
-                      className="matching-board-add"
-                      disabled={!canAddSelected}
-                      aria-label={addLabel}
-                      title={addLabel}
-                      onClick={() => {
-                        if (!selection || !canAddSelected) return;
-                        onAssign(selection, position.track_id);
-                        setSelection(null);
-                      }}
-                    >
-                      {copy.addSelected}
-                    </button>
                   </div>
                   {renderPositionMeta?.({
                     position,

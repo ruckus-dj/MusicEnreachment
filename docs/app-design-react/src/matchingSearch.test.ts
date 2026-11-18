@@ -1,13 +1,8 @@
 import { expect, it } from "vitest";
-import {
-	findExactMatchingIdentity,
-	matchingPage,
-	searchMatchingArtists,
-	searchMatchingReleases,
-} from "./matchingSearch";
+import { matchingPage, searchMatchingReleases } from "./matchingSearch";
 import { incomingFixtures, providerReleases } from "./incomingModel";
 
-it("requires explicit text search and only returns fixture-backed releases", () => {
+it("requires an explicit query and never matches internal identities", () => {
 	expect(
 		searchMatchingReleases(
 			"Northern Lines",
@@ -27,14 +22,45 @@ it("requires explicit text search and only returns fixture-backed releases", () 
 			incomingFixtures.artists,
 		),
 	).toEqual([]);
+	expect(
+		searchMatchingReleases(
+			"p-north",
+			providerReleases,
+			incomingFixtures.artists,
+		),
+	).toEqual([]);
 });
 
-it("searches fixture artists and pages results with a default size of ten", () => {
+it("matches every token across credits, title and available edition details", () => {
+	const ids = (query: string) =>
+		searchMatchingReleases(
+			query,
+			providerReleases,
+			incomingFixtures.artists,
+		).map((release) => release.id);
+	expect(ids("Mira Vale Northern")).toEqual(
+		expect.arrayContaining(["p-north", "p-japan"]),
+	);
+	expect(ids("Field Records FR-021-JP")).toEqual(["p-japan"]);
+	expect(ids("Mira JP")).toEqual(["p-japan"]);
+
+	const credited = {
+		...providerReleases[0],
+		credits: [
+			{ artistId: "mira", credit: "Mira Vale", joinPhrase: " & " },
+			{ artistId: "arden", credit: "Arden Trio", joinPhrase: "" },
+		],
+	};
 	expect(
-		searchMatchingArtists("Mira Vale", incomingFixtures.artists).map(
-			(artist) => artist.id,
+		searchMatchingReleases(
+			"Mira Vale & Arden Trio",
+			[credited],
+			incomingFixtures.artists,
 		),
-	).toContain("mira");
+	).toEqual([credited]);
+});
+
+it("pages search results with a default size of ten", () => {
 	expect(
 		matchingPage(
 			Array.from({ length: 21 }, (_, index) => index),
@@ -45,30 +71,4 @@ it("searches fixture artists and pages results with a default size of ten", () =
 		page: 1,
 		pageCount: 3,
 	});
-});
-
-it("matches only a fixture-native identity and explains unavailable MusicBrainz identities", () => {
-	const native = findExactMatchingIdentity(
-		"release",
-		"p-north",
-		incomingFixtures.artists,
-		providerReleases,
-	);
-	expect(native.items.map((release) => release.id)).toEqual(["p-north"]);
-	const unavailableMBID = findExactMatchingIdentity(
-		"release",
-		"00000000-0000-4000-8000-000000000001",
-		incomingFixtures.artists,
-		providerReleases,
-	);
-	expect(unavailableMBID.items).toEqual([]);
-	expect(unavailableMBID.message).toMatch(/нет MusicBrainz MBID\/URL/);
-	const unavailableURL = findExactMatchingIdentity(
-		"release",
-		"https://musicbrainz.org/release/00000000-0000-4000-8000-000000000001",
-		incomingFixtures.artists,
-		providerReleases,
-	);
-	expect(unavailableURL.items).toEqual([]);
-	expect(unavailableURL.message).toMatch(/нет MusicBrainz MBID\/URL/);
 });

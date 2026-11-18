@@ -52,6 +52,48 @@
   }
 }
 
+/*
+ * Mid-size desktop: keep the position list and the free-file rail paired side
+ * by side so the two halves of one assignment operation stay in view. Search
+ * moves to a full-width row above the pair and the inspector keeps a full-width
+ * row below it. Bound the two lists together so files at the bottom of either
+ * list never push the other drop targets out of the working area.
+ */
+@media (1024px <= width < 1400px) {
+  .incoming-matching-workspace {
+    grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  }
+
+  .incoming-matching-workspace > [data-matching-candidates],
+  .incoming-matching-workspace > [data-matching-inspector] {
+    grid-column: 1 / -1;
+  }
+
+  .incoming-matching-workspace > [data-matching-positions] {
+    grid-column: 1;
+  }
+
+  .incoming-matching-workspace > [data-matching-sources] {
+    grid-column: 2;
+  }
+
+  .incoming-matching-workspace > [data-matching-positions],
+  .incoming-matching-workspace > [data-matching-sources] {
+    min-height: 0;
+    max-height: clamp(340px, 66dvh, 680px);
+    overflow-y: auto;
+  }
+
+  .incoming-matching-workspace .matching-board-sources {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .incoming-matching-workspace .matching-board-source-status {
+    margin-top: auto;
+  }
+}
+
 .incoming-screen input,
 .incoming-screen select,
 .incoming-screen textarea {

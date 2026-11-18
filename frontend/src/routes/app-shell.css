@@ -241,9 +241,9 @@
   padding: 12px;
 }
 
+/* Navigation and the skip link can focus this landmark, not a control. */
 .app-content:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline: none;
 }
 
 .app-content > :first-child {

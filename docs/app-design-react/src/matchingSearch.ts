@@ -1,11 +1,73 @@
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import { normalized } from "./incomingModel";
-import type { Locale } from "./i18n/types";
-import { matchingSearchPickerMessages } from "./matchingSearchPickerMessages";
 
 export const DEFAULT_MATCHING_PAGE_SIZE = 10;
 
-export type MatchingSearchEntity = "artist" | "release";
+export type MatchingEditionDetails = {
+	date?: string;
+	country?: string;
+	trackCount: number;
+	formats: string[];
+	mediaCount: number;
+	labels: { name?: string; catalogNumber?: string }[];
+};
+
+const present = (value: unknown) => {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text || undefined;
+};
+
+/** Only describe release values present in the source data; never synthesize edition fields. */
+export function matchingEditionDetails(
+	release: OriginalRelease,
+): MatchingEditionDetails {
+	const media = Array.isArray(release.media) ? release.media : [];
+	const formats = [
+		...new Set(
+			media
+				.map((item) => present(item.format))
+				.filter((format): format is string => Boolean(format)),
+		),
+	];
+	const name = present(release.metadata?.label) ?? present(release.label);
+	const catalogNumber =
+		present(release.metadata?.catalogNumber) ?? present(release.catalog);
+	const date = present(release.metadata?.date) ?? present(release.year);
+	const country =
+		present(release.metadata?.country) ?? present(release.country);
+	return {
+		...(date ? { date } : {}),
+		...(country ? { country } : {}),
+		trackCount: release.tracks.length,
+		formats,
+		mediaCount: media.length,
+		labels:
+			name || catalogNumber
+				? [
+						{
+							...(name ? { name } : {}),
+							...(catalogNumber ? { catalogNumber } : {}),
+						},
+					]
+				: [],
+	};
+}
+
+/** Ordered release credits, including join phrases, when the fixture provides them. */
+export function matchingArtistCredit(
+	release: OriginalRelease,
+	artists: CatalogArtist[],
+) {
+	const credit = (release.credits ?? [])
+		.map(
+			(entry) =>
+				`${present(entry.credit) ?? present(entry.name) ?? ""}${entry.joinPhrase ?? ""}`,
+		)
+		.join("")
+		.trim();
+	if (credit) return credit;
+	return artists.find((artist) => artist.id === release.artistId)?.name ?? "";
+}
 
 export function matchingPage<T>(
 	items: T[],
@@ -22,18 +84,11 @@ export function matchingPage<T>(
 	};
 }
 
-export function searchMatchingArtists(query: string, artists: CatalogArtist[]) {
-	const terms = normalized(query).split(" ").filter(Boolean);
-	if (!terms.length) return [];
-	return artists.filter((artist) =>
-		terms.every((term) =>
-			normalized(
-				`${artist.name} ${artist.sortName ?? ""} ${artist.disambiguation ?? ""} ${artist.id}`,
-			).includes(term),
-		),
-	);
-}
-
+/**
+ * One freeform artist-and-title query. Every token must occur in the ordered
+ * artist credit, the release title, or an available public edition detail.
+ * Internal catalog and provider identities are never searchable display data.
+ */
 export function searchMatchingReleases(
 	query: string,
 	releases: OriginalRelease[],
@@ -42,103 +97,19 @@ export function searchMatchingReleases(
 	const terms = normalized(query).split(" ").filter(Boolean);
 	if (!terms.length) return [];
 	return releases.filter((release) => {
-		const artist =
-			artists.find((item) => item.id === release.artistId)?.name ?? "";
-		return terms.every((term) =>
-			normalized(
-				`${release.title} ${artist} ${release.catalog} ${release.id} ${release.providerId ?? ""} ${release.year}`,
-			).includes(term),
+		const details = matchingEditionDetails(release);
+		const searchable = normalized(
+			[
+				matchingArtistCredit(release, artists),
+				release.title,
+				details.date,
+				details.country,
+				...details.formats,
+				...details.labels.flatMap((label) => [label.name, label.catalogNumber]),
+			]
+				.filter(Boolean)
+				.join(" "),
 		);
+		return terms.every((term) => searchable.includes(term));
 	});
-}
-
-export type ExactIdentityResult<T> = {
-	items: T[];
-	message: string;
-};
-
-export type ExactIdentityMessageKey =
-	| "enterIdentity"
-	| "identityNoMatch"
-	| "identityNoData"
-	| "identityNameNoMatch";
-
-const mbidPattern =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function musicBrainzMBID(value: string, entity: MatchingSearchEntity) {
-	if (mbidPattern.test(value)) return value;
-	try {
-		const url = new URL(value);
-		if (
-			!new Set(["http:", "https:"]).has(url.protocol) ||
-			!new Set(["musicbrainz.org", "www.musicbrainz.org"]).has(url.hostname)
-		)
-			return null;
-		const segments = url.pathname.split("/").filter(Boolean);
-		const resourceType = segments[0];
-		const id = segments[1];
-		return segments.length === 2 &&
-			resourceType === entity &&
-			typeof id === "string" &&
-			mbidPattern.test(id)
-			? id
-			: null;
-	} catch {
-		return null;
-	}
-}
-
-/** Match only identity values actually present in fixture data; never infer IDs from names. */
-export function findExactMatchingIdentity(
-	entity: MatchingSearchEntity,
-	query: string,
-	artists: CatalogArtist[],
-	releases: OriginalRelease[],
-	locale: Locale = "ru",
-): ExactIdentityResult<CatalogArtist | OriginalRelease> {
-	const value = query.trim();
-	if (!value)
-		return {
-			items: [],
-			message: matchingSearchPickerMessages[locale].enterIdentity,
-		};
-
-	const pool = entity === "artist" ? artists : releases;
-	const mbid = musicBrainzMBID(value, entity);
-	const matches = pool.filter((item) => {
-		const identities = [item.id];
-		if (entity === "release")
-			identities.push((item as OriginalRelease).providerId ?? "");
-		return identities.some(
-			(identity) =>
-				identity !== "" &&
-				(mbid
-					? mbidPattern.test(identity) &&
-						identity.toLocaleLowerCase() === mbid.toLocaleLowerCase()
-					: identity.toLocaleLowerCase() === value.toLocaleLowerCase()),
-		);
-	});
-	if (matches.length) return { items: matches, message: "" };
-
-	const hasFixtureMBID = pool.some((item) =>
-		[
-			item.id,
-			...(entity === "release"
-				? [(item as OriginalRelease).providerId ?? ""]
-				: []),
-		].some((identity) => mbidPattern.test(identity)),
-	);
-	const messageKey: ExactIdentityMessageKey =
-		mbid ||
-		value.toLocaleLowerCase().includes("musicbrainz.org") ||
-		/^[0-9a-f-]{36}$/i.test(value)
-			? hasFixtureMBID
-				? "identityNoMatch"
-				: "identityNoData"
-			: "identityNameNoMatch";
-	return {
-		items: [],
-		message: matchingSearchPickerMessages[locale][messageKey],
-	};
 }

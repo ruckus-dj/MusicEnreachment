@@ -450,7 +450,12 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   const evidence = screen.getByRole("region", {
     name: "Доказательства текущей оценки",
   });
-  expect(within(evidence).getAllByText("0.87")).toHaveLength(2);
+  expect(
+    within(evidence)
+      .getAllByText("87%")
+      .filter((score) => !score.closest("details")),
+  ).toHaveLength(1);
+  expect(evidence).not.toHaveTextContent("0.87");
   fireEvent.click(within(evidence).getByText("Исходные теги файла"));
   const rawTagsPre = within(evidence).getByText(/"ALBUM"/);
   expect(rawTagsPre.tagName).toBe("PRE");
@@ -489,7 +494,11 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   const currentEvidence = screen.getByRole("region", {
     name: "Current evaluation evidence",
   });
-  expect(currentEvidence).toHaveTextContent("0.87");
+  expect(
+    within(currentEvidence)
+      .getAllByText("87%")
+      .filter((score) => !score.closest("details")),
+  ).toHaveLength(1);
   const currentRawTagsPre = within(currentEvidence).getByText(/"ALBUM"/);
   expect(currentRawTagsPre.tagName).toBe("PRE");
   expect(JSON.parse(currentRawTagsPre.textContent ?? "")).toEqual({
@@ -661,13 +670,17 @@ describe("incoming manual group review", () => {
     ).toBeInTheDocument();
   });
 
-  it("inspects a file and position without changing assignment drafts", async () => {
+  it("does not compare a free file with an unrelated position or change the draft", async () => {
     setup(review(), "ru", undefined, false, {
       view: "matching",
       groupId: ids.group,
     });
     await chooseRelease();
 
+    const inspector = within(screen.getByRole("region", { name: "Осмотр" }));
+    const prompt =
+      "Выберите файл в позиции релиза, чтобы увидеть совпадение для этой пары.";
+    expect(inspector.getByText(prompt)).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: "Выбрать folder/02.flac" }),
     );
@@ -678,10 +691,14 @@ describe("incoming manual group review", () => {
     );
 
     expect(
-      screen.getByRole("heading", {
-        name: "Осмотр: folder/02.flac · Диск 2 · трек 2 · Открытие (повтор записи)",
+      inspector.getByText("Диск 2 · трек 2 · Открытие (повтор записи)"),
+    ).toBeVisible();
+    expect(inspector.getByText(prompt)).toBeVisible();
+    expect(
+      inspector.queryByRole("region", {
+        name: "Доказательства текущей оценки",
       }),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: /Снять .* с позиции/,

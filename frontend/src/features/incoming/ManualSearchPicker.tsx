@@ -31,16 +31,20 @@ type Props = {
 type PickerItem = {
   id: string;
   title: string;
+  artistCredit?: string;
   disambiguation?: string;
+  date?: string;
+  country?: string;
+  trackCount?: number;
+  formats: string[];
+  mediaCount: number;
+  labels: { name?: string; catalogNumber?: string }[];
   score?: number;
 };
 type GroupState = {
-  entity: "artist" | "release";
   query: string;
   limit: string;
   offset: number;
-  artistId?: string;
-  artistName?: string;
   body?: ManualPickerSearchBody;
   operationId?: string;
   admitting?: boolean;
@@ -58,19 +62,98 @@ class ManualPickerMessageError extends Error {
 const canonicalMBID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function parseItems(
-  payload: unknown,
-  entity: "artist" | "release",
-  browsingArtist: boolean,
-  offset: number,
-  limit: number,
-) {
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown) {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : undefined;
+}
+
+function parseArtistCredit(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  let credit = "";
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      return undefined;
+    const record = entry as Record<string, unknown>;
+    const artist = record.artist;
+    const name =
+      nonEmptyString(record.name) ??
+      (artist && typeof artist === "object" && !Array.isArray(artist)
+        ? nonEmptyString((artist as Record<string, unknown>).name)
+        : undefined);
+    if (!name) return undefined;
+    credit += name;
+    if (typeof record.joinphrase === "string") credit += record.joinphrase;
+  }
+  return credit.trim() || undefined;
+}
+
+function parseMedia(value: unknown) {
+  if (!Array.isArray(value)) return { formats: [], mediaCount: 0 };
+  const formats: string[] = [];
+  let mediaCount = 0;
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    mediaCount += 1;
+    const format = nonEmptyString((entry as Record<string, unknown>).format);
+    if (format && !formats.includes(format)) formats.push(format);
+  }
+  return { formats, mediaCount };
+}
+
+function sumMediaTracks(value: unknown) {
+  if (!Array.isArray(value) || !value.length) return undefined;
+  let total = 0;
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      return undefined;
+    const count = nonNegativeInteger(
+      (entry as Record<string, unknown>)["track-count"],
+    );
+    if (count === undefined) return undefined;
+    total += count;
+  }
+  return Number.isSafeInteger(total) ? total : undefined;
+}
+
+function parseLabels(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const labels: { name?: string; catalogNumber?: string }[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const label = record.label;
+    const name =
+      label && typeof label === "object" && !Array.isArray(label)
+        ? nonEmptyString((label as Record<string, unknown>).name)
+        : undefined;
+    const catalogNumber = nonEmptyString(record["catalog-number"]);
+    if (name || catalogNumber)
+      labels.push({
+        ...(name ? { name } : {}),
+        ...(catalogNumber ? { catalogNumber } : {}),
+      });
+  }
+  return labels;
+}
+
+function labelText(label: { name?: string; catalogNumber?: string }) {
+  if (label.name && label.catalogNumber)
+    return `${label.name} (${label.catalogNumber})`;
+  return label.name ?? label.catalogNumber ?? "";
+}
+
+function parseItems(payload: unknown, offset: number, limit: number) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     throw new ManualPickerMessageError("invalidResults");
   const record = payload as Record<string, unknown>;
-  const count = record[browsingArtist ? "release-count" : "count"];
-  const resultOffset = record[browsingArtist ? "release-offset" : "offset"];
-  const rawItems = record[entity === "artist" ? "artists" : "releases"];
+  const count = record.count;
+  const resultOffset = record.offset;
+  const rawItems = record.releases;
   if (
     !Array.isArray(rawItems) ||
     !Number.isInteger(count) ||
@@ -87,7 +170,7 @@ function parseItems(
       throw new ManualPickerMessageError("invalidResults");
     const value = item as Record<string, unknown>;
     const id = value.id;
-    const title = entity === "artist" ? value.name : value.title;
+    const title = value.title;
     if (
       typeof id !== "string" ||
       !canonicalMBID.test(id) ||
@@ -99,12 +182,24 @@ function parseItems(
     )
       throw new ManualPickerMessageError("invalidResults");
     seen.add(id);
+    const artistCredit = parseArtistCredit(value["artist-credit"]);
+    const disambiguation = nonEmptyString(value.disambiguation);
+    const date = nonEmptyString(value.date);
+    const country = nonEmptyString(value.country);
+    const trackCount =
+      nonNegativeInteger(value["track-count"]) ?? sumMediaTracks(value.media);
+    const media = parseMedia(value.media);
     return {
       id,
       title,
-      ...(typeof value.disambiguation === "string"
-        ? { disambiguation: value.disambiguation }
-        : {}),
+      ...(artistCredit ? { artistCredit } : {}),
+      ...(disambiguation ? { disambiguation } : {}),
+      ...(date ? { date } : {}),
+      ...(country ? { country } : {}),
+      ...(trackCount !== undefined ? { trackCount } : {}),
+      formats: media.formats,
+      mediaCount: media.mediaCount,
+      labels: parseLabels(value["label-info"]),
       ...(typeof value.score === "number" ? { score: value.score } : {}),
     };
   });
@@ -131,7 +226,6 @@ export function ManualSearchPicker({
   >({});
   const refreshers = useRef<Record<string, () => Promise<void>>>({});
   const state = states[groupId] ?? {
-    entity: "artist",
     query: "",
     limit: "10",
     offset: 0,
@@ -166,13 +260,7 @@ export function ManualSearchPicker({
           typeof body.limit !== "number"
         )
           throw new ManualPickerMessageError("searchParametersFailed");
-        return parseItems(
-          response.data.payload,
-          body.artist_id ? "release" : body.entity,
-          Boolean(body.artist_id),
-          body.offset,
-          body.limit,
-        );
+        return parseItems(response.data.payload, body.offset, body.limit);
       },
     })),
   });
@@ -189,29 +277,55 @@ export function ManualSearchPicker({
           operation.state === "running")),
   );
   const requestBody = state.body;
-  const requestEntity = requestBody?.artist_id
-    ? "release"
-    : requestBody?.entity;
   const resultIsCurrent = Boolean(
     requestBody &&
       requestBody.expected_group_revision === groupRevision &&
       requestBody.limit === pageLimit &&
-      requestBody.entity === (state.artistId ? "artist" : state.entity) &&
-      requestBody.query === state.query &&
-      requestBody.artist_id === state.artistId,
+      requestBody.offset === state.offset &&
+      requestBody.entity === "release" &&
+      requestBody.query === state.query,
   );
   const parsed =
     resultQuery?.data && resultIsCurrent ? resultQuery.data : undefined;
 
-  async function submit(
-    offset = state.offset,
-    artistId = state.artistId,
-    override?: {
-      entity: "artist" | "release";
-      query: string;
-      artistName?: string;
-    },
-  ) {
+  function editionDetails(item: PickerItem) {
+    const formats = item.formats.join(" / ");
+    const media =
+      item.mediaCount > 1
+        ? [formats, message("discCount", { count: item.mediaCount })]
+            .filter(Boolean)
+            .join(" · ")
+        : formats;
+    return [
+      item.date ? message("releaseDate", { date: item.date }) : undefined,
+      item.country
+        ? message("releaseCountry", { country: item.country })
+        : undefined,
+      item.trackCount !== undefined
+        ? message("releaseTracks", { count: item.trackCount })
+        : undefined,
+      media ? message("releaseFormats", { formats: media }) : undefined,
+      item.labels.length
+        ? message("releaseLabels", {
+            labels: item.labels.map(labelText).join(", "),
+          })
+        : undefined,
+      item.score !== undefined
+        ? message("score", { score: item.score })
+        : undefined,
+    ].filter((detail): detail is string => Boolean(detail));
+  }
+
+  function chooseLabel(item: PickerItem) {
+    const details = [item.artistCredit, ...editionDetails(item)]
+      .filter(Boolean)
+      .join(", ");
+    return details
+      ? message("selectReleaseDescribed", { title: item.title, details })
+      : message("selectReleaseTitled", { title: item.title });
+  }
+
+  async function submit(offset = state.offset) {
     if (
       !state.query.trim() ||
       !Number.isInteger(pageLimit) ||
@@ -221,35 +335,29 @@ export function ManualSearchPicker({
       disabled
     )
       return;
-    const entity = override?.entity ?? state.entity;
-    const query = override?.query ?? state.query;
     let body = state.body;
     if (
       !body ||
       body.expected_group_revision !== groupRevision ||
       body.limit !== pageLimit ||
       body.offset !== offset ||
-      body.query !== query ||
-      body.entity !== (artistId ? "artist" : entity) ||
-      body.artist_id !== artistId
+      body.entity !== "release" ||
+      body.query !== state.query
     ) {
       body = {
-        entity: artistId ? "artist" : entity,
-        query,
+        entity: "release",
+        query: state.query,
         expected_group_revision: groupRevision,
         offset,
         limit: pageLimit,
         request_id: crypto.randomUUID(),
-        ...(artistId ? { artist_id: artistId } : {}),
       };
     }
     setStates((current) => ({
       ...current,
       [groupId]: {
         ...state,
-        ...(override ? { entity, query, artistName: override.artistName } : {}),
         offset,
-        artistId,
         body,
         admitting: true,
         error: undefined,
@@ -371,33 +479,6 @@ export function ManualSearchPicker({
       </h2>
       <p className="mt-1 text-sm">{message("searchDescription")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <label className="sr-only" htmlFor="manual-search-entity">
-          {message("searchType")}
-        </label>
-        <select
-          id="manual-search-entity"
-          className="rounded border border-stone-400 p-2"
-          value={state.entity}
-          disabled={pending || disabled}
-          onChange={(event) =>
-            setStates((current) => ({
-              ...current,
-              [groupId]: {
-                ...state,
-                entity: event.target.value as "artist" | "release",
-                artistId: undefined,
-                artistName: undefined,
-                offset: 0,
-                error: undefined,
-                errorKey: undefined,
-                errorStatus: undefined,
-              },
-            }))
-          }
-        >
-          <option value="artist">{message("artists")}</option>
-          <option value="release">{message("releases")}</option>
-        </select>
         <label className="sr-only" htmlFor="manual-search-query">
           {message("searchQuery")}
         </label>
@@ -412,8 +493,6 @@ export function ManualSearchPicker({
               [groupId]: {
                 ...state,
                 query: event.target.value,
-                artistId: undefined,
-                artistName: undefined,
                 offset: 0,
                 error: undefined,
                 errorKey: undefined,
@@ -462,11 +541,6 @@ export function ManualSearchPicker({
           {message("search")}
         </AppButton>
       </div>
-      {state.artistId ? (
-        <p className="mt-2 text-sm">
-          {message("artistReleases", { artist: state.artistName ?? "" })}
-        </p>
-      ) : null}
       {pending ? (
         <p role="status" className="mt-2">
           {message("searching")}
@@ -505,55 +579,41 @@ export function ManualSearchPicker({
               {message("noMatches")}
             </p>
           ) : (
-            <ul className="mt-3 space-y-2">
-              {parsed.items.map((item) => (
-                <li
-                  key={item.id}
-                  className="rounded border border-stone-200 p-3"
-                >
-                  <p className="font-medium">{item.title}</p>
-                  {item.disambiguation ? (
-                    <p className="text-sm">{item.disambiguation}</p>
-                  ) : null}
-                  {item.score !== undefined ? (
-                    <p className="text-sm">
-                      {message("score", { score: item.score })}
-                    </p>
-                  ) : null}
-                  {requestEntity === "artist" ? (
+            <ul className="mt-3 divide-y divide-stone-200 rounded border border-stone-200">
+              {parsed.items.map((item) => {
+                const details = editionDetails(item);
+                return (
+                  <li
+                    key={item.id}
+                    className="flex flex-wrap items-start justify-between gap-3 p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">
+                        <span>{item.title}</span>
+                        {item.disambiguation ? (
+                          <span className="ml-1 text-sm font-normal text-stone-600">
+                            ({item.disambiguation})
+                          </span>
+                        ) : null}
+                      </p>
+                      {item.artistCredit ? (
+                        <p className="text-sm">{item.artistCredit}</p>
+                      ) : null}
+                      {details.length ? (
+                        <p className="mt-1 text-xs text-[var(--muted)] wrap-anywhere">
+                          {details.join(" · ")}
+                        </p>
+                      ) : null}
+                    </div>
                     <AppButton
-                      onPress={() => {
-                        setStates((current) => ({
-                          ...current,
-                          [groupId]: {
-                            ...state,
-                            entity: "release",
-                            query: item.title,
-                            artistId: item.id,
-                            artistName: item.title,
-                            offset: 0,
-                            body: undefined,
-                            error: undefined,
-                            errorKey: undefined,
-                            errorStatus: undefined,
-                          },
-                        }));
-                        void submit(0, item.id, {
-                          entity: "release",
-                          query: item.title,
-                          artistName: item.title,
-                        });
-                      }}
+                      aria-label={chooseLabel(item)}
+                      onPress={() => onSelectRelease(item.id)}
                     >
-                      {message("browseArtistReleases")}
-                    </AppButton>
-                  ) : (
-                    <AppButton onPress={() => onSelectRelease(item.id)}>
                       {message("selectRelease")}
                     </AppButton>
-                  )}
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
           <div className="mt-3 flex items-center gap-2">

@@ -761,18 +761,19 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
 
   const inspectedFileMemberId = memberIds.includes(inspectedMemberId)
     ? inspectedMemberId
-    : (memberIds[0] ?? "");
-  const inspectedPosition =
-    release?.positions?.find(
-      (position) => position.track_id === inspectedTrackId,
-    ) ??
-    [...(release?.positions ?? [])].sort(
-      (a, b) => a.medium - b.medium || a.position - b.position,
-    )[0];
+    : "";
+  const inspectedPosition = release?.positions?.find(
+    (position) => position.track_id === inspectedTrackId,
+  );
   const inspectedFile = groupFiles.find(
     (file) => file.variant_id === inspectedFileMemberId,
   );
   const inspectedSavedFacts = proposalFiles.get(inspectedFileMemberId);
+  const inspectedFileTitle =
+    inspectedSavedFacts?.raw_tags?.TITLE?.[0] ||
+    inspectedFile?.tags?.TITLE?.[0] ||
+    inspectedFile?.locations?.[0]?.relative_path.split(/[\\/]/).at(-1) ||
+    copy.file;
   const inspectedCandidate = review?.candidates?.find(
     (item) =>
       item.file_member_id === inspectedFileMemberId &&
@@ -955,8 +956,12 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   {copy.authorityHeading}
                 </h2>
                 <p className="mt-1 text-sm">
-                  {copy.modeLabel} <strong>{review.authority_mode}</strong> ·{" "}
-                  {copy.revisionLabel} <code>{review.authority_revision}</code>
+                  {copy.modeLabel}{" "}
+                  <strong>
+                    {review.authority_mode === "manual"
+                      ? copy.manualMatching
+                      : copy.automaticMatching}
+                  </strong>
                 </p>
                 <p className="mt-1 text-sm">
                   {copy.savedEvaluationExplanation}
@@ -1085,12 +1090,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     </>
                   ) : null}
                   <h3 className="font-medium">{copy.savedEvaluation}</h3>
-                  <p className="text-sm">
-                    {copy.reviewRevisionParticipants(
-                      review.evaluation_revision || copy.unknown,
-                      memberIds.length,
-                    )}
-                  </p>
                   <label className="block text-sm font-medium">
                     {copy.releaseSelectionLabel}
                     <select
@@ -1214,9 +1213,24 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     onUnassign={(memberId) => assign(memberId, "")}
                     onInspectPosition={(trackId) => {
                       setInspectedTrackId(trackId);
+                      const assigned = memberIds.filter(
+                        (id) => assignmentsByMember[id] === trackId,
+                      );
+                      setInspectedMemberId((current) =>
+                        assigned.includes(current)
+                          ? current
+                          : assigned.length === 1
+                            ? assigned[0]
+                            : "",
+                      );
                     }}
                     onInspectSource={(memberId) => {
                       setInspectedMemberId(memberId);
+                      setInspectedTrackId(assignmentsByMember[memberId] ?? "");
+                    }}
+                    onInspectPair={(memberId, trackId) => {
+                      setInspectedMemberId(memberId);
+                      setInspectedTrackId(trackId);
                     }}
                     renderPositionMeta={({ position }) => (
                       <details className="mt-1">
@@ -1301,23 +1315,32 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
                     <h2 id="matching-inspector-title" className="font-semibold">
                       {copy.inspectorLabel}
-                      {": "}
-                      {inspectedFileMemberId
-                        ? fileLabel(
-                            inspectedFileMemberId,
-                            memberIds.indexOf(inspectedFileMemberId),
-                          )
-                        : copy.inspectorFileMissing}
-                      {inspectedPosition
-                        ? ` · ${positionLabel(inspectedPosition, copy)}`
-                        : ""}
                     </h2>
-                    <MatchingEvidenceInspector
-                      candidate={inspectedCandidate}
-                      rawTags={
-                        inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
-                      }
-                    />
+                    {inspectedFileMemberId || inspectedPosition ? (
+                      <p className="mt-1 text-sm wrap-anywhere">
+                        {[
+                          inspectedFileMemberId ? inspectedFileTitle : "",
+                          inspectedPosition
+                            ? positionLabel(inspectedPosition, copy)
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" → ")}
+                      </p>
+                    ) : null}
+                    {inspectedFileMemberId && inspectedPosition ? (
+                      <MatchingEvidenceInspector
+                        candidate={inspectedCandidate}
+                        position={inspectedPosition}
+                        rawTags={
+                          inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
+                        }
+                      />
+                    ) : (
+                      <p className="mt-2 text-sm text-[var(--muted)]">
+                        {copy.inspectAssignment}
+                      </p>
+                    )}
                   </div>
                   <aside
                     data-matching-actions
@@ -1458,10 +1481,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     ).length ?? 0,
                     currentPreview.omitted_member_ids?.length ?? 0,
                   )}
-                </p>
-                <p className="text-sm">
-                  {copy.previewDigest}{" "}
-                  <code>{currentPreview.preview_digest}</code>
                 </p>
                 <div className="mt-3">
                   <AppButton

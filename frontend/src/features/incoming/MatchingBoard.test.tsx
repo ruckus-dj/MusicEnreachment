@@ -133,6 +133,36 @@ it("shows manual assignments, saved automatic facts, and release-scoped scores",
   expect(onInspectPosition).toHaveBeenLastCalledWith("track-1");
 });
 
+it("prefers paired inspection over the separate source and position handlers", () => {
+  const onInspectPair = vi.fn();
+  const onInspectPosition = vi.fn();
+  const onInspectSource = vi.fn();
+  render(
+    <I18nProvider>
+      <MatchingBoard
+        groupId="group-1"
+        release={release}
+        members={["member-1", "member-2", "member-3"]}
+        sources={sources}
+        assignments={{}}
+        automaticAssignments={automaticAssignments}
+        onAssign={vi.fn()}
+        onInspectPosition={onInspectPosition}
+        onInspectSource={onInspectSource}
+        onInspectPair={onInspectPair}
+      />
+    </I18nProvider>,
+  );
+
+  const first = positionRow("First");
+  fireEvent.click(
+    within(first).getByRole("button", { name: /Saved automatic/ }),
+  );
+  expect(onInspectPair).toHaveBeenCalledWith("member-1", "track-1");
+  expect(onInspectSource).not.toHaveBeenCalled();
+  expect(onInspectPosition).not.toHaveBeenCalled();
+});
+
 it("assigns from the free source rail without dragging", () => {
   const onAssign = vi.fn();
   const onUnassign = vi.fn();

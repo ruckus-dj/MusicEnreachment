@@ -454,6 +454,9 @@ export function MatchingScreen({
 				),
 			).size > 1,
 	);
+	const pairMethod = assignment?.method.startsWith("Вручную")
+		? matchingMessage(locale, "manual")
+		: "";
 	const bindRecording = (recordingId: string) => {
 		const item = assignments[String(state.recordingTarget)];
 		if (!item) {
@@ -548,9 +551,9 @@ export function MatchingScreen({
 						: `${target.year ?? ""} · ${target.country ?? ""} · ${target.catalog ?? ""}`}
 				</span>
 			</div>
-			<div className="matching-layout grid grid-cols-[minmax(220px,.72fr)_minmax(450px,2.1fr)_minmax(220px,.78fr)] items-start gap-3 max-[1250px]:grid-cols-[minmax(200px,.72fr)_minmax(0,1.8fr)] max-[800px]:grid-cols-1 min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))] min-[1400px]:items-stretch">
+			<div className="matching-layout grid grid-cols-1 items-start gap-3 min-[1024px]:max-[1400px]:grid-cols-[minmax(0,1.6fr)_minmax(260px,1fr)] min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:grid-cols-[minmax(220px,.72fr)_minmax(450px,2.1fr)_minmax(220px,.78fr)] min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))] min-[1400px]:items-stretch">
 				<section
-					className={`matching-candidates ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-1 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:max-h-none min-[1400px]:min-h-0 min-[1400px]:max-h-none`}
+					className={`matching-candidates ${surfacePanel} min-[1024px]:max-[1400px]:col-span-2 min-[1024px]:max-[1400px]:row-start-1 min-[1400px]:sticky min-[1400px]:top-[10px] min-[1400px]:min-h-0 min-[1400px]:overflow-auto`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "findRelease")}
@@ -579,7 +582,7 @@ export function MatchingScreen({
 					</Button>
 				</section>
 				<section
-					className={`matching-target ${surfacePanel} max-[1250px]:row-span-2 max-[1250px]:col-start-2 max-[800px]:row-auto max-[800px]:col-auto min-[1400px]:min-h-0 min-[1400px]:max-h-none min-[1400px]:overflow-y-auto`}
+					className={`matching-target ${surfacePanel} min-[1024px]:overflow-y-auto min-[1024px]:max-[1400px]:col-start-1 min-[1024px]:max-[1400px]:row-start-2 min-[1024px]:max-[1400px]:max-h-[clamp(340px,66dvh,680px)] min-[1400px]:min-h-0 min-[1400px]:max-h-none`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "positionCount", {
@@ -820,7 +823,7 @@ export function MatchingScreen({
 					<p>{matchingMessage(locale, "matchingDisclaimer")}</p>
 				</section>
 				<section
-					className={`matching-pool ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-2 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:row-auto max-[800px]:col-auto max-[800px]:max-h-none min-[1400px]:min-h-0 min-[1400px]:max-h-none`}
+					className={`matching-pool ${surfacePanel} min-[1024px]:overflow-y-auto min-[1024px]:max-[1400px]:col-start-2 min-[1024px]:max-[1400px]:row-start-2 min-[1024px]:max-[1400px]:max-h-[clamp(340px,66dvh,680px)] min-[1400px]:sticky min-[1400px]:top-[10px] min-[1400px]:min-h-0`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "poolTitle", { count: pool.length })}
@@ -833,13 +836,38 @@ export function MatchingScreen({
 					<p>{matchingMessage(locale, "poolInstructions")}</p>
 				</section>
 				<section
-					className={`matching-inspector ${surfacePanel} mt-3 max-[1399px]:col-span-full min-[1400px]:col-span-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto`}
+					className={`matching-inspector ${surfacePanel} mt-3 max-[1400px]:col-span-full min-[1400px]:col-span-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "inspectorTitle", {
 							track: String(inspected.title),
 						})}
 					</h2>
+					<div
+						className="matching-pair mb-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-2.5 py-2"
+						data-matching-pair
+					>
+						<div className="min-w-0">
+							<span className="block text-[10px] font-semibold tracking-[.03em] text-[var(--muted)] uppercase">
+								{matchingMessage(locale, "selectedPair")}
+							</span>
+							<strong className="block truncate text-xs">
+								{matchingMessage(locale, "pairPosition", {
+									position: String(inspected.position).padStart(2, "0"),
+									title: String(inspected.title),
+								})}
+							</strong>
+							<span className="block truncate text-[10px] text-[var(--muted)]">
+								{selectedFile?.name ?? matchingMessage(locale, "noFile")}
+							</span>
+						</div>
+						<span className="text-xs text-[var(--muted)]">
+							{pairMethod ? `${pairMethod} · ` : ""}
+							{matchingMessage(locale, "pairConfidence", {
+								value: matchingMessage(locale, "pairConfidenceNone"),
+							})}
+						</span>
+					</div>
 					<Tabs
 						className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
 						selectedKey={state.inspector}
@@ -947,7 +975,6 @@ export function MatchingScreen({
 								<Evidence
 									file={selectedFile}
 									track={inspected}
-									assignment={assignment}
 									providerArtists={artists}
 									locale={locale}
 								/>
@@ -1150,13 +1177,11 @@ export function MatchingScreen({
 function Evidence({
 	file,
 	track,
-	assignment,
 	providerArtists,
 	locale,
 }: {
 	file?: SourceFile;
 	track: OriginalTrack;
-	assignment?: Assignment;
 	providerArtists: CatalogArtist[];
 	locale: import("./i18n/types").Locale;
 }) {
@@ -1169,83 +1194,82 @@ function Evidence({
 			: matchingMessage(locale, "differs");
 	return (
 		<>
-			<p>
-				{assignment?.method.startsWith("Вручную")
-					? matchingMessage(locale, "assignedByOperator")
-					: file.confidence === "high"
-						? matchingMessage(locale, "illustrativeHighConfidence")
-						: matchingMessage(locale, "illustrativeLowConfidence")}
-			</p>
 			<strong>{matchingMessage(locale, "numericScoreNotCalculated")}</strong>
-			<div className={comparisonTableWrap}>
-				<table className={table}>
-					<thead>
-						<tr>
-							<th>{matchingMessage(locale, "evidenceFeature")}</th>
-							<th>{matchingMessage(locale, "sourceValue")}</th>
-							<th>{matchingMessage(locale, "candidateValue")}</th>
-							<th>{matchingMessage(locale, "resultDifference")}</th>
-							<th>{matchingMessage(locale, "weightContribution")}</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr>
-							<th>{matchingMessage(locale, "trackTitle")}</th>
-							<td>{rawTitle}</td>
-							<td>{String(track.title)}</td>
-							<td>{compare(rawTitle, String(track.title))}</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-						<tr>
-							<th>{matchingMessage(locale, "artist")}</th>
-							<td>{rawArtist}</td>
-							<td>{artistName(String(track.artistId), providerArtists)}</td>
-							<td>
-								{compare(
-									rawArtist,
-									artistName(String(track.artistId), providerArtists),
-								)}
-							</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-						<tr>
-							<th>{matchingMessage(locale, "durationFeature")}</th>
-							<td>{duration(file.duration)}</td>
-							<td>{duration(track.duration)}</td>
-							<td>{Number(file.duration) - Number(track.duration)} с</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-						<tr>
-							<th>{matchingMessage(locale, "positionNumber")}</th>
-							<td>{tagValue(file.tags, "TRACKNUMBER")}</td>
-							<td>{String(track.position)}</td>
-							<td>{matchingMessage(locale, "differs")}</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-						<tr>
-							<th>{matchingMessage(locale, "recordingMbid")}</th>
-							<td>{tagValue(file.tags, "MUSICBRAINZ_TRACKID")}</td>
-							<td>
-								{String(
-									track.recordingId ?? matchingMessage(locale, "notSpecified"),
-								)}
-							</td>
-							<td>{matchingMessage(locale, "noMbidEvidence")}</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-						<tr>
-							<th>{matchingMessage(locale, "fingerprint")}</th>
-							<td>
-								{file.fingerprint ??
-									matchingMessage(locale, "noFingerprintResult")}
-							</td>
-							<td>AcoustID / Chromaprint</td>
-							<td>{matchingMessage(locale, "fingerprintNotProof")}</td>
-							<td>{matchingMessage(locale, "notModeled")}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
+			<details className="my-2">
+				<summary className="cursor-pointer">
+					{matchingMessage(locale, "pairDiagnostics")}
+				</summary>
+				<div className={comparisonTableWrap}>
+					<table className={table}>
+						<thead>
+							<tr>
+								<th>{matchingMessage(locale, "evidenceFeature")}</th>
+								<th>{matchingMessage(locale, "sourceValue")}</th>
+								<th>{matchingMessage(locale, "candidateValue")}</th>
+								<th>{matchingMessage(locale, "resultDifference")}</th>
+								<th>{matchingMessage(locale, "weightContribution")}</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<th>{matchingMessage(locale, "trackTitle")}</th>
+								<td>{rawTitle}</td>
+								<td>{String(track.title)}</td>
+								<td>{compare(rawTitle, String(track.title))}</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+							<tr>
+								<th>{matchingMessage(locale, "artist")}</th>
+								<td>{rawArtist}</td>
+								<td>{artistName(String(track.artistId), providerArtists)}</td>
+								<td>
+									{compare(
+										rawArtist,
+										artistName(String(track.artistId), providerArtists),
+									)}
+								</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+							<tr>
+								<th>{matchingMessage(locale, "durationFeature")}</th>
+								<td>{duration(file.duration)}</td>
+								<td>{duration(track.duration)}</td>
+								<td>{Number(file.duration) - Number(track.duration)} с</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+							<tr>
+								<th>{matchingMessage(locale, "positionNumber")}</th>
+								<td>{tagValue(file.tags, "TRACKNUMBER")}</td>
+								<td>{String(track.position)}</td>
+								<td>{matchingMessage(locale, "differs")}</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+							<tr>
+								<th>{matchingMessage(locale, "recordingMbid")}</th>
+								<td>{tagValue(file.tags, "MUSICBRAINZ_TRACKID")}</td>
+								<td>
+									{String(
+										track.recordingId ??
+											matchingMessage(locale, "notSpecified"),
+									)}
+								</td>
+								<td>{matchingMessage(locale, "noMbidEvidence")}</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+							<tr>
+								<th>{matchingMessage(locale, "fingerprint")}</th>
+								<td>
+									{file.fingerprint ??
+										matchingMessage(locale, "noFingerprintResult")}
+								</td>
+								<td>AcoustID / Chromaprint</td>
+								<td>{matchingMessage(locale, "fingerprintNotProof")}</td>
+								<td>{matchingMessage(locale, "notModeled")}</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</details>
 			<p>{matchingMessage(locale, "illustrativeComparison")}</p>
 		</>
 	);

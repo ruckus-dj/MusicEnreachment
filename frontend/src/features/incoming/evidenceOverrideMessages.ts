@@ -3,25 +3,29 @@ import type { Locale } from "../../i18n/locale";
 export const evidenceOverrideMessages = {
   en: {
     missingValue: "not provided",
-    emptyValue: "empty value",
     evidenceLabel: "Current evaluation evidence",
-    evidenceHeading: "Current evaluation evidence",
+    evidenceHeading: "Selected track match",
     evidenceExplanation:
-      "Saved values and their provenance are shown. The interface does not calculate scores or their contributions.",
-    releaseConfidence: "Release confidence (saved)",
-    positionConfidence: (medium: number, track: string | number) =>
-      `Position confidence · Disc ${medium} · track ${track}`,
+      "One saved comparison for the selected file and track. Saved scores are shown as short percentages; nothing is recalculated here.",
+    trackPosition: (disc: number, track: string | number, title?: string) =>
+      `Disc ${disc} · track ${track}${title ? ` · ${title}` : ""}`,
+    matchConfidence: "Match",
+    scoreSummary: (used: number, total: number) =>
+      `Based on ${used} of ${total} saved scoring factors.`,
     missingCandidate: "No candidate exists for this file and release.",
-    rawTags: "Raw file tags",
-    factorsAndProvenance: "Factors and provenance",
-    factor: (index: number) => `Factor ${index}`,
-    edge: (index: number) => `Edge ${index}`,
     noFactors:
       "Factors, weights, and contributions were not saved for this candidate.",
-    missingExplanation:
-      "Missing values are not replaced with calculations; inapplicable factors are shown only when explicitly present in the evaluation data.",
-    releaseProfile: "Release profile",
-    assignmentProfile: "Assignment profile",
+    noPositionEvidence: "No saved comparison exists for this track.",
+    rawTags: "Raw file tags",
+    diagnostics: "Diagnostics for this track",
+    releaseMatch: "Release match",
+    assignmentMatch: "Track match",
+    noAppliedFactors: "No scored factors were saved.",
+    factorsNotApplied: (count: number) =>
+      count === 1
+        ? "1 factor was not scored."
+        : `${count} factors were not scored.`,
+    factorWeight: (weight: number) => `weight ${weight}`,
     tagOverridesLegend: (title: string) => `Track tags · ${title}`,
     tagOverridesExplanation:
       "Provider tags are used unless overridden. Changes here are local metadata edits, not changes to file assignments.",
@@ -37,24 +41,37 @@ export const evidenceOverrideMessages = {
   },
   ru: {
     missingValue: "не указано",
-    emptyValue: "пустое значение",
     evidenceLabel: "Доказательства текущей оценки",
-    evidenceHeading: "Доказательства текущей оценки",
+    evidenceHeading: "Совпадение выбранной позиции",
     evidenceExplanation:
-      "Показаны сохранённые значения и сведения об их происхождении. Числовые оценки и вклад в них интерфейс не рассчитывает.",
-    releaseConfidence: "Уверенность издания (сохранённая)",
-    positionConfidence: (medium: number, track: string | number) =>
-      `Уверенность позиции · Диск ${medium} · трек ${track}`,
+      "Одно сохранённое сравнение выбранного файла и трека. Сохранённые оценки показаны короткими процентами; здесь ничего не пересчитывается.",
+    trackPosition: (disc: number, track: string | number, title?: string) =>
+      `Диск ${disc} · трек ${track}${title ? ` · ${title}` : ""}`,
+    matchConfidence: "Совпадение",
+    scoreSummary: (used: number, total: number) =>
+      `На основе ${used} из ${total} сохранённых факторов оценки.`,
     missingCandidate: "Кандидат для этого файла и издания отсутствует.",
-    rawTags: "Исходные теги файла",
-    factorsAndProvenance: "Факторы и происхождение",
-    factor: (index: number) => `Фактор ${index}`,
-    edge: (index: number) => `Связь ${index}`,
     noFactors: "Факторы, веса и вклад не сохранены для этого кандидата.",
-    missingExplanation:
-      "Отсутствующие значения не заменяются вычислениями; неприменимые факторы отображаются только если они явно указаны в данных оценки.",
-    releaseProfile: "Профиль издания",
-    assignmentProfile: "Профиль назначения",
+    noPositionEvidence: "Сохранённого сравнения для этого трека нет.",
+    rawTags: "Исходные теги файла",
+    diagnostics: "Диагностика по этому треку",
+    releaseMatch: "Совпадение издания",
+    assignmentMatch: "Совпадение трека",
+    noAppliedFactors: "Оценённые факторы не сохранены.",
+    factorsNotApplied: (count: number) => {
+      const remainder10 = count % 10;
+      const remainder100 = count % 100;
+      const noun =
+        remainder10 === 1 && remainder100 !== 11
+          ? "фактор"
+          : remainder10 >= 2 &&
+              remainder10 <= 4 &&
+              (remainder100 < 12 || remainder100 > 14)
+            ? "фактора"
+            : "факторов";
+      return `${count} ${noun} не участвовали в оценке.`;
+    },
+    factorWeight: (weight: number) => `вес ${weight}`,
     tagOverridesLegend: (title: string) => `Теги позиции · ${title}`,
     tagOverridesExplanation:
       "Без переопределения используются теги провайдера. Изменения здесь — локальная ручная правка метаданных, не изменение связей файлов.",
