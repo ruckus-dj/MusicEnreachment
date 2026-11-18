@@ -164,6 +164,33 @@ type LibraryCatalogPositionPage struct {
 	Summary LibraryCatalogSummary
 }
 
+// LibrarySelectionRequest selects real local release positions by parent
+// identity. ArtistIDs match release-level catalog credits only; ReleaseIDs
+// match concrete local releases exactly. Selectors are distinct.
+type LibrarySelectionRequest struct {
+	ArtistIDs    []uuid.UUID
+	ReleaseIDs   []uuid.UUID
+	MaxPositions int
+}
+
+type LibrarySelectionPosition struct {
+	ReleaseID    uuid.UUID
+	PositionID   uuid.UUID
+	Title        string
+	ReleaseTitle string
+	ArtistIDs    []uuid.UUID
+}
+
+type LibrarySelectionResolution struct {
+	Positions []LibrarySelectionPosition
+}
+
+var (
+	ErrLibrarySelectionArtistNotFound  = errors.New("library selection artist not found")
+	ErrLibrarySelectionReleaseNotFound = errors.New("library selection release not found")
+	ErrLibrarySelectionTooBroad        = errors.New("library selection resolves too many positions")
+)
+
 func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, request LibraryCatalogRequest) (LibraryCatalogArtistPage, error) {
 	request = normalizeCatalogAvailability(request)
 	var page LibraryCatalogArtistPage
@@ -393,6 +420,110 @@ func (repository *LibraryRepository) ReadLibraryPositions(ctx context.Context, r
 		return nil
 	})
 	return page, err
+}
+
+// ResolveLibrarySelection reads the real release positions owned by the given
+// parent selectors in one repeatable-read transaction. Artist ownership uses
+// release-level credits only; a position's ArtistIDs therefore lists only
+// requested artists that actually credit its release.
+func (repository *LibraryRepository) ResolveLibrarySelection(ctx context.Context, request LibrarySelectionRequest) (LibrarySelectionResolution, error) {
+	artists := distinctSelectionIDs(request.ArtistIDs)
+	releases := distinctSelectionIDs(request.ReleaseIDs)
+	if request.MaxPositions < 1 {
+		return LibrarySelectionResolution{}, errors.New("library selection position limit is required")
+	}
+	resolution := LibrarySelectionResolution{Positions: []LibrarySelectionPosition{}}
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		if len(artists) > 0 {
+			var found int
+			if err := tx.NewRaw(`SELECT count(*) FROM local_artist WHERE id IN (?) AND catalog_visible IS TRUE`, bun.List(artists)).Scan(ctx, &found); err != nil {
+				return fmt.Errorf("validate library selection artists: %w", err)
+			}
+			if found != len(artists) {
+				return ErrLibrarySelectionArtistNotFound
+			}
+		}
+		if len(releases) > 0 {
+			var found int
+			if err := tx.NewRaw(`SELECT count(*) FROM local_release WHERE id IN (?)`, bun.List(releases)).Scan(ctx, &found); err != nil {
+				return fmt.Errorf("validate library selection releases: %w", err)
+			}
+			if found != len(releases) {
+				return ErrLibrarySelectionReleaseNotFound
+			}
+		}
+		rows := make([]LibrarySelectionPosition, 0, request.MaxPositions)
+		query := `WITH selected_releases AS (
+			SELECT ra.release_id FROM release_artist ra WHERE ra.artist_id IN (?)
+			UNION
+			SELECT r.id FROM local_release r WHERE r.id IN (?)
+		)
+		SELECT rt.id AS position_id,rt.release_id,t.title,r.title AS release_title
+		FROM release_track rt
+		JOIN local_release r ON r.id=rt.release_id
+		JOIN local_track t ON t.id=rt.track_id
+		WHERE rt.release_id IN (SELECT release_id FROM selected_releases)
+		ORDER BY r.id,rt.medium,rt.position,rt.id
+		LIMIT ?`
+		if err := tx.NewRaw(query, bun.List(artists), bun.List(releases), request.MaxPositions+1).Scan(ctx, &rows); err != nil {
+			return fmt.Errorf("resolve library selection positions: %w", err)
+		}
+		if len(rows) > request.MaxPositions {
+			return ErrLibrarySelectionTooBroad
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		releaseIDs := make([]uuid.UUID, 0, len(rows))
+		seenReleases := make(map[uuid.UUID]struct{}, len(rows))
+		for _, row := range rows {
+			if _, ok := seenReleases[row.ReleaseID]; ok {
+				continue
+			}
+			seenReleases[row.ReleaseID] = struct{}{}
+			releaseIDs = append(releaseIDs, row.ReleaseID)
+		}
+		owners := make(map[uuid.UUID][]uuid.UUID, len(releaseIDs))
+		if len(artists) > 0 {
+			type releaseOwner struct {
+				ReleaseID uuid.UUID `bun:"release_id"`
+				ArtistID  uuid.UUID `bun:"artist_id"`
+			}
+			var credits []releaseOwner
+			if err := tx.NewRaw(`SELECT DISTINCT ra.release_id,ra.artist_id FROM release_artist ra WHERE ra.release_id IN (?) AND ra.artist_id IN (?) ORDER BY ra.release_id,ra.artist_id`, bun.List(releaseIDs), bun.List(artists)).Scan(ctx, &credits); err != nil {
+				return fmt.Errorf("resolve library selection artists: %w", err)
+			}
+			for _, credit := range credits {
+				owners[credit.ReleaseID] = append(owners[credit.ReleaseID], credit.ArtistID)
+			}
+		}
+		for i := range rows {
+			owned := owners[rows[i].ReleaseID]
+			if owned == nil {
+				owned = []uuid.UUID{}
+			}
+			rows[i].ArtistIDs = append([]uuid.UUID{}, owned...)
+		}
+		resolution.Positions = rows
+		return nil
+	})
+	if err != nil {
+		return LibrarySelectionResolution{}, err
+	}
+	return resolution, nil
+}
+
+func distinctSelectionIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	distinct := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		distinct = append(distinct, id)
+	}
+	return distinct
 }
 
 func readLibraryCatalogSummary(ctx context.Context, tx bun.Tx, summary *LibraryCatalogSummary) error {

@@ -983,6 +983,46 @@ export interface LibraryPublicationResponse {
   source_cleanup_warnings?: LibraryPublicationSourceCleanupWarning[] | null;
 }
 
+export interface LibraryPublicationSelectionPreviewPosition {
+  position_id: string;
+  release_id: string;
+}
+
+export interface LibraryPublicationSelectionPreviewInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  mode?: string;
+  /**
+     * @minItems 1
+     * @maxItems 100
+     * @nullable
+     */
+  positions: LibraryPublicationSelectionPreviewPosition[] | null;
+}
+
+export interface LibraryPublicationSelectionPreviewReferenceResponse {
+  position_id: string;
+  release_id: string;
+}
+
+export interface LibraryPublicationSelectionPreviewItemResponse {
+  disposition: string;
+  path_clash: boolean;
+  /** @nullable */
+  path_clash_positions?: LibraryPublicationSelectionPreviewReferenceResponse[] | null;
+  position_id: string;
+  reason?: string;
+  release_id: string;
+  resolved_path?: string;
+}
+
+export interface LibraryPublicationSelectionPreviewResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryPublicationSelectionPreviewItemResponse[];
+  mode: string;
+}
+
 export interface LibraryReleaseOptionCredit {
   artist_id: string;
   join_phrase: string;
@@ -1323,6 +1363,35 @@ export interface LibraryReleasePage {
   offset: number;
   summary: LibraryCatalogSummary;
   total: number;
+}
+
+export interface LibrarySelectionPositionResponse {
+  artist_ids: string[];
+  position_id: string;
+  release_id: string;
+  release_title: string;
+  title: string;
+}
+
+export interface LibrarySelectionResolveInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @maxItems 50
+     * @nullable
+     */
+  artist_ids: string[] | null;
+  /**
+     * @maxItems 50
+     * @nullable
+     */
+  release_ids: string[] | null;
+}
+
+export interface LibrarySelectionResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  positions: LibrarySelectionPositionResponse[];
 }
 
 export interface LocalProviderCredit {

@@ -85,30 +85,46 @@ it("renders server summary, artist cards and preserves search and pagination in 
     }),
   );
   renderScreen(<LibraryScreen />);
+  expect(screen.getByRole("tab", { name: "Артисты" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   expect(
-    screen.getByRole("radiogroup", { name: "Наличие аудио" }),
+    screen.getByRole("radiogroup", { name: "Состояние" }),
   ).toBeInTheDocument();
-  expect(await screen.findByRole("link", { name: /A Artist/ })).toHaveAttribute(
+  const artistLink = await screen.findByRole("link", { name: /A Artist/ });
+  expect(artistLink).toHaveAttribute(
     "href",
     `#/library/artists/${artistId}?view=artists&publication=all&availability=all`,
   );
   expect(
     screen.getByText("1 артист · 1 релиз · 2 позиции · 1 опубликовано"),
   ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /A Artist/ })).toHaveTextContent(
-    "Аудио: 1 · 1 опубликовано",
-  );
+  expect(artistLink).toHaveTextContent("Аудио: 1 · 1 опубликовано");
+  expect(
+    screen.getByRole("navigation", { name: "Страницы медиатеки" }),
+  ).toHaveTextContent("Страница 1 из 2 · Всего: 51");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole("searchbox"), {
-    target: { value: "jazz" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+
+  // The search field is debounced: several keystrokes coalesce into one request.
+  const search = screen.getByRole("searchbox");
+  fireEvent.change(search, { target: { value: "j" } });
+  fireEvent.change(search, { target: { value: "ja" } });
+  fireEvent.change(search, { target: { value: "jazz" } });
   await waitFor(() => expect(window.location.hash).toContain("q=jazz"));
-  fireEvent.click(await screen.findByRole("button", { name: "Далее" }));
+  await waitFor(() => expect(artistRequests).toBe(2));
+
+  fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
   await waitFor(() => expect(window.location.hash).toContain("offset=50"));
   await waitFor(() => expect(artistRequests).toBe(3));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("navigation", { name: "Страницы медиатеки" }),
+    ).toHaveTextContent("Страница 2 из 2 · Всего: 51"),
+  );
+
   expectedAvailability = "missing";
-  fireEvent.click(screen.getByRole("radio", { name: "Отсутствует" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Не хватает" }));
   await waitFor(() => {
     expect(window.location.hash).toContain("availability=missing");
     expect(window.location.hash).not.toContain("offset=");
@@ -121,14 +137,14 @@ it("retains the catalog route and search state without refetching when locale ch
   storage.setItem("melotrove-language", "en");
   vi.stubGlobal("localStorage", storage);
   window.location.hash =
-    "#/library?view=artists&q=rock&publication=published&availability=available&offset=50";
+    "#/library?view=artists&q=rock&publication=all&availability=available&offset=50";
   let requests = 0;
   server.use(
     http.get("*/api/library/artists", ({ request }) => {
       requests += 1;
       const url = new URL(request.url);
       expect(url.searchParams.get("q")).toBe("rock");
-      expect(url.searchParams.get("publication")).toBe("published");
+      expect(url.searchParams.get("publication")).toBe("all");
       expect(url.searchParams.get("availability")).toBe("available");
       expect(url.searchParams.get("offset")).toBe("50");
       return HttpResponse.json({
@@ -169,10 +185,8 @@ it("retains the catalog route and search state without refetching when locale ch
     await screen.findByRole("link", { name: /A Artist/ }),
   ).toBeInTheDocument();
   expect(screen.getByRole("searchbox")).toHaveValue("rock");
-  expect(screen.getByRole("combobox", { name: "Publication" })).toHaveValue(
-    "published",
-  );
-  expect(screen.getByRole("radio", { name: "Available" })).toBeChecked();
+  expect(screen.getByRole("tab", { name: "All releases" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Has audio" })).toBeChecked();
   const route = window.location.hash;
 
   fireEvent.click(screen.getByRole("button", { name: "switch-to-ru" }));
@@ -181,9 +195,7 @@ it("retains the catalog route and search state without refetching when locale ch
     await screen.findByRole("link", { name: /A Artist/ }),
   ).toBeInTheDocument();
   expect(screen.getByRole("searchbox")).toHaveValue("rock");
-  expect(screen.getByRole("combobox", { name: "Публикация" })).toHaveValue(
-    "published",
-  );
+  expect(screen.getByRole("tab", { name: "Все релизы" })).toBeInTheDocument();
   expect(screen.getByRole("radio", { name: "В наличии" })).toBeChecked();
   expect(window.location.hash).toBe(route);
   expect(requests).toBe(1);
@@ -253,6 +265,9 @@ it("shows audio availability separately from sources and publication", async () 
 it("marks unknown provider completeness instead of rendering a zero denominator", async () => {
   window.location.hash = "#/library?view=albums";
   server.use(
+    http.post("*/api/library/selection/resolve", () =>
+      HttpResponse.json({ positions: [] }),
+    ),
     http.get("*/api/library/releases", () =>
       HttpResponse.json({
         items: [
@@ -294,7 +309,7 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
   const row = await screen.findByRole("row", {
     name: /Incomplete provider cache/,
   });
-  expect(row).toHaveTextContent("0 с аудио · полнота неизвестна");
+  expect(row).toHaveTextContent("Полнота неизвестна");
   expect(row).not.toHaveTextContent("0 / 0");
 });
 
@@ -391,8 +406,15 @@ it("loads a missing group’s edition and tracks only after explicit selection",
   expect(trackRequests).toBe(0);
   expect(screen.queryByText("Tracks: —")).not.toBeInTheDocument();
 
-  fireEvent.click(within(row).getByRole("button", { name: "Browse editions" }));
-  const picker = await screen.findByRole("combobox", {
+  expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
+  fireEvent.click(within(row).getByRole("button", { name: "Missing album" }));
+  const details = row.nextElementSibling as HTMLElement | null;
+  expect(details).not.toBeNull();
+  if (!details) throw new Error("Missing full-width edition row");
+  expect(details).toHaveAttribute("role", "row");
+  expect(details.firstElementChild).toHaveAttribute("colspan", "9");
+  expect(details).not.toHaveTextContent(groupID);
+  const picker = await within(details).findByRole("combobox", {
     name: "Choose an edition",
   });
   await waitFor(() => expect(editionRequests).toBe(1));
@@ -400,9 +422,9 @@ it("loads a missing group’s edition and tracks only after explicit selection",
   expect(trackRequests).toBe(0);
   fireEvent.change(picker, { target: { value: releaseID } });
 
-  expect(await screen.findByText(/Known track/)).toBeInTheDocument();
+  expect(await within(details).findByText(/Known track/)).toBeInTheDocument();
   expect(
-    screen.getByText(
+    within(details).getByText(
       "The cached track list is incomplete; it may not represent the full edition.",
     ),
   ).toBeInTheDocument();
@@ -426,3 +448,67 @@ function position(title: string) {
     source_variant_count: 0,
   };
 }
+
+it("keeps a page selection off-page and previews only the frozen position", async () => {
+  window.location.hash = "#/library?view=tracks";
+  const requests: unknown[] = [];
+  server.use(
+    http.get("*/api/library/positions", ({ request }) => {
+      const query = new URL(request.url).searchParams.get("q");
+      return HttpResponse.json({
+        items: [
+          {
+            ...position(query ? "Other" : "Selected"),
+            audio_available: true,
+            publication: null,
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        summary,
+      });
+    }),
+    http.post("*/api/library/publication/preview", async ({ request }) => {
+      requests.push(await request.json());
+      return HttpResponse.json({
+        mode: "ordinary",
+        items: [
+          {
+            release_id: "release-id",
+            position_id: "Selected",
+            disposition: "skipped",
+            reason: "missing_audio",
+            path_clash: false,
+          },
+        ],
+      });
+    }),
+  );
+  renderScreen(<LibraryScreen />, "en");
+  const row = await screen.findByRole("row", { name: /Selected/ });
+  const table = row.closest("table");
+  if (!table) throw new Error("Track table missing");
+  const page = within(table).getAllByRole("checkbox")[0];
+  fireEvent.click(page);
+  expect(page).toBeChecked();
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "other" },
+  });
+  await screen.findByRole("row", { name: /Other/ });
+  const dock = screen.getByRole("region", { name: "Selected positions" });
+  expect(dock).toHaveTextContent("Selected positions: 1 · Not on this page: 1");
+  fireEvent.click(
+    within(dock).getByRole("button", { name: "Preview publication" }),
+  );
+  const preview = await screen.findByRole("dialog", {
+    name: "Preview publication",
+  });
+  expect(
+    await within(preview).findByText(/Audio is unavailable/),
+  ).toBeInTheDocument();
+  expect(requests).toEqual([
+    { positions: [{ release_id: "release-id", position_id: "Selected" }] },
+  ]);
+  expect(within(preview).getAllByRole("button")).toHaveLength(1);
+});

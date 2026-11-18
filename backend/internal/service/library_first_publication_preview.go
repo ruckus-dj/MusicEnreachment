@@ -164,6 +164,19 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
 	}
 	selectedTools, _ := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
+	return service.previewFirstCaptured(ctx, contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
+}
+
+// previewFirstCaptured performs the read-only first-publication planning from
+// an already captured context snapshot, settings, and tool selection. Bulk
+// callers capture those inputs once and plan each position independently.
+func (service *LibraryPublications) previewFirstCaptured(ctx context.Context, contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
+	if mode != firstPublicationPreviewModeOrdinary && mode != firstPublicationPreviewModeForced {
+		return FirstPublicationPreview{}, errors.New("first publication preview mode is invalid")
+	}
+	if contextSnapshot == nil || contextSnapshot.Library == nil {
+		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
+	}
 	preview, err := buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
 	if err != nil {
 		return preview, err

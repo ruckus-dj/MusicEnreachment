@@ -1,32 +1,65 @@
-import { useEffect, useState } from "react";
-import { Label, Radio, RadioGroup } from "react-aria-components";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Button,
+  Input,
+  Label,
+  Radio,
+  RadioGroup,
+  SearchField,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
+} from "react-aria-components";
 import { apiResponseError } from "../../api/client/errors";
 import {
-  getGetLibraryReleaseCoverImageUrl,
   useListLibraryArtists,
   useListLibraryPositions,
   useListLibraryReleases,
 } from "../../api/generated/client";
-import type {
-  LibraryArtistCreditResponse,
-  LibraryArtistPage,
-  LibraryPositionPage,
-  LibraryReleasePage,
-  LibraryReleaseSummary,
-} from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
+import { LibraryAlbumRows } from "./LibraryAlbumRows";
+import {
+  LibrarySelectionDock,
+  librarySelectionButtonClass,
+} from "./LibrarySelectionDock";
+import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
+import {
+  LibraryArtistCards,
+  LibraryPositionRows,
+} from "./LibraryTrackArtistRows";
 import {
   type LibraryRoute,
   type LibraryView,
-  libraryArtistRouteHref,
   libraryRouteHref,
   parseLibraryRoute,
 } from "./libraryRoute";
-import "./catalog.css";
-import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
+import { useLibrarySelection } from "./useLibrarySelection";
 
 const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 250;
+const statePanelClass =
+  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm";
+const segmentClass =
+  "flex min-w-[82px] flex-[1_1_82px] cursor-pointer items-center justify-center px-[7px] py-[5px] text-center text-[11px] leading-[1.2] text-[var(--muted)] wrap-anywhere [&+*]:border-l [&+*]:border-[var(--line)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:font-bold data-[selected]:text-[var(--ink)] data-[selected]:shadow-[inset_0_-2px_var(--accent)] data-[hovered]:not-data-[selected]:bg-[var(--raised)] data-[focus-visible]:relative data-[focus-visible]:z-[1] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:-outline-offset-[3px]";
+
+export type LibraryStateFilter = "all" | "missing" | "available" | "published";
+
+const stateFilters: readonly LibraryStateFilter[] = [
+  "all",
+  "missing",
+  "available",
+  "published",
+];
+
+const fallbackRoute: LibraryRoute = {
+  view: "artists",
+  query: "",
+  publication: "all",
+  availability: "all",
+  offset: 0,
+};
 const screenCopy = {
   en: {
     title: "Library",
@@ -48,18 +81,12 @@ const screenCopy = {
     views: { artists: "Artists", albums: "All releases", tracks: "All tracks" },
     search: "Search the library",
     searchPlaceholder: "Artist, release, track…",
-    searchButton: "Search",
-    publication: "Publication",
-    publicationOptions: {
+    state: "Status",
+    stateOptions: {
       all: "All",
+      missing: "Missing audio",
+      available: "Has audio",
       published: "Published",
-      unpublished: "Unpublished",
-    },
-    availability: "Audio availability",
-    availabilityOptions: {
-      all: "All",
-      available: "Available",
-      missing: "Missing",
     },
     loading: "Loading library…",
     requestError: "Could not load the library (HTTP {status}).",
@@ -75,10 +102,11 @@ const screenCopy = {
     noViewRecords: "There are no records in this view yet.",
     resetFilters: "Reset filters",
     addSource: "Add a source",
-    catalogPages: "Catalog pages",
-    of: "of",
-    previous: "Previous",
-    next: "Next",
+    pages: "Library pages",
+    pageStatus: "Page {page} of {pages}",
+    totalItems: "Total: {count}",
+    previousPage: "Previous page",
+    nextPage: "Next page",
     countPublished: "published",
     countAvailable: "with audio",
     completenessUnknown: "completeness unknown",
@@ -125,18 +153,12 @@ const screenCopy = {
     views: { artists: "Артисты", albums: "Все релизы", tracks: "Все треки" },
     search: "Поиск в медиатеке",
     searchPlaceholder: "Артист, релиз, трек…",
-    searchButton: "Найти",
-    publication: "Публикация",
-    publicationOptions: {
+    state: "Состояние",
+    stateOptions: {
       all: "Все",
-      published: "Опубликованные",
-      unpublished: "Неопубликованные",
-    },
-    availability: "Наличие аудио",
-    availabilityOptions: {
-      all: "Все",
+      missing: "Не хватает",
       available: "В наличии",
-      missing: "Отсутствует",
+      published: "Опубликовано",
     },
     loading: "Загрузка медиатеки…",
     requestError: "Не удалось загрузить медиатеку (HTTP {status}).",
@@ -152,10 +174,11 @@ const screenCopy = {
     noViewRecords: "В этом разделе пока нет записей.",
     resetFilters: "Сбросить фильтры",
     addSource: "Добавить источник",
-    catalogPages: "Страницы каталога",
-    of: "из",
-    previous: "Назад",
-    next: "Далее",
+    pages: "Страницы медиатеки",
+    pageStatus: "Страница {page} из {pages}",
+    totalItems: "Всего: {count}",
+    previousPage: "Предыдущая страница",
+    nextPage: "Следующая страница",
     countPublished: "опубликовано",
     countAvailable: "с аудио",
     completenessUnknown: "полнота неизвестна",
@@ -213,33 +236,209 @@ function requestError(
   ).message;
 }
 
-function useLibraryRoute(): [
-  LibraryRoute,
-  (next: Partial<LibraryRoute>) => void,
-] {
-  const hash = useHashLocation();
-  const route = parseLibraryRoute(hash) ?? {
-    view: "artists" as const,
-    query: "",
-    publication: "all" as const,
-    availability: "all" as const,
-    offset: 0,
+function stateFilterFor(route: LibraryRoute): LibraryStateFilter {
+  if (route.publication === "published") return "published";
+  if (route.availability === "available") return "available";
+  if (route.availability === "missing") return "missing";
+  return "all";
+}
+
+function withStateFilter(
+  route: LibraryRoute,
+  filter: LibraryStateFilter,
+): LibraryRoute {
+  return {
+    ...route,
+    publication: filter === "published" ? "published" : "all",
+    availability:
+      filter === "available"
+        ? "available"
+        : filter === "missing"
+          ? "missing"
+          : "all",
   };
-  return [
-    route,
-    (next) => {
-      window.location.hash = libraryRouteHref({ ...route, ...next });
+}
+
+function normalizedRoute(route: LibraryRoute): LibraryRoute {
+  return withStateFilter(route, stateFilterFor(route));
+}
+
+/**
+ * Reads the canonical axis/offset route and also accepts the approved
+ * `filter`/`page` spelling used by the design prototype. Explicit axis or
+ * offset params win, so sharing an older library link keeps its meaning.
+ */
+function libraryControllerRoute(hash: string): LibraryRoute | undefined {
+  const route = parseLibraryRoute(hash);
+  if (!route) return undefined;
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  const [, search = ""] = path.split("?", 2);
+  const params = new URLSearchParams(search);
+  let next = route;
+  const requestedFilter = params.get("filter");
+  if (
+    !params.has("publication") &&
+    !params.has("availability") &&
+    requestedFilter &&
+    stateFilters.includes(requestedFilter as LibraryStateFilter)
+  ) {
+    next = withStateFilter(next, requestedFilter as LibraryStateFilter);
+  }
+  const requestedPage = Number(params.get("page") ?? "");
+  if (
+    !params.has("offset") &&
+    Number.isSafeInteger(requestedPage) &&
+    requestedPage > 0
+  ) {
+    next = { ...next, offset: (requestedPage - 1) * PAGE_SIZE };
+  }
+  return normalizedRoute(next);
+}
+
+function pageForOffset(offset: number) {
+  return Math.floor(offset / PAGE_SIZE) + 1;
+}
+
+function formatCopy(template: string, values: Record<string, string | number>) {
+  return template.replace(/\{([^}]+)\}/g, (_, name: string) =>
+    String(values[name] ?? `{${name}}`),
+  );
+}
+
+/**
+ * Keeps the single state filter, debounced search and server page in sync with
+ * the hash route. The filter maps to the API's independent publication and
+ * availability axes, while page maps to the server offset at PAGE_SIZE.
+ */
+export function useLibraryController() {
+  const hash = useHashLocation();
+  const initialRoute =
+    libraryControllerRoute(hash) ?? normalizedRoute(fallbackRoute);
+  const [route, setRoute] = useState(initialRoute);
+  const [searchInput, setSearchInput] = useState(initialRoute.query);
+  const lastHref = useRef(libraryRouteHref(initialRoute));
+  const pendingSearch = useRef<number | null>(null);
+  const skipNextUrlWrite = useRef(false);
+
+  const clearPendingSearch = useCallback(() => {
+    if (pendingSearch.current !== null) {
+      window.clearTimeout(pendingSearch.current);
+      pendingSearch.current = null;
+    }
+  }, []);
+
+  // Adopt browser back/forward or a copied link without fighting our own writes.
+  useEffect(() => {
+    const next = libraryControllerRoute(hash);
+    if (!next) return;
+    const href = libraryRouteHref(next);
+    if (hash === lastHref.current || href === lastHref.current) return;
+    lastHref.current = href;
+    skipNextUrlWrite.current = true;
+    clearPendingSearch();
+    setSearchInput(next.query);
+    setRoute(next);
+  }, [hash, clearPendingSearch]);
+
+  useEffect(() => {
+    if (skipNextUrlWrite.current) {
+      skipNextUrlWrite.current = false;
+      return;
+    }
+    const href = libraryRouteHref(route);
+    if (href === lastHref.current) return;
+    lastHref.current = href;
+    window.location.hash = href;
+  }, [route]);
+
+  useEffect(() => () => clearPendingSearch(), [clearPendingSearch]);
+
+  const setView = useCallback((view: LibraryView) => {
+    setRoute((current) =>
+      current.view === view ? current : { ...current, view, offset: 0 },
+    );
+  }, []);
+
+  const setFilter = useCallback((filter: LibraryStateFilter) => {
+    setRoute((current) => {
+      if (stateFilterFor(current) === filter) return current;
+      return { ...withStateFilter(current, filter), offset: 0 };
+    });
+  }, []);
+
+  const setPage = useCallback(
+    (page: number, totalPages = Number.MAX_SAFE_INTEGER) => {
+      const nextPage = Math.max(
+        1,
+        Math.min(Math.trunc(page), Math.max(1, totalPages)),
+      );
+      setRoute((current) => {
+        const offset = (nextPage - 1) * PAGE_SIZE;
+        return current.offset === offset ? current : { ...current, offset };
+      });
     },
-  ];
+    [],
+  );
+
+  const setSearch = useCallback(
+    (value: string) => {
+      setSearchInput(value);
+      clearPendingSearch();
+      pendingSearch.current = window.setTimeout(() => {
+        pendingSearch.current = null;
+        setRoute((current) =>
+          current.query === value
+            ? current
+            : { ...current, query: value, offset: 0 },
+        );
+      }, SEARCH_DEBOUNCE_MS);
+    },
+    [clearPendingSearch],
+  );
+
+  const reset = useCallback(() => {
+    clearPendingSearch();
+    setSearchInput("");
+    setRoute((current) => ({
+      ...current,
+      query: "",
+      publication: "all",
+      availability: "all",
+      offset: 0,
+    }));
+  }, [clearPendingSearch]);
+
+  return {
+    route,
+    view: route.view,
+    query: route.query,
+    filter: stateFilterFor(route),
+    page: pageForOffset(route.offset),
+    searchInput,
+    setView,
+    setFilter,
+    setPage,
+    setSearch,
+    reset,
+  };
 }
 
 export function LibraryScreen() {
   const { locale } = useI18n();
   const copy = screenCopy[locale];
   const viewLabels: Record<LibraryView, string> = copy.views;
-  const [route, updateRoute] = useLibraryRoute();
-  const [search, setSearch] = useState(route.query);
-  useEffect(() => setSearch(route.query), [route.query]);
+  const {
+    route,
+    view,
+    filter,
+    page,
+    searchInput,
+    setView,
+    setFilter,
+    setPage,
+    setSearch,
+    reset,
+  } = useLibraryController();
   const artists = useListLibraryArtists(
     {
       limit: PAGE_SIZE,
@@ -248,7 +447,7 @@ export function LibraryScreen() {
       publication: route.publication,
       availability: route.availability,
     },
-    { query: { enabled: route.view === "artists" } },
+    { query: { enabled: view === "artists" } },
   );
   const releases = useListLibraryReleases(
     {
@@ -258,7 +457,7 @@ export function LibraryScreen() {
       publication: route.publication,
       availability: route.availability,
     },
-    { query: { enabled: route.view === "albums" } },
+    { query: { enabled: view === "albums" } },
   );
   const positions = useListLibraryPositions(
     {
@@ -268,22 +467,18 @@ export function LibraryScreen() {
       publication: route.publication,
       availability: route.availability,
     },
-    { query: { enabled: route.view === "tracks" } },
+    { query: { enabled: view === "tracks" } },
   );
-  const query =
-    route.view === "artists"
-      ? artists
-      : route.view === "albums"
-        ? releases
-        : positions;
-  const response = query.data;
+  const activeQuery =
+    view === "artists" ? artists : view === "albums" ? releases : positions;
+  const response = activeQuery.data;
   const failedResponse =
     response && response.status !== 200 ? requestError(response, locale) : "";
   const error =
     failedResponse ||
-    (query.error
-      ? query.error instanceof Error
-        ? query.error.message
+    (activeQuery.error
+      ? activeQuery.error instanceof Error
+        ? activeQuery.error.message
         : copy.error
       : "");
   const artistsBody =
@@ -293,17 +488,22 @@ export function LibraryScreen() {
   const positionsBody =
     positions.data?.status === 200 ? positions.data.data : undefined;
   const body =
-    route.view === "artists"
+    view === "artists"
       ? artistsBody
-      : route.view === "albums"
+      : view === "albums"
         ? releasesBody
         : positionsBody;
   const summary = body?.summary;
   const total = body?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  useEffect(() => {
+    if (body && !error && page > totalPages) setPage(totalPages, totalPages);
+  }, [body, error, page, setPage, totalPages]);
   const hasResults =
-    route.view === "artists"
+    view === "artists"
       ? (artistsBody?.items.length ?? 0) > 0
-      : route.view === "albums"
+      : view === "albums"
         ? (releasesBody?.items.length ?? 0) > 0
         : (positionsBody?.items.length ?? 0) > 0;
   const catalogIsEmpty =
@@ -311,444 +511,243 @@ export function LibraryScreen() {
     summary.artist_count === 0 &&
     summary.release_count === 0 &&
     summary.position_count === 0;
+  const isPristine = route.query === "" && filter === "all";
+  const selection = useLibrarySelection({
+    artistIDs:
+      view === "artists"
+        ? artistsBody?.items.map((artist) => artist.id)
+        : undefined,
+    releaseIDs:
+      view === "albums"
+        ? releasesBody?.items.flatMap((item) =>
+            item.library_release ? [item.library_release.id] : [],
+          )
+        : undefined,
+    trackPositions:
+      view === "tracks"
+        ? positionsBody?.items.map((position) => ({
+            release_id: position.release.id,
+            position_id: position.id,
+            title: position.title,
+            release_title: position.release.title,
+          }))
+        : undefined,
+    pageReady: !!body && !error,
+  });
 
   function retry() {
-    void query.refetch();
+    void activeQuery.refetch();
   }
 
   return (
-    <section className="library-catalog" aria-labelledby="catalog-title">
-      <header className="catalog-header">
+    <section
+      className={`min-w-0 max-w-none px-[clamp(16px,2.2vw,34px)] py-[clamp(16px,2.2vw,34px)] text-[var(--ink)] max-[600px]:px-[10px] max-[600px]:py-[14px] ${selection.positions.length ? "pb-[calc(136px+env(safe-area-inset-bottom))]! max-[600px]:pb-[calc(190px+env(safe-area-inset-bottom))]!" : ""}`}
+      aria-labelledby="catalog-title"
+    >
+      <header className="mb-[18px] grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-6 gap-y-3 border-b border-[var(--line)] pb-4 max-[600px]:grid-cols-1 max-[600px]:items-start">
         <div>
-          <h1 id="catalog-title">{copy.title}</h1>
-          <p className="catalog-muted" aria-live="polite">
+          <h1
+            id="catalog-title"
+            tabIndex={-1}
+            className="m-0 text-[20px] font-semibold leading-[1.3] tracking-[-.02em] wrap-anywhere"
+          >
+            {copy.title}
+          </h1>
+          <p
+            className="mt-[5px] text-xs text-[var(--muted)]"
+            aria-live="polite"
+          >
             {summary
               ? `${countLabel(summary.artist_count, locale, copy.artistCount)} · ${countLabel(summary.release_count, locale, copy.releaseCount)} · ${countLabel(summary.position_count, locale, copy.positionCount)} · ${summary.published_position_count} ${copy.countPublished}`
               : copy.summaryFallback}
           </p>
         </div>
-        <div className="catalog-header-actions">
-          <a className="catalog-button" href="#/incoming-groups">
+        <div className="justify-self-end max-[600px]:justify-self-start">
+          <a
+            className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
+            href="#/incoming-groups"
+          >
             {copy.incoming}
           </a>
         </div>
       </header>
 
-      <div className="catalog-toolbar">
-        <nav className="catalog-segments" aria-label={copy.view}>
-          {(Object.keys(viewLabels) as LibraryView[]).map((view) => (
-            <a
-              key={view}
-              href={libraryRouteHref({ ...route, view, offset: 0 })}
-              aria-current={route.view === view ? "page" : undefined}
+      <Tabs
+        selectedKey={view}
+        onSelectionChange={(key) => setView(key as LibraryView)}
+      >
+        <TabList
+          aria-label={copy.view}
+          className="mb-3 flex flex-wrap gap-[3px] text-xs"
+        >
+          {(Object.keys(viewLabels) as LibraryView[]).map((tab) => (
+            <Tab
+              key={tab}
+              id={tab}
+              className="flex min-h-9 cursor-pointer items-center rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"
             >
-              {viewLabels[view]}
-            </a>
+              {viewLabels[tab]}
+            </Tab>
           ))}
-        </nav>
-        <form
-          className="catalog-search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            updateRoute({ query: search.trim(), offset: 0 });
-          }}
-        >
-          <label className="catalog-sr-only" htmlFor="catalog-query">
-            {copy.search}
-          </label>
-          <input
-            id="catalog-query"
-            type="search"
-            value={search}
-            placeholder={copy.searchPlaceholder}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-          <button type="submit">{copy.searchButton}</button>
-        </form>
-        <label className="catalog-filter">
-          <span>{copy.publication}</span>
-          <select
-            value={route.publication}
-            onChange={(event) =>
-              updateRoute({
-                publication: event.currentTarget
-                  .value as LibraryRoute["publication"],
-                offset: 0,
-              })
-            }
-          >
-            <option value="all">{copy.publicationOptions.all}</option>
-            <option value="published">
-              {copy.publicationOptions.published}
-            </option>
-            <option value="unpublished">
-              {copy.publicationOptions.unpublished}
-            </option>
-          </select>
-        </label>
-        <RadioGroup
-          orientation="horizontal"
-          className="catalog-availability"
-          value={route.availability}
-          onChange={(availability) =>
-            updateRoute({
-              availability: availability as LibraryRoute["availability"],
-              offset: 0,
-            })
-          }
-        >
-          <Label>{copy.availability}</Label>
-          <div className="catalog-availability-segments">
-            <Radio value="all">{copy.availabilityOptions.all}</Radio>
-            <Radio value="available">
-              {copy.availabilityOptions.available}
-            </Radio>
-            <Radio value="missing">{copy.availabilityOptions.missing}</Radio>
+        </TabList>
+        <TabPanel id={view} className="min-w-0">
+          <div className="mb-3 grid grid-cols-[minmax(220px,1fr)_minmax(340px,1fr)] items-end gap-3 max-[1100px]:grid-cols-1 max-[600px]:gap-2">
+            <SearchField
+              aria-label={copy.search}
+              className="min-h-[34px] min-w-0 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1"
+              value={searchInput}
+              onChange={setSearch}
+            >
+              <Input
+                className="min-h-8 w-full text-xs outline-none"
+                placeholder={copy.searchPlaceholder}
+              />
+            </SearchField>
+            <RadioGroup
+              orientation="horizontal"
+              className="min-w-0"
+              value={filter}
+              onChange={(next) => setFilter(next as LibraryStateFilter)}
+            >
+              <Label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">
+                {copy.state}
+              </Label>
+              <div className="flex min-h-[34px] flex-wrap rounded-md border border-[var(--control)] bg-[var(--surface)]">
+                {stateFilters.map((option) => (
+                  <Radio key={option} value={option} className={segmentClass}>
+                    {copy.stateOptions[option]}
+                  </Radio>
+                ))}
+              </div>
+            </RadioGroup>
           </div>
-        </RadioGroup>
-      </div>
 
-      {query.isLoading ? (
-        <p className="catalog-state" role="status">
-          {copy.loading}
-        </p>
-      ) : error ? (
-        <section className="catalog-state catalog-state--error" role="alert">
-          <p>{error}</p>
-          <button type="button" onClick={retry}>
-            {copy.retry}
-          </button>
-        </section>
-      ) : !hasResults ? (
-        <section className="catalog-state" aria-live="polite">
-          <h2>
-            {catalogIsEmpty && !route.query
-              ? copy.emptyLibrary
-              : copy.noResults}
-          </h2>
-          <p>
-            {catalogIsEmpty && !route.query
-              ? copy.addAndMatch
-              : route.publication === "published" &&
-                  summary?.published_position_count === 0
-                ? copy.noPublished
-                : route.query ||
-                    route.publication !== "all" ||
-                    route.availability !== "all"
-                  ? copy.changeSearch
-                  : copy.noViewRecords}
-          </p>
-          {(route.query ||
-            route.publication !== "all" ||
-            route.availability !== "all") && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                updateRoute({
-                  query: "",
-                  publication: "all",
-                  availability: "all",
-                  offset: 0,
-                });
-              }}
+          {activeQuery.isLoading ? (
+            <p className={statePanelClass} role="status">
+              {copy.loading}
+            </p>
+          ) : error ? (
+            <section
+              className={`${statePanelClass} text-[var(--error)]`}
+              role="alert"
             >
-              {copy.resetFilters}
-            </button>
+              <p>{error}</p>
+              <Button className={librarySelectionButtonClass} onPress={retry}>
+                {copy.retry}
+              </Button>
+            </section>
+          ) : !hasResults ? (
+            <section className={statePanelClass} aria-live="polite">
+              <h2 className="font-semibold">
+                {catalogIsEmpty && isPristine
+                  ? copy.emptyLibrary
+                  : copy.noResults}
+              </h2>
+              <p>
+                {catalogIsEmpty && isPristine
+                  ? copy.addAndMatch
+                  : filter === "published" &&
+                      summary?.published_position_count === 0
+                    ? copy.noPublished
+                    : route.query || filter !== "all"
+                      ? copy.changeSearch
+                      : copy.noViewRecords}
+              </p>
+              {(route.query || filter !== "all") && (
+                <Button className={librarySelectionButtonClass} onPress={reset}>
+                  {copy.resetFilters}
+                </Button>
+              )}
+              {catalogIsEmpty && isPristine && (
+                <a
+                  className="text-[var(--accent)] hover:underline"
+                  href="#/sources"
+                >
+                  {copy.addSource}
+                </a>
+              )}
+            </section>
+          ) : (
+            <>
+              {selection.membershipError && (
+                <div
+                  role="alert"
+                  className="my-2 flex flex-wrap items-center gap-2 text-sm"
+                >
+                  {selection.membershipError}
+                  <button
+                    type="button"
+                    className={librarySelectionButtonClass}
+                    onClick={selection.retryMembership}
+                  >
+                    {copy.retry}
+                  </button>
+                </div>
+              )}
+              {view === "artists" && artistsBody && (
+                <LibraryArtistCards
+                  items={artistsBody.items}
+                  route={route}
+                  renderCheckbox={selection.renderCheckbox}
+                />
+              )}
+              {view === "albums" && releasesBody && (
+                <LibraryAlbumRows
+                  items={releasesBody.items}
+                  renderCheckbox={selection.renderCheckbox}
+                />
+              )}
+              {view === "tracks" && positionsBody && (
+                <LibraryPositionRows
+                  items={positionsBody.items}
+                  renderCheckbox={selection.renderCheckbox}
+                />
+              )}
+              <nav
+                className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs"
+                aria-label={copy.pages}
+              >
+                <span className="text-[var(--muted)]" role="status">
+                  {formatCopy(copy.pageStatus, {
+                    page: currentPage,
+                    pages: totalPages,
+                  })}{" "}
+                  · {formatCopy(copy.totalItems, { count: total })}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    className={librarySelectionButtonClass}
+                    isDisabled={route.offset === 0}
+                    onPress={() => setPage(currentPage - 1, totalPages)}
+                  >
+                    {copy.previousPage}
+                  </Button>
+                  <Button
+                    className={librarySelectionButtonClass}
+                    isDisabled={route.offset + PAGE_SIZE >= total}
+                    onPress={() => setPage(currentPage + 1, totalPages)}
+                  >
+                    {copy.nextPage}
+                  </Button>
+                </div>
+              </nav>
+            </>
           )}
-          {catalogIsEmpty && !route.query && (
-            <a href="#/sources">{copy.addSource}</a>
-          )}
-        </section>
-      ) : (
-        <>
-          {route.view === "artists" && artistsBody && (
-            <ArtistCards
-              items={artistsBody.items}
-              route={route}
-              locale={locale}
-              copy={copy}
-            />
-          )}
-          {route.view === "albums" && releasesBody && (
-            <ReleaseTable items={releasesBody.items} copy={copy} />
-          )}
-          {route.view === "tracks" && positionsBody && (
-            <PositionTable items={positionsBody.items} copy={copy} />
-          )}
-          <nav className="catalog-pagination" aria-label={copy.catalogPages}>
-            <span>
-              {route.offset + 1}–{Math.min(route.offset + PAGE_SIZE, total)}{" "}
-              {copy.of} {total}
-            </span>
-            <button
-              type="button"
-              disabled={route.offset === 0}
-              onClick={() =>
-                updateRoute({ offset: Math.max(0, route.offset - PAGE_SIZE) })
-              }
-            >
-              {copy.previous}
-            </button>
-            <button
-              type="button"
-              disabled={route.offset + PAGE_SIZE >= total}
-              onClick={() => updateRoute({ offset: route.offset + PAGE_SIZE })}
-            >
-              {copy.next}
-            </button>
-          </nav>
-        </>
+        </TabPanel>
+      </Tabs>
+      <LibrarySelectionDock
+        positions={selection.positions}
+        hiddenCount={selection.hiddenCount}
+        onDeselect={selection.deselect}
+        onClear={selection.clear}
+        onPreview={selection.setFrozen}
+      />
+      {selection.frozen && (
+        <LibrarySelectionPreview
+          positions={selection.frozen}
+          onClose={() => selection.setFrozen(undefined)}
+        />
       )}
     </section>
-  );
-}
-
-function ArtistCards({
-  items,
-  route,
-  locale,
-  copy,
-}: {
-  items: LibraryArtistPage["items"];
-  route: LibraryRoute;
-  locale: "en" | "ru";
-  copy: (typeof screenCopy)["en"] | (typeof screenCopy)["ru"];
-}) {
-  return (
-    <div className="catalog-artist-grid">
-      {items.map((artist) => (
-        <a
-          className="catalog-artist-card"
-          href={libraryArtistRouteHref(artist.id, route)}
-          key={artist.id}
-        >
-          <span className="catalog-initial" aria-hidden="true">
-            {artist.name.trim().charAt(0).toLocaleUpperCase() || "?"}
-          </span>
-          <span className="catalog-artist-copy">
-            <strong>{artist.name}</strong>
-            <span>
-              {countLabel(artist.release_count, locale, copy.releaseCount)} ·{" "}
-              {countLabel(artist.position_count, locale, copy.positionCount)}
-              <span className="catalog-sub">{copy.cacheNotice}</span>
-            </span>
-            <span>
-              {copy.audio}: {artist.available_position_count} ·{" "}
-              {artist.published_position_count} {copy.countPublished}
-              {artist.genres.length ? ` · ${artist.genres.join(" · ")}` : ""}
-            </span>
-          </span>
-        </a>
-      ))}
-    </div>
-  );
-}
-
-function CreditNames({
-  credits,
-  unknownArtist,
-}: {
-  credits: LibraryArtistCreditResponse[];
-  unknownArtist: string;
-}) {
-  const occurrences = new Map<string, number>();
-  const keyedCredits = credits.map((credit) => {
-    const identity = JSON.stringify(credit);
-    const occurrence = occurrences.get(identity) ?? 0;
-    occurrences.set(identity, occurrence + 1);
-    return { credit, key: `${identity}-${occurrence}` };
-  });
-  return (
-    <span>
-      {keyedCredits.map(({ credit, key }, index) => (
-        <span key={key}>
-          {credit.artist_id ? (
-            <a
-              href={`#/library/artists/${encodeURIComponent(credit.artist_id)}`}
-            >
-              {credit.credit_name || credit.artist_name || unknownArtist}
-            </a>
-          ) : (
-            credit.credit_name || credit.artist_name || unknownArtist
-          )}
-          {credit.join_phrase ?? (index < credits.length - 1 ? " " : "")}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-function Cover({ release }: { release: LibraryReleaseSummary }) {
-  const generation = release.cover?.selected_generation;
-  return (
-    <span className="catalog-cover">
-      {generation ? (
-        <img
-          src={getGetLibraryReleaseCoverImageUrl(release.id, generation)}
-          alt=""
-        />
-      ) : (
-        <span aria-hidden="true">
-          {release.title.trim().charAt(0).toLocaleUpperCase() || "M"}
-        </span>
-      )}
-    </span>
-  );
-}
-
-function ReleaseTable({
-  items,
-  copy,
-}: {
-  items: LibraryReleasePage["items"];
-  copy: (typeof screenCopy)["en"] | (typeof screenCopy)["ru"];
-}) {
-  return (
-    <div className="catalog-table-wrap">
-      <table className="catalog-table">
-        <thead>
-          <tr>
-            <th>{copy.album}</th>
-            <th>{copy.artist}</th>
-            <th>{copy.yearEdition}</th>
-            <th>{copy.positions}</th>
-            <th>{copy.availabilityColumn}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) =>
-            item.kind === "library_release" && item.library_release ? (
-              <tr key={`library_release:${item.library_release.id}`}>
-                <td>
-                  <span className="catalog-entity">
-                    <Cover release={item.library_release} />
-                    <a
-                      href={`#/library/releases/${encodeURIComponent(item.library_release.id)}`}
-                    >
-                      {item.library_release.title || copy.unnamed}
-                    </a>
-                  </span>
-                </td>
-                <td>
-                  <CreditNames
-                    credits={item.library_release.artists}
-                    unknownArtist={copy.unknownArtist}
-                  />
-                </td>
-                <td>
-                  {item.library_release.edition.release_date ??
-                    item.library_release.edition.original_release_date ??
-                    copy.unknownDate}
-                  <span className="catalog-sub">
-                    {[
-                      item.library_release.edition.country,
-                      ...item.library_release.edition.labels,
-                      ...item.library_release.edition.catalog_numbers,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || copy.unknownEdition}
-                  </span>
-                </td>
-                <td>
-                  {item.library_release.counts.position_count}{" "}
-                  <span className="catalog-sub">
-                    {item.library_release.counts.published_position_count}{" "}
-                    {copy.countPublished}
-                  </span>
-                </td>
-                <td>
-                  {item.library_release.counts.provider_position_count == null
-                    ? `${item.library_release.counts.available_position_count} ${copy.countAvailable} · ${copy.completenessUnknown}`
-                    : `${item.library_release.counts.available_position_count} / ${item.library_release.counts.provider_position_count}`}
-                </td>
-              </tr>
-            ) : item.kind === "missing_release_group" &&
-              item.missing_release_group ? (
-              <MissingReleaseGroupRow
-                key={`missing_release_group:${item.missing_release_group.provider_key}`}
-                group={item.missing_release_group}
-                presentation="table"
-              />
-            ) : null,
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function PositionTable({
-  items,
-  copy,
-}: {
-  items: LibraryPositionPage["items"];
-  copy: (typeof screenCopy)["en"] | (typeof screenCopy)["ru"];
-}) {
-  return (
-    <div className="catalog-table-wrap">
-      <table className="catalog-table">
-        <thead>
-          <tr>
-            <th>{copy.track}</th>
-            <th>{copy.album}</th>
-            <th>{copy.artist}</th>
-            <th>{copy.position}</th>
-            <th>{copy.audio}</th>
-            <th>{copy.sources}</th>
-            <th>{copy.publicationColumn}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((position) => (
-            <tr key={position.id}>
-              <td>
-                <a
-                  href={`#/library/releases/${encodeURIComponent(position.release.id)}/positions/${encodeURIComponent(position.id)}`}
-                >
-                  {position.title || copy.unnamed}
-                </a>
-                <span className="catalog-sub">
-                  {position.provider_duration_ms == null
-                    ? copy.durationUnknown
-                    : `${Math.floor(position.provider_duration_ms / 60000)}:${String(Math.floor(position.provider_duration_ms / 1000) % 60).padStart(2, "0")}`}
-                </span>
-              </td>
-              <td>
-                <a
-                  href={`#/library/releases/${encodeURIComponent(position.release.id)}`}
-                >
-                  {position.release.title}
-                </a>
-              </td>
-              <td>
-                <CreditNames
-                  credits={position.artists}
-                  unknownArtist={copy.unknownArtist}
-                />
-              </td>
-              <td>
-                {position.medium} ·{" "}
-                {position.displayed_number || position.position}
-              </td>
-              <td>
-                {position.audio_available ? copy.available : copy.missing}
-              </td>
-              <td>
-                {copy.sourceCount.replace(
-                  "{count}",
-                  String(position.source_variant_count),
-                )}
-              </td>
-              <td>
-                {position.publication
-                  ? copy.publishedStatus
-                  : copy.unpublishedStatus}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }

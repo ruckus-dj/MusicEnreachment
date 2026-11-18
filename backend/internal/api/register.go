@@ -41,6 +41,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerLibraryArtistDetails(api, dependencies.LibraryMetadata)
 	registerLibraryPublication(api, dependencies)
 	registerLibraryFirstPublicationPreview(api, dependencies)
+	registerLibraryPublicationSelectionPreview(api, dependencies)
 	registerLibraryFirstPublicationAdmission(api, dependencies)
 	registerLibraryDeletion(api, dependencies)
 }

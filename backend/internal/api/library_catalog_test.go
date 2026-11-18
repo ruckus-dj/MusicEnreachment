@@ -205,3 +205,6 @@ func TestLibraryCatalogAPINotFoundAndUnavailable(t *testing.T) {
 		t.Fatalf("unavailable status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
+func (repository *libraryCatalogAPIRepository) ResolveLibrarySelection(context.Context, persistence.LibrarySelectionRequest) (persistence.LibrarySelectionResolution, error) {
+	return persistence.LibrarySelectionResolution{}, nil
+}

@@ -62,6 +62,8 @@ import type {
   LibraryPrimaryArtistBody,
   LibraryPrimaryArtistResponse,
   LibraryPublicationResponse,
+  LibraryPublicationSelectionPreviewInputBody,
+  LibraryPublicationSelectionPreviewResponse,
   LibraryRecordingSearchBody,
   LibraryRecordingSearchResultOutputBody,
   LibraryReleaseCoverApplyInputBody,
@@ -73,6 +75,8 @@ import type {
   LibraryReleaseOptionsPageLibraryRecordingOption,
   LibraryReleaseOptionsPageLibrarySourceVariantOption,
   LibraryReleasePage,
+  LibrarySelectionResolveInputBody,
+  LibrarySelectionResponse,
   ListCurrentOperationsParams,
   ListInstallationsParams,
   ListLibraryArtistsParams,
@@ -3501,6 +3505,120 @@ export function useListLibraryPositions<TData = Awaited<ReturnType<typeof listLi
 
 
 
+export type previewLibraryPublicationSelectionResponse200 = {
+  data: LibraryPublicationSelectionPreviewResponse
+  status: 200
+}
+
+export type previewLibraryPublicationSelectionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewLibraryPublicationSelectionResponseSuccess = (previewLibraryPublicationSelectionResponse200) & {
+  headers: Headers;
+};
+export type previewLibraryPublicationSelectionResponseError = (previewLibraryPublicationSelectionResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewLibraryPublicationSelectionResponse = (previewLibraryPublicationSelectionResponseSuccess | previewLibraryPublicationSelectionResponseError)
+
+export const getPreviewLibraryPublicationSelectionUrl = () => {
+
+
+
+
+  return `/api/library/publication/preview`
+}
+
+/**
+ * @summary Preview publication dispositions for a library selection
+ */
+export const previewLibraryPublicationSelection = async (libraryPublicationSelectionPreviewInputBody: NonReadonly<LibraryPublicationSelectionPreviewInputBody>, options?: RequestInit): Promise<previewLibraryPublicationSelectionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreviewLibraryPublicationSelectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryPublicationSelectionPreviewInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewLibraryPublicationSelectionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewLibraryPublicationSelectionResponse
+}
+
+
+
+
+
+export const getPreviewLibraryPublicationSelectionMutationKey = () => ['previewLibraryPublicationSelection'] as const;
+
+export const getPreviewLibraryPublicationSelectionMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewLibraryPublicationSelection>>, TError,PreviewLibraryPublicationSelectionMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof previewLibraryPublicationSelection>>, TError,PreviewLibraryPublicationSelectionMutationVariables, TContext> => {
+
+const mutationKey = getPreviewLibraryPublicationSelectionMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewLibraryPublicationSelection>>, PreviewLibraryPublicationSelectionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewLibraryPublicationSelection(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewLibraryPublicationSelectionMutationResult = NonNullable<Awaited<ReturnType<typeof previewLibraryPublicationSelection>>>
+    export type PreviewLibraryPublicationSelectionMutationBody = NonReadonly<LibraryPublicationSelectionPreviewInputBody>
+    export type PreviewLibraryPublicationSelectionMutationError = ErrorModel
+    export type PreviewLibraryPublicationSelectionMutationVariables = {data: NonReadonly<LibraryPublicationSelectionPreviewInputBody>}
+
+    /**
+ * @summary Preview publication dispositions for a library selection
+ */
+export const usePreviewLibraryPublicationSelection = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewLibraryPublicationSelection>>, TError,PreviewLibraryPublicationSelectionMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewLibraryPublicationSelection>>,
+        TError,
+        PreviewLibraryPublicationSelectionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreviewLibraryPublicationSelectionMutationOptions(options), queryClient);
+    }
+
 export type listLibraryRecordingsResponse200 = {
   data: LibraryReleaseOptionsPageLibraryRecordingOption
   status: 200
@@ -6872,6 +6990,120 @@ export const useSetLibraryReleasePrimaryArtist = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSetLibraryReleasePrimaryArtistMutationOptions(options), queryClient);
+    }
+
+export type resolveLibrarySelectionResponse200 = {
+  data: LibrarySelectionResponse
+  status: 200
+}
+
+export type resolveLibrarySelectionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type resolveLibrarySelectionResponseSuccess = (resolveLibrarySelectionResponse200) & {
+  headers: Headers;
+};
+export type resolveLibrarySelectionResponseError = (resolveLibrarySelectionResponseDefault) & {
+  headers: Headers;
+};
+
+export type resolveLibrarySelectionResponse = (resolveLibrarySelectionResponseSuccess | resolveLibrarySelectionResponseError)
+
+export const getResolveLibrarySelectionUrl = () => {
+
+
+
+
+  return `/api/library/selection/resolve`
+}
+
+/**
+ * @summary Resolve visible library parents to exact local positions
+ */
+export const resolveLibrarySelection = async (librarySelectionResolveInputBody: NonReadonly<LibrarySelectionResolveInputBody>, options?: RequestInit): Promise<resolveLibrarySelectionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getResolveLibrarySelectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(librarySelectionResolveInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: resolveLibrarySelectionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as resolveLibrarySelectionResponse
+}
+
+
+
+
+
+export const getResolveLibrarySelectionMutationKey = () => ['resolveLibrarySelection'] as const;
+
+export const getResolveLibrarySelectionMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveLibrarySelection>>, TError,ResolveLibrarySelectionMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveLibrarySelection>>, TError,ResolveLibrarySelectionMutationVariables, TContext> => {
+
+const mutationKey = getResolveLibrarySelectionMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveLibrarySelection>>, ResolveLibrarySelectionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  resolveLibrarySelection(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveLibrarySelectionMutationResult = NonNullable<Awaited<ReturnType<typeof resolveLibrarySelection>>>
+    export type ResolveLibrarySelectionMutationBody = NonReadonly<LibrarySelectionResolveInputBody>
+    export type ResolveLibrarySelectionMutationError = ErrorModel
+    export type ResolveLibrarySelectionMutationVariables = {data: NonReadonly<LibrarySelectionResolveInputBody>}
+
+    /**
+ * @summary Resolve visible library parents to exact local positions
+ */
+export const useResolveLibrarySelection = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveLibrarySelection>>, TError,ResolveLibrarySelectionMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof resolveLibrarySelection>>,
+        TError,
+        ResolveLibrarySelectionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getResolveLibrarySelectionMutationOptions(options), queryClient);
     }
 
 export type listLibrarySourceVariantsResponse200 = {

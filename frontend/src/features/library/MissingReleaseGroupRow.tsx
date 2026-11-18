@@ -152,11 +152,11 @@ export function MissingReleaseGroupRow({
   presentation,
 }: {
   group: MissingReleaseGroupSummary;
-  presentation: "table" | "artist";
+  presentation: "table" | "artist" | "inline";
 }) {
   const { locale } = useI18n();
   const text = messages[locale];
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(presentation === "inline");
   const [editionOffset, setEditionOffset] = useState(0);
   const [selectedEdition, setSelectedEdition] =
     useState<LibraryReleaseGroupEditionResponse | null>(null);
@@ -211,13 +211,15 @@ export function MissingReleaseGroupRow({
         ) : null}
       </p>
       <p className="catalog-muted">{text.cacheNotice}</p>
-      <button
-        type="button"
-        aria-expanded={pickerOpen}
-        onClick={() => setPickerOpen((open) => !open)}
-      >
-        {pickerOpen ? text.editions : text.loadEditions}
-      </button>
+      {presentation !== "inline" && (
+        <button
+          type="button"
+          aria-expanded={pickerOpen}
+          onClick={() => setPickerOpen((open) => !open)}
+        >
+          {pickerOpen ? text.editions : text.loadEditions}
+        </button>
+      )}
       {pickerOpen && (
         <div>
           {editionsQuery.isLoading ? (
@@ -360,6 +362,7 @@ export function MissingReleaseGroupRow({
     </div>
   );
 
+  if (presentation === "inline") return details;
   if (presentation === "table") {
     return (
       <tr className="catalog-missing-release" aria-label={title}>

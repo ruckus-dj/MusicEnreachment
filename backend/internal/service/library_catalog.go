@@ -15,7 +15,20 @@ import (
 var (
 	ErrLibraryArtistNotFound              = errors.New("library artist not found")
 	ErrLibraryReleaseGroupEditionNotFound = errors.New("library release group edition not found")
+	ErrLibrarySelectionInvalid            = errors.New("library selection is invalid")
+	ErrLibrarySelectionArtistNotFound     = errors.New("library selection artist not found")
+	ErrLibrarySelectionReleaseNotFound    = errors.New("library selection release not found")
+	ErrLibrarySelectionTooBroad           = errors.New("library selection is too broad")
 	errLibraryCatalogUnavailable          = errors.New("library catalog is unavailable")
+)
+
+const (
+	// LibrarySelectionMaxSelectors bounds the distinct artist and release parent
+	// selectors accepted by one resolution request.
+	LibrarySelectionMaxSelectors = 50
+	// LibrarySelectionMaxPositions bounds the response. Broader selections are
+	// rejected explicitly instead of silently trimming the result.
+	LibrarySelectionMaxPositions = 2000
 )
 
 type LibraryCatalogFilter struct {
@@ -190,6 +203,20 @@ type LibraryCatalogPage[T any] struct {
 	Summary LibraryCatalogSummary `json:"summary"`
 }
 
+// LibrarySelectionPosition is a resolved real local release position. ArtistIDs
+// contains only requested artists that credit the release itself.
+type LibrarySelectionPosition struct {
+	ReleaseID    uuid.UUID   `json:"release_id"`
+	PositionID   uuid.UUID   `json:"position_id"`
+	Title        string      `json:"title"`
+	ReleaseTitle string      `json:"release_title"`
+	ArtistIDs    []uuid.UUID `json:"artist_ids"`
+}
+
+type LibrarySelection struct {
+	Positions []LibrarySelectionPosition `json:"positions"`
+}
+
 type libraryCatalogRepository interface {
 	ReadLibraryArtists(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogArtistPage, error)
 	ReadLibraryReleases(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogReleasePage, error)
@@ -198,6 +225,7 @@ type libraryCatalogRepository interface {
 	ReadLibraryAudioCandidates(context.Context, persistence.LibraryCatalogRequest) ([]persistence.LibraryCatalogAudioCandidate, error)
 	ReadLibraryReleaseGroupEditions(context.Context, uuid.UUID, int, int) (persistence.LibraryReleaseGroupEditions, error)
 	ReadLibraryReleaseGroupEditionTracks(context.Context, uuid.UUID, string) (persistence.LibraryReleaseGroupEditionTracks, error)
+	ResolveLibrarySelection(context.Context, persistence.LibrarySelectionRequest) (persistence.LibrarySelectionResolution, error)
 }
 
 type LibraryCatalog struct{ repository libraryCatalogRepository }
@@ -345,6 +373,54 @@ func (catalog *LibraryCatalog) Artist(ctx context.Context, id uuid.UUID) (Librar
 	return mapLibraryCatalogArtist(*artist), nil
 }
 
+// ResolveSelection resolves distinct parent selectors to real local release
+// positions. Artist selectors match release-level catalog credits only; release
+// selectors match concrete local releases exactly. Any unknown selector is
+// rejected rather than ignored, and a selection broader than the response bound
+// fails explicitly.
+func (catalog *LibraryCatalog) ResolveSelection(ctx context.Context, artistIDs, releaseIDs []uuid.UUID) (LibrarySelection, error) {
+	artists := distinctLibrarySelectionIDs(artistIDs)
+	releases := distinctLibrarySelectionIDs(releaseIDs)
+	if len(artists)+len(releases) == 0 {
+		return LibrarySelection{}, fmt.Errorf("%w: at least one selector is required", ErrLibrarySelectionInvalid)
+	}
+	if len(artists)+len(releases) > LibrarySelectionMaxSelectors {
+		return LibrarySelection{}, fmt.Errorf("%w: at most %d distinct selectors are accepted", ErrLibrarySelectionInvalid, LibrarySelectionMaxSelectors)
+	}
+	for _, ids := range [][]uuid.UUID{artists, releases} {
+		for _, id := range ids {
+			if id == uuid.Nil {
+				return LibrarySelection{}, fmt.Errorf("%w: selector identity is empty", ErrLibrarySelectionInvalid)
+			}
+		}
+	}
+	repository, err := catalog.repo()
+	if err != nil {
+		return LibrarySelection{}, err
+	}
+	resolution, err := repository.ResolveLibrarySelection(ctx, persistence.LibrarySelectionRequest{ArtistIDs: artists, ReleaseIDs: releases, MaxPositions: LibrarySelectionMaxPositions})
+	if err != nil {
+		switch {
+		case errors.Is(err, persistence.ErrLibrarySelectionArtistNotFound):
+			return LibrarySelection{}, ErrLibrarySelectionArtistNotFound
+		case errors.Is(err, persistence.ErrLibrarySelectionReleaseNotFound):
+			return LibrarySelection{}, ErrLibrarySelectionReleaseNotFound
+		case errors.Is(err, persistence.ErrLibrarySelectionTooBroad):
+			return LibrarySelection{}, ErrLibrarySelectionTooBroad
+		}
+		return LibrarySelection{}, fmt.Errorf("resolve library selection: %w", err)
+	}
+	positions := make([]LibrarySelectionPosition, 0, len(resolution.Positions))
+	for _, position := range resolution.Positions {
+		owners := position.ArtistIDs
+		if owners == nil {
+			owners = []uuid.UUID{}
+		}
+		positions = append(positions, LibrarySelectionPosition{ReleaseID: position.ReleaseID, PositionID: position.PositionID, Title: position.Title, ReleaseTitle: position.ReleaseTitle, ArtistIDs: append([]uuid.UUID{}, owners...)})
+	}
+	return LibrarySelection{Positions: positions}, nil
+}
+
 func (catalog *LibraryCatalog) repo() (libraryCatalogRepository, error) {
 	if catalog == nil || catalog.repository == nil {
 		return nil, fmt.Errorf("library catalog: %w", errLibraryCatalogUnavailable)
@@ -356,6 +432,27 @@ func IsLibraryArtistNotFound(err error) bool     { return errors.Is(err, ErrLibr
 func IsLibraryCatalogUnavailable(err error) bool { return errors.Is(err, errLibraryCatalogUnavailable) }
 func IsLibraryReleaseGroupEditionNotFound(err error) bool {
 	return errors.Is(err, ErrLibraryReleaseGroupEditionNotFound)
+}
+func IsLibrarySelectionInvalid(err error) bool { return errors.Is(err, ErrLibrarySelectionInvalid) }
+func IsLibrarySelectionArtistNotFound(err error) bool {
+	return errors.Is(err, ErrLibrarySelectionArtistNotFound)
+}
+func IsLibrarySelectionReleaseNotFound(err error) bool {
+	return errors.Is(err, ErrLibrarySelectionReleaseNotFound)
+}
+func IsLibrarySelectionTooBroad(err error) bool { return errors.Is(err, ErrLibrarySelectionTooBroad) }
+
+func distinctLibrarySelectionIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	distinct := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		distinct = append(distinct, id)
+	}
+	return distinct
 }
 
 func catalogRequest(filter LibraryCatalogFilter) persistence.LibraryCatalogRequest {

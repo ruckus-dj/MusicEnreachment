@@ -254,7 +254,64 @@ type LibraryReleaseGroupTrackResponse struct {
 	DurationMS     *int64  `json:"duration_ms" nullable:"true"`
 }
 
+type librarySelectionResolveInput struct {
+	Body struct {
+		ArtistIDs  []uuid.UUID `json:"artist_ids" maxItems:"50"`
+		ReleaseIDs []uuid.UUID `json:"release_ids" maxItems:"50"`
+	}
+}
+
+type LibrarySelectionPositionResponse struct {
+	ReleaseID    uuid.UUID   `json:"release_id"`
+	PositionID   uuid.UUID   `json:"position_id"`
+	Title        string      `json:"title"`
+	ReleaseTitle string      `json:"release_title"`
+	ArtistIDs    []uuid.UUID `json:"artist_ids" nullable:"false"`
+}
+
+type LibrarySelectionResponse struct {
+	Positions []LibrarySelectionPositionResponse `json:"positions" nullable:"false"`
+}
+
+type librarySelectionResolveOutput struct {
+	CacheControl string                   `header:"Cache-Control"`
+	Body         LibrarySelectionResponse `json:"body"`
+}
+
 func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
+	huma.Register(api, huma.Operation{
+		OperationID: "resolve-library-selection",
+		Method:      http.MethodPost,
+		Path:        "/library/selection/resolve",
+		Summary:     "Resolve visible library parents to exact local positions",
+		Tags:        []string{"Library"},
+	}, func(ctx context.Context, input *librarySelectionResolveInput) (*librarySelectionResolveOutput, error) {
+		if catalog == nil {
+			return nil, huma.Error503ServiceUnavailable("library catalog unavailable")
+		}
+		selection, err := catalog.ResolveSelection(ctx, input.Body.ArtistIDs, input.Body.ReleaseIDs)
+		switch {
+		case service.IsLibrarySelectionInvalid(err):
+			return nil, huma.Error400BadRequest("invalid library selection scope")
+		case service.IsLibrarySelectionArtistNotFound(err), service.IsLibrarySelectionReleaseNotFound(err):
+			return nil, huma.Error404NotFound("library selection parent not found")
+		case service.IsLibrarySelectionTooBroad(err):
+			return nil, huma.Error409Conflict("library selection scope is too broad")
+		case err != nil:
+			return nil, huma.Error500InternalServerError("failed to resolve library selection")
+		}
+		positions := make([]LibrarySelectionPositionResponse, 0, len(selection.Positions))
+		for _, row := range selection.Positions {
+			positions = append(positions, LibrarySelectionPositionResponse{
+				ReleaseID: row.ReleaseID, PositionID: row.PositionID, Title: row.Title,
+				ReleaseTitle: row.ReleaseTitle, ArtistIDs: row.ArtistIDs,
+			})
+		}
+		return &librarySelectionResolveOutput{
+			CacheControl: "no-store",
+			Body:         LibrarySelectionResponse{Positions: positions},
+		}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "search-library-artist-references", Method: http.MethodGet, Path: "/library/artist-references", Summary: "Search local artists for metadata credits", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryArtistReferencesInput) (*libraryArtistReferencesOutput, error) {
 		if catalog == nil {
 			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")

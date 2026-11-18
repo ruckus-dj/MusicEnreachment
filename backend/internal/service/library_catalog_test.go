@@ -55,6 +55,10 @@ func (repository *libraryCatalogRepositoryFixture) ReadLibraryReleaseGroupEditio
 	return persistence.LibraryReleaseGroupEditionTracks{}, repository.err
 }
 
+func (repository *libraryCatalogRepositoryFixture) ResolveLibrarySelection(context.Context, persistence.LibrarySelectionRequest) (persistence.LibrarySelectionResolution, error) {
+	return persistence.LibrarySelectionResolution{}, repository.err
+}
+
 func TestValidateLibraryCatalogFilterRequiresLimit(t *testing.T) {
 	filter := LibraryCatalogFilter{Publication: "all"}
 	if err := validateLibraryCatalogFilter(&filter); err == nil {
