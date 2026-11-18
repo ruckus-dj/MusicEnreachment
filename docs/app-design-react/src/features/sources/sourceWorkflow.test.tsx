@@ -101,8 +101,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	const lastProcessing = () => onProcessingState.mock.calls.at(-1)?.[0];
 	const view = render(element(undefined, onRoots, onProcessingState));
 
-	// Directories in the list link to their own route; the list itself never
-	// queues scan work.
+	// Directories link to their own route; rendering the list does not scan.
 	const libraryLink = within(
 		screen.getByRole("grid", { name: "Connected directories" }),
 	).getByRole("link", { name: /Музыкальная библиотека/ });
@@ -182,13 +181,25 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(scannedNewRoot?.inventoryCount).toBe(0);
 	expect(lastProcessing()?.files).toEqual([]);
 
-	// Explicit start on a source that has fixture inventory records: only the
-	// completed scan records it and queues exactly its own processing work.
-	view.rerender(element("root-library", onRoots, onProcessingState));
-	expect(screen.getAllByText("Not scanned yet").length).toBeGreaterThan(0);
+	// Start from the list without navigating; the detail adopts the same scan.
+	window.location.hash = "sources";
+	view.rerender(element(undefined, onRoots, onProcessingState));
+	const grid = within(
+		screen.getByRole("grid", { name: "Connected directories" }),
+	);
 	expect(lastProcessing()?.files).toEqual([]);
 	const rootsCallsBeforeLibraryScan = onRoots.mock.calls.length;
-	fireEvent.click(screen.getByRole("button", { name: "Scan directory" }));
+	fireEvent.click(
+		grid.getByRole("button", { name: "Scan: Музыкальная библиотека" }),
+	);
+	expect(
+		grid.getByRole("button", { name: "Scanning…: Музыкальная библиотека" }),
+	).toBeDisabled();
+	expect(
+		grid.getByRole("button", { name: "Scan: Резервный источник" }),
+	).toBeEnabled();
+	expect(window.location.hash).toBe("#sources");
+	view.rerender(element("root-library", onRoots, onProcessingState));
 	expect(screen.getByText("Scan queued.")).toBeInTheDocument();
 	expect(lastProcessing()?.files).toEqual([]);
 	expect(onRoots.mock.calls.length).toBe(rootsCallsBeforeLibraryScan);

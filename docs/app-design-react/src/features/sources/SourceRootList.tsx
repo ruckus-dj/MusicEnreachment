@@ -17,6 +17,7 @@ export interface SourceRootListRow {
 	availability: "available" | "unavailable" | "unknown";
 	lastSuccessfulScan?: { label: string; dateTime?: string };
 	inventory: { label: string; notes?: string[] };
+	scanning?: boolean;
 	href: string;
 }
 
@@ -32,6 +33,9 @@ const messages = {
 		availability: "Availability",
 		lastScan: "Last successful scan",
 		inventory: "Inventory",
+		actions: "Actions",
+		scan: "Scan",
+		scanning: "Scanning…",
 		modes: { in_place: "In place", staged: "Via working copy" },
 		status: {
 			available: "Available",
@@ -52,6 +56,9 @@ const messages = {
 		availability: "Доступность",
 		lastScan: "Последнее успешное сканирование",
 		inventory: "Инвентарь",
+		actions: "Действия",
+		scan: "Сканировать",
+		scanning: "Сканируется…",
 		modes: { in_place: "На месте", staged: "Через рабочую копию" },
 		status: {
 			available: "Доступен",
@@ -132,22 +139,43 @@ function facts(row: SourceRootListRow, copy: Copy) {
 	];
 }
 
+function scanAction(
+	row: SourceRootListRow,
+	copy: Copy,
+	onScan: (id: string) => void,
+) {
+	const label = row.scanning ? copy.scanning : copy.scan;
+	return (
+		<Button
+			aria-label={`${label}: ${row.name}`}
+			isDisabled={row.scanning || row.availability === "unavailable"}
+			onPress={() => onScan(row.id)}
+			className="min-h-8 max-w-full rounded border border-[var(--control)] px-2 py-1 text-[var(--ink)] wrap-anywhere data-[hovered]:bg-[var(--raised)] data-[disabled]:opacity-60 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] pointer-coarse:min-h-10"
+		>
+			{label}
+		</Button>
+	);
+}
+
 export function SourceRootList({
 	rows,
 	locale,
 	state,
+	onScan,
 }: {
 	rows: readonly SourceRootListRow[];
 	locale: "en" | "ru";
 	state?: LoadState;
+	onScan: (id: string) => void;
 }) {
 	const copy = messages[locale];
 	const columns = [
-		{ id: "directory", label: copy.directory, width: "w-[32%]" },
-		{ id: "mode", label: copy.mode, width: "w-[17%]" },
-		{ id: "availability", label: copy.availability, width: "w-[13%]" },
-		{ id: "lastScan", label: copy.lastScan, width: "w-[19%]" },
-		{ id: "inventory", label: copy.inventory, width: "w-[19%]" },
+		{ id: "directory", label: copy.directory, width: "" },
+		{ id: "mode", label: copy.mode, width: "w-[16%]" },
+		{ id: "availability", label: copy.availability, width: "w-[14%]" },
+		{ id: "lastScan", label: copy.lastScan, width: "w-[18%]" },
+		{ id: "inventory", label: copy.inventory, width: "w-[14%]" },
+		{ id: "actions", label: copy.actions, width: "w-[114px]" },
 	];
 	return (
 		<section className="min-w-0 space-y-2">
@@ -195,7 +223,7 @@ export function SourceRootList({
 									</Column>
 								))}
 							</TableHeader>
-							<TableBody items={rows} dependencies={[copy]}>
+							<TableBody items={rows} dependencies={[copy, onScan]}>
 								{(row) => (
 									<Row
 										id={row.id}
@@ -209,6 +237,9 @@ export function SourceRootList({
 												{value}
 											</Cell>
 										))}
+										<Cell className="px-3 py-2.5 align-top">
+											{scanAction(row, copy, onScan)}
+										</Cell>
 									</Row>
 								)}
 							</TableBody>
@@ -229,6 +260,7 @@ export function SourceRootList({
 										</div>
 									))}
 								</dl>
+								<div className="mt-2">{scanAction(row, copy, onScan)}</div>
 							</li>
 						))}
 					</ul>

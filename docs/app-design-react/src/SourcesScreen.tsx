@@ -206,6 +206,7 @@ export function SourcesScreen({
 		name: item.name,
 		path: item.path,
 		mode: item.mode,
+		scanning: scans.active(item.id),
 		availability:
 			item.available === true
 				? "available"
@@ -624,7 +625,14 @@ export function SourcesScreen({
 					<p className="my-2 text-xs text-[var(--muted)]">
 						{m("sourceTableHelp")}
 					</p>
-					<SourceRootList rows={rows} locale={locale} />
+					<SourceRootList
+						rows={rows}
+						locale={locale}
+						onScan={(id) => {
+							const source = roots.find((item) => item.id === id);
+							if (source) startScan(source);
+						}}
+					/>
 					<p>{m("unavailablePublications")}</p>
 					<p>
 						{m("workDirectory")}: {workDirectory || "—"} ·{" "}

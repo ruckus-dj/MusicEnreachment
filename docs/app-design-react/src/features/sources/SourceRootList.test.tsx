@@ -3,9 +3,11 @@ import { expect, it, vi } from "vitest";
 import { SourceRootList } from "./SourceRootList";
 
 it("shows saved inventory independently from directory availability", () => {
+	const onScan = vi.fn();
 	render(
 		<SourceRootList
 			locale="en"
+			onScan={onScan}
 			rows={[
 				{
 					id: "archive",
@@ -39,19 +41,29 @@ it("shows saved inventory independently from directory availability", () => {
 		"datetime",
 		"2026-09-26T10:20:00Z",
 	);
-	expect(grid.queryByRole("button", { name: /scan/i })).not.toBeInTheDocument();
+	const scan = grid.getByRole("button", { name: "Scan: Archive" });
+	expect(scan).toBeDisabled();
+	fireEvent.click(scan);
+	expect(onScan).not.toHaveBeenCalled();
 });
 
 it("distinguishes loading, empty, and retryable errors", () => {
 	const retry = vi.fn();
+	const onScan = vi.fn();
 	const { rerender } = render(
-		<SourceRootList locale="en" rows={[]} state={{ kind: "loading" }} />,
+		<SourceRootList
+			locale="en"
+			rows={[]}
+			state={{ kind: "loading" }}
+			onScan={onScan}
+		/>,
 	);
 	expect(screen.getByRole("status")).toHaveTextContent("Loading directories");
 	rerender(
 		<SourceRootList
 			locale="en"
 			rows={[]}
+			onScan={onScan}
 			state={{ kind: "error", message: "Unavailable", onRetry: retry }}
 		/>,
 	);
@@ -59,6 +71,6 @@ it("distinguishes loading, empty, and retryable errors", () => {
 	expect(alert.getByText("Unavailable")).toBeInTheDocument();
 	fireEvent.click(alert.getByRole("button", { name: "Retry" }));
 	expect(retry).toHaveBeenCalledOnce();
-	rerender(<SourceRootList locale="en" rows={[]} />);
+	rerender(<SourceRootList locale="en" rows={[]} onScan={onScan} />);
 	expect(screen.getByText("No directories registered.")).toBeInTheDocument();
 });
