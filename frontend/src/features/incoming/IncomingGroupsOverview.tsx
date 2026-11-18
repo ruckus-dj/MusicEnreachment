@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import {
   confirmIncomingGroups,
   getGetIncomingGroupMatchingQueryKey,
@@ -13,6 +13,11 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { compareSourceFiles } from "../matchingWorkspace/sourceFileOrder";
+import {
+  incomingSourceFileName,
+  readIncomingSourceTrackOrder,
+} from "./apiMatchingSources";
 import {
   type IncomingGroupName,
   incomingGroupNameText,
@@ -93,6 +98,10 @@ export function IncomingGroupsOverview({
   );
   const name = (id: string) =>
     incomingGroupNameText(groupNames.get(id), locale);
+  const collator = useMemo(
+    () => new Intl.Collator(locale, { numeric: true, sensitivity: "base" }),
+    [locale],
+  );
   function toggle(id: string) {
     window.location.hash = incomingGroupsListHref(
       expandedGroupIds.includes(id)
@@ -191,6 +200,28 @@ export function IncomingGroupsOverview({
               const groupName = name(group.id);
               const unready = new Set(group.unready_members ?? []);
               const members = new Set([...(group.members ?? []), ...unready]);
+              /*
+               * Sort only this visual copy: the member set, stable row keys,
+               * move targets and the drag payload keep the server's original
+               * composition and ordering of actions unchanged.
+               */
+              const orderedMembers = opened
+                ? [...members]
+                    .map((id) => {
+                      const file = files.get(id);
+                      return {
+                        id,
+                        ...readIncomingSourceTrackOrder(file?.tags),
+                        name:
+                          incomingSourceFileName(
+                            file?.locations?.[0]?.relative_path,
+                          ) ?? "",
+                      };
+                    })
+                    .sort((left, right) =>
+                      compareSourceFiles(left, right, "track", collator),
+                    )
+                : [];
               const paths = new Set(
                 [...members].flatMap((id) =>
                   (files.get(id)?.locations ?? []).map(
@@ -314,7 +345,7 @@ export function IncomingGroupsOverview({
                             </tr>
                           </thead>
                           <tbody>
-                            {[...members].map((id) => {
+                            {orderedMembers.map(({ id, trackNumber }) => {
                               const file = files.get(id);
                               const title = tag(file, "TITLE") || ui.noTitle;
                               const path = file?.locations?.[0]?.relative_path;
@@ -354,8 +385,9 @@ export function IncomingGroupsOverview({
                                   }}
                                 >
                                   <td className={cell}>
-                                    {tag(file, "TRACKNUMBER", "TRACK") ||
-                                      copy.noValue}
+                                    {trackNumber ??
+                                      (tag(file, "TRACKNUMBER", "TRACK") ||
+                                        copy.noValue)}
                                   </td>
                                   <td className={cell}>
                                     <strong>{title}</strong>

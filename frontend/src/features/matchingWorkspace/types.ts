@@ -32,6 +32,15 @@ export type MatchingWorkspaceSource = {
   detail?: string;
   path?: string;
   available?: boolean;
+  /**
+   * Basename of the actual source file, used for filename ordering. The
+   * display `label` is only a fallback when no filename is known.
+   */
+  fileName?: string;
+  /** Disc number taken from the file's own metadata tags, never its name. */
+  discNumber?: number;
+  /** Track number taken from the file's own metadata tags, never its name. */
+  trackNumber?: number;
 };
 
 /**

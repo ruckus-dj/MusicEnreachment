@@ -201,6 +201,98 @@ it("assigns from the free source rail without dragging", () => {
   expect(onUnassign).toHaveBeenCalledWith("member-1", "track-2");
 });
 
+it("sorts free files by disc and track tags, then toggles to file names", async () => {
+  const sortableSources = [
+    {
+      id: "member-1",
+      label: "Bravo.flac",
+      fileName: "zulu.flac",
+      discNumber: 1,
+      trackNumber: 1,
+    },
+    {
+      id: "member-2",
+      label: "Alpha.flac",
+      fileName: "mike.flac",
+      discNumber: 1,
+      trackNumber: 2,
+    },
+    {
+      id: "member-3",
+      label: "Delta.flac",
+      fileName: "alpha.flac",
+      discNumber: 2,
+      trackNumber: 1,
+    },
+    { id: "member-4", label: "Assigned.flac", fileName: "assigned.flac" },
+  ];
+  render(
+    <I18nProvider>
+      <MatchingBoard
+        groupId="group-1"
+        release={release}
+        // Provider order deliberately differs from every sort order.
+        members={["member-2", "member-1", "member-3", "member-4"]}
+        sources={sortableSources}
+        assignments={{ "member-4": "track-2" }}
+        onAssign={vi.fn()}
+      />
+    </I18nProvider>,
+  );
+
+  const rail = screen.getByRole("region", { name: /free source/i });
+  const railOrder = () =>
+    within(rail)
+      .getAllByRole("button", { name: /^Select / })
+      .map((button) => button.getAttribute("aria-label"));
+
+  // Default order is disc then track, not labels, provider order, or file names.
+  expect(railOrder()).toEqual([
+    "Select Bravo.flac",
+    "Select Alpha.flac",
+    "Select Delta.flac",
+  ]);
+
+  const selected = screen.getByRole("button", { name: "Select Bravo.flac" });
+  fireEvent.click(selected);
+  expect(selected).toHaveAttribute("aria-pressed", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: /sort/i }));
+  fireEvent.click(await screen.findByRole("option", { name: /name/i }));
+
+  // Names come from the actual file name, not the display label.
+  expect(railOrder()).toEqual([
+    "Select Delta.flac",
+    "Select Alpha.flac",
+    "Select Bravo.flac",
+  ]);
+
+  // Reordering keeps the free-file selection and the assigned position intact.
+  expect(
+    screen.getByRole("button", { name: "Select Bravo.flac" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Selected Bravo.flac. Choose Add on a position.",
+  );
+  expect(
+    within(rail).queryByRole("button", { name: "Select Assigned.flac" }),
+  ).toBeNull();
+  expect(
+    within(positionRow("Second")).getByText("Assigned.flac"),
+  ).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: /sort/i }));
+  fireEvent.click(await screen.findByRole("option", { name: /disc.*track/i }));
+  expect(railOrder()).toEqual([
+    "Select Bravo.flac",
+    "Select Alpha.flac",
+    "Select Delta.flac",
+  ]);
+  expect(
+    screen.getByRole("button", { name: "Select Bravo.flac" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
 it("keys saved scores by release, member, and track", () => {
   expect(
     matchingBoardSavedScore(savedScores, release, "member-1", "track-1"),

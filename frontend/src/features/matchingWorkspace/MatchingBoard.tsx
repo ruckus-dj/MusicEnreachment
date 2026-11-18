@@ -1,4 +1,13 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
+import {
+  Button as AriaButton,
+  Label,
+  ListBox,
+  ListBoxItem,
+  Popover,
+  Select,
+  SelectValue,
+} from "react-aria-components";
 import { MatchingDropZone, MatchingFileDragHandle } from "./MatchingDnD";
 import { matchingBoardMessages } from "./matchingBoardMessages";
 import {
@@ -10,6 +19,7 @@ import {
   matchingBoardPercent,
   matchingBoardSavedScore,
 } from "./scoring";
+import { compareSourceFiles, type SourceFileSort } from "./sourceFileOrder";
 import type {
   MatchingWorkspaceAutomaticAssignments,
   MatchingWorkspaceLocale,
@@ -73,6 +83,14 @@ function sortedPositions(release: MatchingWorkspaceRelease) {
   );
 }
 
+function sourceOrderKey(source: MatchingWorkspaceSource) {
+  return {
+    name: source.fileName ?? source.label,
+    discNumber: source.discNumber,
+    trackNumber: source.trackNumber,
+  };
+}
+
 export function MatchingBoard({
   groupId,
   release,
@@ -104,6 +122,11 @@ export function MatchingBoard({
   const [uncontrolledSelection, setUncontrolledSelection] = useState<
     string | null
   >(defaultSelectedSourceId ?? null);
+  const [freeFileSort, setFreeFileSort] = useState<SourceFileSort>("track");
+  const collator = useMemo(
+    () => new Intl.Collator(locale, { numeric: true, sensitivity: "base" }),
+    [locale],
+  );
   const selectionControlled = selectedSourceId !== undefined;
   const selection = selectionControlled
     ? (selectedSourceId ?? null)
@@ -147,6 +170,19 @@ export function MatchingBoard({
   }
   const freeMembers = members.filter((memberId) =>
     associations ? !associatedMembers.has(memberId) : !assignmentMap[memberId],
+  );
+  /*
+   * Sort a copy of the already resolved free rows. Associated/assigned rows,
+   * position order, ids, selection and drag handles are left untouched; the
+   * stable member ids keep focus on the same row while it moves.
+   */
+  const freeMembersInOrder = [...freeMembers].sort((left, right) =>
+    compareSourceFiles(
+      sourceOrderKey(sourceFor(left)),
+      sourceOrderKey(sourceFor(right)),
+      freeFileSort,
+      collator,
+    ),
   );
   const selectedSource = selection ? sourceById.get(selection) : undefined;
   const panelClass = matchingBoardClasses(matchingBoardClass.panel, className);
@@ -456,8 +492,56 @@ export function MatchingBoard({
         <p className={matchingBoardClass.instructions}>
           {copy.sourcesInstructions}
         </p>
+        <Select
+          className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1"
+          selectedKey={freeFileSort}
+          isDisabled={freeMembers.length < 2}
+          onSelectionChange={(key) => {
+            if (key === "track" || key === "name") setFreeFileSort(key);
+          }}
+        >
+          <Label className="text-[10px] uppercase leading-4 tracking-[0.03em] text-[var(--muted)]">
+            {copy.sortLabel}
+          </Label>
+          <AriaButton
+            className={matchingBoardClasses(
+              "inline-flex min-h-[28px] min-w-[9rem] max-w-full cursor-pointer items-center justify-between gap-1 rounded-[3px] border border-[var(--line)] bg-[var(--surface)] px-[7px] py-0 text-left text-[11px] font-[inherit] text-[var(--ink)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-10",
+              matchingBoardClass.focusRing,
+            )}
+          >
+            <SelectValue />
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              className="size-3 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <path d="m4 6 4 4 4-4" />
+            </svg>
+          </AriaButton>
+          <Popover className="z-30 max-h-[240px] min-w-[var(--trigger-width)] overflow-auto rounded-[3px] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]">
+            <ListBox className="grid gap-0.5 text-[11px] outline-none">
+              <ListBoxItem
+                id="track"
+                textValue={copy.sortByTrack}
+                className="cursor-pointer rounded-[3px] px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
+              >
+                {copy.sortByTrack}
+              </ListBoxItem>
+              <ListBoxItem
+                id="name"
+                textValue={copy.sortByName}
+                className="cursor-pointer rounded-[3px] px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
+              >
+                {copy.sortByName}
+              </ListBoxItem>
+            </ListBox>
+          </Popover>
+        </Select>
         <ul className={matchingBoardClass.list}>
-          {freeMembers.map((memberId) => {
+          {freeMembersInOrder.map((memberId) => {
             const source = sourceFor(memberId);
             const selected = selection === memberId;
             const available = !disabled && source.available !== false;

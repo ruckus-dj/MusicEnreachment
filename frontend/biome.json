@@ -8,6 +8,7 @@
   "overrides": [
     {
       "includes": [
+        "src/features/matchingWorkspace/sourceFileOrder.ts",
         "src/features/operations/OperationsList.tsx",
         "src/routes/ShellView.tsx"
       ],
