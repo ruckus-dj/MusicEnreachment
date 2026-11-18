@@ -1,9 +1,31 @@
-import { createNamespace } from "./i18n/createNamespace";
-import type { Locale } from "./i18n/types";
+import { createNamespace } from "../../i18n/createNamespace";
+import type { Locale } from "../../i18n/types";
 
 export const operationMessages = createNamespace({
 	en: {
 		title: "Current operations",
+		description:
+			"Work in progress and errors that need attention. History is not retained.",
+		refresh: "Refresh",
+		refreshing: "Refreshing…",
+		loading: "Loading operations…",
+		loadError: "Could not load operations.",
+		retryLoad: "Retry loading",
+		emptyTitle: "No current operations",
+		emptyDescription:
+			"Work in progress and failed operations will appear here.",
+		target: "Target",
+		stateStage: "Status / stage",
+		progress: "Progress",
+		created: "Created",
+		error: "Error",
+		actions: "Actions",
+		retrying: "Retrying…",
+		dismissing: "Dismissing…",
+		retryError: "Could not retry operation.",
+		dismissError: "Could not dismiss operation.",
+		footnote:
+			"Queued, running, and failed operations are shown. Completed operations are hidden.",
 		attention: "Needs attention",
 		currentOperations: "current operations",
 		object: "Object",
@@ -15,6 +37,7 @@ export const operationMessages = createNamespace({
 		signalsTrack: "Signals · position 06",
 		publishPositions: "Publish positions",
 		failed: "Failed",
+		running: "Running",
 		retry: "Retry",
 		dismiss: "Dismiss",
 		retryQueued: "Retry queued",
@@ -110,6 +133,28 @@ export const operationMessages = createNamespace({
 	},
 	ru: {
 		title: "Текущие операции",
+		description:
+			"Работа в процессе и ошибки, требующие внимания. История не сохраняется.",
+		refresh: "Обновить",
+		refreshing: "Обновление…",
+		loading: "Загрузка операций…",
+		loadError: "Не удалось загрузить операции.",
+		retryLoad: "Повторить загрузку",
+		emptyTitle: "Нет текущих операций",
+		emptyDescription:
+			"Здесь появятся операции в процессе и неудачные операции.",
+		target: "Объект",
+		stateStage: "Состояние / этап",
+		progress: "Ход выполнения",
+		created: "Создано",
+		error: "Ошибка",
+		actions: "Действия",
+		retrying: "Повтор…",
+		dismissing: "Скрытие…",
+		retryError: "Не удалось повторить операцию.",
+		dismissError: "Не удалось скрыть операцию.",
+		footnote:
+			"Показаны операции в очереди, выполняемые и неудачные. Завершённые операции скрыты.",
 		attention: "Требует внимания",
 		currentOperations: "текущие операции",
 		object: "Объект",
@@ -121,6 +166,7 @@ export const operationMessages = createNamespace({
 		signalsTrack: "Signals · позиция 06",
 		publishPositions: "Публикация набора позиций",
 		failed: "Ошибка",
+		running: "Выполняется",
 		retry: "Повторить",
 		dismiss: "Скрыть",
 		retryQueued: "Повтор поставлен в очередь",

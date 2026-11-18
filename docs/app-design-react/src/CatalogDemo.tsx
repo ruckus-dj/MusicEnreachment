@@ -27,6 +27,8 @@ import {
 	trackSearchText,
 } from "./catalogViewModel";
 import type { DeletionOperation } from "./DeletionRequest";
+import { OperationsScreen } from "./features/operations/OperationsScreen";
+import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
 import { IncomingScreen } from "./IncomingScreen";
 import { useI18n } from "./i18n";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
@@ -42,10 +44,6 @@ import {
 } from "./localProviderModel";
 import { MatchingScreen } from "./MatchingScreen";
 import type { ManagedPathObservation } from "./managedPublicationDeletionModel";
-import {
-	initialOperationsDemoState,
-	OperationsScreen,
-} from "./OperationsScreen";
 import {
 	PublicationPreview,
 	type PublicationPreviewMode,
@@ -196,9 +194,6 @@ export function CatalogDemo({
 	);
 	const [sourceProcessing, setSourceProcessing] = useState(() =>
 		structuredClone(initialSourceProcessingState),
-	);
-	const [operationsDemo, setOperationsDemo] = useState(() =>
-		structuredClone(initialOperationsDemoState),
 	);
 	const [removedRoots, setRemovedRoots] = useState<Set<string>>(
 		() => new Set(),
@@ -364,6 +359,40 @@ export function CatalogDemo({
 		setDeletions((previous) => [...previous, operation]);
 		window.location.hash = "operations";
 	};
+	const operationsProvider = useOperationsDemoProvider({
+		deletions,
+		settleDeletion: (operation) => completeDeletion(operation),
+		recover: (snapshot) => {
+			const currentOutput = settings.currentOutput ?? "/srv/music";
+			if (
+				!snapshot.path.startsWith(`${currentOutput.replace(/\/$/, "")}/`) ||
+				!releases.some((release) =>
+					release.tracks.some((track) => track.id === recoveryFixture.trackId),
+				)
+			)
+				return false;
+			setReleases((previous) =>
+				previous.map((release) => ({
+					...release,
+					tracks: release.tracks.map((track) =>
+						track.id === recoveryFixture.trackId
+							? {
+									...track,
+									published: structuredClone(snapshot),
+									recovered: true,
+									metadataBaseline: structuredClone(snapshot.tags),
+									metadataBaselineExtras: {
+										coverHash: snapshot.coverHash ?? null,
+										lyrics: snapshot.lyrics ?? null,
+									},
+								}
+							: track,
+					),
+				})),
+			);
+			return true;
+		},
+	});
 	const completeDeletion = (operation: DeletionOperation) => {
 		const confirmedOperation = residualDeletions.get(operation) ?? operation;
 		const tracks = releases.flatMap((release) => release.tracks);
@@ -899,10 +928,7 @@ export function CatalogDemo({
 						setSourceProcessing((previous) =>
 							resetSourceProcessingQueue(previous),
 						);
-						setOperationsDemo({
-							retryState: "succeeded",
-							dismissedOperations: new Set(["signals", "recovery"]),
-						});
+						operationsProvider.reset();
 						setReleases((previous) =>
 							previous.map((release) => ({
 								...release,
@@ -986,53 +1012,7 @@ export function CatalogDemo({
 	if (route === "operations")
 		return (
 			<main className={screenLayout}>
-				<OperationsScreen
-					releases={releases}
-					files={files}
-					deletions={deletions}
-					initialState={operationsDemo}
-					onState={setOperationsDemo}
-					onCompleteDeletion={completeDeletion}
-					onDismissDeletion={(operation) =>
-						setDeletions((previous) =>
-							previous.filter((item) => item !== operation),
-						)
-					}
-					onRecover={(snapshot) => {
-						const currentOutput = settings.currentOutput ?? "/srv/music";
-						if (
-							!snapshot.path.startsWith(
-								`${currentOutput.replace(/\/$/, "")}/`,
-							) ||
-							!releases.some((release) =>
-								release.tracks.some(
-									(track) => track.id === recoveryFixture.trackId,
-								),
-							)
-						)
-							return false;
-						setReleases((previous) =>
-							previous.map((release) => ({
-								...release,
-								tracks: release.tracks.map((track) =>
-									track.id === recoveryFixture.trackId
-										? {
-												...track,
-												published: structuredClone(snapshot),
-												recovered: true,
-												metadataBaseline: structuredClone(snapshot.tags),
-												metadataBaselineExtras: {
-													coverHash: snapshot.coverHash ?? null,
-													lyrics: snapshot.lyrics ?? null,
-												},
-											}
-										: track,
-								),
-							})),
-						);
-						return true;
-					}}
-				/>
+				<OperationsScreen deletions={deletions} provider={operationsProvider} />
 			</main>
 		);
 	if (route && route !== "library")

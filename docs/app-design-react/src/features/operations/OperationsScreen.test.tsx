@@ -1,0 +1,104 @@
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { originalReleases } from "../../catalogData";
+import type { DeletionOperation } from "../../DeletionRequest";
+import {
+	demoOperationSettleDelayMs,
+	demoOperationStartDelayMs,
+	type OperationsDemoProviderOptions,
+	useOperationsDemoProvider,
+} from "../../fixtures/useOperationsDemoProvider";
+import { I18nProvider } from "../../i18n";
+import { OperationsScreen } from "./OperationsScreen";
+
+beforeEach(() => {
+	window.localStorage.setItem("music-design-v2-language", "en");
+	vi.useFakeTimers();
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+});
+
+function OperationsHarness(props: OperationsDemoProviderOptions) {
+	const provider = useOperationsDemoProvider(props);
+	return <OperationsScreen deletions={props.deletions} provider={provider} />;
+}
+
+function advance(delay: number) {
+	act(() => {
+		vi.advanceTimersByTime(delay);
+	});
+}
+
+it("settles removal automatically and keeps failed attempts retryable until completion", () => {
+	const track = originalReleases
+		.flatMap((release) => release.tracks)
+		.find((item) => item.published);
+	if (!track?.published) throw new Error("Missing publication fixture");
+	const operation: DeletionOperation = {
+		kind: "publication",
+		target: track.title,
+		scope: "confirmed publication",
+		publications: 1,
+		paths: [track.published.path],
+		libraryTrackIds: [track.id],
+	};
+	const settleDeletion = vi
+		.fn()
+		.mockReturnValueOnce("retry")
+		.mockReturnValueOnce("conflict")
+		.mockReturnValueOnce("completed");
+	const dismissDeletion = vi.fn();
+	render(
+		<I18nProvider>
+			<OperationsHarness
+				deletions={[operation]}
+				settleDeletion={settleDeletion}
+				dismissDeletion={dismissDeletion}
+				recover={() => false}
+				initialState={{ signals: "succeeded", recovery: "succeeded" }}
+			/>
+		</I18nProvider>,
+	);
+
+	expect(screen.getByText("Queued")).toBeVisible();
+	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
+
+	advance(demoOperationStartDelayMs);
+	expect(screen.getByText("Running")).toBeVisible();
+	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
+	expect(settleDeletion).not.toHaveBeenCalled();
+
+	advance(demoOperationSettleDelayMs);
+	expect(settleDeletion).toHaveBeenCalledTimes(1);
+	expect(settleDeletion).toHaveBeenNthCalledWith(1, operation);
+	expect(screen.getByText("Removal is still pending")).toBeVisible();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"Removal is incomplete. Retry to verify the managed path and finish removal; an unavailable path is not treated as an absent file.",
+	);
+
+	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+	expect(screen.getByText("Queued")).toBeVisible();
+	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
+	advance(demoOperationStartDelayMs);
+	expect(screen.getByText("Running")).toBeVisible();
+	advance(demoOperationSettleDelayMs);
+	expect(settleDeletion).toHaveBeenCalledTimes(2);
+	expect(settleDeletion).toHaveBeenNthCalledWith(2, operation);
+	expect(screen.getByText("Path conflict · review required")).toBeVisible();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"The file changed or the managed path is occupied by another file or publication. It was not touched; review the publication before retrying.",
+	);
+
+	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+	advance(demoOperationStartDelayMs);
+	advance(demoOperationSettleDelayMs);
+	expect(settleDeletion).toHaveBeenCalledTimes(3);
+	expect(settleDeletion).toHaveBeenNthCalledWith(3, operation);
+	expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+	expect(
+		screen.getByText("The confirmed removal scope was completed."),
+	).toBeVisible();
+	expect(dismissDeletion).not.toHaveBeenCalled();
+});

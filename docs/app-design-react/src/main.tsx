@@ -1,13 +1,13 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CatalogDemo } from "./CatalogDemo";
-import { DesignShell } from "./DesignShell";
 import { I18nProvider } from "./i18n";
+import { DesignShell } from "./routes/DesignShell";
 import "./tailwind.css";
 
 const root = document.getElementById("root");
 function PrototypeApp() {
-	const [incomingCount, setIncomingCount] = useState(3);
+	const [incomingCount, setIncomingCount] = useState<number>();
 	return (
 		<DesignShell incomingCount={incomingCount}>
 			<CatalogDemo onIncomingCount={setIncomingCount} />

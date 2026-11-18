@@ -1,27 +1,27 @@
 import { useState } from "react";
-import { DeletionRequest, type DeletionOperation } from "./DeletionRequest";
+import {
+	type OriginalRelease,
+	type OriginalTrack,
+	originalFiles,
+	type SourceFiles,
+} from "./catalogData";
+import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
+import { operationMessage as message } from "./features/operations/operationMessages";
+import { useI18n } from "./i18n";
+import { objectActions } from "./matchingStyles";
+import { refreshProviderHint, renameLocalTrack } from "./trackActionModel";
 import {
 	Button,
+	Dialog,
 	Disclosure,
 	DisclosureGroup,
 	DisclosurePanel,
-	Dialog,
 	Heading,
 	Input,
 	Label,
 	Modal,
 	TextField,
 } from "./ui";
-import {
-	originalFiles,
-	type OriginalRelease,
-	type OriginalTrack,
-	type SourceFiles,
-} from "./catalogData";
-import { refreshProviderHint, renameLocalTrack } from "./trackActionModel";
-import { objectActions } from "./matchingStyles";
-import { useI18n } from "./i18n";
-import { operationMessage as message } from "./operationMessages";
 
 export function TrackActions({
 	release,
