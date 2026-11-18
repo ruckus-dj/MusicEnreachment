@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
@@ -112,9 +113,11 @@ it("distinguishes an unchecked file from a failed audio check", async () => {
   );
   window.location.hash = "/sources/root-1";
   render(
-    <I18nProvider>
-      <SourcesScreen />
-    </I18nProvider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 
   const waiting = await screen.findByRole("row", { name: /Album\/waiting/ });
@@ -224,11 +227,13 @@ describe("source root creation", () => {
     );
     window.location.hash = "/sources";
     render(
-      <I18nProvider>
-        <LocaleFixture>
-          <SourcesScreen />
-        </LocaleFixture>
-      </I18nProvider>,
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider>
+          <LocaleFixture>
+            <SourcesScreen />
+          </LocaleFixture>
+        </I18nProvider>
+      </QueryClientProvider>,
     );
 
     expect(

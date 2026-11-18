@@ -22,6 +22,7 @@ import {
   type IncomingGroupName,
   incomingGroupNameText,
 } from "./incomingGroupNames";
+import { incomingGroupCountQueryKey } from "./incomingGroupsQueryKeys";
 import {
   incomingGroupMatchingHref,
   incomingGroupsListHref,
@@ -144,17 +145,21 @@ export function IncomingGroupsOverview({
         await queryClient.invalidateQueries({ queryKey: key });
         return;
       }
-      await queryClient.cancelQueries({ queryKey: key });
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
       queryClient.setQueryData(key, confirmed.data);
       setFeedback("moved");
       setMoveTarget({});
-      await Promise.all(
-        [from, target].map((id) =>
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: incomingGroupCountQueryKey(),
+          exact: true,
+        }),
+        ...[from, target].map((id) =>
           queryClient.invalidateQueries({
             queryKey: getGetIncomingGroupMatchingQueryKey(id),
           }),
         ),
-      );
+      ]);
     } catch {
       setFeedback("failed");
       await queryClient.invalidateQueries({ queryKey: key });

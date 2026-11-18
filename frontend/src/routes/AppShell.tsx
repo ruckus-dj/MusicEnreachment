@@ -19,6 +19,7 @@ import { AppButton } from "../components/AppButton";
 import { LanguageControl } from "../components/LanguageControl";
 import { ThemeControl } from "../components/ThemeControl";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
+import { incomingGroupCountQueryKey } from "../features/incoming/incomingGroupsQueryKeys";
 import {
   type IncomingGroupsRoute,
   parseIncomingGroupsRoute,
@@ -278,7 +279,7 @@ function ProductShell({
     },
   });
   const incomingGroupCount = useQuery({
-    queryKey: [...getGetIncomingGroupsQueryKey(), "count"],
+    queryKey: incomingGroupCountQueryKey(),
     enabled: !incomingActive,
     retry: false,
     queryFn: async ({ signal }) => {

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
@@ -14,6 +15,7 @@ import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { useI18n } from "../../i18n/I18nProvider";
+import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
 import { SourceLocations } from "./SourceLocations";
 import { SourceScanControl } from "./SourceScanControl";
 import { type SourceMessage, sourceMessage } from "./sourceMessages";
@@ -37,6 +39,7 @@ type EditForm = {
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const { locale } = useI18n();
+  const queryClient = useQueryClient();
   const t = (
     key: Parameters<typeof sourceMessage>[1],
     values?: Record<string, string | number>,
@@ -74,6 +77,16 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     setRefresh((value) => value + 1);
   }, []);
 
+  // The shell mirrors the visible group count outside the Incoming screens. A
+  // root change or scan completion can leave that number stale, so refresh only
+  // the exact count entry instead of the review screen's group-list request.
+  const refreshIncomingGroupCount = useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: incomingGroupCountQueryKey(),
+      exact: true,
+    });
+  }, [queryClient]);
+
   const load = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -87,6 +100,11 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       setBusy(false);
     }
   }, [sourceId, applyRoot]);
+
+  const handleScanCompleted = useCallback(() => {
+    refreshIncomingGroupCount();
+    return load();
+  }, [refreshIncomingGroupCount, load]);
 
   useEffect(() => {
     heading.current?.focus();
@@ -137,6 +155,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       });
       if (response.status !== 200) throw sourceFailure("edit", response);
       applyRoot(response.data);
+      refreshIncomingGroupCount();
       setEditing(false);
       setNotice(
         response.data.stale && response.data.inventory_path
@@ -178,6 +197,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
         confirmed_location_count: root.location_count,
       });
       if (response.status !== 204) throw sourceFailure("delete", response);
+      refreshIncomingGroupCount();
       setDeleting(false);
       dialogTrigger.current = null;
       backToList();
@@ -261,7 +281,10 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             </dl>
             <p className="sources-help">{t("sourceReadOnly")}</p>
           </section>
-          <SourceScanControl root={root} onScanCompleted={load} />
+          <SourceScanControl
+            root={root}
+            onScanCompleted={handleScanCompleted}
+          />
           <SourceLocations
             sourceId={sourceId}
             root={root}

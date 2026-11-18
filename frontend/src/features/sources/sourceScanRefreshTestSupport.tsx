@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { vi } from "vitest";
@@ -122,7 +123,11 @@ export async function openDetail() {
   const locations = nextResponse(`${rootPath}/locations`);
   const discovery = nextResponse("/api/operations");
   window.location.hash = "/sources/root-refresh";
-  const view = render(<SourcesScreen />);
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SourcesScreen />
+    </QueryClientProvider>,
+  );
   await act(async () => root);
   await act(async () => Promise.all([locations, discovery]));
   return view;
