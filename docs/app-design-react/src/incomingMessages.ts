@@ -23,43 +23,25 @@ export const incomingMessages = createNamespace({
 		automaticDirection: "automatic",
 		otherwiseManual: "Otherwise",
 		manualDirection: "manual review, including partial groups",
-		currentGroups: "Current groups",
+		overviewTitle: "Incoming groups",
+		overviewCaption:
+			"Files, paths, source readiness, and saved group evaluations",
+		group: "Group",
+		uniqueFilesPaths: "Unique files / paths",
+		readyTotal: "Ready / total",
+		evaluationState: "Evaluation status",
+		openGroup: "Open group “{name}”",
+		filePaths: "File paths",
+		sourcePathUnavailable: "Source path unavailable",
+		remainingFilesOne: "and {count} more file",
+		remainingFilesFew: "and {count} more files",
+		remainingFilesMany: "and {count} more files",
+		remainingFilesOther: "and {count} more files",
 		groupsOne: "{count} group · source queue",
 		groupsFew: "{count} groups · source queue",
 		groupsMany: "{count} groups · source queue",
 		groupsOther: "{count} groups · source queue",
-		filesCountOne: "file",
-		filesCountFew: "files",
-		filesCountOther: "files",
-		groupList: "Current incoming album groups",
 		noGroups: "There are no incoming groups yet.",
-		open: "Open",
-		files: "Files:",
-		assigned: "Assigned:",
-		free: "Available:",
-		published: "Published:",
-		assignedHeading: "Assigned",
-		freeHeading: "Available",
-		publishedHeading: "Published",
-		albumFolder: "Album / folder",
-		incoming: "Incoming",
-		mode: "Mode",
-		reason: "Reason",
-		action: "Action",
-		publishedAutomatically: "Published automatically",
-		readyForAutomatic: "Ready for automatic processing",
-		manualProcessing: "Manual processing",
-		manualScenario: "Follow the manual workflow",
-		manualStep1:
-			"Open Northern Lines: confident assignments are already filled in.",
-		manualStep2: "Assign 03 — Northbound (live?) to track 03.",
-		manualStep3:
-			"Leave tracks 09–10 empty; the fragment will remain in incoming.",
-		manualStep4: "Preview → confirm publication of the selected tracks.",
-		missingProviderCompilation: "Compilation not listed by the provider",
-		compilationDescription:
-			"Road Notes keeps its own title and order. Its tracks can be found on other releases; a provider album does not replace this local compilation.",
-		openCompilation: "Open local compilation",
 	},
 	ru: {
 		artistNotSpecified: "Артист не указан",
@@ -82,42 +64,25 @@ export const incomingMessages = createNamespace({
 		automaticDirection: "автоматически",
 		otherwiseManual: "Иначе",
 		manualDirection: "ручной разбор, в том числе частичный",
-		currentGroups: "Текущие группы",
+		overviewTitle: "Входящие группы",
+		overviewCaption:
+			"Файлы, пути, готовность источников и сохранённые оценки групп",
+		group: "Группа",
+		uniqueFilesPaths: "Уникальные файлы / пути",
+		readyTotal: "Готово / всего",
+		evaluationState: "Состояние оценки",
+		openGroup: "Открыть группу «{name}»",
+		filePaths: "Пути файлов",
+		sourcePathUnavailable: "Путь к файлам недоступен",
+		remainingFilesOne: "и ещё {count} файл",
+		remainingFilesFew: "и ещё {count} файла",
+		remainingFilesMany: "и ещё {count} файлов",
+		remainingFilesOther: "и ещё {count} файлов",
 		groupsOne: "Группа: {count} · очередь источников",
 		groupsFew: "Группы: {count} · очередь источников",
 		groupsMany: "Групп: {count} · очередь источников",
 		groupsOther: "Групп: {count} · очередь источников",
-		filesCountOne: "файл",
-		filesCountFew: "файла",
-		filesCountOther: "файлов",
-		groupList: "Текущие группы входящих альбомов",
 		noGroups: "Входящих групп пока нет.",
-		open: "Открыть",
-		files: "Файлы:",
-		assigned: "Назначено:",
-		free: "Свободно:",
-		published: "Опубликовано:",
-		assignedHeading: "Назначено",
-		freeHeading: "Свободно",
-		publishedHeading: "Опубликовано",
-		albumFolder: "Альбом / папка",
-		incoming: "Входящие",
-		mode: "Режим",
-		reason: "Причина",
-		action: "Действие",
-		publishedAutomatically: "Опубликовано автоматически",
-		readyForAutomatic: "Готов к автоматике",
-		manualProcessing: "Ручная обработка",
-		manualScenario: "Как пройти ручной сценарий",
-		manualStep1: "Откройте Northern Lines: уверенные назначения заполнены.",
-		manualStep2: "Назначьте 03 — Northbound (live?) на позицию 03.",
-		manualStep3:
-			"Оставьте позиции 09–10 пустыми; фрагмент останется во входящих.",
-		manualStep4: "Предпросмотр → подтвердить публикацию выбранных позиций.",
-		missingProviderCompilation: "Сборник, которого нет у провайдера",
-		compilationDescription:
-			"Road Notes сохраняет собственное название и порядок. Композиции можно найти в других изданиях; альбом провайдера не заменяет локальный сборник.",
-		openCompilation: "Открыть локальный сборник",
 	},
 });
 
@@ -132,17 +97,6 @@ export function incomingMessage(
 		/\{([^}]+)\}/g,
 		(_, name: string) => String(values[name] ?? `{${name}}`),
 	);
-}
-
-export function incomingFilesCount(locale: Locale, count: number) {
-	const category = new Intl.PluralRules(locale).select(count);
-	const key =
-		locale === "ru" && category === "few"
-			? "filesCountFew"
-			: category === "one"
-				? "filesCountOne"
-				: "filesCountOther";
-	return `${count} ${incomingMessages[locale][key]}`;
 }
 
 export function incomingGroupsCount(locale: Locale, count: number) {

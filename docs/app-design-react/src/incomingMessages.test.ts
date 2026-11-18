@@ -1,9 +1,5 @@
 import { expect, it } from "vitest";
-import {
-	incomingFilesCount,
-	incomingGroupsCount,
-	incomingMessage,
-} from "./incomingMessages";
+import { incomingGroupsCount, incomingMessage } from "./incomingMessages";
 
 it("translates descriptor-based incoming reasons and notices in both locales", () => {
 	expect(incomingMessage("en", "incompleteReason")).toBe(
@@ -20,12 +16,9 @@ it("translates descriptor-based incoming reasons and notices in both locales", (
 	);
 });
 
-it("localizes dynamic group and file counts with locale-specific plural forms", () => {
+it("localizes dynamic group counts with locale-specific plural forms", () => {
 	expect(incomingGroupsCount("en", 1)).toBe("1 group · source queue");
 	expect(incomingGroupsCount("en", 2)).toBe("2 groups · source queue");
 	expect(incomingGroupsCount("ru", 2)).toBe("Группы: 2 · очередь источников");
 	expect(incomingGroupsCount("ru", 5)).toBe("Групп: 5 · очередь источников");
-	expect(incomingFilesCount("ru", 1)).toBe("1 файл");
-	expect(incomingFilesCount("ru", 2)).toBe("2 файла");
-	expect(incomingFilesCount("ru", 5)).toBe("5 файлов");
 });

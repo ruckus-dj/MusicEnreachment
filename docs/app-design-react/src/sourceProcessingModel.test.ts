@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { originalFiles } from "./catalogData";
+import { retainedCopyLabel } from "./retainedCopyPath";
 import {
 	blockStagedSourceQueue,
 	canRemoveOriginalFile,
@@ -103,6 +104,16 @@ it("starts processing with the scan, keeps step outcomes independent, and retrie
 	).toBe(true);
 	expect(processed.copies).toHaveLength(processed.files.length);
 	expect(eligibleSourceCopies(processed)).toEqual([]);
+	const retained = processed.copies.find((copy) => copy.fileId === "north-f1");
+	if (!retained) throw new Error("Missing retained copy fixture");
+	expect(
+		retainedCopyLabel(
+			retained,
+			processed,
+			[{ id: "root-inbox", path: "/mnt/inbox" }],
+			originalFiles,
+		),
+	).toBe("north/01 - First Light.flac");
 
 	const retried = retrySourceStep(processed, first.id, "fingerprint");
 	expect(

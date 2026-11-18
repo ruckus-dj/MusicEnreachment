@@ -251,7 +251,15 @@ function setup(
   );
 }
 
+async function openMatching(locale: "en" | "ru" = "ru") {
+  const label = locale === "ru" ? "Сопоставление" : "Matching";
+  const tab = await screen.findByRole("tab", { name: label });
+  if (tab.getAttribute("aria-selected") !== "true") fireEvent.click(tab);
+  return screen.findByRole("tabpanel", { name: label });
+}
+
 async function chooseRelease(title = "Первое издание") {
+  await openMatching();
   await screen.findByRole(
     "heading",
     { name: "Сохраненная оценка" },
@@ -278,9 +286,42 @@ it.each([
   "en",
 ] as const)("shows the localized Local provider matching summary (%s)", async (locale) => {
   setup(review(), locale);
+  const matching = await openMatching(locale);
   expect(
-    await screen.findByText(localMatchingMessages[locale].sectionSummary),
-  ).toBeInTheDocument();
+    await within(matching).findByText(
+      localMatchingMessages[locale].sectionSummary,
+    ),
+  ).toBeVisible();
+});
+
+it("opens matching from the group list and keeps the draft when returning to it", async () => {
+  setup();
+  const groupsTab = await screen.findByRole("tab", { name: "Группы" });
+  expect(groupsTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("tabpanel", { name: "Сопоставление" })).toBeNull();
+
+  const rows = await screen.findByRole("tabpanel", { name: "Группы" });
+  fireEvent.click(
+    await within(rows).findByRole("button", {
+      name: "Открыть группу «Исходник»",
+    }),
+  );
+  expect(screen.getByRole("tab", { name: "Сопоставление" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tabpanel", { name: "Группы" })).toBeNull();
+
+  await chooseRelease();
+  fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
+    target: { value: ids.trackOne },
+  });
+  fireEvent.click(groupsTab);
+  expect(screen.queryByRole("tabpanel", { name: "Сопоставление" })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Открыть группу «Исходник»" }),
+  );
+  expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
 });
 
 it("changes locale without resetting assignments, preview, feedback, or queries", async () => {
@@ -413,6 +454,7 @@ describe("incoming manual group review", () => {
       }),
       "ru",
     );
+    await openMatching();
     expect(await screen.findAllByText("folder/01.flac")).not.toHaveLength(0);
     expect(
       screen.queryByText("550e8400-e29b-41d4-a716-446655440000"),

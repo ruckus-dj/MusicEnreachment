@@ -1,23 +1,10 @@
-import { useState, useSyncExternalStore } from "react";
-import {
-	Button,
-	Cell,
-	Column,
-	Link,
-	PageHeader,
-	Panel,
-	Row,
-	Table,
-	TableBody,
-	TableHeader,
-} from "./ui";
+import { useState } from "react";
+import { Button, Link, PageHeader, Panel } from "./ui";
 import {
 	runAutomaticMatching,
 	artistName,
 	createIncomingState,
 	incomingFixtures,
-	getDraft,
-	findTarget,
 	providerReleases,
 	type IncomingFiles,
 	type IncomingGroup,
@@ -27,35 +14,19 @@ import {
 import type { CatalogArtist } from "./catalogData";
 import { useI18n } from "./i18n";
 import {
-	incomingFilesCount,
 	incomingGroupsCount,
 	incomingMessage,
 	type IncomingMessage,
 } from "./incomingMessages";
+import { incomingOverviewRows } from "./incomingOverview";
 import { formatUiNotice } from "./uiNotice";
-
-const mobileQuery = "(max-width: 599px)";
-
-function subscribeToViewport(listener: () => void) {
-	const media = window.matchMedia?.(mobileQuery);
-	if (!media) return () => {};
-	media.addEventListener("change", listener);
-	return () => media.removeEventListener("change", listener);
-}
-
-function useIsMobile() {
-	return useSyncExternalStore(
-		subscribeToViewport,
-		() => window.matchMedia?.(mobileQuery).matches ?? false,
-		() => false,
-	);
-}
 
 export type IncomingScreenProps = {
 	destination?: import("./publicationOutput").PublicationDestination;
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
 	providers?: IncomingReleases;
+	roots?: readonly { path: string }[];
 	artists?: CatalogArtist[];
 	state?: IncomingState;
 	onState?: (state: IncomingState) => void;
@@ -68,6 +39,7 @@ export function IncomingScreen({
 	files: givenFiles,
 	releases: givenReleases,
 	providers: givenProviders,
+	roots = [],
 	artists = incomingFixtures.artists,
 	state: givenState,
 	onState,
@@ -90,7 +62,6 @@ export function IncomingScreen({
 				return msg("compilationReason");
 		}
 	};
-	const isMobile = useIsMobile();
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [localFiles, setLocalFiles] = useState<IncomingFiles>(() =>
 		structuredClone(incomingFixtures.files),
@@ -107,29 +78,12 @@ export function IncomingScreen({
 		givenState ? onState?.(next) : setLocalState(next);
 	};
 	const groups = state.groups;
-	const rows = groups.map((group) => {
-		const target = findTarget(group, releases, providers);
-		const assignments = getDraft(group, files, providers, releases);
-		const used = new Set(
-			Object.values(assignments).flatMap((assignment) => assignment.sourceIds),
-		);
-		const published = releases.find((release) =>
-			group.mode === "local"
-				? release.id === group.releaseId
-				: release.providerId === target?.id ||
-					release.providerId === target?.providerId,
-		);
-		const publishedCount =
-			published?.tracks.filter((track) => Boolean(track.published)).length ?? 0;
-		return {
-			group,
-			target,
-			assignments,
-			used,
-			publishedCount,
-			tracks: target?.tracks ?? [],
-		};
-	});
+	const rows = incomingOverviewRows(
+		groups,
+		files,
+		locale,
+		roots.map((root) => root.path),
+	);
 	const runAuto = () => {
 		const nextReleases = structuredClone(releases);
 		const count = runAutomaticMatching(
@@ -239,292 +193,115 @@ export function IncomingScreen({
 							className="m-0 text-[13px] font-semibold"
 							id="incoming-groups-heading"
 						>
-							{msg("currentGroups")}
+							{msg("overviewTitle")}
 						</h2>
 						<span className="mt-0.5 block text-xs text-[var(--muted)]">
 							{incomingGroupsCount(locale, rows.length)}
 						</span>
 					</div>
 				</header>
-				{isMobile ? (
-					<ul
-						aria-label={msg("groupList")}
-						className="m-0 grid list-none gap-2 p-2"
-					>
-						{rows.length === 0 ? (
-							<li className="py-6 text-center text-[var(--muted)]">
-								{msg("noGroups")}
-							</li>
-						) : (
-							rows.map(
-								({ group, assignments, used, publishedCount, tracks }) => {
-									const assignedCount = Object.values(assignments).filter(
-										(item) => item.sourceIds.length,
-									).length;
-									const freeCount = group.fileIds.filter(
-										(id) => files[id]?.available && !used.has(id),
-									).length;
-									return (
-										<li
-											key={group.id}
-											className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
-										>
-											<div className="flex min-w-0 items-start justify-between gap-3">
-												<div className="min-w-0">
-													<Link
-														className="font-semibold wrap-anywhere"
-														href={`#match/${group.id}`}
-													>
-														{group.title}
-													</Link>
-													<p className="m-0 mt-0.5 text-xs text-[var(--muted)]">
-														{artistName(group.artistId, artists) ||
-															msg("artistNotSpecified")}
-													</p>
-												</div>
-												<Link
-													className="inline-flex min-h-10 shrink-0 items-center rounded-[3px] border border-[var(--line)] px-3 hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline"
-													href={`#match/${group.id}`}
-												>
-													{msg("open")}
-												</Link>
-											</div>
-											<dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [font-variant-numeric:tabular-nums]">
-												<div>
-													<dt className="inline text-[var(--muted)]">
-														{msg("files")}{" "}
-													</dt>
-													<dd className="inline m-0 font-semibold">
-														{group.fileIds.length}
-													</dd>
-												</div>
-												<div>
-													<dt className="inline text-[var(--muted)]">
-														{msg("assigned")}{" "}
-													</dt>
-													<dd className="inline m-0 font-semibold">
-														{assignedCount} / {tracks.length}
-													</dd>
-												</div>
-												<div>
-													<dt className="inline text-[var(--muted)]">
-														{msg("free")}{" "}
-													</dt>
-													<dd className="inline m-0 font-semibold">
-														{freeCount}
-													</dd>
-												</div>
-												<div>
-													<dt className="inline text-[var(--muted)]">
-														{msg("published")}{" "}
-													</dt>
-													<dd className="inline m-0 font-semibold">
-														{publishedCount} / {tracks.length}
-													</dd>
-												</div>
-											</dl>
-											<p className="m-0 text-xs text-[var(--muted)]">
-												{renderReason(group.reason)}
+				<div className="min-w-0 overflow-x-auto">
+					<table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0">
+						<caption className="sr-only">{msg("overviewCaption")}</caption>
+						<colgroup>
+							<col className="w-[36%]" />
+							<col className="w-[28%]" />
+							<col className="w-[14%]" />
+							<col className="w-[22%]" />
+						</colgroup>
+						<thead>
+							<tr>
+								<th
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
+									scope="col"
+								>
+									{msg("group")}
+								</th>
+								<th
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
+									scope="col"
+								>
+									{msg("uniqueFilesPaths")}
+								</th>
+								<th
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
+									scope="col"
+								>
+									{msg("readyTotal")}
+								</th>
+								<th
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
+									scope="col"
+								>
+									{msg("evaluationState")}
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.length === 0 && (
+								<tr>
+									<td
+										className="p-6 text-center text-[var(--muted)]"
+										colSpan={4}
+									>
+										{msg("noGroups")}
+									</td>
+								</tr>
+							)}
+							{rows.map(
+								({
+									group,
+									name,
+									memberCount,
+									pathCount,
+									paths,
+									readyCount,
+								}) => (
+									<tr key={group.id}>
+										<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
+											<Link
+												className="font-semibold wrap-anywhere"
+												href={`#match/${group.id}`}
+											>
+												{msg("openGroup", { name })}
+											</Link>
+											<p className="m-0 mt-0.5 text-[11px] text-[var(--muted)] wrap-anywhere">
+												{artistName(group.artistId, artists) ||
+													msg("artistNotSpecified")}
 											</p>
-										</li>
-									);
-								},
-							)
-						)}
-					</ul>
-				) : (
-					<div className="min-w-0 overflow-x-auto">
-						<Table
-							aria-label={msg("groupList")}
-							className="w-full min-w-[1040px] border-collapse text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0 max-[900px]:min-w-[970px]"
-						>
-							<TableHeader>
-								<Column
-									id="group"
-									isRowHeader
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("albumFolder")}
-								</Column>
-								<Column
-									id="files"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("incoming")}
-								</Column>
-								<Column
-									id="assigned"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("assignedHeading")}
-								</Column>
-								<Column
-									id="free"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("freeHeading")}
-								</Column>
-								<Column
-									id="mode"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("mode")}
-								</Column>
-								<Column
-									id="published"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("publishedHeading")}
-								</Column>
-								<Column
-									id="reason"
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-								>
-									{msg("reason")}
-								</Column>
-								<Column
-									id="action"
-									aria-label={msg("action")}
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-								/>
-							</TableHeader>
-							<TableBody>
-								{rows.length === 0 && (
-									<Row id="empty">
-										<Cell
-											colSpan={8}
-											className="!p-6 text-center text-[var(--muted)]"
-										>
-											{msg("noGroups")}
-										</Cell>
-									</Row>
-								)}
-								{rows.map(
-									({ group, assignments, used, publishedCount, tracks }) => (
-										<Row
-											id={group.id}
-											key={group.id}
-											className="transition-colors hover:bg-[var(--raised)]"
-										>
-											<Cell className="min-w-[190px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-												<span
-													className={`float-left mr-2 inline-grid h-8 w-8 place-items-center text-sm font-semibold text-white ${group.id === "north" ? "bg-[#486d59]" : group.id === "hours" ? "bg-[#676e95]" : group.id === "mix" ? "bg-[#4c717e]" : "bg-[#ac7059]"}`}
-													aria-hidden="true"
-												>
-													{group.title.slice(0, 1).toLocaleUpperCase()}
-												</span>
-												<span className="grid min-w-0 gap-px">
-													<Link
-														className="font-semibold wrap-anywhere"
-														href={`#match/${group.id}`}
-													>
-														{group.title}
-													</Link>
-													<span className="text-[10px] text-[var(--muted)]">
-														{artistName(group.artistId, artists) ||
-															msg("artistNotSpecified")}
-													</span>
-													<code className="font-mono text-[9px] leading-[1.4] text-[var(--muted)] wrap-anywhere">
-														/mnt/inbox/{group.id}
-													</code>
-												</span>
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-													{group.fileIds.length}
-												</span>
-												<span className="text-[var(--muted)]">
-													{incomingFilesCount(
-														locale,
-														group.fileIds.length,
-													).replace(/^\d+\s*/, "")}
-												</span>
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-													{
-														Object.values(assignments).filter(
-															(item) => item.sourceIds.length,
-														).length
-													}
-												</span>
-												<span className="text-[var(--muted)]">
-													{" "}
-													/ {tracks.length}
-												</span>
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-													{
-														group.fileIds.filter(
-															(id) => files[id]?.available && !used.has(id),
-														).length
-													}
-												</span>
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-												<span
-													className={`inline-flex max-w-[170px] items-center gap-[5px] text-[10px] leading-[1.3] ${group.processed ? "text-[var(--success)]" : group.autoEligible ? "text-[var(--info)]" : "text-[var(--warning)]"}`}
-												>
-													<i
-														className={`h-1.5 w-1.5 flex-[0_0_6px] rounded-full ${group.processed ? "bg-[var(--success)]" : group.autoEligible ? "bg-[var(--info)]" : "bg-[var(--warning)]"}`}
-														aria-hidden="true"
-													/>
-													{group.processed
-														? msg("publishedAutomatically")
-														: group.autoEligible
-															? msg("readyForAutomatic")
-															: msg("manualProcessing")}
-												</span>
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-													{publishedCount}
-												</span>
-												<span className="text-[var(--muted)]">
-													{" "}
-													/ {tracks.length}
-												</span>
-											</Cell>
-											<Cell className="min-w-40 max-w-[270px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle text-[10px] text-[var(--muted)] wrap-anywhere">
-												{renderReason(group.reason)}
-											</Cell>
-											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-												<Link
-													className="inline-flex min-h-7 items-center whitespace-nowrap rounded-[3px] border border-[var(--line)] px-[7px] py-[3px] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline max-[600px]:min-h-10"
-													href={`#match/${group.id}`}
-												>
-													{msg("open")}
-												</Link>
-											</Cell>
-										</Row>
-									),
-								)}
-							</TableBody>
-						</Table>
-					</div>
-				)}
+										</td>
+										<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
+											<span className="block whitespace-nowrap">
+												{memberCount} / {pathCount}
+											</span>
+											<details className="mt-1">
+												<summary className="cursor-pointer text-[11px] text-[var(--muted)] wrap-anywhere">
+													{msg("filePaths")}
+												</summary>
+												<ul className="m-0 mt-1 list-none p-0 text-[11px] text-[var(--muted)]">
+													{paths.map((path) => (
+														<li className="wrap-anywhere" key={path.key}>
+															{path.label}
+														</li>
+													))}
+												</ul>
+											</details>
+										</td>
+										<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
+											<span className="whitespace-nowrap">
+												{readyCount} / {memberCount}
+											</span>
+										</td>
+										<td className="border-b border-[var(--line)] px-2 py-1.5 align-top text-[11px] wrap-anywhere">
+											{renderReason(group.reason)}
+										</td>
+									</tr>
+								),
+							)}
+						</tbody>
+					</table>
+				</div>
 			</Panel>
-			<div className="grid grid-cols-2 gap-[10px] max-[600px]:grid-cols-1">
-				<Panel className="m-0 p-[10px]">
-					<h2 className="mb-1.5 mt-0 text-[13px]">{msg("manualScenario")}</h2>
-					<ol className="m-0 list-decimal pl-5 text-[11px] text-[var(--muted)] [&>li+li]:mt-[3px]">
-						<li>{msg("manualStep1")}</li>
-						<li>{msg("manualStep2")}</li>
-						<li>{msg("manualStep3")}</li>
-						<li>{msg("manualStep4")}</li>
-					</ol>
-				</Panel>
-				<Panel className="m-0 p-[10px]">
-					<h2 className="mb-1.5 mt-0 text-[13px]">
-						{msg("missingProviderCompilation")}
-					</h2>
-					<p className="mb-[7px] mt-0 text-[11px] text-[var(--muted)]">
-						{msg("compilationDescription")}
-					</p>
-					<Link href="#match/mix">{msg("openCompilation")}</Link>
-				</Panel>
-			</div>
 		</main>
 	);
 }

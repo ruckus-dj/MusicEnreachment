@@ -10,6 +10,8 @@ import {
 } from "./incomingGroupNames";
 import { incomingMessages } from "./incomingMessages";
 
+const cellClassName = "border-b p-2 align-top wrap-anywhere";
+
 export function IncomingGroupsOverview({
   snapshot,
   groupNames,
@@ -31,15 +33,29 @@ export function IncomingGroupsOverview({
   return (
     <section aria-labelledby="incoming-overview-title">
       <h2 id="incoming-overview-title">{copy.overviewTitle}</h2>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
+      <div className="mt-2 min-w-0 overflow-x-auto">
+        <table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-sm">
           <caption className="sr-only">{copy.overviewCaption}</caption>
+          <colgroup>
+            <col className="w-[36%]" />
+            <col className="w-[28%]" />
+            <col className="w-[14%]" />
+            <col className="w-[22%]" />
+          </colgroup>
           <thead>
             <tr>
-              <th className="border-b p-2">{copy.group}</th>
-              <th className="border-b p-2">{copy.uniqueFilesPaths}</th>
-              <th className="border-b p-2">{copy.readyTotal}</th>
-              <th className="border-b p-2">{copy.evaluationState}</th>
+              <th scope="col" className={cellClassName}>
+                {copy.group}
+              </th>
+              <th scope="col" className={cellClassName}>
+                {copy.uniqueFilesPaths}
+              </th>
+              <th scope="col" className={cellClassName}>
+                {copy.readyTotal}
+              </th>
+              <th scope="col" className={cellClassName}>
+                {copy.evaluationState}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -62,7 +78,7 @@ export function IncomingGroupsOverview({
               );
               return (
                 <tr key={group.id}>
-                  <td className="border-b p-2">
+                  <td className={cellClassName}>
                     <AppButton
                       className="max-w-full wrap-anywhere text-left"
                       onPress={() => onSelect(group.id)}
@@ -75,7 +91,7 @@ export function IncomingGroupsOverview({
                         : copy.automaticGrouping}
                     </p>
                   </td>
-                  <td className="border-b p-2">
+                  <td className={cellClassName}>
                     {members.size} / {paths.size}
                     <details className="mt-1">
                       <summary>{copy.filePaths}</summary>
@@ -86,11 +102,11 @@ export function IncomingGroupsOverview({
                       </ul>
                     </details>
                   </td>
-                  <td className="border-b p-2">
+                  <td className={cellClassName}>
                     {[...members].filter((id) => !unready.has(id)).length} /{" "}
                     {members.size}
                   </td>
-                  <td className="border-b p-2">
+                  <td className={cellClassName}>
                     {selectedReview
                       ? selectedReview.evaluated
                         ? copy.candidatesAuthority(

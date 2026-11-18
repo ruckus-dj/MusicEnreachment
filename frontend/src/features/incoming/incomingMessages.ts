@@ -14,6 +14,10 @@ export const incomingMessages = {
     overviewTitle: "Incoming groups",
     overviewCaption:
       "Files, paths, source readiness, and saved group evaluations",
+    surfacesLabel: "Incoming views",
+    tabGroups: "Groups",
+    tabGrouping: "Edit grouping",
+    tabMatching: "Matching",
     group: "Group",
     uniqueFilesPaths: "Unique files / paths",
     readyTotal: "Ready / total",
@@ -151,6 +155,10 @@ export const incomingMessages = {
     overviewTitle: "Входящие группы",
     overviewCaption:
       "Файлы, пути, готовность источников и сохранённые оценки групп",
+    surfacesLabel: "Разделы входящих",
+    tabGroups: "Группы",
+    tabGrouping: "Редактор группировки",
+    tabMatching: "Сопоставление",
     group: "Группа",
     uniqueFilesPaths: "Уникальные файлы / пути",
     readyTotal: "Готово / всего",

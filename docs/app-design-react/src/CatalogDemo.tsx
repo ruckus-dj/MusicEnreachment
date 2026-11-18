@@ -429,6 +429,12 @@ export function CatalogDemo({
 		return next.status;
 	};
 	useEffect(() => {
+		if (route !== "review" && !route.startsWith("match/")) return;
+		const content = document.querySelector<HTMLElement>("#content");
+		if (content) content.scrollTop = 0;
+		if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+	}, [route]);
+	useEffect(() => {
 		const heading =
 			document.querySelector<HTMLElement>("#content h1") ??
 			document.querySelector<HTMLElement>("h1");
@@ -857,6 +863,7 @@ export function CatalogDemo({
 				onState={setIncoming}
 				files={files}
 				providers={providers}
+				roots={sourceRoots}
 				artists={providerArtists}
 				releases={releases}
 				onReleases={setImportedReleases}

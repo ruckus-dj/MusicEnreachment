@@ -152,6 +152,12 @@ in frontend/.
 - Make small coherent commits along the way, always with the normal hooks. At the
   end of each plan item, push and check the complete GitHub CI result, then continue.
   Never confuse a green prerequisite commit with completion of the whole plan.
+- For application changes, finish the delivery cycle without a separate owner
+  prompt: update the local `test_stand`, smoke-check the affected surface, commit
+  with the normal hook, push to `go-development`, and check the complete CI result
+  for that commit. For app-only changes, rebuild only the `app` service; preserve
+  stand data and keep `downloads` untouched and mounted read-only. The artifact-only
+  prototype exception below still applies.
 - Record recurring failures and their prevention in the relevant repository
   documentation. In particular, integration tests using tagged fixture helpers
   need the integration build tag; prove a valid baseline before testing rejection,

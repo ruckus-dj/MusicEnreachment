@@ -26,6 +26,75 @@
   background: var(--surface);
 }
 
+.incoming-tabs {
+  min-width: 0;
+}
+
+/*
+ * The tab bar is the only screen-level navigation. It sticks to the shell
+ * scroll container (or the document on mobile) while Groups and the grouping
+ * editor stay in normal flow; only the desktop matching board keeps bounded
+ * internal panes.
+ */
+.incoming-tab-list {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 6px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.incoming-tab-list [role="tab"] {
+  min-height: 34px;
+  padding: 6px 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.incoming-tab-list [role="tab"][data-selected] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.incoming-tab-list [role="tab"]:focus-visible,
+.incoming-tab-panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.incoming-tab-panel[data-inert] {
+  display: none;
+}
+
+.incoming-view-heading {
+  scroll-margin-top: 56px;
+}
+
+.incoming-view-heading:focus {
+  outline: none;
+}
+
+/*
+ * Desktop matching is an explicit exception to shell-only scrolling: keep the
+ * candidate/position/source board and inspector geometry bounded while the
+ * surrounding screen still scrolls normally.
+ */
+@media (min-width: 1400px) {
+  .incoming-matching-workspace {
+    height: clamp(520px, 72dvh, 880px);
+  }
+}
+
 .incoming-screen input,
 .incoming-screen select,
 .incoming-screen textarea {
@@ -138,6 +207,10 @@
   }
 
   .incoming-screen button {
+    min-height: 40px;
+  }
+
+  .incoming-tab-list [role="tab"] {
     min-height: 40px;
   }
 
