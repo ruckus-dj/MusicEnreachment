@@ -200,6 +200,34 @@ export function LibraryCatalogRows({
 		release.tracks.map((track) => ({ release, track })),
 	);
 	const tableTrackIds = tracks.map(({ track }) => track.id);
+	const albumRows = releases.flatMap((release) => {
+		const summary = { id: release.id, release, detail: false };
+		return expanded === release.id
+			? [summary, { id: `${release.id}:tracks`, release, detail: true }]
+			: [summary];
+	});
+	const albumColumnWidths = [
+		catalogueStyles.selectionColumn,
+		"", // The title gets the space left after the other columns.
+		"w-[15%]",
+		"w-[12%]",
+		"w-[8%]",
+		"w-[8%]",
+		"w-[9%]",
+		"w-[12%]",
+		"w-[9%]",
+	];
+	const trackDetailColumnWidths = [
+		catalogueStyles.selectionColumn,
+		"w-[8%]",
+		"",
+		"w-[7%]",
+		"w-[13%]",
+		"w-[9%]",
+		"w-[24%]",
+		"w-[11%]",
+		"w-[9%]",
+	];
 	const columns =
 		view === "albums"
 			? [
@@ -226,16 +254,28 @@ export function LibraryCatalogRows({
 					m("tags"),
 				];
 	return (
-		<div className={catalogueStyles.tableScroll}>
+		<div
+			className={
+				view === "albums" ? "w-full min-w-0" : catalogueStyles.tableScroll
+			}
+		>
 			<div
-				className={catalogueStyles.mobileCatalog}
+				className={
+					view === "albums"
+						? "hidden gap-2 max-[900px]:grid"
+						: catalogueStyles.mobileCatalog
+				}
 				aria-label={view === "albums" ? m("albumsTable") : m("tracksTable")}
 			>
-				<div className={catalogueStyles.mobileCatalogRow}>
-					<MobileField label={bulkSelectionLabel}>
-						{groupCheckbox(tableTrackIds, bulkSelectionLabel)}
-					</MobileField>
-				</div>
+				{view === "albums" && releases.length === 0 ? (
+					<div className={catalogueStyles.empty}>{m("noResults")}</div>
+				) : (
+					<div className={catalogueStyles.mobileCatalogRow}>
+						<MobileField label={bulkSelectionLabel}>
+							{groupCheckbox(tableTrackIds, bulkSelectionLabel)}
+						</MobileField>
+					</div>
+				)}
 				{view === "albums"
 					? releases.map((release) => {
 							const provider = originalProviders.find(
@@ -340,7 +380,7 @@ export function LibraryCatalogRows({
 														: null;
 												return (
 													<div
-														className={catalogueStyles.mobileCatalogGroup}
+														className={`${catalogueStyles.mobileCatalogGroup} ${availabilityRowClass(track as OriginalTrack, filter, hasAudio)} ${catalogueStyles.filterRows} [&.filter-muted>dl]:opacity-[.55] [&.filter-muted:focus-within>dl]:opacity-100`}
 														key={track.id}
 													>
 														<MobileField label={m("select")}>
@@ -494,15 +534,29 @@ export function LibraryCatalogRows({
 							);
 						})}
 			</div>
-			<div className="max-[599px]:hidden">
+			<div
+				className={
+					view === "albums"
+						? "min-w-0 max-[900px]:hidden"
+						: "max-[599px]:hidden"
+				}
+			>
 				<Table
 					key={view}
 					aria-label={view === "albums" ? m("albumsTable") : m("tracksTable")}
-					className={`${catalogueStyles.table} ${catalogueTableWidths[view]}`}
+					className={`${catalogueStyles.table} ${view === "albums" ? "table-fixed" : catalogueTableWidths[view]}`}
 				>
 					<TableHeader>
 						{columns.map((column, index) => (
-							<Column key={column} isRowHeader={index === 1}>
+							<Column
+								key={column}
+								isRowHeader={index === 1}
+								className={
+									view === "albums"
+										? `${albumColumnWidths[index]} whitespace-normal! wrap-anywhere`
+										: undefined
+								}
+							>
 								{index === 0
 									? groupCheckbox(tableTrackIds, bulkSelectionLabel)
 									: column}
@@ -511,7 +565,7 @@ export function LibraryCatalogRows({
 					</TableHeader>
 					{view === "albums" ? (
 						<TableBody
-							items={releases}
+							items={albumRows}
 							dependencies={[
 								releases,
 								artists,
@@ -525,48 +579,21 @@ export function LibraryCatalogRows({
 								<div className={catalogueStyles.empty}>{m("noResults")}</div>
 							)}
 						>
-							{(release) => {
-								const provider = originalProviders.find(
-									(item) => item.id === release.providerId,
-								);
-								const published = release.tracks.filter((track) =>
-									Boolean(track.published),
-								).length;
-								const sourceCount = release.tracks.filter(
-									(track) => sourceIds(track).length > 0,
-								).length;
-								return (
-									<Row id={release.id}>
-										<Cell>
-											{groupCheckbox(
-												release.tracks.map((track) => track.id),
-												m("selectAlbumPositions", { album: release.title }),
-											)}
-										</Cell>
-										<Cell>
-											<Button
-												className={catalogueStyles.expander}
-												aria-expanded={expanded === release.id}
-												onPress={() => onToggleAlbum(release.id)}
+							{({ id, release, detail }) => {
+								if (detail) {
+									return (
+										<Row
+											id={id}
+											aria-label={`${m("recording")} · ${release.title}`}
+										>
+											<Cell
+												colSpan={columns.length}
+												className="w-auto! min-w-0! max-w-none! px-2! text-left!"
 											>
-												{release.title || m("untitled")}
-											</Button>
-											<span className={catalogueStyles.sub}>
-												{artistReleaseHref(release, artists) ? (
-													<a
-														href={
-															artistReleaseHref(release, artists) ?? undefined
-														}
+												<div className="w-full min-w-0 rounded border border-[var(--line)] bg-[var(--raised)]">
+													<table
+														className={`${catalogueStyles.inlineTable} min-w-0! table-fixed wrap-anywhere`}
 													>
-														{m("openRelease")}
-													</a>
-												) : (
-													m("artistNotSpecified")
-												)}
-											</span>
-											{expanded === release.id && (
-												<div className={catalogueStyles.inlineTracks}>
-													<table className={catalogueStyles.inlineTable}>
 														<thead>
 															<tr>
 																{[
@@ -584,9 +611,7 @@ export function LibraryCatalogRows({
 																		key={heading}
 																		scope="col"
 																		className={
-																			headingIndex === 0
-																				? catalogueStyles.selectionColumn
-																				: undefined
+																			trackDetailColumnWidths[headingIndex]
 																		}
 																	>
 																		{headingIndex === 0
@@ -708,7 +733,48 @@ export function LibraryCatalogRows({
 														</tbody>
 													</table>
 												</div>
+											</Cell>
+										</Row>
+									);
+								}
+								const provider = originalProviders.find(
+									(item) => item.id === release.providerId,
+								);
+								const published = release.tracks.filter((track) =>
+									Boolean(track.published),
+								).length;
+								const sourceCount = release.tracks.filter(
+									(track) => sourceIds(track).length > 0,
+								).length;
+								return (
+									<Row id={id}>
+										<Cell>
+											{groupCheckbox(
+												release.tracks.map((track) => track.id),
+												m("selectAlbumPositions", { album: release.title }),
 											)}
+										</Cell>
+										<Cell>
+											<Button
+												className={`${catalogueStyles.expander} max-w-full wrap-anywhere`}
+												aria-expanded={expanded === release.id}
+												onPress={() => onToggleAlbum(release.id)}
+											>
+												{release.title || m("untitled")}
+											</Button>
+											<span className={catalogueStyles.sub}>
+												{artistReleaseHref(release, artists) ? (
+													<a
+														href={
+															artistReleaseHref(release, artists) ?? undefined
+														}
+													>
+														{m("openRelease")}
+													</a>
+												) : (
+													m("artistNotSpecified")
+												)}
+											</span>
 										</Cell>
 										<Cell>
 											{release.credits?.length ? (

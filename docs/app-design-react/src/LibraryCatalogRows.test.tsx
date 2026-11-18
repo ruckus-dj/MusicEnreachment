@@ -13,6 +13,7 @@ const rows = (
 	view: "albums" | "tracks",
 	files = originalFiles,
 	releases = originalReleases,
+	expanded: string | null = release.id,
 ) => (
 	<LibraryCatalogRows
 		view={view}
@@ -28,10 +29,37 @@ const rows = (
 		hasAudio={() => true}
 		files={files}
 		groupCheckbox={(_ids, label) => <button type="button">{label}</button>}
-		expanded={release.id}
+		expanded={expanded}
 		onToggleAlbum={() => undefined}
 	/>
 );
+
+it("opens album tracks below the entire album row", () => {
+	const { rerender } = render(rows("albums", originalFiles, [release]));
+	const grid = screen.getByRole("grid", { name: "Альбомы медиатеки" });
+	const trigger = within(grid).getByRole("button", { name: release.title });
+	const albumRow = trigger.closest("tr");
+	const detailsRow = albumRow?.nextElementSibling;
+	const span = detailsRow?.firstElementChild;
+	if (!span || !detailsRow || !albumRow)
+		throw new Error("Missing album details row");
+	expect(albumRow.querySelector("table")).toBeNull();
+	expect(detailsRow.children).toHaveLength(1);
+	expect(
+		span.getAttribute("colspan") ?? span.getAttribute("aria-colspan"),
+	).toBe(String(grid.querySelectorAll(":scope > thead > tr > th").length));
+	expect(
+		within(detailsRow as HTMLElement).getByRole("link", {
+			name: "First Light",
+		}),
+	).toBeVisible();
+
+	rerender(rows("albums", originalFiles, [release], null));
+	expect(
+		within(grid).getByRole("button", { name: release.title }),
+	).toHaveAttribute("aria-expanded", "false");
+	expect(detailsRow).not.toBeInTheDocument();
+});
 
 it("switches desktop catalog views without hook-order warnings", () => {
 	const originalError = console.error;
@@ -71,7 +99,6 @@ it("renders mobile albums as labeled rows with expansion and selection controls"
 	const mobile = screen.getByLabelText("Альбомы медиатеки", {
 		selector: "div",
 	});
-	expect(mobile.className).toContain("max-[599px]:grid");
 	// JSDOM renders both responsive surfaces; identify desktop semantically.
 	expect(screen.getByRole("grid", { name: "Альбомы медиатеки" })).toBeTruthy();
 	const albumRow = within(mobile)
