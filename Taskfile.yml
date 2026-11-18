@@ -88,17 +88,44 @@ tasks:
   stand:up:
     desc: Build and start the local test stand (app, PostgreSQL, Navidrome, Feishin), waiting for healthy
     cmds:
-      - docker compose -f test_stand/compose.yaml up --build --detach --wait --wait-timeout 240
+      - docker compose -p melotrove-go-test-stand -f test_stand/compose.yaml up --build --detach --wait --wait-timeout 240
 
   stand:down:
     desc: Stop and remove the local test stand containers and network (volumes are kept)
     cmds:
-      - docker compose -f test_stand/compose.yaml down
+      - docker compose -p melotrove-go-test-stand -f test_stand/compose.yaml down
+
+  stand:reset:
+    desc: Permanently reset test stand PostgreSQL, Navidrome, stage, output and tools (keeps downloads)
+    cmds:
+      - |
+        set -eu
+        for dir in test_stand test_stand/data test_stand/config test_stand/data/downloads \
+          test_stand/data/stage test_stand/data/media-go test_stand/data/tools test_stand/config/navidrome-go
+        do
+          if test -L "$dir"; then
+            printf 'Refusing to reset with a symlink at %s\n' "$dir" >&2
+            exit 1
+          fi
+        done
+        project=melotrove-go-test-stand
+        containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+        for id in $containers; do
+          stand_dir=$(docker inspect --format '{{"{{"}}index .Config.Labels "com.docker.compose.project.working_dir"{{"}}"}}' "$id")
+          if test "$stand_dir" != "$(pwd -P)/test_stand"; then
+            printf 'Refusing to reset project %s from a different checkout\n' "$project" >&2
+            exit 1
+          fi
+        done
+        docker compose -p "$project" -f test_stand/compose.yaml down
+        rm -rf -- test_stand/data/stage test_stand/data/media-go test_stand/data/tools test_stand/config/navidrome-go
+        mkdir -p -- test_stand/data/stage test_stand/data/media-go test_stand/data/tools test_stand/config/navidrome-go
+        docker compose -p "$project" -f test_stand/compose.yaml down --volumes
 
   stand:logs:
     desc: Follow the local test stand logs from the last 100 lines
     cmds:
-      - docker compose -f test_stand/compose.yaml logs --follow --tail 100
+      - docker compose -p melotrove-go-test-stand -f test_stand/compose.yaml logs --follow --tail 100
 
   go:build:
     internal: true

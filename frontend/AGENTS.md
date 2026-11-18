@@ -117,8 +117,9 @@ only trigger REST reads; they are not snapshots or history. Reconnection refresh
 all followers, and joining an already-open stream must also read immediately.
 The final unsubscribe closes the shared transport. SSE frames need a `data:`
 line to dispatch in native EventSource; mock listener calls alone cannot verify
-framing. Failed Settings rows retain their controls and snapshots without an
-active follower; queued/running rows continue following.
+framing. Settings does not render an operations list. Follow queued/running
+managed-tool operations to refresh the tool inventory and Settings state on
+completion; retry and dismissal are on the dedicated Operations screen.
 
 **Chained source reads in tests**: A root response bumps the detail screen's
 inventory refresh token, so the locations request starts only after that commit.

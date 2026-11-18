@@ -48,6 +48,21 @@ function sizeLabel(bytes: number, locale: "en" | "ru"): string {
   return `${numberFormat(locale, { maximumFractionDigits: 1 }).format(value)} ${units[unit]}`;
 }
 
+function probeStatusMessage(status: SourceLocationResponse["probe_status"]) {
+  switch (status) {
+    case "audio":
+      return "streamAudio";
+    case "no_audio":
+      return "noAudio";
+    case "not_analyzed":
+      return "probeNotAnalyzed";
+    case "probe_error":
+      return "probeError";
+    default:
+      return "unknown";
+  }
+}
+
 export function SourceLocations({
   sourceId,
   root,
@@ -229,13 +244,7 @@ export function SourceLocations({
                               className="sources-chip"
                               data-status={location.probe_status}
                             >
-                              {t(
-                                location.probe_status === "audio"
-                                  ? "streamAudio"
-                                  : location.probe_status === "no_audio"
-                                    ? "noAudio"
-                                    : "probeError",
-                              )}
+                              {t(probeStatusMessage(location.probe_status))}
                             </span>
                             {location.probe_status === "no_audio" && (
                               <span className="sources-note">

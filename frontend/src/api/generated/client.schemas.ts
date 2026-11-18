@@ -1837,7 +1837,7 @@ export interface SetupStateBody {
 
 export interface SourceAnalysisArtifactCleanupCandidate {
   artifact_id: string;
-  relative_path: string;
+  source_relative_path: string;
   state: string;
 }
 
@@ -1942,6 +1942,7 @@ export const SourceLocationDetailResponseProbeStatus = {
   audio: 'audio',
   no_audio: 'no_audio',
   probe_error: 'probe_error',
+  not_analyzed: 'not_analyzed',
 } as const;
 
 export interface SourceTechnicalContainerResponse {
@@ -2052,6 +2053,7 @@ export const SourceLocationResponseProbeStatus = {
   audio: 'audio',
   no_audio: 'no_audio',
   probe_error: 'probe_error',
+  not_analyzed: 'not_analyzed',
 } as const;
 
 export interface SourceLocationResponse {

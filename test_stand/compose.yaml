@@ -11,15 +11,20 @@ services:
       - "127.0.0.1:8787:8080"
     volumes:
       - type: bind
-        source: ./data/downloads/music
-        target: /data/sources/music
+        source: ./data/downloads
+        target: /downloads
         read_only: true
         bind:
           create_host_path: false
       - type: bind
+        source: ./data/stage
+        target: /stage
+      - type: bind
         source: ./data/media-go
-        target: /var/lib/melotrove/output
-      - tools-data:/var/lib/melotrove/tools
+        target: /media
+      - type: bind
+        source: ./data/tools
+        target: /tools
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,4 +86,3 @@ services:
 
 volumes:
   postgres-data:
-  tools-data:

@@ -37,8 +37,9 @@
   полный список move targets API/UI не раскрывает. В обоих flow серверный token
   ограничивает подтверждение актуальным набором preflight conflicts. Запуск
   создаёт River operation; прогресс читается из REST snapshot, SSE используется
-  как wake-up с повторным REST-read после connect/reconnect/error. Failed
-  operations предлагают Retry и Dismiss.
+  как wake-up с повторным REST-read после connect/reconnect/error. После Setup
+  повтор и закрытие ошибок операций с инструментами доступны на экране
+  «Операции».
 - Каталог хранится только в памяти клиента; timestamp последней успешной
   проверки — в client storage. После загрузки Settings автоматическая проверка
   выполняется не чаще одного раза за 24 часа (один запрос для каждого package).

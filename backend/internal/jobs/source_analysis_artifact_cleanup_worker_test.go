@@ -55,7 +55,7 @@ func (runtime *cleanupWorkerSettings) ReadRuntimeSettings(context.Context) (sett
 
 type cleanupServiceRepository struct{}
 
-func (cleanupServiceRepository) ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]*persistence.SourceAnalysisArtifact, error) {
+func (cleanupServiceRepository) ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]persistence.SourceAnalysisArtifactCleanupCandidate, error) {
 	return nil, nil
 }
 

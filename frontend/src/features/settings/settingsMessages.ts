@@ -106,7 +106,6 @@ const english = {
   enabled: "enabled",
   disabled: "disabled",
   versionLabel: "Version {kind}",
-  bytes: "bytes",
   pageDescription:
     "After setup, configuration issues are shown here and do not return the application to the setup wizard.",
   requestInProgress: "Request in progress…",
@@ -179,7 +178,9 @@ const english = {
   installWithoutActivation: "Install without activation",
   loadingCatalog: "Loading catalog…",
   catalogNotLoaded: "Catalog has not been loaded yet.",
-  currentOperations: "Current operations",
+  toolOperationsHint:
+    "Tool operations continue in the background; progress, retry, and error dismissal are on the Operations screen.",
+  openOperations: "Open operations",
   refreshState: "Refresh state",
   settingsConflict: "Settings conflict: {label}",
   changedSavedValue: "The saved value for “{label}” changed:",
@@ -220,11 +221,8 @@ const english = {
   targetFiles: "Target files",
   conflictsToConfirm: "Conflicts to confirm",
   noConflicts: "No conflicts.",
-  operation: "Operation {id}",
-  operationPending:
-    "Operation in progress; state is being refreshed from the server.",
-  retryOperation: "Retry operation {id}",
-  dismissOperation: "Dismiss error {id}",
+  waitForRunningOperations:
+    "Wait for running operations to finish before changing the publication directory.",
   errorSavingDraft:
     "Could not save the draft to browser storage. Stay on this page and try again.",
   errorDiscardingDraft:
@@ -341,7 +339,6 @@ const russian: Record<SettingsMessageKey, string> = {
   enabled: "включено",
   disabled: "выключено",
   versionLabel: "Версия {kind}",
-  bytes: "байт",
   settingsTabs: "Разделы настроек",
   tabGeneral: "Общие",
   tabFolders: "Папки",
@@ -439,7 +436,9 @@ const russian: Record<SettingsMessageKey, string> = {
   installWithoutActivation: "Установить без активации",
   loadingCatalog: "Загрузка каталога…",
   catalogNotLoaded: "Каталог пока не загружен.",
-  currentOperations: "Текущие операции",
+  toolOperationsHint:
+    "Ход операций с инструментами, повтор и закрытие ошибок — в разделе «Операции».",
+  openOperations: "Открыть операции",
   refreshState: "Обновить состояние",
   settingsConflict: "Конфликт настроек: {label}",
   changedSavedValue: "Сохранённое значение для «{label}» изменилось:",
@@ -480,10 +479,8 @@ const russian: Record<SettingsMessageKey, string> = {
   targetFiles: "Целевые файлы",
   conflictsToConfirm: "Конфликты для подтверждения",
   noConflicts: "Конфликтов нет.",
-  operation: "Операция {id}",
-  operationPending: "Операция выполняется; состояние обновляется с сервера.",
-  retryOperation: "Повторить операцию {id}",
-  dismissOperation: "Закрыть ошибку {id}",
+  waitForRunningOperations:
+    "Дождитесь завершения выполняющихся операций, прежде чем менять каталог публикации.",
   errorSavingDraft:
     "Не удалось сохранить черновик в хранилище браузера. Останьтесь на странице и повторите попытку.",
   errorDiscardingDraft:

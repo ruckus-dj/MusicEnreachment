@@ -24,7 +24,7 @@ func (SourceAnalysisArtifactCleanupJobArgs) Kind() string {
 }
 
 type SourceAnalysisArtifactCleanupRepository interface {
-	ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]*persistence.SourceAnalysisArtifact, error)
+	ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]persistence.SourceAnalysisArtifactCleanupCandidate, error)
 	AdmitSourceAnalysisArtifactCleanupWithArgsFactory(context.Context, []uuid.UUID, persistence.RiverInserter, func(uuid.UUID) river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 	ListSourceAnalysisArtifactCleanupItems(context.Context, uuid.UUID) ([]persistence.SourceAnalysisArtifactCleanupItem, error)
 }
@@ -34,9 +34,9 @@ type SourceAnalysisArtifactCleanupSettings interface {
 }
 
 type SourceAnalysisArtifactCleanupCandidate struct {
-	ArtifactID   uuid.UUID `json:"artifact_id"`
-	RelativePath string    `json:"relative_path"`
-	State        string    `json:"state"`
+	ArtifactID         uuid.UUID `json:"artifact_id"`
+	SourceRelativePath string    `json:"source_relative_path"`
+	State              string    `json:"state"`
 }
 
 type SourceAnalysisArtifactCleanupItemResult struct {
@@ -56,13 +56,13 @@ func NewSourceAnalysisArtifactCleanup(repository SourceAnalysisArtifactCleanupRe
 }
 
 func (s *SourceAnalysisArtifactCleanup) Candidates(ctx context.Context, limit int) ([]SourceAnalysisArtifactCleanupCandidate, error) {
-	artifacts, err := s.repository.ListSourceAnalysisArtifactCleanupCandidates(ctx, limit)
+	candidates, err := s.repository.ListSourceAnalysisArtifactCleanupCandidates(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]SourceAnalysisArtifactCleanupCandidate, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		result = append(result, SourceAnalysisArtifactCleanupCandidate{ArtifactID: artifact.ID, RelativePath: artifact.RelativeOutputPath, State: artifact.State})
+	result := make([]SourceAnalysisArtifactCleanupCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, SourceAnalysisArtifactCleanupCandidate{ArtifactID: candidate.ArtifactID, SourceRelativePath: candidate.SourceRelativePath, State: candidate.State})
 	}
 	return result, nil
 }

@@ -86,6 +86,85 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("distinguishes an unchecked file from a failed audio check", async () => {
+  const file = {
+    size_bytes: 42,
+    mtime: "2026-09-26T10:20:00Z",
+    has_result: false,
+  };
+  server.use(
+    http.get("/api/sources/root-1", () => HttpResponse.json(root())),
+    locationsHandler([
+      {
+        ...file,
+        id: "waiting",
+        relative_path: "Album/waiting.mp3",
+        probe_status: "not_analyzed",
+      },
+      {
+        ...file,
+        id: "failed",
+        relative_path: "Album/failed.mp3",
+        probe_status: "probe_error",
+        safe_error: "Could not read audio.",
+      },
+    ]),
+  );
+  window.location.hash = "/sources/root-1";
+  render(
+    <I18nProvider>
+      <SourcesScreen />
+    </I18nProvider>,
+  );
+
+  const waiting = await screen.findByRole("row", { name: /Album\/waiting/ });
+  const failed = screen.getByRole("row", { name: /Album\/failed/ });
+  expect(waiting).toHaveTextContent("Не проверено");
+  expect(waiting).not.toHaveTextContent("Ошибка проверки");
+  expect(failed).toHaveTextContent("Ошибка проверки");
+  expect(failed).toHaveTextContent("Could not read audio.");
+});
+
+it("shows the original source path when selecting and confirming a copy", async () => {
+  const sourcePath = "music/Альбом/01. Песня.mp3";
+  const artifactId = "ecb4e7c4-1d4d-481f-9cc3-3295325db30d";
+  server.use(
+    http.get("/api/sources", () => json([])),
+    http.get("/api/source-analysis/artifacts/cleanup", () =>
+      HttpResponse.json({
+        count: 1,
+        candidates: [
+          {
+            artifact_id: artifactId,
+            source_relative_path: sourcePath,
+            state: "cleanup_eligible",
+          },
+        ],
+      }),
+    ),
+  );
+  window.location.hash = "/sources";
+  render(
+    <I18nProvider>
+      <SourcesScreen />
+    </I18nProvider>,
+  );
+
+  fireEvent.click(
+    await screen.findByRole("checkbox", {
+      name: `${sourcePath} — Ожидает очистки`,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Очистить выбранные (1)" }),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "Очистить выбранные копии?",
+  });
+  expect(dialog).toHaveTextContent(sourcePath);
+  expect(dialog).not.toHaveTextContent(artifactId);
+});
+
 describe("source root creation", () => {
   it("registers a server path and reloads the list", async () => {
     vi.stubGlobal(

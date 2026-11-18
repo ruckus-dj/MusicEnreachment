@@ -206,6 +206,69 @@ afterEach(() => {
 });
 
 describe("SettingsScreen", () => {
+  it("does not duplicate tool or source operations in Settings", async () => {
+    common({
+      operations: [
+        { ...operation, id: "tool", kind: "install", state: "failed" },
+        { ...operation, id: "source", kind: "scan_source", state: "running" },
+      ],
+    });
+    render(<SettingsScreen />);
+    await screen.findByRole("heading", { name: "Состояние конфигурации" });
+
+    expect(
+      screen.queryByRole("heading", { name: "Текущие операции" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: /^Операция (tool|source)$/ }),
+    ).not.toBeInTheDocument();
+    expect(TestEventSource.instances).toHaveLength(0);
+    await selectSettingsTab("Инструменты");
+    expect(
+      screen.getByRole("link", { name: "Открыть операции" }),
+    ).toHaveAttribute("href", "#/operations");
+  });
+
+  it("refreshes the tools and settings when a download finishes on another tab", async () => {
+    const queued = { ...operation, id: "tool", kind: "install" };
+    const settingsReads = vi.fn(() => json(settings));
+    const toolsReads = vi.fn(() => json({ installations: [] }));
+    let finished = false;
+    server.use(
+      http.get("/api/settings", settingsReads),
+      http.get("/api/tools/installations", toolsReads),
+      http.get("/api/operations", () =>
+        json({ operations: finished ? [] : [queued] }),
+      ),
+      http.get("/api/operations/tool", () =>
+        json(
+          finished
+            ? {
+                ...queued,
+                state: "succeeded",
+                updated_at: "2026-01-01T00:02:00Z",
+              }
+            : queued,
+        ),
+      ),
+    );
+    const firstRead = nextResponseFor("/api/operations/tool");
+    render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
+    await firstRead;
+    const stream = TestEventSource.instances[0];
+    expect(stream).toBeDefined();
+
+    finished = true;
+    act(() => stream.dispatchEvent(new Event("operation-changed")));
+
+    await waitFor(() => {
+      expect(settingsReads).toHaveBeenCalledTimes(2);
+      expect(toolsReads).toHaveBeenCalledTimes(4);
+      expect(stream.close).toHaveBeenCalledOnce();
+    });
+  });
+
   it("retains an unsaved draft across tab and locale switches without rereading settings", async () => {
     const settingsReads = vi.fn(() => json(settings));
     server.use(http.get("/api/settings", settingsReads));

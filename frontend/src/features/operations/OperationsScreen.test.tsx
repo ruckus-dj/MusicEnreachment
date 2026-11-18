@@ -93,6 +93,43 @@ it("shows loading then current operations with real diagnostics and failed retry
   await waitFor(() => expect(retried).toBe(true));
 });
 
+it.each([
+  "install",
+  "move_tools_root",
+])("dismisses a failed %s operation on the dedicated screen", async (kind) => {
+  let dismissed = false;
+  server.use(
+    http.get("/api/operations", () =>
+      HttpResponse.json({
+        operations: dismissed
+          ? []
+          : [
+              {
+                id: "failed-tool",
+                kind,
+                state: "failed",
+                stage: "download",
+                bytes_completed: 0,
+                safe_error: "Download failed",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              },
+            ],
+      }),
+    ),
+    http.delete("/api/operations/failed-tool", () => {
+      dismissed = true;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+
+  renderScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss error" }));
+  expect(
+    await screen.findByRole("heading", { name: "No current operations" }),
+  ).toBeInTheDocument();
+});
+
 it("changes language without refetching or dropping a pending operation", async () => {
   let operationReads = 0;
   server.use(

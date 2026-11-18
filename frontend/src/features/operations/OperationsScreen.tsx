@@ -1,6 +1,13 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
-import { retryOperation, useListOperations } from "../../api/generated/client";
+import {
+  dismissOperation,
+  getListOperationsQueryKey,
+  type listOperationsResponse,
+  retryOperation,
+  useListOperations,
+} from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -13,6 +20,7 @@ import {
 import "./operations.css";
 
 const CURRENT_STATES = new Set(["queued", "running", "failed"]);
+const DISMISSIBLE_TOOL_KINDS = new Set(["install", "move_tools_root"]);
 const GENERIC_RETRY_KINDS = new Set([
   "install",
   "move_tools_root",
@@ -51,11 +59,17 @@ const messages = {
     actions: "Actions",
     retrying: "Retrying…",
     retry: "Retry",
+    dismissing: "Dismissing…",
+    dismiss: "Dismiss error",
+    dismissed: "Error dismissed.",
     footnote:
       "Queued, running, and failed operations are shown. Completed operations are hidden.",
     retryError: "Could not retry operation.",
     retryHttpError: (status: number) =>
       `Could not retry operation (HTTP ${status}).`,
+    dismissError: "Could not dismiss operation.",
+    dismissHttpError: (status: number) =>
+      `Could not dismiss operation (HTTP ${status}).`,
     loadHttpError: (status: number) =>
       `Could not load operations (HTTP ${status}).`,
   },
@@ -80,11 +94,17 @@ const messages = {
     actions: "Действия",
     retrying: "Повтор…",
     retry: "Повторить",
+    dismissing: "Закрываем…",
+    dismiss: "Закрыть ошибку",
+    dismissed: "Ошибка закрыта.",
     footnote:
       "Показаны операции в очереди, выполняющиеся и требующие внимания. Завершённые операции скрыты.",
     retryError: "Не удалось повторить операцию.",
     retryHttpError: (status: number) =>
       `Не удалось повторить операцию (HTTP ${status}).`,
+    dismissError: "Не удалось закрыть ошибку операции.",
+    dismissHttpError: (status: number) =>
+      `Не удалось закрыть ошибку операции (HTTP ${status}).`,
     loadHttpError: (status: number) =>
       `Не удалось загрузить операции (HTTP ${status}).`,
   },
@@ -105,40 +125,73 @@ function formatDate(value: string | undefined, locale: string) {
 export function OperationsScreen() {
   const { locale } = useI18n();
   const copy = messages[locale];
-  const copyRef = useRef(copy);
-  copyRef.current = copy;
+  const queryClient = useQueryClient();
   const operationsQuery = useListOperations();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [dismissed, setDismissed] = useState(false);
   const [actionError, setActionError] = useState<
-    | { reason: unknown }
-    | { response: { status: number; data?: unknown } }
+    | ({ action: "retry" | "dismiss" } & (
+        | { reason: unknown }
+        | { response: { status: number; data?: unknown } }
+      ))
     | null
   >(null);
-  const [retryingID, setRetryingID] = useState("");
+  const [pending, setPending] = useState<{
+    id: string;
+    action: "retry" | "dismiss";
+  }>();
 
   const refresh = useCallback(async () => {
     await operationsQuery.refetch();
   }, [operationsQuery.refetch]);
 
-  const retry = useCallback(
-    async (operation: OperationResponse) => {
-      if (retryingID) return;
-      setRetryingID(operation.id);
-      setActionError(null);
-      try {
-        const response = await retryOperation(operation.id);
-        if (response.status !== 200) {
-          setActionError({ response });
-          return;
-        }
-        await operationsQuery.refetch();
-      } catch (reason) {
-        setActionError({ reason });
-      } finally {
-        setRetryingID("");
+  async function perform(
+    id: string,
+    action: "retry" | "dismiss",
+    trigger?: HTMLButtonElement,
+  ) {
+    if (pending) return;
+    setPending({ id, action });
+    setActionError(null);
+    setDismissed(false);
+    try {
+      const response =
+        action === "retry"
+          ? await retryOperation(id)
+          : await dismissOperation(id);
+      if (response.status !== (action === "retry" ? 200 : 204)) {
+        setActionError({ action, response });
+        return;
       }
-    },
-    [operationsQuery.refetch, retryingID],
-  );
+      if (action === "dismiss") {
+        const queryKey = getListOperationsQueryKey();
+        await queryClient.cancelQueries({ queryKey, exact: true });
+        queryClient.setQueryData<listOperationsResponse>(queryKey, (current) =>
+          current?.status === 200
+            ? {
+                ...current,
+                data: {
+                  ...current.data,
+                  operations:
+                    current.data.operations?.filter(
+                      (operation) => operation.id !== id,
+                    ) ?? [],
+                },
+              }
+            : current,
+        );
+        if (trigger && document.activeElement === trigger) {
+          heading.current?.focus({ preventScroll: true });
+        }
+        setDismissed(true);
+      }
+      await operationsQuery.refetch();
+    } catch (reason) {
+      setActionError({ action, reason });
+    } finally {
+      setPending(undefined);
+    }
+  }
 
   const allOperations =
     operationsQuery.data?.status === 200
@@ -150,7 +203,9 @@ export function OperationsScreen() {
     <section className="operations-screen" aria-labelledby="operations-title">
       <header className="operations-header">
         <div>
-          <h1 id="operations-title">{copy.title}</h1>
+          <h1 id="operations-title" ref={heading} tabIndex={-1}>
+            {copy.title}
+          </h1>
           <p>{copy.description}</p>
         </div>
         <button
@@ -206,11 +261,20 @@ export function OperationsScreen() {
           {"response" in actionError
             ? apiResponseError(
                 actionError.response,
-                copy.retryHttpError(actionError.response.status),
+                actionError.action === "retry"
+                  ? copy.retryHttpError(actionError.response.status)
+                  : copy.dismissHttpError(actionError.response.status),
               ).message
-            : errorMessage(actionError.reason, copy.retryError)}
+            : errorMessage(
+                actionError.reason,
+                actionError.action === "retry"
+                  ? copy.retryError
+                  : copy.dismissError,
+              )}
         </p>
       )}
+
+      {dismissed && <p role="status">{copy.dismissed}</p>}
 
       {operationsQuery.data?.status === 200 && operations.length === 0 && (
         <section className="operations-empty">
@@ -264,18 +328,40 @@ export function OperationsScreen() {
                     {operation.safe_error || "—"}
                   </td>
                   <td>
-                    {operation.state === "failed" &&
-                      GENERIC_RETRY_KINDS.has(operation.kind) && (
-                        <button
-                          type="button"
-                          onClick={() => void retry(operation)}
-                          disabled={Boolean(retryingID)}
-                        >
-                          {retryingID === operation.id
-                            ? copy.retrying
-                            : copy.retry}
-                        </button>
-                      )}
+                    {operation.state === "failed" && (
+                      <div className="flex flex-wrap gap-1">
+                        {GENERIC_RETRY_KINDS.has(operation.kind) && (
+                          <button
+                            type="button"
+                            onClick={() => void perform(operation.id, "retry")}
+                            disabled={Boolean(pending)}
+                          >
+                            {pending?.id === operation.id &&
+                            pending.action === "retry"
+                              ? copy.retrying
+                              : copy.retry}
+                          </button>
+                        )}
+                        {DISMISSIBLE_TOOL_KINDS.has(operation.kind) && (
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              void perform(
+                                operation.id,
+                                "dismiss",
+                                event.currentTarget,
+                              )
+                            }
+                            disabled={Boolean(pending)}
+                          >
+                            {pending?.id === operation.id &&
+                            pending.action === "dismiss"
+                              ? copy.dismissing
+                              : copy.dismiss}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

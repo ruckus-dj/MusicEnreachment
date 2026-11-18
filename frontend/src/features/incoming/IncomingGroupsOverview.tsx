@@ -4,15 +4,21 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type IncomingGroupName,
+  incomingGroupNameText,
+} from "./incomingGroupNames";
 import { incomingMessages } from "./incomingMessages";
 
 export function IncomingGroupsOverview({
   snapshot,
+  groupNames,
   selectedGroupId,
   review,
   onSelect,
 }: {
   snapshot: IncomingGroupsBody;
+  groupNames: ReadonlyMap<string, IncomingGroupName>;
   selectedGroupId: string;
   review?: MatchingReview;
   onSelect: (groupId: string) => void;
@@ -37,7 +43,7 @@ export function IncomingGroupsOverview({
             </tr>
           </thead>
           <tbody>
-            {(snapshot.groups ?? []).map((group, index) => {
+            {(snapshot.groups ?? []).map((group) => {
               const unready = new Set(group.unready_members ?? []);
               const members = new Set([...(group.members ?? []), ...unready]);
               const paths = new Map(
@@ -50,11 +56,18 @@ export function IncomingGroupsOverview({
               );
               const selectedReview =
                 group.id === selectedGroupId ? review : undefined;
+              const label = incomingGroupNameText(
+                groupNames.get(group.id),
+                locale,
+              );
               return (
                 <tr key={group.id}>
                   <td className="border-b p-2">
-                    <AppButton onPress={() => onSelect(group.id)}>
-                      {copy.openGroup(index + 1)}
+                    <AppButton
+                      className="max-w-full wrap-anywhere text-left"
+                      onPress={() => onSelect(group.id)}
+                    >
+                      {copy.openGroup(label)}
                     </AppButton>
                     <p>
                       {group.manual

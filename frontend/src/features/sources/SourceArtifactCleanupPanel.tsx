@@ -24,7 +24,8 @@ export function SourceArtifactCleanupPanel() {
               : "unknown",
     );
   const cleanup = useSourceArtifactCleanup();
-  const [confirmation, setConfirmation] = useState<string[] | undefined>();
+  const [confirmation, setConfirmation] =
+    useState<{ id: string; label: string }[]>();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const alert = useRef<HTMLParagraphElement>(null);
@@ -49,11 +50,21 @@ export function SourceArtifactCleanupPanel() {
   }
 
   const operation = cleanup.operation;
-  const visibleIds = new Set(
-    cleanup.candidates.map(({ artifact_id }) => artifact_id),
+  const pathCounts = new Map<string, number>();
+  for (const item of cleanup.candidates) {
+    const path = item.source_relative_path;
+    pathCounts.set(path, (pathCounts.get(path) ?? 0) + 1);
+  }
+  const candidateLabels = new Map(
+    cleanup.candidates.map(({ artifact_id, source_relative_path }) => [
+      artifact_id,
+      (pathCounts.get(source_relative_path) ?? 0) > 1
+        ? `${source_relative_path} (${artifact_id.slice(0, 8)})`
+        : source_relative_path,
+    ]),
   );
   const selectedNotInBatch = cleanup.selected.filter(
-    (id) => !visibleIds.has(id),
+    (id) => !candidateLabels.has(id),
   );
 
   return (
@@ -102,7 +113,7 @@ export function SourceArtifactCleanupPanel() {
                       disabled={cleanup.isPending || cleanup.busy}
                       onChange={() => cleanup.toggle(candidate.artifact_id)}
                     />{" "}
-                    <code>{candidate.relative_path}</code> —{" "}
+                    <code>{candidateLabels.get(candidate.artifact_id)}</code> —{" "}
                     {t(
                       candidate.state === "cleanup_eligible"
                         ? "cleanupEligible"
@@ -130,7 +141,12 @@ export function SourceArtifactCleanupPanel() {
               }
               onPress={(event) => {
                 trigger.current = event.target as HTMLElement;
-                setConfirmation([...cleanup.selected]);
+                setConfirmation(
+                  cleanup.selected.map((id) => ({
+                    id,
+                    label: candidateLabels.get(id) ?? id,
+                  })),
+                );
               }}
             >
               {t("cleanupSelected", {
@@ -274,16 +290,16 @@ export function SourceArtifactCleanupPanel() {
         >
           <h2 id="artifact-cleanup-confirm-title">{t("confirmCleanup")}</h2>
           <p>
-            {t("confirmationIds", {
+            {t("confirmationCopies", {
               count: new Intl.NumberFormat(
                 locale === "ru" ? "ru-RU" : "en-US",
               ).format(confirmation.length),
             })}
           </p>
           <ul>
-            {confirmation.map((id) => (
+            {confirmation.map(({ id, label }) => (
               <li key={id}>
-                <code>{id}</code>
+                <code>{label}</code>
               </li>
             ))}
           </ul>
@@ -292,7 +308,7 @@ export function SourceArtifactCleanupPanel() {
           <AppButton
             isDisabled={cleanup.busy}
             onPress={() => {
-              const ids = confirmation;
+              const ids = confirmation.map(({ id }) => id);
               setConfirmation(undefined);
               if (dialog.current?.open) dialog.current.close();
               void cleanup.start(ids);

@@ -63,7 +63,7 @@ func (store apiSettingsStore) InitializePlatform(_ context.Context, goos, goarch
 
 type cleanupAdmissionFixture struct{ admissions int }
 
-func (*cleanupAdmissionFixture) ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]*persistence.SourceAnalysisArtifact, error) {
+func (*cleanupAdmissionFixture) ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]persistence.SourceAnalysisArtifactCleanupCandidate, error) {
 	return nil, nil
 }
 

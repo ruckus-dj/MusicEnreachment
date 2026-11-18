@@ -52,6 +52,15 @@ type SourceAnalysisArtifactCleanupOutcome struct {
 	SafeError string
 }
 
+// SourceAnalysisArtifactCleanupCandidate is the bounded listing projection for
+// explicit staged-artifact cleanup. SourceRelativePath is the retained analysis
+// work path relative to its source root, never the internal staged artifact path.
+type SourceAnalysisArtifactCleanupCandidate struct {
+	ArtifactID         uuid.UUID `bun:"artifact_id"`
+	SourceRelativePath string    `bun:"source_relative_path"`
+	State              string    `bun:"state"`
+}
+
 type SourceAnalysisArtifactCleanupExecutor func(context.Context, SourceAnalysisArtifact) (SourceAnalysisArtifactCleanupOutcome, error)
 
 // OutputAdmissionSession pins the shared output gate to one PostgreSQL
@@ -346,14 +355,17 @@ func finishCleanupOperation(ctx context.Context, session *OutputAdmissionSession
 }
 
 // ListSourceAnalysisArtifactCleanupCandidates returns a stable, bounded selection
-// for an admission attempt. AdmitSourceAnalysisArtifactCleanup rechecks the
+// for an admission attempt, reporting each artifact's retained analysis work path
+// relative to its source root. AdmitSourceAnalysisArtifactCleanup rechecks the
 // complete selected set under the output gate before committing it.
-func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandidates(ctx context.Context, limit int) ([]*SourceAnalysisArtifact, error) {
+func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandidates(ctx context.Context, limit int) ([]SourceAnalysisArtifactCleanupCandidate, error) {
 	if limit <= 0 || limit > 1000 {
 		return nil, fmt.Errorf("list cleanup candidates: limit must be between 1 and 1000")
 	}
-	var artifacts []*SourceAnalysisArtifact
-	err := repository.db.NewRaw(`SELECT artifact.* FROM source_analysis_artifact artifact
+	candidates := make([]SourceAnalysisArtifactCleanupCandidate, 0)
+	err := repository.db.NewRaw(`SELECT artifact.id AS artifact_id,work.relative_path AS source_relative_path,artifact.state AS state
+		FROM source_analysis_artifact artifact
+		JOIN source_analysis_work work ON work.id=artifact.work_id
 		WHERE artifact.state IN ('cleanup_eligible','cleanup_failed')
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_work_artifact_binding binding WHERE binding.artifact_id=artifact.id)
 		AND NOT EXISTS (
@@ -362,11 +374,11 @@ func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandi
 			AND EXISTS (SELECT 1 FROM river_job job WHERE job.id=creator.river_job_id AND job.state IN ('available','pending','running','retryable','scheduled'))
 		)
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item claim WHERE claim.artifact_id=artifact.id AND claim.state='claimed')
-		ORDER BY artifact.id LIMIT ?`, limit).Scan(ctx, &artifacts)
+		ORDER BY artifact.id LIMIT ?`, limit).Scan(ctx, &candidates)
 	if err != nil {
 		return nil, fmt.Errorf("list cleanup candidates: %w", err)
 	}
-	return artifacts, nil
+	return candidates, nil
 }
 
 func claimCleanupArtifact(ctx context.Context, session *OutputAdmissionSession, fence SourceAnalysisArtifactCleanupFence, artifactID uuid.UUID) (*SourceAnalysisArtifact, error) {

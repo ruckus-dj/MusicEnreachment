@@ -1,4 +1,8 @@
 import type { Locale } from "../../i18n/locale";
+import {
+  type IncomingGroupName,
+  incomingGroupNameText,
+} from "./incomingGroupNames";
 
 export type IncomingGroupingMessage =
   | {
@@ -22,15 +26,14 @@ export type IncomingGroupingMessage =
   | { key: "raw"; message: string };
 
 export type IncomingGroupingActionPresentation =
-  | { kind: "merge"; groupNumbers: (number | undefined)[] }
-  | { kind: "split"; groupNumber: number | undefined; fileCount: number }
-  | { kind: "move"; groupNumber: number | undefined; fileCount: number };
+  | { kind: "merge"; groups: (IncomingGroupName | undefined)[] }
+  | { kind: "split"; group: IncomingGroupName | undefined; fileCount: number }
+  | { kind: "move"; group: IncomingGroupName | undefined; fileCount: number };
 
 const messages = {
   en: {
     heading: "Correct incoming groups",
     intro: "Changes stay as a page draft until confirmed separately.",
-    group: (index: number) => `Group ${index + 1}`,
     file: (index: number) => `File ${index + 1}`,
     selectFileFallback: (index: number) => `Select file ${index + 1}`,
     selectGroup: (group: string) => `Select ${group} to merge`,
@@ -48,9 +51,9 @@ const messages = {
     draftActions: (count: string) => `Draft actions (${count})`,
     mergeAction: (groups: string) => `Merge ${groups}`,
     splitAction: (count: string, group: string) =>
-      `Separate ${count} from ${group}`,
-    moveAction: (count: string, group: string) => `Move ${count} to ${group}`,
-    unknownGroup: "a group",
+      `Separate ${count} from group “${group}”`,
+    moveAction: (count: string, group: string) =>
+      `Move ${count} to group “${group}”`,
     cancelDraft: "Cancel draft",
     preview: "Preview",
     confirm: "Confirm changes",
@@ -73,7 +76,6 @@ const messages = {
     heading: "Коррекция входящих групп",
     intro:
       "Изменения остаются черновиком страницы до отдельного подтверждения.",
-    group: (index: number) => `Группа ${index + 1}`,
     file: (index: number) => `Файл ${index + 1}`,
     selectFileFallback: (index: number) => `Выбрать файл ${index + 1}`,
     selectGroup: (group: string) => `Выбрать ${group} для объединения`,
@@ -90,11 +92,10 @@ const messages = {
     draftActionsLabel: "Действия черновика",
     draftActions: (count: string) => `Действия черновика (${count})`,
     mergeAction: (groups: string) => `Объединить: ${groups}`,
-    splitAction: (count: string, groupNumber: string) =>
-      `Отделить ${count} из группы ${groupNumber}`,
-    moveAction: (count: string, groupNumber: string) =>
-      `Переместить ${count} в группу ${groupNumber}`,
-    unknownGroup: "с неизвестным номером",
+    splitAction: (count: string, group: string) =>
+      `Отделить ${count} из группы «${group}»`,
+    moveAction: (count: string, group: string) =>
+      `Переместить ${count} в группу «${group}»`,
     cancelDraft: "Отменить черновик",
     preview: "Предпросмотр",
     confirm: "Подтвердить изменения",
@@ -168,25 +169,15 @@ export function incomingGroupingActionSummary(
   action: IncomingGroupingActionPresentation,
 ): string {
   const copy = messages[locale];
-  const groupName = (number: number | undefined) =>
-    number === undefined ? copy.unknownGroup : copy.group(number - 1);
+  const groupName = (name: IncomingGroupName | undefined) =>
+    incomingGroupNameText(name, locale);
 
   if (action.kind === "merge") {
-    return copy.mergeAction(action.groupNumbers.map(groupName).join(", "));
+    return copy.mergeAction(action.groups.map(groupName).join(", "));
   }
 
   const count = incomingGroupingFileCount(action.fileCount, locale);
-  if (locale === "ru") {
-    const groupNumber =
-      action.groupNumber === undefined
-        ? copy.unknownGroup
-        : incomingGroupingNumber(action.groupNumber, locale);
-    return action.kind === "split"
-      ? copy.splitAction(count, groupNumber)
-      : copy.moveAction(count, groupNumber);
-  }
-
-  const group = groupName(action.groupNumber);
+  const group = groupName(action.group);
   return action.kind === "split"
     ? copy.splitAction(count, group)
     : copy.moveAction(count, group);

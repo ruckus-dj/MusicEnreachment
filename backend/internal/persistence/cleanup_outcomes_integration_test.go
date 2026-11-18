@@ -98,14 +98,24 @@ func runCleanupOutcomeCallbackErrorIsSafeAndCandidateCanBeSelectedAgain(t *testi
 	if state != "cleanup_failed" || cleanupError != safe || cleanupAt.IsZero() || itemState != "failed" || itemError != safe {
 		t.Fatalf("artifact/item outcome = %q %q %v / %q %q", state, cleanupError, cleanupAt, itemState, itemError)
 	}
-	if candidates, err := repo.ListSourceAnalysisArtifactCleanupCandidates(ctx, 10); err != nil || len(candidates) != 1 || candidates[0].ID != artifactID {
-		t.Fatalf("cleanup candidates = %+v, %v; want failed artifact selectable", candidates, err)
-	}
 	var steps int
 	if err := repo.db.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE work_id=(SELECT work_id FROM source_analysis_artifact WHERE id=?)`, artifactID).Scan(ctx, &steps); err != nil {
 		t.Fatal(err)
 	}
 	if steps != 0 {
 		t.Fatalf("cleanup mutated analysis steps: %d", steps)
+	}
+	deleted, err := db.ExecContext(ctx, `DELETE FROM source_location WHERE id=(
+		SELECT work.location_id FROM source_analysis_work work
+		JOIN source_analysis_artifact artifact ON artifact.work_id=work.id WHERE artifact.id=?)`, artifactID)
+	if err != nil {
+		t.Fatalf("remove source location: %v", err)
+	}
+	if rows, err := deleted.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("removed %d source locations, want 1: %v", rows, err)
+	}
+	if candidates, err := repo.ListSourceAnalysisArtifactCleanupCandidates(ctx, 10); err != nil || len(candidates) != 1 ||
+		candidates[0].ArtifactID != artifactID || candidates[0].State != "cleanup_failed" || candidates[0].SourceRelativePath != "music/song.flac" {
+		t.Fatalf("cleanup candidates = %+v, %v; want failed artifact %s with its original path after location removal", candidates, err, artifactID)
 	}
 }

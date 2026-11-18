@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   confirmIncomingGroups,
   getIncomingGroups,
@@ -20,6 +20,10 @@ import {
   incomingGroupingNumber,
   incomingGroupingPathCount,
 } from "./incomingGroupingMessages";
+import {
+  incomingGroupNames,
+  incomingGroupNameText,
+} from "./incomingGroupNames";
 
 export interface IncomingGroupingEditorProps {
   snapshot: IncomingGroupsBody;
@@ -81,6 +85,10 @@ export function IncomingGroupingEditor({
   }, [actions.length, snapshot]);
 
   const groups = effectiveBoard.groups ?? [];
+  const groupNames = useMemo(
+    () => incomingGroupNames(effectiveBoard.groups ?? [], effectiveBoard.files),
+    [effectiveBoard],
+  );
   const fileById = new Map(
     (effectiveBoard.files ?? []).map((file) => [file.variant_id, file]),
   );
@@ -99,14 +107,11 @@ export function IncomingGroupingEditor({
     sequence.current += 1;
   }
 
-  // Numbering follows only the board the user currently sees, so an action
-  // added after a transformed preview refers to the displayed group ordinal.
-  // Already captured presentations stay frozen until cancel or confirm.
-  function groupNumber(groupID: string): number | undefined {
-    const index = (effectiveBoard.groups ?? []).findIndex(
-      (group) => group.id === groupID,
-    );
-    return index >= 0 ? index + 1 : undefined;
+  // Names follow only the board the user currently sees, so an action added
+  // after a transformed preview refers to the displayed group name. Already
+  // captured presentations stay frozen until cancel or confirm.
+  function groupName(groupID: string) {
+    return groupNames.get(groupID);
   }
 
   function toggle(
@@ -258,7 +263,7 @@ export function IncomingGroupingEditor({
       </header>
 
       <div className="space-y-3">
-        {groups.map((group, index) => {
+        {groups.map((group) => {
           const members = group.members ?? [];
           const paths = new Set(
             members.flatMap(
@@ -272,16 +277,19 @@ export function IncomingGroupingEditor({
             ),
           );
           const unready = new Set(group.unready_members ?? []);
+          const label = incomingGroupNameText(groupName(group.id), locale);
           return (
             <fieldset
               key={group.id}
-              className="rounded border border-stone-300 p-3"
+              className="min-w-0 rounded border border-stone-300 p-3"
             >
-              <legend className="font-semibold">{copy.group(index)}</legend>
+              <legend className="max-w-full wrap-anywhere font-semibold">
+                {label}
+              </legend>
               <label className="mr-4 inline-flex items-center gap-2">
                 <input
                   type="checkbox"
-                  aria-label={copy.selectGroup(copy.group(index))}
+                  aria-label={copy.selectGroup(label)}
                   checked={groupSelection.includes(group.id)}
                   disabled={busy || needsPreview}
                   onChange={() =>
@@ -346,7 +354,7 @@ export function IncomingGroupingEditor({
                     },
                     {
                       kind: "split",
-                      groupNumber: groupNumber(group.id),
+                      group: groupName(group.id),
                       fileCount: memberSelection.length,
                     },
                   );
@@ -370,7 +378,7 @@ export function IncomingGroupingEditor({
               { kind: "merge", group_ids: groupSelection },
               {
                 kind: "merge",
-                groupNumbers: groupSelection.map(groupNumber),
+                groups: groupSelection.map(groupName),
               },
             );
             setGroupSelection([]);
@@ -387,9 +395,9 @@ export function IncomingGroupingEditor({
             onChange={(event) => setMoveTarget(event.target.value)}
           >
             <option value="">{copy.chooseGroup}</option>
-            {groups.map((group, index) => (
+            {groups.map((group) => (
               <option key={group.id} value={group.id}>
-                {copy.group(index)}
+                {incomingGroupNameText(groupName(group.id), locale)}
               </option>
             ))}
           </select>
@@ -409,7 +417,7 @@ export function IncomingGroupingEditor({
               },
               {
                 kind: "move",
-                groupNumber: groupNumber(moveTarget),
+                group: groupName(moveTarget),
                 fileCount: memberSelection.length,
               },
             );

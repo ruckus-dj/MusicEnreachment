@@ -31,7 +31,7 @@ type SourceLocationDetailResponse struct {
 	RelativePath string    `json:"relative_path"`
 	SizeBytes    int64     `json:"size_bytes"`
 	Mtime        time.Time `json:"mtime"`
-	ProbeStatus  string    `json:"probe_status" enum:"audio,no_audio,probe_error"`
+	ProbeStatus  string    `json:"probe_status" enum:"audio,no_audio,probe_error,not_analyzed"`
 	SafeError    *string   `json:"safe_error,omitempty"`
 
 	Root SourceLocationRootStateResponse `json:"root"`

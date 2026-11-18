@@ -18,7 +18,7 @@ export const incomingMessages = {
     uniqueFilesPaths: "Unique files / paths",
     readyTotal: "Ready / total",
     evaluationState: "Evaluation status",
-    openGroup: (index: number) => `Open group ${index}`,
+    openGroup: (name: string) => `Open group “${name}”`,
     manualGrouping: "Manual grouping",
     automaticGrouping: "Automatic grouping",
     filePaths: "File paths",
@@ -52,8 +52,8 @@ export const incomingMessages = {
     loadingGroups: "Loading incoming groups…",
     noGroups: "There are no incoming groups.",
     incomingGroupsLabel: "Incoming group",
-    groupOption: (index: number, count: number, manual: boolean) =>
-      `Group ${index} · ${count} ${count === 1 ? "file" : "files"}${manual ? " · grouped manually" : ""}`,
+    groupOption: (name: string, count: number, manual: boolean) =>
+      `${name} · ${count} ${count === 1 ? "file" : "files"}${manual ? " · grouped manually" : ""}`,
     groupEditingSummary: "Merge, split, or move group files",
     loadingEvaluation: "Reading saved evaluation…",
     retryReading: "Retry reading",
@@ -155,7 +155,7 @@ export const incomingMessages = {
     uniqueFilesPaths: "Уникальные файлы / пути",
     readyTotal: "Готово / всего",
     evaluationState: "Состояние оценки",
-    openGroup: (index: number) => `Открыть группу ${index}`,
+    openGroup: (name: string) => `Открыть группу «${name}»`,
     manualGrouping: "Ручная группировка",
     automaticGrouping: "Автоматическая группировка",
     filePaths: "Пути файлов",
@@ -190,8 +190,8 @@ export const incomingMessages = {
     loadingGroups: "Загрузка входящих групп…",
     noGroups: "Входящих групп нет.",
     incomingGroupsLabel: "Входящая группа",
-    groupOption: (index: number, count: number, manual: boolean) =>
-      `Группа ${index} · ${count} ${russianCountForm(count, ["файл", "файла", "файлов"])}${manual ? " · вручную сгруппирована" : ""}`,
+    groupOption: (name: string, count: number, manual: boolean) =>
+      `${name} · ${count} ${russianCountForm(count, ["файл", "файла", "файлов"])}${manual ? " · вручную сгруппирована" : ""}`,
     groupEditingSummary: "Объединить, разделить или переместить файлы групп",
     loadingEvaluation: "Чтение сохранённой оценки…",
     retryReading: "Повторить чтение",

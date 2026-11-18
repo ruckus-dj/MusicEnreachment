@@ -13,12 +13,10 @@ import {
   checkSettingsMusicbrainz,
   deleteAcoustidApplicationKey,
   deleteToolInstallation,
-  dismissOperation,
   getSettings,
   listInstallations,
   listOperations,
   preflightToolsRootMove,
-  retryOperation,
   setAcoustidApplicationKey,
   startToolsRootMove,
   updateLogLevel,
@@ -50,11 +48,6 @@ import {
   registerHashNavigationGuard,
   resolveHashNavigation,
 } from "../../navigation/hashLocation";
-import {
-  operationKindLabel,
-  operationStageLabel,
-  operationStateLabel,
-} from "../operations/operationPresentation";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -429,6 +422,12 @@ function activeOperation(operation: OperationResponse) {
     operation.state === "running" ||
     operation.state === "failed"
   );
+}
+
+const toolOperationKinds = new Set<string>(["install", "move_tools_root"]);
+
+function toolOperation(operation: OperationResponse) {
+  return toolOperationKinds.has(operation.kind);
 }
 
 export function SettingsScreen() {
@@ -882,17 +881,26 @@ export function SettingsScreen() {
       const generation = mountGeneration.current;
       const response = settingsSuccessful(await listOperations(), 200);
       const active = (response.data.operations || []).filter(activeOperation);
+      const relevant = active.filter(toolOperation);
       if (
         !mountedRef.current ||
         mountGeneration.current !== generation ||
         !isCurrent()
       )
-        return active;
-      setOperations(active);
-      return active;
+        return relevant;
+      setOperations(relevant);
+      return relevant;
     },
     [],
   );
+
+  const readRunningOperations = useCallback(async () => {
+    const response = settingsSuccessful(
+      await listOperations({ state: "running" }),
+      200,
+    );
+    return (response.data.operations || []).length > 0;
+  }, []);
 
   const loadScreen = useCallback(async () => {
     if (!mountedRef.current || screenLoadInFlight.current) return;
@@ -1802,10 +1810,6 @@ export function SettingsScreen() {
     if (dialog?.open) dialog.close();
   }
 
-  const runningOperation = operations.some(
-    (operation) => operation.state === "running",
-  );
-
   async function confirmOutputDirectory() {
     if (
       "outputDirectory" in conflictValues &&
@@ -1818,23 +1822,29 @@ export function SettingsScreen() {
         });
       return;
     }
-    if (isEffectivelyBusy() || runningOperation) return;
+    if (isEffectivelyBusy()) return;
     const savedDraft = outputDirectory.capture();
     const output = savedDraft.value;
     if (output === undefined) return;
+    // This approval belongs to this attempt, even if the running-work check blocks it.
+    const expectedOutput = expectedForSave(
+      "outputDirectory",
+      savedDraft.baseline ?? state?.settings.output_directory ?? "",
+    );
     outputDirectory.beginSave(savedDraft.revision);
     setBusy(true);
     setOutputDialogError("");
     setNotice(null);
     try {
+      if (await readRunningOperations()) {
+        setOutputDialogError(settingsNotice("waitForRunningOperations"));
+        return;
+      }
       await acceptSettingsWrite(
         await updateSettings({
           output_directory: output,
           expected: {
-            output_directory: expectedForSave(
-              "outputDirectory",
-              savedDraft.baseline ?? state?.settings.output_directory ?? "",
-            ),
+            output_directory: expectedOutput,
           } satisfies UpdateSettingsExpectedBody,
         }),
         204,
@@ -3141,7 +3151,6 @@ export function SettingsScreen() {
                   <AppButton
                     isDisabled={
                       effectiveBusy ||
-                      runningOperation ||
                       outputDirectory.value === state.settings.output_directory
                     }
                     onPress={(event) => {
@@ -3184,6 +3193,27 @@ export function SettingsScreen() {
               data-settings-tab="tools"
               className="settings-tab-panel"
             >
+              {operations.map((operation) =>
+                operation.state === "queued" ||
+                operation.state === "running" ? (
+                  <ToolOperationFollower
+                    key={operation.id}
+                    operation={operation}
+                    onSnapshot={onOperation}
+                  />
+                ) : null,
+              )}
+              {!!operations.length && (
+                <p className="my-2 max-w-[70ch] text-[var(--muted)]">
+                  {t("toolOperationsHint")}{" "}
+                  <a
+                    className="text-[var(--accent)] underline decoration-[var(--line)] underline-offset-2 hover:decoration-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                    href="#/operations"
+                  >
+                    {t("openOperations")}
+                  </a>
+                </p>
+              )}
               <section
                 aria-labelledby="tools-root-title"
                 className="setup-panel settings-panel"
@@ -3504,38 +3534,6 @@ export function SettingsScreen() {
               <GenreCatalogPanel />
             </TabPanel>
           </Tabs>
-          {!!operations.length && (
-            <section
-              aria-labelledby="operations-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="operations-title">{t("currentOperations")}</h2>
-              {operations.map((operation) => (
-                <OperationRow
-                  key={operation.id}
-                  operation={operation}
-                  onSnapshot={onOperation}
-                  onDismiss={async (id) => {
-                    settingsSuccessful(await dismissOperation(id), 204);
-                    setOperations((items) =>
-                      items.filter((item) => item.id !== id),
-                    );
-                  }}
-                  onRetry={async (id) => {
-                    const retried = settingsSuccessful(
-                      await retryOperation(id),
-                      200,
-                    );
-                    setOperations((items) =>
-                      items.map((item) =>
-                        item.id === id ? retried.data : item,
-                      ),
-                    );
-                  }}
-                />
-              ))}
-            </section>
-          )}
         </>
       )}
       {error && (
@@ -3696,7 +3694,7 @@ export function SettingsScreen() {
             </p>
           )}
           <AppButton
-            isDisabled={effectiveBusy || runningOperation}
+            isDisabled={effectiveBusy}
             onPress={() => void confirmOutputDirectory()}
           >
             {t("confirmOutputChange")}
@@ -3880,93 +3878,22 @@ function ConflictList({
   );
 }
 
-function OperationRow({
-  operation: initial,
+// Follows only tool operations for automatic settings refresh; progress,
+// retry, and dismissal stay on the dedicated Operations screen.
+function ToolOperationFollower({
+  operation,
   onSnapshot,
-  onRetry,
-  onDismiss,
 }: {
   operation: OperationResponse;
   onSnapshot: (snapshot: OperationResponse) => void | Promise<void>;
-  onRetry: (id: string) => Promise<void>;
-  onDismiss: (id: string) => Promise<void>;
 }) {
-  const { locale } = useI18n();
-  const t = (
-    key: Parameters<typeof settingsMessage>[1],
-    values?: Parameters<typeof settingsMessage>[2],
-  ) => settingsMessage(locale, key, values);
-  const [operation, setOperation] = useState(initial);
-  useEffect(() => setOperation(initial), [initial]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<SettingsFeedback | "">("");
-  const errorRef = useRef<HTMLParagraphElement>(null);
   useOperationFollower(operation.id, {
     enabled: operation.state === "queued" || operation.state === "running",
     initialSnapshot: operation,
     onSnapshot: (snapshot) => {
-      setOperation(snapshot);
-      setError("");
       void onSnapshot(snapshot);
     },
-    onSnapshotRead: (_snapshot, _source, accepted) => {
-      if (!accepted) setError("");
-    },
-    onHttpError: settingsHttpError,
-    onError: (reason) => setError(message(reason)),
-    onStreamError: (reason) => setError(reason.message),
     refreshOnStreamError: true,
   });
-  useEffect(() => {
-    if (error) errorRef.current?.focus();
-  }, [error]);
-  async function action(run: () => Promise<void>) {
-    setBusy(true);
-    setError("");
-    try {
-      await run();
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-  const pending = operation.state === "queued" || operation.state === "running";
-  return (
-    <fieldset
-      aria-label={t("operation", { id: operation.id })}
-      className="setup-operation"
-    >
-      <p role="status">
-        {operationKindLabel(operation.kind, locale)}:{" "}
-        {operationStateLabel(operation.state, locale)},{" "}
-        {operationStageLabel(operation.stage, locale) || operation.stage},{" "}
-        {operation.bytes_completed}
-        {operation.bytes_total == null ? "" : ` / ${operation.bytes_total}`}{" "}
-        {t("bytes")}. {operation.safe_error || ""}
-      </p>
-      {pending && <p>{t("operationPending")}</p>}
-      {operation.state === "failed" && (
-        <>
-          <AppButton
-            isDisabled={busy}
-            onPress={() => void action(() => onRetry(operation.id))}
-          >
-            {t("retryOperation", { id: operation.id })}
-          </AppButton>
-          <AppButton
-            isDisabled={busy}
-            onPress={() => void action(() => onDismiss(operation.id))}
-          >
-            {t("dismissOperation", { id: operation.id })}
-          </AppButton>
-        </>
-      )}
-      {error && (
-        <p ref={errorRef} tabIndex={-1} role="alert">
-          {feedbackText(error, locale)}
-        </p>
-      )}
-    </fieldset>
-  );
+  return null;
 }

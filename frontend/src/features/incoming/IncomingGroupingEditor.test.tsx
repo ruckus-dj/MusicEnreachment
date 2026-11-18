@@ -75,7 +75,19 @@ const snapshot: IncomingGroupsBody = {
       variant_id: "file-2",
       capture_analysis_id: "analysis-2",
       capture_identity: "capture-2",
-      locations: [],
+      locations: [
+        {
+          configured_path: "/music",
+          inventory_path: "/music",
+          location_id: "location-2",
+          mtime: "2025-01-01T00:00:00Z",
+          relative_path: "two.flac",
+          root_id: "root-1",
+          size_bytes: 1,
+          technical_identity: "identity-2",
+          work_id: "work-2",
+        },
+      ],
       tags: {},
     },
     {
@@ -124,6 +136,86 @@ describe("IncomingGroupingEditor locale presentation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("names groups by agreed album, shared folder, or relative path instead of ordinals", () => {
+    const [baseOne, baseTwo, baseThree] = snapshot.files ?? [];
+    const [firstGroup, secondGroup, thirdGroup] = snapshot.groups ?? [];
+    const namedSnapshot: IncomingGroupsBody = {
+      ...snapshot,
+      groups: [
+        { ...firstGroup, members: ["file-1"] },
+        { ...secondGroup, members: ["file-2", "file-4"] },
+        { ...thirdGroup, members: ["file-3"] },
+      ],
+      files: [
+        {
+          ...baseOne,
+          tags: { " album ": [" Выход в город ", "выход в город"] },
+        },
+        {
+          ...baseTwo,
+          tags: { ALBUM: ["First title", "Second title"] },
+          locations: [
+            {
+              configured_path: "/music",
+              inventory_path: "/music",
+              location_id: "location-2",
+              mtime: "2025-01-01T00:00:00Z",
+              relative_path: "shared/two.flac",
+              root_id: "root-1",
+              size_bytes: 1,
+              technical_identity: "identity-2",
+              work_id: "work-2",
+            },
+          ],
+        },
+        baseThree,
+        {
+          variant_id: "file-4",
+          capture_analysis_id: "analysis-4",
+          capture_identity: "capture-4",
+          locations: [
+            {
+              configured_path: "/music",
+              inventory_path: "/music",
+              location_id: "location-4",
+              mtime: "2025-01-01T00:00:00Z",
+              relative_path: "shared/four.flac",
+              root_id: "root-1",
+              size_bytes: 1,
+              technical_identity: "identity-4",
+              work_id: "work-4",
+            },
+          ],
+          tags: {},
+        },
+      ],
+    };
+    render(
+      <I18nProvider>
+        <IncomingGroupingEditor snapshot={namedSnapshot} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByRole("group", { name: "Выход в город" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "shared" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "three.flac" })).toBeVisible();
+    expect(
+      screen.queryByRole("group", { name: /^Группа \d/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Выбрать Выход в город для объединения",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Выбрать shared для объединения" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Объединить выбранные группы" }),
+    );
+    expect(screen.getByText("Объединить: Выход в город, shared")).toBeVisible();
+  });
+
   it("keeps the draft and preview across locale changes and presents errors appropriately", async () => {
     vi.mocked(previewIncomingGroups)
       .mockResolvedValueOnce({
@@ -149,17 +241,20 @@ describe("IncomingGroupingEditor locale presentation", () => {
       </I18nProvider>,
     );
     expect(
-      screen.getByRole("checkbox", { name: "Выбрать файл 1" }),
+      screen.getByRole("checkbox", { name: "Выбрать файл two.flac" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: /^Группа \d/ }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: "Выбрать Группа 1 для объединения",
+        name: "Выбрать one.flac для объединения",
       }),
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: "Выбрать Группа 2 для объединения",
+        name: "Выбрать two.flac для объединения",
       }),
     );
     fireEvent.click(
@@ -193,7 +288,10 @@ describe("IncomingGroupingEditor locale presentation", () => {
     expect(
       screen.getByRole("heading", { name: "Draft actions (1)" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Merge Group 1, Group 2")).toBeInTheDocument();
+    expect(screen.getByText("Merge one.flac, two.flac")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: /^Group \d/ }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/group-1|group-2/)).not.toBeInTheDocument();
     expect(screen.queryByText("file-1")).not.toBeInTheDocument();
     expect(previewIncomingGroups).toHaveBeenNthCalledWith(1, {
@@ -228,7 +326,7 @@ describe("IncomingGroupingEditor locale presentation", () => {
     );
   });
 
-  it("captures displayed group numbers after a transformed preview and clears pending actions after confirmation", async () => {
+  it("keeps draft names after a transformed preview without changing wire identities", async () => {
     const transformedSnapshot: IncomingGroupsBody = {
       epoch: snapshot.epoch,
       revision: snapshot.revision,
@@ -307,12 +405,12 @@ describe("IncomingGroupingEditor locale presentation", () => {
 
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: "Выбрать Группа 1 для объединения",
+        name: "Выбрать one.flac для объединения",
       }),
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: "Выбрать Группа 2 для объединения",
+        name: "Выбрать two.flac для объединения",
       }),
     );
     fireEvent.click(
@@ -322,9 +420,10 @@ describe("IncomingGroupingEditor locale presentation", () => {
     await screen.findByText(
       "Предпросмотр готов; для сохранения требуется отдельное подтверждение.",
     );
-    // The preview merges the first two groups into one, so the surviving
-    // original third group is displayed as Group 2.
-    expect(screen.getByRole("group", { name: "Группа 2" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "/music" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "three.flac" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Выбрать файл one.flac" }),
@@ -334,13 +433,12 @@ describe("IncomingGroupingEditor locale presentation", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Переместить файлы" }));
 
-    // The frozen merge capture keeps its original ordinals, while the new move
-    // captures the displayed ordinal and the unchanged wire identity.
+    // The draft retains the labels as shown when each action was added.
     expect(
-      screen.getByText("Объединить: Группа 1, Группа 2"),
+      screen.getByText("Объединить: one.flac, two.flac"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Переместить 1 файл в группу 2"),
+      screen.getByText("Переместить 1 файл в группу «three.flac»"),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Предпросмотр" }));
@@ -390,8 +488,8 @@ describe("IncomingGroupingEditor locale presentation", () => {
 
     const confirmedGroups = screen.getAllByRole("group");
     expect(confirmedGroups).toHaveLength(2);
-    const mergedGroup = screen.getByRole("group", { name: "Группа 1" });
-    const targetGroup = screen.getByRole("group", { name: "Группа 2" });
+    const mergedGroup = screen.getByRole("group", { name: "two.flac" });
+    const targetGroup = screen.getByRole("group", { name: "/music" });
     expect(
       within(mergedGroup).getAllByRole("checkbox", {
         name: /^Выбрать файл /,
@@ -415,7 +513,7 @@ describe("IncomingGroupingEditor locale presentation", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("group", { name: "Группа 3" }),
+      screen.queryByRole("group", { name: /^Группа \d/ }),
     ).not.toBeInTheDocument();
   });
 });

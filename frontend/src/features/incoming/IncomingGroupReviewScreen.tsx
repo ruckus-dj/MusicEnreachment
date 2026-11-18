@@ -32,6 +32,10 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { IncomingGroupingEditor } from "./IncomingGroupingEditor";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
 import {
+  incomingGroupNames,
+  incomingGroupNameText,
+} from "./incomingGroupNames";
+import {
   type IncomingFeedback,
   type IncomingMessageKey,
   type IncomingMessages,
@@ -188,6 +192,14 @@ function IncomingGroupReviewContent() {
     },
   });
   const groups = groupsQuery.data?.groups ?? [];
+  const groupNames = useMemo(
+    () =>
+      incomingGroupNames(
+        groupsQuery.data?.groups ?? [],
+        groupsQuery.data?.files ?? null,
+      ),
+    [groupsQuery.data],
+  );
   const [groupId, setGroupId] = useState("");
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
   const [inspectedMemberId, setInspectedMemberId] = useState("");
@@ -752,6 +764,7 @@ function IncomingGroupReviewContent() {
             {groupsQuery.data ? (
               <IncomingGroupsOverview
                 snapshot={groupsQuery.data}
+                groupNames={groupNames}
                 selectedGroupId={groupId}
                 review={review}
                 onSelect={changeGroup}
@@ -764,10 +777,10 @@ function IncomingGroupReviewContent() {
                 value={groupId}
                 onChange={(event) => changeGroup(event.target.value)}
               >
-                {groups.map((item, index) => (
+                {groups.map((item) => (
                   <option key={item.id} value={item.id}>
                     {copy.groupOption(
-                      index + 1,
+                      incomingGroupNameText(groupNames.get(item.id), locale),
                       item.members?.length ?? 0,
                       item.manual,
                     )}

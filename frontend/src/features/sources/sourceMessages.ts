@@ -178,6 +178,7 @@ const en = {
     "Files from the last successful scan: relative path, size, modification time, and audio stream check",
   audioCheck: "Audio check",
   noAudio: "No audio track",
+  probeNotAnalyzed: "Not checked",
   probeError: "Check failed",
   noAudioReason: "No audio track: this file cannot be analyzed.",
   probeRetryNote: "The check will be retried during the next scan.",
@@ -212,7 +213,7 @@ const en = {
   scanFailed: "The scan did not complete. Try again.",
   cleanupTitle: "Temporary analysis copies",
   cleanupDescription:
-    "This is a server-limited selection of copies explicitly allowed for cleanup. Source files are not affected.",
+    "Paths are relative to each source root. Cleanup removes only temporary copies, not source files.",
   loadingCopies: "Loading available copies…",
   refreshCopies: "Refresh selection",
   currentBatch:
@@ -234,8 +235,8 @@ const en = {
   unknownRemoval:
     "The server returned no per-copy results; deletion state is unknown.",
   confirmCleanup: "Clean up selected copies?",
-  confirmationIds:
-    "Only these {count} IDs from the displayed list snapshot will be submitted:",
+  confirmationCopies:
+    "Selected copies: {count}. Only these will be cleaned up:",
   sourceFilesNotDeleted: "Source files are not deleted.",
   confirmCleanupAction: "Confirm cleanup",
   cleanupEligible: "Eligible for cleanup",
@@ -480,6 +481,7 @@ const ru: Record<keyof typeof en, string> = {
     "Файлы последнего успешного сканирования: относительный путь, размер, время изменения и проверка аудиопотока",
   audioCheck: "Проверка аудио",
   noAudio: "Нет аудиодорожки",
+  probeNotAnalyzed: "Не проверено",
   probeError: "Ошибка проверки",
   noAudioReason: "Аудиодорожки нет: файл не может участвовать в анализе.",
   probeRetryNote: "Проверка повторится при следующем сканировании.",
@@ -513,7 +515,7 @@ const ru: Record<keyof typeof en, string> = {
   scanFailed: "Сканирование не завершилось. Повторите попытку.",
   cleanupTitle: "Временные копии анализа",
   cleanupDescription:
-    "Здесь показана ограниченная сервером подборка копий, для которых разрешена явная очистка. Исходные файлы не затрагиваются.",
+    "Пути указаны от корня источника. Очистка удаляет только временные копии, а не исходные файлы.",
   loadingCopies: "Загрузка доступных копий…",
   refreshCopies: "Обновить подборку",
   currentBatch:
@@ -535,8 +537,7 @@ const ru: Record<keyof typeof en, string> = {
   unknownRemoval:
     "Сервер не вернул результаты по отдельным копиям; состояние удаления неизвестно.",
   confirmCleanup: "Очистить выбранные копии?",
-  confirmationIds:
-    "Будут отправлены только эти {count} идентификаторов из показанного снимка списка:",
+  confirmationCopies: "Выбрано копий: {count}. Очистка затронет только их:",
   sourceFilesNotDeleted: "Файлы источника не удаляются.",
   confirmCleanupAction: "Подтвердить очистку",
   cleanupEligible: "Ожидает очистки",
