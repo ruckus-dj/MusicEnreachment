@@ -402,6 +402,13 @@ export interface IncomingFileResponse {
   variant_id: string;
 }
 
+export interface IncomingGroupCountOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  count: number;
+}
+
 export interface IncomingGroupingDiagnosticResponse {
   code: string;
   /** @nullable */

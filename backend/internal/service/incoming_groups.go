@@ -18,6 +18,8 @@ var ErrIncomingGroupingInvalid = errors.New("incoming grouping correction is inv
 
 type incomingGroupingStore interface {
 	State(context.Context) (persistence.IncomingGroupingState, error)
+	ReadVisibleCount(context.Context) (int, bool, error)
+	ReadCountInputs(context.Context) ([]persistence.IncomingGroupingCapture, []persistence.IncomingGroupingGroup, error)
 	CurrentCaptures(context.Context) ([]persistence.IncomingGroupingCapture, error)
 	List(context.Context) ([]persistence.IncomingGroupingGroup, error)
 	Refresh(context.Context, persistence.IncomingGroupingCompute) error
@@ -53,6 +55,27 @@ func (groups *IncomingGroups) Snapshot(ctx context.Context) (IncomingGroupingSna
 	return groups.snapshot(ctx, true)
 }
 
+// Count returns the number of visible groups without refreshing or writing the
+// stored partition. When invalidated, use the same reconciliation as the list.
+func (groups *IncomingGroups) Count(ctx context.Context) (int, error) {
+	if groups == nil || groups.store == nil {
+		return 0, fmt.Errorf("incoming grouping store is unavailable")
+	}
+	count, current, err := groups.store.ReadVisibleCount(ctx)
+	if err != nil || current {
+		return count, err
+	}
+	captures, persisted, err := groups.store.ReadCountInputs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	snapshot, err := buildIncomingSnapshot(0, captures, persisted)
+	if err != nil {
+		return 0, err
+	}
+	return len(snapshot.Groups), nil
+}
+
 func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (IncomingGroupingSnapshot, error) {
 	if groups == nil || groups.store == nil {
 		return IncomingGroupingSnapshot{}, fmt.Errorf("incoming grouping store is unavailable")
@@ -73,6 +96,10 @@ func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (Incom
 			return IncomingGroupingSnapshot{}, err
 		}
 	}
+	return groups.readSnapshot(ctx, state.Revision)
+}
+
+func (groups *IncomingGroups) readSnapshot(ctx context.Context, epoch int64) (IncomingGroupingSnapshot, error) {
 	captures, err := groups.store.CurrentCaptures(ctx)
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
@@ -81,6 +108,10 @@ func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (Incom
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
+	return buildIncomingSnapshot(epoch, captures, persisted)
+}
+
+func buildIncomingSnapshot(epoch int64, captures []persistence.IncomingGroupingCapture, persisted []persistence.IncomingGroupingGroup) (IncomingGroupingSnapshot, error) {
 	view, err := incomingFilesFromCaptures(captures)
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
@@ -89,7 +120,7 @@ func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (Incom
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
-	return IncomingGroupingSnapshot{Epoch: state.Revision, Groups: visibleIncomingGroups(current), Files: view.Files}, nil
+	return IncomingGroupingSnapshot{Epoch: epoch, Groups: visibleIncomingGroups(current), Files: view.Files}, nil
 }
 
 // Refresh recomputes automatic groups from persisted current inventory and

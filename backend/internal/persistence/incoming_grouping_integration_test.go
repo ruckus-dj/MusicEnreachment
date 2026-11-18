@@ -32,6 +32,9 @@ func TestIncomingGroupingCorrectionsCASAndInvalidationWithPostgreSQL(t *testing.
 	if err := repository.Confirm(ctx, state.Revision, compute); err != nil {
 		t.Fatalf("confirm corrections: %v", err)
 	}
+	if count, current, err := repository.ReadVisibleCount(ctx); err != nil || !current || count != 2 {
+		t.Fatalf("clean incoming count = %d, current = %v, err = %v; want two groups", count, current, err)
+	}
 	if err := repository.Confirm(ctx, state.Revision, compute); !errors.Is(err, ErrIncomingGroupingConflict) {
 		t.Fatalf("stale confirmation error = %v, want conflict", err)
 	}
@@ -52,5 +55,8 @@ func TestIncomingGroupingCorrectionsCASAndInvalidationWithPostgreSQL(t *testing.
 	state, err = repository.State(ctx)
 	if err != nil || state.Revision != 2 || !state.NeedsRefresh {
 		t.Fatalf("state after invalidation = %+v, %v", state, err)
+	}
+	if count, current, err := repository.ReadVisibleCount(ctx); err != nil || current || count != 0 {
+		t.Fatalf("invalidated incoming count = %d, current = %v, err = %v; want no trusted count", count, current, err)
 	}
 }

@@ -124,6 +124,35 @@ func (repository *IncomingGroupingRepository) State(ctx context.Context) (Incomi
 	return state, nil
 }
 
+// ReadVisibleCount only trusts the materialized groups while their state is
+// current. The flag and count are read in one statement, in the same snapshot.
+func (repository *IncomingGroupingRepository) ReadVisibleCount(ctx context.Context) (count int, current bool, err error) {
+	err = repository.db.NewRaw(`SELECT CASE WHEN needs_refresh THEN 0 ELSE (
+		SELECT count(DISTINCT group_id) FROM incoming_group_member WHERE ready IS TRUE
+	) END, NOT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &count, &current)
+	if err != nil {
+		return 0, false, fmt.Errorf("read visible incoming group count: %w", err)
+	}
+	return count, current, nil
+}
+
+// ReadCountInputs reads the invalidated projection and its current evidence
+// together, without invoking the refresh writer.
+func (repository *IncomingGroupingRepository) ReadCountInputs(ctx context.Context) ([]IncomingGroupingCapture, []IncomingGroupingGroup, error) {
+	var captures []IncomingGroupingCapture
+	var groups []IncomingGroupingGroup
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		captures, err = loadIncomingGroupingCaptures(ctx, tx)
+		if err != nil {
+			return err
+		}
+		groups, err = loadIncomingGroupingGroups(ctx, tx)
+		return err
+	})
+	return captures, groups, err
+}
+
 func (repository *IncomingGroupingRepository) List(ctx context.Context) ([]IncomingGroupingGroup, error) {
 	return loadIncomingGroupingGroups(ctx, repository.db)
 }

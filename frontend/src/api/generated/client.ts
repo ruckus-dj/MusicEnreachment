@@ -39,6 +39,7 @@ import type {
   GenreCatalogStatus,
   GetLibraryCoverCandidateImageParams,
   GetLibraryFirstPublicationPreviewParams,
+  IncomingGroupCountOutputBody,
   IncomingGroupReturnAutomaticResult,
   IncomingGroupingEditBody,
   IncomingGroupsBody,
@@ -794,6 +795,133 @@ export const useConfirmIncomingGroups = <TError = ErrorModel,
       > => {
       return useMutation(getConfirmIncomingGroupsMutationOptions(options), queryClient);
     }
+
+export type getIncomingGroupCountResponse200 = {
+  data: IncomingGroupCountOutputBody
+  status: 200
+}
+
+export type getIncomingGroupCountResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getIncomingGroupCountResponseSuccess = (getIncomingGroupCountResponse200) & {
+  headers: Headers;
+};
+export type getIncomingGroupCountResponseError = (getIncomingGroupCountResponseDefault) & {
+  headers: Headers;
+};
+
+export type getIncomingGroupCountResponse = (getIncomingGroupCountResponseSuccess | getIncomingGroupCountResponseError)
+
+export const getGetIncomingGroupCountUrl = () => {
+
+
+
+
+  return `/api/incoming-groups/count`
+}
+
+/**
+ * @summary Count visible incoming file groups
+ */
+export const getIncomingGroupCount = async ( options?: RequestInit): Promise<getIncomingGroupCountResponse> => {
+
+  const res = await fetch(getGetIncomingGroupCountUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getIncomingGroupCountResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getIncomingGroupCountResponse
+}
+
+
+
+
+
+export const getGetIncomingGroupCountQueryKey = () => {
+    return [
+    `/api/incoming-groups/count`
+    ] as const;
+    }
+
+
+export const getGetIncomingGroupCountQueryOptions = <TData = Awaited<ReturnType<typeof getIncomingGroupCount>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIncomingGroupCountQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncomingGroupCount>>> = ({ signal }) => getIncomingGroupCount({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIncomingGroupCountQueryResult = NonNullable<Awaited<ReturnType<typeof getIncomingGroupCount>>>
+export type GetIncomingGroupCountQueryError = ErrorModel
+
+
+export function useGetIncomingGroupCount<TData = Awaited<ReturnType<typeof getIncomingGroupCount>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupCount>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupCount>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupCount<TData = Awaited<ReturnType<typeof getIncomingGroupCount>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupCount>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupCount>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupCount<TData = Awaited<ReturnType<typeof getIncomingGroupCount>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Count visible incoming file groups
+ */
+
+export function useGetIncomingGroupCount<TData = Awaited<ReturnType<typeof getIncomingGroupCount>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupCount>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIncomingGroupCountQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type previewIncomingGroupsResponse200 = {
   data: IncomingGroupsBody

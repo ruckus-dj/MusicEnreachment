@@ -102,6 +102,9 @@ beforeEach(() => {
     http.get("/api/incoming-groups", () =>
       HttpResponse.json({ epoch: 0, revision: "", groups: [], files: [] }),
     ),
+    http.get("/api/incoming-groups/count", () =>
+      HttpResponse.json({ count: 0 }),
+    ),
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
     http.get("/api/operations/current", () =>
       HttpResponse.json({ operations: [], total: 0 }),
@@ -319,6 +322,53 @@ describe("AppShell sources routing", () => {
     expect(
       screen.getByRole("navigation", { name: "Разделы приложения" }),
     ).not.toHaveTextContent("Публикации");
+  });
+
+  it("shows the incoming count on a library route without loading the full group list", async () => {
+    const groupListRequests = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("*/api/library/artists", () =>
+        HttpResponse.json({
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+          summary: {
+            artist_count: 0,
+            release_count: 0,
+            position_count: 0,
+            published_position_count: 0,
+          },
+        }),
+      ),
+      http.get("/api/incoming-groups/count", () =>
+        HttpResponse.json({ count: 3 }),
+      ),
+      http.get("/api/incoming-groups", () => {
+        groupListRequests();
+        return HttpResponse.json({
+          epoch: 0,
+          revision: "",
+          groups: [],
+          files: [],
+        });
+      }),
+    );
+    window.location.hash = "/library";
+    render(<App />);
+
+    const navigation = await screen.findByRole("navigation", {
+      name: "Разделы приложения",
+    });
+    await waitFor(() =>
+      expect(
+        within(
+          within(navigation).getByRole("link", { name: /Входящие/ }),
+        ).getByText("3"),
+      ).toBeInTheDocument(),
+    );
+    expect(groupListRequests).not.toHaveBeenCalled();
   });
 
   it("restores a direct incoming group matching link with a back link to the list", async () => {

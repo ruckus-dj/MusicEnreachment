@@ -77,6 +77,13 @@ type incomingGroupingEditInput struct {
 	Body incomingGroupingEditBody
 }
 
+type incomingGroupCountOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         struct {
+		Count int `json:"count" minimum:"0"`
+	}
+}
+
 func registerIncomingGroups(api huma.API, groups *service.IncomingGroups) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-incoming-groups", Method: http.MethodGet, Path: "/incoming-groups",
@@ -90,6 +97,22 @@ func registerIncomingGroups(api huma.API, groups *service.IncomingGroups) {
 			return nil, huma.Error500InternalServerError("failed to read incoming groups")
 		}
 		return incomingGroupsResult(snapshot)
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-incoming-group-count", Method: http.MethodGet, Path: "/incoming-groups/count",
+		Summary: "Count visible incoming file groups", Tags: []string{"Sources"},
+	}, func(ctx context.Context, _ *struct{}) (*incomingGroupCountOutput, error) {
+		if groups == nil {
+			return nil, huma.Error503ServiceUnavailable("incoming groups are unavailable")
+		}
+		count, err := groups.Count(ctx)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to count incoming groups")
+		}
+		output := &incomingGroupCountOutput{CacheControl: "no-store"}
+		output.Body.Count = count
+		return output, nil
 	})
 
 	huma.Register(api, huma.Operation{

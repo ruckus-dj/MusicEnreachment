@@ -9,6 +9,7 @@ import {
 import packageMetadata from "../../package.json";
 import {
   getGetIncomingGroupsQueryKey,
+  getIncomingGroupCount,
   getIncomingGroups,
   getSetupState,
   useListSources,
@@ -258,10 +259,17 @@ function ProductShell({
 }) {
   const { locale } = useI18n();
   const copy = shellMessages[locale];
-  const { data: incomingGroups } = useQuery({
+  const incomingActive =
+    route === "/incoming-groups" || route.startsWith("/incoming-groups/");
+  // Observe the shared group-list cache without fetching: the Incoming review
+  // screen owns that request, so the shell only mirrors it while an Incoming
+  // route is active. The separate count query key extends the generated
+  // group-list key, keeping existing prefix invalidations effective.
+  const incomingGroups = useQuery({
     queryKey: getGetIncomingGroupsQueryKey(),
-    retry: false,
-    // The Incoming review screen caches the body, not the HTTP response.
+    enabled: false,
+    // Same body shape as the review screen caches; disabled here so the shell
+    // never issues a duplicate list request.
     queryFn: async ({ signal }) => {
       const response = await getIncomingGroups({ signal, cache: "no-store" });
       if (response.status !== 200)
@@ -269,10 +277,25 @@ function ProductShell({
       return response.data;
     },
   });
-  const incomingCount =
-    incomingGroups === undefined
+  const incomingGroupCount = useQuery({
+    queryKey: [...getGetIncomingGroupsQueryKey(), "count"],
+    enabled: !incomingActive,
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const response = await getIncomingGroupCount({
+        signal,
+        cache: "no-store",
+      });
+      if (response.status !== 200)
+        throw new Error("incoming group count unavailable");
+      return response.data.count;
+    },
+  });
+  const incomingCount = incomingActive
+    ? incomingGroups.data === undefined
       ? undefined
-      : (incomingGroups.groups?.length ?? 0);
+      : (incomingGroups.data.groups?.length ?? 0)
+    : incomingGroupCount.data;
   const navigation: ShellNavigationItem[] = [
     {
       id: "incoming",

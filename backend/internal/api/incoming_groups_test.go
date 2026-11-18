@@ -26,6 +26,23 @@ func (store *incomingGroupsTestStore) State(context.Context) (persistence.Incomi
 	return store.state, nil
 }
 
+func (store *incomingGroupsTestStore) ReadVisibleCount(context.Context) (int, bool, error) {
+	if store.state.NeedsRefresh {
+		return 0, false, nil
+	}
+	visible := make(map[uuid.UUID]struct{}, len(store.groups))
+	for _, group := range store.groups {
+		if len(group.Members) > 0 {
+			visible[group.ID] = struct{}{}
+		}
+	}
+	return len(visible), true, nil
+}
+
+func (store *incomingGroupsTestStore) ReadCountInputs(context.Context) ([]persistence.IncomingGroupingCapture, []persistence.IncomingGroupingGroup, error) {
+	return store.captures, store.groups, nil
+}
+
 func (store *incomingGroupsTestStore) CurrentCaptures(context.Context) ([]persistence.IncomingGroupingCapture, error) {
 	return store.captures, nil
 }
@@ -223,6 +240,53 @@ func TestIncomingGroupsPreviewDraftConfirmsAreStatelessAndFenced(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIncomingGroupsCountDoesNotRefreshDirtyPartition(t *testing.T) {
+	persisted := persistedIncoming([]service.IncomingGroup{
+		{ID: uuid.New(), Members: []uuid.UUID{uuid.New()}},
+		{ID: uuid.New(), Members: []uuid.UUID{uuid.New()}},
+		{ID: uuid.New()},
+	})
+	check := func(t *testing.T, store *incomingGroupsTestStore, want int) {
+		t.Helper()
+		handler := HandlerWithDependencies(Dependencies{IncomingGroups: service.NewIncomingGroups(store)})
+		before := store.snapshotState()
+		response := incomingGroupsRequest(t, handler, http.MethodGet, "/incoming-groups/count", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("count status = %d, want 200: %s", response.Code, response.Body.String())
+		}
+		if got := response.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("count Cache-Control = %q, want no-store", got)
+		}
+		var body struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Count != want {
+			t.Fatalf("count = %d, want %d", body.Count, want)
+		}
+		if after := store.snapshotState(); !reflect.DeepEqual(before, after) {
+			t.Fatalf("count mutated persisted state: before=%+v after=%+v", before, after)
+		}
+	}
+
+	t.Run("clean", func(t *testing.T) {
+		check(t, &incomingGroupsTestStore{
+			state:  persistence.IncomingGroupingState{Revision: 4},
+			groups: persisted,
+		}, 2)
+	})
+	t.Run("dirty", func(t *testing.T) {
+		// An empty capture set means no visible ready group, so stale persisted
+		// groups must not be served and Refresh must not run.
+		check(t, &incomingGroupsTestStore{
+			state:  persistence.IncomingGroupingState{Revision: 4, NeedsRefresh: true},
+			groups: persisted,
+		}, 0)
+	})
 }
 
 func emptyIncomingGroupsRevision(t *testing.T) string {
