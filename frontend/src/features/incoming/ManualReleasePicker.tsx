@@ -6,17 +6,18 @@ import {
   startIncomingGroupManualReleaseSelection,
 } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ManualReleasePreparationView } from "../matchingWorkspace/ManualReleasePreparationView";
+import {
+  type ManualReleasePreparationError,
+  type ManualReleasePreparationMessageKey,
+  manualReleasePreparationMessage,
+} from "../matchingWorkspace/manualReleasePreparationContract";
 import {
   errorAfterSnapshotRead,
   type IncomingOperationError,
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
-import {
-  type ManualPickerMessageKey,
-  manualPickerMessage,
-} from "./manualPickerMessages";
 
 type Props = {
   groupId: string;
@@ -40,7 +41,7 @@ type GroupState = {
   admitting?: boolean;
   operationId?: string;
   error?: string;
-  errorKey?: ManualPickerMessageKey;
+  errorKey?: ManualReleasePreparationMessageKey;
   errorStatus?: number;
   finished?: boolean;
 };
@@ -55,9 +56,9 @@ export function ManualReleasePicker({
 }: Props) {
   const { locale } = useI18n();
   const message = (
-    key: ManualPickerMessageKey,
+    key: ManualReleasePreparationMessageKey,
     values?: Record<string, string | number>,
-  ) => manualPickerMessage(locale, key, values);
+  ) => manualReleasePreparationMessage(locale, key, values);
   const queryClient = useQueryClient();
   const [states, setStates] = useState<Record<string, GroupState>>({});
   const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
@@ -97,6 +98,25 @@ export function ManualReleasePicker({
       (!operation ||
         operation.state === "queued" ||
         operation.state === "running"));
+  const errors: ManualReleasePreparationError[] = [];
+  if (state.error || state.errorKey) {
+    errors.push({
+      id: "prepare",
+      message:
+        state.error ||
+        message(state.errorKey ?? "releaseNotPrepared", {
+          status: state.errorStatus ?? "",
+        }),
+    });
+  }
+  if (state.operationId && operationErrors[state.operationId]) {
+    const operationId = state.operationId;
+    errors.push({
+      id: "operation",
+      message: operationErrors[operationId].message,
+      onRetry: () => void refreshers.current[operationId]?.(),
+    });
+  }
 
   useEffect(() => {
     for (const [submittedGroupId, submitted] of operations) {
@@ -232,10 +252,7 @@ export function ManualReleasePicker({
   }
 
   return (
-    <section
-      className="rounded border border-stone-300 bg-white p-4"
-      aria-labelledby="manual-release-title"
-    >
+    <>
       {operations.map(([, item]) => (
         <IncomingOperationFollower
           key={item.operationId}
@@ -295,76 +312,30 @@ export function ManualReleasePicker({
           }
         />
       ))}
-      <h2 id="manual-release-title" className="font-semibold">
-        {message("selectReleaseTitle")}
-      </h2>
-      <p className="mt-1 text-sm">{message("selectReleaseDescription")}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <input
-          aria-label={message("releaseMBIDOrURL")}
-          className="min-w-64 flex-1 rounded border border-stone-400 p-2"
-          value={state.value}
-          disabled={operationPending || disabled}
-          onChange={(event) => {
-            setStates((current) => ({
-              ...current,
-              [groupId]: {
-                ...current[groupId],
-                value: event.target.value,
-                body: undefined,
-                error: undefined,
-                errorKey: undefined,
-                errorStatus: undefined,
-                finished: false,
-              },
-            }));
-          }}
-        />
-        <AppButton
-          onPress={() => void submit()}
-          isDisabled={
-            !state.value.trim() ||
-            operationPending ||
-            disabled ||
-            operation?.state === "failed"
-          }
-        >
-          {message("prepareRelease")}
-        </AppButton>
-      </div>
-      {state.operationId &&
-      (operation?.state === "queued" ||
-        operation?.state === "running" ||
-        !operation) ? (
-        <p role="status" className="mt-2">
-          {message("preparingRelease")}
-        </p>
-      ) : null}
-      {state.error || state.errorKey ? (
-        <p role="alert" className="mt-2">
-          {state.error ||
-            message(state.errorKey ?? "releaseNotPrepared", {
-              status: state.errorStatus ?? "",
-            })}
-        </p>
-      ) : null}
-      {state.finished ? (
-        <p role="status" className="mt-2">
-          {message("releasePrepared")}
-        </p>
-      ) : null}
-      {state.operationId && operationErrors[state.operationId] ? (
-        <div role="alert" className="mt-2 space-y-2">
-          <p>{operationErrors[state.operationId].message}</p>
-          <AppButton
-            onPress={() =>
-              void refreshers.current[state.operationId as string]?.()
-            }
-          >
-            {message("refreshOperation")}
-          </AppButton>
-        </div>
-      ) : null}
-    </section>
+      <ManualReleasePreparationView
+        locale={locale}
+        value={state.value}
+        disabled={disabled}
+        pending={operationPending}
+        prepared={Boolean(state.finished)}
+        prepareDisabled={operation?.state === "failed"}
+        errors={errors}
+        onValueChange={(value) =>
+          setStates((current) => ({
+            ...current,
+            [groupId]: {
+              ...current[groupId],
+              value,
+              body: undefined,
+              error: undefined,
+              errorKey: undefined,
+              errorStatus: undefined,
+              finished: false,
+            },
+          }))
+        }
+        onPrepare={() => void submit()}
+      />
+    </>
   );
 }

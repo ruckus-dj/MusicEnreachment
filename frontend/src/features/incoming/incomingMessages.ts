@@ -137,8 +137,8 @@ export const incomingMessages = {
     retryConfirmation: "Retry confirmation",
     confirmExplicitly: "Confirm explicitly",
     previewHeading: "Full assignment preview",
-    previewSummary: (title: string, assigned: number, omitted: number) =>
-      `Release: ${title}. Assigned: ${assigned}; omitted: ${omitted}.`,
+    previewSummary: (assigned: number, omitted: number) =>
+      `Assigned: ${assigned} · Remaining in Incoming: ${omitted}`,
     previewDigest: "Preview digest:",
     manualMetadataApplied: "Manual metadata to apply",
     titleOverride: (value: string) => `title “${value}”`,
@@ -277,8 +277,8 @@ export const incomingMessages = {
     retryConfirmation: "Повторить подтверждение",
     confirmExplicitly: "Явно подтвердить",
     previewHeading: "Предпросмотр полного назначения",
-    previewSummary: (title: string, assigned: number, omitted: number) =>
-      `Издание: ${title}. Назначено: ${assigned}; пропущено: ${omitted}.`,
+    previewSummary: (assigned: number, omitted: number) =>
+      `Назначено: ${assigned} · Останется во входящих: ${omitted}`,
     previewDigest: "Контрольный digest:",
     manualMetadataApplied: "Ручные метаданные, которые будут применены",
     titleOverride: (value: string) => `название «${value}»`,

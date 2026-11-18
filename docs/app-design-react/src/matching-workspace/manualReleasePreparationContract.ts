@@ -1,9 +1,30 @@
-import type { Locale } from "../../i18n/locale";
-import { manualSearchViewMessages } from "../matchingWorkspace/manualSearchContract";
+/** Copyable contract shared byte-for-byte by production and the design prototype. */
+export type ManualReleasePreparationLocale = "en" | "ru";
 
-export const manualPickerMessages = {
+export type ManualReleasePreparationError = {
+  id: string;
+  message: string;
+  onRetry?: () => void;
+};
+
+export type ManualReleasePreparationViewProps = {
+  locale: ManualReleasePreparationLocale;
+  value: string;
+  disabled?: boolean;
+  pending?: boolean;
+  prepared?: boolean;
+  /**
+   * Extra provider-side reason to keep the action disabled, such as a failed
+   * operation that only an edited input may replace. The input stays editable.
+   */
+  prepareDisabled?: boolean;
+  errors?: ManualReleasePreparationError[];
+  onValueChange: (value: string) => void;
+  onPrepare: () => void;
+};
+
+export const manualReleasePreparationMessages = {
   en: {
-    ...manualSearchViewMessages.en,
     releaseNotPrepared: "Could not prepare the release.",
     prepareReleaseNotAccepted: "Could not prepare the release (HTTP {status}).",
     selectReleaseTitle: "Select a release by MBID or URL",
@@ -16,13 +37,12 @@ export const manualPickerMessages = {
     refreshOperation: "Refresh operation status",
   },
   ru: {
-    ...manualSearchViewMessages.ru,
     releaseNotPrepared: "Не удалось подготовить издание.",
     prepareReleaseNotAccepted:
       "Не удалось подготовить издание (HTTP {status}).",
     selectReleaseTitle: "Выбрать издание по MBID или ссылке",
     selectReleaseDescription:
-      "Будет выполнен только запрос выбранного MusicBrainz release. Поиск по артисту не запускается.",
+      "Будет выполнен только запрос выбранного издания MusicBrainz. Поиск по артисту не запускается.",
     releaseMBIDOrURL: "MBID или официальная ссылка на издание",
     prepareRelease: "Подготовить издание",
     preparingRelease: "Подготовка издания…",
@@ -31,14 +51,15 @@ export const manualPickerMessages = {
   },
 } as const;
 
-export type ManualPickerMessageKey = keyof (typeof manualPickerMessages)["en"];
+export type ManualReleasePreparationMessageKey =
+  keyof (typeof manualReleasePreparationMessages)["en"];
 
-export function manualPickerMessage(
-  locale: Locale,
-  key: ManualPickerMessageKey,
+export function manualReleasePreparationMessage(
+  locale: ManualReleasePreparationLocale,
+  key: ManualReleasePreparationMessageKey,
   values: Record<string, string | number> = {},
 ) {
-  return manualPickerMessages[locale][key].replace(
+  return manualReleasePreparationMessages[locale][key].replace(
     /\{([^}]+)\}/g,
     (_, name: string) => String(values[name] ?? `{${name}}`),
   );

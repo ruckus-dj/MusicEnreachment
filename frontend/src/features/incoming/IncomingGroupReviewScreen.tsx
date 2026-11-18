@@ -24,6 +24,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { MatchingPreview } from "../matchingWorkspace/MatchingPreview";
 import {
   MatchingWorkspaceLayout,
   matchingCandidatesPanel,
@@ -159,6 +160,65 @@ function positionLabel(
 ) {
   const number = position.displayed_number || `${position.position + 1}`;
   return copy.discTrack(position.medium + 1, number, position.title);
+}
+
+function previewRows(
+  preview: MatchingManualPreview,
+  copy: IncomingMessages,
+  fileLabel: (memberId: string, index: number) => string,
+) {
+  const members = preview.members ?? [];
+  const positions = preview.selected_release.positions ?? [];
+  const memberIds = new Set(members.map((member) => member.file_member_id));
+  const rows: { key: string; source: string; position?: string }[] =
+    members.map((member, index) => {
+      const assignment = member.assignment;
+      // Prefer the exact provider position; fall back to either half of the
+      // assignment coordinates for older payloads. Never show a track UUID.
+      const matched = assignment
+        ? (positions.find(
+            (item) =>
+              item.track_id === assignment.provider_track_id &&
+              item.medium + 1 === assignment.medium &&
+              item.position + 1 === assignment.position,
+          ) ??
+          positions.find(
+            (item) => item.track_id === assignment.provider_track_id,
+          ) ??
+          positions.find(
+            (item) =>
+              item.medium + 1 === assignment.medium &&
+              item.position + 1 === assignment.position,
+          ))
+        : undefined;
+      return {
+        key: member.file_member_id,
+        source:
+          member.locations?.find(Boolean) ??
+          fileLabel(member.file_member_id, index),
+        ...(assignment
+          ? {
+              position: matched
+                ? positionLabel(matched, copy)
+                : copy.discTrack(
+                    assignment.medium,
+                    String(assignment.position),
+                    copy.unknown,
+                  ),
+            }
+          : {}),
+      };
+    });
+  const omitted = [...new Set(preview.omitted_member_ids ?? [])].filter(
+    (memberId) => !memberIds.has(memberId),
+  );
+  omitted.forEach((memberId, index) => {
+    rows.push({
+      key: `omitted:${memberId}`,
+      source: fileLabel(memberId, members.length + index),
+    });
+  });
+  return rows;
 }
 
 export function IncomingGroupReviewScreen({
@@ -1458,37 +1518,25 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             ) : null}
 
             {currentPreview ? (
-              <section
-                className="rounded border border-sky-700 bg-white p-4"
-                aria-labelledby="preview-title"
+              <MatchingPreview
+                heading={copy.previewHeading}
+                headingRef={previewHeadingRef}
+                releaseTitle={currentPreview.selected_release.title}
+                summary={copy.previewSummary(
+                  currentPreview.members?.filter((member) => member.assignment)
+                    .length ?? 0,
+                  currentPreview.omitted_member_ids?.length ?? 0,
+                )}
+                locale={locale}
+                rows={previewRows(currentPreview, copy, fileLabel)}
+                primary={{
+                  label: currentRetryIntent
+                    ? copy.retryConfirmation
+                    : copy.confirmExplicitly,
+                  onPress: () => void confirm(),
+                  disabled: sameGroupInFlight,
+                }}
               >
-                <h2
-                  id="preview-title"
-                  ref={previewHeadingRef}
-                  tabIndex={-1}
-                  className={`${incomingViewHeadingClass} font-semibold`}
-                >
-                  {copy.previewHeading}
-                </h2>
-                <p>
-                  {copy.previewSummary(
-                    currentPreview.selected_release.title,
-                    currentPreview.members?.filter(
-                      (member) => member.assignment,
-                    ).length ?? 0,
-                    currentPreview.omitted_member_ids?.length ?? 0,
-                  )}
-                </p>
-                <div className="mt-3">
-                  <AppButton
-                    isDisabled={sameGroupInFlight}
-                    onPress={() => void confirm()}
-                  >
-                    {currentRetryIntent
-                      ? copy.retryConfirmation
-                      : copy.confirmExplicitly}
-                  </AppButton>
-                </div>
                 {release?.positions?.some((position) => {
                   const override = tagOverridesByTrack[position.track_id];
                   return (
@@ -1538,7 +1586,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     </ul>
                   </div>
                 ) : null}
-              </section>
+              </MatchingPreview>
             ) : null}
             {receipt?.groupId === groupId ? (
               <section

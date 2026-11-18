@@ -21,6 +21,11 @@ import {
 	type CatalogArtist,
 } from "./catalogData";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
+import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
+import {
+	MatchingPreview,
+	type MatchingPreviewRow,
+} from "./matching-workspace/MatchingPreview";
 import { fixtureMatchingBoard } from "./fixtureMatchingBoard";
 import { MatchingBoard, MatchingEvidenceInspector } from "./matching-workspace";
 import {
@@ -104,6 +109,9 @@ export function MatchingScreen({
 		structuredClone(incomingFixtures.releases),
 	);
 	const [recordingQuery, setRecordingQuery] = useState("");
+	const [selectedSearchReleases, setSelectedSearchReleases] = useState<
+		Record<string, string>
+	>({});
 	const [inspectedPair, setInspectedPair] = useState<{
 		groupId: string;
 		trackId: string;
@@ -412,6 +420,26 @@ export function MatchingScreen({
 		preview && preview.inventoryVersion !== state.inventoryVersion,
 	);
 	const hasDowngrade = changedRows.some((row) => row.downgrade);
+	const assignedFileIds = new Set<string>();
+	const fileOutcomes: MatchingPreviewRow[] = previewRows.flatMap((row) => {
+		if (row.assignment?.included && row.file && metadataIssues(row).length)
+			return [];
+		return sourceIds(row.assignment).flatMap((id) => {
+			if (!usableFile(files[id])) return [];
+			assignedFileIds.add(id);
+			return [
+				{
+					key: `${row.targetTrack.id}:${id}`,
+					source: files[id].name,
+					position: `${row.targetTrack.position} · ${row.targetTrack.title}`,
+				},
+			];
+		});
+	});
+	for (const id of group.fileIds) {
+		if (!assignedFileIds.has(id) && files[id])
+			fileOutcomes.push({ key: id, source: files[id].name });
+	}
 	const confirmPublish = () => {
 		if (!preview || stale || (hasDowngrade && !state.confirmDowngrade)) return;
 		setConfirming(false);
@@ -552,7 +580,23 @@ export function MatchingScreen({
 						selectedReleaseId={
 							group.mode === "provider" ? group.candidateId : null
 						}
-						onSelectRelease={setCandidate}
+						onSelectRelease={(releaseId) =>
+							setSelectedSearchReleases((current) => ({
+								...current,
+								[group.id]: releaseId,
+							}))
+						}
+					/>
+					<MatchingReleasePreparation
+						key={group.id}
+						releaseId={selectedSearchReleases[group.id]}
+						resolveRelease={(identity) =>
+							providers.find(
+								(release) =>
+									release.id === identity || release.providerId === identity,
+							)?.id
+						}
+						onPrepared={setCandidate}
 					/>
 					<Button
 						className="demo-button max-[520px]:w-full"
@@ -891,40 +935,47 @@ export function MatchingScreen({
 				</div>
 			)}
 			{preview && (
-				<section
-					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)] min-[1400px]:mb-[90px]`}
-					aria-label={matchingMessage(locale, "ariaPublicationPreview")}
-				>
-					<h2 ref={previewHeadingRef} tabIndex={-1}>
-						{matchingMessage(locale, "previewTitle", {
-							title: String(preview.target.title),
-						})}
-					</h2>
-					<p>{matchingMessage(locale, "previewDescription")}</p>
-					{stale && (
-						<p role="alert">{matchingMessage(locale, "stalePreview")}</p>
-					)}
-					<p>
-						{matchingMessage(locale, "previewSelected", {
+				<MatchingPreview
+					locale={locale}
+					headingRef={previewHeadingRef}
+					heading={matchingMessage(locale, "previewTitle", {
+						title: String(preview.target.title),
+					})}
+					summary={[
+						matchingMessage(locale, "previewSelected", {
 							selected: activeRows.length,
 							total: previewRows.length,
-						})}{" "}
-						·{" "}
-						{matchingMessage(locale, "previewChanges", {
+						}),
+						matchingMessage(locale, "previewChanges", {
 							count: changedRows.length,
-						})}{" "}
-						·{" "}
-						{matchingMessage(locale, "previewLinked", {
+						}),
+						matchingMessage(locale, "previewLinked", {
 							count: linkedRows.length,
-						})}{" "}
-						·{" "}
-						{matchingMessage(locale, "previewRemainingFiles", {
-							count:
-								group.fileIds.length -
-								new Set(activeRows.map((row) => row.file?.id)).size,
-						})}{" "}
-						· {matchingMessage(locale, "previewFormat")}
-					</p>
+						}),
+						matchingMessage(locale, "previewRemainingFiles", {
+							count: fileOutcomes.filter((row) => !row.position).length,
+						}),
+						matchingMessage(locale, "previewFormat"),
+					].join(" · ")}
+					rows={fileOutcomes}
+					notice={stale ? matchingMessage(locale, "stalePreview") : undefined}
+					primary={{
+						label: matchingMessage(locale, "confirmPublish"),
+						onPress: () => setConfirming(true),
+						disabled:
+							stale ||
+							(!changedRows.length && !linkedRows.length) ||
+							(hasDowngrade && !state.confirmDowngrade),
+					}}
+					secondary={{
+						label: matchingMessage(locale, "returnToObject"),
+						onPress: () => {
+							state.plan = null;
+							commitState();
+						},
+					}}
+				>
+					<p>{matchingMessage(locale, "previewDescription")}</p>
 					<PublicationInspector items={inspectionItems} locale={locale} />
 					{hasDowngrade && (
 						<Checkbox
@@ -938,27 +989,7 @@ export function MatchingScreen({
 							{matchingMessage(locale, "confirmDowngrade")}
 						</Checkbox>
 					)}
-					<div className="incoming-actions flex flex-wrap justify-end gap-2">
-						<Button
-							isDisabled={
-								stale ||
-								(!changedRows.length && !linkedRows.length) ||
-								(hasDowngrade && !state.confirmDowngrade)
-							}
-							onPress={() => setConfirming(true)}
-						>
-							{matchingMessage(locale, "confirmPublish")}
-						</Button>
-						<Button
-							onPress={() => {
-								state.plan = null;
-								commitState();
-							}}
-						>
-							{matchingMessage(locale, "returnToObject")}
-						</Button>
-					</div>
-				</section>
+				</MatchingPreview>
 			)}
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
 				<Dialog
