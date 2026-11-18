@@ -1,11 +1,5 @@
-import {
-  QueryClient,
-  QueryClientProvider,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
@@ -30,12 +24,17 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import { IncomingGroupingEditor } from "./IncomingGroupingEditor";
+import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
 import {
   incomingGroupNames,
   incomingGroupNameText,
 } from "./incomingGroupNames";
+import {
+  type IncomingGroupsRoute,
+  incomingGroupMatchingHref,
+  incomingGroupsListHref,
+} from "./incomingGroupsRoute";
 import {
   type IncomingFeedback,
   type IncomingMessageKey,
@@ -47,7 +46,12 @@ import { LocalReleaseEditor } from "./LocalReleaseEditor";
 import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
+import {
+  MatchingBoard,
+  matchingBoardScoresFromCandidates,
+} from "./MatchingBoard";
 import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
+import { savedAutomaticAssignments } from "./savedAutomaticAssignments";
 import {
   emptyTrackTagOverride,
   type TrackTagOverrideDraft,
@@ -64,7 +68,6 @@ type ReviewProposal = {
   files?: ProposalFile[];
 };
 type Draft = Record<string, string>;
-type IncomingSurface = "groups" | "grouping" | "matching";
 type ManualAssignmentWithOverrides = MatchingManualAssignmentBody & {
   title_override?: string;
   artist_overrides?: string[] | null;
@@ -93,10 +96,10 @@ function errorText(
   reason: unknown,
   fallback: IncomingMessageKey,
 ): IncomingFeedback {
-  if (reason instanceof Error && (reason as IncomingError).incomingMessageKey) {
-    const error = reason as IncomingError;
+  const error = reason instanceof Error ? (reason as IncomingError) : undefined;
+  if (error?.incomingMessageKey) {
     return {
-      key: error.incomingMessageKey!,
+      key: error.incomingMessageKey,
       status: error.incomingHttpStatus,
     };
   }
@@ -142,49 +145,25 @@ function positionLabel(
   return copy.discTrack(position.medium + 1, number, position.title);
 }
 
-function Metadata({
-  title,
-  tags,
-  copy,
+export function IncomingGroupReviewScreen({
+  route,
 }: {
-  title: string;
-  tags: Record<string, string[] | null>;
-  copy: IncomingMessages;
+  route: IncomingGroupsRoute;
 }) {
-  const entries = Object.entries(tags);
-  return (
-    <details className="mt-2 text-sm">
-      <summary className="cursor-pointer">{title}</summary>
-      {entries.length ? (
-        <dl className="mt-2 grid gap-1 sm:grid-cols-2">
-          {entries.map(([key, values]) => (
-            <div key={key} className="rounded border border-stone-200 p-2">
-              <dt className="font-semibold">{key}</dt>
-              <dd>{values?.length ? values.join(" · ") : copy.noValue}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p>{copy.metadataNotSaved}</p>
-      )}
-    </details>
-  );
+  return <IncomingGroupReviewContent route={route} />;
 }
 
-export function IncomingGroupReviewScreen() {
-  const [queryClient] = useState(() => new QueryClient());
-  return (
-    <QueryClientProvider client={queryClient}>
-      <IncomingGroupReviewContent />
-    </QueryClientProvider>
-  );
-}
-
-function IncomingGroupReviewContent() {
+function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const queryClient = useQueryClient();
   const { locale } = useI18n();
   const copy = incomingMessages[locale];
   const localMatchingCopy = localMatchingMessages[locale];
+  const routeGroupId = route.view === "matching" ? route.groupId : "";
+  const routeReleaseId =
+    route.view === "matching" ? (route.releaseId ?? "") : "";
+  const matchingActive = route.view === "matching";
+  const [retainedGroupId, setRetainedGroupId] = useState("");
+  const groupId = routeGroupId || retainedGroupId;
   const groupsQuery = useQuery({
     queryKey: getGetIncomingGroupsQueryKey(),
     queryFn: async ({ signal }) => {
@@ -202,8 +181,6 @@ function IncomingGroupReviewContent() {
       ),
     [groupsQuery.data],
   );
-  const [groupId, setGroupId] = useState("");
-  const [surface, setSurface] = useState<IncomingSurface>("groups");
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
   const [inspectedMemberId, setInspectedMemberId] = useState("");
   const [inspectedTrackId, setInspectedTrackId] = useState("");
@@ -237,15 +214,11 @@ function IncomingGroupReviewContent() {
   const evaluationRevisionRef = useRef("");
   const requestId = useRef(0);
   const seededGroup = useRef("");
+  const appliedRouteGroup = useRef("");
   const authorityRevisionByGroup = useRef(new Map<string, number>());
   const matchingHeadingRef = useRef<HTMLHeadingElement>(null);
-  const screenRef = useRef<HTMLElement>(null);
-  const tabListRef = useRef<HTMLDivElement>(null);
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
   const focusedPreview = useRef<MatchingManualPreview | undefined>(undefined);
-  const panelScrollTarget = useRef(false);
-  const [matchingFocusRequest, setMatchingFocusRequest] = useState(0);
-  const [panelScrollRequest, setPanelScrollRequest] = useState(0);
 
   function scopeIdentity() {
     const scope = scopeRef.current;
@@ -262,18 +235,53 @@ function IncomingGroupReviewContent() {
     setPendingRequest(undefined);
   }
 
-  useEffect(() => {
-    if (!groupId && groups.length) setGroupId(groups[0].id);
-    if (groupId && !groups.some((group) => group.id === groupId)) {
+  const applyReleaseSelection = useCallback(
+    (nextReleaseId: string) => {
       generation.current += 1;
       scopeRef.current = {
-        groupId: groups[0]?.id ?? "",
-        releaseId: "",
+        groupId,
+        releaseId: nextReleaseId,
         generation: generation.current,
       };
-      setGroupId(groups[0]?.id ?? "");
+      setSelectedReleaseId(nextReleaseId);
+      setPreview(undefined);
+      setConfirmIntent(undefined);
+      setReceipt(undefined);
+      setNotice(null);
+      setError(null);
+    },
+    [groupId],
+  );
+
+  useEffect(() => {
+    if (!routeGroupId) return;
+    setRetainedGroupId(routeGroupId);
+    if (appliedRouteGroup.current === routeGroupId) return;
+    appliedRouteGroup.current = routeGroupId;
+    generation.current += 1;
+    scopeRef.current = {
+      groupId: routeGroupId,
+      releaseId: "",
+      generation: generation.current,
+    };
+    setSelectedReleaseId("");
+    setPreparedReleaseMBID("");
+    setPreview(undefined);
+    setConfirmIntent(undefined);
+    setReceipt(undefined);
+    setAuthorityIntent(undefined);
+    setAuthorityNotice(null);
+  }, [routeGroupId]);
+
+  useEffect(() => {
+    if (!matchingActive || !routeGroupId) return;
+    const heading = matchingHeadingRef.current;
+    if (!heading) return;
+    if (typeof heading.scrollIntoView === "function") {
+      heading.scrollIntoView({ block: "start", inline: "nearest" });
     }
-  }, [groupId, groups]);
+    heading.focus({ preventScroll: true });
+  }, [matchingActive, routeGroupId]);
 
   const reviewQuery = useQuery({
     queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
@@ -285,7 +293,8 @@ function IncomingGroupReviewContent() {
       if (result.status !== 200) throw responseError(result, "loadReviewError");
       return result.data;
     },
-    enabled: Boolean(groupId),
+    enabled:
+      Boolean(groupId) && groups.some((candidate) => candidate.id === groupId),
   });
   const review = reviewQuery.data;
   evaluationRevisionRef.current = review?.evaluation_revision ?? "";
@@ -332,6 +341,10 @@ function IncomingGroupReviewContent() {
     setConfirmIntent(undefined);
     setReceipt(undefined);
     setPreparedReleaseMBID("");
+    window.location.hash = incomingGroupMatchingHref(
+      groupId,
+      chosen.provider_release_id,
+    );
   }, [groupId, preparedReleaseMBID, releases]);
 
   useEffect(() => {
@@ -345,39 +358,45 @@ function IncomingGroupReviewContent() {
     };
   }, [groupId, review, savedSelectedId]);
 
+  // The release is an explicit URL state. A valid persisted proposal seeds the
+  // selection only when the URL carries no release of its own. Abandoning the
+  // query (for example by returning to the list) keeps the in-memory draft.
   useEffect(() => {
-    if (!matchingFocusRequest) return;
-    const heading = matchingHeadingRef.current;
-    if (!heading) return;
-    const stickyHeight =
-      tabListRef.current?.getBoundingClientRect().height ?? 0;
-    heading.style.scrollMarginTop = `${stickyHeight + 8}px`;
-    if (typeof heading.scrollIntoView === "function") {
-      heading.scrollIntoView({ block: "start", inline: "nearest" });
-    }
-    heading.focus({ preventScroll: true });
-  }, [matchingFocusRequest]);
-
-  useEffect(() => {
-    if (!panelScrollRequest || !panelScrollTarget.current) return;
-    panelScrollTarget.current = false;
-    const panel = screenRef.current?.querySelector<HTMLElement>(
-      `[data-incoming-surface="${surface}"]`,
-    );
-    if (!panel) return;
-    const stickyHeight =
-      tabListRef.current?.getBoundingClientRect().height ?? 0;
-    panel.style.scrollMarginTop = `${stickyHeight + 8}px`;
-    if (typeof panel.scrollIntoView === "function") {
-      panel.scrollIntoView({ block: "start", inline: "nearest" });
-    }
-  }, [panelScrollRequest, surface]);
+    if (!matchingActive || !routeReleaseId) return;
+    if (routeReleaseId === selectedReleaseId) return;
+    if (!review || review.group_id !== groupId) return;
+    if (
+      !(review.releases ?? []).some(
+        (item) => item.provider_release_id === routeReleaseId,
+      )
+    )
+      return;
+    applyReleaseSelection(routeReleaseId);
+  }, [
+    applyReleaseSelection,
+    groupId,
+    matchingActive,
+    review,
+    routeReleaseId,
+    selectedReleaseId,
+  ]);
 
   const release = releases.find(
     (candidate) => candidate.provider_release_id === selectedReleaseId,
   );
   const draftKey = `${groupId}:${selectedReleaseId}`;
-  const assignmentsByMember = drafts[draftKey] ?? {};
+  const savedAssignments = useMemo(
+    () => savedAutomaticAssignments(review, selectedReleaseId),
+    [review, selectedReleaseId],
+  );
+  const assignmentsByMember = useMemo(() => {
+    const merged: Record<string, string> = { ...savedAssignments };
+    for (const [memberId, trackId] of Object.entries(drafts[draftKey] ?? {})) {
+      if (trackId) merged[memberId] = trackId;
+      else delete merged[memberId];
+    }
+    return merged;
+  }, [drafts, draftKey, savedAssignments]);
   const tagOverridesByTrack = tagOverrideDrafts[draftKey] ?? {};
   const files = groupsQuery.data?.files ?? [];
   const groupFiles = useMemo(() => {
@@ -400,6 +419,22 @@ function IncomingGroupReviewContent() {
       `${copy.file} ${index >= 0 ? index + 1 : 1}`
     );
   };
+  const boardSources = memberIds.map((memberId, index) => {
+    const file = groupFiles.find((item) => item.variant_id === memberId);
+    const path = file?.locations?.[0]?.relative_path;
+    const tags = proposalFiles.get(memberId)?.raw_tags ?? file?.tags;
+    const title = tags?.TITLE?.find(Boolean);
+    const artist = tags?.ARTIST?.find(Boolean);
+    const tagLine = [artist, title].filter(Boolean).join(" · ");
+    return {
+      id: memberId,
+      label: fileLabel(memberId, index),
+      detail: path && tagLine ? tagLine : undefined,
+    };
+  });
+  const savedScores = release
+    ? matchingBoardScoresFromCandidates(review?.candidates, release)
+    : {};
   const intentPayload = useMemo(() => {
     if (!review?.evaluation_revision || !release) return "";
     const assignments: ManualAssignmentWithOverrides[] = memberIds.flatMap(
@@ -456,17 +491,14 @@ function IncomingGroupReviewContent() {
   useEffect(() => {
     if (!currentPreview || focusedPreview.current === currentPreview) return;
     focusedPreview.current = currentPreview;
-    if (surface !== "matching") return;
+    if (!matchingActive) return;
     const heading = previewHeadingRef.current;
     if (!heading) return;
-    const stickyHeight =
-      tabListRef.current?.getBoundingClientRect().height ?? 0;
-    heading.style.scrollMarginTop = `${stickyHeight + 8}px`;
     if (typeof heading.scrollIntoView === "function") {
       heading.scrollIntoView({ block: "start", inline: "nearest" });
     }
     heading.focus({ preventScroll: true });
-  }, [currentPreview, surface]);
+  }, [currentPreview, matchingActive]);
 
   const currentRetryIntent =
     confirmIntent?.groupId === groupId &&
@@ -571,52 +603,38 @@ function IncomingGroupReviewContent() {
   }
 
   function changeGroup(nextGroupId: string) {
-    generation.current += 1;
-    scopeRef.current = {
-      groupId: nextGroupId,
-      releaseId: "",
-      generation: generation.current,
-    };
-    setGroupId(nextGroupId);
-    setSelectedReleaseId("");
-    setPreparedReleaseMBID("");
-    setPreview(undefined);
-    setConfirmIntent(undefined);
-    setReceipt(undefined);
-    setAuthorityIntent(undefined);
-    setAuthorityNotice(null);
-  }
-
-  function openGroupMatching(nextGroupId: string) {
-    if (nextGroupId !== groupId) changeGroup(nextGroupId);
-    setSurface("matching");
-    setMatchingFocusRequest((request) => request + 1);
+    window.location.hash = incomingGroupMatchingHref(nextGroupId);
   }
 
   function changeRelease(nextReleaseId: string) {
     if (sameGroupInFlight) return;
-    generation.current += 1;
-    scopeRef.current = {
-      groupId,
-      releaseId: nextReleaseId,
-      generation: generation.current,
-    };
-    setSelectedReleaseId(nextReleaseId);
-    setPreview(undefined);
-    setConfirmIntent(undefined);
-    setReceipt(undefined);
-    setNotice(null);
-    setError(null);
+    applyReleaseSelection(nextReleaseId);
+    window.location.hash = incomingGroupMatchingHref(groupId, nextReleaseId);
   }
 
   function assign(memberId: string, trackId: string) {
-    if (sameGroupInFlight) return;
+    if (sameGroupInFlight || !review?.evaluation_revision || !release) return;
+    if (!memberIds.includes(memberId)) return;
+    if (
+      trackId &&
+      !(release.positions ?? []).some(
+        (position) => position.track_id === trackId,
+      )
+    )
+      return;
     invalidateIntent();
     setDrafts((current) => {
       const draft = { ...(current[draftKey] ?? {}) };
-      if (trackId) draft[memberId] = trackId;
-      else delete draft[memberId];
-      return { ...current, [draftKey]: draft };
+      if (trackId === (savedAssignments[memberId] ?? ""))
+        delete draft[memberId];
+      else draft[memberId] = trackId;
+      if (Object.keys(draft).length) {
+        return { ...current, [draftKey]: draft };
+      }
+      if (current[draftKey] === undefined) return current;
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
     });
     setPreview(undefined);
     setConfirmIntent(undefined);
@@ -763,124 +781,98 @@ function IncomingGroupReviewContent() {
   );
 
   return (
-    <section
-      ref={screenRef}
-      className="incoming-screen mx-auto max-w-[1800px] space-y-4"
-      aria-labelledby="incoming-title"
-    >
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 id="incoming-title" className="text-2xl font-semibold">
-            {copy.title}
-          </h1>
-          <p className="mt-1 text-sm text-stone-700">{copy.introduction}</p>
+    <section className="incoming-screen mx-auto max-w-[1800px] space-y-4">
+      <section hidden={matchingActive} aria-labelledby="incoming-title">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 id="incoming-title" className="text-2xl font-semibold">
+              {copy.title}
+            </h1>
+            <p className="mt-1 text-sm text-stone-700">{copy.introduction}</p>
+          </div>
+          <AppButton
+            onPress={() => {
+              void groupsQuery.refetch();
+            }}
+          >
+            {copy.refreshGroups}
+          </AppButton>
         </div>
-        <AppButton
-          onPress={() => {
-            void groupsQuery.refetch();
-          }}
-        >
-          {copy.refreshGroups}
-        </AppButton>
-      </div>
 
-      {groupsQuery.isLoading ? <p role="status">{copy.loadingGroups}</p> : null}
-      {groupsQuery.isError ? (
-        <p role="alert">
-          {incomingFeedbackText(
-            locale,
-            errorText(groupsQuery.error, "groupsLoadError"),
-          )}
-        </p>
-      ) : null}
-      {groupsQuery.data && groups.length === 0 ? (
-        <p className="rounded border border-stone-300 p-4">{copy.noGroups}</p>
-      ) : null}
+        {groupsQuery.isLoading ? (
+          <p role="status">{copy.loadingGroups}</p>
+        ) : null}
+        {groupsQuery.isError ? (
+          <p role="alert">
+            {incomingFeedbackText(
+              locale,
+              errorText(groupsQuery.error, "groupsLoadError"),
+            )}
+          </p>
+        ) : null}
+        {groupsQuery.data && groups.length === 0 ? (
+          <p className="rounded border border-stone-300 p-4">{copy.noGroups}</p>
+        ) : null}
 
-      {groups.length > 0 ? (
-        <Tabs
-          selectedKey={surface}
-          onSelectionChange={(key) => {
-            if (key === "groups" || key === "grouping" || key === "matching") {
-              setSurface(key);
-              panelScrollTarget.current = true;
-              setPanelScrollRequest((request) => request + 1);
+        {groupsQuery.data ? (
+          <IncomingGroupsOverview
+            snapshot={groupsQuery.data}
+            groupNames={groupNames}
+            expandedGroupIds={
+              route.view === "list" ? route.expandedGroupIds : undefined
             }
-          }}
-          className="incoming-tabs"
-          data-incoming-tabs
+          />
+        ) : null}
+      </section>
+
+      {groupId ? (
+        <section
+          hidden={!matchingActive}
+          className="space-y-4"
+          aria-labelledby="incoming-matching-title"
         >
-          <TabList
-            ref={tabListRef}
-            aria-label={copy.surfacesLabel}
-            className="incoming-tab-list"
-          >
-            <Tab id="groups">{copy.tabGroups}</Tab>
-            <Tab id="grouping">{copy.tabGrouping}</Tab>
-            <Tab id="matching">{copy.tabMatching}</Tab>
-          </TabList>
+          <div>
+            <a
+              className="incoming-back-link"
+              href={
+                group
+                  ? incomingGroupsListHref([groupId])
+                  : incomingGroupsListHref()
+              }
+            >
+              {copy.backToGroups}
+            </a>
+            <h1
+              id="incoming-matching-title"
+              ref={matchingHeadingRef}
+              tabIndex={-1}
+              className="incoming-view-heading text-xl font-semibold"
+            >
+              {copy.tabMatching}
+              {group
+                ? ` · ${incomingGroupNameText(groupNames.get(group.id), locale)}`
+                : ""}
+            </h1>
+          </div>
 
-          <TabPanel
-            id="groups"
-            shouldForceMount
-            hidden={surface !== "groups"}
-            className="incoming-tab-panel"
-            data-incoming-surface="groups"
-          >
-            {groupsQuery.data ? (
-              <IncomingGroupsOverview
-                snapshot={groupsQuery.data}
-                groupNames={groupNames}
-                selectedGroupId={groupId}
-                review={review}
-                onSelect={openGroupMatching}
-              />
+          <div className="space-y-4">
+            {groupsQuery.isLoading ? (
+              <p role="status">{copy.loadingGroups}</p>
             ) : null}
-          </TabPanel>
-
-          <TabPanel
-            id="grouping"
-            shouldForceMount
-            hidden={surface !== "grouping"}
-            className="incoming-tab-panel"
-            data-incoming-surface="grouping"
-          >
-            {groupsQuery.data ? (
-              <IncomingGroupingEditor
-                snapshot={groupsQuery.data}
-                onConfirmed={async (snapshot) => {
-                  invalidateIntent();
-                  setPreview(undefined);
-                  setConfirmIntent(undefined);
-                  setAuthorityIntent(undefined);
-                  queryClient.setQueryData(
-                    getGetIncomingGroupsQueryKey(),
-                    snapshot,
-                  );
-                  await queryClient.invalidateQueries({
-                    queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-                  });
-                }}
-              />
+            {groupsQuery.isError ? (
+              <p role="alert">
+                {incomingFeedbackText(
+                  locale,
+                  errorText(groupsQuery.error, "groupsLoadError"),
+                )}
+              </p>
             ) : null}
-          </TabPanel>
-
-          <TabPanel
-            id="matching"
-            shouldForceMount
-            hidden={surface !== "matching"}
-            className="incoming-tab-panel"
-            data-incoming-surface="matching"
-          >
-            <div className="space-y-4">
-              <h2
-                id="incoming-matching-title"
-                ref={matchingHeadingRef}
-                tabIndex={-1}
-                className="incoming-view-heading text-xl font-semibold"
-              >
-                {copy.tabMatching}
-              </h2>
+            {groupsQuery.data && !group ? (
+              <p role="alert" className="rounded border border-stone-300 p-4">
+                {copy.groupNotFound}
+              </p>
+            ) : null}
+            {groups.length > 0 && group ? (
               <label className="block max-w-2xl text-sm font-medium">
                 {copy.incomingGroupsLabel}
                 <select
@@ -899,243 +891,234 @@ function IncomingGroupReviewContent() {
                   ))}
                 </select>
               </label>
+            ) : null}
 
-              {group && groupsQuery.data ? (
-                <details className="rounded border border-stone-300 p-3">
-                  <summary className="cursor-pointer font-semibold">
-                    {localMatchingCopy.sectionSummary}
-                  </summary>
-                  <LocalReleaseEditor
-                    group={group}
-                    files={groupsQuery.data.files ?? []}
-                    authorityRevision={review?.authority_revision}
-                    onConfirmed={async () => {
-                      invalidateIntent();
-                      setPreview(undefined);
-                      setConfirmIntent(undefined);
-                      setAuthorityIntent(undefined);
-                      await Promise.all([
-                        queryClient.invalidateQueries({
-                          queryKey: getGetIncomingGroupsQueryKey(),
-                        }),
-                        queryClient.invalidateQueries({
-                          queryKey:
-                            getGetIncomingGroupMatchingQueryKey(groupId),
-                        }),
-                      ]);
-                    }}
-                  />
-                </details>
-              ) : null}
+            {group && groupsQuery.data ? (
+              <details className="rounded border border-stone-300 p-3">
+                <summary className="cursor-pointer font-semibold">
+                  {localMatchingCopy.sectionSummary}
+                </summary>
+                <LocalReleaseEditor
+                  group={group}
+                  files={groupsQuery.data.files ?? []}
+                  authorityRevision={review?.authority_revision}
+                  onConfirmed={async () => {
+                    invalidateIntent();
+                    setPreview(undefined);
+                    setConfirmIntent(undefined);
+                    setAuthorityIntent(undefined);
+                    await Promise.all([
+                      queryClient.invalidateQueries({
+                        queryKey: getGetIncomingGroupsQueryKey(),
+                      }),
+                      queryClient.invalidateQueries({
+                        queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+                      }),
+                    ]);
+                  }}
+                />
+              </details>
+            ) : null}
 
-              {reviewQuery.isLoading ? (
-                <p role="status">{copy.loadingEvaluation}</p>
-              ) : null}
-              {reviewQuery.isError ? (
-                <div role="alert" className="space-y-2">
-                  <p>
-                    {incomingFeedbackText(
-                      locale,
-                      errorText(reviewQuery.error, "loadReviewError"),
-                    )}
+            {reviewQuery.isLoading ? (
+              <p role="status">{copy.loadingEvaluation}</p>
+            ) : null}
+            {reviewQuery.isError ? (
+              <div role="alert" className="space-y-2">
+                <p>
+                  {incomingFeedbackText(
+                    locale,
+                    errorText(reviewQuery.error, "loadReviewError"),
+                  )}
+                </p>
+                <AppButton
+                  isDisabled={sameGroupInFlight}
+                  onPress={() => {
+                    void reviewQuery.refetch();
+                  }}
+                >
+                  {copy.retryReading}
+                </AppButton>
+              </div>
+            ) : null}
+            {review && !review.evaluated ? (
+              <p className="rounded border border-amber-500 bg-amber-50 p-3">
+                {copy.evaluationNotRun}
+              </p>
+            ) : null}
+            {review ? (
+              <section
+                className="rounded border border-stone-300 bg-white p-4"
+                aria-labelledby="authority-title"
+              >
+                <h2 id="authority-title" className="font-semibold">
+                  {copy.authorityHeading}
+                </h2>
+                <p className="mt-1 text-sm">
+                  {copy.modeLabel} <strong>{review.authority_mode}</strong> ·{" "}
+                  {copy.revisionLabel} <code>{review.authority_revision}</code>
+                </p>
+                <p className="mt-1 text-sm">
+                  {copy.savedEvaluationExplanation}
+                </p>
+                {authorityNotice ? (
+                  <p
+                    role="status"
+                    className="mt-2 rounded border border-green-700 p-3"
+                  >
+                    {incomingFeedbackText(locale, authorityNotice)}
                   </p>
+                ) : null}
+                {review.authority_mode === "manual" ? (
+                  <div className="mt-3">
+                    <AppButton
+                      isDisabled={sameGroupInFlight}
+                      onPress={() => void performAuthorityAction()}
+                    >
+                      {currentAuthorityIntent?.action === "automatic"
+                        ? copy.retryReturnAutomatic
+                        : copy.returnAutomatic}
+                    </AppButton>
+                  </div>
+                ) : null}
+                {error?.refresh === "authority" ? (
                   <AppButton
                     isDisabled={sameGroupInFlight}
                     onPress={() => {
-                      void reviewQuery.refetch();
+                      setAuthorityIntent(undefined);
+                      void Promise.all([
+                        groupsQuery.refetch(),
+                        reviewQuery.refetch(),
+                      ]);
                     }}
                   >
-                    {copy.retryReading}
+                    {copy.refreshAuthority}
                   </AppButton>
-                </div>
-              ) : null}
-              {review && !review.evaluated ? (
-                <p className="rounded border border-amber-500 bg-amber-50 p-3">
-                  {copy.evaluationNotRun}
-                </p>
-              ) : null}
-              {review ? (
+                ) : null}
+              </section>
+            ) : null}
+            {review?.evaluated && !review.proposal_available ? (
+              <p className="rounded border border-amber-500 bg-amber-50 p-3">
+                {copy.proposalUnavailable}
+              </p>
+            ) : null}
+
+            {group && !(review?.evaluated && review.proposal_available) ? (
+              <section
+                className="grid gap-3 rounded border border-stone-300 bg-white p-3 lg:grid-cols-2"
+                aria-label={copy.searchPreparationLabel}
+              >
+                <ManualSearchPicker
+                  groupId={groupId}
+                  groupRevision={group.revision}
+                  disabled={
+                    !review || busy || authorityBusy || sameGroupInFlight
+                  }
+                  onSelectRelease={(releaseId) =>
+                    setSearchReleaseSelections((current) => ({
+                      ...current,
+                      [groupId]: releaseId,
+                    }))
+                  }
+                />
+                <ManualReleasePicker
+                  groupId={groupId}
+                  groupRevision={group.revision}
+                  evaluationRevision={review?.evaluation_revision || undefined}
+                  disabled={
+                    !review || busy || authorityBusy || sameGroupInFlight
+                  }
+                  searchRelease={searchReleaseSelections[groupId]}
+                  onPrepared={setPreparedReleaseMBID}
+                />
+              </section>
+            ) : null}
+
+            {review?.evaluated &&
+            review.proposal_available &&
+            review.releases?.length === 0 ? (
+              <p className="rounded border border-stone-300 p-3">
+                {copy.noReleaseLayouts}
+              </p>
+            ) : null}
+
+            {review?.evaluated && review.proposal_available ? (
+              <div
+                data-matching-workspace
+                className="incoming-matching-workspace grid min-h-0 gap-3 min-[1400px]:grid-cols-[minmax(320px,.85fr)_minmax(480px,2.1fr)_minmax(250px,.8fr)] min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]"
+              >
                 <section
-                  className="rounded border border-stone-300 bg-white p-4"
-                  aria-labelledby="authority-title"
+                  data-matching-candidates
+                  className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                  aria-labelledby="matching-search-title"
                 >
-                  <h2 id="authority-title" className="font-semibold">
-                    {copy.authorityHeading}
+                  <h2 id="matching-search-title" className="font-semibold">
+                    {copy.searchFilesHeading}
                   </h2>
-                  <p className="mt-1 text-sm">
-                    {copy.modeLabel} <strong>{review.authority_mode}</strong> ·{" "}
-                    {copy.revisionLabel}{" "}
-                    <code>{review.authority_revision}</code>
+                  {group ? (
+                    <>
+                      <ManualSearchPicker
+                        groupId={groupId}
+                        groupRevision={group.revision}
+                        disabled={
+                          !review || busy || authorityBusy || sameGroupInFlight
+                        }
+                        onSelectRelease={(releaseId) =>
+                          setSearchReleaseSelections((current) => ({
+                            ...current,
+                            [groupId]: releaseId,
+                          }))
+                        }
+                      />
+                      <ManualReleasePicker
+                        groupId={groupId}
+                        groupRevision={group.revision}
+                        evaluationRevision={
+                          review?.evaluation_revision || undefined
+                        }
+                        disabled={
+                          !review || busy || authorityBusy || sameGroupInFlight
+                        }
+                        searchRelease={searchReleaseSelections[groupId]}
+                        onPrepared={setPreparedReleaseMBID}
+                      />
+                    </>
+                  ) : null}
+                  <h3 className="font-medium">{copy.savedEvaluation}</h3>
+                  <p className="text-sm">
+                    {copy.reviewRevisionParticipants(
+                      review.evaluation_revision || copy.unknown,
+                      memberIds.length,
+                    )}
                   </p>
-                  <p className="mt-1 text-sm">
-                    {copy.savedEvaluationExplanation}
-                  </p>
-                  {authorityNotice ? (
-                    <p
-                      role="status"
-                      className="mt-2 rounded border border-green-700 p-3"
+                  <label className="block text-sm font-medium">
+                    {copy.releaseSelectionLabel}
+                    <select
+                      disabled={busy || authorityBusy || sameGroupInFlight}
+                      className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
+                      value={selectedReleaseId}
+                      onChange={(event) => changeRelease(event.target.value)}
                     >
-                      {incomingFeedbackText(locale, authorityNotice)}
-                    </p>
+                      <option value="">{copy.chooseRelease}</option>
+                      {releases.map((item) => (
+                        <option
+                          key={item.provider_release_id}
+                          value={item.provider_release_id}
+                        >
+                          {layoutLabel(item, releases, copy)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {savedSelectedId && selectedReleaseId === savedSelectedId ? (
+                    <p className="text-sm">{copy.savedRelease}</p>
                   ) : null}
-                  {review.authority_mode === "manual" ? (
-                    <div className="mt-3">
-                      <AppButton
-                        isDisabled={sameGroupInFlight}
-                        onPress={() => void performAuthorityAction()}
-                      >
-                        {currentAuthorityIntent?.action === "automatic"
-                          ? copy.retryReturnAutomatic
-                          : copy.returnAutomatic}
-                      </AppButton>
-                    </div>
-                  ) : null}
-                  {error?.refresh === "authority" ? (
-                    <AppButton
-                      isDisabled={sameGroupInFlight}
-                      onPress={() => {
-                        setAuthorityIntent(undefined);
-                        void Promise.all([
-                          groupsQuery.refetch(),
-                          reviewQuery.refetch(),
-                        ]);
-                      }}
-                    >
-                      {copy.refreshAuthority}
-                    </AppButton>
-                  ) : null}
-                </section>
-              ) : null}
-              {review?.evaluated && !review.proposal_available ? (
-                <p className="rounded border border-amber-500 bg-amber-50 p-3">
-                  {copy.proposalUnavailable}
-                </p>
-              ) : null}
-
-              {group && !(review?.evaluated && review.proposal_available) ? (
-                <section
-                  className="grid gap-3 rounded border border-stone-300 bg-white p-3 lg:grid-cols-2"
-                  aria-label={copy.searchPreparationLabel}
-                >
-                  <ManualSearchPicker
-                    groupId={groupId}
-                    groupRevision={group.revision}
-                    disabled={
-                      !review || busy || authorityBusy || sameGroupInFlight
-                    }
-                    onSelectRelease={(releaseId) =>
-                      setSearchReleaseSelections((current) => ({
-                        ...current,
-                        [groupId]: releaseId,
-                      }))
-                    }
-                  />
-                  <ManualReleasePicker
-                    groupId={groupId}
-                    groupRevision={group.revision}
-                    evaluationRevision={
-                      review?.evaluation_revision || undefined
-                    }
-                    disabled={
-                      !review || busy || authorityBusy || sameGroupInFlight
-                    }
-                    searchRelease={searchReleaseSelections[groupId]}
-                    onPrepared={setPreparedReleaseMBID}
-                  />
-                </section>
-              ) : null}
-
-              {review?.evaluated &&
-              review.proposal_available &&
-              review.releases?.length === 0 ? (
-                <p className="rounded border border-stone-300 p-3">
-                  {copy.noReleaseLayouts}
-                </p>
-              ) : null}
-
-              {review?.evaluated && review.proposal_available ? (
-                <div
-                  data-matching-workspace
-                  className="incoming-matching-workspace grid min-h-0 gap-3 min-[1400px]:grid-cols-[minmax(320px,.85fr)_minmax(480px,2.1fr)_minmax(250px,.8fr)] min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]"
-                >
-                  <section
-                    data-matching-candidates
-                    className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
-                    aria-labelledby="matching-search-title"
-                  >
-                    <h2 id="matching-search-title" className="font-semibold">
-                      {copy.searchFilesHeading}
-                    </h2>
-                    {group ? (
-                      <>
-                        <ManualSearchPicker
-                          groupId={groupId}
-                          groupRevision={group.revision}
-                          disabled={
-                            !review ||
-                            busy ||
-                            authorityBusy ||
-                            sameGroupInFlight
-                          }
-                          onSelectRelease={(releaseId) =>
-                            setSearchReleaseSelections((current) => ({
-                              ...current,
-                              [groupId]: releaseId,
-                            }))
-                          }
-                        />
-                        <ManualReleasePicker
-                          groupId={groupId}
-                          groupRevision={group.revision}
-                          evaluationRevision={
-                            review?.evaluation_revision || undefined
-                          }
-                          disabled={
-                            !review ||
-                            busy ||
-                            authorityBusy ||
-                            sameGroupInFlight
-                          }
-                          searchRelease={searchReleaseSelections[groupId]}
-                          onPrepared={setPreparedReleaseMBID}
-                        />
-                      </>
-                    ) : null}
-                    <h3 className="font-medium">{copy.savedEvaluation}</h3>
-                    <p className="text-sm">
-                      {copy.reviewRevisionParticipants(
-                        review.evaluation_revision || copy.unknown,
-                        memberIds.length,
-                      )}
-                    </p>
-                    <label className="block text-sm font-medium">
-                      {copy.releaseSelectionLabel}
-                      <select
-                        disabled={busy || authorityBusy || sameGroupInFlight}
-                        className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
-                        value={selectedReleaseId}
-                        onChange={(event) => changeRelease(event.target.value)}
-                      >
-                        <option value="">{copy.chooseRelease}</option>
-                        {releases.map((item) => (
-                          <option
-                            key={item.provider_release_id}
-                            value={item.provider_release_id}
-                          >
-                            {layoutLabel(item, releases, copy)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {savedSelectedId &&
-                    selectedReleaseId === savedSelectedId ? (
-                      <p className="text-sm">{copy.savedRelease}</p>
-                    ) : null}
-                    <h3 className="font-medium">
+                  <details className="rounded border border-[var(--line)] p-2">
+                    <summary className="cursor-pointer font-medium">
                       {copy.savedCandidatesHeading}
-                    </h3>
+                    </summary>
                     {review.candidates?.length ? (
-                      <ul className="space-y-2 text-sm">
+                      <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto text-sm">
                         {review.candidates.flatMap((candidate) =>
                           candidate.positions?.length
                             ? candidate.positions.map((position) => (
@@ -1213,508 +1196,365 @@ function IncomingGroupReviewContent() {
                     ) : (
                       <p className="text-sm">{copy.noCandidateEdges}</p>
                     )}
-                  </section>
+                  </details>
+                </section>
 
-                  {release ? (
+                {release ? (
+                  <MatchingBoard
+                    groupId={groupId}
+                    release={release}
+                    members={memberIds}
+                    sources={boardSources}
+                    assignments={assignmentsByMember}
+                    automaticAssignments={savedAssignments}
+                    savedScores={savedScores}
+                    disabled={busy || authorityBusy || sameGroupInFlight}
+                    inspectedTrackId={inspectedPosition?.track_id}
+                    onAssign={assign}
+                    onUnassign={(memberId) => assign(memberId, "")}
+                    onInspectPosition={(trackId) => {
+                      setInspectedTrackId(trackId);
+                    }}
+                    onInspectSource={(memberId) => {
+                      setInspectedMemberId(memberId);
+                    }}
+                    renderPositionMeta={({ position }) => (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs text-stone-700">
+                          {evidenceOverrideMessages[locale].tagOverridesLegend(
+                            positionLabel(position, copy),
+                          )}
+                        </summary>
+                        <TrackTagOverrides
+                          title={positionLabel(position, copy)}
+                          trackId={position.track_id}
+                          override={
+                            tagOverridesByTrack[position.track_id] ??
+                            emptyTrackTagOverride()
+                          }
+                          disabled={busy || authorityBusy || sameGroupInFlight}
+                          onChange={(override) =>
+                            updateTrackTagOverride(position.track_id, override)
+                          }
+                        />
+                      </details>
+                    )}
+                  />
+                ) : (
+                  <>
                     <section
                       data-matching-positions
-                      className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                      className="matching-board-panel matching-board-positions"
                       aria-labelledby="assignment-board-title"
                     >
-                      <h2 id="assignment-board-title" className="font-semibold">
-                        {copy.positionHeading} · {release.title}
+                      <h2
+                        id="assignment-board-title"
+                        className="matching-board-heading"
+                      >
+                        {copy.positionHeading}
                       </h2>
-                      <p className="mt-1 text-sm text-stone-700">
-                        {copy.positionInstructions}
-                      </p>
-                      <p className="mt-1 text-sm text-stone-700">
-                        {release.tracklist_complete
-                          ? copy.completeTrackList
-                          : copy.incompleteTrackList}{" "}
-                        · {copy.positionCount(release.positions?.length ?? 0)}
-                      </p>
-                      <ol className="mt-3 space-y-2">
-                        {[...(release.positions ?? [])]
-                          .sort(
-                            (a, b) =>
-                              a.medium - b.medium || a.position - b.position,
-                          )
-                          .map((position) => {
-                            const occupants = memberIds.filter(
-                              (memberId) =>
-                                assignmentsByMember[memberId] ===
-                                position.track_id,
-                            );
-                            return (
-                              <li
-                                key={position.track_id}
-                                onDragOver={(event) => event.preventDefault()}
-                                onDrop={(event) => {
-                                  event.preventDefault();
-                                  const memberId =
-                                    event.dataTransfer.getData("text/plain");
-                                  if (memberIds.includes(memberId))
-                                    assign(memberId, position.track_id);
-                                }}
-                                className={`min-h-24 rounded border border-dashed p-3 text-sm ${inspectedPosition?.track_id === position.track_id ? "border-stone-600 bg-stone-50" : "border-stone-400"}`}
-                              >
-                                <button
-                                  type="button"
-                                  className="text-left font-medium underline decoration-stone-400 underline-offset-2"
-                                  aria-pressed={
-                                    inspectedPosition?.track_id ===
-                                    position.track_id
-                                  }
-                                  onClick={() =>
-                                    setInspectedTrackId(position.track_id)
-                                  }
-                                >
-                                  {positionLabel(position, copy)}
-                                </button>
-                                <p className="mt-1 text-stone-700">
-                                  {occupants.length
-                                    ? `${copy.assignedFiles(occupants.length)} · ${occupants.map((memberId) => fileLabel(memberId, memberIds.indexOf(memberId))).join(", ")}`
-                                    : copy.noAssignedFiles}
-                                </p>
-                                <TrackTagOverrides
-                                  title={positionLabel(position, copy)}
-                                  trackId={position.track_id}
-                                  override={
-                                    tagOverridesByTrack[position.track_id] ??
-                                    emptyTrackTagOverride()
-                                  }
-                                  disabled={
-                                    busy || authorityBusy || sameGroupInFlight
-                                  }
-                                  onChange={(override) =>
-                                    updateTrackTagOverride(
-                                      position.track_id,
-                                      override,
-                                    )
-                                  }
-                                />
-                              </li>
-                            );
-                          })}
-                      </ol>
-                    </section>
-                  ) : (
-                    <section className="rounded border border-stone-300 bg-white p-3">
-                      <h2 className="font-semibold">{copy.positionHeading}</h2>
-                      <p className="mt-2 text-sm">
+                      <p className="matching-board-instructions">
                         {copy.choosePrepareRelease}
                       </p>
                     </section>
-                  )}
-
-                  <section
-                    data-matching-sources
-                    className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
-                    aria-labelledby="matching-sources-title"
-                  >
-                    <h2 id="matching-sources-title" className="font-semibold">
-                      {copy.sourceFilesHeading}
-                    </h2>
-                    <p className="text-sm text-stone-700">
-                      {copy.sourceInstructions}
-                    </p>
-                    {memberIds.map((memberId, index) => {
-                      const file = groupFiles.find(
-                        (item) => item.variant_id === memberId,
-                      );
-                      const savedFacts = proposalFiles.get(memberId);
-                      const isFree = !assignmentsByMember[memberId];
-                      const assignedPosition = release?.positions?.find(
-                        (position) =>
-                          position.track_id === assignmentsByMember[memberId],
-                      );
-                      return (
-                        <article
-                          key={memberId}
-                          className="rounded border border-stone-200 p-3"
-                        >
-                          <button
-                            type="button"
-                            draggable={
-                              isFree &&
-                              !busy &&
-                              !authorityBusy &&
-                              !sameGroupInFlight
-                            }
-                            disabled={
-                              busy || authorityBusy || sameGroupInFlight
-                            }
-                            aria-pressed={inspectedFileMemberId === memberId}
-                            onClick={() => setInspectedMemberId(memberId)}
-                            onDragStart={(event) => {
-                              event.dataTransfer.setData(
-                                "text/plain",
-                                memberId,
-                              );
-                              event.dataTransfer.effectAllowed = "move";
-                            }}
-                            className={`w-full rounded border p-2 text-left text-sm ${inspectedFileMemberId === memberId ? "border-stone-600 bg-stone-50" : "border-stone-400 bg-stone-50"}`}
-                          >
-                            <strong className="block">
-                              {fileLabel(memberId, index)}
-                            </strong>
-                            {file?.locations?.map((location) => (
-                              <span
-                                key={location.location_id}
-                                className="block text-stone-700"
-                              >
-                                {location.relative_path}
-                              </span>
-                            ))}
-                            <span className="mt-1 block text-xs text-stone-700">
-                              {isFree
-                                ? copy.free
-                                : assignedPosition
-                                  ? copy.assigned(
-                                      positionLabel(assignedPosition, copy),
-                                    )
-                                  : copy.assignmentOutsideRelease}
-                            </span>
-                          </button>
-                          <label className="mt-2 block text-sm font-medium">
-                            {copy.assignment}
-                            <select
-                              disabled={
-                                !release ||
-                                busy ||
-                                authorityBusy ||
-                                sameGroupInFlight
-                              }
-                              className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
-                              value={assignmentsByMember[memberId] ?? ""}
-                              onChange={(event) =>
-                                assign(memberId, event.target.value)
-                              }
+                    <section
+                      data-matching-sources
+                      className="matching-board-panel matching-board-sources"
+                      aria-labelledby="matching-sources-title"
+                    >
+                      <h2
+                        id="matching-sources-title"
+                        className="matching-board-heading"
+                      >
+                        {copy.sourceFilesHeading}
+                      </h2>
+                      <p className="matching-board-instructions">
+                        {copy.sourceInstructions}
+                      </p>
+                      {memberIds.length ? (
+                        <ul className="matching-board-source-list">
+                          {memberIds.map((memberId, index) => (
+                            <li
+                              key={memberId}
+                              className="matching-board-source"
                             >
-                              <option value="">{copy.leaveIncoming}</option>
-                              {(release?.positions ?? []).map((position) => (
-                                <option
-                                  key={position.track_id}
-                                  value={position.track_id}
-                                >
-                                  {positionLabel(position, copy)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          {savedFacts?.raw_tags ? (
-                            <Metadata
-                              title={copy.savedProposalMetadata}
-                              tags={savedFacts.raw_tags}
-                              copy={copy}
-                            />
-                          ) : null}
-                          {file ? (
-                            <Metadata
-                              title={copy.incomingFileMetadata}
-                              tags={file.tags}
-                              copy={copy}
-                            />
-                          ) : null}
-                          {savedFacts?.diagnostics?.length ? (
-                            <div className="mt-2 text-sm">
-                              <p className="font-medium">
-                                {copy.groupDiagnostics}
-                              </p>
-                              <ul className="list-inside list-disc">
-                                {savedFacts.diagnostics.map((diagnostic) => (
-                                  <li
-                                    key={`${diagnostic.code}-${diagnostic.values?.join("-") ?? ""}`}
-                                  >
-                                    {diagnostic.code}
-                                    {diagnostic.values?.length
-                                      ? `: ${diagnostic.values.join(" · ")}`
-                                      : ""}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                        </article>
-                      );
-                    })}
-                    {memberIds.length === 0 ? (
-                      <p className="text-sm text-stone-600">
-                        {copy.noFilesInGroup}
+                              <span className="matching-board-source-select">
+                                <strong>{fileLabel(memberId, index)}</strong>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="matching-board-empty">
+                          {copy.noFilesInGroup}
+                        </p>
+                      )}
+                    </section>
+                  </>
+                )}
+
+                <section
+                  data-matching-inspector
+                  className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:col-span-3 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-3"
+                  aria-labelledby="matching-inspector-title"
+                >
+                  <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
+                    <h2 id="matching-inspector-title" className="font-semibold">
+                      {copy.inspectorLabel}
+                      {": "}
+                      {inspectedFileMemberId
+                        ? fileLabel(
+                            inspectedFileMemberId,
+                            memberIds.indexOf(inspectedFileMemberId),
+                          )
+                        : copy.inspectorFileMissing}
+                      {inspectedPosition
+                        ? ` · ${positionLabel(inspectedPosition, copy)}`
+                        : ""}
+                    </h2>
+                    <MatchingEvidenceInspector
+                      candidate={inspectedCandidate}
+                      rawTags={
+                        inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
+                      }
+                    />
+                  </div>
+                  <aside
+                    data-matching-actions
+                    className="flex flex-wrap content-start items-start gap-2 min-[1400px]:min-h-0 min-[1400px]:min-w-[220px] min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
+                    aria-label={copy.assignmentActions}
+                  >
+                    {error ? (
+                      <p
+                        role="alert"
+                        className="w-full rounded border border-red-600 p-2 text-sm"
+                      >
+                        {incomingFeedbackText(locale, error)}
                       </p>
                     ) : null}
-                  </section>
-
-                  <section
-                    data-matching-inspector
-                    className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:col-span-3 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-3"
-                    aria-labelledby="matching-inspector-title"
-                  >
-                    <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
-                      <h2
-                        id="matching-inspector-title"
-                        className="font-semibold"
+                    {notice ? (
+                      <p
+                        role="status"
+                        className="w-full rounded border border-green-700 p-2 text-sm"
                       >
-                        {copy.inspectorLabel}
-                        {": "}
-                        {inspectedFileMemberId
-                          ? fileLabel(
-                              inspectedFileMemberId,
-                              memberIds.indexOf(inspectedFileMemberId),
-                            )
-                          : copy.inspectorFileMissing}
-                        {inspectedPosition
-                          ? ` · ${positionLabel(inspectedPosition, copy)}`
-                          : ""}
-                      </h2>
-                      <MatchingEvidenceInspector
-                        candidate={inspectedCandidate}
-                        rawTags={
-                          inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
-                        }
-                      />
-                    </div>
-                    <aside
-                      data-matching-actions
-                      className="flex flex-wrap content-start items-start gap-2 min-[1400px]:min-h-0 min-[1400px]:min-w-[220px] min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
-                      aria-label={copy.assignmentActions}
-                    >
-                      {error ? (
-                        <p
-                          role="alert"
-                          className="w-full rounded border border-red-600 p-2 text-sm"
-                        >
-                          {incomingFeedbackText(locale, error)}
-                        </p>
-                      ) : null}
-                      {notice ? (
-                        <p
-                          role="status"
-                          className="w-full rounded border border-green-700 p-2 text-sm"
-                        >
-                          {incomingFeedbackText(locale, notice)}
-                        </p>
-                      ) : null}
-                      <AppButton
-                        isDisabled={
-                          sameGroupInFlight ||
-                          !release ||
-                          !review.evaluation_revision
-                        }
-                        onPress={() => void createPreview()}
-                      >
-                        {busy && !currentRetryIntent
-                          ? copy.processing
-                          : copy.previewAll}
-                      </AppButton>
-                      {error?.refresh === "evaluation" ? (
-                        <AppButton
-                          isDisabled={sameGroupInFlight}
-                          onPress={() => void reloadReview()}
-                        >
-                          {copy.refreshEvaluation}
-                        </AppButton>
-                      ) : null}
-                    </aside>
-                  </section>
-                </div>
-              ) : null}
-
-              {review?.evaluated && review.proposal_available ? (
-                <section
-                  className="rounded border border-stone-300 bg-white p-4"
-                  aria-label={copy.groupSummaryLabel}
-                >
-                  <h2 className="font-semibold">{copy.groupDraftHeading}</h2>
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr>
-                          <th className="border-b p-2">
-                            {copy.uniqueFilesPaths}
-                          </th>
-                          <th className="border-b p-2">
-                            {copy.draftAssignedTotal}
-                          </th>
-                          <th className="border-b p-2">
-                            {copy.sourceSnapshot}
-                          </th>
-                          <th className="border-b p-2">
-                            {copy.providerSnapshot}
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td className="border-b p-2">
-                            {new Set(memberIds).size} /{" "}
-                            {
-                              new Set(
-                                groupFiles.flatMap(
-                                  (file) =>
-                                    file.locations?.map(
-                                      (location) =>
-                                        `${location.root_id}:${location.relative_path}`,
-                                    ) ?? [],
-                                ),
-                              ).size
-                            }
-                          </td>
-                          <td className="border-b p-2">
-                            {
-                              Object.keys(assignmentsByMember).filter(
-                                (memberId) => memberIds.includes(memberId),
-                              ).length
-                            }{" "}
-                            / {memberIds.length}
-                          </td>
-                          <td className="border-b p-2">
-                            {copy.savedFacts(
-                              groupFiles.filter(
-                                (file) =>
-                                  file.capture_identity ||
-                                  file.locations?.length,
-                              ).length,
-                              groupFiles.length,
-                            )}
-                          </td>
-                          <td className="border-b p-2">
-                            {review.candidates?.length
-                              ? copy.savedCandidates(review.candidates.length)
-                              : copy.noCandidates}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-2 text-sm">
-                    {copy.linkedManualFiles}{" "}
-                    {review.current_linked_manual_media_source_ids?.length ?? 0}
-                    . {copy.draftDoesNotChangeLinks}
-                  </p>
-                </section>
-              ) : null}
-
-              {currentPreview ? (
-                <section
-                  className="rounded border border-sky-700 bg-white p-4"
-                  aria-labelledby="preview-title"
-                >
-                  <h2
-                    id="preview-title"
-                    ref={previewHeadingRef}
-                    tabIndex={-1}
-                    className="incoming-view-heading font-semibold"
-                  >
-                    {copy.previewHeading}
-                  </h2>
-                  <p>
-                    {copy.previewSummary(
-                      currentPreview.selected_release.title,
-                      currentPreview.members?.filter(
-                        (member) => member.assignment,
-                      ).length ?? 0,
-                      currentPreview.omitted_member_ids?.length ?? 0,
-                    )}
-                  </p>
-                  <p className="text-sm">
-                    {copy.previewDigest}{" "}
-                    <code>{currentPreview.preview_digest}</code>
-                  </p>
-                  <div className="mt-3">
+                        {incomingFeedbackText(locale, notice)}
+                      </p>
+                    ) : null}
                     <AppButton
-                      isDisabled={sameGroupInFlight}
-                      onPress={() => void confirm()}
+                      isDisabled={
+                        sameGroupInFlight ||
+                        !release ||
+                        !review.evaluation_revision
+                      }
+                      onPress={() => void createPreview()}
                     >
-                      {currentRetryIntent
-                        ? copy.retryConfirmation
-                        : copy.confirmExplicitly}
+                      {busy && !currentRetryIntent
+                        ? copy.processing
+                        : copy.previewAll}
                     </AppButton>
-                  </div>
-                  {release?.positions?.some((position) => {
-                    const override = tagOverridesByTrack[position.track_id];
-                    return (
-                      Object.values(assignmentsByMember).includes(
-                        position.track_id,
-                      ) &&
-                      (override?.title.enabled || override?.artists.enabled)
-                    );
-                  }) ? (
-                    <div className="mt-2 text-sm">
-                      <h3 className="font-medium">
-                        {copy.manualMetadataApplied}
-                      </h3>
-                      <ul className="list-inside list-disc">
-                        {release.positions?.map((position) => {
-                          const override =
-                            tagOverridesByTrack[position.track_id];
-                          if (
-                            !Object.values(assignmentsByMember).includes(
-                              position.track_id,
-                            ) ||
-                            (!override?.title.enabled &&
-                              !override?.artists.enabled)
-                          )
-                            return null;
-                          return (
-                            <li key={position.track_id}>
-                              {position.title}:{" "}
-                              {[
-                                override.title.enabled
-                                  ? copy.titleOverride(override.title.value)
-                                  : undefined,
-                                override.artists.enabled
-                                  ? copy.artistOverrides(
-                                      override.artists.values.length
-                                        ? override.artists.values
-                                            .map((artist) => `«${artist.name}»`)
-                                            .join(", ")
-                                        : copy.emptyList,
-                                    )
-                                  : undefined,
-                              ]
-                                .filter(Boolean)
-                                .join("; ")}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
+                    {error?.refresh === "evaluation" ? (
+                      <AppButton
+                        isDisabled={sameGroupInFlight}
+                        onPress={() => void reloadReview()}
+                      >
+                        {copy.refreshEvaluation}
+                      </AppButton>
+                    ) : null}
+                  </aside>
                 </section>
-              ) : null}
-              {receipt?.groupId === groupId ? (
-                <section
-                  className="rounded border border-green-700 bg-white p-4"
-                  aria-labelledby="receipt-title"
+              </div>
+            ) : null}
+
+            {review?.evaluated && review.proposal_available ? (
+              <section
+                className="rounded border border-stone-300 bg-white p-4"
+                aria-label={copy.groupSummaryLabel}
+              >
+                <h2 className="font-semibold">{copy.groupDraftHeading}</h2>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr>
+                        <th className="border-b p-2">
+                          {copy.uniqueFilesPaths}
+                        </th>
+                        <th className="border-b p-2">
+                          {copy.draftAssignedTotal}
+                        </th>
+                        <th className="border-b p-2">{copy.sourceSnapshot}</th>
+                        <th className="border-b p-2">
+                          {copy.providerSnapshot}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border-b p-2">
+                          {new Set(memberIds).size} /{" "}
+                          {
+                            new Set(
+                              groupFiles.flatMap(
+                                (file) =>
+                                  file.locations?.map(
+                                    (location) =>
+                                      `${location.root_id}:${location.relative_path}`,
+                                  ) ?? [],
+                              ),
+                            ).size
+                          }
+                        </td>
+                        <td className="border-b p-2">
+                          {
+                            Object.keys(assignmentsByMember).filter(
+                              (memberId) => memberIds.includes(memberId),
+                            ).length
+                          }{" "}
+                          / {memberIds.length}
+                        </td>
+                        <td className="border-b p-2">
+                          {copy.savedFacts(
+                            groupFiles.filter(
+                              (file) =>
+                                file.capture_identity || file.locations?.length,
+                            ).length,
+                            groupFiles.length,
+                          )}
+                        </td>
+                        <td className="border-b p-2">
+                          {review.candidates?.length
+                            ? copy.savedCandidates(review.candidates.length)
+                            : copy.noCandidates}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-sm">
+                  {copy.linkedManualFiles}{" "}
+                  {review.current_linked_manual_media_source_ids?.length ?? 0}.{" "}
+                  {copy.draftDoesNotChangeLinks}
+                </p>
+              </section>
+            ) : null}
+
+            {currentPreview ? (
+              <section
+                className="rounded border border-sky-700 bg-white p-4"
+                aria-labelledby="preview-title"
+              >
+                <h2
+                  id="preview-title"
+                  ref={previewHeadingRef}
+                  tabIndex={-1}
+                  className="incoming-view-heading font-semibold"
                 >
-                  <h2 id="receipt-title" className="font-semibold">
-                    {copy.confirmedLocalRelease}
-                  </h2>
-                  <p>
-                    {copy.receiptCounts(
-                      receipt.response.members?.filter(
-                        (member) => member.assignment,
-                      ).length ?? 0,
-                      receipt.response.members?.length ?? 0,
-                      receipt.response.omitted_member_ids?.length ?? 0,
-                    )}
-                  </p>
-                  <ul className="mt-2 list-inside list-disc text-sm">
-                    {(receipt.response.omitted_member_ids ?? []).map(
-                      (memberId) => (
-                        <li key={memberId}>
-                          {receipt.omittedFileLabels[memberId] ?? copy.file}{" "}
-                          {copy.remainsIncoming}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                </section>
-              ) : null}
-            </div>
-          </TabPanel>
-        </Tabs>
+                  {copy.previewHeading}
+                </h2>
+                <p>
+                  {copy.previewSummary(
+                    currentPreview.selected_release.title,
+                    currentPreview.members?.filter(
+                      (member) => member.assignment,
+                    ).length ?? 0,
+                    currentPreview.omitted_member_ids?.length ?? 0,
+                  )}
+                </p>
+                <p className="text-sm">
+                  {copy.previewDigest}{" "}
+                  <code>{currentPreview.preview_digest}</code>
+                </p>
+                <div className="mt-3">
+                  <AppButton
+                    isDisabled={sameGroupInFlight}
+                    onPress={() => void confirm()}
+                  >
+                    {currentRetryIntent
+                      ? copy.retryConfirmation
+                      : copy.confirmExplicitly}
+                  </AppButton>
+                </div>
+                {release?.positions?.some((position) => {
+                  const override = tagOverridesByTrack[position.track_id];
+                  return (
+                    Object.values(assignmentsByMember).includes(
+                      position.track_id,
+                    ) &&
+                    (override?.title.enabled || override?.artists.enabled)
+                  );
+                }) ? (
+                  <div className="mt-2 text-sm">
+                    <h3 className="font-medium">
+                      {copy.manualMetadataApplied}
+                    </h3>
+                    <ul className="list-inside list-disc">
+                      {release.positions?.map((position) => {
+                        const override = tagOverridesByTrack[position.track_id];
+                        if (
+                          !Object.values(assignmentsByMember).includes(
+                            position.track_id,
+                          ) ||
+                          (!override?.title.enabled &&
+                            !override?.artists.enabled)
+                        )
+                          return null;
+                        return (
+                          <li key={position.track_id}>
+                            {position.title}:{" "}
+                            {[
+                              override.title.enabled
+                                ? copy.titleOverride(override.title.value)
+                                : undefined,
+                              override.artists.enabled
+                                ? copy.artistOverrides(
+                                    override.artists.values.length
+                                      ? override.artists.values
+                                          .map((artist) => `«${artist.name}»`)
+                                          .join(", ")
+                                      : copy.emptyList,
+                                  )
+                                : undefined,
+                            ]
+                              .filter(Boolean)
+                              .join("; ")}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+            {receipt?.groupId === groupId ? (
+              <section
+                className="rounded border border-green-700 bg-white p-4"
+                aria-labelledby="receipt-title"
+              >
+                <h2 id="receipt-title" className="font-semibold">
+                  {copy.confirmedLocalRelease}
+                </h2>
+                <p>
+                  {copy.receiptCounts(
+                    receipt.response.members?.filter(
+                      (member) => member.assignment,
+                    ).length ?? 0,
+                    receipt.response.members?.length ?? 0,
+                    receipt.response.omitted_member_ids?.length ?? 0,
+                  )}
+                </p>
+                <ul className="mt-2 list-inside list-disc text-sm">
+                  {(receipt.response.omitted_member_ids ?? []).map(
+                    (memberId) => (
+                      <li key={memberId}>
+                        {receipt.omittedFileLabels[memberId] ?? copy.file}{" "}
+                        {copy.remainsIncoming}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        </section>
       ) : null}
     </section>
   );

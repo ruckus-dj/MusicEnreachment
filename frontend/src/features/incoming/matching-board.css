@@ -1,0 +1,341 @@
+.matching-board-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  padding: 12px;
+}
+
+.matching-board-heading {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.matching-board-summary,
+.matching-board-instructions {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.matching-board-position-list,
+.matching-board-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.matching-board-position {
+  position: relative;
+  min-width: 0;
+  border: 1px dashed var(--line);
+  border-radius: var(--control-radius);
+  padding: 6px 8px;
+}
+
+.matching-board-position[data-inspected] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.matching-board-position-drop {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--control-radius);
+}
+
+.matching-board-position-drop[data-drop-target] {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+.matching-board-position-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.matching-board-position-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.matching-board-position-title:hover {
+  color: var(--accent);
+}
+
+.matching-board-position-number {
+  min-width: 20px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.matching-board-position-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.matching-board-position-medium {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.matching-board-assigned {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.matching-board-assigned-file,
+.matching-board-saved-file {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 4px 1px 8px;
+  background: var(--raised);
+  font-size: 11px;
+}
+
+.matching-board-saved-file {
+  border-style: dashed;
+  color: var(--muted);
+  background: transparent;
+  padding-right: 8px;
+  cursor: pointer;
+}
+
+button.matching-board-saved-file {
+  font: inherit;
+  text-align: left;
+}
+
+.matching-board-file-label {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.matching-board-file-label:hover {
+  color: var(--accent);
+}
+
+.matching-board-auto-marker {
+  flex: none;
+  border-radius: 3px;
+  padding: 0 3px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 9px;
+  line-height: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.matching-board-score {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.matching-board-drag,
+.matching-board-remove {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.matching-board-drag:hover:not(:disabled),
+.matching-board-remove:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.matching-board-drag[data-dragging] {
+  opacity: 0.5;
+}
+
+.matching-board-remove {
+  width: 20px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 14px;
+}
+
+.matching-board-add {
+  min-height: 22px;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 7px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.matching-board-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.matching-board-add:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.matching-board-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.matching-board-source {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  padding: 4px;
+  background: var(--surface);
+}
+
+.matching-board-source[data-selected] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.matching-board-source-select {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  border: 0;
+  padding: 2px 4px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.matching-board-source-select strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.matching-board-source-select span {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.matching-board-source-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.matching-board-source-static {
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 4px;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.matching-board-source-status {
+  min-height: 30px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.matching-board-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--accent);
+  border-radius: var(--control-radius);
+  padding: 4px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 92%, transparent);
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.matching-board-panel :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1400px) {
+  .matching-board-panel {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}

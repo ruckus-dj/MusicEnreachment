@@ -23,17 +23,33 @@ func NewMatchingReviewService(reader matchingReviewReader) *MatchingReviewServic
 }
 
 type MatchingReview struct {
-	Evaluated                         bool                      `json:"evaluated"`
-	ProposalAvailable                 bool                      `json:"proposal_available"`
-	EvaluationRevision                string                    `json:"evaluation_revision,omitempty"`
-	GroupID                           uuid.UUID                 `json:"group_id"`
-	Proposal                          json.RawMessage           `json:"proposal,omitempty"`
-	Releases                          []MatchingReviewRelease   `json:"releases"`
-	Candidates                        []MatchingReviewCandidate `json:"candidates"`
-	Members                           []uuid.UUID               `json:"members"`
-	AuthorityMode                     string                    `json:"authority_mode"`
-	AuthorityRevision                 int64                     `json:"authority_revision"`
-	CurrentLinkedManualMediaSourceIDs []uuid.UUID               `json:"current_linked_manual_media_source_ids"`
+	Evaluated                         bool                               `json:"evaluated"`
+	ProposalAvailable                 bool                               `json:"proposal_available"`
+	EvaluationRevision                string                             `json:"evaluation_revision,omitempty"`
+	GroupID                           uuid.UUID                          `json:"group_id"`
+	Proposal                          json.RawMessage                    `json:"proposal,omitempty"`
+	Releases                          []MatchingReviewRelease            `json:"releases"`
+	Candidates                        []MatchingReviewCandidate          `json:"candidates"`
+	AutomaticAssignment               *MatchingReviewAutomaticAssignment `json:"automatic_assignment,omitempty"`
+	Members                           []uuid.UUID                        `json:"members"`
+	AuthorityMode                     string                             `json:"authority_mode"`
+	AuthorityRevision                 int64                              `json:"authority_revision"`
+	CurrentLinkedManualMediaSourceIDs []uuid.UUID                        `json:"current_linked_manual_media_source_ids"`
+}
+
+// MatchingReviewAutomaticAssignment is the validated unique matching decision
+// saved for the review's selected release. It always describes the saved
+// review layout; it is omitted when the persisted decision is absent, invalid,
+// or does not match that layout.
+type MatchingReviewAutomaticAssignment struct {
+	ProviderReleaseID uuid.UUID                       `json:"provider_release_id"`
+	Assignments       []MatchingReviewTrackAssignment `json:"assignments"`
+}
+
+// MatchingReviewTrackAssignment is one exact saved file-to-provider-track pair.
+type MatchingReviewTrackAssignment struct {
+	FileMemberID    uuid.UUID `json:"file_member_id"`
+	ProviderTrackID uuid.UUID `json:"provider_track_id"`
 }
 
 type MatchingReviewRelease struct {
@@ -117,6 +133,7 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 	}
 	selectedReleaseID := uuid.Nil
 	selectedDisplayNumbers := make(map[[2]int]string)
+	var savedSelectedRelease *reviewProposalRelease
 	if err := json.Unmarshal(snapshot.Header.EvaluationEvidence, &envelope); err != nil {
 		return MatchingReview{}, fmt.Errorf("decode persisted matching review: %w", err)
 	}
@@ -128,6 +145,7 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 			result.ProposalAvailable = true
 			result.Proposal = append(json.RawMessage(nil), envelope.Proposal...)
 			if proposal.SelectedRelease != nil {
+				savedSelectedRelease = proposal.SelectedRelease
 				selectedReleaseID = proposal.SelectedRelease.ProviderReleaseID
 				for _, position := range proposal.SelectedRelease.Positions {
 					selectedDisplayNumbers[[2]int{position.Medium, position.Position}] = position.DisplayedNumber
@@ -149,6 +167,7 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 			}
 		}
 	}
+	result.AutomaticAssignment = automaticReviewAssignment(snapshot.Header.EvaluationEvidence, groupID, snapshot.Members, savedSelectedRelease)
 	for _, candidate := range snapshot.Candidates {
 		if candidate.FileMemberID == uuid.Nil || candidate.ProviderID == uuid.Nil || candidate.ProviderSourceID == uuid.Nil || candidate.ReleaseID == uuid.Nil || math.IsNaN(candidate.Score) || math.IsInf(candidate.Score, 0) {
 			return MatchingReview{}, fmt.Errorf("persisted matching review candidate identity is invalid")
@@ -201,6 +220,42 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 		result.Candidates = append(result.Candidates, item)
 	}
 	return result, nil
+}
+
+// automaticReviewAssignment projects only a strictly decoded unique decision
+// whose group and selected provider release match the saved review layout.
+// Every projected pair must reference a saved group member and a provider
+// track from that saved layout; any other persisted shape is omitted instead
+// of being inferred or surfaced as a partial assignment.
+func automaticReviewAssignment(evidence json.RawMessage, groupID uuid.UUID, members []uuid.UUID, selected *reviewProposalRelease) *MatchingReviewAutomaticAssignment {
+	if selected == nil || len(members) == 0 {
+		return nil
+	}
+	decision, err := DecodeMatchingDecision(evidence)
+	if err != nil || decision.Outcome != MatchingDecisionOutcomeUnique || decision.GroupID != groupID ||
+		decision.SelectedRelease == nil || decision.SelectedRelease.ProviderReleaseID != selected.ProviderReleaseID {
+		return nil
+	}
+	savedTracks := make(map[uuid.UUID]struct{}, len(selected.Positions))
+	for _, position := range selected.Positions {
+		savedTracks[position.TrackID] = struct{}{}
+	}
+	assignments := make([]MatchingReviewTrackAssignment, 0, len(decision.Assignments))
+	for _, assignment := range decision.Assignments {
+		if !containsUUID(members, assignment.FileMemberID) {
+			return nil
+		}
+		if _, saved := savedTracks[assignment.ProviderTrackID]; !saved {
+			return nil
+		}
+		assignments = append(assignments, MatchingReviewTrackAssignment{
+			FileMemberID: assignment.FileMemberID, ProviderTrackID: assignment.ProviderTrackID,
+		})
+	}
+	if len(assignments) == 0 {
+		return nil
+	}
+	return &MatchingReviewAutomaticAssignment{ProviderReleaseID: selected.ProviderReleaseID, Assignments: assignments}
 }
 
 func validateReviewProposal(proposal reviewProposal, members []uuid.UUID) error {

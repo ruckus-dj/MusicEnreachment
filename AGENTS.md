@@ -158,6 +158,8 @@ in frontend/.
   for that commit. For app-only changes, rebuild only the `app` service; preserve
   stand data and keep `downloads` untouched and mounted read-only. The artifact-only
   prototype exception below still applies.
+- For visible UI changes, send the owner a direct link to the updated state on
+  the stand so they can review it. A local test or green CI is not visual approval.
 - Record recurring failures and their prevention in the relevant repository
   documentation. In particular, integration tests using tagged fixture helpers
   need the integration build tag; prove a valid baseline before testing rejection,

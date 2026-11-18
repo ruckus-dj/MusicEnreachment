@@ -5,6 +5,10 @@ import { AppButton } from "../components/AppButton";
 import { LanguageControl } from "../components/LanguageControl";
 import { ThemeControl } from "../components/ThemeControl";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
+import {
+  type IncomingGroupsRoute,
+  parseIncomingGroupsRoute,
+} from "../features/incoming/incomingGroupsRoute";
 import { LibraryArtistScreen } from "../features/library/LibraryArtistScreen";
 import { LibraryReleaseScreen } from "../features/library/LibraryReleaseScreen";
 import { LibraryScreen } from "../features/library/LibraryScreen";
@@ -35,6 +39,7 @@ type Route =
   | "/setup"
   | "/sources"
   | "/incoming-groups"
+  | `/incoming-groups/${string}/matching`
   | "/operations"
   | "/library"
   | "/own-catalog"
@@ -42,16 +47,23 @@ type Route =
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
 
-function currentRoute(hash: string, isSourcesRoute: boolean): Route {
+function currentRoute(
+  hash: string,
+  isSourcesRoute: boolean,
+  incomingGroupsRoute: IncomingGroupsRoute | undefined,
+): Route {
   const pathname = (hash.startsWith("#") ? hash.slice(1) : hash).split(
     "?",
     1,
   )[0];
-  if (hash === "#/settings") return "/settings";
-  if (hash === "#/setup") return "/setup";
+  if (pathname === "/settings") return "/settings";
+  if (pathname === "/setup") return "/setup";
   if (isSourcesRoute) return "/sources";
-  if (hash === "#/incoming-groups") return "/incoming-groups";
-  if (hash === "#/operations") return "/operations";
+  if (incomingGroupsRoute)
+    return incomingGroupsRoute.view === "list"
+      ? "/incoming-groups"
+      : `/incoming-groups/${incomingGroupsRoute.groupId}/matching`;
+  if (pathname === "/operations") return "/operations";
   if (pathname === "/publications") return "/library";
   if (pathname === "/own-catalog") return "/own-catalog";
   if (parseLibraryRoute(hash)) return "/library";
@@ -69,7 +81,12 @@ export function AppShell() {
   const copy = shellMessages[locale];
   const hash = useHashLocation();
   const sourcesRoute = parseSourcesRoute(hash);
-  const route = currentRoute(hash, sourcesRoute !== undefined);
+  const incomingGroupsRoute = parseIncomingGroupsRoute(hash);
+  const route = currentRoute(
+    hash,
+    sourcesRoute !== undefined,
+    incomingGroupsRoute,
+  );
   const [state, setState] = useState<SetupStateBody>();
   const [error, setError] = useState<ShellError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,7 +145,7 @@ export function AppShell() {
       className={`app-shell ${
         !productAvailable
           ? "setup-shell"
-          : route === "/incoming-groups"
+          : incomingGroupsRoute !== undefined
             ? "settings-screen settings-shell incoming-screen"
             : route === "/sources"
               ? "sources-screen sources-shell"
@@ -232,8 +249,8 @@ export function AppShell() {
       <SettingsScreen />
     ) : state && route === "/sources" ? (
       <SourcesScreen route={sourcesRoute} />
-    ) : state && route === "/incoming-groups" ? (
-      <IncomingGroupReviewScreen />
+    ) : state && incomingGroupsRoute ? (
+      <IncomingGroupReviewScreen route={incomingGroupsRoute} />
     ) : state && route === "/operations" ? (
       <OperationsScreen />
     ) : state && route === "/library" ? (
@@ -310,7 +327,8 @@ function sectionLabel(
   route: Route,
   copy: Record<ShellMessageKey, string>,
 ): string {
-  if (route === "/incoming-groups") return copy.incoming;
+  if (route === "/incoming-groups" || route.startsWith("/incoming-groups/"))
+    return copy.incoming;
   if (route === "/library" || route.startsWith("/library/"))
     return copy.library;
   if (route === "/own-catalog") return copy.ownCatalog;
@@ -326,7 +344,8 @@ function ShellNavigation({ route, locale }: { route: Route; locale: Locale }) {
     {
       label: copy.incoming,
       href: "#/incoming-groups",
-      active: route === "/incoming-groups",
+      active:
+        route === "/incoming-groups" || route.startsWith("/incoming-groups/"),
     },
     {
       label: copy.library,

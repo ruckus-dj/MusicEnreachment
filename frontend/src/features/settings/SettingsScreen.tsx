@@ -47,6 +47,7 @@ import {
   type HashAttempt,
   registerHashNavigationGuard,
   resolveHashNavigation,
+  useHashLocation,
 } from "../../navigation/hashLocation";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
@@ -71,6 +72,13 @@ import {
   settingsHttpError,
   settingsMessage,
 } from "./settingsMessages";
+import {
+  isSettingsTabID,
+  parseSettingsRoute,
+  type SettingsTabID,
+  settingsTabFromHash,
+  settingsTabHash,
+} from "./settingsRoute";
 import "../setup/setup.css";
 import "./settings.css";
 
@@ -432,6 +440,7 @@ function toolOperation(operation: OperationResponse) {
 
 export function SettingsScreen() {
   const { locale } = useI18n();
+  const hash = useHashLocation();
   const t = (
     key: Parameters<typeof settingsMessage>[1],
     values?: Parameters<typeof settingsMessage>[2],
@@ -440,7 +449,9 @@ export function SettingsScreen() {
     readSettingsDraft(getSettingsDraftStorage()),
   );
   const [state, setState] = useState<SetupStateBody>();
-  const [activeSettingsTab, setActiveSettingsTab] = useState("general");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabID>(
+    () => settingsTabFromHash(hash),
+  );
   const [conflictConfirmation, setConflictConfirmation] =
     useState<ConflictConfirmation>();
   const [navigationAttempt, setNavigationAttempt] = useState<HashAttempt>();
@@ -595,20 +606,40 @@ export function SettingsScreen() {
   const effectiveBusy = busy || generalPendingCount > 0;
   const isEffectivelyBusy = () => busy || generalPending.current > 0;
 
+  const showSettingsTab = useCallback((tab: SettingsTabID) => {
+    setActiveSettingsTab(tab);
+    if (typeof window === "undefined") return;
+    const nextHash = settingsTabHash(tab);
+    if (window.location.hash === nextHash) return;
+    window.location.hash = nextHash;
+  }, []);
+
+  const selectSettingsTab = (value: string) => {
+    if (!isSettingsTabID(value)) return;
+    setActiveSettingsTab(value);
+    if (typeof window === "undefined") return;
+    const nextHash = settingsTabHash(value);
+    if (window.location.hash !== nextHash) window.location.hash = nextHash;
+  };
+
+  useEffect(() => {
+    setActiveSettingsTab(settingsTabFromHash(hash));
+  }, [hash]);
+
   const focusSettingsTarget = useCallback(
     (target: HTMLElement | null) => {
       if (!target) return;
       const panel = target.closest<HTMLElement>("[data-settings-tab]");
       const targetTab = panel?.dataset.settingsTab;
-      if (targetTab && targetTab !== activeSettingsTab) {
+      if (isSettingsTabID(targetTab) && targetTab !== activeSettingsTab) {
         pendingTabFocusTarget.current = target;
-        setActiveSettingsTab(targetTab);
+        showSettingsTab(targetTab);
         return;
       }
       pendingTabFocusTarget.current = null;
       target.focus();
     },
-    [activeSettingsTab],
+    [activeSettingsTab, showSettingsTab],
   );
 
   const restoreDialogFocus = useCallback(() => {
@@ -775,6 +806,13 @@ export function SettingsScreen() {
   const hasUnsavedSettingsTextDrafts = useCallback(
     () => settingsDraftIsDirty(currentSettingsDraftSnapshot()),
     [currentSettingsDraftSnapshot],
+  );
+
+  const shouldBlockNavigation = useCallback(
+    (destination: string) =>
+      parseSettingsRoute(destination) === undefined &&
+      hasUnsavedSettingsTextDrafts(),
+    [hasUnsavedSettingsTextDrafts],
   );
 
   const refreshState = useCallback(
@@ -1182,7 +1220,7 @@ export function SettingsScreen() {
     };
     window.addEventListener("click", captureNavigationAnchor, true);
     const unregister = registerHashNavigationGuard({
-      shouldBlock: hasUnsavedSettingsTextDrafts,
+      shouldBlock: shouldBlockNavigation,
       onBlocked: (attempt) => {
         const anchor = capturedNavigationAnchor.current;
         capturedNavigationAnchor.current = null;
@@ -1218,7 +1256,7 @@ export function SettingsScreen() {
       window.removeEventListener("click", captureNavigationAnchor, true);
       unregister();
     };
-  }, [hasUnsavedSettingsTextDrafts, publicationPathTemplate.snapshot]);
+  }, [publicationPathTemplate.snapshot, shouldBlockNavigation]);
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!hasUnsavedSettingsTextDrafts()) return;
@@ -2996,7 +3034,7 @@ export function SettingsScreen() {
           </section>
           <Tabs
             selectedKey={activeSettingsTab}
-            onSelectionChange={(key) => setActiveSettingsTab(String(key))}
+            onSelectionChange={(key) => selectSettingsTab(String(key))}
             className="settings-tabs"
           >
             <TabList

@@ -98,6 +98,9 @@ module request and can break application bootstrap instead of mocking the API.
 **Build output**: Vite builds to ../build/frontend; tools/stage-frontend.mjs stages it; backend embeds it via internal/static.
 
 **Hash routing**: Uses hash router (#/setup, #/settings) for embedded static serving without backend routing.
+Represent the active tab and selected entity in the URL, not only in component
+state. Opening a shared link or restoring browser history must select the same
+view; keep drafts, secrets, and transient action state out of the URL.
 
 **Shared operation following**: Use `api/client/useOperationFollower.ts` for REST
 snapshot reads and SSE wake-ups. Action responses introducing a new operation ID

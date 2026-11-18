@@ -1,4 +1,36 @@
-import { useEffect, useRef, useState, type Key } from "react";
+import { type Key, useEffect, useRef, useState } from "react";
+import { DirectoryPicker } from "./DirectoryPicker";
+import { overlapsAnyDemoPath } from "./demoPathValidation";
+import { formStyles as styles } from "./formStyles";
+import { GenreLibrary } from "./GenreLibrary";
+import { useI18n } from "./i18n";
+import { settingsMessages } from "./i18n/namespaces/settings";
+import {
+	isValidMusicBrainzConfiguration,
+	musicBrainzConfigurationFingerprint,
+} from "./providerValidation";
+import {
+	getSettingsDraftStorage,
+	mergeSettingsDraft,
+	readSettingsDraft,
+	rebaseSettingsDraft,
+	type SettingsTextDraft,
+	settingsDraftConflicts,
+	settingsDraftIsDirty,
+	validConcurrency,
+	writeSettingsDraft,
+} from "./settingsDraft";
+import { setupToolExecutables } from "./setupToolsLifecycle";
+import {
+	activateDemoInstallation,
+	availableToolReleases,
+	createDemoInstallation,
+	type DemoInstallation,
+	initialDemoInstallations,
+	isAbsoluteDemoServerPath,
+	type ManagedToolPackage,
+	movePreflightDemo,
+} from "./ToolLifecycleDemo";
 import {
 	Button,
 	Dialog,
@@ -17,38 +49,25 @@ import {
 	Tabs,
 	TextField,
 } from "./ui";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { GenreLibrary } from "./GenreLibrary";
-import { formStyles as styles } from "./formStyles";
-import {
-	activateDemoInstallation,
-	availableToolReleases,
-	createDemoInstallation,
-	initialDemoInstallations,
-	isAbsoluteDemoServerPath,
-	movePreflightDemo,
-	type DemoInstallation,
-	type ManagedToolPackage,
-} from "./ToolLifecycleDemo";
-import { setupToolExecutables } from "./setupToolsLifecycle";
-import { useI18n } from "./i18n";
-import { settingsMessages } from "./i18n/namespaces/settings";
-import {
-	isValidMusicBrainzConfiguration,
-	musicBrainzConfigurationFingerprint,
-} from "./providerValidation";
-import { overlapsAnyDemoPath } from "./demoPathValidation";
-import {
-	getSettingsDraftStorage,
-	mergeSettingsDraft,
-	readSettingsDraft,
-	rebaseSettingsDraft,
-	settingsDraftConflicts,
-	settingsDraftIsDirty,
-	validConcurrency,
-	writeSettingsDraft,
-	type SettingsTextDraft,
-} from "./settingsDraft";
+
+const settingsTabs = [
+	"general",
+	"folders",
+	"tools",
+	"providers",
+	"genres",
+] as const;
+type SettingsTabKey = (typeof settingsTabs)[number];
+
+const readSettingsTab = (hash: string): SettingsTabKey => {
+	const [path, query = ""] = hash.replace(/^#/, "").split("?");
+	if (path !== "settings") return "general";
+	const tab = new URLSearchParams(query).get("tab");
+	return settingsTabs.find((item) => item === tab) ?? "general";
+};
+
+const isSettingsTabDestination = (hash: string) =>
+	hash.replace(/^#/, "").split("?")[0] === "settings";
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -175,6 +194,23 @@ export function SettingsScreen({
 	const previousHash = useRef(
 		typeof window === "undefined" ? "" : window.location.hash,
 	);
+	const [activeTab, setActiveTab] = useState<SettingsTabKey>(() =>
+		typeof window === "undefined"
+			? "general"
+			: readSettingsTab(window.location.hash),
+	);
+	useEffect(() => {
+		const syncTab = () => setActiveTab(readSettingsTab(window.location.hash));
+		syncTab();
+		window.addEventListener("hashchange", syncTab);
+		return () => window.removeEventListener("hashchange", syncTab);
+	}, []);
+	const selectTab = (key: Key) => {
+		const tab = settingsTabs.find((item) => item === key) ?? "general";
+		setActiveTab(tab);
+		const nextHash = `#settings?tab=${tab}`;
+		if (window.location.hash !== nextHash) window.location.hash = nextHash;
+	};
 	const [fieldErrors, setFieldErrors] = useState<
 		Partial<Record<keyof SettingsTextDraft, string>>
 	>({});
@@ -225,6 +261,10 @@ export function SettingsScreen({
 			const nextHash = window.location.hash;
 			if (allowNavigation.current) {
 				allowNavigation.current = false;
+				previousHash.current = nextHash;
+				return;
+			}
+			if (isSettingsTabDestination(nextHash)) {
 				previousHash.current = nextHash;
 				return;
 			}
@@ -755,7 +795,12 @@ export function SettingsScreen({
 					</div>
 				</div>
 			)}
-			<Tabs className="grid min-w-0 gap-3" aria-label={copy.title}>
+			<Tabs
+				className="grid min-w-0 gap-3"
+				aria-label={copy.title}
+				selectedKey={activeTab}
+				onSelectionChange={selectTab}
+			>
 				<TabList
 					aria-label={copy.title}
 					className="flex flex-wrap gap-1 border-b border-[var(--line)]"

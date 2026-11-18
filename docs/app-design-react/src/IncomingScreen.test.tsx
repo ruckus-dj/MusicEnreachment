@@ -18,6 +18,7 @@ function renderOverview(state = createIncomingState()) {
 }
 
 beforeEach(() => {
+	window.history.replaceState(null, "", "#review");
 	window.localStorage.setItem("music-design-v2-language", "ru");
 });
 
@@ -53,12 +54,23 @@ it("renders one four-column overview with source paths and link navigation", () 
 	expect(
 		within(row).getByText("Неполный релиз; одна спорная композиция"),
 	).toBeInTheDocument();
-	expect(within(row).getByText("Пути файлов")).toBeInTheDocument();
 	expect(
-		within(row).getByText("/mnt/inbox / north/01 - First Light.flac"),
+		within(row).getByRole("button", { name: "Northern lines" }),
+	).toHaveAttribute("aria-expanded", "false");
+});
+
+it("restores the expanded group from a shared link", () => {
+	window.history.replaceState(null, "", "#review?group=north");
+	renderOverview();
+	expect(
+		screen.getByRole("button", { name: "Northern lines" }),
+	).toHaveAttribute("aria-expanded", "true");
+	expect(screen.getByText("First Light")).toBeInTheDocument();
+	expect(
+		screen.getByText("/mnt/inbox / north/01 - First Light.flac"),
 	).toBeInTheDocument();
 	expect(
-		within(row).getByText("/mnt/backup / Northern Lines/01 - First Light.flac"),
+		screen.getByText("/mnt/backup / Northern Lines/01 - First Light.flac"),
 	).toBeInTheDocument();
 });
 

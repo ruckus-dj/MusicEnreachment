@@ -1,62 +1,23 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import {
-	Button,
-	Checkbox,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	Select,
-	SelectValue,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
-} from "./ui";
-import { Input, SearchField } from "./ui";
-import {
-	catalogData,
-	originalReleases,
-	originalProviders,
-	applyMetadataPreview,
-	originalFiles,
-	type CatalogArtist,
-	type OriginalRelease,
-	type OriginalTrack,
-} from "./catalogData";
-import {
-	PublicationPreview,
-	type PublicationPreviewMode,
-} from "./PublicationPreview";
+import { ArtistScreen } from "./ArtistScreen";
+import { artistReleaseHref } from "./artistReleaseRoute";
+import type { CatalogFilter } from "./availabilityRows";
+import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
+import { ComponentsScreen } from "./ComponentsScreen";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import {
-	captureMetadataPreview,
-	isMetadataPreviewFresh,
-	previewScopeKey,
-	type MetadataPreviewToken,
-} from "./previewModel";
-import { TrackScreen } from "./TrackScreen";
-import { artistReleaseHref } from "./artistReleaseRoute";
-import {
-	initialOperationsDemoState,
-	OperationsScreen,
-} from "./OperationsScreen";
-import type { DeletionOperation } from "./DeletionRequest";
-import { recoveryFixture } from "./catalogData";
-import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
-import { removeRootFromInventory } from "./sourceInventory";
-import { SettingsScreen, initialDemoSettings } from "./SettingsScreen";
-import { SetupScreen } from "./SetupScreen";
-import { IncomingScreen } from "./IncomingScreen";
-import { MatchingScreen } from "./MatchingScreen";
-import { createIncomingState, makeReleasePlan } from "./incomingModel";
-import { LocalProviderScreen } from "./LocalProviderScreen";
-import {
-	createLocalProviderState,
-	localProviderReleases,
-} from "./localProviderModel";
-import { ArtistScreen } from "./ArtistScreen";
-import { TagsScreen } from "./TagsScreen";
-import { ComponentsScreen } from "./ComponentsScreen";
+	applyMetadataPreview,
+	type CatalogArtist,
+	catalogData,
+	type OriginalRelease,
+	type OriginalTrack,
+	originalFiles,
+	originalProviders,
+	originalReleases,
+	recoveryFixture,
+} from "./catalogData";
+import { catalogMessage } from "./catalogMessages";
+import { catalogueStyles } from "./catalogueStyles";
 import {
 	albumSearchText,
 	artistReleases,
@@ -65,28 +26,68 @@ import {
 	normalizeCatalogSearch,
 	trackSearchText,
 } from "./catalogViewModel";
+import type { DeletionOperation } from "./DeletionRequest";
+import { IncomingScreen } from "./IncomingScreen";
+import { useI18n } from "./i18n";
+import { createIncomingState, makeReleasePlan } from "./incomingModel";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
-import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
-import { SelectionDock } from "./SelectionDock";
-import type { CatalogFilter } from "./availabilityRows";
-import { catalogueStyles } from "./catalogueStyles";
+import { LocalProviderScreen } from "./LocalProviderScreen";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "./libraryDeletionModel";
+import {
+	createLocalProviderState,
+	localProviderReleases,
+} from "./localProviderModel";
+import { MatchingScreen } from "./MatchingScreen";
 import type { ManagedPathObservation } from "./managedPublicationDeletionModel";
+import {
+	initialOperationsDemoState,
+	OperationsScreen,
+} from "./OperationsScreen";
+import {
+	PublicationPreview,
+	type PublicationPreviewMode,
+} from "./PublicationPreview";
+import {
+	captureMetadataPreview,
+	isMetadataPreviewFresh,
+	type MetadataPreviewToken,
+	previewScopeKey,
+} from "./previewModel";
 import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "./publicationOutput";
+import { SelectionDock } from "./SelectionDock";
+import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
+import { SetupScreen } from "./SetupScreen";
+import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
+import { removeRootFromInventory } from "./sourceInventory";
 import {
 	initialSourceProcessingState,
 	resetSourceProcessingQueue,
 	sourceProcessingLocks,
 } from "./sourceProcessingModel";
-import { useI18n } from "./i18n";
-import { catalogMessage } from "./catalogMessages";
+import { TagsScreen } from "./TagsScreen";
+import { TrackScreen } from "./TrackScreen";
 import { applyAudioUpgradePreview } from "./trackActionModel";
+import {
+	Button,
+	Checkbox,
+	Input,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	SearchField,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	TabPanel,
+	Tabs,
+} from "./ui";
 
 const subscribeRoute = (listener: () => void) => {
 	let observedHash = window.location.hash;
@@ -227,6 +228,7 @@ export function CatalogDemo({
 		() => "library",
 	);
 	const route = routePath;
+	const [routeName] = route.split("?");
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
@@ -429,11 +431,11 @@ export function CatalogDemo({
 		return next.status;
 	};
 	useEffect(() => {
-		if (route !== "review" && !route.startsWith("match/")) return;
+		if (routeName !== "review" && !routeName.startsWith("match/")) return;
 		const content = document.querySelector<HTMLElement>("#content");
 		if (content) content.scrollTop = 0;
 		if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
-	}, [route]);
+	}, [routeName]);
 	useEffect(() => {
 		const heading =
 			document.querySelector<HTMLElement>("#content h1") ??
@@ -855,7 +857,7 @@ export function CatalogDemo({
 				genresLoaded={settings.genresLoaded}
 			/>
 		);
-	if (route === "review")
+	if (routeName === "review")
 		return (
 			<IncomingScreen
 				destination={publicationDestination}
@@ -883,7 +885,7 @@ export function CatalogDemo({
 				onReleases={setImportedReleases}
 			/>
 		);
-	if (route === "settings")
+	if (routeName === "settings")
 		return (
 			<main className={screenLayout}>
 				<SettingsScreen

@@ -1612,6 +1612,17 @@ export interface MatchingReturnAutomaticBody {
   request_id: string;
 }
 
+export interface MatchingReviewTrackAssignment {
+  file_member_id: string;
+  provider_track_id: string;
+}
+
+export interface MatchingReviewAutomaticAssignment {
+  /** @nullable */
+  assignments: MatchingReviewTrackAssignment[] | null;
+  provider_release_id: string;
+}
+
 export interface MatchingReviewPosition {
   assignment_confidence?: number;
   displayed_number?: string;
@@ -1635,6 +1646,7 @@ export interface MatchingReview {
   readonly $schema?: string;
   authority_mode: string;
   authority_revision: number;
+  automatic_assignment?: MatchingReviewAutomaticAssignment;
   /** @nullable */
   candidates: MatchingReviewCandidate[] | null;
   /** @nullable */

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   fireEvent,
   render,
@@ -14,9 +15,17 @@ import type {
   MatchingReview,
 } from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
+import { useHashLocation } from "../../navigation/hashLocation";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
+import {
+  type IncomingGroupsRoute,
+  incomingGroupMatchingHref,
+  incomingGroupsListHref,
+  incomingGroupsListRoute,
+  parseIncomingGroupsRoute,
+} from "./incomingGroupsRoute";
 import { localMatchingMessages } from "./localMatchingMessages";
 
 const ids = {
@@ -156,6 +165,7 @@ function review(overrides: Partial<MatchingReview> = {}): MatchingReview {
             medium: 0,
             position: 0,
             displayed_number: "1",
+            assignment_confidence: 0.87,
           },
         ],
       },
@@ -225,10 +235,15 @@ function setup(
   locale: "en" | "ru" = "ru",
   counts?: RequestCounts,
   withLocaleToggle = false,
+  initialRoute: IncomingGroupsRoute = incomingGroupsListRoute,
 ) {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", locale);
   vi.stubGlobal("localStorage", storage);
+  window.location.hash =
+    initialRoute.view === "list"
+      ? incomingGroupsListHref(initialRoute.expandedGroupIds)
+      : incomingGroupMatchingHref(initialRoute.groupId, initialRoute.releaseId);
   server.use(
     http.get("/api/incoming-groups", () => {
       if (counts) counts.groups += 1;
@@ -243,19 +258,28 @@ function setup(
       return HttpResponse.json(preview(1));
     }),
   );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <I18nProvider>
-      {withLocaleToggle ? <LocaleToggle /> : null}
-      <IncomingGroupReviewScreen />
-    </I18nProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        {withLocaleToggle ? <LocaleToggle /> : null}
+        <IncomingRouteHarness />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
+}
+
+function IncomingRouteHarness() {
+  const hash = useHashLocation();
+  const route = parseIncomingGroupsRoute(hash) ?? incomingGroupsListRoute;
+  return <IncomingGroupReviewScreen route={route} />;
 }
 
 async function openMatching(locale: "en" | "ru" = "ru") {
   const label = locale === "ru" ? "Сопоставление" : "Matching";
-  const tab = await screen.findByRole("tab", { name: label });
-  if (tab.getAttribute("aria-selected") !== "true") fireEvent.click(tab);
-  return screen.findByRole("tabpanel", { name: label });
+  return screen.findByRole("region", { name: new RegExp(label) });
 }
 
 async function chooseRelease(title = "Первое издание") {
@@ -272,6 +296,33 @@ async function chooseRelease(title = "Первое издание") {
   });
 }
 
+function assignFromRail(file: string, position: string, locale = "ru") {
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: locale === "ru" ? `Выбрать ${file}` : `Select ${file}`,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name:
+        locale === "ru"
+          ? `Добавить ${file} к позиции ${position}`
+          : `Add ${file} to ${position}`,
+    }),
+  );
+}
+
+function expectAssigned(file: string, position: string, locale = "ru") {
+  expect(
+    screen.getByRole("button", {
+      name:
+        locale === "ru"
+          ? `Снять ${file} с позиции ${position}`
+          : `Remove ${file} from ${position}`,
+    }),
+  ).toBeInTheDocument();
+}
+
 beforeEach(() => {
   window.location.hash = "";
   vi.restoreAllMocks();
@@ -285,7 +336,10 @@ it.each([
   "ru",
   "en",
 ] as const)("shows the localized Local provider matching summary (%s)", async (locale) => {
-  setup(review(), locale);
+  setup(review(), locale, undefined, false, {
+    view: "matching",
+    groupId: ids.group,
+  });
   const matching = await openMatching(locale);
   expect(
     await within(matching).findByText(
@@ -294,46 +348,81 @@ it.each([
   ).toBeVisible();
 });
 
-it("opens matching from the group list and keeps the draft when returning to it", async () => {
+it("opens one group matching route from the list and keeps the draft when returning", async () => {
   setup();
-  const groupsTab = await screen.findByRole("tab", { name: "Группы" });
-  expect(groupsTab).toHaveAttribute("aria-selected", "true");
-  expect(screen.queryByRole("tabpanel", { name: "Сопоставление" })).toBeNull();
+  expect(
+    await screen.findByRole("region", { name: "Разбор входящих групп" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: /Сопоставление/ }),
+  ).not.toBeInTheDocument();
 
-  const rows = await screen.findByRole("tabpanel", { name: "Группы" });
-  fireEvent.click(
-    await within(rows).findByRole("button", {
-      name: "Открыть группу «Исходник»",
-    }),
+  fireEvent.click(await screen.findByText("Открыть группу «Исходник»"));
+  await waitFor(() =>
+    expect(window.location.hash).toBe(incomingGroupMatchingHref(ids.group)),
   );
-  expect(screen.getByRole("tab", { name: "Сопоставление" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.queryByRole("tabpanel", { name: "Группы" })).toBeNull();
+  expect(screen.getByRole("region", { name: /Сопоставление/ })).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Разбор входящих групп" }),
+  ).not.toBeInTheDocument();
 
   await chooseRelease();
-  fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
-    target: { value: ids.trackOne },
-  });
-  fireEvent.click(groupsTab);
-  expect(screen.queryByRole("tabpanel", { name: "Сопоставление" })).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Открыть группу «Исходник»" }),
+  expect(window.location.hash).toBe(
+    incomingGroupMatchingHref(ids.group, ids.releaseOne),
   );
-  expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
+  assignFromRail("folder/01.flac", "Диск 1 · трек 1 · Открытие");
+  fireEvent.click(screen.getByRole("link", { name: "← Все входящие группы" }));
+  await waitFor(() =>
+    expect(window.location.hash).toBe(incomingGroupsListHref([ids.group])),
+  );
+  expect(
+    screen.queryByRole("region", { name: /Сопоставление/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByText("Открыть группу «Исходник»"));
+  await waitFor(() =>
+    expect(window.location.hash).toBe(incomingGroupMatchingHref(ids.group)),
+  );
+  await chooseRelease();
+  expectAssigned("folder/01.flac", "Диск 1 · трек 1 · Открытие");
+});
+
+it("keeps a direct matching link and rejects an unknown group without another group", async () => {
+  const counts: RequestCounts = { groups: 0, review: 0, preview: 0 };
+  setup(review(), "ru", counts, false, {
+    view: "matching",
+    groupId: "missing-group",
+  });
+  expect(
+    await screen.findByText("Этой входящей группы больше нет в списке."),
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("Издание (выбор вручную)")).toBeNull();
+  expect(counts.review).toBe(0);
+});
+
+it("restores the selected release from the URL without another first release", async () => {
+  setup(review(), "ru", undefined, false, {
+    view: "matching",
+    groupId: ids.group,
+    releaseId: ids.releaseTwo,
+  });
+  expect(await screen.findByLabelText("Издание (выбор вручную)")).toHaveValue(
+    ids.releaseTwo,
+  );
 });
 
 it("changes locale without resetting assignments, preview, feedback, or queries", async () => {
   const counts: RequestCounts = { groups: 0, review: 0, preview: 0 };
-  setup(review(), "ru", counts, true);
-  await chooseRelease();
-  fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
-    target: { value: ids.trackOne },
+  setup(review(), "ru", counts, true, {
+    view: "matching",
+    groupId: ids.group,
   });
+  await chooseRelease();
+  assignFromRail("folder/01.flac", "Диск 1 · трек 1 · Открытие");
+  const tagOverrideTitle = "Теги позиции · Диск 1 · трек 1 · Открытие";
+  fireEvent.click(screen.getAllByText(tagOverrideTitle)[0]);
   const firstTrackTags = within(
     screen.getByRole("group", {
-      name: "Теги позиции · Диск 1 · трек 1 · Открытие",
+      name: tagOverrideTitle,
     }),
   );
   fireEvent.click(
@@ -355,17 +444,13 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   fireEvent.change(screen.getByLabelText("Исполнитель 1"), {
     target: { value: "Локальный исполнитель" },
   });
-  const fileCard = screen.getAllByLabelText("Назначение")[0].closest("article");
-  expect(fileCard).not.toBeNull();
   fireEvent.click(
-    within(fileCard as HTMLElement).getByRole("button", {
-      name: /folder\/01\.flac/,
-    }),
+    screen.getByRole("button", { name: "Открыть источник folder/01.flac" }),
   );
   const evidence = screen.getByRole("region", {
     name: "Доказательства текущей оценки",
   });
-  expect(within(evidence).getByText("0.87")).toBeInTheDocument();
+  expect(within(evidence).getAllByText("0.87")).toHaveLength(2);
   fireEvent.click(within(evidence).getByText("Исходные теги файла"));
   const rawTagsPre = within(evidence).getByText(/"ALBUM"/);
   expect(rawTagsPre.tagName).toBe("PRE");
@@ -396,7 +481,7 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   expect(
     await screen.findByRole("heading", { name: "Full assignment preview" }),
   ).toBeInTheDocument();
-  expect(screen.getAllByLabelText("Assignment")[0]).toHaveValue(ids.trackOne);
+  expectAssigned("folder/01.flac", "Disc 1 · track 1 · Открытие", "en");
   expect(screen.getByLabelText("Title")).toHaveValue("Локальное название");
   expect(screen.getByLabelText("Artist 1")).toHaveValue(
     "Локальный исполнитель",
@@ -427,7 +512,7 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
       "Evaluation refreshed. Your assignment draft was kept for the selected release.",
     ),
   ).toBeInTheDocument();
-  expect(screen.getAllByLabelText("Assignment")[0]).toHaveValue(ids.trackOne);
+  expectAssigned("folder/01.flac", "Disc 1 · track 1 · Открытие", "en");
   expect(
     screen.queryByRole("heading", { name: "Full assignment preview" }),
   ).not.toBeInTheDocument();
@@ -439,8 +524,47 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
       "Оценка обновлена. Черновик назначений сохранён для выбранного издания.",
     ),
   ).toBeInTheDocument();
-  expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
+  expectAssigned("folder/01.flac", "Диск 1 · трек 1 · Открытие");
   expect(counts).toEqual(requestsBeforeSecondLocaleChange);
+});
+
+it("uses saved automatic assignments as a baseline and keeps explicit removals", async () => {
+  setup(
+    review({
+      automatic_assignment: {
+        provider_release_id: ids.releaseOne,
+        assignments: [
+          {
+            file_member_id: ids.memberOne,
+            provider_track_id: ids.trackOne,
+          },
+        ],
+      },
+    }),
+    "ru",
+    undefined,
+    false,
+    { view: "matching", groupId: ids.group },
+  );
+  await chooseRelease();
+
+  expectAssigned("folder/01.flac", "Диск 1 · трек 1 · Открытие");
+  expect(screen.getByText("оценка 87%")).toBeInTheDocument();
+
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Снять folder/01.flac с позиции Диск 1 · трек 1 · Открытие",
+    }),
+  );
+  expect(
+    screen.queryByRole("button", { name: /Снять .* с позиции/ }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Выбрать folder/01.flac" }),
+  ).toBeInTheDocument();
+
+  assignFromRail("folder/01.flac", "Диск 1 · трек 1 · Открытие");
+  expectAssigned("folder/01.flac", "Диск 1 · трек 1 · Открытие");
 });
 
 describe("incoming manual group review", () => {
@@ -453,6 +577,9 @@ describe("incoming manual group review", () => {
         ],
       }),
       "ru",
+      undefined,
+      false,
+      { view: "matching", groupId: ids.group },
     );
     await openMatching();
     expect(await screen.findAllByText("folder/01.flac")).not.toHaveLength(0);
@@ -463,11 +590,11 @@ describe("incoming manual group review", () => {
     expect(screen.queryByText("recording-repeat")).not.toBeInTheDocument();
     await chooseRelease();
     expect(
-      screen.getAllByText("Диск 1 · трек 1 · Открытие").length,
-    ).toBeGreaterThan(0);
-    fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
-      target: { value: ids.trackOne },
-    });
+      screen.getByRole("listitem", {
+        name: "Диск 1 · трек 1 · Открытие",
+      }),
+    ).toBeInTheDocument();
+    assignFromRail("folder/01.flac", "Диск 1 · трек 1 · Открытие");
     server.use(
       http.post("/api/incoming-groups/:groupId/matching/preview", () =>
         HttpResponse.json(preview(1)),
@@ -535,21 +662,18 @@ describe("incoming manual group review", () => {
   });
 
   it("inspects a file and position without changing assignment drafts", async () => {
-    setup(review(), "ru");
+    setup(review(), "ru", undefined, false, {
+      view: "matching",
+      groupId: ids.group,
+    });
     await chooseRelease();
 
-    const fileCard = screen
-      .getAllByLabelText("Назначение")[1]
-      .closest("article");
-    expect(fileCard).not.toBeNull();
     fireEvent.click(
-      within(fileCard as HTMLElement).getByRole("button", {
-        name: /folder\/02\.flac/,
-      }),
+      screen.getByRole("button", { name: "Выбрать folder/02.flac" }),
     );
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Диск 2 · трек 2 · Открытие (повтор записи)",
+        name: "Открыть позицию Диск 2 · трек 2 · Открытие (повтор записи)",
       }),
     );
 
@@ -559,9 +683,9 @@ describe("incoming manual group review", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen
-        .getAllByLabelText<HTMLSelectElement>("Назначение")
-        .map((select) => select.value),
-    ).toEqual(["", ""]);
+      screen.queryByRole("button", {
+        name: /Снять .* с позиции/,
+      }),
+    ).toBeNull();
   });
 });

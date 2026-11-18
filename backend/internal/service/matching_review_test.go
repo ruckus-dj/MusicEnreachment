@@ -306,3 +306,143 @@ func TestMatchingReviewRejectsDuplicateLayoutCoordinatesButAllowsRepeatedRecordi
 		})
 	}
 }
+
+func TestMatchingReviewProjectsOnlySavedUniqueAutomaticAssignment(t *testing.T) {
+	groupID, otherGroupID := uuid.New(), uuid.New()
+	releaseID, otherReleaseID := uuid.New(), uuid.New()
+	memberA, memberB, unsavedMember := uuid.New(), uuid.New(), uuid.New()
+	trackA, trackB, unsavedTrack := uuid.New(), uuid.New(), uuid.New()
+	proposal := func(t *testing.T, version int) json.RawMessage {
+		t.Helper()
+		encoded, err := json.Marshal(map[string]any{
+			"version": version, "group_id": groupID,
+			"selected_release": map[string]any{
+				"provider_release_id": releaseID, "release_id": "release", "title": "Album", "tracklist_complete": true,
+				"positions": []any{
+					map[string]any{"track_id": trackA, "medium": 1, "position": 1, "displayed_number": "1", "recording_id": "recording-a", "title": "Track A"},
+					map[string]any{"track_id": trackB, "medium": 1, "position": 2, "displayed_number": "2", "recording_id": "recording-b", "title": "Track B"},
+				},
+			},
+			"files": []any{
+				map[string]any{"file_member_id": memberA, "raw_tags": map[string][]string{}, "diagnostics": []any{}},
+				map[string]any{"file_member_id": memberB, "raw_tags": map[string][]string{}, "diagnostics": []any{}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	uniqueDecision := func() MatchingEvaluationDecision {
+		return MatchingEvaluationDecision{
+			Version: matchingDecisionVersion, GroupID: groupID, PolicyVersion: MatchingPolicyVersion,
+			Outcome:         MatchingDecisionOutcomeUnique,
+			SelectedRelease: &MatchingDecisionSelectedRelease{ProviderReleaseID: releaseID, ProviderReleaseKey: "release"},
+			Assignments: []MatchingDecisionAssignment{
+				{FileMemberID: memberA, ProviderTrackID: trackA, Medium: 1, Position: 1},
+				{FileMemberID: memberB, ProviderTrackID: trackB, Medium: 1, Position: 2},
+			},
+		}
+	}
+	review := func(t *testing.T, proposal json.RawMessage, decision MatchingEvaluationDecision) MatchingReview {
+		t.Helper()
+		evidence, err := json.Marshal(map[string]any{
+			"review_proposal": json.RawMessage(proposal), "evaluation_decision": decision,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := NewMatchingReviewService(matchingReviewSnapshotReader{snapshot: &persistence.IncomingMatchReviewSnapshot{
+			Header:  &persistence.IncomingMatchEvaluationHeader{EvaluationRevision: "revision", EvaluationEvidence: evidence},
+			Members: []uuid.UUID{memberA, memberB}, Candidates: []persistence.IncomingMatchCandidate{},
+		}}).Get(t.Context(), groupID)
+		if err != nil {
+			t.Fatalf("review should remain readable: %v", err)
+		}
+		return got
+	}
+
+	t.Run("validated unique decision", func(t *testing.T) {
+		got := review(t, proposal(t, 1), uniqueDecision())
+		if !got.ProposalAvailable || len(got.Releases) != 0 {
+			t.Fatalf("saved review changed: %+v", got)
+		}
+		assignment := got.AutomaticAssignment
+		if assignment == nil || assignment.ProviderReleaseID != releaseID || len(assignment.Assignments) != 2 {
+			t.Fatalf("automatic assignment = %+v", assignment)
+		}
+		if assignment.Assignments[0] != (MatchingReviewTrackAssignment{FileMemberID: memberA, ProviderTrackID: trackA}) ||
+			assignment.Assignments[1] != (MatchingReviewTrackAssignment{FileMemberID: memberB, ProviderTrackID: trackB}) {
+			t.Fatalf("saved exact pairs were not projected in order: %+v", assignment.Assignments)
+		}
+	})
+
+	for _, test := range []struct {
+		name      string
+		proposal  func(t *testing.T) json.RawMessage
+		mutate    func(*MatchingEvaluationDecision)
+		available bool
+	}{
+		{
+			name: "non unique outcome",
+			mutate: func(decision *MatchingEvaluationDecision) {
+				decision.Outcome, decision.SelectedRelease, decision.Assignments = MatchingDecisionOutcomeTie, nil, nil
+			},
+			available: true,
+		},
+		{
+			name:      "another group",
+			mutate:    func(decision *MatchingEvaluationDecision) { decision.GroupID = otherGroupID },
+			available: true,
+		},
+		{
+			name: "another selected release",
+			mutate: func(decision *MatchingEvaluationDecision) {
+				decision.SelectedRelease.ProviderReleaseID = otherReleaseID
+			},
+			available: true,
+		},
+		{
+			name:      "unsaved file member",
+			mutate:    func(decision *MatchingEvaluationDecision) { decision.Assignments[0].FileMemberID = unsavedMember },
+			available: true,
+		},
+		{
+			name:      "unsaved provider track",
+			mutate:    func(decision *MatchingEvaluationDecision) { decision.Assignments[0].ProviderTrackID = unsavedTrack },
+			available: true,
+		},
+		{
+			name:      "missing assignments",
+			mutate:    func(decision *MatchingEvaluationDecision) { decision.Assignments = nil },
+			available: true,
+		},
+		{
+			name:      "unsupported decision version",
+			mutate:    func(decision *MatchingEvaluationDecision) { decision.Version = matchingDecisionVersion + 1 },
+			available: true,
+		},
+		{
+			name:      "unsaved proposal layout",
+			proposal:  func(t *testing.T) json.RawMessage { return proposal(t, 2) },
+			mutate:    func(*MatchingEvaluationDecision) {},
+			available: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			decision := uniqueDecision()
+			test.mutate(&decision)
+			saved := proposal(t, 1)
+			if test.proposal != nil {
+				saved = test.proposal(t)
+			}
+			got := review(t, saved, decision)
+			if got.AutomaticAssignment != nil {
+				t.Fatalf("out-of-scope automatic assignment was projected: %+v", got.AutomaticAssignment)
+			}
+			if got.ProposalAvailable != test.available {
+				t.Fatalf("proposal_available = %v, want %v", got.ProposalAvailable, test.available)
+			}
+		})
+	}
+}

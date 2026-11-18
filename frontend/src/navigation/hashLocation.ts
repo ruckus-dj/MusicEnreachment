@@ -7,7 +7,7 @@ export interface HashAttempt {
 }
 
 interface HashNavigationGuard {
-  shouldBlock: () => boolean;
+  shouldBlock: (destination: string) => boolean;
   onBlocked: (attempt: HashAttempt) => void;
 }
 
@@ -71,7 +71,7 @@ function handleHashChange() {
     pendingAttempt.attempt.to === hash
   )
     return;
-  if (navigationGuard?.shouldBlock()) {
+  if (navigationGuard?.shouldBlock(hash)) {
     makeAttempt(hash, "browser");
     return;
   }
@@ -110,7 +110,7 @@ function handleAnchorClick(event: MouseEvent) {
     return;
 
   const to = targetURL.hash;
-  if (to === acceptedHash || !navigationGuard?.shouldBlock()) return;
+  if (to === acceptedHash || !navigationGuard?.shouldBlock(to)) return;
 
   event.preventDefault();
   makeAttempt(to, "anchor");

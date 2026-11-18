@@ -1,5 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +14,7 @@ import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
+import { incomingGroupsListHref } from "../features/incoming/incomingGroupsRoute";
 import {
   resetSettingsDraftMemory,
   settingsDraftStorageKey,
@@ -301,5 +308,58 @@ describe("AppShell sources routing", () => {
     expect(
       screen.getByRole("navigation", { name: "Разделы приложения" }),
     ).not.toHaveTextContent("Публикации");
+  });
+
+  it("restores a direct incoming group matching link with a back link to the list", async () => {
+    const groupId = "11111111-1111-4111-8111-111111111111";
+    const memberId = "22222222-2222-4222-8222-222222222222";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/incoming-groups", () =>
+        HttpResponse.json({
+          epoch: 1,
+          revision: "group-revision",
+          groups: [
+            {
+              id: groupId,
+              revision: "group-revision",
+              manual: false,
+              members: [memberId],
+              unready_members: [],
+              diagnostics: [],
+            },
+          ],
+          files: [],
+        }),
+      ),
+      http.get("/api/incoming-groups/:groupId/matching", () =>
+        HttpResponse.json({
+          evaluated: false,
+          proposal_available: false,
+          group_id: groupId,
+          authority_mode: "automatic",
+          authority_revision: 1,
+          candidates: [],
+          current_linked_manual_media_source_ids: [],
+          members: [memberId],
+          releases: [],
+        }),
+      ),
+    );
+    window.location.hash = `/incoming-groups/${groupId}/matching`;
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: /Сопоставление/,
+      }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "← Все входящие группы" }),
+      ).toHaveAttribute("href", incomingGroupsListHref([groupId])),
+    );
+    expect(window.location.hash).toBe(`#/incoming-groups/${groupId}/matching`);
   });
 });
