@@ -1,59 +1,10 @@
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import type { Locale } from "../../i18n/locale";
+import operationKinds from "./operationKindLabels.json";
 
 type LocalizedText = Record<Locale, string>;
 
-const operationKindLabels: Record<string, LocalizedText> = {
-  install: { en: "Tool download", ru: "Загрузка инструмента" },
-  activate: { en: "Tool activation", ru: "Активация инструмента" },
-  delete: { en: "Tool removal", ru: "Удаление инструмента" },
-  move_tools_root: {
-    en: "Tools folder move",
-    ru: "Перемещение папки инструментов",
-  },
-  scan_source: { en: "Source scan", ru: "Сканирование источника" },
-  analyze_source: { en: "Source analysis", ru: "Анализ источника" },
-  cleanup_source_analysis_artifacts: {
-    en: "Analysis artifact cleanup",
-    ru: "Очистка файлов анализа",
-  },
-  provider_release_lookup: { en: "Release lookup", ru: "Поиск релиза" },
-  provider_recording_lookup: { en: "Recording lookup", ru: "Поиск записи" },
-  provider_release_search: { en: "Release search", ru: "Поиск релиза" },
-  provider_recording_search: { en: "Recording search", ru: "Поиск записи" },
-  provider_artist_search: { en: "Artist search", ru: "Поиск исполнителя" },
-  provider_artist_release_browse: {
-    en: "Artist releases",
-    ru: "Релизы исполнителя",
-  },
-  provider_acoustid_lookup: { en: "AcoustID lookup", ru: "Поиск в AcoustID" },
-  matching_evaluation_v1: {
-    en: "Match evaluation",
-    ru: "Оценка совпадений",
-  },
-  matching_apply_v1: { en: "Match application", ru: "Применение совпадений" },
-  publish_track_v1: { en: "Track publication", ru: "Публикация трека" },
-  cleanup_publication_sources_v1: {
-    en: "Published source cleanup",
-    ru: "Очистка исходных файлов публикации",
-  },
-  publication_reconcile_v1: {
-    en: "Publication recovery",
-    ru: "Восстановление публикации",
-  },
-  retry_publication_sources_v1: {
-    en: "Source cleanup retry",
-    ru: "Повторная очистка исходных файлов публикации",
-  },
-  obsolete_publication_output_cleanup_v1: {
-    en: "Obsolete publication cleanup",
-    ru: "Очистка устаревших файлов публикации",
-  },
-  refresh_genre_catalog_v1: {
-    en: "Genre catalog refresh",
-    ru: "Обновление каталога жанров",
-  },
-};
+const operationKindLabels: Record<string, LocalizedText> = operationKinds.kinds;
 
 const operationStateLabels: Record<string, LocalizedText> = {
   queued: { en: "Queued", ru: "В очереди" },
@@ -197,16 +148,8 @@ const operationTargetLabels: Record<string, LocalizedText> = {
   refresh_genre_catalog_v1: { en: "Genre catalog", ru: "Каталог жанров" },
 };
 
-function text(
-  labels: Record<string, LocalizedText>,
-  key: string,
-  locale: Locale,
-) {
-  return labels[key]?.[locale] ?? labels[key]?.en ?? "Operation";
-}
-
 export function operationKindLabel(kind: string, locale: Locale) {
-  return text(operationKindLabels, kind, locale);
+  return operationKindLabels[kind]?.[locale] ?? operationKinds.fallback[locale];
 }
 
 export function operationStateLabel(state: string, locale: Locale) {

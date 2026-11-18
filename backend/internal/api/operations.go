@@ -23,10 +23,13 @@ type OperationsBody struct {
 }
 
 type CurrentOperationsInput struct {
-	Status string `query:"status" default:"attention" enum:"attention,all,failed,running,queued"`
-	Kind   string `query:"kind" required:"false" enum:"publication,analysis,removal,matching"`
-	Query  string `query:"q" maxLength:"200"`
-	Offset int    `query:"offset" minimum:"0" maximum:"1000000"`
+	Status    string `query:"status" default:"attention" enum:"attention,all,failed,running,queued"`
+	Kind      string `query:"kind" required:"false" enum:"publication,analysis,removal,matching"`
+	Query     string `query:"q" maxLength:"200"`
+	Offset    int    `query:"offset" minimum:"0" maximum:"1000000"`
+	Sort      string `query:"sort" default:"created" enum:"target,operation,state,created" doc:"Column used to order the whole filtered set before pagination."`
+	Direction string `query:"direction" default:"desc" enum:"asc,desc" doc:"Ordering direction of the selected sort column."`
+	Locale    string `query:"locale" default:"en" enum:"en,ru" doc:"Locale of the operation wording used by the operation sort."`
 }
 
 type CurrentOperationsOutput struct {
@@ -97,7 +100,11 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
-		snapshots, total, err := operations.ListCurrentSnapshots(ctx, input.Status, input.Kind, input.Query, input.Offset)
+		snapshots, total, err := operations.ListCurrentSnapshots(ctx, service.CurrentOperationsQuery{
+			Status: input.Status, Kind: input.Kind, Query: input.Query,
+			Sort: input.Sort, Direction: input.Direction, Locale: input.Locale,
+			Offset: input.Offset,
+		})
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list current operations")
 		}

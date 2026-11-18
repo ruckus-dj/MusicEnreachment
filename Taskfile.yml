@@ -56,9 +56,10 @@ tasks:
       - node tools/stage-frontend.mjs
 
   generate:
-    desc: Generate OpenAPI and Orval client code
+    desc: Generate operation-kind ordering, OpenAPI and Orval client code
     deps: [frontend:install]
     cmds:
+      - node tools/generate-operation-kind-order.mjs
       - task: go:openapi
       - npm --prefix frontend run generate
 

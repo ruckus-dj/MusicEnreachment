@@ -1,7 +1,11 @@
 import { execFileSync } from "node:child_process";
 
 try {
-  const paths = ["frontend/openapi.json", "frontend/src/api/generated"];
+  const paths = [
+    "frontend/openapi.json",
+    "frontend/src/api/generated",
+    "backend/internal/persistence/current_operations_kind_order_gen.go",
+  ];
   execFileSync("git", ["diff", "--exit-code", "--", ...paths], { stdio: "inherit" });
   const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "--", ...paths], { encoding: "utf8" }).trim();
   if (untracked) throw new Error(`Untracked generated files:\n${untracked}`);

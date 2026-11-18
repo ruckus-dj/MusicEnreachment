@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SortDescriptor } from "react-aria-components";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   dismissOperation,
@@ -25,7 +26,6 @@ import {
 } from "./OperationsList";
 import {
   operationKindLabel,
-  operationProgressLabel,
   operationStageLabel,
   operationStateLabel,
   operationTargetLabel,
@@ -34,6 +34,7 @@ import {
 const PAGE_SIZE = 50;
 const MAX_PAGE_OFFSET = 1_000_000;
 const MAX_QUERY_LENGTH = 200;
+const OPERATIONS_POLL_INTERVAL_MS = 8_000;
 const operationsListQueryKey = getListCurrentOperationsQueryKey();
 
 const statusFilters = [
@@ -48,6 +49,11 @@ type OperationStatusFilter = (typeof statusFilters)[number];
 const kindFilters = ["publication", "analysis", "removal", "matching"] as const;
 type OperationKindFilter = (typeof kindFilters)[number];
 type OperationKindSelection = OperationKindFilter | "all";
+
+const sortColumns = ["target", "operation", "state", "created"] as const;
+type OperationSort = (typeof sortColumns)[number];
+const sortDirections = ["asc", "desc"] as const;
+type OperationSortDirection = (typeof sortDirections)[number];
 
 const DISMISSIBLE_TOOL_KINDS = new Set(["install", "move_tools_root"]);
 const GENERIC_RETRY_KINDS = new Set([
@@ -134,8 +140,8 @@ const messages = {
       "Здесь появятся операции в процессе и неудачные операции.",
     target: "Объект",
     operation: "Операция",
-    stateStage: "Состояние / этап",
-    progress: "Ход выполнения",
+    stateStage: "Статус / этап",
+    progress: "Прогресс",
     created: "Создано",
     error: "Ошибка",
     actions: "Действия",
@@ -180,12 +186,16 @@ type Copy = (typeof messages)[Locale];
 interface OperationsRoute {
   status: OperationStatusFilter;
   kind: OperationKindSelection;
+  sort: OperationSort;
+  direction: OperationSortDirection;
   offset: number;
 }
 
 const defaultRoute: OperationsRoute = {
   status: "attention",
   kind: "all",
+  sort: "created",
+  direction: "desc",
   offset: 0,
 };
 
@@ -197,6 +207,14 @@ function isKindFilter(value: string): value is OperationKindFilter {
   return kindFilters.some((candidate) => candidate === value);
 }
 
+function isSortColumn(value: string): value is OperationSort {
+  return sortColumns.some((candidate) => candidate === value);
+}
+
+function isSortDirection(value: string): value is OperationSortDirection {
+  return sortDirections.some((candidate) => candidate === value);
+}
+
 function parseOperationsRoute(hash: string): OperationsRoute {
   const path = hash.startsWith("#") ? hash.slice(1) : hash;
   const [pathname, search = ""] = path.split("?", 2);
@@ -204,6 +222,8 @@ function parseOperationsRoute(hash: string): OperationsRoute {
   const params = new URLSearchParams(search);
   const requestedStatus = params.get("status") ?? "";
   const requestedKind = params.get("kind") ?? "";
+  const requestedSort = params.get("sort") ?? "";
+  const requestedDirection = params.get("direction") ?? "";
   const requestedOffset = Number(params.get("offset") ?? 0);
   return {
     status: isStatusFilter(requestedStatus)
@@ -213,6 +233,10 @@ function parseOperationsRoute(hash: string): OperationsRoute {
       requestedKind === "all" || isKindFilter(requestedKind)
         ? requestedKind
         : defaultRoute.kind,
+    sort: isSortColumn(requestedSort) ? requestedSort : defaultRoute.sort,
+    direction: isSortDirection(requestedDirection)
+      ? requestedDirection
+      : defaultRoute.direction,
     offset:
       Number.isSafeInteger(requestedOffset) && requestedOffset > 0
         ? Math.min(requestedOffset, MAX_PAGE_OFFSET)
@@ -224,6 +248,9 @@ function operationsRouteHref(route: OperationsRoute) {
   const params = new URLSearchParams();
   if (route.status !== defaultRoute.status) params.set("status", route.status);
   if (route.kind !== defaultRoute.kind) params.set("kind", route.kind);
+  if (route.sort !== defaultRoute.sort) params.set("sort", route.sort);
+  if (route.direction !== defaultRoute.direction)
+    params.set("direction", route.direction);
   if (route.offset > 0)
     params.set("offset", String(Math.min(route.offset, MAX_PAGE_OFFSET)));
   const search = params.toString();
@@ -293,6 +320,39 @@ function formatDate(value: string | undefined, locale: string) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
+}
+
+/**
+ * Measured progress only. Operations without an observable count stay hidden
+ * rather than showing a fabricated or zero percentage.
+ */
+function measuredProgressLabel(
+  operation: OperationResponse,
+  locale: Locale,
+): string | undefined {
+  if (operation.kind === "move_tools_root") {
+    const total = operation.bytes_total;
+    if (operation.stage !== "copy" || total == null || total <= 0)
+      return undefined;
+    const completed = Math.max(0, Math.min(operation.bytes_completed, total));
+    const percent = Math.floor((completed / total) * 100);
+    return new Intl.NumberFormat(locale, {
+      style: "percent",
+      maximumFractionDigits: 0,
+    }).format(percent / 100);
+  }
+  if (operation.kind === "install") {
+    if (operation.bytes_completed <= 0) return undefined;
+    const completed = operation.bytes_completed.toLocaleString(locale);
+    const total = operation.bytes_total;
+    if (total == null || total <= 0) {
+      return locale === "ru" ? `${completed} байт` : `${completed} bytes`;
+    }
+    return locale === "ru"
+      ? `${completed} / ${total.toLocaleString(locale)} байт`
+      : `${completed} / ${total.toLocaleString(locale)} bytes`;
+  }
+  return undefined;
 }
 
 function targetHref(ref: OperationTargetRef | undefined) {
@@ -394,7 +454,7 @@ function operationRow(
         ? "info"
         : "neutral",
     stage: stage || undefined,
-    progress: operationProgressLabel(operation, locale),
+    progress: measuredProgressLabel(operation, locale),
     created: formatDate(operation.created_at, locale),
     error: failed ? operation.safe_error || undefined : undefined,
     actions: actions.length > 0 ? actions : undefined,
@@ -409,6 +469,7 @@ export function OperationsScreen() {
   const route = parseOperationsRoute(hash);
   const heading = useRef<HTMLHeadingElement>(null);
   const pendingGuard = useRef(false);
+  const manualRefreshGuard = useRef(false);
   const lastGood = useRef<
     | {
         key: string;
@@ -421,29 +482,43 @@ export function OperationsScreen() {
   const [pending, setPending] = useState<PendingAction>();
   const [notice, setNotice] = useState<"dismissed">();
   const [actionError, setActionError] = useState<ActionFailure | null>(null);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const updateRoute = useCallback(
     (next: Partial<OperationsRoute>) => {
       window.location.hash = operationsRouteHref({
         status: route.status,
         kind: route.kind,
+        sort: route.sort,
+        direction: route.direction,
         offset: route.offset,
         ...next,
       });
     },
-    [route.kind, route.offset, route.status],
+    [route.direction, route.kind, route.offset, route.sort, route.status],
   );
 
   const search = searchText.trim().slice(0, MAX_QUERY_LENGTH);
+  const localeSorting = route.sort === "target" || route.sort === "operation";
   const params = {
     status: route.status,
     kind: route.kind === "all" ? undefined : route.kind,
     q: search || undefined,
+    sort: route.sort,
+    direction: route.direction,
+    ...(localeSorting ? { locale } : {}),
     offset: route.offset,
   };
   const paramsKey = JSON.stringify(params);
 
-  const operationsQuery = useListCurrentOperations(params);
+  const operationsQuery = useListCurrentOperations(params, {
+    query: {
+      // Foreground-only: background tabs must not keep polling. The list stays
+      // bounded, so an empty or failed filter keeps polling too.
+      refetchInterval: pending ? false : OPERATIONS_POLL_INTERVAL_MS,
+      refetchIntervalInBackground: false,
+    },
+  });
 
   const currentData =
     operationsQuery.data?.status === 200
@@ -633,6 +708,23 @@ export function OperationsScreen() {
         }
       : undefined;
 
+  const sortDescriptor: SortDescriptor = {
+    column: route.sort,
+    direction: route.direction === "asc" ? "ascending" : "descending",
+  };
+
+  async function refresh() {
+    if (manualRefreshGuard.current) return;
+    manualRefreshGuard.current = true;
+    setManualRefreshing(true);
+    try {
+      await operationsQuery.refetch({ cancelRefetch: false });
+    } finally {
+      manualRefreshGuard.current = false;
+      setManualRefreshing(false);
+    }
+  }
+
   return (
     <OperationsList
       copy={copy}
@@ -642,10 +734,19 @@ export function OperationsScreen() {
       notice={notice ? copy[notice] : undefined}
       actionError={actionErrorText(actionError, copy)}
       headingRef={heading}
-      onRefresh={() => {
-        void operationsQuery.refetch();
+      sortDescriptor={sortDescriptor}
+      onSortChange={({ column, direction }) => {
+        if (typeof column !== "string" || !isSortColumn(column)) return;
+        updateRoute({
+          sort: column,
+          direction: direction === "ascending" ? "asc" : "desc",
+          offset: 0,
+        });
       }}
-      isRefreshing={operationsQuery.isFetching}
+      onRefresh={() => {
+        void refresh();
+      }}
+      isRefreshing={manualRefreshing}
       filters={{
         query: searchText,
         onQueryChange: (value) => {

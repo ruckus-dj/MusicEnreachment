@@ -13,10 +13,23 @@ import (
 const currentOperationsPageSize = 50
 
 type CurrentOperationsFilter struct {
-	Status string
-	Kind   string
-	Query  string
+	Status    string
+	Kind      string
+	Query     string
+	Sort      string
+	Direction string
+	// Locale selects the localized wording used to rank operations when Sort is
+	// "operation". Target labels are user data and are ordered without it.
+	Locale string
 	Offset int
+}
+
+// currentOperationsOrder is the validated ordering of the read model. The
+// direction is the SQL keyword, so it is only ever assembled from this switch.
+type currentOperationsOrder struct {
+	field     string
+	direction string
+	locale    string
 }
 
 type OperationTargetRef struct {
@@ -48,6 +61,7 @@ type currentOperationTargetRow struct {
 // ListCurrentOperations is a read-only, bounded list for the Operations screen.
 // Quiesced runs are already known to be superseded; the projection neither
 // rewrites their history nor interprets a River job state as an operation state.
+// Ordering applies to the whole filtered set before the page is cut.
 func (repo *SetupManagerRepository) ListCurrentOperations(
 	ctx context.Context, filter CurrentOperationsFilter,
 ) ([]CurrentOperationRow, int, error) {
@@ -55,49 +69,67 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 	if err != nil {
 		return nil, 0, err
 	}
+	order, err := currentOperationsOrderFor(filter)
+	if err != nil {
+		return nil, 0, err
+	}
 	query := strings.TrimSpace(filter.Query)
+	needsTargets := query != "" || order.field == "target"
+	offset := int64(filter.Offset)
 	rows := make([]currentOperationTargetRow, 0, currentOperationsPageSize)
 	var total int64
 	err = repo.db.RunInTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 		ReadOnly:  true,
 	}, func(ctx context.Context, tx bun.Tx) error {
-		base := tx.NewSelect().TableExpr("operation AS op").
-			Where("op.state IN (?)", bun.List(states)).
-			Where(`NOT EXISTS (SELECT 1 FROM matching_run retired
-				WHERE retired.operation_id=op.id AND retired.quiesced_at IS NOT NULL)`)
-		if len(kinds) != 0 {
-			base.Where("op.kind IN (?)", bun.List(kinds))
-		}
-		if query != "" {
-			base.Join(currentOperationTargets).
-				Where("strpos(lower("+currentOperationTargetLabel+"), lower(?)) > 0", query)
+		filtered := func(withTargets bool) *bun.SelectQuery {
+			base := tx.NewSelect().TableExpr("operation AS op").
+				Where("op.state IN (?)", bun.List(states)).
+				Where(`NOT EXISTS (SELECT 1 FROM matching_run retired
+					WHERE retired.operation_id=op.id AND retired.quiesced_at IS NOT NULL)`)
+			if len(kinds) != 0 {
+				base.Where("op.kind IN (?)", bun.List(kinds))
+			}
+			if withTargets {
+				base.Join(currentOperationTargets)
+			}
+			if query != "" {
+				base.Where("strpos(lower("+currentOperationTargetLabel+"), lower(?)) > 0", query)
+			}
+			return base
 		}
 		var countErr error
-		total, countErr = base.Count(ctx)
+		total, countErr = filtered(query != "").Count(ctx)
 		if countErr != nil {
 			return fmt.Errorf("count current operations: %w", countErr)
 		}
-		if int64(filter.Offset) >= total {
+		if offset >= total {
 			return nil
 		}
-		// Resolve target labels only for the chosen page unless label search
-		// requires resolving the matching set first.
-		page := base.ColumnExpr("op.*").OrderExpr("op.created_at DESC, op.id DESC").
-			Limit(currentOperationsPageSize).Offset(int64(filter.Offset))
-		var selectPage *bun.SelectQuery
-		if query == "" {
-			selectPage = tx.NewSelect().TableExpr("(?) AS op", page).
-				ColumnExpr("op.*").Join(currentOperationTargets).
-				OrderExpr("op.created_at DESC, op.id DESC")
+		// Target labels are resolved for the entire filtered set when the order
+		// or the query depends on them. Otherwise they are resolved only for the
+		// chosen page after the cheap columns have ordered and cut it.
+		var page *bun.SelectQuery
+		if needsTargets {
+			page = filtered(true).ColumnExpr("op.*").
+				ColumnExpr(currentOperationTargetLabel + " AS target_label").
+				ColumnExpr(currentOperationTargetRefs)
 		} else {
-			selectPage = page
+			page = filtered(false).ColumnExpr("op.*")
+			applyCurrentOperationsOrder(page, order).
+				Limit(currentOperationsPageSize).Offset(offset)
 		}
-		return selectPage.ColumnExpr(currentOperationTargetLabel+" AS target_label").
-			ColumnExpr("root.id AS resolved_root_id, location.id AS resolved_location_id").
-			ColumnExpr("release.id AS resolved_release_id, pos.id AS resolved_position_id").
-			ColumnExpr("grp.id AS resolved_group_id, artist.id AS resolved_artist_id").
-			Scan(ctx, &rows)
+		selectPage := tx.NewSelect().TableExpr("(?) AS op", page).ColumnExpr("op.*")
+		if !needsTargets {
+			selectPage.Join(currentOperationTargets).
+				ColumnExpr(currentOperationTargetLabel + " AS target_label").
+				ColumnExpr(currentOperationTargetRefs)
+		}
+		applyCurrentOperationsOrder(selectPage, order)
+		if needsTargets {
+			selectPage.Limit(currentOperationsPageSize).Offset(offset)
+		}
+		return selectPage.Scan(ctx, &rows)
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("list current operations: %w", err)
@@ -109,6 +141,52 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 		result = append(result, projected)
 	}
 	return result, int(total), nil
+}
+
+func currentOperationsOrderFor(filter CurrentOperationsFilter) (currentOperationsOrder, error) {
+	order := currentOperationsOrder{field: "created", direction: "DESC", locale: "en"}
+	switch filter.Sort {
+	case "":
+	case "created", "target", "operation", "state":
+		order.field = filter.Sort
+	default:
+		return currentOperationsOrder{}, fmt.Errorf("invalid current operations sort")
+	}
+	switch filter.Direction {
+	case "", "desc":
+	case "asc":
+		order.direction = "ASC"
+	default:
+		return currentOperationsOrder{}, fmt.Errorf("invalid current operations direction")
+	}
+	switch filter.Locale {
+	case "":
+	case "en", "ru":
+		order.locale = filter.Locale
+	default:
+		return currentOperationsOrder{}, fmt.Errorf("invalid current operations locale")
+	}
+	return order, nil
+}
+
+// applyCurrentOperationsOrder orders a query that exposes the read model as
+// `op`, including `target_label` once it has been resolved. Equal ordering keys
+// fall back to the newest operation so pages stay deterministic.
+func applyCurrentOperationsOrder(query *bun.SelectQuery, order currentOperationsOrder) *bun.SelectQuery {
+	switch order.field {
+	case "state":
+		return query.OrderExpr("CASE op.state WHEN 'failed' THEN 0 WHEN 'running' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END " + order.direction).
+			OrderExpr("op.created_at DESC, op.id DESC")
+	case "operation":
+		expression, args := currentOperationKindSortExpr(order.locale)
+		return query.OrderExpr("("+expression+") "+order.direction, args...).
+			OrderExpr("op.created_at DESC, op.id DESC")
+	case "target":
+		return query.OrderExpr("lower(NULLIF(op.target_label, '')) " + order.direction + " NULLS LAST").
+			OrderExpr("op.created_at DESC, op.id DESC")
+	default:
+		return query.OrderExpr("op.created_at " + order.direction + ", op.id " + order.direction)
+	}
 }
 
 func currentOperationsScope(filter CurrentOperationsFilter) ([]string, []string, error) {
@@ -214,6 +292,12 @@ const currentOperationTargets = `
 		WHERE member.group_id=grp.id
 		HAVING count(DISTINCT lower(NULLIF(btrim(variant.observed_tags->'ALBUM'->>0), '')))=1
 	) AS album ON grp.id IS NOT NULL`
+
+// currentOperationTargetRefs resolves the identities of a linked target. It is
+// shared by the target-label join and the page projection.
+const currentOperationTargetRefs = `root.id AS resolved_root_id, location.id AS resolved_location_id,
+	release.id AS resolved_release_id, pos.id AS resolved_position_id,
+	grp.id AS resolved_group_id, artist.id AS resolved_artist_id`
 
 const currentOperationTargetLabel = `COALESCE(
 	NULLIF(concat_ws(' · ', NULLIF(release.title, ''), NULLIF(track.title, '')), ''),

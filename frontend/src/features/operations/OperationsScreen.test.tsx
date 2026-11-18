@@ -126,11 +126,16 @@ it("shows loading then current operations with target links, diagnostics and fai
   const row = screen.getByRole("row", { name: /Music library/ });
   expect(target).toHaveAttribute("href", "#/sources/root-1");
   expect(within(row).getByText("Source scan")).toBeInTheDocument();
-  expect(screen.getByText("Permission denied")).toBeInTheDocument();
-  expect(screen.getByText("12 / 30 bytes")).toBeInTheDocument();
+  expect(screen.queryByText("Permission denied")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("columnheader", { name: /progress|error/i }),
+  ).not.toBeInTheDocument();
 
   fireEvent.click(within(row).getByRole("button", { name: "Details" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("Permission denied");
+  expect(
+    within(screen.getByRole("dialog")).queryByText("Progress"),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
   fireEvent.click(within(row).getByRole("button", { name: "Retry" }));
@@ -144,6 +149,85 @@ it("shows loading then current operations with target links, diagnostics and fai
   expect(
     screen.queryByRole("button", { name: "Retry" }),
   ).not.toBeInTheDocument();
+});
+
+it("delegates the sort across pages and keeps the server order", async () => {
+  window.location.hash = "#/operations?offset=50";
+  const sortedReads: URL[] = [];
+  const created = "2026-01-01T00:00:00Z";
+  const operation = {
+    kind: "scan_source",
+    state: "running",
+    stage: "traversing",
+    bytes_completed: 0,
+    created_at: created,
+    updated_at: created,
+  };
+  server.use(
+    http.get("/api/operations/current", ({ request }) => {
+      const url = new URL(request.url);
+      if (url.searchParams.get("sort") === "target") {
+        sortedReads.push(url);
+        return HttpResponse.json({
+          operations: [
+            { ...operation, id: "test-zebra", target_label: "Zebra" },
+            { ...operation, id: "test-archive", target_label: "Archive" },
+          ],
+          total: 2,
+        });
+      }
+      return HttpResponse.json({
+        operations: [
+          { ...operation, id: "test-start", target_label: "Second page" },
+        ],
+        total: 51,
+      });
+    }),
+  );
+  renderScreen();
+  await screen.findByText("Second page");
+  fireEvent.click(screen.getByRole("columnheader", { name: "Target" }));
+  const zebra = await screen.findByText("Zebra");
+  expect(
+    within(screen.getByRole("grid")).getAllByRole("row")[1],
+  ).toContainElement(zebra);
+  expect(sortedReads[0]?.searchParams.get("direction")).toBe("asc");
+  expect(sortedReads[0]?.searchParams.get("offset")).toBe("0");
+  expect(sortedReads[0]?.searchParams.get("locale")).toBe("en");
+  expect(screen.getByRole("columnheader", { name: "Target" })).toHaveAttribute(
+    "aria-sort",
+    "ascending",
+  );
+  expect(
+    new URLSearchParams(window.location.hash.split("?")[1]).get("sort"),
+  ).toBe("target");
+});
+
+it("shows a measured copy percentage only in operation details", async () => {
+  server.use(
+    http.get("/api/operations/current", () =>
+      HttpResponse.json({
+        operations: [
+          {
+            id: "moving-tools",
+            kind: "move_tools_root",
+            state: "running",
+            stage: "copy",
+            bytes_completed: 20,
+            bytes_total: 50,
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:01:00Z",
+          },
+        ],
+        total: 1,
+      }),
+    ),
+  );
+  renderScreen();
+  const details = await screen.findByRole("button", { name: "Details" });
+  expect(screen.queryByText(/40\s*%/)).not.toBeInTheDocument();
+  fireEvent.click(details);
+  expect(screen.getByRole("dialog")).toHaveTextContent(/40\s*%/);
 });
 
 it("refreshes the active filter after a retry completes across navigation", async () => {

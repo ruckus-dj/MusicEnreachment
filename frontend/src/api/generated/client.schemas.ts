@@ -2526,6 +2526,18 @@ q?: string;
  * @maximum 1000000
  */
 offset?: number;
+/**
+ * Column used to order the whole filtered set before pagination.
+ */
+sort?: ListCurrentOperationsSort;
+/**
+ * Ordering direction of the selected sort column.
+ */
+direction?: ListCurrentOperationsDirection;
+/**
+ * Locale of the operation wording used by the operation sort.
+ */
+locale?: ListCurrentOperationsLocale;
 };
 
 export type ListCurrentOperationsStatus = typeof ListCurrentOperationsStatus[keyof typeof ListCurrentOperationsStatus];
@@ -2547,6 +2559,32 @@ export const ListCurrentOperationsKind = {
   analysis: 'analysis',
   removal: 'removal',
   matching: 'matching',
+} as const;
+
+export type ListCurrentOperationsSort = typeof ListCurrentOperationsSort[keyof typeof ListCurrentOperationsSort];
+
+
+export const ListCurrentOperationsSort = {
+  target: 'target',
+  operation: 'operation',
+  state: 'state',
+  created: 'created',
+} as const;
+
+export type ListCurrentOperationsDirection = typeof ListCurrentOperationsDirection[keyof typeof ListCurrentOperationsDirection];
+
+
+export const ListCurrentOperationsDirection = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ListCurrentOperationsLocale = typeof ListCurrentOperationsLocale[keyof typeof ListCurrentOperationsLocale];
+
+
+export const ListCurrentOperationsLocale = {
+  en: 'en',
+  ru: 'ru',
 } as const;
 
 export type ListLocalProviderArtistsParams = {

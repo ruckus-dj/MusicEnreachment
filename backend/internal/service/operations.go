@@ -210,16 +210,31 @@ func (s *Operations) ListSnapshots(ctx context.Context, states ...string) ([]Ope
 	return snapshots, nil
 }
 
+// CurrentOperationsQuery selects one page of the current-operations read model.
+// Sort and Direction are validated by the repository; Locale selects the
+// localized operation wording used when Sort is "operation".
+type CurrentOperationsQuery struct {
+	Status    string
+	Kind      string
+	Query     string
+	Sort      string
+	Direction string
+	Locale    string
+	Offset    int
+}
+
 // ListCurrentSnapshots lists operations filtered by attention state, kind, and
 // free-text query. The repository that owns the operation read model implements
 // the current-operations listing; a repository without it is unavailable.
-func (s *Operations) ListCurrentSnapshots(ctx context.Context, status, kind, query string, offset int) ([]OperationSnapshot, int, error) {
+func (s *Operations) ListCurrentSnapshots(ctx context.Context, query CurrentOperationsQuery) ([]OperationSnapshot, int, error) {
 	repository, ok := s.repository.(currentOperationsRepository)
 	if !ok {
 		return nil, 0, fmt.Errorf("current operations repository is unavailable")
 	}
 	rows, total, err := repository.ListCurrentOperations(ctx, persistence.CurrentOperationsFilter{
-		Status: status, Kind: kind, Query: query, Offset: offset,
+		Status: query.Status, Kind: query.Kind, Query: query.Query,
+		Sort: query.Sort, Direction: query.Direction, Locale: query.Locale,
+		Offset: query.Offset,
 	})
 	if err != nil {
 		return nil, 0, err
