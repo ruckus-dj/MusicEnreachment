@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -24,6 +26,10 @@ const (
 	analysisSafeInvalidInput = "The source analysis input is invalid. Start a new analysis."
 	analysisSafeNotReady     = "The source analysis requires a completed setup on a supported server platform."
 	analysisSafeInterrupted  = "The source analysis was interrupted. Pending work will be resumed."
+
+	// sourceAnalysisArtifactRetirementTimeout bounds best-effort release of a
+	// used staged copy, including after the delivery context is canceled.
+	sourceAnalysisArtifactRetirementTimeout = 5 * time.Second
 )
 
 type analysisWorkerRepository interface {
@@ -70,6 +76,15 @@ type pendingDispatcher interface {
 
 type incomingMatchingReconcileDispatcher interface {
 	DispatchPendingMatchingReconciliations(context.Context) error
+}
+
+// sourceAnalysisArtifactRetirer is an optional persistence capability. The
+// worker asserts it at runtime so repositories used by fixtures and read-only
+// callers do not have to implement staged-copy retirement. The repository owns
+// the exact fence, resolves the managed work directory under its own lock, and
+// invokes remove only for a copy this delivery may release.
+type sourceAnalysisArtifactRetirer interface {
+	RetireSourceAnalysisWorkArtifact(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, uuid.UUID, func(workDirectory string, artifact persistence.SourceAnalysisArtifact) error) error
 }
 
 type SourceAnalysisWorker struct {
@@ -553,7 +568,22 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 		}
 		return worker.failClaimedSteps(ctx, operation, jobID, executions, claims, "The source file could not be prepared for analysis.")
 	}
-	defer func() { _ = input.Close() }()
+	defer func() {
+		// Every step reader has been joined by the loop below. Close the shared
+		// input before its staged copy is retired, and keep both inside this
+		// group's limiter permit so no sibling release races the removal.
+		var identity os.FileInfo
+		if input.ArtifactID != nil {
+			identity, _ = input.File.Stat(context.WithoutCancel(ctx))
+		}
+		if closeErr := input.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "close prepared source analysis input", "work", workID, "operation", operation.ID, "error", closeErr)
+			return
+		}
+		if input.ArtifactID != nil {
+			worker.retireStagedArtifact(ctx, fence, *input.ArtifactID, identity)
+		}
+	}()
 	steps := make([]persistence.SourceStepName, 0, len(ordered))
 	for _, step := range ordered {
 		if step != persistence.SourceStepSHA256 {
@@ -671,6 +701,34 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 		return err
 	}
 	return errors.Join(failures...)
+}
+
+// retireStagedArtifact releases the staged copy consumed by this exact delivery
+// after all of its readers have finished. In-place work owns no copy and stays
+// untouched. Removal is fenced by the repository and best-effort here: a failed
+// or unavailable retirement is logged and never changes the analysis outcome.
+func (worker *SourceAnalysisWorker) retireStagedArtifact(ctx context.Context, fence persistence.SourceAnalysisArtifactFence, artifactID uuid.UUID, identity os.FileInfo) {
+	retirer, ok := any(worker.repository).(sourceAnalysisArtifactRetirer)
+	if !ok {
+		return
+	}
+	cleaner := sourcefs.NewCleaner()
+	// Cancellation of the delivery must not strand an owned copy, so detach the
+	// context while still bounding the release.
+	retireCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sourceAnalysisArtifactRetirementTimeout)
+	defer cancel()
+	err := retirer.RetireSourceAnalysisWorkArtifact(retireCtx, fence.WorkID,
+		persistence.SourceAnalysisOperationDelivery{Attempt: fence.OperationAttempt, JobID: fence.JobID}, fence.OperationID,
+		func(workDirectory string, artifact persistence.SourceAnalysisArtifact) error {
+			if artifact.ID != artifactID || identity == nil {
+				return errors.New("staged audio identity could not be verified")
+			}
+			_, removeErr := cleaner.RemoveRegisteredMatching(retireCtx, workDirectory, artifact.RelativeOutputPath, identity)
+			return removeErr
+		})
+	if err != nil {
+		slog.WarnContext(ctx, "retire used source analysis artifact", "work", fence.WorkID, "operation", fence.OperationID, "error", err)
+	}
 }
 
 func (worker *SourceAnalysisWorker) invalidateChangedInput(ctx context.Context, operation *persistence.Operation, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, changedSteps ...persistence.SourceStepName) error {

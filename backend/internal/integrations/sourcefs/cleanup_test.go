@@ -131,3 +131,73 @@ func TestCleanerRemovesArtifactAndPreservesForeignEntries(t *testing.T) {
 		t.Fatalf("foreign file after cleanup = %q, %v; want untouched", got, err)
 	}
 }
+
+// cleanupExpectedInfo takes the identity from an open staged-input handle, as a
+// reader supplies it before closing.
+func cleanupExpectedInfo(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func TestCleanerRemovesMatchingRegisteredArtifact(t *testing.T) {
+	root := cleanupTempDir(t)
+	artifact := filepath.Join(root, filepath.FromSlash(cleanupArtifactPath))
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := cleanupExpectedInfo(t, artifact)
+
+	outcome, err := NewCleaner().RemoveRegisteredMatching(context.Background(), root, cleanupArtifactPath, expected)
+	if err != nil || outcome != CleanupDeleted {
+		t.Fatalf("RemoveRegisteredMatching() = (%v, %v), want (%v, nil)", outcome, err, CleanupDeleted)
+	}
+	if _, err := os.Stat(artifact); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("artifact stat error = %v, want not-exist", err)
+	}
+	outcome, err = NewCleaner().RemoveRegisteredMatching(context.Background(), root, cleanupArtifactPath, expected)
+	if err != nil || outcome != CleanupMissing {
+		t.Fatalf("second RemoveRegisteredMatching() = (%v, %v), want (%v, nil)", outcome, err, CleanupMissing)
+	}
+}
+
+func TestCleanerLeavesReplacedRegisteredArtifact(t *testing.T) {
+	root := cleanupTempDir(t)
+	artifact := filepath.Join(root, filepath.FromSlash(cleanupArtifactPath))
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := cleanupExpectedInfo(t, artifact)
+	previous := artifact + ".previous"
+	if err := os.Rename(artifact, previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := NewCleaner().RemoveRegisteredMatching(context.Background(), root, cleanupArtifactPath, expected)
+	if !errors.Is(err, ErrRegisteredArtifactChanged) {
+		t.Fatalf("RemoveRegisteredMatching(replaced) = (%v, %v), want ErrRegisteredArtifactChanged", outcome, err)
+	}
+	if got, err := os.ReadFile(artifact); err != nil || string(got) != "replacement" {
+		t.Fatalf("replacement after rejected cleanup = %q, %v; want untouched", got, err)
+	}
+	if got, err := os.ReadFile(previous); err != nil || string(got) != "original" {
+		t.Fatalf("previous inode after rejected cleanup = %q, %v; want untouched", got, err)
+	}
+}

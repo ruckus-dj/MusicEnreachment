@@ -2,8 +2,11 @@
 
 package sourcefs
 
-import "context"
+import (
+	"context"
+	"os"
+)
 
-func removeRegistered(context.Context, string, string) (CleanupOutcome, error) {
+func removeRegistered(context.Context, string, string, os.FileInfo) (CleanupOutcome, error) {
 	return 0, ErrUnsupported
 }

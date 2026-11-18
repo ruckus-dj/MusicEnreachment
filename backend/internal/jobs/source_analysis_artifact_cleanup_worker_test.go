@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,14 +11,13 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type cleanupWorkerRepository struct {
 	service.OperationRepository
 	operation *persistence.Operation
-	item      bool
-	settings  *cleanupWorkerSettings
+	artifact  *persistence.SourceAnalysisArtifact
+	outcomes  []persistence.SourceAnalysisArtifactCleanupOutcome
 }
 
 func (repository *cleanupWorkerRepository) GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error) {
@@ -28,76 +29,77 @@ func (repository *cleanupWorkerRepository) TransitionOperationForDelivery(_ cont
 }
 
 func (repository *cleanupWorkerRepository) RunSourceAnalysisArtifactCleanupDelivery(ctx context.Context, _ persistence.SourceAnalysisArtifactCleanupFence, executor persistence.SourceAnalysisArtifactCleanupExecutor) error {
-	// Simulate the output root changing while the shared output gate is being
-	// acquired. The executor must resolve settings only after entering this callback.
-	repository.settings.gateAcquired = true
-	repository.settings.outputRoot = repository.settings.newOutputRoot
-	if !repository.item {
+	if repository.artifact == nil {
 		return nil
 	}
-	_, err := executor(ctx, persistence.SourceAnalysisArtifact{RelativeOutputPath: "staged/missing.bin"})
-	return err
-}
-
-type cleanupWorkerSettings struct {
-	gateAcquired  bool
-	outputRoot    string
-	newOutputRoot string
-	reads         int
-	readAfterGate bool
-}
-
-func (runtime *cleanupWorkerSettings) ReadRuntimeSettings(context.Context) (settings.RuntimeSettings, error) {
-	runtime.reads++
-	runtime.readAfterGate = runtime.gateAcquired
-	return settings.RuntimeSettings{OutputDirectory: runtime.outputRoot}, nil
-}
-
-type cleanupServiceRepository struct{}
-
-func (cleanupServiceRepository) ListSourceAnalysisArtifactCleanupCandidates(context.Context, int) ([]persistence.SourceAnalysisArtifactCleanupCandidate, error) {
-	return nil, nil
-}
-
-func (cleanupServiceRepository) AdmitSourceAnalysisArtifactCleanupWithArgsFactory(context.Context, []uuid.UUID, persistence.RiverInserter, func(uuid.UUID) river.JobArgs, *river.InsertOpts) (*persistence.Operation, error) {
-	return nil, nil
-}
-
-func (cleanupServiceRepository) ListSourceAnalysisArtifactCleanupItems(context.Context, uuid.UUID) ([]persistence.SourceAnalysisArtifactCleanupItem, error) {
-	return nil, nil
-}
-
-func TestSourceAnalysisArtifactCleanupResolvesOutputAfterGateAndOnlyForItems(t *testing.T) {
-	for _, hasItem := range []bool{true, false} {
-		t.Run(map[bool]string{true: "item", false: "no items"}[hasItem], func(t *testing.T) {
-			oldRoot, newRoot := t.TempDir(), t.TempDir()
-			settings := &cleanupWorkerSettings{outputRoot: oldRoot, newOutputRoot: newRoot}
-			operationID := uuid.New()
-			jobID := int64(17)
-			repository := &cleanupWorkerRepository{
-				operation: &persistence.Operation{
-					ID: operationID, Kind: persistence.SourceAnalysisArtifactCleanupOperationKind,
-					State: "queued", Attempt: 1, RiverJobID: &jobID,
-				},
-				item: hasItem, settings: settings,
-			}
-			cleanup := service.NewSourceAnalysisArtifactCleanup(cleanupServiceRepository{}, settings, nil)
-			worker := NewSourceAnalysisArtifactCleanupWorker(repository, service.NewOperations(repository), cleanup)
-			if err := worker.Work(context.Background(), &river.Job[service.SourceAnalysisArtifactCleanupJobArgs]{
-				JobRow: &rivertype.JobRow{ID: jobID}, Args: service.SourceAnalysisArtifactCleanupJobArgs{OperationID: operationID},
-			}); err != nil {
-				t.Fatal(err)
-			}
-			wantReads := 0
-			if hasItem {
-				wantReads = 1
-			}
-			if settings.reads != wantReads {
-				t.Fatalf("runtime settings reads=%d, want %d", settings.reads, wantReads)
-			}
-			if hasItem && (!settings.readAfterGate || settings.outputRoot != newRoot) {
-				t.Fatalf("output settings were not resolved after gate acquisition: %+v", settings)
-			}
-		})
+	outcome, err := executor(ctx, *repository.artifact)
+	if err != nil {
+		return err
 	}
+	repository.outcomes = append(repository.outcomes, outcome)
+	return nil
+}
+
+func TestSourceAnalysisArtifactCleanupUsesFrozenWorkDirectory(t *testing.T) {
+	operationID, jobID := uuid.New(), int64(17)
+	newWorker := func(repository *cleanupWorkerRepository) *SourceAnalysisArtifactCleanupWorker {
+		return NewSourceAnalysisArtifactCleanupWorker(repository, service.NewOperations(repository))
+	}
+	run := func(t *testing.T, repository *cleanupWorkerRepository) {
+		t.Helper()
+		if err := newWorker(repository).Work(context.Background(), &river.Job[service.SourceAnalysisArtifactCleanupJobArgs]{
+			JobRow: &rivertype.JobRow{ID: jobID}, Args: service.SourceAnalysisArtifactCleanupJobArgs{OperationID: operationID},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	operation := func() *persistence.Operation {
+		return &persistence.Operation{
+			ID: operationID, Kind: persistence.SourceAnalysisArtifactCleanupOperationKind,
+			State: "queued", Attempt: 1, RiverJobID: &jobID,
+		}
+	}
+
+	t.Run("registered artifact is removed beneath the frozen stage directory", func(t *testing.T) {
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		relative := "analysis/staging/" + uuid.NewString() + "/" + uuid.NewString() + "/" + uuid.NewString()
+		staged := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(staged, []byte("staged"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		repository := &cleanupWorkerRepository{operation: operation(), artifact: &persistence.SourceAnalysisArtifact{
+			RelativeOutputPath: relative, CleanupWorkDirectory: root,
+		}}
+		run(t, repository)
+		if len(repository.outcomes) != 1 || !repository.outcomes[0].Succeeded {
+			t.Fatalf("cleanup outcomes = %+v, want one succeeded", repository.outcomes)
+		}
+		if _, err := os.Stat(staged); !os.IsNotExist(err) {
+			t.Fatalf("staged artifact still present after cleanup: %v", err)
+		}
+	})
+
+	t.Run("unavailable frozen stage directory records a safe failure", func(t *testing.T) {
+		repository := &cleanupWorkerRepository{operation: operation(), artifact: &persistence.SourceAnalysisArtifact{
+			RelativeOutputPath: "analysis/staging/" + uuid.NewString() + "/" + uuid.NewString() + "/" + uuid.NewString(),
+		}}
+		run(t, repository)
+		if len(repository.outcomes) != 1 || repository.outcomes[0].Succeeded || repository.outcomes[0].SafeError == "" {
+			t.Fatalf("cleanup outcomes = %+v, want one safe failure", repository.outcomes)
+		}
+	})
+
+	t.Run("no selected items never invokes the artifact callback", func(t *testing.T) {
+		repository := &cleanupWorkerRepository{operation: operation()}
+		run(t, repository)
+		if len(repository.outcomes) != 0 {
+			t.Fatalf("cleanup outcomes = %+v, want none", repository.outcomes)
+		}
+	})
 }

@@ -285,6 +285,7 @@ func Run(ctx context.Context, config Config) error {
 	publicationSourceCleanupRequestDispatcher := publicationSourceCleanupRequestDispatcher{repository: setupManagerRepository, river: riverSlot}
 	publicationSourceCleanupDispatchWorker := jobs.NewPublicationSourceCleanupDispatchWorker(publicationSourceCleanupRequestDispatcher)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
+	artifactCleanupDrain := service.NewSourceAnalysisArtifactCleanupDrain(artifactCleanup, setupManagerRepository)
 	sourceCleanupRetries := service.NewSourceCleanupRetries(setupManagerRepository, riverSlot)
 	publicationSourceCleanupWorkers, err := newPublicationSourceCleanupWorkers(setupManagerRepository, publicationBootUUID)
 	if err != nil {
@@ -318,7 +319,7 @@ func Run(ctx context.Context, config Config) error {
 		sourceInventory, persistence.NewSourceAnalysisArtifactRepository(db), registry, nil, nil,
 	))
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
-	artifactCleanupWorker := jobs.NewSourceAnalysisArtifactCleanupWorker(setupManagerRepository, operationService, artifactCleanup)
+	artifactCleanupWorker := jobs.NewSourceAnalysisArtifactCleanupWorker(setupManagerRepository, operationService)
 
 	registerWorkers := func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
@@ -389,6 +390,37 @@ func Run(ctx context.Context, config Config) error {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
+	}()
+	// Eligible staged artifacts are drained through the same fenced cleanup
+	// deliveries as the explicit endpoint. One bounded batch is admitted at
+	// startup and after each interval; failures are logged so maintenance can
+	// never prevent the server from serving, and a backlog is retried on the
+	// next tick.
+	artifactCleanupMaintenanceContext, stopArtifactCleanupMaintenance := context.WithCancel(ctx)
+	artifactCleanupMaintenanceDone := make(chan struct{})
+	defer func() {
+		stopArtifactCleanupMaintenance()
+		<-artifactCleanupMaintenanceDone
+	}()
+	go func() {
+		defer close(artifactCleanupMaintenanceDone)
+		ticker := time.NewTicker(service.SourceAnalysisArtifactCleanupDrainInterval)
+		defer ticker.Stop()
+		for {
+			admitted, err := artifactCleanupDrain.Drain(artifactCleanupMaintenanceContext)
+			if err != nil {
+				if artifactCleanupMaintenanceContext.Err() == nil {
+					logger.Warn("drain eligible staged analysis artifacts", "error", err)
+				}
+			} else if admitted > 0 {
+				logger.Info("admitted staged analysis artifact cleanup", "artifacts", admitted)
+			}
+			select {
+			case <-artifactCleanupMaintenanceContext.Done():
+				return
+			case <-ticker.C:
+			}
+		}
 	}()
 	consumerLifetimeContext, cancelConsumerLifetime := context.WithCancel(ctx)
 	defer cancelConsumerLifetime()

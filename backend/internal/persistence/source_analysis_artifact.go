@@ -48,6 +48,7 @@ type SourceAnalysisArtifact struct {
 	CleanupAt             *time.Time `bun:"cleanup_at,nullzero"`
 	CreatedAt             time.Time  `bun:"created_at,nullzero"`
 	UpdatedAt             time.Time  `bun:"updated_at,nullzero"`
+	CleanupWorkDirectory  string     `bun:"-"`
 }
 
 // SourceAnalysisArtifactRepository owns the database registry for staged

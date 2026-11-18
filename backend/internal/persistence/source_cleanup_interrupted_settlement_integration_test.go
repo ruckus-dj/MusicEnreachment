@@ -18,7 +18,12 @@ import (
 func TestInterruptedCleanupAfterUnlinkRequiresExplicitSettlement(t *testing.T) {
 	ctx, repo, artifactID, fence := admitCleanupOutcomeFixture(t)
 	output := t.TempDir()
-	relative := filepath.Join("analysis", "staging", artifactID.String())
+	var rootID, workID uuid.UUID
+	if err := repo.db.NewRaw(`SELECT work.source_root_id,work.id FROM source_analysis_work work
+		JOIN source_analysis_artifact artifact ON artifact.work_id=work.id WHERE artifact.id=?`, artifactID).Scan(ctx, &rootID, &workID); err != nil {
+		t.Fatal(err)
+	}
+	relative := filepath.FromSlash(sourceAnalysisArtifactPath(rootID, workID, artifactID))
 	full := filepath.Join(output, relative)
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)

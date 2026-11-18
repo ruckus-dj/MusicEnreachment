@@ -2,8 +2,14 @@ package sourcefs
 
 import (
 	"context"
+	"errors"
+	"os"
 	"regexp"
 )
+
+// ErrRegisteredArtifactChanged indicates the named registered artifact is no
+// longer the object the caller observed while reading the staged input.
+var ErrRegisteredArtifactChanged = errors.New("sourcefs: registered artifact changed")
 
 // CleanupOutcome describes whether a registered artifact was removed or was
 // already absent beneath its managed staging directory.
@@ -33,5 +39,20 @@ func (Cleaner) RemoveRegistered(ctx context.Context, outputRoot, canonicalRelati
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	return removeRegistered(ctx, outputRoot, canonicalRelativePath)
+	return removeRegistered(ctx, outputRoot, canonicalRelativePath, nil)
+}
+
+// RemoveRegisteredMatching removes the registered artifact at
+// canonicalRelativePath only while the current named regular file is the same
+// object described by expected. Callers take expected from the staged input
+// handle before closing its readers; a nil expected skips the identity check
+// and behaves like RemoveRegistered.
+func (Cleaner) RemoveRegisteredMatching(ctx context.Context, outputRoot, canonicalRelativePath string, expected os.FileInfo) (CleanupOutcome, error) {
+	if !registeredArtifactPath.MatchString(canonicalRelativePath) {
+		return 0, ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return removeRegistered(ctx, outputRoot, canonicalRelativePath, expected)
 }

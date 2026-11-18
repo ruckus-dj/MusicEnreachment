@@ -20,12 +20,11 @@ type SourceAnalysisArtifactCleanupWorker struct {
 	river.WorkerDefaults[service.SourceAnalysisArtifactCleanupJobArgs]
 	repository sourceAnalysisArtifactCleanupRepository
 	operations *service.Operations
-	cleanup    *service.SourceAnalysisArtifactCleanup
 	cleaner    sourcefs.Cleaner
 }
 
-func NewSourceAnalysisArtifactCleanupWorker(repository sourceAnalysisArtifactCleanupRepository, operations *service.Operations, cleanup *service.SourceAnalysisArtifactCleanup) *SourceAnalysisArtifactCleanupWorker {
-	return &SourceAnalysisArtifactCleanupWorker{repository: repository, operations: operations, cleanup: cleanup, cleaner: sourcefs.NewCleaner()}
+func NewSourceAnalysisArtifactCleanupWorker(repository sourceAnalysisArtifactCleanupRepository, operations *service.Operations) *SourceAnalysisArtifactCleanupWorker {
+	return &SourceAnalysisArtifactCleanupWorker{repository: repository, operations: operations, cleaner: sourcefs.NewCleaner()}
 }
 
 func (worker *SourceAnalysisArtifactCleanupWorker) Work(ctx context.Context, job *river.Job[service.SourceAnalysisArtifactCleanupJobArgs]) error {
@@ -40,18 +39,11 @@ func (worker *SourceAnalysisArtifactCleanupWorker) Work(ctx context.Context, job
 	if err := worker.operations.RunningForDelivery(ctx, operation, "cleaning_artifacts"); err != nil {
 		return err
 	}
-	var outputRoot string
-	var settingsErr error
-	settingsResolved := false
 	err = worker.repository.RunSourceAnalysisArtifactCleanupDelivery(ctx, fence, func(ctx context.Context, artifact persistence.SourceAnalysisArtifact) (persistence.SourceAnalysisArtifactCleanupOutcome, error) {
-		if !settingsResolved {
-			outputRoot, settingsErr = worker.cleanup.OutputDirectory(ctx)
-			settingsResolved = true
+		if artifact.CleanupWorkDirectory == "" {
+			return persistence.SourceAnalysisArtifactCleanupOutcome{SafeError: "The staged analysis artifact could not be cleaned up."}, nil
 		}
-		if settingsErr != nil || outputRoot == "" {
-			return persistence.SourceAnalysisArtifactCleanupOutcome{SafeError: "The managed output directory is unavailable."}, nil
-		}
-		_, err := worker.cleaner.RemoveRegistered(ctx, outputRoot, artifact.RelativeOutputPath)
+		_, err := worker.cleaner.RemoveRegistered(ctx, artifact.CleanupWorkDirectory, artifact.RelativeOutputPath)
 		if err != nil {
 			return persistence.SourceAnalysisArtifactCleanupOutcome{SafeError: "The staged analysis artifact could not be cleaned up."}, nil
 		}

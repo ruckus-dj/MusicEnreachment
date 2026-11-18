@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func removeRegistered(ctx context.Context, outputRoot, relative string) (CleanupOutcome, error) {
+func removeRegistered(ctx context.Context, outputRoot, relative string, expected os.FileInfo) (CleanupOutcome, error) {
 	rootCapability, err := NewOpener().OpenRoot(ctx, outputRoot)
 	if err != nil {
 		return 0, err
@@ -57,7 +57,15 @@ func removeRegistered(ctx context.Context, outputRoot, relative string) (Cleanup
 	}
 	defer func() { _ = file.Close() }()
 	var opened, named unix.Stat_t
-	if err := file.Borrow(ctx, func(f *os.File) error { return unix.Fstat(int(f.Fd()), &opened) }); err != nil {
+	var openedInfo os.FileInfo
+	if err := file.Borrow(ctx, func(f *os.File) error {
+		info, statErr := f.Stat()
+		if statErr != nil {
+			return statErr
+		}
+		openedInfo = info
+		return unix.Fstat(int(f.Fd()), &opened)
+	}); err != nil {
 		return 0, err
 	}
 	if err := unix.Fstatat(parentFD, leaf, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -71,6 +79,9 @@ func removeRegistered(ctx context.Context, outputRoot, relative string) (Cleanup
 	}
 	if opened.Dev != named.Dev || opened.Ino != named.Ino {
 		return 0, errors.New("sourcefs: registered artifact namespace changed")
+	}
+	if expected != nil && !os.SameFile(expected, openedInfo) {
+		return 0, ErrRegisteredArtifactChanged
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err

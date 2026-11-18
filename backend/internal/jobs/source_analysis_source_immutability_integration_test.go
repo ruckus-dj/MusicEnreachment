@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 // The fixture's ffprobe/fpcalc executables are fakes: this verifies filesystem
@@ -24,6 +25,17 @@ func TestSourceAnalysisWorkerPreservesSourceBytesAndMetadataWithPostgreSQL(t *te
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
 			fixture.fpcalcID = fixture.installAnalysisDispatchFPCalc(t, ctx)
+			workRoot, _, err := fixture.registry.GetWorkDirectory(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workRoot, err = filepath.EvalSymlinks(workRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fixture.settings.Set(ctx, settings.WorkDirectoryKey, workRoot); err != nil {
+				t.Fatal(err)
+			}
 
 			sourcePath := filepath.Join(fixture.source, "album", "track.flac")
 			beforeBytes, err := os.ReadFile(sourcePath)
@@ -74,25 +86,11 @@ func TestSourceAnalysisWorkerPreservesSourceBytesAndMetadataWithPostgreSQL(t *te
 			if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, fixture.work.ID).Scan(ctx, &artifacts); err != nil {
 				t.Fatalf("count staged artifacts: %v", err)
 			}
+			if artifacts != 0 {
+				t.Fatalf("%s artifacts = %d, want none", mode, artifacts)
+			}
 			if mode == "in_place" {
-				if artifacts != 0 {
-					t.Fatalf("in_place artifacts = %d, want none", artifacts)
-				}
 				return
-			}
-			var retained []persistence.SourceAnalysisArtifact
-			if err := fixture.database.NewSelect().Model(&retained).
-				Where("owner_operation_id = ?", operation.ID).
-				Where("work_id = ?", fixture.work.ID).
-				Scan(ctx); err != nil {
-				t.Fatalf("read staged artifact owned by source analysis: %v", err)
-			}
-			if len(retained) != 1 {
-				t.Fatalf("staged artifacts owned by operation/work = %d, want exactly 1", len(retained))
-			}
-			artifact := retained[0]
-			if artifacts != 1 || artifact.State != persistence.SourceAnalysisArtifactCleanupEligible {
-				t.Fatalf("staged artifact count/state = %d/%q, want 1/cleanup eligible (retained)", artifacts, artifact.State)
 			}
 			var processingMode string
 			if err := fixture.database.NewRaw(`SELECT processing_mode FROM source_analysis_work_execution
@@ -105,23 +103,16 @@ func TestSourceAnalysisWorkerPreservesSourceBytesAndMetadataWithPostgreSQL(t *te
 			}
 			var bound bool
 			if err := fixture.database.NewRaw(`SELECT EXISTS (
-				SELECT 1 FROM source_analysis_work_artifact_binding WHERE artifact_id=?
-			)`, artifact.ID).Scan(ctx, &bound); err != nil {
+				SELECT 1 FROM source_analysis_work_artifact_binding WHERE work_id=?
+			)`, fixture.work.ID).Scan(ctx, &bound); err != nil {
 				t.Fatalf("check staged artifact binding after settlement: %v", err)
 			}
 			if bound {
 				t.Fatal("staged artifact remains bound after successful settlement")
 			}
-			outputRoot, _, err := fixture.registry.GetWorkDirectory(ctx)
-			if err != nil {
-				t.Fatalf("read managed output root: %v", err)
-			}
-			copyBytes, err := os.ReadFile(filepath.Join(outputRoot, artifact.RelativeOutputPath))
-			if err != nil {
-				t.Fatalf("read retained staged input copy: %v", err)
-			}
-			if string(copyBytes) != string(beforeBytes) {
-				t.Fatal("retained staged input does not contain one unchanged source copy")
+			files, err := filepath.Glob(filepath.Join(workRoot, "analysis", "staging", "*", "*", "*"))
+			if err != nil || len(files) != 0 {
+				t.Fatalf("staged files after successful analysis = %v, error %v", files, err)
 			}
 		})
 	}

@@ -197,6 +197,11 @@ func (repository *SetupManagerRepository) AdmitSourceAnalysisArtifactCleanupWith
 	}
 	err = repository.WithOutputAdmissionSession(ctx, func(session *OutputAdmissionSession) error {
 		return session.RunInTx(ctx, func(tx *sql.Tx) error {
+			// Serialize reservations before reading snapshots: a queued job
+			// owns its set even before the worker has claimed the first item.
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1, 0)`, cleanupDeliveryLockNamespace); err != nil {
+				return fmt.Errorf("lock staged cleanup reservations: %w", err)
+			}
 			eligible, err := eligibleCleanupArtifactIDs(ctx, tx, ids, true)
 			if err != nil {
 				return err
@@ -359,6 +364,14 @@ func finishCleanupOperation(ctx context.Context, session *OutputAdmissionSession
 // relative to its source root. AdmitSourceAnalysisArtifactCleanup rechecks the
 // complete selected set under the output gate before committing it.
 func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandidates(ctx context.Context, limit int) ([]SourceAnalysisArtifactCleanupCandidate, error) {
+	return repository.listSourceAnalysisArtifactCleanupCandidates(ctx, limit, false)
+}
+
+func (repository *SetupManagerRepository) ListAutomaticSourceAnalysisArtifactCleanupCandidates(ctx context.Context, limit int) ([]SourceAnalysisArtifactCleanupCandidate, error) {
+	return repository.listSourceAnalysisArtifactCleanupCandidates(ctx, limit, true)
+}
+
+func (repository *SetupManagerRepository) listSourceAnalysisArtifactCleanupCandidates(ctx context.Context, limit int, automatic bool) ([]SourceAnalysisArtifactCleanupCandidate, error) {
 	if limit <= 0 || limit > 1000 {
 		return nil, fmt.Errorf("list cleanup candidates: limit must be between 1 and 1000")
 	}
@@ -367,6 +380,8 @@ func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandi
 		FROM source_analysis_artifact artifact
 		JOIN source_analysis_work work ON work.id=artifact.work_id
 		WHERE artifact.state IN ('cleanup_eligible','cleanup_failed')
+		AND (NOT ? OR artifact.state='cleanup_eligible')
+		AND artifact.relative_output_path = 'analysis/staging/' || work.source_root_id::text || '/' || work.id::text || '/' || artifact.id::text
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_work_artifact_binding binding WHERE binding.artifact_id=artifact.id)
 		AND NOT EXISTS (
 			SELECT 1 FROM operation_source_work_hold hold JOIN operation creator ON creator.id=hold.operation_id
@@ -374,7 +389,12 @@ func (repository *SetupManagerRepository) ListSourceAnalysisArtifactCleanupCandi
 			AND EXISTS (SELECT 1 FROM river_job job WHERE job.id=creator.river_job_id AND job.state IN ('available','pending','running','retryable','scheduled'))
 		)
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item claim WHERE claim.artifact_id=artifact.id AND claim.state='claimed')
-		ORDER BY artifact.id LIMIT ?`, limit).Scan(ctx, &candidates)
+		AND NOT EXISTS (
+			SELECT 1 FROM operation reservation WHERE reservation.kind='cleanup_source_analysis_artifacts'
+			AND reservation.state IN ('queued','running')
+			AND reservation.input_snapshot->'artifact_ids' @> jsonb_build_array(artifact.id::text)
+		)
+		ORDER BY artifact.id LIMIT ?`, automatic, limit).Scan(ctx, &candidates)
 	if err != nil {
 		return nil, fmt.Errorf("list cleanup candidates: %w", err)
 	}
@@ -432,6 +452,17 @@ func claimCleanupArtifact(ctx context.Context, session *OutputAdmissionSession, 
 			&artifact.OwnerOperationID, &artifact.OwnerOperationAttempt, &artifact.OwnerJobID, &artifact.State,
 			&artifact.CleanupError, &artifact.CleanupAt, &artifact.CreatedAt, &artifact.UpdatedAt); err != nil {
 			return fmt.Errorf("claim cleanup artifact %s: %w", artifactID, err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(
+			(SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')`).Scan(&artifact.CleanupWorkDirectory); err != nil {
+			return fmt.Errorf("read staged work directory for cleanup: %w", err)
+		}
+		var sourceRootID uuid.UUID
+		if err := tx.QueryRowContext(ctx, `SELECT source_root_id FROM source_analysis_work WHERE id=$1`, workID).Scan(&sourceRootID); err != nil {
+			return fmt.Errorf("read staged artifact source root: %w", err)
+		}
+		if artifact.RelativeOutputPath != sourceAnalysisArtifactPath(sourceRootID, workID, artifactID) {
+			return errors.New("staged source analysis artifact has a noncanonical path")
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO source_analysis_artifact_cleanup_item
 			(artifact_id,operation_id,operation_attempt,job_id,relative_output_path,state)
@@ -673,7 +704,12 @@ func eligibleCleanupArtifactIDs(ctx context.Context, tx *sql.Tx, ids []uuid.UUID
 			AND creator.kind='analyze_source'
 			AND EXISTS (SELECT 1 FROM river_job job WHERE job.id=creator.river_job_id AND job.state IN ('available','pending','running','retryable','scheduled'))
 		)
-		AND NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item claim WHERE claim.artifact_id=artifact.id AND claim.state='claimed')`
+		AND NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item claim WHERE claim.artifact_id=artifact.id AND claim.state='claimed')
+		AND NOT EXISTS (
+			SELECT 1 FROM operation reservation WHERE reservation.kind='cleanup_source_analysis_artifacts'
+			AND reservation.state IN ('queued','running')
+			AND reservation.input_snapshot->'artifact_ids' @> jsonb_build_array(artifact.id::text)
+		)`
 	if lock {
 		query += " FOR UPDATE OF artifact"
 	}

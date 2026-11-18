@@ -28,7 +28,10 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	repository := persistence.NewSetupManagerRepository(db)
 	settingsRepository := persistence.NewSettingsRepository(db)
 	runtimeSettings := settings.New(settingsRepository, nil)
-	outputRoot := t.TempDir()
+	outputRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := runtimeSettings.SetOutputDirectory(ctx, outputRoot, t.TempDir()); err != nil {
 		t.Fatalf("set managed output directory: %v", err)
 	}
@@ -87,7 +90,7 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 		t.Fatal("admitted cleanup operation has no River job ID")
 	}
 	operations := service.NewOperations(repository)
-	worker := NewSourceAnalysisArtifactCleanupWorker(repository, operations, cleanup)
+	worker := NewSourceAnalysisArtifactCleanupWorker(repository, operations)
 	if err := worker.Work(ctx, &river.Job[service.SourceAnalysisArtifactCleanupJobArgs]{
 		JobRow: &rivertype.JobRow{ID: *operation.RiverJobID}, Args: service.SourceAnalysisArtifactCleanupJobArgs{OperationID: operation.ID},
 	}); err != nil {

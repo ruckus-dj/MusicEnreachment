@@ -12,7 +12,9 @@ import { ManualReleasePicker } from "./ManualReleasePicker";
 const { unsubscribe } = vi.hoisted(() => ({ unsubscribe: vi.fn() }));
 
 vi.mock("../../api/client/operations", () => ({
-  subscribeToOperation: vi.fn(() => unsubscribe),
+  subscribeToOperation: vi.fn(
+    (operationId: string) => () => unsubscribe(operationId),
+  ),
 }));
 
 const releaseMBID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -368,10 +370,22 @@ it("keeps an in-flight result from the previous selection off the new input", as
   expect(onPrepared).toHaveBeenCalledWith(otherMBID);
   expect(bodies).toHaveLength(2);
 
+  await waitFor(() => expect(unsubscribe).toHaveBeenCalledWith("operation-4"));
   queryClient.clear();
 });
 
 it("prefills the explicit selection from the release search without preparing it", async () => {
+  const submit = vi.fn();
+  const onPrepared = vi.fn();
+  server.use(
+    http.post("/api/incoming-groups/prefill/matching/manual-release", () => {
+      submit();
+      return HttpResponse.json(
+        { operation_id: "prefill-operation" },
+        { status: 202 },
+      );
+    }),
+  );
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
   vi.stubGlobal("localStorage", storage);
@@ -382,10 +396,10 @@ it("prefills the explicit selection from the release search without preparing it
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
         <ManualReleasePicker
-          groupId="group-1"
+          groupId="prefill"
           groupRevision="revision-1"
           searchRelease={releaseMBID}
-          onPrepared={vi.fn()}
+          onPrepared={onPrepared}
         />
       </QueryClientProvider>
     </I18nProvider>,
@@ -396,7 +410,11 @@ it("prefills the explicit selection from the release search without preparing it
       screen.getByRole("textbox", { name: "Release MBID or official URL" }),
     ).toHaveValue(releaseMBID),
   );
-  expect(vi.mocked(subscribeToOperation)).not.toHaveBeenCalled();
+  expect(submit).not.toHaveBeenCalled();
+  expect(onPrepared).not.toHaveBeenCalled();
+  expect(
+    vi.mocked(subscribeToOperation).mock.calls.map(([id]) => id),
+  ).not.toContain("prefill-operation");
 
   queryClient.clear();
 });

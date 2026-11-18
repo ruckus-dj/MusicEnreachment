@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -13,7 +14,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func removeRegistered(ctx context.Context, outputRoot, relative string) (CleanupOutcome, error) {
+func removeRegistered(ctx context.Context, outputRoot, relative string, expected os.FileInfo) (CleanupOutcome, error) {
+	if expected != nil {
+		// Windows os.SameFile loads path-derived identities lazily at comparison
+		// time; bind the caller's expected identity before the name can change.
+		_ = os.SameFile(expected, expected)
+	}
 	opened, err := NewOutputOpener().OpenRoot(ctx, outputRoot)
 	if err != nil {
 		return 0, err
@@ -77,6 +83,15 @@ func removeRegistered(ctx context.Context, outputRoot, relative string) (Cleanup
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	if expected != nil {
+		openedInfo, infoErr := cleanupWindowsHandleInfo(handle)
+		if infoErr != nil {
+			return 0, infoErr
+		}
+		if !os.SameFile(expected, openedInfo) {
+			return 0, ErrRegisteredArtifactChanged
+		}
+	}
 	if err := root.Verify(ctx); err != nil {
 		return 0, err
 	}
@@ -128,6 +143,30 @@ func openCleanupWindowsFile(parent windows.Handle, name string) (windows.Handle,
 		return windows.InvalidHandle, err
 	}
 	return handle, nil
+}
+
+// cleanupWindowsHandleInfo reports the file identity of an open cleanup handle.
+// The handle is duplicated so os.File finalization cannot close the handle that
+// the caller still uses for deletion.
+func cleanupWindowsHandleInfo(handle windows.Handle) (os.FileInfo, error) {
+	var duplicate windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), handle, windows.CurrentProcess(), &duplicate, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(duplicate), "sourcefs-cleanup-file")
+	if file == nil {
+		_ = windows.CloseHandle(duplicate)
+		return nil, ErrNotRegular
+	}
+	info, statErr := file.Stat()
+	closeErr := file.Close()
+	if statErr != nil {
+		return nil, statErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return info, nil
 }
 
 func isWindowsCleanupMissing(err error) bool {

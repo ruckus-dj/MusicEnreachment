@@ -187,6 +187,73 @@ func (repository *workerInputRepository) GetSourceRoot(context.Context, uuid.UUI
 	return repository.root, nil
 }
 
+type stagedArtifactRepository struct {
+	workID      uuid.UUID
+	rootID      uuid.UUID
+	size        int64
+	mtime       time.Time
+	acquired    *persistence.SourceAnalysisArtifact
+	readyCalls  int
+	forgetCalls int
+}
+
+func (repository *stagedArtifactRepository) Acquire(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisArtifact, error) {
+	artifact := &persistence.SourceAnalysisArtifact{
+		ID: id, WorkID: repository.workID,
+		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", repository.rootID.String(), repository.workID.String(), id.String())),
+		SourceSizeBytes:    repository.size, SourceMtime: repository.mtime,
+		OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID,
+		State: persistence.SourceAnalysisArtifactAcquiring,
+	}
+	repository.acquired = artifact
+	return artifact, nil
+}
+
+func (repository *stagedArtifactRepository) MarkReady(_ context.Context, id uuid.UUID, _ persistence.SourceAnalysisArtifactFence, _ int64) (*persistence.SourceAnalysisArtifact, error) {
+	if repository.acquired == nil || repository.acquired.ID != id {
+		return nil, errors.New("mark ready for an unknown artifact")
+	}
+	repository.readyCalls++
+	ready := *repository.acquired
+	ready.State = persistence.SourceAnalysisArtifactReady
+	return &ready, nil
+}
+
+func (repository *stagedArtifactRepository) ForgetUncreated(context.Context, uuid.UUID, persistence.SourceAnalysisArtifactFence) error {
+	repository.forgetCalls++
+	return nil
+}
+
+type workerStagedSettings struct{ path string }
+
+func (settings workerStagedSettings) GetWorkDirectory(context.Context) (string, bool, error) {
+	return settings.path, true, nil
+}
+
+type retiringWorkerRepository struct {
+	*workerInputRepository
+	artifacts *stagedArtifactRepository
+	directory string
+	retireErr error
+	calls     int
+	fence     persistence.SourceAnalysisArtifactFence
+	removed   []string
+}
+
+func (repository *retiringWorkerRepository) RetireSourceAnalysisWorkArtifact(_ context.Context, workID uuid.UUID, delivery persistence.SourceAnalysisOperationDelivery, operationID uuid.UUID, remove func(string, persistence.SourceAnalysisArtifact) error) error {
+	repository.calls++
+	repository.fence = persistence.SourceAnalysisArtifactFence{WorkID: workID, OperationID: operationID, OperationAttempt: delivery.Attempt, JobID: delivery.JobID}
+	if repository.retireErr != nil {
+		return repository.retireErr
+	}
+	artifact := *repository.artifacts.acquired
+	if err := remove(repository.directory, artifact); err != nil {
+		return err
+	}
+	repository.removed = append(repository.removed, artifact.RelativeOutputPath)
+	return nil
+}
+
 type recordingWorkerInputPreparer struct {
 	preparer *service.SourceAnalysisInputPreparer
 	modes    []string
@@ -328,6 +395,60 @@ func TestSourceAnalysisWorkerWithInputPreparerOmitsSHAWhenNotSelected(t *testing
 	}
 	if len(input.modes) != 1 || input.modes[0] != "in_place" {
 		t.Fatalf("input preparation modes = %v", input.modes)
+	}
+}
+
+func TestSourceAnalysisWorkerRetiresUsedStagedArtifact(t *testing.T) {
+	repo := &workerInputRepository{}
+	worker, snapshot, operation, executions, _ := newWorkerGroup(t, repo, workerGroupPreparingFunc(func(context.Context, service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		return preparedSHA()
+	}))
+	executions = executions[:1]
+	repo.mode = "staged"
+	workDirectory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := &stagedArtifactRepository{workID: repo.work.ID, rootID: repo.work.SourceRootID, size: repo.work.SizeBytes, mtime: repo.work.Mtime}
+	worker.inputPreparer = service.NewSourceAnalysisInputPreparer(repo, artifacts, workerStagedSettings{path: workDirectory}, nil, nil)
+	retiring := &retiringWorkerRepository{workerInputRepository: repo, artifacts: artifacts, directory: workDirectory}
+	worker.repository = retiring
+
+	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions); err != nil {
+		t.Fatalf("run staged work group: %v", err)
+	}
+	wantFence := persistence.SourceAnalysisArtifactFence{WorkID: repo.work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: 9}
+	if retiring.calls != 1 || retiring.fence != wantFence {
+		t.Fatalf("staged retirement = %d calls with fence %+v, want one call with fence %+v", retiring.calls, retiring.fence, wantFence)
+	}
+	if artifacts.readyCalls != 1 || artifacts.forgetCalls != 0 {
+		t.Fatalf("staged transitions: ready=%d forget=%d, want ready=1 forget=0", artifacts.readyCalls, artifacts.forgetCalls)
+	}
+	canonical := artifacts.acquired.RelativeOutputPath
+	if len(retiring.removed) != 1 || retiring.removed[0] != canonical {
+		t.Fatalf("removed artifacts = %v, want %q", retiring.removed, canonical)
+	}
+	if _, err := os.Stat(filepath.Join(workDirectory, filepath.FromSlash(canonical))); !os.IsNotExist(err) {
+		t.Fatalf("staged artifact remained after successful analysis: %v", err)
+	}
+
+	// In-place work owns no staged copy and must never attempt retirement.
+	repo.mode = "in_place"
+	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions); err != nil {
+		t.Fatalf("run in-place work group: %v", err)
+	}
+	if retiring.calls != 1 {
+		t.Fatalf("in-place retirement calls = %d, want 1", retiring.calls)
+	}
+
+	// A failed retirement is logged and must not change the analysis outcome.
+	repo.mode = "staged"
+	retiring.retireErr = errors.New("retirement unavailable")
+	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions); err != nil {
+		t.Fatalf("run staged work group with failed retirement: %v", err)
+	}
+	if retiring.calls != 2 {
+		t.Fatalf("retirement attempts = %d, want 2", retiring.calls)
 	}
 }
 
