@@ -371,7 +371,13 @@ func (repository *IncomingGroupingRepository) runGroupingCompute(ctx context.Con
 			return fmt.Errorf("replace incoming groups: %w", err)
 		}
 		for _, group := range next {
-			if group.ID == uuid.Nil || len(group.Members) == 0 {
+			// A manual correction may legitimately retain only unready members,
+			// for example after splitting the ready part away from a group whose
+			// remaining files lost their analysis. Such a group still needs its
+			// identity and unready membership; everything else requires a ready
+			// member.
+			unreadyOnly := group.Manual && len(group.UnreadyMembers) > 0
+			if group.ID == uuid.Nil || (len(group.Members) == 0 && !unreadyOnly) {
 				return fmt.Errorf("computed incoming group is invalid")
 			}
 			if err := insertIncomingGroupingGroup(ctx, tx, group); err != nil {

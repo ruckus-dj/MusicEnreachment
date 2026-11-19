@@ -398,6 +398,87 @@ it("opens one group matching route from the list and keeps the draft when return
   expectAssigned("folder/01.flac", "Диск 1 · трек 1 · Открытие");
 });
 
+it("previews and confirms only the chosen file when creating a new group", async () => {
+  setup();
+  const split = vi.fn();
+  const confirm = vi.fn();
+  const original = incomingGroups();
+  const source = original.groups?.[0];
+  if (!source) throw new Error("Missing source group fixture");
+  const confirmed = {
+    ...original,
+    epoch: 2,
+    revision: "confirmed-revision",
+    groups: [
+      {
+        ...source,
+        id: "confirmed-singleton",
+        revision: "singleton-revision",
+        manual: true,
+        members: [ids.memberOne],
+      },
+      {
+        ...source,
+        id: "confirmed-remainder",
+        revision: "remainder-revision",
+        manual: true,
+        members: [ids.memberTwo],
+      },
+    ],
+  };
+  server.use(
+    http.post("/api/incoming-groups/preview", async ({ request }) => {
+      split(await request.json());
+      return HttpResponse.json({ ...original, draft_revision: "split-draft" });
+    }),
+    http.post("/api/incoming-groups/confirm", async ({ request }) => {
+      confirm(await request.json());
+      return HttpResponse.json(confirmed);
+    }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Файлы группы «Исходник»" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Действия с файлом: Открытие" }),
+  );
+  const create = await screen.findByRole("menuitem", {
+    name: "Создать новую группу",
+  });
+  expect(split).not.toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  fireEvent.click(create);
+
+  const action = {
+    actions: [
+      { kind: "split", group_id: ids.group, member_ids: [ids.memberOne] },
+    ],
+    base_revision: original.revision,
+    epoch: original.epoch,
+  };
+  await waitFor(() =>
+    expect(confirm.mock.calls).toEqual([
+      [{ ...action, draft_revision: "split-draft" }],
+    ]),
+  );
+  expect(split.mock.calls).toEqual([[action]]);
+  await waitFor(() =>
+    expect(window.location.hash).toBe(
+      incomingGroupsListHref(["confirmed-remainder"]),
+    ),
+  );
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole("link", { name: /Открыть группу/ })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      incomingGroupMatchingHref("confirmed-singleton"),
+      incomingGroupMatchingHref("confirmed-remainder"),
+    ]),
+  );
+});
+
 it("keeps a direct matching link and rejects an unknown group without another group", async () => {
   const counts: RequestCounts = { groups: 0, review: 0, preview: 0 };
   setup(review(), "ru", counts, false, {
