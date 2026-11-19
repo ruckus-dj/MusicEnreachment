@@ -9,10 +9,14 @@ import {
 } from "react-aria-components";
 import {
 	formatLocalDuration,
-	type LocalProviderRecord,
-	type LocalProviderTrack,
+	isOutcomeUncertain,
+	type LocalRecordingDraft,
+	type LocalReleaseArtist,
+	type LocalReleaseDraft,
+	type LocalReleaseRecording,
+	type LocalReleaseTrack,
 	parseLocalDuration,
-} from "../../localProviderModel";
+} from "./localReleaseFormModel";
 import { localReleaseMessages } from "./localReleaseMessages";
 
 export type ReleaseCheckHit = {
@@ -23,26 +27,27 @@ export type ReleaseCheckHit = {
 	details?: string;
 };
 
-type NewRecord = Omit<LocalProviderRecord, "id" | "key" | "provider">;
-
 export type LocalReleaseEditorProps = {
 	locale: "ru" | "en";
 	suggestedArtist: string;
 	suggestedTitle: string;
 	incomingLabel: string;
-	artists: readonly LocalProviderRecord[];
-	recordings: readonly LocalProviderRecord[];
+	artists: readonly LocalReleaseArtist[];
+	recordings: readonly LocalReleaseRecording[];
 	checkRelease: (
 		artist: string,
 		title: string,
+		signal?: AbortSignal,
 	) => Promise<readonly ReleaseCheckHit[]>;
-	findRecordings: (query: string) => Promise<readonly LocalProviderRecord[]>;
-	saveRecording: (data: {
-		title: string;
-		duration_ms?: number;
-	}) => LocalProviderRecord;
+	findRecordings: (
+		query: string,
+		signal?: AbortSignal,
+	) => Promise<readonly LocalReleaseRecording[]>;
+	saveRecording: (
+		data: LocalRecordingDraft,
+	) => LocalReleaseRecording | Promise<LocalReleaseRecording>;
 	onUseRelease: (id: string) => void;
-	onSave: (data: NewRecord) => void;
+	onSave: (data: LocalReleaseDraft) => void | Promise<void>;
 	onCancel: () => void;
 };
 
@@ -54,28 +59,46 @@ type SearchResult<T> =
 function useLookup<T>() {
 	const [result, setResult] = useState<SearchResult<T>>({ kind: "idle" });
 	const generation = useRef(0);
+	const controller = useRef<AbortController | null>(null);
+	useEffect(
+		() => () => {
+			generation.current += 1;
+			controller.current?.abort();
+			controller.current = null;
+		},
+		[],
+	);
 	function reset() {
 		generation.current += 1;
+		controller.current?.abort();
+		controller.current = null;
 		setResult({ kind: "idle" });
 	}
-	async function search(load: () => Promise<readonly T[]>) {
+	async function search(load: (signal: AbortSignal) => Promise<readonly T[]>) {
 		const request = ++generation.current;
+		controller.current?.abort();
+		const next = new AbortController();
+		controller.current = next;
 		setResult({ kind: "pending" });
 		try {
-			const hits = await load();
-			if (request === generation.current) setResult({ kind: "ready", hits });
+			const hits = await load(next.signal);
+			if (request === generation.current && !next.signal.aborted)
+				setResult({ kind: "ready", hits });
 		} catch {
-			if (request === generation.current) setResult({ kind: "error" });
+			if (request === generation.current && !next.signal.aborted)
+				setResult({ kind: "error" });
 		}
 	}
 	return { result, reset, search };
 }
 
+const button =
+	"react-aria-Button ui-button inline-flex min-h-[30px] pointer-coarse:min-h-[40px] cursor-pointer items-center justify-center gap-1.5 rounded-[var(--control-radius)] border px-[9px] py-[5px] no-underline motion-safe:transition-[background-color,border-color,color] motion-safe:duration-[120ms] motion-reduce:transition-none hover:border-[var(--accent)] hover:bg-[var(--raised)] active:bg-[var(--accent-soft)] aria-disabled:cursor-not-allowed aria-disabled:bg-[var(--raised)] aria-disabled:text-[var(--muted)] disabled:cursor-not-allowed disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
 const panel =
 	"min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 sm:p-4";
 const actions = "flex flex-wrap items-center gap-2";
-const secondary = "demo-button max-w-full";
-const primary = `${secondary} font-semibold border-[var(--accent)] bg-[var(--accent-soft)]`;
+const secondary = `${button} max-w-full border-[var(--control)] bg-[var(--surface)] text-[var(--ink)] aria-disabled:border-[var(--line)] disabled:border-[var(--line)]`;
+const primary = `${button} max-w-full font-semibold border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] aria-disabled:border-[var(--line)] aria-disabled:text-[var(--muted)] disabled:border-[var(--line)] disabled:text-[var(--muted)]`;
 const muted = "m-0 text-xs text-[var(--muted)] wrap-anywhere";
 const rows = "m-0 list-none divide-y divide-[var(--line)] p-0";
 const row = "flex min-w-0 flex-wrap items-center justify-between gap-2 py-2.5";
@@ -88,6 +111,7 @@ function Field({
 	required,
 	placeholder,
 	readOnly,
+	disabled,
 }: {
 	label: string;
 	value: string;
@@ -95,6 +119,7 @@ function Field({
 	required?: boolean;
 	placeholder?: string;
 	readOnly?: boolean;
+	disabled?: boolean;
 }) {
 	return (
 		<label className="grid min-w-0 gap-1 text-xs font-medium">
@@ -106,6 +131,7 @@ function Field({
 				required={required}
 				placeholder={placeholder}
 				readOnly={readOnly}
+				disabled={disabled}
 			/>
 		</label>
 	);
@@ -151,6 +177,7 @@ function RecordingPicker({
 	copy,
 	findRecordings,
 	saveRecording,
+	busy,
 	onSaved,
 	onAdd,
 	onClose,
@@ -158,35 +185,56 @@ function RecordingPicker({
 	copy: Copy;
 	findRecordings: LocalReleaseEditorProps["findRecordings"];
 	saveRecording: LocalReleaseEditorProps["saveRecording"];
-	onSaved: (recording: LocalProviderRecord) => void;
-	onAdd: (recording: LocalProviderRecord) => void;
+	busy: boolean;
+	onSaved: (recording: LocalReleaseRecording) => void;
+	onAdd: (recording: LocalReleaseRecording) => void;
 	onClose: () => void;
 }) {
-	const lookup = useLookup<LocalProviderRecord>();
+	const lookup = useLookup<LocalReleaseRecording>();
 	const [query, setQuery] = useState("");
 	const [create, setCreate] = useState(false);
 	const [duration, setDuration] = useState("");
 	const [invalid, setInvalid] = useState(false);
-	const [saved, setSaved] = useState<LocalProviderRecord>();
+	const [saved, setSaved] = useState<LocalReleaseRecording>();
+	const [saving, setSaving] = useState(false);
+	const [saveError, setSaveError] = useState(false);
+	const [uncertain, setUncertain] = useState(false);
+	const savingRef = useRef(false);
 	const titleRef = useRef<HTMLHeadingElement>(null);
 	useEffect(() => titleRef.current?.focus(), []);
 	const trimQuery = query.trim();
-	function saveNewRecording() {
+	const isBusy = busy || saving;
+	function clearSaveError() {
+		if (saveError) setSaveError(false);
+	}
+	async function saveNewRecording() {
+		if (savingRef.current || uncertain) return;
 		if (!trimQuery || lookup.result.kind !== "ready" || !create) return;
 		const durationMs = parseLocalDuration(duration);
 		if (Number.isNaN(durationMs)) {
 			setInvalid(true);
 			return;
 		}
-		const recording = saveRecording({
-			title: trimQuery,
-			duration_ms: durationMs ?? undefined,
-		});
-		onSaved(recording);
-		setSaved(recording);
-		setCreate(false);
+		savingRef.current = true;
+		setSaving(true);
+		setSaveError(false);
+		try {
+			const recording = await saveRecording({
+				title: trimQuery,
+				duration_ms: durationMs ?? undefined,
+			});
+			onSaved(recording);
+			setSaved(recording);
+			setCreate(false);
+		} catch (error) {
+			if (isOutcomeUncertain(error)) setUncertain(true);
+			else setSaveError(true);
+		} finally {
+			savingRef.current = false;
+			setSaving(false);
+		}
 	}
-	const resultRow = (recording: LocalProviderRecord) => (
+	const resultRow = (recording: LocalReleaseRecording) => (
 		<li key={recording.id} className={row}>
 			<div className="min-w-0 wrap-anywhere">
 				<strong>{recording.title}</strong>
@@ -199,6 +247,7 @@ function RecordingPicker({
 			<Button
 				className={secondary}
 				aria-label={`${copy.add}: ${recording.title}`}
+				isDisabled={isBusy}
 				onPress={() => onAdd(recording)}
 			>
 				{copy.add}
@@ -219,7 +268,7 @@ function RecordingPicker({
 				>
 					{copy.addTrack}
 				</h3>
-				<Button className={secondary} onPress={onClose}>
+				<Button className={secondary} isDisabled={isBusy} onPress={onClose}>
 					{copy.closePicker}
 				</Button>
 			</div>
@@ -228,27 +277,30 @@ function RecordingPicker({
 				className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
 				onSubmit={(event) => {
 					event.preventDefault();
-					if (!trimQuery || lookup.result.kind === "pending") return;
+					if (!trimQuery || lookup.result.kind === "pending" || isBusy) return;
 					setSaved(undefined);
 					setCreate(false);
-					void lookup.search(() => findRecordings(trimQuery));
+					clearSaveError();
+					void lookup.search((signal) => findRecordings(trimQuery, signal));
 				}}
 			>
 				<Field
 					label={copy.recordingQuery}
 					value={query}
 					required
+					disabled={isBusy}
 					onChange={(value) => {
 						setQuery(value);
 						lookup.reset();
 						setCreate(false);
 						setSaved(undefined);
+						clearSaveError();
 					}}
 				/>
 				<Button
 					className={secondary}
 					type="submit"
-					isDisabled={!trimQuery || lookup.result.kind === "pending"}
+					isDisabled={!trimQuery || lookup.result.kind === "pending" || isBusy}
 				>
 					{copy.search}
 				</Button>
@@ -273,9 +325,11 @@ function RecordingPicker({
 							{!create && (
 								<Button
 									className={`${secondary} w-fit`}
+									isDisabled={isBusy}
 									onPress={() => {
 										setDuration("");
 										setInvalid(false);
+										clearSaveError();
 										setCreate(true);
 									}}
 								>
@@ -299,9 +353,11 @@ function RecordingPicker({
 						<Field
 							label={copy.duration}
 							value={duration}
+							disabled={isBusy}
 							onChange={(value) => {
 								setDuration(value);
 								setInvalid(false);
+								clearSaveError();
 							}}
 							placeholder="3:24"
 						/>
@@ -311,7 +367,26 @@ function RecordingPicker({
 							{copy.badDuration}
 						</p>
 					)}
-					<Button className={`${primary} w-fit`} onPress={saveNewRecording}>
+					{saving && (
+						<p className={muted} role="status">
+							{copy.savingRecording}
+						</p>
+					)}
+					{saveError && (
+						<p className={errorClass} role="alert">
+							{copy.saveRecordingError}
+						</p>
+					)}
+					{uncertain && (
+						<p className={errorClass} role="alert">
+							{copy.saveRecordingUncertain}
+						</p>
+					)}
+					<Button
+						className={`${primary} w-fit`}
+						isDisabled={isBusy || uncertain}
+						onPress={() => void saveNewRecording()}
+					>
 						{copy.saveTrack}
 					</Button>
 				</section>
@@ -320,7 +395,7 @@ function RecordingPicker({
 	);
 }
 
-type Position = LocalProviderTrack & { durationInput: string };
+type Position = LocalReleaseTrack & { durationInput: string };
 
 export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 	const { locale, incomingLabel, artists, recordings, onCancel } = props;
@@ -338,19 +413,43 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 	const [editId, setEditId] = useState<string>();
 	const [badPosition, setBadPosition] = useState<string>();
 	const [picker, setPicker] = useState(false);
-	const [savedRecordings, setSavedRecordings] = useState<LocalProviderRecord[]>(
-		[],
-	);
+	const [savedRecordings, setSavedRecordings] = useState<
+		LocalReleaseRecording[]
+	>([]);
+	const [pickedRecordings, setPickedRecordings] = useState<
+		LocalReleaseRecording[]
+	>([]);
 	const [cancel, setCancel] = useState(false);
+	const [savingRelease, setSavingRelease] = useState(false);
+	const [saveReleaseError, setSaveReleaseError] = useState(false);
+	const [releaseUncertain, setReleaseUncertain] = useState(false);
+	const savingReleaseRef = useRef(false);
 	const heading = useRef<HTMLHeadingElement>(null);
 	const editorHeading = useRef<HTMLHeadingElement>(null);
 	const addButton = useRef<HTMLButtonElement>(null);
+	const suggestedArtist = props.suggestedArtist.trim();
+	const rosterIncludesSuggested =
+		!suggestedArtist ||
+		artists.some(
+			(item) =>
+				(item.name ?? "").trim().toLowerCase() ===
+				suggestedArtist.toLowerCase(),
+		);
 	useEffect(() => heading.current?.focus(), []);
 	useEffect(() => {
 		if (step === "edit") editorHeading.current?.focus();
 	}, [step]);
 
-	function add(recording: LocalProviderRecord) {
+	function remember(recording: LocalReleaseRecording) {
+		setPickedRecordings((current) =>
+			current.some((item) => item.id === recording.id)
+				? current
+				: [...current, recording],
+		);
+	}
+
+	function add(recording: LocalReleaseRecording) {
+		remember(recording);
 		setPositions((current) => [
 			...current,
 			{
@@ -383,7 +482,8 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 		});
 	}
 
-	function save() {
+	async function save() {
+		if (savingReleaseRef.current || releaseUncertain) return;
 		if (!title.trim()) return;
 		const invalidPosition = positions.find((position) =>
 			Number.isNaN(parseLocalDuration(position.durationInput)),
@@ -393,19 +493,30 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 			setBadPosition(invalidPosition.id);
 			return;
 		}
-		props.onSave({
-			title: edition.trim() || title.trim(),
-			release_group_title: title.trim(),
-			artistIds,
-			primaryType: primaryType || undefined,
-			language: language.trim() || undefined,
-			script: script.trim() || undefined,
-			tracks: positions.map(({ durationInput, ...position }) => ({
-				...position,
-				titleOverride: position.titleOverride.trim(),
-				durationOverrideMs: parseLocalDuration(durationInput),
-			})),
-		});
+		savingReleaseRef.current = true;
+		setSavingRelease(true);
+		setSaveReleaseError(false);
+		try {
+			await props.onSave({
+				title: edition.trim() || title.trim(),
+				release_group_title: title.trim(),
+				artistIds,
+				primaryType: primaryType || undefined,
+				language: language.trim() || undefined,
+				script: script.trim() || undefined,
+				tracks: positions.map(({ durationInput, ...position }) => ({
+					...position,
+					titleOverride: position.titleOverride.trim(),
+					durationOverrideMs: parseLocalDuration(durationInput),
+				})),
+			});
+		} catch (error) {
+			if (isOutcomeUncertain(error)) setReleaseUncertain(true);
+			else setSaveReleaseError(true);
+		} finally {
+			savingReleaseRef.current = false;
+			setSavingRelease(false);
+		}
 	}
 
 	return (
@@ -433,8 +544,8 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!title.trim() || lookup.result.kind === "pending") return;
-							void lookup.search(() =>
-								props.checkRelease(artist.trim(), title.trim()),
+							void lookup.search((signal) =>
+								props.checkRelease(artist.trim(), title.trim(), signal),
 							);
 						}}
 					>
@@ -543,7 +654,11 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 									readOnly
 								/>
 							</div>
-							<Button className={secondary} onPress={() => setStep("check")}>
+							<Button
+								className={secondary}
+								isDisabled={savingRelease}
+								onPress={() => setStep("check")}
+							>
 								{copy.recheck}
 							</Button>
 						</div>
@@ -552,12 +667,19 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 								{copy.artists}
 							</legend>
 							<p className={muted}>{copy.artistHelp}</p>
+							{suggestedArtist && !rosterIncludesSuggested && (
+								<p className={muted}>
+									{copy.suggestedArtistContext}{" "}
+									<strong>{suggestedArtist}</strong>
+								</p>
+							)}
 							<div className="flex flex-wrap gap-2">
 								{artists.map((item) => (
 									<Checkbox
 										className="flex cursor-pointer items-center gap-1.5 rounded border border-[var(--control)] px-2 py-1 text-xs wrap-anywhere data-[selected]:border-[var(--accent)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"
 										key={item.id}
 										isSelected={artistIds.includes(item.id)}
+										isDisabled={savingRelease}
 										onChange={(selected) =>
 											setArtistIds((current) =>
 												selected
@@ -581,12 +703,14 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 									value={edition}
 									onChange={setEdition}
 									placeholder={title}
+									disabled={savingRelease}
 								/>
 								<label className="grid gap-1 text-xs font-medium">
 									{copy.type}
 									<select
 										className="min-h-8 rounded border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)]"
 										value={primaryType}
+										disabled={savingRelease}
 										onChange={(event) => setPrimaryType(event.target.value)}
 									>
 										<option value="">—</option>
@@ -602,12 +726,14 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 									value={language}
 									onChange={setLanguage}
 									placeholder="eng"
+									disabled={savingRelease}
 								/>
 								<Field
 									label={copy.script}
 									value={script}
 									onChange={setScript}
 									placeholder="Latn"
+									disabled={savingRelease}
 								/>
 								<p className={`${muted} sm:col-span-2`}>{copy.editionHelp}</p>
 							</div>
@@ -627,7 +753,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 							<Button
 								ref={addButton}
 								className={secondary}
-								isDisabled={picker}
+								isDisabled={picker || savingRelease}
 								onPress={() => setPicker(true)}
 							>
 								{copy.addTrack}
@@ -639,6 +765,9 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 								{positions.map((position, index) => {
 									const recording =
 										recordings.find(
+											(record) => record.id === position.recordingId,
+										) ??
+										pickedRecordings.find(
 											(record) => record.id === position.recordingId,
 										) ??
 										savedRecordings.find(
@@ -672,6 +801,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 												<Button
 													className={secondary}
 													aria-expanded={editing}
+													isDisabled={savingRelease}
 													aria-label={`${editing ? copy.closeRow : copy.editRow} ${index + 1}`}
 													onPress={() =>
 														setEditId(editing ? undefined : position.id)
@@ -686,6 +816,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 														<Field
 															label={copy.positionTitle}
 															value={position.titleOverride}
+															disabled={savingRelease}
 															onChange={(value) =>
 																change(position.id, { titleOverride: value })
 															}
@@ -693,6 +824,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 														<Field
 															label={copy.positionDuration}
 															value={position.durationInput}
+															disabled={savingRelease}
 															onChange={(value) =>
 																change(position.id, { durationInput: value })
 															}
@@ -707,20 +839,23 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 													<div className={actions}>
 														<Button
 															className={secondary}
-															isDisabled={index === 0}
+															isDisabled={savingRelease || index === 0}
 															onPress={() => move(index, -1)}
 														>
 															{copy.up}
 														</Button>
 														<Button
 															className={secondary}
-															isDisabled={index === positions.length - 1}
+															isDisabled={
+																savingRelease || index === positions.length - 1
+															}
 															onPress={() => move(index, 1)}
 														>
 															{copy.down}
 														</Button>
 														<Button
 															className={secondary}
+															isDisabled={savingRelease}
 															onPress={() =>
 																setPositions((current) =>
 																	current.filter(
@@ -744,6 +879,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 								copy={copy}
 								findRecordings={props.findRecordings}
 								saveRecording={props.saveRecording}
+								busy={savingRelease}
 								onSaved={(recording) =>
 									setSavedRecordings((current) => [...current, recording])
 								}
@@ -770,11 +906,34 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 					</section>
 					<footer className={`${panel} grid gap-2`}>
 						<p className={muted}>{copy.saveHelp}</p>
+						{savingRelease && (
+							<p className={muted} role="status">
+								{copy.savingRelease}
+							</p>
+						)}
+						{saveReleaseError && (
+							<p className={errorClass} role="alert">
+								{copy.saveReleaseError}
+							</p>
+						)}
+						{releaseUncertain && (
+							<p className={errorClass} role="alert">
+								{copy.saveReleaseUncertain}
+							</p>
+						)}
 						<div className={actions}>
-							<Button className={primary} onPress={save}>
+							<Button
+								className={primary}
+								isDisabled={savingRelease || releaseUncertain}
+								onPress={() => void save()}
+							>
 								{copy.save}
 							</Button>
-							<Button className={secondary} onPress={() => setCancel(true)}>
+							<Button
+								className={secondary}
+								isDisabled={savingRelease}
+								onPress={() => setCancel(true)}
+							>
 								{copy.cancel}
 							</Button>
 						</div>

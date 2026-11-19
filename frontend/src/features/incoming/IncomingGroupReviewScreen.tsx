@@ -24,6 +24,8 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { IncomingLocalReleaseCreation } from "../local-release/IncomingLocalReleaseCreation";
+import { localReleaseMessages } from "../local-release/localReleaseMessages";
 import { MatchingPreview } from "../matchingWorkspace/MatchingPreview";
 import {
   MatchingWorkspaceLayout,
@@ -224,7 +226,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const routeGroupId = route.view === "matching" ? route.groupId : "";
   const routeReleaseId =
     route.view === "matching" ? (route.releaseId ?? "") : "";
-  const matchingActive = route.view === "matching";
+  const creatingLocalRelease =
+    route.view === "matching" && route.creatingLocalRelease === true;
+  const matchingActive = route.view === "matching" && !creatingLocalRelease;
+  const preferredLocalReleaseId =
+    route.view === "matching" ? route.localReleaseId : undefined;
+  const prepareReleaseId =
+    route.view === "matching" ? route.prepareReleaseId : undefined;
   const [retainedGroupId, setRetainedGroupId] = useState("");
   const groupId = routeGroupId || retainedGroupId;
   const groupsQuery = useQuery({
@@ -283,6 +291,14 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const matchingHeadingRef = useRef<HTMLHeadingElement>(null);
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
   const focusedPreview = useRef<MatchingManualPreview | undefined>(undefined);
+
+  useEffect(() => {
+    if (!matchingActive || !groupId || !prepareReleaseId) return;
+    setSearchReleaseSelections((current) => ({
+      ...current,
+      [groupId]: prepareReleaseId,
+    }));
+  }, [groupId, matchingActive, prepareReleaseId]);
 
   function scopeIdentity() {
     const scope = scopeRef.current;
@@ -437,7 +453,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }, [drafts, groupId, review, selectedReleaseId, tagOverrideDrafts]);
 
   useEffect(() => {
-    if (!preparedReleaseMBID || !groupId) return;
+    if (
+      !matchingActive ||
+      preferredLocalReleaseId ||
+      !preparedReleaseMBID ||
+      !groupId
+    )
+      return;
     const chosen = releases.find(
       (item) => item.release_id === preparedReleaseMBID,
     );
@@ -456,7 +478,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       groupId,
       chosen.provider_release_id,
     );
-  }, [groupId, preparedReleaseMBID, releases]);
+  }, [
+    groupId,
+    matchingActive,
+    preferredLocalReleaseId,
+    preparedReleaseMBID,
+    releases,
+  ]);
 
   useEffect(() => {
     if (!groupId || !review || seededGroup.current === groupId) return;
@@ -870,9 +898,59 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         item.release_id === release?.provider_release_id),
   );
 
+  const matchingHref = incomingGroupMatchingHref(groupId, routeReleaseId, {
+    localReleaseId: preferredLocalReleaseId,
+    prepareReleaseId,
+  });
+  const creationHash = creatingLocalRelease ? window.location.hash : "";
+
   return (
     <section className={incomingScreenClass}>
-      <section hidden={matchingActive} aria-labelledby="incoming-title">
+      {creatingLocalRelease &&
+        (group && groupsQuery.data ? (
+          <IncomingLocalReleaseCreation
+            key={group.id}
+            group={group}
+            files={files.filter((file) =>
+              [
+                ...(group.members ?? []),
+                ...(group.unready_members ?? []),
+              ].includes(file.variant_id),
+            )}
+            label={incomingGroupNameText(groupNames.get(group.id), locale)}
+            onCancel={() => window.location.replace(matchingHref)}
+            onSelect={(id, kind) => {
+              if (window.location.hash !== creationHash) return;
+              const next = incomingGroupMatchingHref(group.id, routeReleaseId, {
+                localReleaseId: kind === "local" ? id : preferredLocalReleaseId,
+                prepareReleaseId: kind === "musicbrainz" ? id : undefined,
+              });
+              window.location.replace(next);
+            }}
+          />
+        ) : (
+          <section className="space-y-2">
+            <a href={matchingHref} className="underline">
+              {copy.tabMatching}
+            </a>
+            {groupsQuery.isLoading ? (
+              <p role="status">{copy.loadingGroups}</p>
+            ) : groupsQuery.isError ? (
+              <p role="alert">
+                {incomingFeedbackText(
+                  locale,
+                  errorText(groupsQuery.error, "groupsLoadError"),
+                )}
+              </p>
+            ) : (
+              <p role="alert">{copy.groupNotFound}</p>
+            )}
+          </section>
+        ))}
+      <section
+        hidden={matchingActive || creatingLocalRelease}
+        aria-labelledby="incoming-title"
+      >
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 id="incoming-title" className="text-2xl font-semibold">
@@ -984,7 +1062,10 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             ) : null}
 
             {group && groupsQuery.data ? (
-              <details className="rounded border border-stone-300 p-3">
+              <details
+                className="rounded border border-stone-300 p-3"
+                open={preferredLocalReleaseId ? true : undefined}
+              >
                 <summary className="cursor-pointer font-semibold">
                   {localMatchingCopy.sectionSummary}
                 </summary>
@@ -992,6 +1073,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   group={group}
                   files={groupsQuery.data.files ?? []}
                   authorityRevision={review?.authority_revision}
+                  preferredReleaseId={preferredLocalReleaseId}
                   onConfirmed={async () => {
                     invalidateIntent();
                     setPreview(undefined);
@@ -1009,6 +1091,18 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                 />
               </details>
             ) : null}
+            {group && !sameGroupInFlight && (
+              <a
+                className="inline-block rounded border border-[var(--control)] px-2.5 py-1.5 text-sm text-[var(--ink)] no-underline hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                href={incomingGroupMatchingHref(group.id, routeReleaseId, {
+                  localReleaseId: preferredLocalReleaseId,
+                  prepareReleaseId,
+                  creatingLocalRelease: true,
+                })}
+              >
+                {localReleaseMessages[locale].title}
+              </a>
+            )}
 
             {reviewQuery.isLoading ? (
               <p role="status">{copy.loadingEvaluation}</p>
@@ -1122,7 +1216,9 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   disabled={
                     !review || busy || authorityBusy || sameGroupInFlight
                   }
-                  searchRelease={searchReleaseSelections[groupId]}
+                  searchRelease={
+                    searchReleaseSelections[groupId] ?? prepareReleaseId
+                  }
                   onPrepared={setPreparedReleaseMBID}
                 />
               </section>
@@ -1170,7 +1266,9 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         disabled={
                           !review || busy || authorityBusy || sameGroupInFlight
                         }
-                        searchRelease={searchReleaseSelections[groupId]}
+                        searchRelease={
+                          searchReleaseSelections[groupId] ?? prepareReleaseId
+                        }
                         onPrepared={setPreparedReleaseMBID}
                       />
                     </>

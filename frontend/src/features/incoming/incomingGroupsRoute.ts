@@ -1,6 +1,13 @@
 export type IncomingGroupsRoute =
   | { view: "list"; expandedGroupIds: string[] }
-  | { view: "matching"; groupId: string; releaseId?: string };
+  | {
+      view: "matching";
+      groupId: string;
+      releaseId?: string;
+      localReleaseId?: string;
+      prepareReleaseId?: string;
+      creatingLocalRelease?: boolean;
+    };
 
 export const incomingGroupsListRoute: IncomingGroupsRoute = {
   view: "list",
@@ -20,15 +27,26 @@ export function parseIncomingGroupsRoute(
       ],
     };
   }
-  const match = /^\/incoming-groups\/([^/]+)\/matching$/.exec(pathname);
+  const match =
+    /^\/incoming-groups\/([^/]+)\/matching(?:\/(local-release))?$/.exec(
+      pathname,
+    );
   if (!match) return undefined;
   try {
     const groupId = decodeURIComponent(match[1]);
     if (!groupId) return undefined;
-    const releaseId = new URLSearchParams(search).get("release") ?? "";
-    return releaseId
-      ? { view: "matching", groupId, releaseId }
-      : { view: "matching", groupId };
+    const params = new URLSearchParams(search);
+    const releaseId = params.get("release");
+    const localReleaseId = params.get("local");
+    const prepareReleaseId = params.get("prepare");
+    return {
+      view: "matching",
+      groupId,
+      ...(releaseId ? { releaseId } : {}),
+      ...(localReleaseId ? { localReleaseId } : {}),
+      ...(prepareReleaseId ? { prepareReleaseId } : {}),
+      ...(match[2] ? { creatingLocalRelease: true } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -43,7 +61,21 @@ export function incomingGroupsListHref(
   return query ? `#/incoming-groups?${query}` : "#/incoming-groups";
 }
 
-export function incomingGroupMatchingHref(groupId: string, releaseId?: string) {
+export function incomingGroupMatchingHref(
+  groupId: string,
+  releaseId?: string,
+  options?: {
+    localReleaseId?: string;
+    prepareReleaseId?: string;
+    creatingLocalRelease?: boolean;
+  },
+) {
   const path = `#/incoming-groups/${encodeURIComponent(groupId)}/matching`;
-  return releaseId ? `${path}?release=${encodeURIComponent(releaseId)}` : path;
+  const params = new URLSearchParams();
+  if (releaseId) params.set("release", releaseId);
+  if (options?.localReleaseId) params.set("local", options.localReleaseId);
+  if (options?.prepareReleaseId)
+    params.set("prepare", options.prepareReleaseId);
+  const query = params.toString();
+  return `${path}${options?.creatingLocalRelease ? "/local-release" : ""}${query ? `?${query}` : ""}`;
 }

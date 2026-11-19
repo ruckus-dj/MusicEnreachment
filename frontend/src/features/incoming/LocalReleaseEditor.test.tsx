@@ -107,6 +107,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("opens the exact catalog release with no file assignments or matching writes", async () => {
+  const matching = vi.fn();
+  const readRelease = vi.fn(() => HttpResponse.json(release));
+  server.use(
+    http.get(`/api/provider-catalog/releases/${releaseID}`, readRelease),
+    http.post("/api/incoming-groups/:group/matching/local/:action", () => {
+      matching();
+      return HttpResponse.json(matchingPreview);
+    }),
+  );
+  render(
+    <I18nProvider>
+      <LocalReleaseEditor
+        group={group}
+        files={[file]}
+        authorityRevision={2}
+        preferredReleaseId={releaseID}
+      />
+    </I18nProvider>,
+  );
+  expect(
+    await screen.findByRole("option", { name: "1. Переименованная дорожка" }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Локальный релиз")).toHaveValue(releaseID);
+  expect(screen.getByLabelText("Дорожка для файла album/01.flac")).toHaveValue(
+    "",
+  );
+  expect(readRelease).toHaveBeenCalledTimes(1);
+  expect(matching).not.toHaveBeenCalled();
+});
+
 it("selects a local provider release, assigns an incoming file, and confirms the frozen preview", async () => {
   let previewBody: Record<string, unknown> | undefined;
   let catalogRequests = 0;

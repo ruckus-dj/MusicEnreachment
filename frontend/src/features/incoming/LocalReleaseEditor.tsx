@@ -45,6 +45,7 @@ type EditorState = {
   selectedReleaseID: string;
   release?: LocalProviderItem;
   assignments: Record<string, string>;
+  assignmentDrafts: Record<string, Record<string, string>>;
   preview?: PreviewState;
   pending?: PendingConfirmation;
   receipt?: MatchingLocalPreview;
@@ -63,6 +64,7 @@ type CatalogState = {
 const emptyEditorState = (): EditorState => ({
   selectedReleaseID: "",
   assignments: {},
+  assignmentDrafts: {},
 });
 
 function message(reason: unknown, fallback: string) {
@@ -91,6 +93,7 @@ export interface LocalReleaseEditorProps {
   group: IncomingGroupResponse;
   files: IncomingFileResponse[];
   authorityRevision: number | undefined;
+  preferredReleaseId?: string;
   onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
 }
 
@@ -98,6 +101,7 @@ export function LocalReleaseEditor({
   group,
   files,
   authorityRevision,
+  preferredReleaseId,
   onConfirmed,
 }: LocalReleaseEditorProps) {
   const { locale } = useI18n();
@@ -108,6 +112,7 @@ export function LocalReleaseEditor({
   const catalogRequests = useRef<Record<string, number>>({});
   const detailRequest = useRef(0);
   const previousScopes = useRef<Record<string, string>>({});
+  const appliedPreferredReleases = useRef<Record<string, string>>({});
   const selectedReleaseRef = useRef("");
   const currentScope = `${group.id}:${group.revision}:${authorityRevision === undefined ? "unknown" : authorityRevision}`;
   const currentScopeRef = useRef(currentScope);
@@ -118,6 +123,18 @@ export function LocalReleaseEditor({
     group.members?.includes(file.variant_id),
   );
   const tracks = state.release?.tracks ?? [];
+  const exactRelease =
+    state.release?.id === state.selectedReleaseID ? state.release : undefined;
+  const catalogItems = catalogs[group.id]?.items;
+  const releaseOptions =
+    catalogItems === undefined
+      ? exactRelease
+        ? [exactRelease]
+        : undefined
+      : exactRelease &&
+          !catalogItems.some((item) => item.id === exactRelease.id)
+        ? [exactRelease, ...catalogItems]
+        : catalogItems;
   const confirmationInFlight = state.busy === "confirm";
 
   function update(updateState: (current: EditorState) => EditorState) {
@@ -208,22 +225,34 @@ export function LocalReleaseEditor({
     }
   }
 
-  async function selectRelease(releaseID: string) {
+  async function selectRelease(
+    releaseID: string,
+    { restoreDraft = true }: { restoreDraft?: boolean } = {},
+  ) {
     if (state.pending) return;
     const request = ++detailRequest.current;
     selectedReleaseRef.current = releaseID;
     sequence.current += 1;
-    update((current) => ({
-      ...current,
-      selectedReleaseID: releaseID,
-      release: undefined,
-      assignments: {},
-      preview: undefined,
-      receipt: undefined,
-      error: undefined,
-      notice: undefined,
-      stale: false,
-    }));
+    update((current) => {
+      const assignmentDrafts = { ...current.assignmentDrafts };
+      if (current.selectedReleaseID) {
+        assignmentDrafts[current.selectedReleaseID] = current.assignments;
+      }
+      return {
+        ...current,
+        selectedReleaseID: releaseID,
+        release: undefined,
+        assignmentDrafts,
+        assignments: restoreDraft
+          ? { ...(assignmentDrafts[releaseID] ?? {}) }
+          : {},
+        preview: undefined,
+        receipt: undefined,
+        error: undefined,
+        notice: undefined,
+        stale: false,
+      };
+    });
     if (!releaseID) return;
     try {
       const response = await readLocalProviderRelease(releaseID, {
@@ -254,6 +283,31 @@ export function LocalReleaseEditor({
       }
     }
   }
+
+  const selectReleaseRef = useRef(selectRelease);
+  selectReleaseRef.current = selectRelease;
+
+  useEffect(() => {
+    if (!preferredReleaseId) {
+      delete appliedPreferredReleases.current[group.id];
+      return;
+    }
+    if (appliedPreferredReleases.current[group.id] === preferredReleaseId) {
+      return;
+    }
+    if (state.pending || state.busy === "confirm") return;
+    appliedPreferredReleases.current[group.id] = preferredReleaseId;
+    if (state.selectedReleaseID !== preferredReleaseId)
+      void selectReleaseRef.current(preferredReleaseId, {
+        restoreDraft: false,
+      });
+  }, [
+    preferredReleaseId,
+    group.id,
+    state.pending,
+    state.busy,
+    state.selectedReleaseID,
+  ]);
 
   function makePreviewBody(): PreviewBody | undefined {
     if (authorityRevision === undefined) {
@@ -464,7 +518,7 @@ export function LocalReleaseEditor({
         {catalogs[group.id]?.error && (
           <p role="alert">{catalogs[group.id].error}</p>
         )}
-        {catalogs[group.id]?.items && (
+        {(releaseOptions || state.selectedReleaseID) && (
           <label className="block">
             {copy.releaseLabel}
             <select
@@ -473,11 +527,19 @@ export function LocalReleaseEditor({
               onChange={(event) => void selectRelease(event.target.value)}
             >
               <option value="">{copy.chooseRelease}</option>
-              {catalogs[group.id]?.items?.map((release) => (
+              {releaseOptions?.map((release) => (
                 <option key={release.id} value={release.id}>
                   {release.title || release.id}
                 </option>
               ))}
+              {state.selectedReleaseID &&
+                !releaseOptions?.some(
+                  (release) => release.id === state.selectedReleaseID,
+                ) && (
+                  <option value={state.selectedReleaseID}>
+                    {exactRelease?.title || state.selectedReleaseID}
+                  </option>
+                )}
             </select>
           </label>
         )}

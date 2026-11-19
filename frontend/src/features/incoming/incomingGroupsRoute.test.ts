@@ -37,6 +37,44 @@ describe("incoming groups route", () => {
     });
   });
 
+  it("parses a local release creation route and preferred local release", () => {
+    expect(
+      parseIncomingGroupsRoute(
+        "#/incoming-groups/group%2Fone/matching/local-release",
+      ),
+    ).toEqual({
+      view: "matching",
+      groupId: "group/one",
+      creatingLocalRelease: true,
+    });
+    expect(
+      parseIncomingGroupsRoute(
+        "#/incoming-groups/group-one/matching?local=local%2Frelease",
+      ),
+    ).toEqual({
+      view: "matching",
+      groupId: "group-one",
+      localReleaseId: "local/release",
+    });
+    expect(
+      parseIncomingGroupsRoute(
+        "#/incoming-groups/group-one/matching/local-release?release=release%2Fone&local=local%2Frelease&prepare=prepare%2Frelease",
+      ),
+    ).toEqual({
+      view: "matching",
+      groupId: "group-one",
+      releaseId: "release/one",
+      localReleaseId: "local/release",
+      prepareReleaseId: "prepare/release",
+      creatingLocalRelease: true,
+    });
+    expect(
+      parseIncomingGroupsRoute(
+        "#/incoming-groups/group-one/matching/local-release/extra",
+      ),
+    ).toBe(undefined);
+  });
+
   it("ignores unrelated and malformed locations", () => {
     expect(parseIncomingGroupsRoute("#/incoming-groups/group-one")).toBe(
       undefined,
@@ -68,5 +106,38 @@ describe("incoming groups route", () => {
       expandedGroupIds: ["group/one"],
     });
     expect(incomingGroupsListHref()).toBe("#/incoming-groups");
+
+    const localCreation = incomingGroupMatchingHref(
+      "group/one",
+      "release/one",
+      {
+        localReleaseId: "local/release",
+        prepareReleaseId: "prepare/release",
+        creatingLocalRelease: true,
+      },
+    );
+    expect(localCreation).toBe(
+      "#/incoming-groups/group%2Fone/matching/local-release?release=release%2Fone&local=local%2Frelease&prepare=prepare%2Frelease",
+    );
+    expect(parseIncomingGroupsRoute(localCreation)).toEqual({
+      view: "matching",
+      groupId: "group/one",
+      releaseId: "release/one",
+      localReleaseId: "local/release",
+      prepareReleaseId: "prepare/release",
+      creatingLocalRelease: true,
+    });
+
+    const preferred = incomingGroupMatchingHref("group-one", undefined, {
+      localReleaseId: "local/release",
+    });
+    expect(preferred).toBe(
+      "#/incoming-groups/group-one/matching?local=local%2Frelease",
+    );
+    expect(parseIncomingGroupsRoute(preferred)).toEqual({
+      view: "matching",
+      groupId: "group-one",
+      localReleaseId: "local/release",
+    });
   });
 });

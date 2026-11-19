@@ -9,6 +9,9 @@
     {
       "includes": [
         "src/features/matchingWorkspace/sourceFileOrder.ts",
+        "src/features/local-release/LocalReleaseEditor.tsx",
+        "src/features/local-release/localReleaseFormModel.ts",
+        "src/features/local-release/localReleaseMessages.ts",
         "src/features/operations/OperationsList.tsx",
         "src/features/sources/SourceRootList.tsx",
         "src/features/sources/SourceScanPanel.tsx",

@@ -19,6 +19,7 @@ export const localReleaseMessages = {
 		next: "No suitable edition — continue",
 		artists: "Release artists",
 		artistHelp: "Select existing artist records. They are not copied.",
+		suggestedArtistContext: "Suggested artist (not in the roster):",
 		tracklist: "Tracklist",
 		noTracks: "No tracks yet. Find an existing recording to add the first one.",
 		addTrack: "Add a recording",
@@ -32,6 +33,11 @@ export const localReleaseMessages = {
 		duration: "Duration (M:SS or seconds)",
 		badDuration: "Use whole seconds or M:SS for the duration.",
 		saveTrack: "Save recording",
+		savingRecording: "Saving the recording…",
+		saveRecordingError:
+			"Could not save the recording. Your draft is still here; try again.",
+		saveRecordingUncertain:
+			"The result is unknown: the recording may already exist. Check Own Catalog. Saving is disabled for this draft.",
 		savedTracks: "Saved in your catalog",
 		savedHelp: "These recordings persist even if you cancel the release.",
 		details: "More details",
@@ -51,6 +57,11 @@ export const localReleaseMessages = {
 		save: "Save release and return",
 		saveHelp:
 			"Saving does not assign files, confirm a match, or publish audio.",
+		savingRelease: "Saving the release…",
+		saveReleaseError:
+			"Could not save the release. Your draft is still here; try again.",
+		saveReleaseUncertain:
+			"The result is unknown: the release may already exist. Check Own Catalog. Saving is disabled for this draft.",
 		cancel: "Cancel",
 		cancelQuestion: "Cancel this release?",
 		cancelHelp: "Only the unsaved release will be discarded.",
@@ -77,6 +88,7 @@ export const localReleaseMessages = {
 		next: "Нет подходящего — продолжить",
 		artists: "Исполнители релиза",
 		artistHelp: "Выберите существующих исполнителей. Их записи не копируются.",
+		suggestedArtistContext: "Исполнитель из подсказки (нет в списке):",
 		tracklist: "Треклист",
 		noTracks:
 			"Треклист пуст. Найдите существующую композицию, чтобы добавить первую позицию.",
@@ -91,6 +103,11 @@ export const localReleaseMessages = {
 		duration: "Длительность (М:СС или секунды)",
 		badDuration: "Укажите длительность целыми секундами или в формате М:СС.",
 		saveTrack: "Сохранить композицию",
+		savingRecording: "Сохраняем композицию…",
+		saveRecordingError:
+			"Не удалось сохранить композицию. Черновик не потерян — попробуйте ещё раз.",
+		saveRecordingUncertain:
+			"Результат неизвестен: возможно, композиция уже создана. Проверьте «Собственный каталог». Сохранение для этого черновика отключено.",
 		savedTracks: "Сохранены в собственном каталоге",
 		savedHelp: "Эти композиции останутся в каталоге, даже если отменить релиз.",
 		details: "Подробнее",
@@ -110,6 +127,11 @@ export const localReleaseMessages = {
 		save: "Сохранить релиз и вернуться",
 		saveHelp:
 			"Сохранение не назначает файлы, не подтверждает сопоставление и не публикует аудио.",
+		savingRelease: "Сохраняем релиз…",
+		saveReleaseError:
+			"Не удалось сохранить релиз. Черновик не потерян — попробуйте ещё раз.",
+		saveReleaseUncertain:
+			"Результат неизвестен: возможно, релиз уже создан. Проверьте «Собственный каталог». Сохранение для этого черновика отключено.",
 		cancel: "Отмена",
 		cancelQuestion: "Отменить создание релиза?",
 		cancelHelp: "Будет отброшен только несохранённый релиз.",
