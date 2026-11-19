@@ -9,6 +9,7 @@ import {
 	incomingFixtures,
 	type IncomingFiles,
 	type IncomingState,
+	makeGroupPlan,
 } from "../../incomingModel";
 import { initialSourceRoots } from "../../SourcesScreen";
 import { splitFileIntoNewGroup } from "./incomingSplitModel";
@@ -187,7 +188,7 @@ const draftAssignment = (
 	included: true,
 });
 
-it("splits one exact file without touching source tags or unrelated drafts", () => {
+it("splits one exact file only on a menu action, preserving unrelated drafts", async () => {
 	window.history.replaceState(null, "", "#review?group=north");
 	const files = structuredClone(incomingFixtures.files);
 	const northTags = structuredClone(files["north-f1"].tags);
@@ -204,36 +205,65 @@ it("splits one exact file without touching source tags or unrelated drafts", () 
 		"p-hours": { "p-hours-t1": draftAssignment(["hours-f1"], "hours-f1") },
 	};
 	const hoursDrafts = structuredClone(hours.drafts);
-	let latest = initial;
+	initial.plan = makeGroupPlan(
+		initial,
+		north,
+		files,
+		incomingFixtures.releases,
+		incomingFixtures.providerReleases,
+	);
+	expect(initial.plan?.groupId).toBe("north");
+	const beforeSelection = structuredClone(initial);
+	const onChange = vi.fn<(state: IncomingState) => void>();
 
 	render(
 		<I18nProvider>
-			<SplitHarness
-				files={files}
-				initialState={initial}
-				onChange={(next) => {
-					latest = next;
-				}}
-			/>
+			<SplitHarness files={files} initialState={initial} onChange={onChange} />
 		</I18nProvider>,
 	);
+	const trigger = screen.getByRole("button", {
+		name: "Действия с файлом: First Light",
+	});
+	const row = trigger.closest("li");
+	if (!row) throw new Error("Missing file row");
+	expect(within(row).getAllByRole("button")).toEqual([trigger]);
+	expect(within(row).queryByRole("combobox")).toBeNull();
+	fireEvent.click(trigger);
+	const move = await screen.findByRole("menuitem", { name: "Переместить в…" });
+	move.focus();
+	fireEvent.keyDown(move, { key: "ArrowRight" });
+	const destination = await screen.findByRole("menuitem", {
+		name: "Small Hours",
+	});
+	expect(
+		screen.getByRole("menuitem", { name: "Road Notes" }),
+	).toBeInTheDocument();
+	expect(screen.queryByRole("menuitem", { name: "Northern lines" })).toBeNull();
+	destination.focus();
+	fireEvent.keyDown(destination, { key: "Escape" });
+	fireEvent.keyDown(move, { key: "Escape" });
+	expect(onChange).not.toHaveBeenCalled();
+	expect(initial).toEqual(beforeSelection);
+	fireEvent.click(trigger);
 	fireEvent.click(
-		screen.getByRole("button", {
-			name: "Отделить «First Light» в новую группу",
-		}),
+		await screen.findByRole("menuitem", { name: "Создать новую группу" }),
 	);
 
 	expect(
 		screen.getByText("Группы: 4 · очередь источников"),
 	).toBeInTheDocument();
-	const splitGroup = latest.groups[1];
-	expect(splitGroup?.id).toMatch(/^split-/);
-	expect(latest.groups.map((group) => group.id)).toEqual([
-		"north",
-		splitGroup?.id,
-		"hours",
-		"mix",
-	]);
+	expect(onChange).toHaveBeenCalledTimes(1);
+	const latest = onChange.mock.calls[0][0];
+	const splitGroup = latest.groups.find((group) =>
+		group.id.startsWith("split-"),
+	);
+	if (!splitGroup) throw new Error("Missing split group");
+	const routes = screen
+		.getAllByRole("link", { name: /Открыть группу/ })
+		.map((link) => link.getAttribute("href"));
+	const sourceIndex = routes.indexOf("#match/north");
+	expect(sourceIndex).toBeGreaterThanOrEqual(0);
+	expect(routes[sourceIndex + 1]).toBe(`#match/${splitGroup.id}`);
 	expect(splitGroup).toMatchObject({
 		title: "Northern Lines",
 		artistId: north.artistId,
@@ -245,9 +275,9 @@ it("splits one exact file without touching source tags or unrelated drafts", () 
 		processed: false,
 		drafts: { "p-north": {} },
 	});
-	expect(splitGroup?.reason).toEqual({ code: "incomplete" });
+	expect(splitGroup.reason).toEqual({ code: "incomplete" });
 
-	const source = latest.groups[0];
+	const source = latest.groups.find((group) => group.id === "north");
 	expect(source?.fileIds).toHaveLength(8);
 	expect(source?.fileIds).not.toContain("north-f1");
 	const kept = source?.drafts["p-north"]?.["p-north-t1"];
@@ -265,33 +295,49 @@ it("splits one exact file without touching source tags or unrelated drafts", () 
 	expect(files["north-f1"].tags).toEqual(northTags);
 });
 
-it("offers splitting only while another eligible file remains", () => {
+it("offers a new group only for a ready file when another ready file remains", async () => {
 	window.history.replaceState(null, "", "#review?group=north");
 	const files = structuredClone(incomingFixtures.files);
 	files["north-f2"].available = false;
 	files["north-f2"].locations = [];
 	const state = createIncomingState();
-	state.groups[0].fileIds = ["north-f1", "north-f2"];
+	state.groups[0].fileIds = ["north-f1", "north-f2", "north-extra"];
 
-	render(
+	const rendered = render(
 		<I18nProvider>
 			<IncomingScreen files={files} roots={initialSourceRoots} state={state} />
 		</I18nProvider>,
 	);
 
+	async function openActions(title: string) {
+		fireEvent.click(
+			screen.getByRole("button", { name: `Действия с файлом: ${title}` }),
+		);
+		return await screen.findByRole("menuitem", { name: "Переместить в…" });
+	}
+	let move = await openActions("First Light");
 	expect(
-		screen.queryByRole("button", {
-			name: "Отделить «First Light» в новую группу",
-		}),
-	).toBeNull();
+		screen.getByRole("menuitem", { name: "Создать новую группу" }),
+	).toBeInTheDocument();
+	fireEvent.keyDown(move, { key: "Escape" });
+	move = await openActions("Still Water");
 	expect(
-		screen.queryByRole("button", {
-			name: "Отделить «Still Water» в новую группу",
-		}),
+		screen.queryByRole("menuitem", { name: "Создать новую группу" }),
 	).toBeNull();
-	expect(screen.getAllByRole("button", { name: "Переместить" })).toHaveLength(
-		2,
+	fireEvent.keyDown(move, { key: "Escape" });
+
+	const next = structuredClone(state);
+	next.groups[0].fileIds = ["north-f1", "north-f2"];
+	// With only one ready file remaining, neither row can split.
+	rendered.rerender(
+		<I18nProvider>
+			<IncomingScreen files={files} roots={initialSourceRoots} state={next} />
+		</I18nProvider>,
 	);
+	await openActions("First Light");
+	expect(
+		screen.queryByRole("menuitem", { name: "Создать новую группу" }),
+	).toBeNull();
 });
 
 it("renders the existing Matching route for the split group without a dangling target", () => {

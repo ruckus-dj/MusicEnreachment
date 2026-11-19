@@ -2,11 +2,6 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { CatalogArtist } from "../../catalogData";
 import { useI18n } from "../../i18n";
 import {
-	type IncomingMessage,
-	incomingGroupsCount,
-	incomingMessage,
-} from "./incomingMessages";
-import {
 	artistName,
 	createIncomingState,
 	type IncomingFiles,
@@ -18,15 +13,20 @@ import {
 	runAutomaticMatching,
 	usableFile,
 } from "../../incomingModel";
-import { incomingOverviewRows } from "./incomingOverview";
-import { incomingSplitMessage } from "./incomingSplitMessages";
-import { canSplitGroup, splitFileIntoNewGroup } from "./incomingSplitModel";
 import {
 	compareSourceFiles,
 	readSourceTrackOrder,
 } from "../../matching-workspace/sourceFileOrder";
 import { Button, Link, PageHeader, Panel } from "../../ui";
 import { formatUiNotice } from "../../uiNotice";
+import { IncomingFileActions } from "./IncomingFileActions";
+import {
+	type IncomingMessage,
+	incomingGroupsCount,
+	incomingMessage,
+} from "./incomingMessages";
+import { incomingOverviewRows } from "./incomingOverview";
+import { canSplitGroup, splitFileIntoNewGroup } from "./incomingSplitModel";
 
 export type IncomingScreenProps = {
 	destination?: import("../../publicationOutput").PublicationDestination;
@@ -79,9 +79,11 @@ export function IncomingScreen({
 	const [hash, setHash] = useState(() => window.location.hash);
 	const drag = useRef<{ groupId: string; fileId: string } | null>(null);
 	const [dropTarget, setDropTarget] = useState("");
-	const [moveDestinations, setMoveDestinations] = useState<
-		Record<string, string>
-	>({});
+	const groupDisclosureRefs = useRef(new Map<string, HTMLButtonElement>());
+	const pendingGroupFocus = useRef<{
+		groupId: string;
+		preventScroll: boolean;
+	} | null>(null);
 	const expanded = new URLSearchParams(hash.split("?")[1]).getAll("group");
 	useEffect(() => {
 		const onHashChange = () => setHash(window.location.hash);
@@ -123,7 +125,7 @@ export function IncomingScreen({
 		const source = state.groups.find((group) => group.id === sourceId);
 		const target = state.groups.find((group) => group.id === targetId);
 		if (!source?.fileIds.includes(fileId) || !target || source === target)
-			return;
+			return false;
 		const invalidate = (group: IncomingGroup, fileIds: string[]) => ({
 			...group,
 			fileIds,
@@ -149,31 +151,42 @@ export function IncomingScreen({
 				.filter((group) => group.fileIds.length),
 		};
 		givenState ? onState?.(next) : setLocalState(next);
-		setMoveDestinations({});
+		return true;
 	}
 	function splitFile(sourceId: string, fileId: string) {
 		const next = splitFileIntoNewGroup(state, files, sourceId, fileId);
-		if (!next) return;
+		if (!next) return false;
 		givenState ? onState?.(next) : setLocalState(next);
-		setMoveDestinations((current) => {
-			const remaining = { ...current };
-			delete remaining[fileId];
-			return remaining;
-		});
+		return true;
 	}
-	const labels =
-		locale === "ru"
-			? {
-					title: "Нет тега названия",
-					move: "Переместить",
-					target: "Куда переместить",
-				}
-			: { title: "No title tag", move: "Move", target: "Destination group" };
-	const splitLabels = {
-		split: incomingSplitMessage(locale, "split"),
-		file: (file: string) => incomingSplitMessage(locale, "splitFile", { file }),
-	};
+	function commitMove(sourceId: string, fileId: string, targetId: string) {
+		const sourceRemains = Boolean(
+			state.groups
+				.find((group) => group.id === sourceId)
+				?.fileIds.some((id) => id !== fileId),
+		);
+		queueGroupFocus(sourceRemains ? sourceId : targetId);
+		if (!moveFile(sourceId, fileId, targetId)) pendingGroupFocus.current = null;
+	}
+	function commitSplit(sourceId: string, fileId: string) {
+		queueGroupFocus(sourceId);
+		if (!splitFile(sourceId, fileId)) pendingGroupFocus.current = null;
+	}
+	function queueGroupFocus(groupId: string) {
+		pendingGroupFocus.current = {
+			groupId,
+			preventScroll: !document.activeElement?.matches(":focus-visible"),
+		};
+	}
 	const groups = state.groups;
+	useEffect(() => {
+		const pending = pendingGroupFocus.current;
+		if (!pending) return;
+		pendingGroupFocus.current = null;
+		groupDisclosureRefs.current
+			.get(pending.groupId)
+			?.focus({ preventScroll: pending.preventScroll });
+	}, [groups]);
 	const rows = incomingOverviewRows(
 		groups,
 		files,
@@ -401,6 +414,11 @@ export function IncomingScreen({
 														className="text-left font-semibold wrap-anywhere"
 														aria-expanded={expanded.includes(group.id)}
 														onClick={() => toggleGroup(group.id)}
+														ref={(node) => {
+															if (node)
+																groupDisclosureRefs.current.set(group.id, node);
+															else groupDisclosureRefs.current.delete(group.id);
+														}}
 													>
 														{name}
 													</button>
@@ -435,17 +453,27 @@ export function IncomingScreen({
 														colSpan={4}
 														className="border-b border-[var(--line)] px-2 py-1.5"
 													>
-														<ul className="m-0 list-none p-0">
+														<ul className="m-0 list-none p-0 max-sm:sticky max-sm:left-0 max-sm:w-[calc(100vw-3rem)] max-sm:min-w-0">
 															{sortedMembers(group.fileIds).map((row) => {
 																const { id, trackNumber } = row;
 																const file = files[id];
 																const tag = (key: string) =>
 																	file?.tags?.[key]?.join(" · ");
+																const title =
+																	tag("TITLE") || msg("missingFileTitle");
+																const canCreateGroup =
+																	splitEnabled && usableFile(file);
+																const destinations = rows
+																	.filter((row) => row.group.id !== group.id)
+																	.map((row) => ({
+																		id: row.group.id,
+																		name: row.name,
+																	}));
 																return (
 																	<li
 																		key={id}
 																		draggable
-																		className="grid cursor-grab grid-cols-[8%_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[var(--line)] p-2 wrap-anywhere"
+																		className="grid cursor-grab grid-cols-[8%_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[var(--line)] p-2 wrap-anywhere"
 																		onDragStart={(event) => {
 																			drag.current = {
 																				groupId: group.id,
@@ -466,67 +494,30 @@ export function IncomingScreen({
 																			{trackNumber ??
 																				(tag("TRACKNUMBER") || "—")}
 																		</span>
-																		<strong>
-																			{tag("TITLE") || labels.title}
-																		</strong>
+																		<strong>{title}</strong>
 																		<span>
 																			{tag("ARTIST") ||
 																				tag("ALBUMARTIST") ||
 																				"—"}
 																		</span>
 																		<span>{tag("ALBUM") || "—"}</span>
-																		<div className="grid gap-1 max-sm:col-span-full">
-																			<select
-																				className="w-full min-w-0"
-																				aria-label={`${labels.target}: ${tag("TITLE") || labels.title}`}
-																				value={moveDestinations[id] ?? ""}
-																				onChange={(event) =>
-																					setMoveDestinations({
-																						...moveDestinations,
-																						[id]: event.target.value,
-																					})
-																				}
-																			>
-																				<option value="">
-																					{labels.target}
-																				</option>
-																				{rows
-																					.filter(
-																						(row) => row.group.id !== group.id,
-																					)
-																					.map((row) => (
-																						<option
-																							key={row.group.id}
-																							value={row.group.id}
-																						>
-																							{row.name}
-																						</option>
-																					))}
-																			</select>
-																			<Button
-																				isDisabled={!moveDestinations[id]}
-																				onPress={() =>
-																					moveFile(
+																		<div className="flex justify-end">
+																			<IncomingFileActions
+																				fileId={id}
+																				fileTitle={title}
+																				destinations={destinations}
+																				canCreateGroup={canCreateGroup}
+																				onMove={(fileId, destinationId) =>
+																					commitMove(
 																						group.id,
-																						id,
-																						moveDestinations[id],
+																						fileId,
+																						destinationId,
 																					)
 																				}
-																			>
-																				{labels.move}
-																			</Button>
-																			{splitEnabled && usableFile(file) && (
-																				<Button
-																					aria-label={splitLabels.file(
-																						tag("TITLE") || labels.title,
-																					)}
-																					onPress={() =>
-																						splitFile(group.id, id)
-																					}
-																				>
-																					{splitLabels.split}
-																				</Button>
-																			)}
+																				onCreateGroup={(fileId) =>
+																					commitSplit(group.id, fileId)
+																				}
+																			/>
 																		</div>
 																	</li>
 																);

@@ -16,11 +16,20 @@ export type IncomingOverviewRow = {
 	paths: IncomingOverviewPath[];
 };
 
+type FolderEvidence = {
+	root: string;
+	configured: boolean;
+	parent: string;
+	members: number;
+	primaryMembers: number;
+};
+
 type GroupEvidence = {
 	album?: string;
 	folder?: string;
 	path?: string;
 	qualifiedPath?: string;
+	sortFolder?: FolderEvidence;
 	otherFiles: number;
 };
 
@@ -33,6 +42,48 @@ type SourceLocation = {
 };
 
 const folded = (value: string) => value.normalize("NFC").toLowerCase();
+const natural = new Intl.Collator("en", { numeric: true });
+
+function naturalCompare(a: string, b: string) {
+	return natural.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
+}
+
+function naturalPathCompare(a: string, b: string) {
+	const left = a.split("/").filter(Boolean);
+	const right = b.split("/").filter(Boolean);
+	const depth = Math.min(left.length, right.length);
+	for (let index = 0; index < depth; index++) {
+		const compared = naturalCompare(left[index], right[index]);
+		if (compared) return compared;
+	}
+	return left.length - right.length;
+}
+
+function representativeFolder(folders: Iterable<FolderEvidence>) {
+	let representative: FolderEvidence | undefined;
+	for (const folder of folders) {
+		if (
+			!representative ||
+			(representative.members - folder.members ||
+				representative.primaryMembers - folder.primaryMembers ||
+				compareFolders(folder, representative)) < 0
+		) {
+			representative = folder;
+		}
+	}
+	return representative;
+}
+
+function compareFolders(a?: FolderEvidence, b?: FolderEvidence) {
+	// Groups without source paths follow every located group.
+	if (!a || !b) return a ? -1 : b ? 1 : 0;
+	return (
+		Number(b.configured) - Number(a.configured) ||
+		naturalCompare(a.root, b.root) ||
+		naturalPathCompare(a.parent, b.parent) ||
+		naturalCompare(a.parent, b.parent)
+	);
+}
 
 function normalizeRoot(path: string) {
 	return path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -67,14 +118,19 @@ function sourceLocation(path: string, roots: string[]): SourceLocation {
 		: { relative: normalized, qualified: normalized };
 }
 
+const parentOf = (path: string) =>
+	path.slice(0, Math.max(0, path.lastIndexOf("/")));
+
 function groupEvidence(
 	group: IncomingGroup,
 	files: IncomingFiles,
 	roots: string[],
+	hasConfiguredRoots: boolean,
 ): GroupEvidence {
 	const memberIds = [...new Set(group.fileIds)];
 	const albums = new Map<string, string>();
 	const folders = new Map<string, { label: string; members: number }>();
+	const sortFolders = new Map<string, FolderEvidence>();
 	const paths: SourceLocation[] = [];
 	for (const id of memberIds) {
 		const file = files[id];
@@ -86,13 +142,12 @@ function groupEvidence(
 				if (key && !albums.has(key)) albums.set(key, title);
 			}
 		}
+		const primary = file?.path ? sourceLocation(file.path, roots) : undefined;
 		const seen = new Set<string>();
+		const sortSeen = new Set<string>();
 		for (const location of file?.locations ?? []) {
 			const source = sourceLocation(location.path, roots);
-			const parent = source.relative.slice(
-				0,
-				Math.max(0, source.relative.lastIndexOf("/")),
-			);
+			const parent = parentOf(source.relative);
 			const key = `${location.rootId}:${parent}`;
 			if (!seen.has(key)) {
 				seen.add(key);
@@ -100,6 +155,39 @@ function groupEvidence(
 					label: parent || source.root || "",
 					members: (folders.get(key)?.members ?? 0) + 1,
 				});
+			}
+			// Sort-only identity: a matched configured root path is stronger
+			// evidence than the location's root ID. Without one, keep the root ID
+			// so equal relative folders on different roots stay distinct.
+			const root = hasConfiguredRoots ? source.root : undefined;
+			const sortParent = root ? parent : parentOf(source.qualified);
+			const sortKey = JSON.stringify([
+				root ?? null,
+				root ? null : location.rootId,
+				sortParent,
+			]);
+			if (source.qualified && !sortSeen.has(sortKey)) {
+				sortSeen.add(sortKey);
+				const existing = sortFolders.get(sortKey);
+				const primaryMatch =
+					primary &&
+					(root
+						? primary.root === root && parentOf(primary.relative) === sortParent
+						: parentOf(primary.qualified) === sortParent)
+						? 1
+						: 0;
+				if (existing) {
+					existing.members += 1;
+					existing.primaryMembers += primaryMatch;
+				} else {
+					sortFolders.set(sortKey, {
+						root: root ?? location.rootId,
+						configured: Boolean(root),
+						parent: sortParent,
+						members: 1,
+						primaryMembers: primaryMatch,
+					});
+				}
 			}
 			paths.push(source);
 		}
@@ -123,6 +211,7 @@ function groupEvidence(
 		folder: commonFolder || undefined,
 		path: first?.relative,
 		qualifiedPath: first?.qualified,
+		sortFolder: representativeFolder(sortFolders.values()),
 		otherFiles: Math.max(0, memberIds.length - 1),
 	};
 }
@@ -173,13 +262,22 @@ export function incomingOverviewRows(
 			: fallbackRoot
 				? [fallbackRoot]
 				: [];
-	const evidence = groups.map((group) => groupEvidence(group, files, roots));
+	const evidence = groups.map((group) =>
+		groupEvidence(group, files, roots, configuredRoots.length > 0),
+	);
 	const counts = new Map<string, number>();
 	for (const item of evidence) {
 		const text = item.album ?? item.folder ?? item.path;
 		if (text) counts.set(folded(text), (counts.get(folded(text)) ?? 0) + 1);
 	}
-	return groups.map((group, index) => {
+	const order = groups.map((_, index) => index);
+	order.sort(
+		(a, b) =>
+			compareFolders(evidence[a].sortFolder, evidence[b].sortFolder) || a - b,
+	);
+	const displayCounts = new Map<string, number>();
+	const rows = order.map((index) => {
+		const group = groups[index];
 		const item = evidence[index];
 		const text = item.album ?? item.folder ?? item.path;
 		const duplicate = Boolean(text && (counts.get(folded(text)) ?? 0) > 1);
@@ -196,6 +294,8 @@ export function incomingOverviewRows(
 			},
 			locale,
 		);
+		const displayKey = folded(name);
+		displayCounts.set(displayKey, (displayCounts.get(displayKey) ?? 0) + 1);
 		const memberIds = [...new Set(group.fileIds)];
 		const paths = new Map<string, string>();
 		for (const id of memberIds) {
@@ -222,4 +322,18 @@ export function incomingOverviewRows(
 			paths: [...paths].map(([key, label]) => ({ key, label })),
 		};
 	});
+	// The same unique label is shown in the table and in the immediate-action
+	// move menu, even when paths and album evidence cannot disambiguate a group.
+	const displayNumbers = new Map<string, number>();
+	for (const row of rows) {
+		const key = folded(row.name);
+		if ((displayCounts.get(key) ?? 0) < 2) continue;
+		const number = (displayNumbers.get(key) ?? 0) + 1;
+		displayNumbers.set(key, number);
+		row.name = incomingMessage(locale, "repeatedGroupName", {
+			name: row.name,
+			number,
+		});
+	}
+	return rows;
 }

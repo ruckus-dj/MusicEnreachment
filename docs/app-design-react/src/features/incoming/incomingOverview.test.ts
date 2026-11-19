@@ -14,17 +14,18 @@ it("names groups from album evidence and reports unique paths separately from so
 	const rows = incomingOverviewRows(groups, files, "en", sourceRoots);
 
 	expect(rows.map((row) => row.name)).toEqual([
-		"Northern lines",
 		"Small Hours",
 		"Road Notes",
+		"Northern lines",
 	]);
-	expect(rows.map((row) => row.memberCount)).toEqual([9, 8, 5]);
-	expect(rows.map((row) => row.pathCount)).toEqual([10, 8, 5]);
-	expect(rows.map((row) => row.readyCount)).toEqual([9, 8, 5]);
-	expect(rows[0].paths.map((path) => path.label)).toContain(
+	expect(rows.map((row) => row.memberCount)).toEqual([8, 5, 9]);
+	expect(rows.map((row) => row.pathCount)).toEqual([8, 5, 10]);
+	expect(rows.map((row) => row.readyCount)).toEqual([8, 5, 9]);
+	const north = rows.find((row) => row.group.id === "north");
+	expect(north?.paths.map((path) => path.label)).toContain(
 		"/mnt/inbox / north/01 - First Light.flac",
 	);
-	expect(rows[0].paths.map((path) => path.label)).toContain(
+	expect(north?.paths.map((path) => path.label)).toContain(
 		"/mnt/backup / Northern Lines/01 - First Light.flac",
 	);
 });
@@ -41,6 +42,44 @@ it("keeps source readiness distinct from the release evaluation", () => {
 		code: "confident",
 		params: { count: 8, total: 8 },
 	});
+});
+
+it("keeps same-folder groups adjacent and separates equal folders on another root", () => {
+	const { groups, files } = fresh();
+	const template = files["north-extra"];
+	const make = (id: string, path: string, album: string, rootId: string) => {
+		files[id] = {
+			...structuredClone(template),
+			id,
+			name: path.split("/").at(-1) ?? id,
+			path,
+			tags: { ...structuredClone(template.tags), ALBUM: [album] },
+			locations: [{ id: `loc-${id}`, rootId, path }],
+		};
+		return { ...groups[0], id, title: album, fileIds: [id] };
+	};
+	const shuffled = [
+		make("inbox-a", "/mnt/inbox/set 10/a.flac", "Alpha", "root-inbox"),
+		{ ...groups[0], id: "missing", fileIds: ["missing-file"] },
+		make("backup-b", "/mnt/backup/set 10/b.flac", "Beta", "root-backup"),
+		make("inbox-c", "/mnt/inbox/set 10/c.flac", "Gamma", "root-inbox"),
+		make("inbox-d", "/mnt/inbox/set 2/d.flac", "Delta", "root-inbox"),
+		{ ...groups[0], id: "missing-2", fileIds: ["missing-file-2"] },
+	];
+
+	const rows = incomingOverviewRows(shuffled, files, "en", sourceRoots);
+	expect(rows.map((row) => row.group.id)).toEqual([
+		"backup-b",
+		"inbox-d",
+		"inbox-a",
+		"inbox-c",
+		"missing",
+		"missing-2",
+	]);
+	expect(rows.slice(-2).map((row) => row.name)).toEqual([
+		"Source path unavailable · group 1",
+		"Source path unavailable · group 2",
+	]);
 });
 
 it("falls back to a common folder or the first source-relative path plus remaining files", () => {
