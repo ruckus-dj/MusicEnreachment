@@ -82,6 +82,8 @@ export type MatchingScreenProps = {
 	state?: IncomingState;
 	onState?: (state: IncomingState) => void;
 	onReleases?: (releases: IncomingReleases) => void;
+	createLocalReleaseHref?: string;
+	prepareReleaseId?: string;
 };
 
 const duration = (seconds: unknown) =>
@@ -100,6 +102,8 @@ export function MatchingScreen({
 	state: givenState,
 	onState,
 	onReleases,
+	createLocalReleaseHref,
+	prepareReleaseId,
 }: MatchingScreenProps) {
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [confirming, setConfirming] = useState(false);
@@ -593,7 +597,7 @@ export function MatchingScreen({
 					/>
 					<MatchingReleasePreparation
 						key={group.id}
-						releaseId={selectedSearchReleases[group.id]}
+						releaseId={selectedSearchReleases[group.id] ?? prepareReleaseId}
 						resolveRelease={(identity) =>
 							providers.find(
 								(release) =>
@@ -602,6 +606,23 @@ export function MatchingScreen({
 						}
 						onPrepared={setCandidate}
 					/>
+					{createLocalReleaseHref && (
+						<div className="my-3 grid gap-1 border-t border-[var(--line)] pt-3">
+							<p className="m-0 text-xs text-[var(--muted)]">
+								{locale === "ru"
+									? "Не нашли нужное издание?"
+									: "Can't find the right edition?"}
+							</p>
+							<a
+								className="demo-button w-fit max-w-full text-center no-underline max-[520px]:w-full"
+								href={createLocalReleaseHref}
+							>
+								{locale === "ru"
+									? "Создать свой релиз"
+									: "Create your own release"}
+							</a>
+						</div>
+					)}
 					<Button
 						className="demo-button max-[520px]:w-full"
 						aria-pressed={group.mode === "local"}

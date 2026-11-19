@@ -38,6 +38,15 @@ import {
 	useLibraryRouteState,
 } from "./features/library";
 import { OperationsScreen } from "./features/operations/OperationsScreen";
+import { LocalReleaseEditor } from "./features/local-release/LocalReleaseEditor";
+import {
+	appendDemoLocalRecord,
+	checkDemoReleases,
+	findDemoRecordings,
+	localReleaseSuggestions,
+	newDemoLocalRecord,
+	selectDemoRelease,
+} from "./fixtures/localReleaseDemo";
 import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider";
 import { IncomingScreen } from "./IncomingScreen";
@@ -245,7 +254,7 @@ export function CatalogDemo({
 		() => "library",
 	);
 	const route = routePath;
-	const [routeName] = route.split("?");
+	const [routeName, routeQuery] = route.split("?", 2);
 	const {
 		view,
 		query,
@@ -1010,11 +1019,85 @@ export function CatalogDemo({
 				onReleases={setImportedReleases}
 			/>
 		);
-	if (route.startsWith("match/"))
+	const localReleaseRoute = /^match\/([^/]+)\/local-release$/.exec(routeName);
+	if (localReleaseRoute) {
+		const groupId = routeId(localReleaseRoute[1]);
+		const group = incoming.groups.find((item) => item.id === groupId);
+		if (!group)
+			return (
+				<MatchingScreen
+					groupId={groupId}
+					state={incoming}
+					files={files}
+					releases={releases}
+					providers={providers}
+				/>
+			);
+		const returnToMatching = (prepareReleaseId?: string) => {
+			const query = prepareReleaseId
+				? `?${new URLSearchParams({ prepare: prepareReleaseId })}`
+				: "";
+			window.location.replace(`#match/${encodeURIComponent(group.id)}${query}`);
+		};
+		const suggested = localReleaseSuggestions(group, files, providerArtists);
+		return (
+			<LocalReleaseEditor
+				key={group.id}
+				locale={locale}
+				incomingLabel={group.title}
+				suggestedArtist={suggested.artist}
+				suggestedTitle={suggested.title}
+				artists={localProvider.items.artists}
+				recordings={localProvider.items.recordings}
+				checkRelease={async (artist, title) =>
+					checkDemoReleases(providers, providerArtists, artist, title)
+				}
+				findRecordings={async (query) =>
+					findDemoRecordings(localProvider.items.recordings, query)
+				}
+				saveRecording={(data) => {
+					const recording = newDemoLocalRecord(data);
+					setLocalProvider((current) =>
+						appendDemoLocalRecord(current, "recordings", recording),
+					);
+					return recording;
+				}}
+				onUseRelease={(id) => {
+					const candidate = providers.find((item) => item.id === id);
+					if (!candidate) return;
+					if (candidate.provider !== "Local") {
+						returnToMatching(candidate.providerId ?? candidate.id);
+						return;
+					}
+					setIncoming((current) =>
+						selectDemoRelease(current, group.id, candidate),
+					);
+					returnToMatching();
+				}}
+				onSave={(data) => {
+					const release = newDemoLocalRecord(data);
+					setLocalProvider((current) =>
+						appendDemoLocalRecord(current, "releases", release),
+					);
+					setIncoming((current) =>
+						selectDemoRelease(
+							current,
+							group.id,
+							{ id: release.id, title: data.title ?? "" },
+							true,
+						),
+					);
+					returnToMatching();
+				}}
+				onCancel={() => returnToMatching()}
+			/>
+		);
+	}
+	if (routeName.startsWith("match/"))
 		return (
 			<MatchingScreen
 				destination={publicationDestination}
-				groupId={route.slice(6)}
+				groupId={routeId(routeName.slice(6))}
 				state={incoming}
 				onState={setIncoming}
 				files={files}
@@ -1022,6 +1105,10 @@ export function CatalogDemo({
 				artists={providerArtists}
 				releases={releases}
 				onReleases={setImportedReleases}
+				createLocalReleaseHref={`#match/${encodeURIComponent(routeId(routeName.slice(6)))}/local-release`}
+				prepareReleaseId={
+					new URLSearchParams(routeQuery).get("prepare") ?? undefined
+				}
 			/>
 		);
 	if (routeName === "settings")
