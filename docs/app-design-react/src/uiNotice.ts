@@ -1,5 +1,5 @@
 import { catalogMessage } from "./catalogMessages";
-import { incomingMessage } from "./incomingMessages";
+import { incomingMessage } from "./features/incoming/incomingMessages";
 import { matchingMessage } from "./matchingMessages";
 import {
 	publicationMessage,

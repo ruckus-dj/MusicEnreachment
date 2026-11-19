@@ -2,7 +2,7 @@ import { catalogMessages } from "../catalogMessages";
 import { catalogueMessages } from "../catalogueMessages";
 import { operationMessages } from "../features/operations/operationMessages";
 import { genreMessages } from "../genres/genreMessages";
-import { incomingMessages } from "../incomingMessages";
+import { incomingMessages } from "../features/incoming/incomingMessages";
 import { libraryRowsMessages } from "../features/library/libraryRowsMessages";
 import { localProviderMessages } from "../localProviderMessages";
 import { matchingMessages } from "../matchingMessages";

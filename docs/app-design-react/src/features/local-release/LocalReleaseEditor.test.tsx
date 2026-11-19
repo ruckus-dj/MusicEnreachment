@@ -30,6 +30,12 @@ it("requires a successful search and saves a missing recording separately from t
 			recordings={[]}
 			checkRelease={checkRelease}
 			findRecordings={async () => []}
+			findArtists={async () => []}
+			saveArtist={(data) => ({
+				id: "new-artist",
+				name: data.name,
+				provider: "Local",
+			})}
 			saveRecording={saveRecording}
 			onUseRelease={vi.fn()}
 			onSave={onSave}
@@ -54,9 +60,7 @@ it("requires a successful search and saves a missing recording separately from t
 			target: { value: "Still Water" },
 		},
 	);
-	fireEvent.click(
-		within(picker).getByRole("button", { name: "Search" }),
-	);
+	fireEvent.click(within(picker).getByRole("button", { name: "Search" }));
 	fireEvent.click(
 		await within(picker).findByRole("button", {
 			name: "No suitable recording — create one",

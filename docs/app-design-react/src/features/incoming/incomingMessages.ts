@@ -1,5 +1,5 @@
-import { createNamespace } from "./i18n/createNamespace";
-import type { Locale } from "./i18n/types";
+import { createNamespace } from "../../i18n/createNamespace";
+import type { Locale } from "../../i18n/types";
 
 export const incomingMessages = createNamespace({
 	en: {

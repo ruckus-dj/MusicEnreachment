@@ -30,6 +30,31 @@ export const localReleaseMessages = {
 		add: "Add to tracklist",
 		createTrack: "No suitable recording — create one",
 		newRecording: "New Local recording",
+		recordingArtist: "Recording artist",
+		recordingCredits: "Recording credits",
+		recordingArtistHelp:
+			"The recording artist is chosen separately from the release artists. Search existing artists first.",
+		recordingArtistOptional:
+			"Optional for the recording. Select an artist to keep its credit, or leave it empty.",
+		selectedArtist: "Selected artist",
+		noArtistSelected: "No artist selected yet.",
+		artistQuery: "Artist name",
+		findArtist: "Find artist",
+		artistResults: "Matching artists",
+		noArtists: "No artists found for this search.",
+		selectArtist: "Select artist",
+		clearArtist: "Clear artist",
+		createArtist: "No suitable artist — save Local artist",
+		newArtist: "New Local artist",
+		saveArtist: "Save Local artist",
+		savingArtist: "Saving the artist…",
+		saveArtistError:
+			"Could not save the artist. Your draft is still here; try again.",
+		saveArtistUncertain:
+			"The result is unknown: the artist may already exist. Check Own Catalog. Saving is disabled for this draft.",
+		savedArtists: "Saved Local artists",
+		savedArtistHelp:
+			"Saved Local artists stay in your catalog even if you cancel the release.",
 		duration: "Duration (M:SS or seconds)",
 		badDuration: "Use whole seconds or M:SS for the duration.",
 		saveTrack: "Save recording",
@@ -100,6 +125,31 @@ export const localReleaseMessages = {
 		add: "Добавить в треклист",
 		createTrack: "Нет подходящей — создать композицию",
 		newRecording: "Новая композиция Local",
+		recordingArtist: "Исполнитель композиции",
+		recordingCredits: "Credits композиции",
+		recordingArtistHelp:
+			"Исполнитель композиции выбирается отдельно от исполнителей релиза. Сначала найдите существующего исполнителя.",
+		recordingArtistOptional:
+			"Для композиции необязательно. Выберите исполнителя, чтобы сохранить его credit, или оставьте поле пустым.",
+		selectedArtist: "Выбранный исполнитель",
+		noArtistSelected: "Исполнитель пока не выбран.",
+		artistQuery: "Имя исполнителя",
+		findArtist: "Найти исполнителя",
+		artistResults: "Найденные исполнители",
+		noArtists: "По этому запросу исполнителей не найдено.",
+		selectArtist: "Выбрать исполнителя",
+		clearArtist: "Убрать исполнителя",
+		createArtist: "Нет подходящего — сохранить исполнителя Local",
+		newArtist: "Новый исполнитель Local",
+		saveArtist: "Сохранить исполнителя Local",
+		savingArtist: "Сохраняем исполнителя…",
+		saveArtistError:
+			"Не удалось сохранить исполнителя. Черновик не потерян — попробуйте ещё раз.",
+		saveArtistUncertain:
+			"Результат неизвестен: возможно, исполнитель уже создан. Проверьте «Собственный каталог». Сохранение для этого черновика отключено.",
+		savedArtists: "Сохранённые исполнители Local",
+		savedArtistHelp:
+			"Сохранённые исполнители останутся в каталоге, даже если отменить релиз.",
 		duration: "Длительность (М:СС или секунды)",
 		badDuration: "Укажите длительность целыми секундами или в формате М:СС.",
 		saveTrack: "Сохранить композицию",
@@ -139,3 +189,6 @@ export const localReleaseMessages = {
 		discard: "Отменить релиз",
 	},
 } as const;
+
+export type LocalReleaseCopy =
+	(typeof localReleaseMessages)[keyof typeof localReleaseMessages];

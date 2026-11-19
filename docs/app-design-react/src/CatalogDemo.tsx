@@ -41,6 +41,8 @@ import { LocalReleaseEditor } from "./features/local-release/LocalReleaseEditor"
 import {
 	appendDemoLocalRecord,
 	checkDemoReleases,
+	demoRecordingWithCredits,
+	findDemoArtists,
 	findDemoRecordings,
 	localReleaseSuggestions,
 	newDemoLocalRecord,
@@ -48,7 +50,7 @@ import {
 } from "./fixtures/localReleaseDemo";
 import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider";
-import { IncomingScreen } from "./IncomingScreen";
+import { IncomingScreen } from "./features/incoming/IncomingScreen";
 import { useI18n } from "./i18n";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
 import { CatalogFilter as CatalogFilterControl } from "./features/library/CatalogFilter";
@@ -1048,15 +1050,33 @@ export function CatalogDemo({
 				suggestedArtist={suggested.artist}
 				suggestedTitle={suggested.title}
 				artists={localProvider.items.artists}
-				recordings={localProvider.items.recordings}
+				recordings={localProvider.items.recordings.map((recording) =>
+					demoRecordingWithCredits(recording, localProvider.items.artists),
+				)}
 				checkRelease={async (artist, title) =>
 					checkDemoReleases(providers, providerArtists, artist, title)
 				}
 				findRecordings={async (query) =>
-					findDemoRecordings(localProvider.items.recordings, query)
+					findDemoRecordings(localProvider.items.recordings, query).map(
+						(recording) =>
+							demoRecordingWithCredits(recording, localProvider.items.artists),
+					)
 				}
+				findArtists={async (query) =>
+					findDemoArtists(localProvider.items.artists, query)
+				}
+				saveArtist={(data) => {
+					const artist = newDemoLocalRecord(data);
+					setLocalProvider((current) =>
+						appendDemoLocalRecord(current, "artists", artist),
+					);
+					return artist;
+				}}
 				saveRecording={(data) => {
-					const recording = newDemoLocalRecord(data);
+					const recording = newDemoLocalRecord({
+						...data,
+						artistIds: data.credits?.map((credit) => credit.artistId),
+					});
 					setLocalProvider((current) =>
 						appendDemoLocalRecord(current, "recordings", recording),
 					);

@@ -10,6 +10,11 @@ export type LocalReleaseRecording = {
 	provider: string;
 	title?: string;
 	duration_ms?: string | number | "" | null;
+	credits?: {
+		artistId?: string;
+		creditName: string;
+		joinPhrase: string;
+	}[];
 };
 
 export type LocalReleaseTrack = {
@@ -35,7 +40,21 @@ export type LocalReleaseDraft = {
 export type LocalRecordingDraft = {
 	title: string;
 	duration_ms?: number;
+	credits?: {
+		artistId: string;
+		creditName: string;
+		joinPhrase: string;
+	}[];
 };
+
+export type FindLocalArtists = (
+	query: string,
+	signal?: AbortSignal,
+) => Promise<readonly LocalReleaseArtist[]>;
+
+export type SaveLocalArtist = (data: {
+	name: string;
+}) => LocalReleaseArtist | Promise<LocalReleaseArtist>;
 
 export type OutcomeUncertainError = Error & { outcomeUncertain?: boolean };
 
@@ -45,6 +64,17 @@ export function isOutcomeUncertain(error: unknown): boolean {
 		error !== null &&
 		(error as { outcomeUncertain?: unknown }).outcomeUncertain === true
 	);
+}
+
+export function formatLocalCredits(
+	credits:
+		| readonly { creditName: string; joinPhrase: string }[]
+		| null
+		| undefined,
+): string {
+	return (credits ?? [])
+		.map((credit) => `${credit.creditName}${credit.joinPhrase}`)
+		.join("");
 }
 
 export function formatLocalDuration(milliseconds: unknown): string {

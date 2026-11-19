@@ -84,6 +84,39 @@ export function findDemoRecordings(
 		: [];
 }
 
+export function findDemoArtists(
+	artists: readonly LocalProviderRecord[],
+	query: string,
+) {
+	const name = normalize(query);
+	return name
+		? artists.filter((item) => normalize(item.name ?? "").includes(name))
+		: [];
+}
+
+export function demoRecordingWithCredits(
+	recording: LocalProviderRecord,
+	artists: readonly LocalProviderRecord[],
+): LocalProviderRecord {
+	if (recording.credits?.length || !recording.artistIds?.length)
+		return recording;
+	return {
+		...recording,
+		credits: recording.artistIds.flatMap((artistId, index, ids) => {
+			const artist = artists.find((item) => item.id === artistId);
+			return artist?.name
+				? [
+						{
+							artistId,
+							creditName: artist.name,
+							joinPhrase: index + 1 < ids.length ? ", " : "",
+						},
+					]
+				: [];
+		}),
+	};
+}
+
 export function newDemoLocalRecord(
 	data: Omit<LocalProviderRecord, "id" | "key" | "provider">,
 ): LocalProviderRecord {
