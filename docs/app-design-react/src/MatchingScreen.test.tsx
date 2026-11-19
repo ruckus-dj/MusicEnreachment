@@ -60,7 +60,7 @@ function LocaleSwitch() {
 	);
 }
 
-it("opens a Local edition in the same matching workspace without assigning files", async () => {
+it("switches between Local and MusicBrainz search results without losing the draft", async () => {
 	render(
 		<MatchingHarness
 			providers={[
@@ -72,16 +72,49 @@ it("opens a Local edition in the same matching workspace without assigning files
 	const before = screen.getByRole("region", {
 		name: "Позиции · Northern Lines",
 	});
-	fireEvent.keyDown(screen.getByRole("button", { name: /Локальное издание/ }), {
-		key: "ArrowDown",
+	const search = within(screen.getByRole("region", { name: "Поиск изданий" }));
+	expect(search.queryByRole("list")).not.toBeInTheDocument();
+	fireEvent.change(
+		search.getByRole("textbox", { name: "Артист и название издания" }),
+		{ target: { value: "Northern Lines" } },
+	);
+	fireEvent.click(search.getByRole("button", { name: "Искать" }));
+	const local = await search.findByRole("button", {
+		name: /^Выбрать «Northern Lines» \(Local,/,
 	});
-	fireEvent.click(await screen.findByRole("option", { name: /Road Notes/ }));
+	const remote = search.getAllByRole("button", {
+		name: /^Подготовить и выбрать «Northern Lines» \(MusicBrainz,/,
+	})[0];
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/MusicBrainz/,
+	);
+	fireEvent.click(local);
 	expect(
 		screen.getByRole("region", {
-			name: "Позиции · Road Notes — личный сборник",
+			name: "Позиции · Northern Lines",
 		}),
 	).toBe(before);
-	expect(screen.getByText("Назначено позиций: 0 из 5")).toBeInTheDocument();
+	expect(screen.getByText(/Назначено позиций: 0 из /)).toBeInTheDocument();
+	fireEvent.click(
+		screen.getByRole("button", { name: "Выбрать 01 - First Light.flac" }),
+	);
+	fireEvent.click(
+		within(before).getAllByRole("button", {
+			name: /^Добавить 01 - First Light\.flac к позиции/,
+		})[0],
+	);
+	expect(screen.getByText(/Назначено позиций: 1 из /)).toBeInTheDocument();
+	fireEvent.click(remote);
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/MusicBrainz/,
+	);
+	fireEvent.click(
+		search.getByRole("button", { name: /^Выбрать «Northern Lines» \(Local,/ }),
+	);
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/Local/,
+	);
+	expect(screen.getByText(/Назначено позиций: 1 из /)).toBeInTheDocument();
 });
 
 afterEach(() => {

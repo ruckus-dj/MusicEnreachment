@@ -18,7 +18,7 @@ type Props = {
 	artists: CatalogArtist[];
 	releases: OriginalRelease[];
 	selectedReleaseId: string | null;
-	onSelectRelease: (id: string) => void;
+	onSelectRelease: (release: OriginalRelease) => boolean;
 	pageSize?: number;
 };
 
@@ -31,6 +31,7 @@ function viewItem(
 	return {
 		id: release.id,
 		title: release.title,
+		provider: release.provider === "Local" ? "Local" : "MusicBrainz",
 		...(artistCredit ? { artistCredit } : {}),
 		...(details.date ? { date: details.date } : {}),
 		...(details.country ? { country: details.country } : {}),
@@ -62,6 +63,7 @@ export function MatchingSearchPicker({
 		"idle",
 	);
 	const [error, setError] = useState("");
+	const [selectionError, setSelectionError] = useState(false);
 
 	const pageLimit = limitValue(limit) || pageSize;
 	const results =
@@ -76,6 +78,7 @@ export function MatchingSearchPicker({
 		setSubmittedQuery(value);
 		setPage(0);
 		setError("");
+		setSelectionError(false);
 		setStatus("loading");
 		await Promise.resolve();
 		try {
@@ -104,20 +107,35 @@ export function MatchingSearchPicker({
 						}
 					: undefined
 			}
-			errors={status === "error" ? [{ id: "search", message: error }] : []}
+			errors={[
+				...(status === "error" ? [{ id: "search", message: error }] : []),
+				...(selectionError
+					? [
+							{
+								id: "prepare",
+								message: manualSearchMessage(locale, "prepareFailed"),
+							},
+						]
+					: []),
+			]}
 			selectedItemId={selectedReleaseId}
 			onQueryChange={(value) => {
 				setQuery(value);
 				setPage(0);
 				setStatus("idle");
+				setSelectionError(false);
 			}}
 			onLimitChange={(value) => {
 				setLimit(value);
 				setPage(0);
 				setStatus("idle");
+				setSelectionError(false);
 			}}
 			onSearch={() => void submit()}
-			onSelectRelease={onSelectRelease}
+			onSelectRelease={(id) => {
+				const release = pageResult.items.find((item) => item.id === id);
+				if (release) setSelectionError(!onSelectRelease(release));
+			}}
 			onPrevious={() => setPage(Math.max(0, pageResult.page - 1))}
 			onNext={() => setPage(pageResult.page + 1)}
 		/>
