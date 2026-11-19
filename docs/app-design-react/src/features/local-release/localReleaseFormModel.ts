@@ -21,7 +21,7 @@ export function buildLocalRecordingCredits(
 ): LocalRecordingCredit[] {
 	return selection.map((credit, index) => ({
 		...credit,
-		joinPhrase: index + 1 < selection.length ? " / " : "",
+		joinPhrase: index + 1 < selection.length ? ", " : "",
 	}));
 }
 

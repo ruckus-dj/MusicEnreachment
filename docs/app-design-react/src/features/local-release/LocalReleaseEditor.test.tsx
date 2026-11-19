@@ -102,7 +102,7 @@ it("requires a successful search and saves a missing recording separately from t
 	expect(onCancel).not.toHaveBeenCalled();
 });
 
-it("saves ordered recording artists with the fixed separator without assigning the recording", async () => {
+it("preserves provider credits and uses commas for new Local recording artists", async () => {
 	const onSave = vi.fn();
 	const saveArtist = vi.fn();
 	const saveRecording = vi.fn<LocalReleaseEditorProps["saveRecording"]>(
@@ -121,7 +121,18 @@ it("saves ordered recording artists with the fixed separator without assigning t
 			artists={artists}
 			recordings={[]}
 			checkRelease={async () => []}
-			findRecordings={async () => []}
+			findRecordings={async () => [
+				{
+					id: "provider-duet",
+					title: "Another duet",
+					provider: "MusicBrainz",
+					credits: [
+						{ artistId: "first", creditName: "First", joinPhrase: " feat. " },
+						{ artistId: "second", creditName: "Second", joinPhrase: " and " },
+						{ artistId: "third", creditName: "Third", joinPhrase: "" },
+					],
+				},
+			]}
 			findArtists={async (query) =>
 				artists.filter((artist) => artist.name === query)
 			}
@@ -146,6 +157,9 @@ it("saves ordered recording artists with the fixed separator without assigning t
 		target: { value: "Duet" },
 	});
 	fireEvent.click(picker.getByRole("button", { name: "Search" }));
+	expect(
+		await picker.findByText(/First feat\. Second and Third/),
+	).toBeInTheDocument();
 	fireEvent.click(
 		await picker.findByRole("button", {
 			name: "No suitable recording — create one",
@@ -164,7 +178,7 @@ it("saves ordered recording artists with the fixed separator without assigning t
 	}
 	expect(picker.queryByRole("textbox", { name: /separator/i })).toBeNull();
 	fireEvent.click(picker.getByRole("button", { name: "Move artist up 2" }));
-	expect(picker.getByText("AC/DC / Mira Vale")).toBeInTheDocument();
+	expect(picker.getByText("AC/DC, Mira Vale")).toBeInTheDocument();
 	expect(saveRecording).not.toHaveBeenCalled();
 	expect(saveArtist).not.toHaveBeenCalled();
 	fireEvent.click(picker.getByRole("button", { name: "Save recording" }));
@@ -172,7 +186,7 @@ it("saves ordered recording artists with the fixed separator without assigning t
 		title: "Duet",
 		duration_ms: undefined,
 		credits: [
-			{ artistId: "acdc", creditName: "AC/DC", joinPhrase: " / " },
+			{ artistId: "acdc", creditName: "AC/DC", joinPhrase: ", " },
 			{ artistId: "mira", creditName: "Mira Vale", joinPhrase: "" },
 		],
 	});
