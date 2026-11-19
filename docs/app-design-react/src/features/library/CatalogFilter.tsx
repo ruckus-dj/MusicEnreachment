@@ -1,7 +1,7 @@
-import { Label, Radio, RadioGroup } from "./ui";
-import type { CatalogFilter as CatalogFilterValue } from "./availabilityRows";
-import { catalogueStyles } from "./catalogueStyles";
-import { useI18n } from "./i18n/I18nProvider";
+import { Label, Radio, RadioGroup } from "../../ui";
+import type { CatalogFilter as CatalogFilterValue } from "../../availabilityRows";
+import { catalogueStyles } from "../../catalogueStyles";
+import { useI18n } from "../../i18n/I18nProvider";
 import {
 	libraryRowsMessage,
 	type LibraryRowsMessage,

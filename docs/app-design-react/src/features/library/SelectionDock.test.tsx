@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import type { OriginalRelease, OriginalTrack } from "./catalogData";
+import type { OriginalRelease, OriginalTrack } from "../../catalogData";
 import { SelectionDock } from "./SelectionDock";
 
 const track = (id: string, title: string): OriginalTrack => ({

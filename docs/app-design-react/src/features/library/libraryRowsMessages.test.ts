@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalog } from "./i18n/catalog";
+import { catalog } from "../../i18n/catalog";
 import { libraryRowsMessage, libraryRowsMessages } from "./libraryRowsMessages";
 
 describe("library row localization", () => {

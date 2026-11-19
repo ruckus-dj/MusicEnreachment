@@ -3,7 +3,7 @@ import { catalogueMessages } from "../catalogueMessages";
 import { operationMessages } from "../features/operations/operationMessages";
 import { genreMessages } from "../genres/genreMessages";
 import { incomingMessages } from "../incomingMessages";
-import { libraryRowsMessages } from "../libraryRowsMessages";
+import { libraryRowsMessages } from "../features/library/libraryRowsMessages";
 import { localProviderMessages } from "../localProviderMessages";
 import { matchingMessages } from "../matchingMessages";
 import { matchingSearchPickerMessages } from "../matchingSearchPickerMessages";

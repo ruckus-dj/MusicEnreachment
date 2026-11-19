@@ -1,7 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ArtistScreen } from "./ArtistScreen";
 import { artistReleaseHref } from "./artistReleaseRoute";
-import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
 import { ComponentsScreen } from "./ComponentsScreen";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import {
@@ -52,7 +51,8 @@ import { useSourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider"
 import { IncomingScreen } from "./IncomingScreen";
 import { useI18n } from "./i18n";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
-import { LibraryCatalogRows } from "./LibraryCatalogRows";
+import { CatalogFilter as CatalogFilterControl } from "./features/library/CatalogFilter";
+import { LibraryCatalogRows } from "./features/library/LibraryCatalogRows";
 import { LocalProviderScreen } from "./LocalProviderScreen";
 import {
 	completeManagedLibraryDeletion,
@@ -78,7 +78,7 @@ import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "./publicationOutput";
-import { SelectionDock } from "./SelectionDock";
+import { SelectionDock } from "./features/library/SelectionDock";
 import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
 import { SetupScreen } from "./SetupScreen";
 import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";

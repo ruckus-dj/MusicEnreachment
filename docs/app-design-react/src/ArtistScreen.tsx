@@ -8,7 +8,7 @@ import {
 	availabilityRowClass,
 	type CatalogFilter as CatalogFilterValue,
 } from "./availabilityRows";
-import { CatalogFilter } from "./CatalogFilter";
+import { CatalogFilter } from "./features/library/CatalogFilter";
 import {
 	type CatalogArtist,
 	catalogData,

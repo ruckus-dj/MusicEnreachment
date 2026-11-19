@@ -14,6 +14,10 @@ artifacts.
 
 ## Approved prototype-to-production port
 
+- Keep screen-specific components, copy and colocated tests in `src/features/`
+  by feature. Keep the top-level entry and shared modules independent of any
+  one screen; new screen work must not grow the flat `src/` layout.
+
 - Keep fixture imports and demo execution behind the prototype data provider so
   the approved UI modules can be copied without changes. Production code must
   not import from `docs/app-design-react/` or use prototype fixtures or

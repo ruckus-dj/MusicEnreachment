@@ -4,17 +4,20 @@ import type {
 	OriginalRelease,
 	OriginalTrack,
 	SourceFiles,
-} from "./catalogData";
+} from "../../catalogData";
 import {
 	originalArtistName,
 	originalProviders,
 	trackNumberLabel,
-} from "./catalogData";
-import { audioProperties } from "./audioProperties";
-import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
-import { artistReleaseHref } from "./artistReleaseRoute";
-import { catalogueStyles, catalogueTableWidths } from "./catalogueStyles";
-import { useI18n } from "./i18n/I18nProvider";
+} from "../../catalogData";
+import { audioProperties } from "../../audioProperties";
+import {
+	availabilityRowClass,
+	type CatalogFilter,
+} from "../../availabilityRows";
+import { artistReleaseHref } from "../../artistReleaseRoute";
+import { catalogueStyles, catalogueTableWidths } from "../../catalogueStyles";
+import { useI18n } from "../../i18n/I18nProvider";
 import {
 	libraryRowsMessage,
 	type LibraryRowsMessage,
@@ -28,7 +31,7 @@ import {
 	Table,
 	TableBody,
 	TableHeader,
-} from "./ui";
+} from "../../ui";
 
 type View = "artists" | "albums" | "tracks";
 type CatalogTrack = Omit<OriginalTrack, "published"> & {
