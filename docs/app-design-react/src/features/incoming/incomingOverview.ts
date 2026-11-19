@@ -14,6 +14,7 @@ export type IncomingOverviewRow = {
 	pathCount: number;
 	readyCount: number;
 	paths: IncomingOverviewPath[];
+	folderPaths: string[];
 };
 
 type FolderEvidence = {
@@ -298,11 +299,14 @@ export function incomingOverviewRows(
 		displayCounts.set(displayKey, (displayCounts.get(displayKey) ?? 0) + 1);
 		const memberIds = [...new Set(group.fileIds)];
 		const paths = new Map<string, string>();
+		const folderPaths = new Set<string>();
 		for (const id of memberIds) {
 			for (const location of files[id]?.locations ?? []) {
 				const key = `${location.rootId}:${location.path}`;
 				if (paths.has(key)) continue;
 				const source = sourceLocation(location.path, roots);
+				const folder = parentOf(source.qualified);
+				if (folder) folderPaths.add(folder);
 				paths.set(
 					key,
 					source.root ? `${source.root} / ${source.relative}` : source.relative,
@@ -320,6 +324,7 @@ export function incomingOverviewRows(
 					Boolean(files[id]?.locations?.length),
 			).length,
 			paths: [...paths].map(([key, label]) => ({ key, label })),
+			folderPaths: [...folderPaths],
 		};
 	});
 	// The same unique label is shown in the table and in the immediate-action

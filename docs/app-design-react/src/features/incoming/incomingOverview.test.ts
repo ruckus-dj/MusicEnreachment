@@ -28,6 +28,9 @@ it("names groups from album evidence and reports unique paths separately from so
 	expect(north?.paths.map((path) => path.label)).toContain(
 		"/mnt/backup / Northern Lines/01 - First Light.flac",
 	);
+	expect(new Set(north?.folderPaths)).toEqual(
+		new Set(["/mnt/inbox/north", "/mnt/backup/Northern Lines"]),
+	);
 });
 
 it("keeps source readiness distinct from the release evaluation", () => {

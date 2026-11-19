@@ -363,6 +363,15 @@ export function IncomingScreen({
 									readyCount,
 								}) => {
 									const splitEnabled = canSplitGroup(group, files);
+									const moveDestinations = rows
+										.filter(
+											(destinationRow) => destinationRow.group.id !== group.id,
+										)
+										.map((destinationRow) => ({
+											id: destinationRow.group.id,
+											name: destinationRow.name,
+											paths: destinationRow.folderPaths,
+										}));
 									return (
 										<Fragment key={group.id}>
 											<tr
@@ -463,12 +472,6 @@ export function IncomingScreen({
 																	tag("TITLE") || msg("missingFileTitle");
 																const canCreateGroup =
 																	splitEnabled && usableFile(file);
-																const destinations = rows
-																	.filter((row) => row.group.id !== group.id)
-																	.map((row) => ({
-																		id: row.group.id,
-																		name: row.name,
-																	}));
 																return (
 																	<li
 																		key={id}
@@ -505,7 +508,7 @@ export function IncomingScreen({
 																			<IncomingFileActions
 																				fileId={id}
 																				fileTitle={title}
-																				destinations={destinations}
+																				destinations={moveDestinations}
 																				canCreateGroup={canCreateGroup}
 																				onMove={(fileId, destinationId) =>
 																					commitMove(
