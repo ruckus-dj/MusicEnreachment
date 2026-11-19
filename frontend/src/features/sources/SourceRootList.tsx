@@ -150,7 +150,7 @@ function scanAction(
 			aria-label={`${label}: ${row.name}`}
 			isDisabled={row.scanning || row.availability === "unavailable"}
 			onPress={() => onScan(row.id)}
-			className="min-h-8 max-w-full rounded border border-[var(--control)] px-2 py-1 text-[var(--ink)] wrap-anywhere data-[hovered]:bg-[var(--raised)] data-[disabled]:opacity-60 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] pointer-coarse:min-h-10"
+			className="min-h-8 max-w-full rounded border border-[var(--control)] px-2 py-1 whitespace-nowrap text-[var(--ink)] data-[hovered]:bg-[var(--raised)] data-[disabled]:opacity-60 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] pointer-coarse:min-h-10"
 		>
 			{label}
 		</Button>
@@ -175,7 +175,7 @@ export function SourceRootList({
 		{ id: "availability", label: copy.availability, width: "w-[14%]" },
 		{ id: "lastScan", label: copy.lastScan, width: "w-[18%]" },
 		{ id: "inventory", label: copy.inventory, width: "w-[14%]" },
-		{ id: "actions", label: copy.actions, width: "w-[114px]" },
+		{ id: "actions", label: copy.actions, width: "w-36" },
 	];
 	return (
 		<section className="min-w-0 space-y-2">
