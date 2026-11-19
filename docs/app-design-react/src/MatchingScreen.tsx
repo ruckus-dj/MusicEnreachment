@@ -22,6 +22,7 @@ import {
 } from "./catalogData";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
+import { MatchingLocalReleasePicker } from "./features/incoming/MatchingLocalReleasePicker";
 import {
 	MatchingPreview,
 	type MatchingPreviewRow,
@@ -40,6 +41,7 @@ import type { PublicationInspection } from "./PublicationInspector";
 import { publicationMessage } from "./publicationMessages";
 import { useI18n } from "./i18n";
 import { matchingAction, matchingMessage } from "./matchingMessages";
+import { matchingArtistCredit } from "./matchingSearch";
 import { formatUiNotice, type UiNotice } from "./uiNotice";
 import {
 	applyPlan,
@@ -140,6 +142,18 @@ export function MatchingScreen({
 	const releases = givenReleases ?? localReleases;
 	const providers = givenProviders ?? providerReleases;
 	const artists = givenArtists ?? incomingFixtures.artists;
+	const musicBrainzEditions = providers.filter(
+		(release) => release.provider !== "Local",
+	);
+	const localEditions = providers
+		.filter(
+			(release) => release.provider === "Local" && release.tracks.length > 0,
+		)
+		.map((release) => ({
+			id: release.id,
+			title: release.title,
+			artist: matchingArtistCredit(release, artists),
+		}));
 	const activeGroupId = groupId ?? state.groupId;
 	const group = state.groups.find((item) => item.id === activeGroupId);
 	if (!group)
@@ -584,9 +598,11 @@ export function MatchingScreen({
 					</h2>
 					<MatchingSearchPicker
 						artists={artists}
-						releases={providers}
+						releases={musicBrainzEditions}
 						selectedReleaseId={
-							group.mode === "provider" ? group.candidateId : null
+							group.mode === "provider" && target.provider !== "Local"
+								? group.candidateId
+								: null
 						}
 						onSelectRelease={(releaseId) =>
 							setSelectedSearchReleases((current) => ({
@@ -599,20 +615,25 @@ export function MatchingScreen({
 						key={group.id}
 						releaseId={selectedSearchReleases[group.id] ?? prepareReleaseId}
 						resolveRelease={(identity) =>
-							providers.find(
+							musicBrainzEditions.find(
 								(release) =>
 									release.id === identity || release.providerId === identity,
 							)?.id
 						}
 						onPrepared={setCandidate}
 					/>
-					{createLocalReleaseHref && (
-						<div className="my-3 grid gap-1 border-t border-[var(--line)] pt-3">
-							<p className="m-0 text-xs text-[var(--muted)]">
-								{locale === "ru"
-									? "Не нашли нужное издание?"
-									: "Can't find the right edition?"}
-							</p>
+					<div className="mt-3 grid gap-2 border-t border-[var(--line)] pt-3">
+						<MatchingLocalReleasePicker
+							locale={locale}
+							releases={localEditions}
+							selectedReleaseId={
+								group.mode === "provider" && target.provider === "Local"
+									? target.id
+									: undefined
+							}
+							onSelect={setCandidate}
+						/>
+						{createLocalReleaseHref && (
 							<a
 								className="demo-button w-fit max-w-full text-center no-underline max-[520px]:w-full"
 								href={createLocalReleaseHref}
@@ -621,22 +642,8 @@ export function MatchingScreen({
 									? "Создать свой релиз"
 									: "Create your own release"}
 							</a>
-						</div>
-					)}
-					<Button
-						className="demo-button max-[520px]:w-full"
-						aria-pressed={group.mode === "local"}
-						onPress={() => {
-							group.mode = "local";
-							state.selectedTarget = null;
-							state.selectedFile = null;
-							state.recordingTarget = null;
-							clearPreview();
-							commitState();
-						}}
-					>
-						{matchingMessage(locale, "localRelease")}
-					</Button>
+						)}
+					</div>
 				</section>
 				<MatchingBoard
 					{...fixtureBoard}

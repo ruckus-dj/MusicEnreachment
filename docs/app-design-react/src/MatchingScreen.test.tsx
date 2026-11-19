@@ -9,6 +9,10 @@ import {
 } from "./incomingModel";
 import type { CatalogArtist } from "./catalogData";
 import { I18nProvider, useI18n } from "./i18n";
+import {
+	createLocalProviderState,
+	localProviderReleases,
+} from "./localProviderModel";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(
 	HTMLElement.prototype,
@@ -55,6 +59,30 @@ function LocaleSwitch() {
 		</button>
 	);
 }
+
+it("opens a Local edition in the same matching workspace without assigning files", async () => {
+	render(
+		<MatchingHarness
+			providers={[
+				...incomingFixtures.providerReleases,
+				...localProviderReleases(createLocalProviderState()),
+			]}
+		/>,
+	);
+	const before = screen.getByRole("region", {
+		name: "Позиции · Northern Lines",
+	});
+	fireEvent.keyDown(screen.getByRole("button", { name: /Локальное издание/ }), {
+		key: "ArrowDown",
+	});
+	fireEvent.click(await screen.findByRole("option", { name: /Road Notes/ }));
+	expect(
+		screen.getByRole("region", {
+			name: "Позиции · Road Notes — личный сборник",
+		}),
+	).toBe(before);
+	expect(screen.getByText("Назначено позиций: 0 из 5")).toBeInTheDocument();
+});
 
 afterEach(() => {
 	if (previousLanguagePreference === null)
