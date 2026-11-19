@@ -83,6 +83,25 @@ const matchingPreview: MatchingLocalPreview = {
   tracks: [],
 };
 
+function incomingFile(
+  variantID: string,
+  relativePath: string,
+  tags: Record<string, string[]> = {},
+): IncomingFileResponse {
+  return {
+    variant_id: variantID,
+    capture_analysis_id: `capture-${variantID}`,
+    capture_identity: `identity-${variantID}`,
+    tags,
+    locations:
+      file.locations?.map((location) => ({
+        ...location,
+        location_id: `location-${variantID}`,
+        relative_path: relativePath,
+      })) ?? [],
+  };
+}
+
 function LocaleToggle() {
   const { locale, setPreference } = useI18n();
   return (
@@ -298,4 +317,79 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   expect(
     screen.getByRole("heading", { name: "Match with a Local release" }),
   ).toBeInTheDocument();
+});
+
+it("orders assignment files by disc and track and previews the chosen variant", async () => {
+  const shuffledFiles = [
+    // Transport order (and IDs) deliberately differs from disc/track order.
+    incomingFile("variant-c", "album/disc-2-track-1.flac", {
+      DISCNUMBER: ["2"],
+      TRACKNUMBER: ["1"],
+    }),
+    // A file without a track number sorts after every numbered file, even by name.
+    incomingFile("variant-untagged", "album/00-untagged.flac"),
+    incomingFile("variant-b", "album/disc-1-track-10.flac", {
+      DISCNUMBER: ["1"],
+      TRACKNUMBER: ["10"],
+    }),
+    incomingFile("variant-d", "album/disc-1-track-2.flac", {
+      DISCNUMBER: ["1"],
+      TRACKNUMBER: ["2"],
+    }),
+  ];
+  const shuffledGroup: IncomingGroupResponse = {
+    ...group,
+    members: shuffledFiles.map((item) => item.variant_id),
+  };
+  const previewRequest = vi.fn();
+  server.use(
+    http.get(`/api/provider-catalog/releases/${releaseID}`, () =>
+      HttpResponse.json(release),
+    ),
+    http.post(
+      `/api/incoming-groups/${group.id}/matching/local/preview`,
+      async ({ request }) => {
+        previewRequest(await request.json());
+        return HttpResponse.json(matchingPreview);
+      },
+    ),
+  );
+  render(
+    <I18nProvider>
+      <LocalReleaseEditor
+        group={shuffledGroup}
+        files={shuffledFiles}
+        authorityRevision={2}
+        preferredReleaseId={releaseID}
+      />
+    </I18nProvider>,
+  );
+  await screen.findByLabelText("Дорожка для файла album/disc-1-track-2.flac");
+
+  const assignmentOrder = () =>
+    screen
+      .getAllByLabelText(/^Дорожка для файла /)
+      .map((select) => select.getAttribute("aria-label"));
+  // Numeric track order, not transport order, file names, or IDs.
+  expect(assignmentOrder()).toEqual([
+    "Дорожка для файла album/disc-1-track-2.flac",
+    "Дорожка для файла album/disc-1-track-10.flac",
+    "Дорожка для файла album/disc-2-track-1.flac",
+    "Дорожка для файла album/00-untagged.flac",
+  ]);
+
+  fireEvent.change(
+    screen.getByLabelText("Дорожка для файла album/disc-1-track-2.flac"),
+    { target: { value: trackID } },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр назначения" }),
+  );
+  await screen.findByRole("region", { name: "Предпросмотр — только чтение" });
+  expect(previewRequest).toHaveBeenCalledExactlyOnceWith({
+    assignments: [{ file_member_id: "variant-d", provider_track_id: trackID }],
+    expected_authority_revision: 2,
+    expected_group_revision: group.revision,
+    provider_release_id: releaseID,
+  });
 });

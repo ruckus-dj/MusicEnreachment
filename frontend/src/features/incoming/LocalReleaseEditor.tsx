@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
@@ -18,6 +18,11 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { compareSourceFiles } from "../matchingWorkspace/sourceFileOrder";
+import {
+  incomingSourceFileName,
+  readIncomingSourceTrackOrder,
+} from "./apiMatchingSources";
 import {
   type LocalMatchingMessages,
   type LocalMatchingNotice,
@@ -119,9 +124,25 @@ export function LocalReleaseEditor({
   currentScopeRef.current = currentScope;
   const state = states[group.id] ?? emptyEditorState();
   selectedReleaseRef.current = state.selectedReleaseID;
-  const scopedFiles = files.filter((file) =>
-    group.members?.includes(file.variant_id),
-  );
+  const memberIds = group.members;
+  const scopedFiles = useMemo(() => {
+    const members = new Set(memberIds);
+    const collator = new Intl.Collator(locale, {
+      numeric: true,
+      sensitivity: "base",
+    });
+    return files
+      .filter((file) => members.has(file.variant_id))
+      .map((file) => ({
+        file,
+        name:
+          incomingSourceFileName(file.locations?.[0]?.relative_path) ??
+          file.variant_id,
+        ...readIncomingSourceTrackOrder(file.tags),
+      }))
+      .sort((a, b) => compareSourceFiles(a, b, "track", collator))
+      .map(({ file }) => file);
+  }, [files, memberIds, locale]);
   const tracks = state.release?.tracks ?? [];
   const exactRelease =
     state.release?.id === state.selectedReleaseID ? state.release : undefined;
