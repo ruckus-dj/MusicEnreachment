@@ -3,19 +3,62 @@ import {
   getIncomingGroupManualPickerSearch,
   getLibraryRecordingSearch,
   getOperation,
+  listLocalProviderArtists,
   listLocalProviderRecordings,
   listLocalProviderReleases,
+  readLocalProviderRecording,
   startIncomingGroupManualPickerSearch,
   startLibraryRecordingSearch,
 } from "../../api/generated/client";
-import type { OperationResponse } from "../../api/generated/client.schemas";
+import type {
+  LocalProviderItem,
+  OperationResponse,
+} from "../../api/generated/client.schemas";
 import type { ReleaseCheckHit } from "./LocalReleaseEditor";
-import type { LocalReleaseRecording } from "./localReleaseFormModel";
+import type {
+  LocalReleaseArtist,
+  LocalReleaseRecording,
+} from "./localReleaseFormModel";
 
 const limit = 25;
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const requestOptions = (signal?: AbortSignal) =>
   ({ cache: "no-store", signal }) satisfies RequestInit;
+
+export function formProviderRecord(
+  item: LocalProviderItem,
+): LocalReleaseArtist & LocalReleaseRecording {
+  return {
+    id: item.id,
+    key: item.provider_key,
+    provider:
+      item.provider_code === "local"
+        ? "Local"
+        : item.provider_code === "musicbrainz"
+          ? "MusicBrainz"
+          : item.provider_code,
+    name: item.name,
+    title: item.title,
+    duration_ms: item.duration_ms,
+    credits: item.credits?.map((credit) => ({
+      artistId: credit.artist_id,
+      creditName: credit.credit_name,
+      joinPhrase: credit.join_phrase,
+    })),
+  };
+}
+
+export async function findLocalReleaseArtists(
+  query: string,
+  signal?: AbortSignal,
+): Promise<LocalReleaseArtist[]> {
+  const result = await listLocalProviderArtists(
+    { provider: "all", q: query, limit },
+    requestOptions(signal),
+  );
+  if (result.status !== 200) throw new Error("artist lookup failed");
+  return (result.data.items ?? []).map(formProviderRecord);
+}
 
 function awaitSearch(id: string, signal?: AbortSignal) {
   signal?.throwIfAborted();
@@ -173,10 +216,31 @@ export async function findLocalReleaseRecordings(
   signal?: AbortSignal,
 ): Promise<LocalReleaseRecording[]> {
   const opts = requestOptions(signal);
-  const localPage = listLocalProviderRecordings(
-    { provider: "local", q: query, limit },
-    opts,
-  );
+  const localRecordings = async () => {
+    const local = await listLocalProviderRecordings(
+      { provider: "local", q: query, limit },
+      opts,
+    );
+    if (local.status !== 200) throw new Error("Local recordings unavailable");
+    // Catalog pages omit recording credits. Reopen the bounded result page
+    // without treating an unavailable detail as an artistless recording.
+    const items = local.data.items ?? [];
+    const result: LocalReleaseRecording[] = [];
+    for (let offset = 0; offset < items.length; offset += 5) {
+      signal?.throwIfAborted();
+      result.push(
+        ...(await Promise.all(
+          items.slice(offset, offset + 5).map(async ({ id }) => {
+            const detail = await readLocalProviderRecording(id, opts);
+            if (detail.status !== 200)
+              throw new Error("Local recording details unavailable");
+            return formProviderRecord(detail.data);
+          }),
+        )),
+      );
+    }
+    return result;
+  };
   const musicBrainz = async () => {
     const start = await startLibraryRecordingSearch(
       { query, limit, offset: 0 },
@@ -196,18 +260,17 @@ export async function findLocalReleaseRecordings(
         provider: "MusicBrainz",
         title: item.title,
         duration_ms: item.duration_ms,
+        credits: item.artists?.map((artist) => ({
+          artistId: artist.provider_artist_id ?? undefined,
+          creditName: artist.name,
+          joinPhrase: artist.join_phrase,
+        })),
       };
     });
   };
-  const [external, local] = await Promise.all([musicBrainz(), localPage]);
-  if (local.status !== 200) throw new Error("Local recordings unavailable");
-  return [
-    ...(local.data.items ?? []).map((item) => ({
-      id: item.id,
-      provider: "Local",
-      title: item.title ?? "",
-      duration_ms: item.duration_ms,
-    })),
-    ...external,
-  ];
+  const [external, local] = await Promise.all([
+    musicBrainz(),
+    localRecordings(),
+  ]);
+  return [...local, ...external];
 }

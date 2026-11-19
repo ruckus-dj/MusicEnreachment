@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  createLocalProviderArtist,
   createLocalProviderRecording,
   createLocalProviderRelease,
   listLocalProviderArtists,
@@ -13,7 +14,9 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
 import {
   checkLocalReleaseEditions,
+  findLocalReleaseArtists,
   findLocalReleaseRecordings,
+  formProviderRecord,
 } from "./localReleaseLookups";
 
 function uniqueTag(files: readonly IncomingFileResponse[], key: string) {
@@ -28,17 +31,6 @@ function uniqueTag(files: readonly IncomingFileResponse[], key: string) {
     }
   }
   return distinct.size === 1 ? (distinct.values().next().value ?? "") : "";
-}
-
-function formRecord(item: LocalProviderItem) {
-  return {
-    id: item.id,
-    key: item.provider_key,
-    provider: item.provider_code === "local" ? "Local" : "MusicBrainz",
-    name: item.name,
-    title: item.title,
-    duration_ms: item.duration_ms,
-  };
 }
 
 const options = (signal?: AbortSignal): RequestInit => ({
@@ -91,7 +83,9 @@ export function IncomingLocalReleaseCreation({
   onSelect: (id: string, kind: "local" | "musicbrainz") => void;
 }) {
   const { locale } = useI18n();
-  const [artists, setArtists] = useState<ReturnType<typeof formRecord>[]>([]);
+  const [artists, setArtists] = useState<
+    ReturnType<typeof formProviderRecord>[]
+  >([]);
   const [localEditions, setLocalEditions] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -123,9 +117,10 @@ export function IncomingLocalReleaseCreation({
         if (artistPage.status !== 200) throw new Error("artist lookup failed");
         setArtists((current) => [
           ...new Map(
-            [...current, ...(artistPage.data.items ?? []).map(formRecord)].map(
-              (item) => [item.id, item] as const,
-            ),
+            [
+              ...current,
+              ...(artistPage.data.items ?? []).map(formProviderRecord),
+            ].map((item) => [item.id, item] as const),
           ).values(),
         ]);
         setLocalEditions(
@@ -138,11 +133,31 @@ export function IncomingLocalReleaseCreation({
         return editions;
       }}
       findRecordings={findLocalReleaseRecordings}
+      findArtists={findLocalReleaseArtists}
+      saveArtist={async (data) => {
+        const artist = formProviderRecord(
+          await writeCatalogRecord(
+            `artist:${data.name.trim().normalize("NFC").toLowerCase()}`,
+            () => createLocalProviderArtist(data),
+          ),
+        );
+        setArtists((current) => [...current, artist]);
+        return artist;
+      }}
       saveRecording={async (data) => {
-        return formRecord(
+        return formProviderRecord(
           await writeCatalogRecord(
             `recording:${data.title.trim().normalize("NFC").toLowerCase()}`,
-            () => createLocalProviderRecording(data),
+            () =>
+              createLocalProviderRecording({
+                title: data.title,
+                duration_ms: data.duration_ms,
+                credits: data.credits?.map((credit) => ({
+                  artist_id: credit.artistId,
+                  credit_name: credit.creditName,
+                  join_phrase: credit.joinPhrase,
+                })),
+              }),
           ),
         );
       }}

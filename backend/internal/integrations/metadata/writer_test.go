@@ -33,15 +33,20 @@ func TestWriterRoundTripsTagsAndPreservesAudioProperties(t *testing.T) {
 			if before.Properties.BitRateBitsPerSecond == 0 {
 				t.Fatalf("audio bitrate is not useful before writing: %#v", before.Properties)
 			}
+			// Production writes one singular joined credit in ARTIST and the
+			// ordered separate names in ARTISTS. The comma credit must survive as
+			// one value rather than being split back into the artist list.
 			requested := map[string][]string{
 				taglib.Title:                     {""},
-				taglib.Artist:                    {"First", "Second"},
+				taglib.Artist:                    {"First, Second"},
+				taglib.Artists:                   {"First", "Second"},
 				taglib.MusicBrainzTrackID:        {"recording-mbid"},
 				taglib.MusicBrainzReleaseTrackID: {"release-track-mbid"},
 				"EMPTY-KEY":                      {""},
 			}
 			expected := map[string][]string{
-				taglib.Artist:                    {"First", "Second"},
+				taglib.Artist:                    {"First, Second"},
+				taglib.Artists:                   {"First", "Second"},
 				taglib.MusicBrainzTrackID:        {"recording-mbid"},
 				taglib.MusicBrainzReleaseTrackID: {"release-track-mbid"},
 			}
@@ -82,6 +87,23 @@ func TestWriterRoundTripsTagsAndPreservesAudioProperties(t *testing.T) {
 			}
 			if !reflect.DeepEqual(beforeComparable, afterComparable) {
 				t.Fatalf("audio properties changed: before %#v after %#v", before.Properties, after.Properties)
+			}
+			// Reopened tags must expose production's artist shape exactly: one
+			// singular credit and a separate ordered pair of names.
+			if got := after.Tags[taglib.Artist]; !reflect.DeepEqual(got, []string{"First, Second"}) {
+				t.Fatalf("reopened ARTIST = %#v, want the singular comma credit", got)
+			}
+			if got := after.Tags[taglib.Artists]; !reflect.DeepEqual(got, []string{"First", "Second"}) {
+				t.Fatalf("reopened ARTISTS = %#v, want the ordered pair", got)
+			}
+			if ext == ".mp3" {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(raw) < 4 || string(raw[:3]) != "ID3" || raw[3] != 4 {
+					t.Fatalf("MP3 tag header = % x, want ID3v2.4", raw[:min(len(raw), 4)])
+				}
 			}
 		})
 	}
