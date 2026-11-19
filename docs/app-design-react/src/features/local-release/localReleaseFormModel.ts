@@ -4,17 +4,21 @@ export type LocalReleaseArtist = {
 	provider: string;
 };
 
+export type LocalReleaseCredit = {
+	artistId?: string;
+	creditName: string;
+	joinPhrase: string;
+};
+
+export type LocalRecordingCredit = LocalReleaseCredit & { artistId: string };
+
 export type LocalReleaseRecording = {
 	id: string;
 	key?: string;
 	provider: string;
 	title?: string;
 	duration_ms?: string | number | "" | null;
-	credits?: {
-		artistId?: string;
-		creditName: string;
-		joinPhrase: string;
-	}[];
+	credits?: LocalReleaseCredit[];
 };
 
 export type LocalReleaseTrack = {
@@ -40,11 +44,7 @@ export type LocalReleaseDraft = {
 export type LocalRecordingDraft = {
 	title: string;
 	duration_ms?: number;
-	credits?: {
-		artistId: string;
-		creditName: string;
-		joinPhrase: string;
-	}[];
+	credits?: LocalRecordingCredit[];
 };
 
 export type FindLocalArtists = (

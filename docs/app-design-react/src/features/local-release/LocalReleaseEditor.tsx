@@ -13,6 +13,7 @@ import {
 	formatLocalDuration,
 	type FindLocalArtists,
 	isOutcomeUncertain,
+	type LocalRecordingCredit,
 	type LocalRecordingDraft,
 	type LocalReleaseArtist,
 	type LocalReleaseDraft,
@@ -102,10 +103,11 @@ function RecordingPicker({
 	const [query, setQuery] = useState("");
 	const [create, setCreate] = useState(false);
 	const [duration, setDuration] = useState("");
-	const [selectedArtist, setSelectedArtist] = useState<LocalReleaseArtist>();
+	const [credits, setCredits] = useState<LocalRecordingCredit[]>([]);
 	const [invalid, setInvalid] = useState(false);
 	const [saved, setSaved] = useState<LocalReleaseRecording>();
 	const [saving, setSaving] = useState(false);
+	const [artistSaving, setArtistSaving] = useState(false);
 	const [saveError, setSaveError] = useState(false);
 	const [uncertain, setUncertain] = useState(false);
 	const savingRef = useRef(false);
@@ -113,12 +115,12 @@ function RecordingPicker({
 	const descriptionBase = useId();
 	useEffect(() => titleRef.current?.focus(), []);
 	const trimQuery = query.trim();
-	const isBusy = busy || saving;
+	const isBusy = busy || saving || artistSaving;
 	function clearSaveError() {
 		if (saveError) setSaveError(false);
 	}
 	async function saveNewRecording() {
-		if (savingRef.current || uncertain) return;
+		if (savingRef.current || uncertain || artistSaving) return;
 		if (!trimQuery || lookup.result.kind !== "ready" || !create) return;
 		const durationMs = parseLocalDuration(duration);
 		if (Number.isNaN(durationMs)) {
@@ -132,15 +134,9 @@ function RecordingPicker({
 			const recording = await saveRecording({
 				title: trimQuery,
 				duration_ms: durationMs ?? undefined,
-				...(selectedArtist
+				...(credits.length > 0
 					? {
-							credits: [
-								{
-									artistId: selectedArtist.id,
-									creditName: selectedArtist.name ?? "",
-									joinPhrase: "",
-								},
-							],
+							credits: credits.map((credit) => ({ ...credit })),
 						}
 					: {}),
 			});
@@ -258,7 +254,7 @@ function RecordingPicker({
 									isDisabled={isBusy}
 									onPress={() => {
 										setDuration("");
-										setSelectedArtist(undefined);
+										setCredits([]);
 										setInvalid(false);
 										clearSaveError();
 										setCreate(true);
@@ -297,10 +293,11 @@ function RecordingPicker({
 						copy={copy}
 						findArtists={findArtists}
 						saveArtist={saveArtist}
-						selected={selectedArtist}
+						credits={credits}
 						saved={savedArtists}
 						busy={isBusy}
-						onSelect={setSelectedArtist}
+						onCreditsChange={setCredits}
+						onSavingChange={setArtistSaving}
 						onSaved={onArtistSaved}
 					/>
 					{invalid && (

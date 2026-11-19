@@ -101,3 +101,86 @@ it("requires a successful search and saves a missing recording separately from t
 	);
 	expect(onCancel).not.toHaveBeenCalled();
 });
+
+it("saves ordered recording artists and their exact separator without assigning the recording", async () => {
+	const onSave = vi.fn();
+	const saveArtist = vi.fn();
+	const saveRecording = vi.fn<LocalReleaseEditorProps["saveRecording"]>(
+		(data) => ({ ...data, id: "duet", provider: "Local" }),
+	);
+	const artists = [
+		{ id: "mira", name: "Mira Vale", provider: "Local" },
+		{ id: "arden", name: "Arden Trio", provider: "MusicBrainz" },
+	];
+	render(
+		<LocalReleaseEditor
+			locale="en"
+			incomingLabel="Northern Lines"
+			suggestedArtist="Various Artists"
+			suggestedTitle="Northern Lines"
+			artists={artists}
+			recordings={[]}
+			checkRelease={async () => []}
+			findRecordings={async () => []}
+			findArtists={async (query) =>
+				artists.filter((artist) => artist.name === query)
+			}
+			saveArtist={saveArtist}
+			saveRecording={saveRecording}
+			onUseRelease={vi.fn()}
+			onSave={onSave}
+			onCancel={vi.fn()}
+		/>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Check editions" }));
+	fireEvent.click(
+		await screen.findByRole("button", {
+			name: "No suitable edition — continue",
+		}),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Add a recording" }));
+	const picker = within(
+		screen.getByRole("region", { name: "Add a recording" }),
+	);
+	fireEvent.change(picker.getByRole("textbox", { name: "Recording title" }), {
+		target: { value: "Duet" },
+	});
+	fireEvent.click(picker.getByRole("button", { name: "Search" }));
+	fireEvent.click(
+		await picker.findByRole("button", {
+			name: "No suitable recording — create one",
+		}),
+	);
+	for (const artist of artists) {
+		fireEvent.change(picker.getByRole("textbox", { name: "Artist name" }), {
+			target: { value: artist.name },
+		});
+		fireEvent.click(picker.getByRole("button", { name: "Find artist" }));
+		const add = await picker.findByRole("button", {
+			name: `Add artist: ${artist.name} · ${artist.provider}`,
+		});
+		fireEvent.click(add);
+		expect(add).toBeDisabled();
+	}
+	fireEvent.change(
+		picker.getByRole("textbox", { name: "Separator after: Mira Vale" }),
+		{ target: { value: " + " } },
+	);
+	fireEvent.click(picker.getByRole("button", { name: "Move artist up 2" }));
+	expect(picker.getByText("Arden Trio + Mira Vale")).toBeInTheDocument();
+	expect(saveRecording).not.toHaveBeenCalled();
+	expect(saveArtist).not.toHaveBeenCalled();
+	fireEvent.click(picker.getByRole("button", { name: "Save recording" }));
+	expect(saveRecording).toHaveBeenCalledExactlyOnceWith({
+		title: "Duet",
+		duration_ms: undefined,
+		credits: [
+			{ artistId: "arden", creditName: "Arden Trio", joinPhrase: " + " },
+			{ artistId: "mira", creditName: "Mira Vale", joinPhrase: "" },
+		],
+	});
+	expect(onSave).not.toHaveBeenCalled();
+	expect(
+		screen.queryByRole("list", { name: "Tracklist" }),
+	).not.toBeInTheDocument();
+});
