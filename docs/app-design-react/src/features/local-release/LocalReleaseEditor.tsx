@@ -9,11 +9,12 @@ import {
 } from "react-aria-components";
 import { LocalRecordingArtistField } from "./LocalRecordingArtistField";
 import {
+	buildLocalRecordingCredits,
 	formatLocalCredits,
 	formatLocalDuration,
 	type FindLocalArtists,
 	isOutcomeUncertain,
-	type LocalRecordingCredit,
+	type LocalRecordingCreditSelection,
 	type LocalRecordingDraft,
 	type LocalReleaseArtist,
 	type LocalReleaseDraft,
@@ -103,7 +104,7 @@ function RecordingPicker({
 	const [query, setQuery] = useState("");
 	const [create, setCreate] = useState(false);
 	const [duration, setDuration] = useState("");
-	const [credits, setCredits] = useState<LocalRecordingCredit[]>([]);
+	const [credits, setCredits] = useState<LocalRecordingCreditSelection[]>([]);
 	const [invalid, setInvalid] = useState(false);
 	const [saved, setSaved] = useState<LocalReleaseRecording>();
 	const [saving, setSaving] = useState(false);
@@ -136,7 +137,7 @@ function RecordingPicker({
 				duration_ms: durationMs ?? undefined,
 				...(credits.length > 0
 					? {
-							credits: credits.map((credit) => ({ ...credit })),
+							credits: buildLocalRecordingCredits(credits),
 						}
 					: {}),
 			});

@@ -1,10 +1,11 @@
 import { useId, useRef, useState } from "react";
 import { Button } from "react-aria-components";
 import {
+	buildLocalRecordingCredits,
 	type FindLocalArtists,
 	formatLocalCredits,
 	isOutcomeUncertain,
-	type LocalRecordingCredit,
+	type LocalRecordingCreditSelection,
 	type LocalReleaseArtist,
 	type SaveLocalArtist,
 } from "./localReleaseFormModel";
@@ -22,67 +23,10 @@ import {
 	useLookup,
 } from "./localReleaseUi";
 
-const defaultCreditSeparator = ", ";
-
 type CreditControl = "up" | "down" | "remove";
 
 function formatArtistName(artist: LocalReleaseArtist): string {
 	return artist.name?.trim() || artist.id;
-}
-
-function creditLabel(credit: LocalRecordingCredit): string {
-	return credit.creditName || credit.artistId;
-}
-
-function appendCredit(
-	credits: readonly LocalRecordingCredit[],
-	artist: LocalReleaseArtist,
-): LocalRecordingCredit[] {
-	if (credits.some((credit) => credit.artistId === artist.id))
-		return [...credits];
-	const next = credits.map((credit, index) =>
-		index + 1 === credits.length && !credit.joinPhrase
-			? { ...credit, joinPhrase: defaultCreditSeparator }
-			: credit,
-	);
-	return [
-		...next,
-		{ artistId: artist.id, creditName: artist.name ?? "", joinPhrase: "" },
-	];
-}
-
-function removeCredit(
-	credits: readonly LocalRecordingCredit[],
-	index: number,
-): LocalRecordingCredit[] {
-	const next = credits.filter((_, item) => item !== index);
-	if (next.length > 0 && next[next.length - 1].joinPhrase) {
-		next[next.length - 1] = { ...next[next.length - 1], joinPhrase: "" };
-	}
-	return next;
-}
-
-function moveCredit(
-	credits: readonly LocalRecordingCredit[],
-	index: number,
-	by: number,
-): LocalRecordingCredit[] {
-	const target = index + by;
-	if (target < 0 || target >= credits.length) return [...credits];
-	const next = credits.map((credit) => ({ ...credit }));
-	const source = next[index];
-	const destination = next[target];
-	next[index] = {
-		...source,
-		artistId: destination.artistId,
-		creditName: destination.creditName,
-	};
-	next[target] = {
-		...destination,
-		artistId: source.artistId,
-		creditName: source.creditName,
-	};
-	return next;
 }
 
 export function LocalRecordingArtistField({
@@ -99,10 +43,10 @@ export function LocalRecordingArtistField({
 	copy: LocalReleaseCopy;
 	findArtists: FindLocalArtists;
 	saveArtist: SaveLocalArtist;
-	credits: readonly LocalRecordingCredit[];
+	credits: readonly LocalRecordingCreditSelection[];
 	saved: readonly LocalReleaseArtist[];
 	busy: boolean;
-	onCreditsChange: (credits: LocalRecordingCredit[]) => void;
+	onCreditsChange: (credits: LocalRecordingCreditSelection[]) => void;
 	onSavingChange: (saving: boolean) => void;
 	onSaved: (artist: LocalReleaseArtist) => void;
 }) {
@@ -155,15 +99,19 @@ export function LocalRecordingArtistField({
 	}
 	function moveCreditRow(index: number, by: number) {
 		const credit = credits[index];
-		if (!credit) return;
-		onCreditsChange(moveCredit(credits, index, by));
+		const target = index + by;
+		if (!credit || target < 0 || target >= credits.length) return;
+		const next = [...credits];
+		next[index] = next[target];
+		next[target] = credit;
+		onCreditsChange(next);
 		focusControl(
 			credit.artistId,
 			by < 0 ? ["up", "down", "remove"] : ["down", "up", "remove"],
 		);
 	}
 	function removeCreditRow(index: number) {
-		const next = removeCredit(credits, index);
+		const next = credits.filter((_, item) => item !== index);
 		onCreditsChange(next);
 		const target = next[Math.min(index, next.length - 1)];
 		if (!target) {
@@ -173,16 +121,13 @@ export function LocalRecordingArtistField({
 		focusControl(target.artistId, ["remove", "up", "down"]);
 	}
 	function addCredit(artist: LocalReleaseArtist) {
+		if (credits.some((credit) => credit.artistId === artist.id)) return;
 		clearSaveError();
-		onCreditsChange(appendCredit(credits, artist));
+		onCreditsChange([
+			...credits,
+			{ artistId: artist.id, creditName: artist.name ?? "" },
+		]);
 		focusSearch();
-	}
-	function changeSeparator(index: number, value: string) {
-		onCreditsChange(
-			credits.map((credit, item) =>
-				item === index ? { ...credit, joinPhrase: value } : credit,
-			),
-		);
 	}
 	async function saveNewArtist() {
 		if (savingRef.current || uncertain) return;
@@ -252,12 +197,12 @@ export function LocalRecordingArtistField({
 					<p className="m-0 min-w-0 text-xs wrap-anywhere">
 						<span className="font-medium">{copy.creditsPreview}:</span>{" "}
 						<span className="text-sm font-semibold whitespace-pre-wrap wrap-anywhere">
-							{formatLocalCredits(credits)}
+							{formatLocalCredits(buildLocalRecordingCredits(credits))}
 						</span>
 					</p>
 					<ol className={rows} aria-label={copy.creditsOrder}>
 						{credits.map((credit, index) => {
-							const name = creditLabel(credit);
+							const name = credit.creditName || credit.artistId;
 							const last = index + 1 >= credits.length;
 							return (
 								<li key={credit.artistId} className="grid gap-2 py-2">
@@ -302,16 +247,6 @@ export function LocalRecordingArtistField({
 											</Button>
 										</div>
 									</div>
-									{!last && (
-										<div className="max-w-72">
-											<Field
-												label={`${copy.separatorAfter}: ${name}`}
-												value={credit.joinPhrase}
-												disabled={isBusy}
-												onChange={(value) => changeSeparator(index, value)}
-											/>
-										</div>
-									)}
 								</li>
 							);
 						})}

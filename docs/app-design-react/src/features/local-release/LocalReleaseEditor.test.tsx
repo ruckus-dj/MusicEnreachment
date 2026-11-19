@@ -102,7 +102,7 @@ it("requires a successful search and saves a missing recording separately from t
 	expect(onCancel).not.toHaveBeenCalled();
 });
 
-it("saves ordered recording artists and their exact separator without assigning the recording", async () => {
+it("saves ordered recording artists with the fixed separator without assigning the recording", async () => {
 	const onSave = vi.fn();
 	const saveArtist = vi.fn();
 	const saveRecording = vi.fn<LocalReleaseEditorProps["saveRecording"]>(
@@ -110,7 +110,7 @@ it("saves ordered recording artists and their exact separator without assigning 
 	);
 	const artists = [
 		{ id: "mira", name: "Mira Vale", provider: "Local" },
-		{ id: "arden", name: "Arden Trio", provider: "MusicBrainz" },
+		{ id: "acdc", name: "AC/DC", provider: "MusicBrainz" },
 	];
 	render(
 		<LocalReleaseEditor
@@ -162,12 +162,9 @@ it("saves ordered recording artists and their exact separator without assigning 
 		fireEvent.click(add);
 		expect(add).toBeDisabled();
 	}
-	fireEvent.change(
-		picker.getByRole("textbox", { name: "Separator after: Mira Vale" }),
-		{ target: { value: " + " } },
-	);
+	expect(picker.queryByRole("textbox", { name: /separator/i })).toBeNull();
 	fireEvent.click(picker.getByRole("button", { name: "Move artist up 2" }));
-	expect(picker.getByText("Arden Trio + Mira Vale")).toBeInTheDocument();
+	expect(picker.getByText("AC/DC / Mira Vale")).toBeInTheDocument();
 	expect(saveRecording).not.toHaveBeenCalled();
 	expect(saveArtist).not.toHaveBeenCalled();
 	fireEvent.click(picker.getByRole("button", { name: "Save recording" }));
@@ -175,7 +172,7 @@ it("saves ordered recording artists and their exact separator without assigning 
 		title: "Duet",
 		duration_ms: undefined,
 		credits: [
-			{ artistId: "arden", creditName: "Arden Trio", joinPhrase: " + " },
+			{ artistId: "acdc", creditName: "AC/DC", joinPhrase: " / " },
 			{ artistId: "mira", creditName: "Mira Vale", joinPhrase: "" },
 		],
 	});

@@ -11,6 +11,19 @@ export type LocalReleaseCredit = {
 };
 
 export type LocalRecordingCredit = LocalReleaseCredit & { artistId: string };
+export type LocalRecordingCreditSelection = Omit<
+	LocalRecordingCredit,
+	"joinPhrase"
+>;
+
+export function buildLocalRecordingCredits(
+	selection: readonly LocalRecordingCreditSelection[],
+): LocalRecordingCredit[] {
+	return selection.map((credit, index) => ({
+		...credit,
+		joinPhrase: index + 1 < selection.length ? " / " : "",
+	}));
+}
 
 export type LocalReleaseRecording = {
 	id: string;
