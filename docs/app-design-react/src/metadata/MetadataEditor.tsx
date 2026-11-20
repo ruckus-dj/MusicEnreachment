@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
-import { Button, Dialog, Heading, Modal } from "../ui";
+import { Button, Dialog, Heading, Modal } from "../components/ui";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
 import {

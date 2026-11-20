@@ -1,4 +1,4 @@
-import type { CatalogFilter } from "../../availabilityRows";
+import type { CatalogFilter } from "./availabilityRows";
 
 export const LIBRARY_PAGE_SIZE = 50;
 

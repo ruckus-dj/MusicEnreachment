@@ -2,7 +2,7 @@ import {
 	createLocalProviderState,
 	type LocalProviderRecord,
 	type LocalProviderState,
-} from "../localProviderModel";
+} from "../features/local-catalog/localProviderModel";
 
 // Clearly demo-only rows for paging the Own Catalog prototype. They are not
 // part of the canonical fixture JSON and carry no source provenance.

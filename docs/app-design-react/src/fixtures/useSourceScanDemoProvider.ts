@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { SourceFiles } from "../catalogData";
+import type { SourceFiles } from "../features/library/catalogData";
 import type { SourceScanState } from "../features/sources/SourceScanPanel";
-import { rootLocations } from "../sourceInventory";
+import { rootLocations } from "../features/sources/sourceInventory";
 import {
 	blockStagedSourceQueue,
 	createSourceScan,
 	processSourceQueue,
 	type SourceProcessingState,
-} from "../sourceProcessingModel";
-import type { SourceRoot } from "../SourcesScreen";
+} from "../features/sources/sourceProcessingModel";
+import type { SourceRoot } from "../features/sources/SourcesScreen";
 
 type Update<T> = (update: (current: T) => T) => void;
 

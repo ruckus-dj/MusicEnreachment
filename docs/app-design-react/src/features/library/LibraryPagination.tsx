@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n/I18nProvider";
-import { Button } from "../../ui";
+import { Button } from "../../components/ui";
 import {
 	libraryPaginationMessage,
 	type LibraryPaginationMessage,

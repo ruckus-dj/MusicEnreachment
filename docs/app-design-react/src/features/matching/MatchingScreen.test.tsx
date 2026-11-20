@@ -1,0 +1,361 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { CatalogArtist } from "../library/catalogData";
+import { I18nProvider, useI18n } from "../../i18n";
+import {
+	createIncomingState,
+	type IncomingReleases,
+	incomingFixtures,
+} from "../incoming/incomingModel";
+import {
+	createLocalProviderState,
+	localProviderReleases,
+} from "../local-catalog/localProviderModel";
+import { MatchingScreen } from "./MatchingScreen";
+
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+	HTMLElement.prototype,
+	"scrollIntoView",
+);
+let previousLanguagePreference: string | null = null;
+
+function MatchingHarness({
+	artists,
+	providers,
+}: {
+	artists?: CatalogArtist[];
+	providers?: IncomingReleases;
+} = {}) {
+	const [state, setState] = useState(createIncomingState);
+	return (
+		<>
+			<button
+				type="button"
+				onClick={() =>
+					setState((current) => ({
+						...current,
+						inventoryVersion: current.inventoryVersion + 1,
+					}))
+				}
+			>
+				Change inventory
+			</button>
+			<MatchingScreen
+				state={state}
+				onState={setState}
+				artists={artists}
+				providers={providers}
+			/>
+		</>
+	);
+}
+
+function LocaleSwitch() {
+	const { setPreference } = useI18n();
+	return (
+		<button type="button" onClick={() => setPreference("en")}>
+			Switch locale
+		</button>
+	);
+}
+
+it("switches between Local and MusicBrainz search results without losing the draft", async () => {
+	render(
+		<MatchingHarness
+			providers={[
+				...incomingFixtures.providerReleases,
+				...localProviderReleases(createLocalProviderState()),
+			]}
+		/>,
+	);
+	const before = screen.getByRole("region", {
+		name: "Позиции · Northern Lines",
+	});
+	const search = within(screen.getByRole("region", { name: "Поиск изданий" }));
+	expect(search.queryByRole("list")).not.toBeInTheDocument();
+	fireEvent.change(
+		search.getByRole("textbox", { name: "Артист и название издания" }),
+		{ target: { value: "Northern Lines" } },
+	);
+	fireEvent.click(search.getByRole("button", { name: "Искать" }));
+	const local = await search.findByRole("button", {
+		name: /^Выбрать «Northern Lines» \(Local,/,
+	});
+	const remote = search.getAllByRole("button", {
+		name: /^Выбрать «Northern Lines» \(MusicBrainz,/,
+	})[0];
+	expect(local).toHaveAccessibleName(/Исполнитель: Mira Vale.*Треков: 1\b/);
+	expect(remote).toHaveAccessibleName(/Исполнитель: Mira Vale.*Треков: 11\b/);
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/MusicBrainz/,
+	);
+	fireEvent.click(local);
+	expect(
+		screen.getByRole("region", {
+			name: "Позиции · Northern Lines",
+		}),
+	).toBe(before);
+	expect(screen.getByText(/Назначено позиций: 0 из /)).toBeInTheDocument();
+	fireEvent.click(
+		screen.getByRole("button", { name: "Выбрать 01 - First Light.flac" }),
+	);
+	fireEvent.click(
+		within(before).getAllByRole("button", {
+			name: /^Добавить 01 - First Light\.flac к позиции/,
+		})[0],
+	);
+	expect(screen.getByText(/Назначено позиций: 1 из /)).toBeInTheDocument();
+	fireEvent.click(remote);
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/MusicBrainz/,
+	);
+	fireEvent.click(
+		search.getByRole("button", { name: /^Выбрать «Northern Lines» \(Local,/ }),
+	);
+	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
+		/Local/,
+	);
+	expect(screen.getByText(/Назначено позиций: 1 из /)).toBeInTheDocument();
+});
+
+afterEach(() => {
+	if (previousLanguagePreference === null)
+		window.localStorage.removeItem("music-design-v2-language");
+	else
+		window.localStorage.setItem(
+			"music-design-v2-language",
+			previousLanguagePreference,
+		);
+	if (originalScrollIntoView)
+		Object.defineProperty(
+			HTMLElement.prototype,
+			"scrollIntoView",
+			originalScrollIntoView,
+		);
+	else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+	previousLanguagePreference = window.localStorage.getItem(
+		"music-design-v2-language",
+	);
+	window.localStorage.setItem("music-design-v2-language", "ru");
+});
+
+it("uses the compact publication inspector and scrolls its heading into focus on each open", () => {
+	const scrollIntoView = vi.fn();
+	Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+		configurable: true,
+		value: scrollIntoView,
+	});
+	vi.stubGlobal(
+		"matchMedia",
+		vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn() }),
+	);
+
+	const { container } = render(<MatchingHarness />);
+	const openPreview = () =>
+		fireEvent.click(
+			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		);
+	expect(
+		screen.getByText(/Выбрано позиций для публикации:/),
+	).toBeInTheDocument();
+	openPreview();
+	expect(container.querySelector(".matching-commit")).not.toBeInTheDocument();
+
+	const heading = screen.getByRole("heading", { name: /Предпросмотр:/ });
+	expect(heading).toHaveFocus();
+	expect(scrollIntoView).toHaveBeenLastCalledWith({
+		behavior: "auto",
+		block: "start",
+	});
+	expect(
+		screen.getByRole("region", { name: "Сравнить метаданные" }),
+	).toBeInTheDocument();
+	expect(
+		screen.getAllByRole("checkbox", { name: /Включить/ }).length,
+	).toBeGreaterThan(0);
+	expect(screen.getByText(/^Выбрано: \d+ \/ \d+/)).toBeInTheDocument();
+	expect(
+		screen.queryByText(/^\d+ Выбрано позиций для публикации:/),
+	).not.toBeInTheDocument();
+
+	fireEvent.click(screen.getByRole("button", { name: "Вернуться к объекту" }));
+	expect(container.querySelector(".matching-commit")).toBeInTheDocument();
+	openPreview();
+	expect(screen.getByRole("heading", { name: /Предпросмотр:/ })).toHaveFocus();
+	expect(scrollIntoView).toHaveBeenCalledTimes(2);
+});
+
+it("reserves a bounded inspector grid row and keeps the target list independently scrollable on wide desktop", () => {
+	const { container } = render(<MatchingHarness />);
+	const main = container.querySelector<HTMLElement>("[data-matching-screen]");
+	const layout = container.querySelector<HTMLElement>(
+		"[data-matching-workspace]",
+	);
+	const inspector = container.querySelector<HTMLElement>(
+		"[data-matching-inspector]",
+	);
+	const target = container.querySelector<HTMLElement>(
+		"[data-matching-positions]",
+	);
+	const sources = container.querySelector<HTMLElement>(
+		"[data-matching-sources]",
+	);
+	const search = container.querySelector<HTMLElement>(
+		"[data-matching-candidates]",
+	);
+	expect(main?.className).toContain("min-[1400px]:h-full");
+	expect(main?.className).toContain("min-[1400px]:flex-col");
+	expect(layout?.className).toContain(
+		"min-[1400px]:h-[clamp(520px,72dvh,880px)]",
+	);
+	expect(layout?.className).toContain("min-[1400px]:shrink-0");
+	expect(layout?.className).toContain(
+		"min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]",
+	);
+	expect(inspector).not.toBeNull();
+	expect(inspector?.parentElement).toBe(layout);
+	expect(layout?.className).toContain(
+		"[&>[data-matching-inspector]]:col-span-full",
+	);
+	expect(layout?.previousElementSibling).toBe(search);
+	expect(inspector?.className).not.toContain("min-[1400px]:fixed");
+	expect(target?.parentElement).toBe(layout);
+	expect(sources?.parentElement).toBe(layout);
+	expect(target?.className).toContain("min-[1400px]:overflow-y-auto");
+	expect(target?.className).toContain("min-[1400px]:min-h-0");
+});
+
+it("does not move focus back to the preview after a locale change", () => {
+	const scrollIntoView = vi.fn();
+	Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+		configurable: true,
+		value: scrollIntoView,
+	});
+	vi.stubGlobal(
+		"matchMedia",
+		vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn() }),
+	);
+
+	render(
+		<I18nProvider>
+			<LocaleSwitch />
+			<MatchingHarness />
+		</I18nProvider>,
+	);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Предпросмотр публикации" }),
+	);
+	const heading = screen.getByRole("heading", { name: /Предпросмотр:/ });
+	const switchLocale = screen.getByRole("button", { name: "Switch locale" });
+	switchLocale.focus();
+	fireEvent.click(switchLocale);
+
+	expect(switchLocale).toHaveFocus();
+	expect(heading).not.toHaveFocus();
+	expect(scrollIntoView).toHaveBeenCalledTimes(1);
+});
+
+it("keeps stale plans blocked and retains the final confirmation step", () => {
+	render(<MatchingHarness />);
+	const openPreview = () =>
+		fireEvent.click(
+			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		);
+	openPreview();
+
+	const previewConfirm = screen.getByRole("button", {
+		name: "Подтвердить публикацию",
+	});
+	expect(previewConfirm).toBeEnabled();
+	fireEvent.click(previewConfirm);
+	const dialog = screen.getByRole("dialog");
+	fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+	expect(dialog).not.toBeInTheDocument();
+
+	fireEvent.click(screen.getByRole("button", { name: "Change inventory" }));
+	expect(screen.getByRole("alert")).toHaveTextContent("Предпросмотр устарел");
+	expect(
+		screen.getByRole("button", { name: "Подтвердить публикацию" }),
+	).toBeDisabled();
+
+	fireEvent.click(screen.getByRole("button", { name: "Вернуться к объекту" }));
+	openPreview();
+	fireEvent.click(
+		screen.getByRole("button", { name: "Подтвердить публикацию" }),
+	);
+	const finalDialog = screen.getByRole("dialog");
+	fireEvent.click(
+		within(finalDialog).getByRole("button", { name: "Подтвердить" }),
+	);
+	expect(
+		screen.queryByRole("heading", { name: /Предпросмотр:/ }),
+	).not.toBeInTheDocument();
+});
+
+it("shows reactive, nonblocking localized sort-collision notices in the matching preview", () => {
+	const providers = structuredClone(incomingFixtures.providerReleases);
+	const release = providers.find((item) => item.id === "p-north");
+	if (!release) throw new Error("Missing provider release fixture");
+	release.credits = [
+		{ artistId: "mira", credit: "Mira credit", joinPhrase: " & " },
+		{ artistId: "arden", credit: "Arden credit", joinPhrase: "" },
+	];
+	release.tracks = release.tracks.map((track) => ({
+		...track,
+		recordingCredits: [
+			{ artistId: "mira", creditName: "Mira credit", joinPhrase: " & " },
+			{ artistId: "arden", creditName: "Arden credit", joinPhrase: "" },
+		],
+	}));
+	const artists: CatalogArtist[] = [
+		{ id: "mira", name: "Shared sort" },
+		{ id: "arden", name: "Shared sort" },
+	];
+
+	render(
+		<I18nProvider>
+			<LocaleSwitch />
+			<MatchingHarness artists={artists} providers={providers} />
+		</I18nProvider>,
+	);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Предпросмотр публикации" }),
+	);
+	expect(
+		screen.getByText(
+			"Сортировочные теги исполнителей композиции пропущены: у разных артистов совпало имя сортировки.",
+			{ exact: false },
+		),
+	).toBeInTheDocument();
+	expect(
+		screen.getByText(
+			"Сортировочные теги исполнителей издания пропущены: у разных артистов совпало имя сортировки.",
+			{ exact: false },
+		),
+	).toBeInTheDocument();
+	const confirm = screen.getByRole("button", {
+		name: "Подтвердить публикацию",
+	});
+	expect(confirm).toBeEnabled();
+
+	fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+	expect(
+		screen.getByText(
+			"Recording artist sort tags are omitted because different artists resolve to the same sort name.",
+			{ exact: false },
+		),
+	).toBeInTheDocument();
+	expect(
+		screen.getByText(
+			"Release artist sort tags are omitted because different artists resolve to the same sort name.",
+			{ exact: false },
+		),
+	).toBeInTheDocument();
+	expect(confirm).toBeEnabled();
+});

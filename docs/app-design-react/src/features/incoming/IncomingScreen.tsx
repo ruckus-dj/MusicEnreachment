@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { CatalogArtist } from "../../catalogData";
+import type { CatalogArtist } from "../library/catalogData";
 import { useI18n } from "../../i18n";
 import {
 	artistName,
@@ -12,13 +12,13 @@ import {
 	providerReleases,
 	runAutomaticMatching,
 	usableFile,
-} from "../../incomingModel";
+} from "./incomingModel";
 import {
 	compareSourceFiles,
 	readSourceTrackOrder,
-} from "../../matching-workspace/sourceFileOrder";
-import { Button, Link, PageHeader, Panel } from "../../ui";
-import { formatUiNotice } from "../../uiNotice";
+} from "../matching/sourceFileOrder";
+import { Button, Link, PageHeader, Panel } from "../../components/ui";
+import { formatUiNotice } from "../../infrastructure/uiNotice";
 import { IncomingFileActions } from "./IncomingFileActions";
 import {
 	type IncomingMessage,
@@ -29,7 +29,7 @@ import { incomingOverviewRows } from "./incomingOverview";
 import { canSplitGroup, splitFileIntoNewGroup } from "./incomingSplitModel";
 
 export type IncomingScreenProps = {
-	destination?: import("../../publicationOutput").PublicationDestination;
+	destination?: import("../publication/publicationOutput").PublicationDestination;
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
 	providers?: IncomingReleases;

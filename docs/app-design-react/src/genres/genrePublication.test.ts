@@ -7,7 +7,7 @@ import {
 	originalFiles,
 	originalReleases,
 	publicationMetadataIssues,
-} from "../catalogData";
+} from "../features/library/catalogData";
 import { genreCatalog } from "./catalogue";
 
 function catalogGenre(sourceName: string) {

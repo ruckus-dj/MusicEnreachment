@@ -2,7 +2,7 @@ import type {
 	LocalProviderRecord,
 	LocalProviderState,
 	LocalProviderType,
-} from "../../localProviderModel";
+} from "./localProviderModel";
 import type { GenreReference } from "../../metadata/GenrePicker";
 import {
 	formatLocalDuration,

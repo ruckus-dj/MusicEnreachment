@@ -1,4 +1,4 @@
-import type { CatalogArtist } from "../catalogData";
+import type { CatalogArtist } from "../features/library/catalogData";
 
 export type ArtistProjectionCredit = {
 	artistId: string;

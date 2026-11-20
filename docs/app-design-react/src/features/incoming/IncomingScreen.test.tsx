@@ -3,15 +3,15 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IncomingScreen } from "./IncomingScreen";
 import { I18nProvider } from "../../i18n";
-import { MatchingScreen } from "../../MatchingScreen";
+import { MatchingScreen } from "../matching/MatchingScreen";
 import {
 	createIncomingState,
 	incomingFixtures,
 	type IncomingFiles,
 	type IncomingState,
 	makeGroupPlan,
-} from "../../incomingModel";
-import { initialSourceRoots } from "../../SourcesScreen";
+} from "./incomingModel";
+import { initialSourceRoots } from "../sources/SourcesScreen";
 import { splitFileIntoNewGroup } from "./incomingSplitModel";
 
 function renderOverview(state = createIncomingState()) {

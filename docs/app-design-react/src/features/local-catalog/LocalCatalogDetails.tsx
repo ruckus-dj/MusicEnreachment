@@ -2,7 +2,7 @@ import { Button } from "react-aria-components";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
-} from "../../localProviderModel";
+} from "./localProviderModel";
 import { formatLocalDuration } from "../local-release/localReleaseFormModel";
 import { muted, panel, primary, rows } from "../local-release/localReleaseUi";
 import { LocalCatalogEditorShell } from "./LocalCatalogEditorShell";

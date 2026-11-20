@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CatalogFilter } from "../../availabilityRows";
+import type { CatalogFilter } from "./availabilityRows";
 import {
 	buildLibraryRouteHref,
 	parseLibraryRoute,

@@ -9,7 +9,7 @@ import {
 	MenuTrigger,
 	Popover,
 	SearchField,
-} from "../../ui";
+} from "../../components/ui";
 import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 
 export type IncomingFileDestination = {

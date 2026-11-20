@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
-} from "../../localProviderModel";
+} from "./localProviderModel";
 import { LocalCatalogScreen } from "./LocalCatalogScreen";
 
 const localRelease = (index: number): LocalProviderRecord => ({

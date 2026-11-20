@@ -11,8 +11,8 @@ import {
 	incomingFixtures,
 	makeGroupPlan,
 	type IncomingState,
-} from "../../incomingModel";
-import { createLocalProviderState } from "../../localProviderModel";
+} from "../incoming/incomingModel";
+import { createLocalProviderState } from "../local-catalog/localProviderModel";
 
 function groupById(state: IncomingState, id: string) {
 	const group = state.groups.find((item) => item.id === id);

@@ -1,7 +1,7 @@
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-import type { CatalogArtist, OriginalRelease } from "../catalogData";
+import type { CatalogArtist, OriginalRelease } from "../features/library/catalogData";
 import { useI18n } from "../i18n/I18nProvider";
 import { metadataEditorMessages } from "./editorMessages";
 

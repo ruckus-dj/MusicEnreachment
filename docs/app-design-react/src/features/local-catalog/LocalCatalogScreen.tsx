@@ -1,11 +1,11 @@
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { Button } from "react-aria-components";
-import { formStyles as styles } from "../../formStyles";
+import { formStyles as styles } from "../../components/styles/formStyles";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
-} from "../../localProviderModel";
+} from "./localProviderModel";
 import {
 	Input,
 	Label,
@@ -14,7 +14,7 @@ import {
 	TabList,
 	TabPanel,
 	Tabs,
-} from "../../ui";
+} from "../../components/ui";
 import type {
 	LocalRecordingDraft,
 	LocalReleaseArtist,

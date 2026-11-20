@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import canonical from "./src/original-fixtures.json" with { type: "json" };
+import canonical from "./src/fixtures/original-fixtures.json" with { type: "json" };
 import { validateFixtures } from "./check-fixtures.mjs";
 
 const { test } = process.env.VITEST

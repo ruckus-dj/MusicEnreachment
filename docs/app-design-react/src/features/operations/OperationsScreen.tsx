@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SortDescriptor } from "react-aria-components";
-import { recoveryFixture } from "../../catalogData";
-import type { DeletionOperation } from "../../DeletionRequest";
+import { recoveryFixture } from "../library/catalogData";
+import type { DeletionOperation } from "../../components/DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import type {
 	DemoOperationStatus,

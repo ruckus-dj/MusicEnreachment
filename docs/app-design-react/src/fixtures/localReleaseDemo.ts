@@ -1,16 +1,16 @@
-import type { CatalogArtist } from "../catalogData";
+import type { CatalogArtist } from "../features/library/catalogData";
 import type { ReleaseCheckHit } from "../features/local-release/LocalReleaseEditor";
 import type {
 	IncomingFiles,
 	IncomingGroup,
 	IncomingReleases,
 	IncomingState,
-} from "../incomingModel";
+} from "../features/incoming/incomingModel";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
 	LocalProviderType,
-} from "../localProviderModel";
+} from "../features/local-catalog/localProviderModel";
 
 const normalize = (value: string) =>
 	value.normalize("NFC").trim().replace(/\s+/gu, " ").toLowerCase();

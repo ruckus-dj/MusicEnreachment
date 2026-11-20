@@ -1,4 +1,4 @@
-import type { LocalProviderRecord } from "../../localProviderModel";
+import type { LocalProviderRecord } from "./localProviderModel";
 import { LocalReleaseCancelDialog } from "../local-release/LocalReleaseCancelDialog";
 import { LocalReleaseForm } from "../local-release/LocalReleaseForm";
 import type {

@@ -4,7 +4,7 @@ import {
 	type IncomingState,
 	unassignFile,
 	usableFile,
-} from "../../incomingModel";
+} from "./incomingModel";
 
 /** Files that can be detached without making the source group unreadable. */
 export function splittableFileIds(

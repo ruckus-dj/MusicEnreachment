@@ -2,8 +2,8 @@ import type {
 	CatalogArtist,
 	OriginalRelease,
 	OriginalTrack,
-} from "../../catalogData";
-import type { AbsentCatalogGroup } from "../../catalogViewModel";
+} from "./catalogData";
+import type { AbsentCatalogGroup } from "./catalogViewModel";
 import { LIBRARY_PAGE_SIZE } from "./libraryRoute";
 
 export type LibraryAlbumEntry =

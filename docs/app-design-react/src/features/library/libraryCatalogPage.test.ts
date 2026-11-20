@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import type { OriginalRelease } from "../../catalogData";
-import type { AbsentCatalogGroup } from "../../catalogViewModel";
+import type { OriginalRelease } from "./catalogData";
+import type { AbsentCatalogGroup } from "./catalogViewModel";
 import {
 	combineLibraryAlbumEntries,
 	libraryPageCount,

@@ -3,8 +3,8 @@ import {
 	originalFiles,
 	originalReleases,
 	trackNumberLabel,
-} from "../catalogData";
-import fixtureData from "../original-fixtures.json";
+} from "../features/library/catalogData";
+import fixtureData from "./original-fixtures.json";
 
 /**
  * Deterministic scale sample for the prototype operations queue.

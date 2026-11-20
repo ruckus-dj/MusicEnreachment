@@ -1,18 +1,18 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { SourceFiles } from "../../catalogData";
+import type { SourceFiles } from "../library/catalogData";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import {
 	initialSourceRoots,
 	type SourceRoot,
 	SourcesScreen,
-} from "../../SourcesScreen";
+} from "./SourcesScreen";
 import { useSourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
 import {
 	initialSourceProcessingState,
 	type SourceProcessingState,
-} from "../../sourceProcessingModel";
+} from "./sourceProcessingModel";
 
 const files: SourceFiles = {
 	"track-1": {

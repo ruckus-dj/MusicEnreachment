@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { desiredTags } from "../catalogData";
+import { desiredTags } from "../features/library/catalogData";
 import {
 	readMetadataContributors,
 	readMetadataCredits,

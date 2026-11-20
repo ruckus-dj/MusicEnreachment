@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "react-aria-components";
-import type { LocalProviderRecord } from "../../localProviderModel";
+import type { LocalProviderRecord } from "./localProviderModel";
 import { GenrePicker, type GenreReference } from "../../metadata/GenrePicker";
 import {
 	Checkbox,
@@ -11,7 +11,7 @@ import {
 	Select,
 	SelectValue,
 	Button as UiButton,
-} from "../../ui";
+} from "../../components/ui";
 import {
 	formatLocalDuration,
 	parseLocalDuration,

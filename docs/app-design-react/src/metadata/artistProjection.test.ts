@@ -3,9 +3,9 @@ import type {
 	CatalogArtist,
 	OriginalRelease,
 	OriginalTrack,
-} from "../catalogData";
-import { desiredTags, effectivePublicationTags } from "../catalogData";
-import { publicationMetadataDiff } from "../publicationMetadataDiff";
+} from "../features/library/catalogData";
+import { desiredTags, effectivePublicationTags } from "../features/library/catalogData";
+import { publicationMetadataDiff } from "../features/publication/publicationMetadataDiff";
 import { projectArtistCreditGroup } from "./artistProjection";
 
 const artists: CatalogArtist[] = [

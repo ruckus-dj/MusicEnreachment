@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createIncomingState, incomingFixtures } from "../../incomingModel";
+import { createIncomingState, incomingFixtures } from "./incomingModel";
 import { incomingOverviewRows } from "./incomingOverview";
 
 const sourceRoots = ["/mnt/inbox", "/mnt/backup"];

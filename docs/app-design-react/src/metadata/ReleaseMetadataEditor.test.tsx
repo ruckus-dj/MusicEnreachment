@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { originalArtists, originalReleases } from "../catalogData";
+import { originalArtists, originalReleases } from "../features/library/catalogData";
 import { I18nProvider } from "../i18n";
 import { ReleaseMetadataEditor } from "./ReleaseMetadataEditor";
 

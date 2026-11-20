@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { originalReleases } from "../../catalogData";
-import type { DeletionOperation } from "../../DeletionRequest";
+import { originalReleases } from "../library/catalogData";
+import type { DeletionOperation } from "../../components/DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import {
 	demoOperationSettleDelayMs,

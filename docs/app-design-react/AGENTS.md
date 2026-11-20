@@ -18,6 +18,12 @@ artifacts.
   by feature. Keep the top-level entry and shared modules independent of any
   one screen; new screen work must not grow the flat `src/` layout.
 
+- Keep no direct source files under `src/`: app entry and composition live in
+  `src/app/`, shell in `src/routes/`, shared controls in `src/components/`,
+  feature code and tests in `src/features/<feature>/`, fixtures in
+  `src/fixtures/`, cross-feature utilities in `src/infrastructure/`, metadata in
+  `src/metadata/`, i18n in `src/i18n/`, and test support in `src/test/`.
+
 - Keep fixture imports and demo execution behind the prototype data provider so
   the approved UI modules can be copied without changes. Production code must
   not import from `docs/app-design-react/` or use prototype fixtures or
@@ -33,7 +39,7 @@ verification: `task design:check` and live prototype checks, not application
 reintroduce application checks through the commit hook for such changes.
 
 Use React 19, TypeScript, Vite, Tailwind 4 and react-aria-components. The fixture
-at `src/original-fixtures.json` is canonical, self-contained demo data. Do not
+at `src/fixtures/original-fixtures.json` is canonical, self-contained demo data. Do not
 regenerate it from a retired prototype or add invented source hashes/provenance.
 `check-fixtures.mjs` validates structure, identity uniqueness, references, and
 critical existing identities; update it only when approved fixture identities

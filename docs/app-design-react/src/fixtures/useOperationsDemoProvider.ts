@@ -3,10 +3,10 @@ import {
 	type OriginalTrack,
 	originalReleases,
 	recoveryFixture,
-} from "../catalogData";
-import type { DeletionOperation } from "../DeletionRequest";
+} from "../features/library/catalogData";
+import type { DeletionOperation } from "../components/DeletionRequest";
 import type { OperationMessage } from "../features/operations/operationMessages";
-import type { ManagedPublicationDeletionResult } from "../managedPublicationDeletionModel";
+import type { ManagedPublicationDeletionResult } from "../features/publication/managedPublicationDeletionModel";
 
 /** Demo scheduling: admission is visible before the provider settles the work. */
 export const demoOperationStartDelayMs = 400;

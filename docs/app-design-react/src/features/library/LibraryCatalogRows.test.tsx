@@ -4,8 +4,8 @@ import {
 	originalArtists,
 	originalFiles,
 	originalReleases,
-} from "../../catalogData";
-import { audioProperties } from "../../audioProperties";
+} from "./catalogData";
+import { audioProperties } from "../../metadata/audioProperties";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
 
 const release = originalReleases[0];

@@ -1,17 +1,17 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { OriginalRelease, OriginalTrack } from "../../catalogData";
-import { catalogueStyles } from "../../catalogueStyles";
+import type { OriginalRelease, OriginalTrack } from "./catalogData";
+import { catalogueStyles } from "./catalogueStyles";
 import {
 	type DeletionOperation,
 	publicationSelectionPlan,
-} from "../../DeletionRequest";
+} from "../../components/DeletionRequest";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
 } from "./libraryRowsMessages";
-import { Button, Dialog, Heading, Modal } from "../../ui";
+import { Button, Dialog, Heading, Modal } from "../../components/ui";
 
 type FrozenPublication = {
 	releaseId: string;

@@ -10,7 +10,7 @@ import {
 	ListBoxItem,
 	Modal,
 	SearchField,
-} from "../ui";
+} from "../components/ui";
 import { genreCatalog, resolveCatalogGenreName } from "../genres/catalogue";
 import { metadataMessage } from "./messages";
 
