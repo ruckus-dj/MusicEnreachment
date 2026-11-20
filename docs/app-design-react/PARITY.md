@@ -48,14 +48,16 @@ source channel, а fixture макета такого происхождения 
 | Оболочка | `routes/ShellView.tsx` | `routes/ShellView.tsx` |
 | Источники и операции | `features/sources/SourceRootList.tsx`, `features/sources/SourceScanPanel.tsx`, `features/operations/OperationsList.tsx` | Те же пути |
 | Перенос файла | `components/AppButton.tsx`, `features/incoming/IncomingFileActions.tsx` | Те же пути |
-| Сопоставление | `features/matching/`: `MatchingBoard`, `MatchingDnD`, `MatchingWorkspaceLayout`, `MatchingEvidenceInspector`, `MatchingPreview`, `ManualSearchView`, `ManualReleasePreparationView` и их контракты, стили и подписи | `features/matchingWorkspace/` |
-| Редактор Local-релиза | `features/local-release/`: форма, шаг проверки издания, диалог отмены, поиск артиста и композиции, состояние черновика, типы, стили и подписи | Те же пути |
+| Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
+| Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
 | Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
+| Настройки: вкладки | `features/settings/SettingsTabs.tsx` | Тот же путь |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
-адаптерах. Редакторы медиатеки, первый запуск, настройки и экран публикации
-целиком не перенесены дословно.
+адаптерах. В настройках совпадает каркас вкладок, а содержимое панелей и
+контроллеры сохранения пока различаются. Редакторы медиатеки, первый запуск и
+экран публикации целиком не перенесены дословно.
 
 ## Проверка
 

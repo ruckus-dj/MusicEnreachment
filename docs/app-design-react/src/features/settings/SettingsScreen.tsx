@@ -1,36 +1,7 @@
 import { type Key, useEffect, useRef, useState } from "react";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
-import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
-import { formStyles as styles } from "../../components/styles/formStyles";
 import { GenreLibrary } from "../../components/GenreLibrary";
-import { useI18n } from "../../i18n";
-import { settingsMessages } from "../../i18n/namespaces/settings";
-import {
-	isValidMusicBrainzConfiguration,
-	musicBrainzConfigurationFingerprint,
-} from "../../infrastructure/providerValidation";
-import {
-	getSettingsDraftStorage,
-	mergeSettingsDraft,
-	readSettingsDraft,
-	rebaseSettingsDraft,
-	type SettingsTextDraft,
-	settingsDraftConflicts,
-	settingsDraftIsDirty,
-	validConcurrency,
-	writeSettingsDraft,
-} from "./settingsDraft";
-import { setupToolExecutables } from "../setup/setupToolsLifecycle";
-import {
-	activateDemoInstallation,
-	availableToolReleases,
-	createDemoInstallation,
-	type DemoInstallation,
-	initialDemoInstallations,
-	isAbsoluteDemoServerPath,
-	type ManagedToolPackage,
-	movePreflightDemo,
-} from "./ToolLifecycleDemo";
+import { formStyles as styles } from "../../components/styles/formStyles";
 import {
 	Button,
 	Dialog,
@@ -43,27 +14,49 @@ import {
 	Popover,
 	Select,
 	SelectValue,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
 	TextField,
 } from "../../components/ui";
-
-const settingsTabs = [
-	"general",
-	"folders",
-	"tools",
-	"providers",
-	"genres",
-] as const;
-type SettingsTabKey = (typeof settingsTabs)[number];
+import { useI18n } from "../../i18n";
+import { settingsMessages } from "../../i18n/namespaces/settings";
+import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
+import {
+	isValidMusicBrainzConfiguration,
+	musicBrainzConfigurationFingerprint,
+} from "../../infrastructure/providerValidation";
+import { setupToolExecutables } from "../setup/setupToolsLifecycle";
+import {
+	type SettingsTabKey,
+	SettingsTabPanel,
+	SettingsTabs,
+	settingsTabKeys,
+} from "./SettingsTabs";
+import {
+	getSettingsDraftStorage,
+	mergeSettingsDraft,
+	readSettingsDraft,
+	rebaseSettingsDraft,
+	type SettingsTextDraft,
+	settingsDraftConflicts,
+	settingsDraftIsDirty,
+	validConcurrency,
+	writeSettingsDraft,
+} from "./settingsDraft";
+import {
+	activateDemoInstallation,
+	availableToolReleases,
+	createDemoInstallation,
+	type DemoInstallation,
+	initialDemoInstallations,
+	isAbsoluteDemoServerPath,
+	type ManagedToolPackage,
+	movePreflightDemo,
+} from "./ToolLifecycleDemo";
 
 const readSettingsTab = (hash: string): SettingsTabKey => {
 	const [path, query = ""] = hash.replace(/^#/, "").split("?");
 	if (path !== "settings") return "general";
 	const tab = new URLSearchParams(query).get("tab");
-	return settingsTabs.find((item) => item === tab) ?? "general";
+	return settingsTabKeys.find((item) => item === tab) ?? "general";
 };
 
 const isSettingsTabDestination = (hash: string) =>
@@ -206,7 +199,7 @@ export function SettingsScreen({
 		return () => window.removeEventListener("hashchange", syncTab);
 	}, []);
 	const selectTab = (key: Key) => {
-		const tab = settingsTabs.find((item) => item === key) ?? "general";
+		const tab = settingsTabKeys.find((item) => item === key) ?? "general";
 		setActiveTab(tab);
 		const nextHash = `#settings?tab=${tab}`;
 		if (window.location.hash !== nextHash) window.location.hash = nextHash;
@@ -795,48 +788,12 @@ export function SettingsScreen({
 					</div>
 				</div>
 			)}
-			<Tabs
-				className="grid min-w-0 gap-3"
-				aria-label={copy.title}
+			<SettingsTabs
+				locale={locale}
 				selectedKey={activeTab}
 				onSelectionChange={selectTab}
 			>
-				<TabList
-					aria-label={copy.title}
-					className="flex flex-wrap gap-1 border-b border-[var(--line)]"
-				>
-					<Tab
-						id="general"
-						className="min-h-9 rounded-t px-3 text-sm text-[var(--muted)] selected:border-b-2 selected:border-[var(--accent)] selected:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-					>
-						{copy.tabGeneral}
-					</Tab>
-					<Tab
-						id="folders"
-						className="min-h-9 rounded-t px-3 text-sm text-[var(--muted)] selected:border-b-2 selected:border-[var(--accent)] selected:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-					>
-						{copy.tabFolders}
-					</Tab>
-					<Tab
-						id="tools"
-						className="min-h-9 rounded-t px-3 text-sm text-[var(--muted)] selected:border-b-2 selected:border-[var(--accent)] selected:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-					>
-						{copy.tabTools}
-					</Tab>
-					<Tab
-						id="providers"
-						className="min-h-9 rounded-t px-3 text-sm text-[var(--muted)] selected:border-b-2 selected:border-[var(--accent)] selected:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-					>
-						{copy.tabProviders}
-					</Tab>
-					<Tab
-						id="genres"
-						className="min-h-9 rounded-t px-3 text-sm text-[var(--muted)] selected:border-b-2 selected:border-[var(--accent)] selected:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-					>
-						{copy.tabGenres}
-					</Tab>
-				</TabList>
-				<TabPanel id="general" className={styles.panel}>
+				<SettingsTabPanel id="general" className={styles.panel}>
 					<h2>{copy.general}</h2>
 					<div className="grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:gap-x-6">
 						<div className="grid content-start gap-3 min-[600px]:grid-cols-2">
@@ -963,8 +920,8 @@ export function SettingsScreen({
 							</p>
 						</section>
 					</div>
-				</TabPanel>
-				<TabPanel
+				</SettingsTabPanel>
+				<SettingsTabPanel
 					id="folders"
 					className={`${styles.panel} grid max-w-3xl gap-4`}
 				>
@@ -1009,8 +966,8 @@ export function SettingsScreen({
 						</div>
 						<small>{copy.workHelp}</small>
 					</section>
-				</TabPanel>
-				<TabPanel id="tools" className={`${styles.panel} grid gap-4`}>
+				</SettingsTabPanel>
+				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
 					<h2>{copy.tools}</h2>
 					{(["ffmpeg", "fpcalc"] as const).map((kind) => {
 						const active = installations.find(
@@ -1134,8 +1091,8 @@ export function SettingsScreen({
 							</Button>
 						</div>
 					</section>
-				</TabPanel>
-				<TabPanel
+				</SettingsTabPanel>
+				<SettingsTabPanel
 					id="providers"
 					className={`${styles.panel} grid max-w-3xl gap-4`}
 				>
@@ -1262,16 +1219,16 @@ export function SettingsScreen({
 						{copy.lrclib}
 					</label>
 					<small>{copy.lrclibHelp}</small>
-				</TabPanel>
-				<TabPanel id="genres" className={`${styles.panel} grid gap-2`}>
+				</SettingsTabPanel>
+				<SettingsTabPanel id="genres" className={`${styles.panel} grid gap-2`}>
 					<h2>{copy.tabGenres}</h2>
 					<GenreLibrary
 						loaded={settings.genresLoaded}
 						onLoadedChange={(genresLoaded) => update({ genresLoaded })}
 						buttonLabel={copy.refreshGenres}
 					/>
-				</TabPanel>
-			</Tabs>
+				</SettingsTabPanel>
+			</SettingsTabs>
 			{leavePrompt && (
 				<Modal
 					isOpen

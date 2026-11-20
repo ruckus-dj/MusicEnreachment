@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
@@ -57,6 +56,7 @@ import {
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -3032,27 +3032,12 @@ export function SettingsScreen() {
             )}
             {!platformReady && <p role="alert">{t("platformUnavailable")}</p>}
           </section>
-          <Tabs
+          <SettingsTabs
+            locale={locale}
             selectedKey={activeSettingsTab}
             onSelectionChange={(key) => selectSettingsTab(String(key))}
-            className="settings-tabs"
           >
-            <TabList
-              aria-label={t("settingsTabs")}
-              className="settings-tab-list"
-            >
-              <Tab id="general">{t("tabGeneral")}</Tab>
-              <Tab id="folders">{t("tabFolders")}</Tab>
-              <Tab id="tools">{t("tabTools")}</Tab>
-              <Tab id="providers">{t("tabProviders")}</Tab>
-              <Tab id="genres">{t("tabGenres")}</Tab>
-            </TabList>
-            <TabPanel
-              id="general"
-              shouldForceMount
-              data-settings-tab="general"
-              className="settings-tab-panel"
-            >
+            <SettingsTabPanel id="general" forceMount>
               <SettingsGeneralSection
                 publicationFormat={publicationFormat.value ?? "mka"}
                 onPublicationFormatChange={savePublicationFormat}
@@ -3141,13 +3126,8 @@ export function SettingsScreen() {
                   <p>{t("unsavedSourceDeletion")}</p>
                 )}
               </section>
-            </TabPanel>
-            <TabPanel
-              id="folders"
-              shouldForceMount
-              data-settings-tab="folders"
-              className="settings-tab-panel"
-            >
+            </SettingsTabPanel>
+            <SettingsTabPanel id="folders" forceMount>
               <div className="settings-grid">
                 <section
                   aria-labelledby="runtime-title"
@@ -3224,13 +3204,8 @@ export function SettingsScreen() {
                   </AppButton>
                 </section>
               </div>
-            </TabPanel>
-            <TabPanel
-              id="tools"
-              shouldForceMount
-              data-settings-tab="tools"
-              className="settings-tab-panel"
-            >
+            </SettingsTabPanel>
+            <SettingsTabPanel id="tools" forceMount>
               {operations.map((operation) =>
                 operation.state === "queued" ||
                 operation.state === "running" ? (
@@ -3430,13 +3405,8 @@ export function SettingsScreen() {
                   })}
                 </div>
               </section>
-            </TabPanel>
-            <TabPanel
-              id="providers"
-              shouldForceMount
-              data-settings-tab="providers"
-              className="settings-tab-panel"
-            >
+            </SettingsTabPanel>
+            <SettingsTabPanel id="providers" forceMount>
               <section
                 aria-labelledby="providers-title"
                 className="setup-panel settings-panel"
@@ -3562,16 +3532,11 @@ export function SettingsScreen() {
                 </label>
                 {lrclib.dirty && <p>{t("unsavedLrclib")}</p>}
               </section>
-            </TabPanel>
-            <TabPanel
-              id="genres"
-              shouldForceMount
-              data-settings-tab="genres"
-              className="settings-tab-panel"
-            >
+            </SettingsTabPanel>
+            <SettingsTabPanel id="genres" forceMount>
               <GenreCatalogPanel />
-            </TabPanel>
-          </Tabs>
+            </SettingsTabPanel>
+          </SettingsTabs>
         </>
       )}
       {error && (

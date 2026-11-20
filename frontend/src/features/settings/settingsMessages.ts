@@ -1,12 +1,6 @@
 import type { Locale } from "../../i18n/locale";
 
 const english = {
-  settingsTabs: "Settings sections",
-  tabGeneral: "General",
-  tabFolders: "Folders",
-  tabTools: "Tools",
-  tabProviders: "Providers",
-  tabGenres: "Genres",
   generalTitle: "General",
   publicationFormat: "Publication format",
   originalFormat: "Original format",
@@ -339,12 +333,6 @@ const russian: Record<SettingsMessageKey, string> = {
   enabled: "включено",
   disabled: "выключено",
   versionLabel: "Версия {kind}",
-  settingsTabs: "Разделы настроек",
-  tabGeneral: "Общие",
-  tabFolders: "Папки",
-  tabTools: "Инструменты",
-  tabProviders: "Провайдеры",
-  tabGenres: "Жанры",
   generalTitle: "Общие",
   publicationFormat: "Формат публикации",
   originalFormat: "Исходный формат",

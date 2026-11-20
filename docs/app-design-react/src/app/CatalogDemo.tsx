@@ -1,8 +1,40 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { ComponentsScreen } from "../components/ComponentsScreen";
+import type { DeletionOperation } from "../components/DeletionRequest";
+import {
+	Button,
+	Checkbox,
+	Input,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	SearchField,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	TabPanel,
+	Tabs,
+} from "../components/ui";
+import { IncomingScreen } from "../features/incoming/IncomingScreen";
+import {
+	createIncomingState,
+	makeReleasePlan,
+} from "../features/incoming/incomingModel";
+import {
+	combineLibraryAlbumEntries,
+	LibraryPagination,
+	libraryArtistPositionIds,
+	libraryPageCount,
+	libraryPageSlice,
+	libraryTrackPositionIds,
+	sliceTrackReleasePage,
+	splitLibraryAlbumEntries,
+	useLibraryRouteState,
+} from "../features/library";
 import { ArtistScreen } from "../features/library/ArtistScreen";
 import { artistReleaseHref } from "../features/library/artistReleaseRoute";
-import { ComponentsScreen } from "../components/ComponentsScreen";
-import { ContextPublicationPreview } from "../features/publication/ContextPublicationPreview";
+import { CatalogFilter as CatalogFilterControl } from "../features/library/CatalogFilter";
 import {
 	applyMetadataPreview,
 	type CatalogArtist,
@@ -24,48 +56,22 @@ import {
 	normalizeCatalogSearch,
 	trackSearchText,
 } from "../features/library/catalogViewModel";
-import type { DeletionOperation } from "../components/DeletionRequest";
-import { IncomingScreen } from "../features/incoming/IncomingScreen";
-import {
-	combineLibraryAlbumEntries,
-	LibraryPagination,
-	libraryArtistPositionIds,
-	libraryPageCount,
-	libraryPageSlice,
-	libraryTrackPositionIds,
-	sliceTrackReleasePage,
-	splitLibraryAlbumEntries,
-	useLibraryRouteState,
-} from "../features/library";
-import { CatalogFilter as CatalogFilterControl } from "../features/library/CatalogFilter";
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
-import { SelectionDock } from "../features/library/SelectionDock";
-import { LocalCatalogScreen } from "../features/local-catalog";
-import { LocalReleaseEditor } from "../features/local-release/LocalReleaseEditor";
-import { LocalReleaseDemoGenres } from "../fixtures/LocalReleaseDemoGenres";
-import { releaseDraftToRecord } from "../features/local-catalog/localCatalogModel";
-import { OperationsScreen } from "../features/operations/OperationsScreen";
-import { createLocalCatalogDemoState } from "../fixtures/localCatalogDemo";
-import {
-	appendDemoLocalRecord,
-	checkDemoReleases,
-	demoRecordingWithCredits,
-	findDemoArtists,
-	findDemoRecordings,
-	localReleaseSuggestions,
-	newDemoLocalRecord,
-	selectDemoRelease,
-} from "../fixtures/localReleaseDemo";
-import { useOperationsDemoProvider } from "../fixtures/useOperationsDemoProvider";
-import { useSourceScanDemoProvider } from "../fixtures/useSourceScanDemoProvider";
-import { useI18n } from "../i18n";
-import { createIncomingState, makeReleasePlan } from "../features/incoming/incomingModel";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "../features/library/libraryDeletionModel";
+import { SelectionDock } from "../features/library/SelectionDock";
+import { TagsScreen } from "../features/library/TagsScreen";
+import { TrackScreen } from "../features/library/TrackScreen";
+import { applyAudioUpgradePreview } from "../features/library/trackActionModel";
+import { LocalCatalogScreen } from "../features/local-catalog";
+import { releaseDraftToRecord } from "../features/local-catalog/localCatalogModel";
 import { localProviderReleases } from "../features/local-catalog/localProviderModel";
+import { LocalReleaseEditor } from "../features/local-release/LocalReleaseEditor";
 import { MatchingScreen } from "../features/matching/MatchingScreen";
+import { OperationsScreen } from "../features/operations/OperationsScreen";
+import { ContextPublicationPreview } from "../features/publication/ContextPublicationPreview";
 import type { ManagedPathObservation } from "../features/publication/managedPublicationDeletionModel";
 import {
 	PublicationPreview,
@@ -81,33 +87,36 @@ import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "../features/publication/publicationOutput";
-import { initialDemoSettings, SettingsScreen } from "../features/settings/SettingsScreen";
+import {
+	initialDemoSettings,
+	SettingsScreen,
+} from "../features/settings/SettingsScreen";
 import { SetupScreen } from "../features/setup/SetupScreen";
-import { initialSourceRoots, SourcesScreen } from "../features/sources/SourcesScreen";
+import {
+	initialSourceRoots,
+	SourcesScreen,
+} from "../features/sources/SourcesScreen";
 import { removeRootFromInventory } from "../features/sources/sourceInventory";
 import {
 	initialSourceProcessingState,
 	resetSourceProcessingQueue,
 	sourceProcessingLocks,
 } from "../features/sources/sourceProcessingModel";
-import { TagsScreen } from "../features/library/TagsScreen";
-import { TrackScreen } from "../features/library/TrackScreen";
-import { applyAudioUpgradePreview } from "../features/library/trackActionModel";
+import { LocalReleaseDemoGenres } from "../fixtures/LocalReleaseDemoGenres";
+import { createLocalCatalogDemoState } from "../fixtures/localCatalogDemo";
 import {
-	Button,
-	Checkbox,
-	Input,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	SearchField,
-	Select,
-	SelectValue,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
-} from "../components/ui";
+	appendDemoLocalRecord,
+	checkDemoReleases,
+	demoRecordingWithCredits,
+	findDemoArtists,
+	findDemoRecordings,
+	localReleaseSuggestions,
+	newDemoLocalRecord,
+	selectDemoRelease,
+} from "../fixtures/localReleaseDemo";
+import { useOperationsDemoProvider } from "../fixtures/useOperationsDemoProvider";
+import { useSourceScanDemoProvider } from "../fixtures/useSourceScanDemoProvider";
+import { useI18n } from "../i18n";
 
 const subscribeRoute = (listener: () => void) => {
 	let observedHash = window.location.hash;
@@ -271,7 +280,8 @@ export function CatalogDemo({
 		setPage,
 		setSearch,
 	} = useLibraryRouteState(route);
-	const headingRoute = routeName === "library" ? "library" : route;
+	const headingRoute =
+		routeName === "library" || routeName === "settings" ? routeName : route;
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);

@@ -2,10 +2,7 @@ import { createNamespace } from "../createNamespace";
 
 export const settingsMessages = createNamespace({
 	en: {
-		tabGeneral: "General",
 		tabFolders: "Folders",
-		tabTools: "Tools",
-		tabProviders: "Providers",
 		tabGenres: "Genres",
 		title: "Settings",
 		subtitle: "Library configuration and connected services",
@@ -141,10 +138,7 @@ export const settingsMessages = createNamespace({
 		refreshGenres: "Refresh genre catalog",
 	},
 	ru: {
-		tabGeneral: "Общие",
 		tabFolders: "Папки",
-		tabTools: "Инструменты",
-		tabProviders: "Провайдеры",
 		tabGenres: "Жанры",
 		title: "Настройки",
 		subtitle: "Параметры библиотеки и её подключений",
