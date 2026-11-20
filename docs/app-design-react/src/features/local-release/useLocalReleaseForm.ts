@@ -1,21 +1,24 @@
 import { useRef, useState } from "react";
 import {
-	type MetadataValidationIssue,
-	validateMetadataIssues,
-} from "../../metadata/projection";
-import {
 	formatLocalDuration,
 	isOutcomeUncertain,
 	type LocalReleaseArtist,
 	type LocalReleaseDraft,
+	type LocalReleaseEditionDraft,
 	type LocalReleaseGenre,
 	type LocalReleaseRecording,
 	type LocalReleaseTrack,
 	parseLocalDuration,
+	validLocalReleaseDate,
 } from "./localReleaseFormModel";
 
 export type LocalReleaseTrackInput = LocalReleaseTrack & {
 	durationInput: string;
+};
+
+/** Optional display duration; the form derives it from `durationOverrideMs`. */
+export type LocalReleaseTrackInitial = LocalReleaseTrack & {
+	durationInput?: string;
 };
 
 export type LocalReleaseFormInitialValues = {
@@ -29,20 +32,25 @@ export type LocalReleaseFormInitialValues = {
 	secondaryTypes?: string[] | string;
 	language?: string;
 	script?: string;
-	release_date?: string;
-	country_code?: string;
-	format?: string;
-	label?: string;
-	catalog_number?: string;
-	disambiguation?: string;
+	editionDetails?: LocalReleaseEditionDraft;
 	genres?: LocalReleaseGenre[];
-	tracks?: LocalReleaseTrackInput[];
+	tracks?: LocalReleaseTrackInitial[];
 };
 
 type Options = {
 	initialValues?: LocalReleaseFormInitialValues;
 	onSave: (draft: LocalReleaseDraft) => void | Promise<void>;
 };
+
+function initialTracks(
+	tracks: readonly LocalReleaseTrackInitial[] | undefined,
+): LocalReleaseTrackInput[] {
+	return (tracks ?? []).map((track) => ({
+		...track,
+		durationInput:
+			track.durationInput ?? formatLocalDuration(track.durationOverrideMs),
+	}));
+}
 
 export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 	const [artist, setArtist] = useState(initialValues?.artist ?? "");
@@ -62,24 +70,29 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 	const [language, setLanguage] = useState(initialValues?.language ?? "");
 	const [script, setScript] = useState(initialValues?.script ?? "");
 	const [releaseDate, setReleaseDateValue] = useState(
-		initialValues?.release_date ?? "",
+		initialValues?.editionDetails?.release_date ?? "",
 	);
-	const [editionDateIssue, setEditionDateIssue] =
-		useState<MetadataValidationIssue | null>(null);
-	const [country, setCountry] = useState(initialValues?.country_code ?? "");
-	const [format, setFormat] = useState(initialValues?.format ?? "");
-	const [label, setLabel] = useState(initialValues?.label ?? "");
+	const [editionDateIssue, setEditionDateIssue] = useState(false);
+	const [country, setCountry] = useState(
+		initialValues?.editionDetails?.country ?? "",
+	);
+	const [format, setFormat] = useState(
+		initialValues?.editionDetails?.format ?? "",
+	);
+	const [label, setLabel] = useState(
+		initialValues?.editionDetails?.label ?? "",
+	);
 	const [catalogNumber, setCatalogNumber] = useState(
-		initialValues?.catalog_number ?? "",
+		initialValues?.editionDetails?.catalog_number ?? "",
 	);
 	const [disambiguation, setDisambiguation] = useState(
-		initialValues?.disambiguation ?? "",
+		initialValues?.editionDetails?.disambiguation ?? "",
 	);
 	const [genres, setGenres] = useState<LocalReleaseGenre[]>(
 		initialValues?.genres ?? [],
 	);
-	const [positions, setPositions] = useState<LocalReleaseTrackInput[]>(
-		() => initialValues?.tracks ?? [],
+	const [positions, setPositions] = useState<LocalReleaseTrackInput[]>(() =>
+		initialTracks(initialValues?.tracks),
 	);
 	const [editId, setEditId] = useState<string>();
 	const [badPosition, setBadPosition] = useState<string>();
@@ -93,13 +106,21 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 	>([]);
 	const [cancel, setCancel] = useState(false);
 	const [savingRelease, setSavingRelease] = useState(false);
+	const [writingCatalogRecord, setWritingCatalogRecordState] = useState(false);
 	const [saveReleaseError, setSaveReleaseError] = useState(false);
 	const [releaseUncertain, setReleaseUncertain] = useState(false);
 	const savingReleaseRef = useRef(false);
+	const writingCatalogRecordRef = useRef(false);
 
 	function setReleaseDate(value: string) {
 		setReleaseDateValue(value);
-		setEditionDateIssue(null);
+		setEditionDateIssue(false);
+	}
+
+	/** Keep release saving fenced while a picker is writing catalog records. */
+	function markCatalogWrite(pending: boolean) {
+		writingCatalogRecordRef.current = pending;
+		setWritingCatalogRecordState(pending);
 	}
 
 	function splitList(value: string) {
@@ -156,6 +177,7 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 		const initialSecondaryTypes = Array.isArray(initial.secondaryTypes)
 			? initial.secondaryTypes.join(", ")
 			: (initial.secondaryTypes ?? "");
+		const initialEdition = initial.editionDetails ?? {};
 		const positionSignature = (position: LocalReleaseTrackInput) =>
 			[
 				position.id,
@@ -164,6 +186,10 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 				position.durationInput,
 				position.durationOverrideMs ?? "",
 			].join("|");
+		const genreSignature = (items: readonly LocalReleaseGenre[]) =>
+			items
+				.map((item) => `${item.id}\u0000${item.name}\u0000${item.source_name}`)
+				.join("|");
 		return Boolean(
 			savedRecordings.length ||
 				savedArtists.length ||
@@ -175,32 +201,31 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 				secondaryTypes !== initialSecondaryTypes ||
 				language !== (initial.language ?? "") ||
 				script !== (initial.script ?? "") ||
-				releaseDate !== (initial.release_date ?? "") ||
-				country !== (initial.country_code ?? "") ||
-				format !== (initial.format ?? "") ||
-				label !== (initial.label ?? "") ||
-				catalogNumber !== (initial.catalog_number ?? "") ||
-				disambiguation !== (initial.disambiguation ?? "") ||
+				releaseDate !== (initialEdition.release_date ?? "") ||
+				country !== (initialEdition.country ?? "") ||
+				format !== (initialEdition.format ?? "") ||
+				label !== (initialEdition.label ?? "") ||
+				catalogNumber !== (initialEdition.catalog_number ?? "") ||
+				disambiguation !== (initialEdition.disambiguation ?? "") ||
 				JSON.stringify(artistIds) !== JSON.stringify(initial.artistIds ?? []) ||
-				JSON.stringify(genres) !== JSON.stringify(initial.genres ?? []) ||
+				genreSignature(genres) !== genreSignature(initial.genres ?? []) ||
 				JSON.stringify(positions.map(positionSignature)) !==
-					JSON.stringify((initial.tracks ?? []).map(positionSignature)),
+					JSON.stringify(initialTracks(initial.tracks).map(positionSignature)),
 		);
 	}
 
 	async function save() {
-		if (savingReleaseRef.current || releaseUncertain) return;
+		if (
+			savingReleaseRef.current ||
+			writingCatalogRecordRef.current ||
+			releaseUncertain
+		)
+			return;
 		if (!title.trim()) return;
 		const date = releaseDate.trim();
-		if (date) {
-			const [issue] = validateMetadataIssues(
-				{ releasedate: [date] },
-				"release",
-			);
-			if (issue) {
-				setEditionDateIssue(issue);
-				return;
-			}
+		if (date && !validLocalReleaseDate(date)) {
+			setEditionDateIssue(true);
+			return;
 		}
 		const invalidPosition = positions.find((position) =>
 			Number.isNaN(parseLocalDuration(position.durationInput)),
@@ -210,6 +235,14 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 			setBadPosition(invalidPosition.id);
 			return;
 		}
+		const editionDetails: LocalReleaseEditionDraft = {
+			release_date: date || undefined,
+			country: country.trim() || undefined,
+			format: format.trim() || undefined,
+			label: label.trim() || undefined,
+			catalog_number: catalogNumber.trim() || undefined,
+			disambiguation: disambiguation.trim() || undefined,
+		};
 		savingReleaseRef.current = true;
 		setSavingRelease(true);
 		setSaveReleaseError(false);
@@ -222,12 +255,9 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 				secondaryTypes: splitList(secondaryTypes),
 				language: language.trim() || undefined,
 				script: script.trim() || undefined,
-				release_date: releaseDate.trim() || undefined,
-				country_code: country.trim() || undefined,
-				format: format.trim() || undefined,
-				label: label.trim() || undefined,
-				catalog_number: catalogNumber.trim() || undefined,
-				disambiguation: disambiguation.trim() || undefined,
+				edition: Object.values(editionDetails).some(Boolean)
+					? editionDetails
+					: undefined,
 				genres,
 				tracks: positions.map(({ durationInput, ...position }) => {
 					const originalDuration = position.durationOverrideMs;
@@ -297,6 +327,8 @@ export function useLocalReleaseForm({ initialValues, onSave }: Options) {
 		cancel,
 		setCancel,
 		savingRelease,
+		writingCatalogRecord,
+		markCatalogWrite,
 		saveReleaseError,
 		releaseUncertain,
 		remember,

@@ -1,50 +1,57 @@
 import { Button } from "react-aria-components";
 import { secondary } from "../local-release/localReleaseUi";
-import {
-	type LocalCatalogMessage,
-	localCatalogMessage,
-} from "./localCatalogMessage";
 
-export function LocalCatalogPagination({
+export function OwnCatalogPagination({
 	locale,
 	page,
 	totalPages,
 	totalItems,
+	busy,
 	onPageChange,
 }: {
 	locale: "ru" | "en";
 	page: number;
 	totalPages: number;
 	totalItems: number;
+	busy?: boolean;
 	onPageChange: (page: number) => void;
 }) {
-	const m = (
-		key: LocalCatalogMessage,
-		values?: Record<string, string | number>,
-	) => localCatalogMessage(locale, key, values);
+	const copy =
+		locale === "ru"
+			? {
+					pages: "Страницы собственного каталога",
+					status: `Страница ${page} из ${totalPages} · Всего: ${totalItems}`,
+					previous: "Предыдущая страница",
+					next: "Следующая страница",
+				}
+			: {
+					pages: "Own catalog pages",
+					status: `Page ${page} of ${totalPages} · Total: ${totalItems}`,
+					previous: "Previous page",
+					next: "Next page",
+				};
 	return (
 		<nav
 			className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] pt-3 text-xs"
-			aria-label={m("pages")}
+			aria-label={copy.pages}
 		>
 			<span role="status" className="text-[var(--muted)]">
-				{m("pageStatus", { page, pages: totalPages })} ·{" "}
-				{m("totalItems", { count: totalItems })}
+				{copy.status}
 			</span>
 			<div className="flex gap-2">
 				<Button
 					className={secondary}
-					isDisabled={page <= 1}
+					isDisabled={Boolean(busy) || page <= 1}
 					onPress={() => onPageChange(page - 1)}
 				>
-					{m("previousPage")}
+					{copy.previous}
 				</Button>
 				<Button
 					className={secondary}
-					isDisabled={page >= totalPages}
+					isDisabled={Boolean(busy) || page >= totalPages}
 					onPress={() => onPageChange(page + 1)}
 				>
-					{m("nextPage")}
+					{copy.next}
 				</Button>
 			</div>
 		</nav>

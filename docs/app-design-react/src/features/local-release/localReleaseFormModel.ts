@@ -31,6 +31,8 @@ export type LocalReleaseRecording = {
 	provider: string;
 	title?: string;
 	duration_ms?: string | number | "" | null;
+	/** Provider-authored caption for saved credits, including unresolved names. */
+	artistCredit?: string;
 	credits?: LocalReleaseCredit[];
 };
 
@@ -44,7 +46,21 @@ export type LocalReleaseTrack = {
 
 export type LocalReleaseTrackDraft = Omit<LocalReleaseTrack, "durationInput">;
 
-export type LocalReleaseGenre = { id?: string; name: string };
+export type LocalReleaseGenre = {
+	id: string;
+	name: string;
+	source_name: string;
+};
+
+/** Optional edition metadata written as the nested wire `edition` object. */
+export type LocalReleaseEditionDraft = {
+	release_date?: string;
+	country?: string;
+	format?: string;
+	label?: string;
+	catalog_number?: string;
+	disambiguation?: string;
+};
 
 export type LocalReleaseDraft = {
 	title: string;
@@ -54,13 +70,8 @@ export type LocalReleaseDraft = {
 	secondaryTypes?: string[];
 	language?: string;
 	script?: string;
-	release_date?: string;
-	country_code?: string;
-	format?: string;
-	label?: string;
-	catalog_number?: string;
-	disambiguation?: string;
-	genres?: LocalReleaseGenre[];
+	edition?: LocalReleaseEditionDraft;
+	genres: LocalReleaseGenre[];
 	tracks: LocalReleaseTrackDraft[];
 };
 
@@ -104,6 +115,28 @@ export function formatLocalDuration(milliseconds: unknown): string {
 	if (milliseconds === "" || milliseconds == null) return "";
 	const value = Number(milliseconds);
 	return `${Math.floor(value / 60_000)}:${String(Math.floor((value % 60_000) / 1000)).padStart(2, "0")}`;
+}
+
+/**
+ * Mirrors backend `librarymetadata.ValidPartialDate`: YYYY, YYYY-MM, or
+ * YYYY-MM-DD, with a real calendar date and a non-zero year.
+ */
+export function validLocalReleaseDate(value: string): boolean {
+	if (!/^\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(value)) return false;
+	if (value.slice(0, 4) === "0000") return false;
+	const [year, month, day] = value.split("-").map(Number);
+	if (month !== undefined && (month < 1 || month > 12)) return false;
+	if (day !== undefined) {
+		const date = new Date(0);
+		date.setUTCFullYear(year, month - 1, day);
+		date.setUTCHours(0, 0, 0, 0);
+		return (
+			date.getUTCFullYear() === year &&
+			date.getUTCMonth() === month - 1 &&
+			date.getUTCDate() === day
+		);
+	}
+	return true;
 }
 
 export function parseLocalDuration(value: string): number | null {

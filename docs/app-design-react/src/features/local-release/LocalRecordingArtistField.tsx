@@ -66,7 +66,6 @@ export function LocalRecordingArtistField({
 	const descriptionBase = useId();
 	const trimQuery = query.trim();
 	const isBusy = busy || saving;
-	const title = scope === "release" ? copy.artists : copy.recordingArtist;
 	function clearSaveError() {
 		if (saveError) setSaveError(false);
 	}
@@ -184,19 +183,23 @@ export function LocalRecordingArtistField({
 	}
 	return (
 		<section
-			aria-label={title}
+			aria-label={scope === "release" ? copy.artists : copy.recordingArtist}
 			className="grid gap-2 rounded border border-[var(--line)] p-2"
 		>
 			<div className="grid gap-1">
-				<h4 className="m-0 text-sm font-semibold">{title}</h4>
+				<h4 className="m-0 text-sm font-semibold">
+					{scope === "release" ? copy.artists : copy.recordingArtist}
+				</h4>
 				<p className={muted}>
 					{scope === "release" ? copy.artistHelp : copy.recordingArtistHelp}
 				</p>
 			</div>
 			{credits.length > 0 ? (
 				<fieldset
-					aria-label={copy.recordingCredits}
-					className="m-0 grid min-w-0 gap-1 rounded border border-[var(--accent)] bg-[var(--accent-soft)] p-2"
+					aria-label={
+						scope === "release" ? copy.creditsPreview : copy.recordingCredits
+					}
+					className="grid min-w-0 gap-1 rounded border border-[var(--accent)] bg-[var(--accent-soft)] p-2"
 				>
 					<p className="m-0 min-w-0 text-xs wrap-anywhere">
 						<span className="font-medium">{copy.creditsPreview}:</span>{" "}
@@ -258,8 +261,8 @@ export function LocalRecordingArtistField({
 				</fieldset>
 			) : (
 				<p className={muted}>
-					{copy.noArtistSelected}{" "}
-					{scope === "recording" ? copy.recordingArtistOptional : null}
+					{copy.noArtistSelected}
+					{scope === "recording" ? ` ${copy.recordingArtistOptional}` : null}
 				</p>
 			)}
 			<form

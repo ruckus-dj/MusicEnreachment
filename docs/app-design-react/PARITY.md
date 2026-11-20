@@ -37,6 +37,26 @@ source channel, а fixture макета такого происхождения 
 результат; строка readonly и не участвует в черновике или сохранении локальных
 жанров. Тесты используют реальные ссылки каталога жанров, не выдумывая provenance.
 
+## Перенос исходников
+
+Проверяем совпадение файлов, а не только оформления. В таблице — границы
+дословного переноса. Файлы внутри этих границ не читают демонстрационные данные
+или HTTP API; состояние и действия передают отдельные адаптеры.
+
+| Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
+| --- | --- | --- |
+| Оболочка | `routes/ShellView.tsx` | `routes/ShellView.tsx` |
+| Источники и операции | `features/sources/SourceRootList.tsx`, `features/sources/SourceScanPanel.tsx`, `features/operations/OperationsList.tsx` | Те же пути |
+| Перенос файла | `components/AppButton.tsx`, `features/incoming/IncomingFileActions.tsx` | Те же пути |
+| Сопоставление | `features/matching/`: `MatchingBoard`, `MatchingDnD`, `MatchingWorkspaceLayout`, `MatchingEvidenceInspector`, `MatchingPreview`, `ManualSearchView`, `ManualReleasePreparationView` и их контракты, стили и подписи | `features/matchingWorkspace/` |
+| Редактор Local-релиза | `features/local-release/`: форма, шаг проверки издания, диалог отмены, поиск артиста и композиции, состояние черновика, типы, стили и подписи | Те же пути |
+| Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
+
+Это не утверждение, что экраны целиком используют одинаковый код. В частности,
+выборки каталога, управление операциями и получение жанров остаются в отдельных
+адаптерах. Редакторы медиатеки, первый запуск, настройки и экран публикации
+целиком не перенесены дословно.
+
 ## Проверка
 
 Для макета и документации используются `task design:check` и живой браузер.

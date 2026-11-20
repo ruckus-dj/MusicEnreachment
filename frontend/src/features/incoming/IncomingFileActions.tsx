@@ -12,7 +12,6 @@ import {
 } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { Locale } from "../../i18n/locale";
 
 export type IncomingFileDestination = {
   id: string;
@@ -47,7 +46,7 @@ const actionCopy = {
     noGroupsFound: "Группы не найдены",
     createNewGroup: "Создать новую группу",
   },
-} satisfies Record<Locale, unknown>;
+} as const;
 
 const itemClass =
   "flex min-h-8 cursor-pointer items-center gap-2 rounded-[var(--control-radius)] px-2 py-[7px] text-xs text-[var(--ink)] outline-none data-[disabled]:cursor-not-allowed data-[disabled]:text-[var(--muted)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)] data-[focused]:bg-[var(--raised)] data-[open]:bg-[var(--raised)] pointer-coarse:min-h-11";
@@ -120,7 +119,7 @@ type MoveDestinationMenuProps = {
   fileTitle: string;
   destinations: readonly IncomingFileDestination[];
   onMove: (fileId: string, destinationId: string) => void;
-  copy: (typeof actionCopy)[Locale];
+  copy: (typeof actionCopy)[keyof typeof actionCopy];
   isDisabled: boolean;
 };
 

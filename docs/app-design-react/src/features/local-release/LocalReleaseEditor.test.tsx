@@ -8,6 +8,7 @@ import {
 it("requires a successful search and saves a missing recording separately from the release", async () => {
 	const onCancel = vi.fn();
 	const onSave = vi.fn();
+	const onUseRelease = vi.fn();
 	const saveRecording = vi.fn<LocalReleaseEditorProps["saveRecording"]>(
 		(data) => ({
 			...data,
@@ -31,13 +32,14 @@ it("requires a successful search and saves a missing recording separately from t
 			checkRelease={checkRelease}
 			findRecordings={async () => []}
 			findArtists={async () => []}
+			renderGenreField={() => null}
 			saveArtist={(data) => ({
 				id: "new-artist",
 				name: data.name,
 				provider: "Local",
 			})}
 			saveRecording={saveRecording}
-			onUseRelease={vi.fn()}
+			onUseRelease={onUseRelease}
 			onSave={onSave}
 			onCancel={onCancel}
 		/>,
@@ -78,6 +80,9 @@ it("requires a successful search and saves a missing recording separately from t
 	).not.toBeInTheDocument();
 	expect(onSave).not.toHaveBeenCalled();
 
+	await screen.findByRole("button", {
+		name: "Add to tracklist: Still Water",
+	});
 	fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 	const dialog = await screen.findByRole("dialog", {
 		name: "Cancel this release?",
@@ -89,6 +94,31 @@ it("requires a successful search and saves a missing recording separately from t
 		await screen.findByRole("button", {
 			name: "Add to tracklist: Still Water",
 		}),
+	);
+	checkRelease.mockResolvedValueOnce([
+		{
+			id: "other",
+			title: "Another edition",
+			artist: "Mira Vale",
+			provider: "Local",
+		},
+	]);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Back to the edition check" }),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Check editions" }));
+	fireEvent.click(
+		await screen.findByRole("button", { name: "Return with this edition" }),
+	);
+	expect(onUseRelease).not.toHaveBeenCalled();
+	fireEvent.click(
+		within(await screen.findByRole("dialog")).getByRole("button", {
+			name: "Keep editing",
+		}),
+	);
+	fireEvent.click(screen.getByRole("button", { name: next }));
+	expect(screen.getByRole("list", { name: "Tracklist" })).toHaveTextContent(
+		"Still Water",
 	);
 	fireEvent.click(
 		screen.getByRole("button", { name: "Save release and return" }),
@@ -117,6 +147,7 @@ it("preserves provider credits and uses commas for new Local recording artists",
 			locale="en"
 			incomingLabel="Northern Lines"
 			suggestedArtist="Various Artists"
+			renderGenreField={() => null}
 			suggestedTitle="Northern Lines"
 			artists={artists}
 			recordings={[]}

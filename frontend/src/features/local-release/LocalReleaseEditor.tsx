@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "react-aria-components";
 import { LocalReleaseCancelDialog } from "./LocalReleaseCancelDialog";
-import { LocalReleaseForm } from "./LocalReleaseForm";
+import {
+	LocalReleaseForm,
+	type RenderLocalReleaseGenreField,
+} from "./LocalReleaseForm";
 import type {
 	FindLocalArtists,
 	LocalRecordingDraft,
@@ -53,6 +56,7 @@ export type LocalReleaseEditorProps = {
 	) => LocalReleaseRecording | Promise<LocalReleaseRecording>;
 	findArtists: FindLocalArtists;
 	saveArtist: SaveLocalArtist;
+	renderGenreField: RenderLocalReleaseGenreField;
 	onUseRelease: (id: string) => void;
 	onSave: (data: LocalReleaseDraft) => void | Promise<void>;
 	onCancel: () => void;
@@ -63,6 +67,8 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 	const copy = localReleaseMessages[locale];
 	const lookup = useLookup<ReleaseCheckHit>();
 	const [step, setStep] = useState<"check" | "edit">("check");
+	const [returningToCheck, setReturningToCheck] = useState(false);
+	const [editionToUse, setEditionToUse] = useState<string>();
 	const heading = useRef<HTMLHeadingElement>(null);
 	const form = useLocalReleaseForm({
 		initialValues: {
@@ -164,7 +170,14 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 													</div>
 													<Button
 														className={secondary}
-														onPress={() => props.onUseRelease(hit.id)}
+														onPress={() => {
+															if (returningToCheck && form.hasDraft()) {
+																setEditionToUse(hit.id);
+																form.setCancel(true);
+															} else {
+																props.onUseRelease(hit.id);
+															}
+														}}
 													>
 														{copy.useEdition}
 													</Button>
@@ -197,7 +210,10 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 						form={form}
 						heading={copy.editStep}
 						titleReadOnly
-						onRecheck={() => setStep("check")}
+						onRecheck={() => {
+							setReturningToCheck(true);
+							setStep("check");
+						}}
 						suggestedArtist={props.suggestedArtist}
 						artists={props.artists}
 						recordings={props.recordings}
@@ -205,14 +221,21 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 						saveRecording={props.saveRecording}
 						findArtists={props.findArtists}
 						saveArtist={props.saveArtist}
+						renderGenreField={props.renderGenreField}
 					/>
 				)}
 			</section>
 			<LocalReleaseCancelDialog
 				copy={copy}
 				isOpen={form.cancel}
-				onOpenChange={form.setCancel}
-				onDiscard={onCancel}
+				onOpenChange={(open) => {
+					if (!open) setEditionToUse(undefined);
+					form.setCancel(open);
+				}}
+				onDiscard={() => {
+					if (editionToUse) props.onUseRelease(editionToUse);
+					else onCancel();
+				}}
 				savedRecordings={form.savedRecordings}
 				savedArtists={form.savedArtists}
 			/>

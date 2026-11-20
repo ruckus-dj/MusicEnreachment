@@ -42,6 +42,8 @@ import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
 import { SelectionDock } from "../features/library/SelectionDock";
 import { LocalCatalogScreen } from "../features/local-catalog";
 import { LocalReleaseEditor } from "../features/local-release/LocalReleaseEditor";
+import { LocalReleaseDemoGenres } from "../fixtures/LocalReleaseDemoGenres";
+import { releaseDraftToRecord } from "../features/local-catalog/localCatalogModel";
 import { OperationsScreen } from "../features/operations/OperationsScreen";
 import { createLocalCatalogDemoState } from "../fixtures/localCatalogDemo";
 import {
@@ -1028,6 +1030,13 @@ export function CatalogDemo({
 				incomingLabel={group.title}
 				suggestedArtist={suggested.artist}
 				suggestedTitle={suggested.title}
+				renderGenreField={(props) => (
+					<LocalReleaseDemoGenres
+						{...props}
+						loaded={settings.genresLoaded}
+						onLoad={loadGenres}
+					/>
+				)}
 				artists={localProvider.items.artists}
 				recordings={localProvider.items.recordings.map((recording) =>
 					demoRecordingWithCredits(recording, localProvider.items.artists),
@@ -1073,14 +1082,12 @@ export function CatalogDemo({
 					);
 					returnToMatching();
 				}}
-				onSave={({ genres, ...data }) => {
-					const release = newDemoLocalRecord({
-						...data,
-						genres: genres?.map((genre) => genre.id ?? genre.name),
-						genreNamesById: Object.fromEntries(
-							(genres ?? []).map((genre) => [genre.id ?? genre.name, genre.name]),
-						),
-					});
+				onSave={(draft) => {
+					const release = releaseDraftToRecord(
+						draft,
+						undefined,
+						localProvider.items.artists,
+					);
 					setLocalProvider((current) =>
 						appendDemoLocalRecord(current, "releases", release),
 					);
@@ -1088,7 +1095,7 @@ export function CatalogDemo({
 						selectDemoRelease(
 							current,
 							group.id,
-							{ id: release.id, title: data.title ?? "" },
+							{ id: release.id, title: draft.title },
 							true,
 						),
 					);

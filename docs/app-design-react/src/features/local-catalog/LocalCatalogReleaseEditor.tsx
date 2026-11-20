@@ -11,7 +11,8 @@ import type {
 } from "../local-release/localReleaseFormModel";
 import { localReleaseMessages } from "../local-release/localReleaseMessages";
 import { useLocalReleaseForm } from "../local-release/useLocalReleaseForm";
-import { LocalCatalogEditorShell } from "./LocalCatalogEditorShell";
+import { LocalReleaseDemoGenres } from "../../fixtures/LocalReleaseDemoGenres";
+import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import {
 	type LocalCatalogMessage,
 	localCatalogMessage,
@@ -59,15 +60,17 @@ export function LocalCatalogReleaseEditor({
 		onSave,
 	});
 	const requestBack = () => {
+		if (form.savingRelease || form.writingCatalogRecord) return;
 		if (form.hasDraft()) form.setCancel(true);
 		else onBack();
 	};
 	return (
 		<>
-			<LocalCatalogEditorShell
+			<OwnCatalogEditorShell
 				eyebrow={m("eyebrow")}
 				title={record ? m("editRelease") : m("createRelease")}
 				backLabel={m("back")}
+				backDisabled={form.savingRelease || form.writingCatalogRecord}
 				onBack={requestBack}
 			>
 				<LocalReleaseForm
@@ -82,11 +85,16 @@ export function LocalCatalogReleaseEditor({
 					findArtists={findArtists}
 					saveArtist={saveArtist}
 					saveLabel={m("save")}
-					genresLoaded={genresLoaded}
-					genreOptions={genreOptions}
-					onLoadGenres={onLoadGenres}
+					renderGenreField={(props) => (
+						<LocalReleaseDemoGenres
+							{...props}
+							loaded={genresLoaded ?? false}
+							options={genreOptions}
+							onLoad={onLoadGenres}
+						/>
+					)}
 				/>
-			</LocalCatalogEditorShell>
+			</OwnCatalogEditorShell>
 			<LocalReleaseCancelDialog
 				copy={copy}
 				isOpen={form.cancel}

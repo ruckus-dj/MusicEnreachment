@@ -22,6 +22,7 @@ import {
   catalogCreateIdentity,
   writeCatalogRecord,
 } from "./localReleaseWrites";
+import { ProviderCatalogReleaseGenreField } from "./ProviderCatalogReleaseGenreField";
 
 function uniqueTag(files: readonly IncomingFileResponse[], key: string) {
   const distinct = new Map<string, string>();
@@ -107,6 +108,9 @@ export function IncomingLocalReleaseCreation({
       }}
       findRecordings={findLocalReleaseRecordings}
       findArtists={findLocalReleaseArtists}
+      renderGenreField={(props) => (
+        <ProviderCatalogReleaseGenreField {...props} />
+      )}
       saveArtist={async (data) => {
         const artist = formProviderRecord(
           await writeCatalogRecord(

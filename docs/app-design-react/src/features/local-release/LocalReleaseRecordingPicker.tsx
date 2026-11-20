@@ -42,6 +42,7 @@ export type LocalReleaseRecordingPickerProps = {
 	saveArtist: SaveLocalArtist;
 	savedArtists: readonly LocalReleaseArtist[];
 	busy: boolean;
+	onWritingChange: (pending: boolean) => void;
 	onSaved: (recording: LocalReleaseRecording) => void;
 	onArtistSaved: (artist: LocalReleaseArtist) => void;
 	onAdd: (recording: LocalReleaseRecording) => void;
@@ -57,6 +58,7 @@ export function LocalReleaseRecordingPicker({
 	saveArtist,
 	savedArtists,
 	busy,
+	onWritingChange,
 	onSaved,
 	onArtistSaved,
 	onAdd,
@@ -94,6 +96,7 @@ export function LocalReleaseRecordingPicker({
 		}
 		savingRef.current = true;
 		setSaving(true);
+		onWritingChange(true);
 		setSaveError(false);
 		try {
 			const recording = await saveRecording({
@@ -114,11 +117,13 @@ export function LocalReleaseRecordingPicker({
 		} finally {
 			savingRef.current = false;
 			setSaving(false);
+			onWritingChange(false);
 		}
 	}
 	const resultRow = (recording: LocalReleaseRecording, index: number) => {
 		const descriptionId = `${descriptionBase}-recording-${index}`;
-		const credits = formatLocalCredits(recording.credits);
+		const credits =
+			recording.artistCredit ?? formatLocalCredits(recording.credits);
 		return (
 			<li key={recording.id} className={row}>
 				<div className="min-w-0 wrap-anywhere">
@@ -262,7 +267,10 @@ export function LocalReleaseRecordingPicker({
 						saved={savedArtists}
 						busy={isBusy}
 						onCreditsChange={setCredits}
-						onSavingChange={setArtistSaving}
+						onSavingChange={(pending) => {
+							setArtistSaving(pending);
+							onWritingChange(pending);
+						}}
 						onSaved={onArtistSaved}
 					/>
 					{invalid && (

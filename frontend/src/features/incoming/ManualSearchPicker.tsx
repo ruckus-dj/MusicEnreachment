@@ -14,6 +14,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { ManualSearchView } from "../matchingWorkspace/ManualSearchView";
 import {
   type ManualSearchMessageKey,
+  type ManualSearchSelection,
   type ManualSearchViewError,
   type ManualSearchViewItem,
   type ManualSearchViewResults,
@@ -319,6 +320,11 @@ export function ManualSearchPicker({
   const currentGroup = useRef(groupId);
   currentGroup.current = groupId;
   const localEnabled = Boolean(onSelectLocalRelease);
+  const selectedItem: ManualSearchSelection | undefined = selectedLocalReleaseId
+    ? { provider: "Local", id: selectedLocalReleaseId }
+    : selectedReleaseId
+      ? { provider: "MusicBrainz", id: selectedReleaseId }
+      : undefined;
   const state = states[groupId] ?? {
     query: "",
     limit: "10",
@@ -729,6 +735,7 @@ export function ManualSearchPicker({
       ))}
       <ManualSearchView
         locale={locale}
+        variant={localEnabled ? "editions" : "musicbrainz"}
         query={state.query}
         limit={state.limit}
         offset={state.offset}
@@ -736,13 +743,17 @@ export function ManualSearchPicker({
         pending={pending}
         results={results}
         errors={errors}
-        selectedReleaseId={selectedReleaseId}
-        selectedLocalReleaseId={selectedLocalReleaseId}
+        selectedItem={selectedItem}
         onQueryChange={changeQuery}
         onLimitChange={changeLimit}
         onSearch={() => void submit(0)}
-        onSelectRelease={onSelectRelease}
-        onSelectLocalRelease={onSelectLocalRelease}
+        onSelectItem={(item) => {
+          if (item.provider === "Local") {
+            onSelectLocalRelease?.(item.id);
+            return;
+          }
+          onSelectRelease(item.id);
+        }}
         onPrevious={() => void submit(Math.max(0, state.offset - pageLimit))}
         onNext={() => void submit(state.offset + pageLimit)}
       />

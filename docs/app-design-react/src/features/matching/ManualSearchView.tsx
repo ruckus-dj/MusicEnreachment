@@ -1,5 +1,7 @@
+import { Button as AriaButton, type ButtonProps } from "react-aria-components";
 import {
 	type ManualSearchMessageKey,
+	type ManualSearchSelection,
 	type ManualSearchViewItem,
 	type ManualSearchViewProps,
 	manualSearchMessage,
@@ -22,14 +24,16 @@ function editionDetails(
 	) => string,
 ) {
 	const formats = item.formats.join(" / ");
-	const namedLabels = item.labels.flatMap(({ name, catalogNumber }) =>
+	const labels = item.labels.flatMap(({ name, catalogNumber }) =>
 		name ? [catalogNumber ? `${name} (${catalogNumber})` : name] : [],
 	);
-	const unpairedCatalogNumbers = item.labels.flatMap(
-		({ name, catalogNumber }) =>
-			!name && catalogNumber ? [catalogNumber] : [],
+	const unpairedNumbers = item.labels.flatMap(({ name, catalogNumber }) =>
+		!name && catalogNumber ? [catalogNumber] : [],
 	);
 	return [
+		item.releaseGroupTitle
+			? message("releaseGroup", { title: item.releaseGroupTitle })
+			: undefined,
 		item.date ? message("releaseDate", { date: item.date }) : undefined,
 		item.country
 			? message("releaseCountry", { country: item.country })
@@ -41,13 +45,14 @@ function editionDetails(
 		item.mediaCount > 1
 			? message("discCount", { count: item.mediaCount })
 			: undefined,
-		namedLabels.length
-			? message("releaseLabels", { labels: namedLabels.join(", ") })
+		labels.length
+			? message("releaseLabels", { labels: labels.join(", ") })
 			: undefined,
-		unpairedCatalogNumbers.length
-			? message("catalogNumbers", {
-					numbers: unpairedCatalogNumbers.join(", "),
-				})
+		unpairedNumbers.length
+			? message("catalogNumbers", { numbers: unpairedNumbers.join(", ") })
+			: undefined,
+		item.score !== undefined
+			? message("score", { score: item.score })
 			: undefined,
 	].filter((detail): detail is string => Boolean(detail));
 }
@@ -55,13 +60,14 @@ function editionDetails(
 function chooseLabel(
 	item: ManualSearchViewItem,
 	selected: boolean,
+	showProviders: boolean,
 	message: (
 		key: ManualSearchMessageKey,
 		values?: Record<string, string | number>,
 	) => string,
 ) {
 	const details = [
-		item.provider,
+		showProviders ? item.provider : undefined,
 		item.disambiguation,
 		item.artistCredit
 			? message("releaseArtist", { artist: item.artistCredit })
@@ -70,9 +76,33 @@ function chooseLabel(
 	]
 		.filter(Boolean)
 		.join(", ");
-	return message(
-		selected ? "selectedReleaseDescribed" : "selectReleaseDescribed",
-		{ title: item.title, details },
+	return details
+		? message(
+				selected ? "selectedReleaseDescribed" : "selectReleaseDescribed",
+				{ title: item.title, details },
+			)
+		: message(selected ? "selectedReleaseTitled" : "selectReleaseTitled", {
+				title: item.title,
+			});
+}
+
+function normalizedSelection(value: ManualSearchSelection | null | undefined) {
+	if (!value) return undefined;
+	const { provider } = value;
+	const id = typeof value.id === "string" ? value.id.trim() : "";
+	if (!id || (provider !== "Local" && provider !== "MusicBrainz"))
+		return undefined;
+	return { provider, id };
+}
+
+function isItemSelected(
+	item: ManualSearchViewItem,
+	selection: ManualSearchSelection | undefined,
+) {
+	return (
+		selection !== undefined &&
+		item.provider === selection.provider &&
+		item.id === selection.id
 	);
 }
 
@@ -83,6 +113,7 @@ function pageLimitValue(limit: string) {
 
 export function ManualSearchView({
 	locale,
+	variant = "editions",
 	query,
 	limit,
 	offset,
@@ -90,11 +121,11 @@ export function ManualSearchView({
 	pending = false,
 	results,
 	errors = [],
-	selectedItemId,
+	selectedItem,
 	onQueryChange,
 	onLimitChange,
 	onSearch,
-	onSelectRelease,
+	onSelectItem,
 	onPrevious,
 	onNext,
 }: ManualSearchViewProps) {
@@ -104,6 +135,9 @@ export function ManualSearchView({
 	) => manualSearchMessage(locale, key, values);
 	const pageLimit = pageLimitValue(limit);
 	const canSearch = Boolean(query.trim() && pageLimit && !pending && !disabled);
+	const showProviders = variant === "editions";
+	const selection = normalizedSelection(selectedItem);
+	const safeOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
 
 	return (
 		<section
@@ -111,9 +145,13 @@ export function ManualSearchView({
 			aria-labelledby="manual-search-title"
 		>
 			<h2 id="manual-search-title" className="font-semibold">
-				{message("searchTitle")}
+				{message(showProviders ? "searchTitleEditions" : "searchTitle")}
 			</h2>
-			<p className="mt-1 text-sm">{message("searchDescription")}</p>
+			<p className="mt-1 text-sm">
+				{message(
+					showProviders ? "searchDescriptionEditions" : "searchDescription",
+				)}
+			</p>
 			<form
 				className="mt-3 flex flex-wrap gap-2"
 				onSubmit={(event) => {
@@ -151,7 +189,7 @@ export function ManualSearchView({
 			</form>
 			{pending ? (
 				<p role="status" className="mt-2">
-					{message("searching")}
+					{message(showProviders ? "searchingEditions" : "searching")}
 				</p>
 			) : null}
 			{errors.map((error) =>
@@ -162,7 +200,9 @@ export function ManualSearchView({
 						key={error.id}
 					>
 						<p>{error.message}</p>
-						<Button onPress={error.onRetry}>{message("retryReading")}</Button>
+						<Button onPress={error.onRetry} isDisabled={disabled}>
+							{message("retryReading")}
+						</Button>
 					</div>
 				) : (
 					<p role="alert" className="mt-2 text-[var(--error)]" key={error.id}>
@@ -180,10 +220,10 @@ export function ManualSearchView({
 						<ul className="mt-3 max-h-60 overflow-y-auto divide-y divide-[var(--line)] rounded border border-[var(--line)]">
 							{results.items.map((item) => {
 								const details = editionDetails(item, message);
-								const selected = selectedItemId === item.id;
+								const selected = isItemSelected(item, selection);
 								return (
 									<li
-										key={item.id}
+										key={`${item.provider}:${item.id}`}
 										className="flex flex-wrap items-start justify-between gap-3 p-3"
 									>
 										<div className="min-w-0 flex-1">
@@ -195,18 +235,26 @@ export function ManualSearchView({
 													</span>
 												) : null}
 											</p>
-											<p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm wrap-anywhere">
-												<span className="rounded border border-[var(--line)] bg-[var(--raised)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
-													{item.provider}
-												</span>
-												{item.artistCredit ? (
-													<span>
-														{message("releaseArtist", {
-															artist: item.artistCredit,
-														})}
+											{showProviders ? (
+												<p className="mt-1 flex flex-wrap items-center gap-2 text-sm wrap-anywhere">
+													<span className="rounded border border-[var(--line)] bg-[var(--raised)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
+														{item.provider}
 													</span>
-												) : null}
-											</p>
+													{item.artistCredit ? (
+														<span>
+															{message("releaseArtist", {
+																artist: item.artistCredit,
+															})}
+														</span>
+													) : null}
+												</p>
+											) : item.artistCredit ? (
+												<p className="text-sm">
+													{message("releaseArtist", {
+														artist: item.artistCredit,
+													})}
+												</p>
+											) : null}
 											{details.length ? (
 												<p className="mt-1 text-xs text-[var(--muted)] wrap-anywhere">
 													{details.join(" · ")}
@@ -214,15 +262,17 @@ export function ManualSearchView({
 											) : null}
 										</div>
 										<Button
-											aria-label={chooseLabel(item, selected, message)}
-											aria-pressed={
-												selectedItemId === undefined
-													? undefined
-													: selectedItemId === item.id
-											}
-											aria-disabled={selected || undefined}
+											aria-label={chooseLabel(
+												item,
+												selected,
+												showProviders,
+												message,
+											)}
+											aria-pressed={selection ? selected : undefined}
+											aria-disabled={disabled || selected || undefined}
 											onPress={() => {
-												if (!selected) onSelectRelease(item.id);
+												if (disabled || selected) return;
+												onSelectItem({ provider: item.provider, id: item.id });
 											}}
 										>
 											{message(selected ? "selectedRelease" : "selectRelease")}
@@ -232,30 +282,33 @@ export function ManualSearchView({
 							})}
 						</ul>
 					)}
-					{results.count > 0 && (
+					{pageLimit > 0 && results.count > 0 && safeOffset < results.count ? (
 						<div className="mt-3 flex flex-wrap items-center gap-2">
 							<span>
 								{message("resultRange", {
-									start: offset + 1,
-									end: Math.min(offset + pageLimit, results.count),
+									start: safeOffset + 1,
+									end: Math.min(safeOffset + pageLimit, results.count),
 									count: results.count,
 								})}
 							</span>
-							<Button onPress={onPrevious} isDisabled={offset === 0 || pending}>
+							<Button
+								onPress={onPrevious}
+								isDisabled={disabled || safeOffset === 0 || pending}
+							>
 								{message("previous")}
 							</Button>
 							<Button
 								onPress={onNext}
-								isDisabled={offset + pageLimit >= results.count || pending}
+								isDisabled={
+									disabled || safeOffset + pageLimit >= results.count || pending
+								}
 							>
 								{message("next")}
 							</Button>
 						</div>
-					)}
+					) : null}
 				</>
 			) : null}
 		</section>
 	);
 }
-
-import { Button as AriaButton, type ButtonProps } from "react-aria-components";

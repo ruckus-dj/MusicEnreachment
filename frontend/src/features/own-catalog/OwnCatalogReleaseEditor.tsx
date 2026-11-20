@@ -11,6 +11,7 @@ import type {
   SaveLocalArtist,
 } from "../local-release/localReleaseFormModel";
 import { localReleaseMessages } from "../local-release/localReleaseMessages";
+import { ProviderCatalogReleaseGenreField } from "../local-release/ProviderCatalogReleaseGenreField";
 import { useLocalReleaseForm } from "../local-release/useLocalReleaseForm";
 import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import {
@@ -83,6 +84,9 @@ export function OwnCatalogReleaseEditor({
           saveRecording={saveRecording}
           findArtists={findArtists}
           saveArtist={saveArtist}
+          renderGenreField={(props) => (
+            <ProviderCatalogReleaseGenreField {...props} />
+          )}
           saveLabel={m("save")}
         />
       </OwnCatalogEditorShell>

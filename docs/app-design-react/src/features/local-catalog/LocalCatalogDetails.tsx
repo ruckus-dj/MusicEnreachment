@@ -5,7 +5,7 @@ import type {
 } from "./localProviderModel";
 import { formatLocalDuration } from "../local-release/localReleaseFormModel";
 import { muted, panel, primary, rows } from "../local-release/localReleaseUi";
-import { LocalCatalogEditorShell } from "./LocalCatalogEditorShell";
+import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import {
 	type LocalCatalogMessage,
 	localCatalogMessage,
@@ -58,7 +58,7 @@ export function LocalCatalogDetails({
 		release.tracks?.some((track) => track.recordingId === record.id),
 	);
 	return (
-		<LocalCatalogEditorShell
+		<OwnCatalogEditorShell
 			eyebrow={m("currentDataNoHistory")}
 			title={title}
 			backLabel={m("back")}
@@ -186,6 +186,6 @@ export function LocalCatalogDetails({
 					</div>
 				)}
 			</section>
-		</LocalCatalogEditorShell>
+		</OwnCatalogEditorShell>
 	);
 }

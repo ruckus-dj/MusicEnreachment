@@ -78,6 +78,8 @@ export const localReleaseMessages = {
 		language: "Language",
 		script: "Script",
 		editionDate: "Edition date",
+		editionDateInvalid:
+			"Use YYYY, YYYY-MM, or YYYY-MM-DD for the edition date.",
 		country: "Country",
 		format: "Medium format",
 		label: "Label",
@@ -186,6 +188,8 @@ export const localReleaseMessages = {
 		language: "Язык",
 		script: "Письменность",
 		editionDate: "Дата издания",
+		editionDateInvalid:
+			"Укажите дату издания как ГГГГ, ГГГГ-ММ или ГГГГ-ММ-ДД.",
 		country: "Страна",
 		format: "Формат носителя",
 		label: "Лейбл",

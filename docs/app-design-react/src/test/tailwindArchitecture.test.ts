@@ -3,16 +3,16 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it("keeps only the Tailwind configuration entry, without handwritten CSS rules", () => {
+it("groups prototype sources and keeps Tailwind as the only CSS entry", () => {
 	const source = join(dirname(fileURLToPath(import.meta.url)), "..");
+	expect(
+		readdirSync(source, { withFileTypes: true })
+			.filter((entry) => !entry.isDirectory())
+			.map((entry) => entry.name),
+	).toEqual([]);
 	const files = readdirSync(source, { recursive: true })
 		.map(String)
 		.map((file) => file.split(sep).join("/"));
-	expect(
-		files.filter(
-			(file) => !file.includes("/") && /\.(?:css|json|md|mjs|ts|tsx)$/.test(file),
-		),
-	).toEqual([]);
 	expect(files.filter((file) => file.endsWith(".css"))).toEqual([
 		"app/tailwind.css",
 	]);

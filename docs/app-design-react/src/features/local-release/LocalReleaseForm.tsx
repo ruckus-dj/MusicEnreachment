@@ -1,7 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button, Checkbox } from "react-aria-components";
-import { GenrePicker } from "../../metadata/GenrePicker";
-import { metadataValidationMessage } from "../../metadata/projection";
 import { LocalRecordingArtistField } from "./LocalRecordingArtistField";
 import { LocalReleaseRecordingPicker } from "./LocalReleaseRecordingPicker";
 import {
@@ -10,6 +8,7 @@ import {
 	formatLocalDuration,
 	type LocalRecordingDraft,
 	type LocalReleaseArtist,
+	type LocalReleaseGenre,
 	type LocalReleaseRecording,
 	parseLocalDuration,
 	type SaveLocalArtist,
@@ -27,6 +26,17 @@ import {
 	secondary,
 } from "./localReleaseUi";
 import type { LocalReleaseFormController } from "./useLocalReleaseForm";
+
+export type LocalReleaseGenreFieldProps = {
+	locale: "ru" | "en";
+	value: readonly LocalReleaseGenre[];
+	onChange: (next: LocalReleaseGenre[]) => void;
+	disabled?: boolean;
+};
+
+export type RenderLocalReleaseGenreField = (
+	props: LocalReleaseGenreFieldProps,
+) => ReactNode;
 
 export type LocalReleaseFormProps = {
 	locale: "ru" | "en";
@@ -46,10 +56,8 @@ export type LocalReleaseFormProps = {
 	) => LocalReleaseRecording | Promise<LocalReleaseRecording>;
 	findArtists: FindLocalArtists;
 	saveArtist: SaveLocalArtist;
+	renderGenreField: RenderLocalReleaseGenreField;
 	saveLabel?: string;
-	genresLoaded?: boolean;
-	onLoadGenres?: () => void | Promise<void>;
-	genreOptions?: readonly { id: string; name: string }[];
 };
 
 export function LocalReleaseForm({
@@ -65,10 +73,8 @@ export function LocalReleaseForm({
 	saveRecording,
 	findArtists,
 	saveArtist,
+	renderGenreField,
 	saveLabel,
-	genresLoaded = false,
-	onLoadGenres,
-	genreOptions,
 }: LocalReleaseFormProps) {
 	const copy = localReleaseMessages[locale];
 	const headingRef = useRef<HTMLHeadingElement>(null);
@@ -131,7 +137,7 @@ export function LocalReleaseForm({
 					{onRecheck && (
 						<Button
 							className={secondary}
-							isDisabled={form.savingRelease}
+							isDisabled={form.savingRelease || form.writingCatalogRecord}
 							onPress={onRecheck}
 						>
 							{copy.recheck}
@@ -245,7 +251,7 @@ export function LocalReleaseForm({
 						/>
 						{form.editionDateIssue && (
 							<p className={`${errorClass} sm:col-span-2`} role="alert">
-								{metadataValidationMessage(form.editionDateIssue, locale)}
+								{copy.editionDateInvalid}
 							</p>
 						)}
 						<Field
@@ -282,13 +288,12 @@ export function LocalReleaseForm({
 					</div>
 				</details>
 				<div className="grid gap-2 border-t border-[var(--line)] pt-2">
-					<GenrePicker
-						value={form.genres}
-						onChange={form.setGenres}
-						loaded={genresLoaded}
-						onLoad={onLoadGenres}
-						options={genreOptions}
-					/>
+					{renderGenreField({
+						locale,
+						value: form.genres,
+						onChange: form.setGenres,
+						disabled: form.savingRelease,
+					})}
 					<small>{copy.releaseGenreExplanation}</small>
 				</div>
 			</section>
@@ -316,10 +321,10 @@ export function LocalReleaseForm({
 					<ol className={rows} aria-label={copy.tracklist}>
 						{form.positions.map((position, index) => {
 							const recording =
-								recordings.find(
+								form.pickedRecordings.find(
 									(record) => record.id === position.recordingId,
 								) ??
-								form.pickedRecordings.find(
+								recordings.find(
 									(record) => record.id === position.recordingId,
 								) ??
 								form.savedRecordings.find(
@@ -328,7 +333,10 @@ export function LocalReleaseForm({
 							const name =
 								position.titleOverride.trim() || recording?.title || "—";
 							const duration = parseLocalDuration(position.durationInput);
-							const credits = formatLocalCredits(recording?.credits);
+							const credits = recording
+								? (recording.artistCredit ??
+									formatLocalCredits(recording.credits))
+								: "";
 							const editing = form.editId === position.id;
 							return (
 								<li key={position.id} className="py-2">
@@ -454,6 +462,7 @@ export function LocalReleaseForm({
 						saveArtist={saveArtist}
 						savedArtists={form.savedArtists}
 						busy={form.savingRelease}
+						onWritingChange={form.markCatalogWrite}
 						onSaved={(recording) =>
 							form.setSavedRecordings((current) =>
 								current.some((item) => item.id === recording.id)
@@ -520,6 +529,7 @@ export function LocalReleaseForm({
 						isDisabled={
 							!form.title.trim() ||
 							form.savingRelease ||
+							form.writingCatalogRecord ||
 							form.releaseUncertain ||
 							savingArtist
 						}
@@ -529,7 +539,7 @@ export function LocalReleaseForm({
 					</Button>
 					<Button
 						className={secondary}
-						isDisabled={form.savingRelease}
+						isDisabled={form.savingRelease || form.writingCatalogRecord}
 						onPress={() => form.setCancel(true)}
 					>
 						{copy.cancel}

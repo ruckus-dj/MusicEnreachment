@@ -240,15 +240,18 @@ export function releaseRecordToFormValues(
 		secondaryTypes: record.secondaryTypes ?? [],
 		language: record.language ?? "",
 		script: firstDefined(record, "script", "script"),
-		release_date: firstDefined(record, "release_date", "releasedate"),
-		country_code: firstDefined(record, "country_code", "releasecountry"),
-		format: firstDefined(record, "format", "media"),
-		label: firstDefined(record, "label", "recordlabel"),
-		catalog_number: firstDefined(record, "catalog_number", "catalognumber"),
-		disambiguation: firstDefined(record, "disambiguation", "albumversion"),
+		editionDetails: {
+			release_date: firstDefined(record, "release_date", "releasedate"),
+			country: firstDefined(record, "country_code", "releasecountry"),
+			format: firstDefined(record, "format", "media"),
+			label: firstDefined(record, "label", "recordlabel"),
+			catalog_number: firstDefined(record, "catalog_number", "catalognumber"),
+			disambiguation: firstDefined(record, "disambiguation", "albumversion"),
+		},
 		genres: (record.genres ?? []).map((id) => ({
 			id,
 			name: record.genreNamesById?.[id] ?? id,
+			source_name: record.genreNamesById?.[id] ?? id,
 		})),
 		tracks: (record.tracks ?? []).map((track) => ({
 			...structuredClone(track),
@@ -332,18 +335,18 @@ function editionMetadata(
 		else delete values[key];
 	};
 	set("album", draft.title);
-	set("releasedate", draft.release_date);
-	set("releasecountry", draft.country_code);
-	set("media", draft.format);
-	set("recordlabel", draft.label);
+	set("releasedate", draft.edition?.release_date);
+	set("releasecountry", draft.edition?.country);
+	set("media", draft.edition?.format);
+	set("recordlabel", draft.edition?.label);
 	if (
 		!existing ||
-		(draft.catalog_number ?? "") !==
+		(draft.edition?.catalog_number ?? "") !==
 			firstDefined(existing, "catalog_number", "catalognumber")
 	) {
-		set("catalognumber", draft.catalog_number);
+		set("catalognumber", draft.edition?.catalog_number);
 	}
-	set("albumversion", draft.disambiguation);
+	set("albumversion", draft.edition?.disambiguation);
 	set("script", draft.script);
 	return values;
 }
@@ -365,17 +368,17 @@ export function releaseDraftToRecord(
 		primaryType: draft.primaryType ?? "",
 		language: draft.language ?? "",
 		script: draft.script ?? "",
-		release_date: draft.release_date ?? "",
-		country_code: draft.country_code ?? "",
-		format: draft.format ?? "",
-		label: draft.label ?? "",
-		catalog_number: draft.catalog_number ?? "",
-		disambiguation: draft.disambiguation ?? "",
+		release_date: draft.edition?.release_date ?? "",
+		country_code: draft.edition?.country ?? "",
+		format: draft.edition?.format ?? "",
+		label: draft.edition?.label ?? "",
+		catalog_number: draft.edition?.catalog_number ?? "",
+		disambiguation: draft.edition?.disambiguation ?? "",
 		status: existing?.status ?? "",
 		packaging: existing?.packaging ?? "",
 		barcode: existing?.barcode ?? "",
 		secondaryTypes: draft.secondaryTypes ?? existing?.secondaryTypes ?? [],
-		...genreRecordFields(draft.genres ?? []),
+		...genreRecordFields(draft.genres),
 		credits: syncCredits(existing, draft.artistIds, artists),
 		metadataValues: editionMetadata(existing, draft),
 		tracks: draft.tracks.map((track) => ({

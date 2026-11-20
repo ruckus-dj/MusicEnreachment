@@ -1,30 +1,18 @@
 import { type Dispatch, type SetStateAction, useState } from "react";
-import { Button } from "react-aria-components";
-import { formStyles as styles } from "../../components/styles/formStyles";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
 } from "./localProviderModel";
-import {
-	Input,
-	Label,
-	SearchField,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
-} from "../../components/ui";
 import type {
 	LocalRecordingDraft,
 	LocalReleaseArtist,
 	LocalReleaseRecording,
 } from "../local-release/localReleaseFormModel";
 import { formatLocalDuration } from "../local-release/localReleaseFormModel";
-import { muted, panel, primary } from "../local-release/localReleaseUi";
 import { LocalCatalogDetails } from "./LocalCatalogDetails";
-import { LocalCatalogEditorShell } from "./LocalCatalogEditorShell";
-import { LocalCatalogPagination } from "./LocalCatalogPagination";
+import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
+import { OwnCatalogList } from "./OwnCatalogList";
 import {
 	LocalCatalogArtistForm,
 	LocalCatalogRecordingForm,
@@ -276,7 +264,7 @@ export function LocalCatalogScreen({
 			}
 			if (kind === "recordings") {
 				return (
-					<LocalCatalogEditorShell
+					<OwnCatalogEditorShell
 						eyebrow={m("eyebrow")}
 						title={record ? m("editRecording") : m("createRecording")}
 						backLabel={m("back")}
@@ -300,11 +288,11 @@ export function LocalCatalogScreen({
 							}}
 							onBack={back}
 						/>
-					</LocalCatalogEditorShell>
+					</OwnCatalogEditorShell>
 				);
 			}
 			return (
-				<LocalCatalogEditorShell
+				<OwnCatalogEditorShell
 					eyebrow={m("eyebrow")}
 					title={record ? m("editArtist") : m("createArtist")}
 					backLabel={m("back")}
@@ -323,7 +311,7 @@ export function LocalCatalogScreen({
 						}}
 						onBack={back}
 					/>
-				</LocalCatalogEditorShell>
+				</OwnCatalogEditorShell>
 			);
 		}
 	}
@@ -381,97 +369,49 @@ export function LocalCatalogScreen({
 
 	return (
 		<section className="mx-auto max-w-none p-3">
-			<header className={styles.pageHeader}>
-				<h1 className={styles.pageTitle}>{m("title")}</h1>
-				<p className={styles.pageDescription}>{m("description")}</p>
-			</header>
-			<Tabs
-				className={styles.localTabs}
-				selectedKey={type}
-				onSelectionChange={changeTab}
-			>
-				<TabList aria-label={m("tabListLabel")} className={styles.localTabList}>
-					{localCatalogTypes.map((kind) => {
-						const label = m(tabMessage[kind]);
-						const count = localCatalogRecords(state, kind).length;
-						return (
-							<Tab
-								aria-label={`${label}: ${count}`}
-								className={`${styles.localTab} inline-flex items-center gap-1.5 whitespace-nowrap max-sm:px-2`}
-								key={kind}
-								id={kind}
-							>
-								<span>{label}</span>
-								<span
-									aria-hidden="true"
-									className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-1 text-xs leading-none font-medium text-[var(--ink)] tabular-nums"
-								>
-									{count}
-								</span>
-							</Tab>
-						);
-					})}
-				</TabList>
-				<TabPanel id={type} className="pt-2">
-					<section className={`${panel} grid gap-2`}>
-						<div className="flex flex-wrap items-end justify-between gap-2">
-							<SearchField
-								className="grid w-full min-w-0 gap-1 sm:max-w-[32rem] sm:flex-1"
-								value={query}
-								onChange={changeFilter}
-							>
-								<Label className="text-xs font-medium">
-									{m("filterLabel")}
-								</Label>
-								<Input placeholder={m("filterPlaceholder")} />
-							</SearchField>
-							<Button
-								className={primary}
-								onPress={() => setView({ kind: "create", type })}
-							>
-								{m(createMessage[type])}
-							</Button>
-						</div>
-						{records.length === 0 ? (
-							<p className={muted}>{m(emptyMessage[type])}</p>
-						) : filtered.length === 0 ? (
-							<div className="grid justify-items-start gap-2">
-								<p className={muted}>{m("noMatches")}</p>
-								<Button onPress={() => changeFilter("")}>
-									{m("clearFilter")}
-								</Button>
-							</div>
-						) : (
-							<ul className="m-0 list-none divide-y divide-[var(--line)] border-y border-[var(--line)] p-0">
-								{pageRecords.map((record) => (
-									<li key={record.id}>
-										<Button
-											className="flex min-h-14 w-full justify-start gap-2 border-0 bg-transparent px-3 py-2 text-left hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus)]"
-											onPress={() => setView(detailView(type, record.id))}
-										>
-											<span className="min-w-0">
-												<strong className="block wrap-anywhere">
-													{rowTitle(record)}
-												</strong>
-												<small className="block text-[var(--muted)] wrap-anywhere">
-													{rowDetails(record)}
-												</small>
-											</span>
-										</Button>
-									</li>
-								))}
-							</ul>
-						)}
-						<LocalCatalogPagination
-							locale={locale}
-							page={currentPage}
-							totalPages={totalPages}
-							totalItems={filtered.length}
-							onPageChange={setPage}
-						/>
-					</section>
-				</TabPanel>
-			</Tabs>
+			<OwnCatalogList
+				locale={locale}
+				copy={{
+					title: m("title"),
+					description: m("description"),
+					tabListLabel: m("tabListLabel"),
+					filterLabel: m("filterLabel"),
+					filterPlaceholder: m("filterPlaceholder"),
+					createLabel: m(createMessage[type]),
+					emptyLabel: m(emptyMessage[type]),
+					loading: m("loading"),
+					retry: m("retry"),
+					noMatches: m("noMatches"),
+					clearFilter: m("clearFilter"),
+				}}
+				tabs={localCatalogTypes.map((kind) => ({
+					id: kind,
+					label: m(tabMessage[kind]),
+					count: localCatalogRecords(state, kind).length,
+				}))}
+				selectedTab={type}
+				onTabChange={changeTab}
+				filter={query}
+				hasFilter={Boolean(records.length && query.trim())}
+				onFilterChange={changeFilter}
+				onClearFilter={() => changeFilter("")}
+				onCreate={() => setView({ kind: "create", type })}
+				loaded
+				page={{
+					total: filtered.length,
+					rows: pageRecords.map((record) => ({
+						id: record.id,
+						title: rowTitle(record),
+						detail: rowDetails(record),
+						value: record,
+					})),
+				}}
+				pageNumber={currentPage}
+				pageCount={totalPages}
+				onRetry={() => {}}
+				onOpenRow={(row) => setView(detailView(type, row.id))}
+				onPageChange={setPage}
+			/>
 			{notice ? (
 				<p className="mt-3 text-sm text-[var(--ink)]" role="status">
 					{m(notice)}

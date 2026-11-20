@@ -5,16 +5,6 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  Button,
-  Input,
-  Label,
-  SearchField,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs,
-} from "react-aria-components";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   createLocalProviderArtist,
@@ -47,14 +37,18 @@ import {
   findLocalReleaseArtists,
   findSavedLocalReleaseRecordings,
 } from "../local-release/localReleaseLookups";
-import { primary } from "../local-release/localReleaseUi";
 import {
   catalogCreateIdentity,
   writeCatalogRecord,
 } from "../local-release/localReleaseWrites";
 import { OwnCatalogDetails } from "./OwnCatalogDetails";
 import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
-import { OwnCatalogPagination } from "./OwnCatalogPagination";
+import {
+  OwnCatalogList,
+  type OwnCatalogListCopy,
+  type OwnCatalogListRow,
+  type OwnCatalogListTab,
+} from "./OwnCatalogList";
 import {
   OwnCatalogArtistForm,
   OwnCatalogRecordingForm,
@@ -796,140 +790,56 @@ export function OwnCatalogScreen() {
     artists: "createArtist",
   };
 
+  const tabs: OwnCatalogListTab[] = ownCatalogTypes.map((kind) => ({
+    id: kind,
+    label: m(kind as OwnCatalogMessage),
+    count: totals[kind] ?? 0,
+  }));
+  const rows: OwnCatalogListRow<LocalProviderItem>[] = (
+    activePage?.items ?? []
+  ).map((item) => ({
+    id: item.id,
+    title: ownCatalogTitle(route.type, item),
+    detail: ownCatalogRowDetails(route.type, item, m),
+    value: item,
+  }));
+  const copy: OwnCatalogListCopy = {
+    title: m("title"),
+    description: m("description"),
+    tabListLabel: m("tabListLabel"),
+    filterLabel: m("filterLabel"),
+    filterPlaceholder: m("filterPlaceholder"),
+    createLabel: m(createMessage[route.type]),
+    emptyLabel: m(emptyMessage[route.type]),
+    loading: m("loading"),
+    retry: m("retry"),
+    noMatches: m("noMatches"),
+    clearFilter: m("clearFilter"),
+  };
+
   return shell(
-    <section className="mx-auto max-w-none">
-      <header className="mb-3">
-        <h1 className="m-0 text-2xl font-semibold">{m("title")}</h1>
-        <p className="m-0 text-sm text-[var(--muted)]">{m("description")}</p>
-      </header>
-      <Tabs
-        selectedKey={route.type}
-        onSelectionChange={changeTab}
-        className="grid min-w-0 gap-2"
-      >
-        <TabList
-          aria-label={m("tabListLabel")}
-          className="flex flex-wrap gap-[3px] text-xs"
-        >
-          {ownCatalogTypes.map((kind) => {
-            const label = m(kind as OwnCatalogMessage);
-            const count = totals[kind] ?? 0;
-            return (
-              <Tab
-                key={kind}
-                id={kind}
-                aria-label={`${label}: ${count}`}
-                className="flex min-h-9 cursor-pointer items-center gap-1.5 rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold whitespace-nowrap text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] max-sm:px-2"
-              >
-                <span>{label}</span>
-                <span
-                  aria-hidden="true"
-                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-1 text-xs leading-none font-medium text-[var(--ink)] tabular-nums"
-                >
-                  {count}
-                </span>
-              </Tab>
-            );
-          })}
-        </TabList>
-        <TabPanel id={route.type} className="min-w-0 pt-2">
-          <section className="grid min-w-0 gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 sm:p-4">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <SearchField
-                className="grid w-full min-w-0 gap-1 sm:max-w-[32rem] sm:flex-1"
-                value={filterInput}
-                onChange={changeFilter}
-              >
-                <Label className="text-xs font-medium">
-                  {m("filterLabel")}
-                </Label>
-                <Input
-                  className="min-h-8 w-full rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
-                  placeholder={m("filterPlaceholder")}
-                />
-              </SearchField>
-              <Button
-                className={primary}
-                isDisabled={saving}
-                onPress={() => openEditor({ kind: "create", type: route.type })}
-              >
-                {m(createMessage[route.type])}
-              </Button>
-            </div>
-            {listLoading ? (
-              <p className="m-0 text-xs text-[var(--muted)]" role="status">
-                {m("loading")}
-              </p>
-            ) : null}
-            {listError ? (
-              <div className="grid justify-items-start gap-2">
-                <p
-                  className="m-0 text-xs font-medium text-[var(--error)]"
-                  role="alert"
-                >
-                  {listError}
-                </p>
-                <Button
-                  className={primary}
-                  onPress={() => setListVersion((attempt) => attempt + 1)}
-                >
-                  {m("retry")}
-                </Button>
-              </div>
-            ) : null}
-            {!listError &&
-            activePage &&
-            listLoaded &&
-            activePage.total === 0 ? (
-              filter ? (
-                <div className="grid justify-items-start gap-2">
-                  <p className="m-0 text-xs text-[var(--muted)]">
-                    {m("noMatches")}
-                  </p>
-                  <Button onPress={clearFilter}>{m("clearFilter")}</Button>
-                </div>
-              ) : (
-                <p className="m-0 text-xs text-[var(--muted)]">
-                  {m(emptyMessage[route.type])}
-                </p>
-              )
-            ) : null}
-            {!listError && activePage && activePage.items.length > 0 ? (
-              <ul className="m-0 list-none divide-y divide-[var(--line)] border-y border-[var(--line)] p-0">
-                {activePage.items.map((item) => {
-                  const title = ownCatalogTitle(route.type, item);
-                  return (
-                    <li key={item.id}>
-                      <Button
-                        className="flex min-h-14 w-full justify-start gap-2 border-0 bg-transparent px-3 py-2 text-left hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus)]"
-                        isDisabled={pagerBusy}
-                        onPress={() => openDetails(route.type, item)}
-                      >
-                        <span className="min-w-0">
-                          <strong className="block wrap-anywhere">
-                            {title || "—"}
-                          </strong>
-                          <small className="block text-[var(--muted)] wrap-anywhere">
-                            {ownCatalogRowDetails(route.type, item, m)}
-                          </small>
-                        </span>
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-            <OwnCatalogPagination
-              locale={locale}
-              page={currentPage}
-              totalPages={pageCount}
-              totalItems={activePage?.total ?? 0}
-              busy={pagerBusy}
-              onPageChange={setPage}
-            />
-          </section>
-        </TabPanel>
-      </Tabs>
-    </section>,
+    <OwnCatalogList<LocalProviderItem>
+      locale={locale}
+      copy={copy}
+      tabs={tabs}
+      selectedTab={route.type}
+      onTabChange={changeTab}
+      filter={filterInput}
+      hasFilter={Boolean(filter)}
+      onFilterChange={changeFilter}
+      onClearFilter={clearFilter}
+      onCreate={() => openEditor({ kind: "create", type: route.type })}
+      createDisabled={saving}
+      loading={listLoading}
+      loaded={listLoaded}
+      error={listError}
+      page={activePage ? { rows, total: activePage.total } : undefined}
+      pageNumber={currentPage}
+      pageCount={pageCount}
+      busy={pagerBusy}
+      onRetry={() => setListVersion((attempt) => attempt + 1)}
+      onOpenRow={(row) => openDetails(route.type, row.value)}
+      onPageChange={setPage}
+    />,
   );
 }

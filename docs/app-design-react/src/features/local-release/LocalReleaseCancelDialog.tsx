@@ -1,5 +1,10 @@
-import { Button } from "react-aria-components";
-import { Dialog, Heading, Modal, ModalOverlay } from "../../components/ui";
+import {
+	Button,
+	Dialog,
+	Heading,
+	Modal,
+	ModalOverlay,
+} from "react-aria-components";
 import type {
 	LocalReleaseArtist,
 	LocalReleaseRecording,

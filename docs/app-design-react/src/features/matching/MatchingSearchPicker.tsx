@@ -3,6 +3,7 @@ import type { CatalogArtist, OriginalRelease } from "../library/catalogData";
 import { useI18n } from "../../i18n/I18nProvider";
 import { ManualSearchView } from "./ManualSearchView";
 import {
+	type ManualSearchSelection,
 	type ManualSearchViewItem,
 	manualSearchMessage,
 } from "./manualSearchContract";
@@ -31,7 +32,7 @@ function viewItem(
 	return {
 		id: release.id,
 		title: release.title,
-		provider: release.provider === "Local" ? "Local" : "MusicBrainz",
+		provider: searchProvider(release),
 		...(artistCredit ? { artistCredit } : {}),
 		...(details.disambiguation
 			? { disambiguation: details.disambiguation }
@@ -74,6 +75,12 @@ export function MatchingSearchPicker({
 			? searchMatchingReleases(submittedQuery, releases, artists)
 			: undefined;
 	const pageResult = matchingPage(results ?? [], page, pageLimit);
+	const selectedRelease = releases.find(
+		(release) => release.id === selectedReleaseId,
+	);
+	const selectedItem: ManualSearchSelection | null = selectedRelease
+		? { id: selectedRelease.id, provider: searchProvider(selectedRelease) }
+		: null;
 
 	const submit = async () => {
 		const value = query.trim();
@@ -121,7 +128,7 @@ export function MatchingSearchPicker({
 						]
 					: []),
 			]}
-			selectedItemId={selectedReleaseId}
+			selectedItem={selectedItem}
 			onQueryChange={(value) => {
 				setQuery(value);
 				setPage(0);
@@ -135,12 +142,20 @@ export function MatchingSearchPicker({
 				setSelectionError(false);
 			}}
 			onSearch={() => void submit()}
-			onSelectRelease={(id) => {
-				const release = pageResult.items.find((item) => item.id === id);
+			onSelectItem={({ id, provider }) => {
+				const release = pageResult.items.find(
+					(item) => item.id === id && searchProvider(item) === provider,
+				);
 				if (release) setSelectionError(!onSelectRelease(release));
 			}}
 			onPrevious={() => setPage(Math.max(0, pageResult.page - 1))}
 			onNext={() => setPage(pageResult.page + 1)}
 		/>
 	);
+}
+
+function searchProvider(
+	release: OriginalRelease,
+): ManualSearchSelection["provider"] {
+	return release.provider === "Local" ? "Local" : "MusicBrainz";
 }
