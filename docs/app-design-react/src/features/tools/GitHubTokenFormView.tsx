@@ -52,10 +52,10 @@ const stepsClass = "m-0 max-w-[75ch] list-decimal space-y-1 pl-5 text-sm";
 const fieldClass =
   "grid max-w-[420px] min-w-0 gap-[5px] text-xs font-semibold text-[var(--ink)]";
 const inputClass =
-  "min-h-[38px] w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-[10px] py-2 font-normal text-[var(--ink)] aria-[invalid=true]:border-[var(--error)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:text-[var(--muted)]";
+  "min-h-[38px] w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-[10px] py-2 font-normal text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:text-[var(--muted)]";
 const actionsClass = "flex flex-wrap items-center gap-2";
 const statusClass = "m-0 text-sm text-[var(--muted)]";
-const successClass = "m-0 text-sm text-[var(--success)]";
+const successClass = "m-0 text-sm text-[var(--accent)]";
 const errorClass =
   "m-0 wrap-anywhere rounded border border-[var(--error)] bg-[var(--error-soft)] p-2 text-sm text-[var(--error)]";
 const revokeClass = "m-0 max-w-[75ch] text-sm text-[var(--muted)]";
@@ -99,60 +99,59 @@ export function GitHubTokenFormView({
       <h2 id={headingId} className={headingClass}>
         {copy.heading}
       </h2>
-      {simulated && (
+      {simulated ? (
         <p id={modeId} className={`${paragraphClass} font-medium`}>
           {copy.demoWarning}
         </p>
-      )}
-      <p className={paragraphClass}>{copy.rateLimit}</p>
-      <p className={paragraphClass}>
-        {copy.recommendation[0]}
-        <code className={codeClass}>repo</code>
-        {copy.recommendation[1]}
-        <code className={codeClass}>public_repo</code>
-        {copy.recommendation[2]}
-      </p>
-      {!simulated && (
+      ) : (
         <>
+          <p className={paragraphClass}>{copy.rateLimit}</p>
+          <p className={paragraphClass}>
+            {copy.recommendation[0]}
+            <code className={codeClass}>repo</code>
+            {copy.recommendation[1]}
+            <code className={codeClass}>public_repo</code>
+            {copy.recommendation[2]}
+          </p>
           <p className={`${paragraphClass} ${mutedClass}`}>
             {copy.tokenStorage}
           </p>
           <p className={`${paragraphClass} ${mutedClass}`}>
             {copy.tokenTransport}
           </p>
+          <p className={paragraphClass}>
+            <a
+              className={linkClass}
+              href={tokenCreate}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {copy.createToken}
+            </a>{" "}
+            ({copy.expiryNote}) ·{" "}
+            <a
+              className={linkClass}
+              href={tokenGuide}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {copy.guide}
+            </a>
+            .
+          </p>
+          <ol className={stepsClass}>
+            <li>{copy.stepOpenSettings}</li>
+            <li>{copy.stepChooseOwner}</li>
+            <li>
+              {copy.stepCopyToken[0]}
+              <code className={codeClass}>repo</code>
+              {copy.stepCopyToken[1]}
+              <code className={codeClass}>public_repo</code>
+              {copy.stepCopyToken[2]}
+            </li>
+          </ol>
         </>
       )}
-      <p className={paragraphClass}>
-        <a
-          className={linkClass}
-          href={tokenCreate}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {copy.createToken}
-        </a>{" "}
-        ({copy.expiryNote}) ·{" "}
-        <a
-          className={linkClass}
-          href={tokenGuide}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {copy.guide}
-        </a>
-        .
-      </p>
-      <ol className={stepsClass}>
-        <li>{copy.stepOpenSettings}</li>
-        <li>{copy.stepChooseOwner}</li>
-        <li>
-          {copy.stepCopyToken[0]}
-          <code className={codeClass}>repo</code>
-          {copy.stepCopyToken[1]}
-          <code className={codeClass}>public_repo</code>
-          {copy.stepCopyToken[2]}
-        </li>
-      </ol>
       <div className={fieldClass}>
         <label htmlFor={inputId}>{copy.tokenLabel}</label>
         <input
@@ -161,7 +160,6 @@ export function GitHubTokenFormView({
           autoComplete="new-password"
           value={draft}
           disabled={busy}
-          aria-invalid={error !== null}
           aria-describedby={[simulated && modeId, stateId, error && errorId]
             .filter(Boolean)
             .join(" ")}
@@ -170,7 +168,10 @@ export function GitHubTokenFormView({
         />
       </div>
       <div className={actionsClass}>
-        <AppButton isDisabled={busy || !draft} onPress={() => void onSave()}>
+        <AppButton
+          isDisabled={busy || !(simulated ? draft.trim() : draft)}
+          onPress={() => void onSave()}
+        >
           {copy.verifyAndSave}
         </AppButton>
         {hasToken && (

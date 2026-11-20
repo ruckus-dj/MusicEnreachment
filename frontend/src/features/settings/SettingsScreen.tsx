@@ -70,6 +70,7 @@ import {
 import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
 import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
+import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -579,7 +580,6 @@ export function SettingsScreen() {
   const navigationFocusRestorePending = useRef(false);
   const alert = useRef<HTMLParagraphElement>(null);
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
-  const installDialogAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
   const conflictDialogRef = useRef<HTMLDialogElement>(null);
   const navigationDialogRef = useRef<HTMLDialogElement>(null);
@@ -590,7 +590,6 @@ export function SettingsScreen() {
   const mountedRef = useRef(true);
   const mountGeneration = useRef(0);
   const screenLoadGeneration = useRef(0);
-  const installDialogRef = useRef<HTMLDialogElement>(null);
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingTabFocusTarget = useRef<HTMLElement | null>(null);
@@ -1002,10 +1001,6 @@ export function SettingsScreen() {
     if (error && !installDialog && !moveDialog) alert.current?.focus();
   }, [error, installDialog, moveDialog]);
   useLayoutEffect(() => {
-    if (installDialogError && installDialogRef.current?.open)
-      installDialogAlert.current?.focus();
-  }, [installDialogError]);
-  useLayoutEffect(() => {
     if (moveDialogError && moveDialogRef.current?.open)
       moveDialogAlert.current?.focus();
   }, [moveDialogError]);
@@ -1037,9 +1032,6 @@ export function SettingsScreen() {
     outputDialog,
     restoreDialogFocus,
   ]);
-  useLayoutEffect(() => {
-    if (installDialog) showSettingsDialog(installDialogRef.current);
-  }, [installDialog]);
   useLayoutEffect(() => {
     if (moveDialog) showSettingsDialog(moveDialogRef.current);
   }, [moveDialog]);
@@ -2498,11 +2490,7 @@ export function SettingsScreen() {
     installStartRevision.current += 1;
     setInstallDialogError("");
     setBusy(false);
-    const dialog = installDialogRef.current;
-    if (dialog?.open) dialog.close();
-    else {
-      setInstallDialog(undefined);
-    }
+    setInstallDialog(undefined);
   }
   function closeMoveDialog() {
     dialogFocusRestorePending.current = true;
@@ -3510,45 +3498,18 @@ export function SettingsScreen() {
         />
       )}
       {installDialog && (
-        <dialog
-          ref={installDialogRef}
-          aria-modal="true"
-          aria-labelledby="install-dialog-title"
-          className="settings-dialog"
-          onClose={() => {
-            dialogFocusRestorePending.current = true;
-            setInstallDialog(undefined);
-            setInstallDialogError("");
-          }}
-          onKeyDown={(event) => onDialogKeyDown(event, closeInstallDialog)}
-          onCancel={(event) => {
-            event.preventDefault();
-            closeInstallDialog();
-          }}
-        >
-          <h2 id="install-dialog-title">
-            {t("confirmInstallation", { release: installDialog.release })}
-          </h2>
-          <p>{t("installDoesNotActivate")}</p>
-          <ConflictList
-            conflicts={installDialog.plan.conflicts || []}
-            targets={installDialog.plan.targets || []}
-          />
-          {installDialogError && (
-            <p ref={installDialogAlert} tabIndex={-1} role="alert">
-              {feedbackText(installDialogError, locale)}
-            </p>
-          )}
-          <AppButton
-            isDisabled={effectiveBusy}
-            onPress={() => void confirmInstall()}
-          >
-            {t("confirmConflicts")}
-          </AppButton>
-          <AppButton isDisabled={effectiveBusy} onPress={closeInstallDialog}>
-            {t("cancel")}
-          </AppButton>
-        </dialog>
+        <SettingsToolInstallDialog
+          locale={locale}
+          release={installDialog.release}
+          targets={{ kind: "paths", items: installDialog.plan.targets || [] }}
+          conflicts={installDialog.plan.conflicts || []}
+          busy={effectiveBusy}
+          {...(installDialogError
+            ? { error: feedbackText(installDialogError, locale) }
+            : {})}
+          onConfirm={() => void confirmInstall()}
+          onDismiss={closeInstallDialog}
+        />
       )}
       {moveDialog && (
         <dialog

@@ -56,7 +56,7 @@ source channel, а fixture макета такого происхождения 
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
 | Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
-| Настройки: карточки пакетов инструментов | `features/settings/SettingsManagedPackageCards.tsx` | Тот же путь |
+| Настройки: карточки пакетов инструментов и подтверждение загрузки | `features/settings/SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
 | Первый запуск: каркас мастера и поля выбора папок | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx` | Те же пути |
 | Медиатека: карточки артистов и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibrarySelectionReviewView.tsx` | Те же пути |
@@ -64,9 +64,11 @@ source channel, а fixture макета такого происхождения 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
 адаптерах. Во вкладке инструментов ещё различаются действия над каталогом и
-диалоги. Форма токена общая: макет имитирует сохранение и проверку без запросов
-в GitHub, а приложение выполняет их на сервере. Не переносились остальные
-диалоги настроек.
+перенос корневой папки. Приложение открывает подтверждение загрузки только для
+конфликтного preflight и показывает серверные пути; макет показывает имена
+проверяемых программ, не имитируя серверные пути. Форма токена общая: макет
+имитирует сохранение и проверку без запросов в GitHub, а приложение выполняет
+их на сервере. Не переносились остальные диалоги настроек.
 В первом запуске совпадают каркас и поля папок, но не порядок
 шагов и не остальные тела шагов. Редакторы медиатеки и предпросмотр публикации
 пока не перенесены дословно.

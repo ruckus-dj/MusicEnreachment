@@ -127,10 +127,6 @@ const english = {
     "The current saved value for “{label}” is {value}. Confirm to replace it with this draft. If another conflict occurs, you will need to confirm again.",
   replaceSaved: "Replace saved value",
   cancel: "Cancel",
-  confirmInstallation: "Confirm installation of {release}",
-  installDoesNotActivate:
-    "Installation does not activate the selected version.",
-  confirmConflicts: "Confirm listed conflicts",
   moveToolsTitle: "Move tools directory",
   newToolsDirectory: "New tools directory",
   removeOldManagedFiles: "Remove old managed files after a successful move",
@@ -293,9 +289,6 @@ const russian: Record<SettingsMessageKey, string> = {
     "Для «{label}» сейчас сохранено {value}. Подтвердите замену этим черновиком. При новом конфликте потребуется подтвердить ещё раз.",
   replaceSaved: "Заменить сохранённое значение",
   cancel: "Отмена",
-  confirmInstallation: "Подтверждение установки {release}",
-  installDoesNotActivate: "Установка не активирует выбранную версию.",
-  confirmConflicts: "Подтвердить перечисленные конфликты",
   moveToolsTitle: "Перенос каталога инструментов",
   newToolsDirectory: "Новый каталог инструментов",
   removeOldManagedFiles:

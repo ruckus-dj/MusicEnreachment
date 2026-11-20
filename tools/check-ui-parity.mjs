@@ -33,6 +33,7 @@ const pairs = [
       "SettingsOutputResetDialog.tsx",
       "SettingsProvidersSection.tsx",
       "SettingsTabs.tsx",
+      "SettingsToolInstallDialog.tsx",
     ],
   ],
   ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupWizard.tsx"]],

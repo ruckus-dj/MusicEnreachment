@@ -43,6 +43,7 @@ import {
 	SettingsTabs,
 	settingsTabKeys,
 } from "./SettingsTabs";
+import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
 import {
 	getSettingsDraftStorage,
 	mergeSettingsDraft,
@@ -231,8 +232,8 @@ export function SettingsScreen({
 	const [installPlan, setInstallPlan] = useState<{
 		kind: ManagedToolPackage;
 		release: string;
-		root: string;
 		token: string;
+		opener: HTMLElement | null;
 	} | null>(null);
 	const [draftState, setDraftState] = useState(() => {
 		const baseline = settingsTextBaseline(settings);
@@ -841,14 +842,14 @@ export function SettingsScreen({
 				}),
 			downloadAndVerify: {
 				disabled: platformMismatch || !selectedRelease[kind],
-				onPress: () => {
+				onPress: (opener) => {
 					const release = selectedRelease[kind];
 					if (!release) return;
 					setInstallPlan({
 						kind,
 						release,
-						root: settings.toolsPath,
 						token: [kind, release, settings.toolsPath].join("|"),
+						opener: opener instanceof HTMLElement ? opener : null,
 					});
 				},
 			},
@@ -1361,23 +1362,21 @@ export function SettingsScreen({
 			)}
 			{!confirmingFromLeave && outputResetDialog}
 			{installPlan && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => !open && setInstallPlan(null)}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">
-							{copy.install} · {installPlan.kind}
-						</Heading>
-						<p>{installPlan.release}</p>
-						<p>{setupToolExecutables(installPlan.kind).join(", ")}</p>
-						<Button isDisabled={platformMismatch} onPress={startInstall}>
-							{copy.install}
-						</Button>
-						<Button onPress={() => setInstallPlan(null)}>{copy.cancel}</Button>
-					</Dialog>
-				</Modal>
+				<SettingsToolInstallDialog
+					locale={locale}
+					release={installPlan.release}
+					targets={{
+						kind: "executables",
+						items: setupToolExecutables(installPlan.kind),
+					}}
+					conflicts={[]}
+					busy={false}
+					confirmDisabled={platformMismatch}
+					returnFocusTo={installPlan.opener}
+					dismissOnBackdrop
+					onConfirm={startInstall}
+					onDismiss={() => setInstallPlan(null)}
+				/>
 			)}
 			{movePlan && (
 				<Modal
