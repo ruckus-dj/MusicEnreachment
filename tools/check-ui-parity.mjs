@@ -46,6 +46,8 @@ const pairs = [
     "features/library",
     [
       "AggregatePublicationPreviewView.tsx",
+      "ArtistMetadataCard.tsx",
+      "GenrePicker.tsx",
       "LibraryAlbumListView.tsx",
       "LibraryAlbumPositionsView.tsx",
       "LibraryArtistCards.tsx",
@@ -60,6 +62,7 @@ const pairs = [
       "PublicationAudioMeasurementsView.tsx",
       "PublicationPreviewDetailsView.tsx",
       "firstPublicationPreviewMessages.ts",
+      "genreMessages.ts",
       "libraryArtistCardStyles.ts",
     ],
   ],

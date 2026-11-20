@@ -8,9 +8,7 @@ import {
 } from "../../api/generated/client";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
-import { ArtistDetailsEditor } from "./ArtistDetailsEditor";
-import { ArtistSortNameEditor } from "./ArtistSortNameEditor";
-import { GenreMetadataEditor } from "./GenreMetadataEditor";
+import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
   libraryArtistRouteHref,
@@ -134,10 +132,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     availability: route.availability,
   });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [artistMetadataRefreshToken, setArtistMetadataRefreshToken] =
-    useState(0);
   function invalidateArtistMetadata() {
-    setArtistMetadataRefreshToken((generation) => generation + 1);
     void queryClient.invalidateQueries({
       predicate: ({ queryKey }) => {
         const key = queryKey[0];
@@ -216,13 +211,10 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         <>
           <header className="catalog-header">
             <div>
-              <ArtistDetailsEditor
-                artistId={artistId}
-                fallbackName={artist.name}
-                fallbackDisambiguation={artist.disambiguation}
-                refreshToken={artistMetadataRefreshToken}
-                onSaved={invalidateArtistMetadata}
-              />
+              <h1 id="artist-title">{artist.name}</h1>
+              {artist.disambiguation && (
+                <p className="catalog-muted">{artist.disambiguation}</p>
+              )}
               <p className="catalog-muted">
                 {countLabel(artist.release_count, locale, {
                   en: ["release", "releases"],
@@ -249,15 +241,9 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               ))}
             </div>
           </header>
-          <ArtistSortNameEditor
+          <LibraryArtistMetadataCard
+            key={artistId}
             artistId={artistId}
-            refreshToken={artistMetadataRefreshToken}
-            onSaved={invalidateArtistMetadata}
-          />
-          <GenreMetadataEditor
-            owner="artist"
-            ownerId={artistId}
-            refreshToken={artistMetadataRefreshToken}
             onSaved={invalidateArtistMetadata}
           />
           {releasesQuery.isLoading ? (

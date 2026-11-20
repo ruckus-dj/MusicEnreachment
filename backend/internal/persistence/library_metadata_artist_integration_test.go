@@ -46,14 +46,14 @@ func TestLibraryArtistMetadataRepositoryUsesRevisionAndCatalog(t *testing.T) {
 			"genre": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []librarymetadata.GenreReference{{ID: genreID, SourceName: "art rock", Name: "Art Rock"}}, true),
 		},
 	}
-	updated, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID, read.Revision, envelope)
+	updated, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID, read.Revision, envelope, nil)
 	if err != nil {
 		t.Fatalf("update artist metadata: %v", err)
 	}
 	if updated.Revision != 2 {
 		t.Fatalf("updated artist revision = %d, want 2", updated.Revision)
 	}
-	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID, read.Revision, envelope); !errors.Is(err, ErrLibraryMetadataConflict) {
+	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID, read.Revision, envelope, nil); !errors.Is(err, ErrLibraryMetadataConflict) {
 		t.Fatalf("stale artist update error = %v, want conflict", err)
 	}
 	read, err = repository.ReadMetadata(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID)
@@ -111,7 +111,7 @@ func TestLibraryMetadataArtistCreditPatchValidatesAndHydratesIdentity(t *testing
 			}}, true),
 		},
 	}
-	updated, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, current.Revision, envelope)
+	updated, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, current.Revision, envelope, nil)
 	if err != nil {
 		t.Fatalf("update recording artist credit: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestLibraryMetadataArtistCreditPatchValidatesAndHydratesIdentity(t *testing
 			ArtistID: uuid.NewString(), ArtistName: "Missing", CreditName: "Missing", JoinPhrase: "",
 		}}, true),
 	}
-	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, updated.Revision, invalid); !errors.Is(err, ErrLibraryMetadataArtistNotFound) {
+	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, updated.Revision, invalid, nil); !errors.Is(err, ErrLibraryMetadataArtistNotFound) {
 		t.Fatalf("update with unknown local artist error = %v", err)
 	}
 	unchanged, err := repository.ReadMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID)
@@ -191,7 +191,7 @@ func TestLibraryMetadataDisplayKeepsEnvelopeWhenTrackCreditsAreFallbackOrUnclass
 		t.Fatalf("read recording metadata before key setup: %v", err)
 	}
 	recordingMetadata.Envelope.Desired["key"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "D♭ minor", true)
-	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, recordingMetadata.Revision, recordingMetadata.Envelope); err != nil {
+	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, recordingMetadata.Revision, recordingMetadata.Envelope, nil); err != nil {
 		t.Fatalf("save recording key: %v", err)
 	}
 	metadata, err := repository.ReadMetadata(ctx, librarymetadata.ScopePosition, releaseID, fallbackPositionID)
@@ -199,7 +199,7 @@ func TestLibraryMetadataDisplayKeepsEnvelopeWhenTrackCreditsAreFallbackOrUnclass
 		t.Fatalf("read fallback position metadata: %v", err)
 	}
 	metadata.Envelope.Desired["comment"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "preserve unrelated metadata", true)
-	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopePosition, releaseID, fallbackPositionID, metadata.Revision, metadata.Envelope); err != nil {
+	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopePosition, releaseID, fallbackPositionID, metadata.Revision, metadata.Envelope, nil); err != nil {
 		t.Fatalf("save unrelated position metadata: %v", err)
 	}
 	for _, test := range []struct {

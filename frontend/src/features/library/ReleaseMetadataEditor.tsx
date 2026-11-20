@@ -13,9 +13,11 @@ import {
 import type {
   LibraryMetadataGetResponse,
   LibraryMetadataResponse,
+  ProviderGenreBaseline,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
 import { ArtistCreditRowsEditor } from "./ArtistCreditRowsEditor";
 import {
   type ArtistCreditDraft,
@@ -25,6 +27,8 @@ import {
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
 import { artistCreditMessages } from "./artistCreditMessages";
+import type { GenreReference } from "./GenreMetadataEditor";
+import { genreMessages } from "./genreMessages";
 import {
   createMetadataDraftRowKey,
   type MetadataMovementDraft,
@@ -50,7 +54,8 @@ type MetadataValue =
   | boolean
   | MetadataWorkDraft[]
   | ContributorDraft[]
-  | MetadataMovementDraft;
+  | MetadataMovementDraft
+  | GenreReference[];
 type ReleaseFieldKey =
   | "title"
   | "sort_title"
@@ -77,6 +82,7 @@ type ReleaseFieldKey =
   | "license"
   | "website"
   | "media"
+  | "genre"
   | "isrc"
   | "bpm"
   | "key"
@@ -103,7 +109,8 @@ type ReleaseField = {
     | "advisory"
     | "works"
     | "contributors"
-    | "movement";
+    | "movement"
+    | "genres";
   group: string;
 };
 
@@ -125,6 +132,7 @@ const releaseFields: ReleaseField[] = [
   { key: "compilation", kind: "boolean", group: "release" },
   { key: "content_advisory", kind: "advisory", group: "release" },
   { key: "media", kind: "list", group: "release" },
+  { key: "genre", kind: "genres", group: "release" },
   { key: "mood", kind: "list", group: "additional" },
   { key: "grouping", kind: "text", group: "additional" },
   { key: "comment", kind: "text", group: "additional" },
@@ -210,7 +218,7 @@ const copy = {
       track_total: "Track total",
       disc_number: "Disc number",
       disc_total: "Disc total",
-    } satisfies Record<ReleaseFieldKey, string>,
+    } satisfies Record<Exclude<ReleaseFieldKey, "genre">, string>,
     groups: {
       release: "Release details",
       recording: "Recording details",
@@ -324,7 +332,7 @@ const copy = {
       track_total: "Всего дорожек",
       disc_number: "Номер диска",
       disc_total: "Всего дисков",
-    } satisfies Record<ReleaseFieldKey, string>,
+    } satisfies Record<Exclude<ReleaseFieldKey, "genre">, string>,
     groups: {
       release: "Сведения о релизе",
       recording: "Сведения о записи",
@@ -414,7 +422,10 @@ function emptyValues(fields: ReleaseField[]): EditorValues {
       {
         state: "absent",
         value:
-          kind === "list" || kind === "works" || kind === "contributors"
+          kind === "list" ||
+          kind === "works" ||
+          kind === "contributors" ||
+          kind === "genres"
             ? []
             : kind === "movement"
               ? { name: "", number: "", count: "" }
@@ -443,7 +454,10 @@ function readValues(
       continue;
     const state = field.state as FieldState;
     let value: MetadataValue =
-      kind === "list" || kind === "works" || kind === "contributors"
+      kind === "list" ||
+      kind === "works" ||
+      kind === "contributors" ||
+      kind === "genres"
         ? []
         : kind === "movement"
           ? { name: "", number: "", count: "" }
@@ -457,6 +471,7 @@ function readValues(
       else if (kind === "contributors") value = readContributors(field.value);
       else if (kind === "movement")
         value = readMetadataMovementDraft(field.value);
+      else if (kind === "genres") value = readGenreReferences(field.value);
       else if (kind === "list" && Array.isArray(field.value))
         value = field.value.filter(
           (item): item is string => typeof item === "string",
@@ -502,6 +517,21 @@ function readContributors(value: unknown): ContributorDraft[] {
           : {}),
       },
     ];
+  });
+}
+
+function readGenreReferences(value: unknown): GenreReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const genre = item as Record<string, unknown>;
+    if (
+      typeof genre.id !== "string" ||
+      typeof genre.name !== "string" ||
+      typeof genre.source_name !== "string"
+    )
+      return [];
+    return [{ id: genre.id, name: genre.name, source_name: genre.source_name }];
   });
 }
 
@@ -618,6 +648,7 @@ function LibraryScopedMetadataEditorSession({
   const { locale } = useI18n();
   const contributorControlPrefix = useId();
   const text = copy[locale];
+  const genreCopy = genreMessages[locale];
   const title =
     scope === "release"
       ? text.title
@@ -661,6 +692,8 @@ function LibraryScopedMetadataEditorSession({
   }>({ status: "unclassified", origin: null });
   const [effectiveKey, setEffectiveKey] =
     useState<LibraryMetadataGetResponse["effective_key"]>();
+  const [providerGenreBaseline, setProviderGenreBaseline] =
+    useState<ProviderGenreBaseline>();
   const [artistSearchQuery, setArtistSearchQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -703,73 +736,76 @@ function LibraryScopedMetadataEditorSession({
     artistSearch.isError ||
     (artistSearch.data !== undefined && artistSearch.data.status !== 200);
 
-  const loadMetadata = useCallback(
-    async (force = false) => {
-      const generation = ++readGeneration.current;
-      readController.current?.abort();
-      const controller = new AbortController();
-      readController.current = controller;
-      setLoading(true);
-      try {
-        const options: RequestInit = {
-          cache: "no-store",
-          signal: controller.signal,
-        };
-        const response =
-          scope === "release"
-            ? await getLibraryReleaseMetadata(ownerId, options)
-            : scope === "recording"
-              ? await getLibraryRecordingMetadata(ownerId, options)
-              : await getLibraryPositionMetadata(releaseId, ownerId, options);
-        if (controller.signal.aborted || generation !== readGeneration.current)
-          return;
-        if (response.status !== 200) throw apiResponseError(response);
-        if (
-          !force &&
-          dirtyRef.current &&
-          metadataRevision.current !== undefined &&
-          metadataRevision.current !== response.data.revision
-        ) {
-          setRefreshConflict(true);
-          return;
-        }
-        const next = readValues(response.data, fields);
-        const creditDisplay = adaptArtistCreditMetadata(response.data);
-        metadataRevision.current = response.data.revision;
-        setMetadata(response.data);
-        setSaved(next);
-        setSavedArtistCredit(creditDisplay.draft);
-        setArtistCreditBaseline(creditDisplay.baseline);
-        setEffectiveArtistCredit({
-          status: creditDisplay.effective.status,
-          origin: creditDisplay.effective.origin,
-        });
-        setEffectiveKey(
-          "effective_key" in response.data
-            ? response.data.effective_key
-            : undefined,
-        );
-        if (!dirtyRef.current) {
-          setDraft(next);
-          setArtistCreditDraft(creditDisplay.draft);
-          setDirtyFields(new Set());
-          setRefreshConflict(false);
-        }
-        setReadError("");
-      } catch (reason) {
-        if (!controller.signal.aborted && generation === readGeneration.current)
-          setReadError(errorMessage(reason, ""));
-      } finally {
-        if (!controller.signal.aborted && generation === readGeneration.current)
-          setLoading(false);
+  const loadMetadata = useCallback(async () => {
+    const generation = ++readGeneration.current;
+    readController.current?.abort();
+    const controller = new AbortController();
+    readController.current = controller;
+    setLoading(true);
+    try {
+      const options: RequestInit = {
+        cache: "no-store",
+        signal: controller.signal,
+      };
+      const response =
+        scope === "release"
+          ? await getLibraryReleaseMetadata(ownerId, options)
+          : scope === "recording"
+            ? await getLibraryRecordingMetadata(ownerId, options)
+            : await getLibraryPositionMetadata(releaseId, ownerId, options);
+      if (controller.signal.aborted || generation !== readGeneration.current)
+        return;
+      if (response.status !== 200) throw apiResponseError(response);
+      if (
+        metadataRevision.current !== undefined &&
+        response.data.revision < metadataRevision.current
+      ) {
+        return;
       }
-    },
-    [fields, ownerId, releaseId, scope],
-  );
+      if (
+        dirtyRef.current &&
+        metadataRevision.current !== undefined &&
+        metadataRevision.current !== response.data.revision
+      ) {
+        setRefreshConflict(true);
+        return;
+      }
+      const next = readValues(response.data, fields);
+      const creditDisplay = adaptArtistCreditMetadata(response.data);
+      metadataRevision.current = response.data.revision;
+      setMetadata(response.data);
+      setSaved(next);
+      setProviderGenreBaseline(response.data.provider_genre_baseline);
+      setSavedArtistCredit(creditDisplay.draft);
+      setArtistCreditBaseline(creditDisplay.baseline);
+      setEffectiveArtistCredit({
+        status: creditDisplay.effective.status,
+        origin: creditDisplay.effective.origin,
+      });
+      setEffectiveKey(
+        "effective_key" in response.data
+          ? response.data.effective_key
+          : undefined,
+      );
+      if (!dirtyRef.current) {
+        setDraft(next);
+        setArtistCreditDraft(creditDisplay.draft);
+        setDirtyFields(new Set());
+        setRefreshConflict(false);
+      }
+      setReadError("");
+    } catch (reason) {
+      if (!controller.signal.aborted && generation === readGeneration.current)
+        setReadError(errorMessage(reason, ""));
+    } finally {
+      if (!controller.signal.aborted && generation === readGeneration.current)
+        setLoading(false);
+    }
+  }, [fields, ownerId, releaseId, scope]);
 
   useEffect(() => {
     const generation = ++sessionGeneration.current;
-    void loadMetadata(true);
+    void loadMetadata();
     return () => {
       if (sessionGeneration.current === generation)
         sessionGeneration.current += 1;
@@ -803,7 +839,7 @@ function LibraryScopedMetadataEditorSession({
     setArtistSearchQuery("");
     setEditing(false);
     setSaveError("");
-    if (refreshConflict) void loadMetadata(true);
+    if (refreshConflict) void loadMetadata();
     setRefreshConflict(false);
   }
 
@@ -971,7 +1007,7 @@ function LibraryScopedMetadataEditorSession({
       notifySaved(response.data);
       // The mutation is committed. A follow-up read must not turn it into a
       // reported save failure, and must not overwrite the committed revision.
-      void loadMetadata(true);
+      void loadMetadata();
     } catch (reason) {
       if (isCurrentSession()) setSaveError(errorMessage(reason, ""));
     } finally {
@@ -998,6 +1034,7 @@ function LibraryScopedMetadataEditorSession({
         : ["track_number", "disc_number"];
   const basicFieldKeySet = new Set(basicFieldKeys);
   const renderField = ({ key, kind }: ReleaseField) => {
+    if (key === "genre") return null;
     const field = editing ? draft[key] : saved[key];
     const label = text.labels[key];
     const rendered = Array.isArray(field.value)
@@ -1525,6 +1562,9 @@ function LibraryScopedMetadataEditorSession({
     );
   };
 
+  const genres = scope === "release" ? (editing ? draft : saved).genre : null;
+  const genreValue = genres?.value as GenreReference[] | undefined;
+  const genreFields = fields.filter(({ key }) => key !== "genre");
   return (
     <section
       aria-label={title}
@@ -1566,14 +1606,102 @@ function LibraryScopedMetadataEditorSession({
         </div>
       </div>
       <div className="grid min-w-0 gap-2">
+        {genres && genreValue && (
+          <section
+            aria-label={genreCopy.label.release}
+            className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+          >
+            <h3 className="text-sm font-semibold">{genreCopy.label.release}</h3>
+            {editing ? (
+              <ProviderCatalogGenreField
+                locale={locale}
+                owner="release"
+                value={genreValue}
+                onChange={(value) =>
+                  updateField("genre", {
+                    state: value.length ? "value" : "explicit_empty",
+                    value,
+                  })
+                }
+                disabled={saving}
+              />
+            ) : (
+              genreValue.length > 0 && (
+                <ul className="m-0 flex list-none flex-wrap gap-2 p-0 text-sm">
+                  {genreValue.map((genre) => (
+                    <li
+                      className="rounded-full border border-[var(--line)] px-2 py-0.5"
+                      key={genre.id}
+                    >
+                      {genre.name}
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+            {!genreValue.length && (
+              <p className="m-0 text-sm text-[var(--muted)]">
+                {genres.state === "explicit_empty"
+                  ? genreCopy.explicitlyCleared
+                  : genreCopy.noOverride}
+              </p>
+            )}
+            {editing && (
+              <div className="flex flex-wrap gap-2">
+                <AppButton
+                  type="button"
+                  isDisabled={saving}
+                  onPress={() =>
+                    updateField("genre", { state: "explicit_empty", value: [] })
+                  }
+                >
+                  {genreCopy.clear}
+                </AppButton>
+                <AppButton
+                  type="button"
+                  isDisabled={saving}
+                  onPress={() =>
+                    updateField("genre", { state: "absent", value: [] })
+                  }
+                >
+                  {genreCopy.inherit}
+                </AppButton>
+              </div>
+            )}
+            <section
+              aria-label={genreCopy.providerGenres}
+              className="grid gap-1 border-t border-[var(--line)] pt-2 text-sm"
+            >
+              <h4 className="m-0 font-medium">{genreCopy.providerGenres}</h4>
+              {providerGenreBaseline?.genres?.length ? (
+                <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+                  {providerGenreBaseline.genres.map((genre) => (
+                    <li
+                      className="rounded-full border border-[var(--line)] px-2 py-0.5"
+                      key={genre.id}
+                    >
+                      {genre.name}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="m-0 text-[var(--muted)]">
+                  {providerGenreBaseline
+                    ? genreCopy.providerGenresEmpty
+                    : genreCopy.providerGenresUnavailable}
+                </p>
+              )}
+            </section>
+          </section>
+        )}
         <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {fields
+          {genreFields
             .filter(({ key }) => basicFieldKeySet.has(key))
             .map(renderField)}
         </dl>
         {[
           ...new Set(
-            fields
+            genreFields
               .filter(({ key }) => !basicFieldKeySet.has(key))
               .map(({ group }) => group),
           ),
@@ -1586,7 +1714,7 @@ function LibraryScopedMetadataEditorSession({
               {text.groups[group as keyof typeof text.groups]}
             </summary>
             <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 p-2 sm:grid-cols-2 lg:grid-cols-3">
-              {fields
+              {genreFields
                 .filter(
                   (field) =>
                     field.group === group && !basicFieldKeySet.has(field.key),
@@ -1636,7 +1764,7 @@ function LibraryScopedMetadataEditorSession({
           <AppButton
             type="button"
             isDisabled={loading || saving}
-            onPress={() => void loadMetadata(true)}
+            onPress={() => void loadMetadata()}
             className="min-w-0 justify-center"
           >
             {text.retry}

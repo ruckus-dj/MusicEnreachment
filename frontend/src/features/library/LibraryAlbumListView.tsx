@@ -64,6 +64,8 @@ export interface LibraryAlbumRow {
   providerPositionCount?: number | null;
   /** `null`/absent is an explicit em dash, not an inferred zero. */
   publishedCount?: number | null;
+  /** Local coverage may have a different denominator than cached audio totals. */
+  publicationCoverage?: { total: number; complete: boolean };
   provider: "musicbrainz" | "local";
   /** Per-row selection; `null`/absent rows have no checkbox. */
   selection?: LibraryAlbumSelectionControl | null;
@@ -169,6 +171,7 @@ const copy = {
     untitled: "Untitled",
     empty: "No results. Change the query or filter.",
     unknown: "Completeness unknown",
+    known: "Completeness known",
     track: "Recording",
     loading: "Loading tracks…",
     error: "Could not load tracks.",
@@ -198,6 +201,7 @@ const copy = {
     untitled: "Без названия",
     empty: "Нет результатов. Измените запрос или фильтр.",
     unknown: "Полнота неизвестна",
+    known: "Полнота известна",
     track: "Запись",
     loading: "Загрузка треков…",
     error: "Не удалось загрузить треки.",
@@ -281,6 +285,16 @@ function audioField(album: LibraryAlbumRow, text: Text) {
 
 function publicationField(album: LibraryAlbumRow, text: Text) {
   if (album.missing || album.publishedCount == null) return "—";
+  if (album.publicationCoverage) {
+    return (
+      <>
+        {album.publishedCount} / {album.publicationCoverage.total}
+        <span className={subClass}>
+          {album.publicationCoverage.complete ? text.known : text.unknown}
+        </span>
+      </>
+    );
+  }
   if (!album.publishedCount) return text.notPublished;
   return (
     <>

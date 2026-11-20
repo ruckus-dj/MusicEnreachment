@@ -1582,12 +1582,6 @@ export function LibraryReleaseScreen({
           </div>
         ) : null}
       </header>
-      <GenreMetadataEditor
-        owner="release"
-        ownerId={releaseId}
-        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-        onSaved={refreshAfterMetadataSave}
-      />
       {genreRefreshError ? (
         <p role="alert">{displayText(genreRefreshError)}</p>
       ) : null}

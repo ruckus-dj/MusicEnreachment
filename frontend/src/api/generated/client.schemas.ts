@@ -558,9 +558,12 @@ export interface LibraryArtistDetails {
   revision: number;
 }
 
-export interface LibraryArtistDetailsPatchInputBody {
+export type LibraryArtistMetadataBodyChanges = {[key: string]: unknown};
+
+export interface LibraryArtistMetadataBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  changes?: LibraryArtistMetadataBodyChanges;
   disambiguation?: string;
   expected_revision: number;
   name?: string;

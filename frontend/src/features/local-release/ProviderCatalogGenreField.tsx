@@ -12,7 +12,7 @@ import type {
   GenreOwner,
   GenreReference,
 } from "../library/GenreMetadataEditor";
-import { GenrePicker } from "../library/GenrePicker";
+import { GenrePicker, type GenrePickerCatalog } from "../library/GenrePicker";
 import { genreMessages } from "../library/genreMessages";
 
 /**
@@ -31,12 +31,35 @@ export function ProviderCatalogGenreField({
   onChange: (next: GenreReference[]) => void;
   disabled?: boolean;
 }) {
+  const catalog = useProviderGenreCatalog(locale);
+  const copy = genreMessages[locale];
+  return (
+    <div className="grid gap-1">
+      <GenrePicker
+        {...catalog}
+        value={[...value]}
+        onChange={onChange}
+        editing
+        label={copy.label[owner]}
+        copy={copy}
+        disabled={Boolean(disabled)}
+      />
+    </div>
+  );
+}
+
+export function useProviderGenreCatalog(
+  locale: "ru" | "en",
+): GenrePickerCatalog {
   const copy = genreMessages[locale];
   const [status, setStatus] = useState<GenreCatalogStatus>();
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState("");
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<GenreCatalogItem[]>([]);
+  const [result, setResult] = useState<{
+    term: string;
+    options: GenreCatalogItem[];
+  }>();
   const [loading, setLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -60,7 +83,7 @@ export function ProviderCatalogGenreField({
 
   useEffect(() => {
     if (!trimmed || !catalogAvailable) {
-      setOptions([]);
+      setResult(undefined);
       setLoading(false);
       return;
     }
@@ -76,7 +99,7 @@ export function ProviderCatalogGenreField({
           .then((response) => {
             if (response.status !== 200) throw apiResponseError(response);
             if (!controller.signal.aborted)
-              setOptions(response.data.items ?? []);
+              setResult({ term: trimmed, options: response.data.items ?? [] });
           })
           .catch((reason: unknown) => {
             if (!controller.signal.aborted)
@@ -94,31 +117,21 @@ export function ProviderCatalogGenreField({
     };
   }, [catalogAvailable, copy.loadError, retry, trimmed]);
 
-  return (
-    <div className="grid gap-1">
-      <GenrePicker
-        value={[...value]}
-        onChange={onChange}
-        editing
-        label={copy.label[owner]}
-        copy={copy}
-        options={options}
-        query={query}
-        onQueryChange={setQuery}
-        loading={loading}
-        catalogError={catalogError}
-        onClearCatalogError={() => setCatalogError("")}
-        onRetryCatalog={() => setRetry((attempt) => attempt + 1)}
-        catalogStatus={status}
-        catalogStatusLoading={statusLoading}
-        catalogStatusError={statusError}
-        onOpenCatalog={() => void loadStatus()}
-        onRetryStatus={() => {
-          setStatus(undefined);
-          void loadStatus(true);
-        }}
-        disabled={Boolean(disabled)}
-      />
-    </div>
-  );
+  return {
+    options: catalogAvailable && result?.term === trimmed ? result.options : [],
+    query,
+    onQueryChange: setQuery,
+    loading,
+    catalogError,
+    onClearCatalogError: () => setCatalogError(""),
+    onRetryCatalog: () => setRetry((attempt) => attempt + 1),
+    catalogStatus: status,
+    catalogStatusLoading: statusLoading,
+    catalogStatusError: statusError,
+    onOpenCatalog: () => void loadStatus(),
+    onRetryStatus: () => {
+      setStatus(undefined);
+      void loadStatus(true);
+    },
+  };
 }

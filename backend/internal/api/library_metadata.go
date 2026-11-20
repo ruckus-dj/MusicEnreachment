@@ -17,6 +17,12 @@ type libraryMetadataBody struct {
 	ExpectedRevision int64                      `json:"expected_revision"`
 	Changes          map[string]json.RawMessage `json:"changes"`
 }
+type libraryArtistMetadataBody struct {
+	ExpectedRevision int64                      `json:"expected_revision"`
+	Changes          map[string]json.RawMessage `json:"changes,omitempty"`
+	Name             *string                    `json:"name,omitempty"`
+	Disambiguation   *string                    `json:"disambiguation,omitempty"`
+}
 type libraryMetadataResponse struct {
 	Envelope           librarymetadata.Envelope `json:"envelope"`
 	Revision           int64                    `json:"revision"`
@@ -69,8 +75,8 @@ type libraryMetadataRecordingGetInput struct {
 	RecordingID string `path:"recording_id"`
 }
 type libraryMetadataArtistInput struct {
-	ArtistID string              `path:"artist_id"`
-	Body     libraryMetadataBody `json:"body"`
+	ArtistID string                    `path:"artist_id"`
+	Body     libraryArtistMetadataBody `json:"body"`
 }
 type libraryMetadataArtistGetInput struct {
 	ArtistID string `path:"artist_id"`
@@ -155,7 +161,22 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				if e != nil {
 					return nil, huma.Error400BadRequest("library artist ID is invalid")
 				}
-				return register(ctx, s.scope, uuid.Nil, id, &in.Body)
+				if metadata == nil {
+					return nil, huma.Error503ServiceUnavailable("library metadata is unavailable")
+				}
+				result, err := metadata.UpdateArtist(ctx, id, in.Body.ExpectedRevision, in.Body.Changes, in.Body.Name, in.Body.Disambiguation)
+				switch {
+				case errors.Is(err, service.ErrLibraryMetadataInvalidRequest):
+					return nil, huma.Error400BadRequest("library metadata request is invalid")
+				case errors.Is(err, service.ErrLibraryMetadataNotFound):
+					return nil, huma.Error404NotFound("library metadata owner not found")
+				case errors.Is(err, service.ErrLibraryMetadataConflict):
+					return nil, huma.Error409Conflict("library metadata revision is stale")
+				case err != nil:
+					return nil, huma.Error503ServiceUnavailable("library metadata is unavailable")
+				default:
+					return &libraryMetadataOutput{Body: libraryMetadataResponse{Envelope: result.Envelope, Revision: result.Revision, PublicationApplied: false}}, nil
+				}
 			})
 		case librarymetadata.ScopeRelease:
 			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataReleaseGetInput) (*libraryMetadataGetOutput, error) {

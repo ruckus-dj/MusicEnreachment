@@ -14,13 +14,16 @@ import {
 } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
-import { ObjectMetadataForm } from "../../metadata/ObjectMetadataForm";
 import { ReleaseMetadataEditor } from "../../metadata/ReleaseMetadataEditor";
 import {
 	ReleasePublicationDemo,
 	type ReleasePublicationDemoProvider,
 } from "../publication/ReleasePublicationDemo";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
+import {
+	ArtistMetadataCard,
+	type ArtistMetadataValues,
+} from "./ArtistMetadataCard";
 import {
 	availabilityRowClass,
 	type CatalogFilter as CatalogFilterValue,
@@ -45,6 +48,22 @@ import { trackMessage } from "./trackMessages";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
+
+function genreOptions(query: string) {
+	const term = query.trim().toLocaleLowerCase("en");
+	if (!term) return [];
+	const exact = [];
+	const partial = [];
+	for (const { id, name, sourceName } of demoGenres) {
+		const fields = [id, name, sourceName].map((item) =>
+			item.toLocaleLowerCase("en"),
+		);
+		const option = { id, name, source_name: sourceName };
+		if (fields.includes(term)) exact.push(option);
+		else if (fields.some((field) => field.includes(term))) partial.push(option);
+	}
+	return [...exact, ...partial];
+}
 
 export function ArtistScreen({
 	artistId,
@@ -91,6 +110,12 @@ export function ArtistScreen({
 	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
 		catalogueMessage(locale, key, values);
 	const [localQuery, setLocalQuery] = useState("");
+	const [genreQuery, setGenreQuery] = useState("");
+	const [localGenresLoaded, setLocalGenresLoaded] = useState(false);
+	const genreSearchResults = useMemo(
+		() => genreOptions(genreQuery),
+		[genreQuery],
+	);
 	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
 	const query = sharedQuery ?? localQuery;
 	const filter = sharedFilter ?? localFilter;
@@ -194,28 +219,44 @@ export function ArtistScreen({
 		tracks.filter(predicate).length;
 	const expandedReleaseId =
 		initialTags?.scope === "release" ? initialTags.releaseId : initialReleaseId;
-	const saveArtist = (values: Record<string, string>, genreIds?: string[]) => {
-		const selectedGenres = genreIds
-			? [
-					...genreIds.map((id) => {
-						const known = demoGenres.find((item) => item.id === id);
-						return (
-							known ?? artist.genres?.find((genre) => genre.id === id) ?? { id }
-						);
-					}),
-					...(artist.genres ?? []).filter((genre) => !genre.id),
-				]
-			: artist.genres;
+	const selectedGenres = (artist.genres ?? []).flatMap((genre) => {
+		if (!genre.id) return [];
+		const known = demoGenres.find((item) => item.id === genre.id);
+		const name = known?.name ?? genre.name ?? genre.id;
+		return [{ id: genre.id, name, source_name: known?.sourceName ?? name }];
+	});
+	const saveArtist = async (changes: Partial<ArtistMetadataValues>) => {
+		const genre = changes.genre;
+		const inherited =
+			artist.genreOverride?.inherited ??
+			(artist.genres ?? []).filter((item) => !item.id);
 		const updated = {
 			...artist,
-			name: values.name,
-			sortName: values.sortName,
-			disambiguation: values.disambiguation,
-			tags: values.tags
-				.split(",")
-				.map((tag) => tag.trim())
-				.filter(Boolean),
-			...(genreIds ? { genres: selectedGenres } : {}),
+			...(changes.name !== undefined ? { name: changes.name } : {}),
+			...(changes.sortName !== undefined ? { sortName: changes.sortName } : {}),
+			...(changes.disambiguation !== undefined
+				? { disambiguation: changes.disambiguation }
+				: {}),
+			...(changes.tags !== undefined
+				? {
+						tags: changes.tags
+							.split(",")
+							.map((tag) => tag.trim())
+							.filter(Boolean),
+					}
+				: {}),
+			...(genre
+				? {
+						genreOverride: { state: genre.state, inherited },
+						genres:
+							genre.state === "explicit_empty"
+								? []
+								: [
+										...genre.value.map(({ id, name }) => ({ id, name })),
+										...inherited,
+									],
+					}
+				: {}),
 		};
 		if (onUpdateArtist) onUpdateArtist(updated);
 		else
@@ -284,7 +325,8 @@ export function ArtistScreen({
 								?.map((genre) => genre.name)
 								.filter(Boolean)
 								.join(", ") ||
-								artist.genre ||
+								(artist.genreOverride?.state !== "explicit_empty" &&
+									artist.genre) ||
 								m("performer")}
 						</p>
 					</div>
@@ -323,30 +365,24 @@ export function ArtistScreen({
 				ref={initialTags?.scope === "artist" ? initialTagsTarget : undefined}
 				tabIndex={initialTags?.scope === "artist" ? -1 : undefined}
 			>
-				<ObjectMetadataForm
+				<ArtistMetadataCard
 					key={artist.id}
-					label={m("artistDetails")}
-					fields={[
-						{ key: "name", label: m("artistName"), value: artist.name },
-						{
-							key: "sortName",
-							label: m("sortName"),
-							value: artist.sortName ?? "",
+					locale={locale}
+					revision={artist.id}
+					values={{
+						name: artist.name,
+						sortName: artist.sortName ?? "",
+						disambiguation: artist.disambiguation ?? "",
+						tags: artist.tags?.join(", ") ?? "",
+						genre: {
+							state: selectedGenres.length
+								? "value"
+								: (artist.genreOverride?.state ?? "absent"),
+							value: selectedGenres,
 						},
-						{
-							key: "disambiguation",
-							label: m("disambiguation"),
-							value: artist.disambiguation ?? "",
-						},
-						{
-							key: "tags",
-							label: m("tags"),
-							// Comma-separated values are a display-prototype convention only.
-							value: artist.tags?.join(", ") ?? "",
-						},
-					]}
-					readOnlyFields={[
-						{ key: "id", label: m("artistID"), value: artist.id },
+					}}
+					readOnly={[
+						{ id: "id", label: m("artistID"), value: artist.id },
 						...(
 							(
 								artist as CatalogArtist & {
@@ -357,26 +393,36 @@ export function ArtistScreen({
 								}
 							).providerLinks ?? []
 						).map((link, index) => ({
-							key: `provider-${link.providerCode}-${index}`,
+							id: `provider-${link.providerCode}-${index}`,
 							label: `ID ${link.providerCode}`,
 							value: link.providerKey,
 						})),
 					]}
-					genreField={{
-						value:
-							artist.genres?.flatMap((genre) => (genre.id ? [genre.id] : [])) ??
-							[],
-						displayValue:
-							artist.genres
-								?.map((genre) => genre.name)
-								.filter(Boolean)
-								.join(", ") ||
-							artist.genre ||
-							"",
-						loaded: genresLoaded,
-						onLoad: onLoadGenres,
+					genreCaption={
+						artist.genres
+							?.map((genre) => genre.name)
+							.filter(Boolean)
+							.join(", ") || artist.genre
+					}
+					genreCatalog={{
+						options: genreSearchResults,
+						query: genreQuery,
+						onQueryChange: setGenreQuery,
+						loading: false,
+						catalogError: "",
+						onClearCatalogError: () => undefined,
+						onRetryCatalog: () => undefined,
+						catalogStatusLoading: false,
+						catalogStatusError: "",
+						bundledCatalogReady: genresLoaded || localGenresLoaded,
+						onLoadBundledCatalog: () => {
+							if (onLoadGenres) void onLoadGenres();
+							else setLocalGenresLoaded(true);
+						},
+						settingsHref: "#settings",
+						onOpenCatalog: () => undefined,
+						onRetryStatus: () => undefined,
 					}}
-					required={["name"]}
 					onSave={saveArtist}
 				/>
 			</div>

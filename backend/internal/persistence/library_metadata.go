@@ -23,6 +23,14 @@ type LibraryMetadata struct {
 	Revision int64
 }
 
+// LibraryArtistDetailsChange carries artist-card details that are saved
+// atomically with the desired metadata envelope. A nil member preserves the
+// stored value.
+type LibraryArtistDetailsChange struct {
+	Name           *string
+	Disambiguation *string
+}
+
 type ProviderGenreBaseline struct {
 	ProviderCode string
 	SourceID     uuid.UUID
@@ -210,12 +218,15 @@ func readEffectiveKey(ctx context.Context, tx bun.Tx, scope librarymetadata.Scop
 	return &resolved, nil
 }
 
-func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, envelope librarymetadata.Envelope) (LibraryMetadata, error) {
+func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, envelope librarymetadata.Envelope, artist *LibraryArtistDetailsChange) (LibraryMetadata, error) {
 	if err := envelope.Validate(); err != nil {
 		return LibraryMetadata{}, err
 	}
 	if envelope.Scope != scope {
 		return LibraryMetadata{}, fmt.Errorf("metadata scope mismatch")
+	}
+	if artist != nil && scope != librarymetadata.ScopeArtist {
+		return LibraryMetadata{}, fmt.Errorf("artist details require artist metadata scope")
 	}
 	encoded, err := json.Marshal(envelope)
 	if err != nil {
@@ -256,11 +267,27 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 		if !ok {
 			return fmt.Errorf("update library metadata: unknown scope %q", scope)
 		}
-		set := `metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{local_metadata}',?::jsonb,true),` + owner.revision + `=` + owner.revision + `+1`
+		metadata := `COALESCE(metadata,'{}'::jsonb)`
+		metadata = `jsonb_set(` + metadata + `,'{local_metadata}',?::jsonb,true)`
+		args = []any{string(encoded)}
+		if artist != nil && artist.Disambiguation != nil {
+			encoded, err := json.Marshal(*artist.Disambiguation)
+			if err != nil {
+				return fmt.Errorf("encode library artist disambiguation: %w", err)
+			}
+			metadata = `jsonb_set(` + metadata + `,'{disambiguation}',?::jsonb,true)`
+			args = append(args, string(encoded))
+		}
+		set := `metadata=` + metadata
+		if artist != nil && artist.Name != nil {
+			set += `,name=?`
+			args = append(args, *artist.Name)
+		}
+		set += `,` + owner.revision + `=` + owner.revision + `+1`
 		if owner.updatedAt {
 			set += `,updated_at=now()`
 		}
-		args = []any{string(encoded), ownerID}
+		args = append(args, ownerID)
 		if scope == librarymetadata.ScopePosition {
 			args = append(args, releaseID)
 		}

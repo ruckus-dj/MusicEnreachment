@@ -128,6 +128,10 @@ export type CatalogArtist = {
 	sortName?: string;
 	disambiguation?: string;
 	genres?: { id?: string; name?: string }[];
+	genreOverride?: {
+		state: "absent" | "explicit_empty" | "value";
+		inherited: { name?: string }[];
+	};
 	/** Legacy display value for fixtures that predate canonical genre references. */
 	genre?: string;
 	/** Optional demo-only artist tags, edited as comma-separated values. */

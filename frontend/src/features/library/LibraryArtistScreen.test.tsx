@@ -21,18 +21,16 @@ afterEach(() => {
   window.location.hash = "";
 });
 
-it("keeps the artist release filter but loads every position in an expanded release", async () => {
+it("saves combined artist metadata in one patch while keeping the artist release filter", async () => {
   window.location.hash = `#/library/artists/${artistId}?view=artists&availability=missing&publication=published`;
   let detailsRevision = 1;
-  let detailsName = "Artist";
-  let detailsDisambiguation: string | null = "provider band";
-  let sortNameSaveCount = 0;
-  let failNextDetailsRead = false;
+  let artistName = "Artist";
+  let metadataPatchCount = 0;
   server.use(
     http.get(`*/api/library/artists/${artistId}`, () =>
       HttpResponse.json({
         id: artistId,
-        name: "Artist",
+        name: artistName,
         disambiguation: "provider band",
         genres: [],
         provider_links: [],
@@ -42,29 +40,25 @@ it("keeps the artist release filter but loads every position in an expanded rele
         published_position_count: 1,
       }),
     ),
-    http.get(`*/api/library/artists/${artistId}/details`, () => {
-      if (failNextDetailsRead) {
-        failNextDetailsRead = false;
-        return HttpResponse.json(
-          { detail: "temporary read failure" },
-          { status: 500 },
-        );
-      }
-      return HttpResponse.json({
+    http.get(`*/api/library/artists/${artistId}/details`, () =>
+      HttpResponse.json({
         id: artistId,
-        name: detailsName,
-        disambiguation: detailsDisambiguation,
+        name: artistName,
+        disambiguation: "provider band",
         revision: detailsRevision,
         publication_applied: false,
-      });
-    }),
+      }),
+    ),
     http.get(`*/api/library/artists/${artistId}/metadata`, () =>
       HttpResponse.json({
         revision: detailsRevision,
         envelope: {
           version: 1,
           scope: "artist",
-          desired: { sort_name: { state: "absent" } },
+          desired: {
+            sort_name: { state: "absent" },
+            genre: { state: "absent" },
+          },
         },
         publication_applied: false,
         provider_genre_baseline: null,
@@ -75,59 +69,35 @@ it("keeps the artist release filter but loads every position in an expanded rele
       async ({ request }) => {
         const body = (await request.json()) as {
           expected_revision: number;
-          changes: { sort_name: { state: string; value?: string } };
+          name?: string;
+          disambiguation?: string;
+          changes: {
+            sort_name: { state: string; value?: string };
+            genre: { state: string };
+          };
         };
-        expect(body.expected_revision).toBe(detailsRevision);
-        sortNameSaveCount += 1;
-        expect(body.changes.sort_name).toEqual({
-          state: "value",
-          value: sortNameSaveCount === 1 ? "Artist, Sort" : "Artist, Sort 2",
+        expect(body).toEqual({
+          expected_revision: 1,
+          name: "  Local Artist  ",
+          disambiguation: "",
+          changes: {
+            sort_name: { state: "value", value: "Artist, Sort" },
+            genre: { state: "explicit_empty" },
+          },
         });
+        metadataPatchCount += 1;
         detailsRevision += 1;
-        if (sortNameSaveCount === 2) failNextDetailsRead = true;
+        artistName = body.name ?? artistName;
         return HttpResponse.json({
           revision: detailsRevision,
           envelope: {
             version: 1,
             scope: "artist",
             desired: {
-              sort_name: {
-                state: "value",
-                value:
-                  sortNameSaveCount === 1 ? "Artist, Sort" : "Artist, Sort 2",
-              },
+              sort_name: { state: "value", value: "Artist, Sort" },
+              genre: { state: "explicit_empty" },
             },
           },
-          publication_applied: false,
-        });
-      },
-    ),
-    http.patch(
-      `*/api/library/artists/${artistId}/details`,
-      async ({ request }) => {
-        const body = (await request.json()) as {
-          expected_revision: number;
-          name?: string;
-          disambiguation?: string;
-        };
-        expect(body.expected_revision).toBe(detailsRevision);
-        if (detailsRevision === 2) {
-          expect(body).toEqual({
-            expected_revision: 2,
-            name: "  Local Artist  ",
-          });
-        } else {
-          expect(body).toEqual({ expected_revision: 3, disambiguation: "" });
-        }
-        if (body.name !== undefined) detailsName = body.name;
-        if (body.disambiguation !== undefined)
-          detailsDisambiguation = body.disambiguation;
-        detailsRevision += 1;
-        return HttpResponse.json({
-          id: artistId,
-          name: detailsName,
-          disambiguation: detailsDisambiguation,
-          revision: detailsRevision,
           publication_applied: false,
         });
       },
@@ -221,85 +191,42 @@ it("keeps the artist release filter but loads every position in an expanded rele
     </QueryClientProvider>,
   );
 
-  const sortNameEditor = await screen.findByRole("region", {
-    name: "Artist sort name",
+  const metadataCard = await screen.findByRole("region", {
+    name: "Artist metadata",
   });
-  const editButton = await within(sortNameEditor).findByRole("button", {
+  const editButton = within(metadataCard).getByRole("button", {
     name: "Edit",
   });
   await waitFor(() => expect(editButton).toBeEnabled());
   fireEvent.click(editButton);
-  const sortNameInput = await screen.findByRole("textbox", {
-    name: "Artist sort name",
-  });
-  fireEvent.change(sortNameInput, { target: { value: "Artist, Sort" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByText("Artist, Sort")).toBeVisible();
-  expect(
-    screen.getByRole("heading", { name: "Artist", level: 1 }),
-  ).toBeVisible();
-
-  const detailsEditor = await screen.findByRole("region", {
-    name: "Artist name",
-  });
-  const detailsEdit = within(detailsEditor).getByRole("button", {
-    name: "Edit",
-  });
-  await waitFor(() => expect(detailsEdit).toBeEnabled());
-  fireEvent.click(detailsEdit);
-  fireEvent.change(screen.getByRole("textbox", { name: "Artist name" }), {
-    target: { value: "  Local Artist  " },
-  });
-  fireEvent.click(within(detailsEditor).getByRole("button", { name: "Save" }));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("textbox", { name: "Artist name" }),
-    ).not.toBeInTheDocument(),
+  fireEvent.change(
+    within(metadataCard).getByRole("textbox", { name: "Name" }),
+    { target: { value: "  Local Artist  " } },
   );
-  const localArtistHeading = screen.getByRole("heading", {
+  fireEvent.change(
+    within(metadataCard).getByRole("textbox", { name: "Sort name" }),
+    { target: { value: "Artist, Sort" } },
+  );
+  fireEvent.change(
+    within(metadataCard).getByRole("textbox", { name: "Disambiguation" }),
+    { target: { value: "" } },
+  );
+  fireEvent.click(
+    within(metadataCard).getByRole("button", { name: "Clear genres" }),
+  );
+  fireEvent.click(within(metadataCard).getByRole("button", { name: "Save" }));
+
+  const heading = await screen.findByRole("heading", {
     name: "Local Artist",
     level: 1,
   });
-  expect(localArtistHeading).toBeVisible();
-  expect(localArtistHeading.textContent).toBe("  Local Artist  ");
-  expect(detailsRevision).toBe(3);
-
-  fireEvent.click(within(detailsEditor).getByRole("button", { name: "Edit" }));
-  expect(screen.getByRole("textbox", { name: "Disambiguation" })).toHaveValue(
-    "provider band",
-  );
-  fireEvent.click(within(detailsEditor).getByRole("button", { name: "Clear" }));
-  fireEvent.click(within(detailsEditor).getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(detailsRevision).toBe(4));
-  expect(detailsDisambiguation).toBe("");
-
-  fireEvent.click(within(detailsEditor).getByRole("button", { name: "Edit" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Artist name" }), {
-    target: { value: "Unrebased draft" },
-  });
-  fireEvent.click(within(sortNameEditor).getByRole("button", { name: "Edit" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Artist sort name" }), {
-    target: { value: "Artist, Sort 2" },
-  });
-  fireEvent.click(within(sortNameEditor).getByRole("button", { name: "Save" }));
-  const retryDetails = await within(detailsEditor).findByRole("button", {
-    name: "Retry",
-  });
-  fireEvent.click(retryDetails);
+  expect(heading).toBeVisible();
+  expect(heading.textContent).toBe("  Local Artist  ");
+  expect(metadataPatchCount).toBe(1);
   await waitFor(() =>
     expect(
-      within(detailsEditor)
-        .getAllByRole("alert")
-        .some((alert) =>
-          alert.textContent?.includes("changed while you were editing"),
-        ),
-    ).toBe(true),
-  );
-  expect(
-    within(detailsEditor).queryByRole("button", { name: "Retry" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Artist name" })).toHaveValue(
-    "Unrebased draft",
+      within(metadataCard).getByRole("button", { name: "Edit" }),
+    ).toBeEnabled(),
   );
 
   fireEvent.click(
@@ -313,15 +240,11 @@ it("keeps the artist release filter but loads every position in an expanded rele
   ).toBeVisible();
 });
 
-it("preserves a conflicting artist-details draft and ignores a late save after artist navigation", async () => {
+it("preserves a conflicting draft and refreshes a reopened artist after a late save", async () => {
   const otherArtistId = "123e4567-e89b-42d3-a456-426614174001";
-  let latestDetails = {
-    id: artistId,
-    name: "Artist",
-    disambiguation: null as string | null,
-    revision: 1,
-    publication_applied: false,
-  };
+  let detailsRevision = 1;
+  let detailsName = "Artist";
+  const detailsDisambiguation: string | null = null;
   let deferNextSave = false;
   let resolveLatePatch!: (response: Response) => void;
   let signalLatePatchStarted!: () => void;
@@ -332,8 +255,8 @@ it("preserves a conflicting artist-details draft and ignores a late save after a
     http.get("*/api/library/artists/:id", ({ params }) =>
       HttpResponse.json({
         id: params.id,
-        name: params.id === artistId ? "Artist" : "Second Artist",
-        disambiguation: null,
+        name: params.id === artistId ? detailsName : "Second Artist",
+        disambiguation: params.id === artistId ? detailsDisambiguation : null,
         genres: [],
         provider_links: [],
         release_count: 0,
@@ -345,7 +268,13 @@ it("preserves a conflicting artist-details draft and ignores a late save after a
     http.get("*/api/library/artists/:id/details", ({ params }) =>
       HttpResponse.json(
         params.id === artistId
-          ? latestDetails
+          ? {
+              id: artistId,
+              name: detailsName,
+              disambiguation: detailsDisambiguation,
+              revision: detailsRevision,
+              publication_applied: false,
+            }
           : {
               id: otherArtistId,
               name: "Second Artist",
@@ -355,33 +284,44 @@ it("preserves a conflicting artist-details draft and ignores a late save after a
             },
       ),
     ),
-    http.patch("*/api/library/artists/:id/details", async () => {
+    http.get("*/api/library/artists/:id/metadata", ({ params }) =>
+      HttpResponse.json({
+        revision: params.id === artistId ? detailsRevision : 1,
+        envelope: {
+          version: 1,
+          scope: "artist",
+          desired: {
+            sort_name: { state: "absent" },
+            genre: { state: "absent" },
+          },
+        },
+        publication_applied: false,
+        provider_genre_baseline: null,
+      }),
+    ),
+    http.patch("*/api/library/artists/:id/metadata", async ({ request }) => {
+      const body = (await request.json()) as {
+        expected_revision: number;
+        name?: string;
+        disambiguation?: string;
+      };
       if (deferNextSave) {
+        expect(body.expected_revision).toBe(2);
         deferNextSave = false;
         signalLatePatchStarted();
         return new Promise<Response>((resolve) => {
           resolveLatePatch = resolve;
         });
       }
-      latestDetails = {
-        ...latestDetails,
-        name: "Remote Artist",
-        revision: 2,
-      };
+      expect(body).toEqual({
+        expected_revision: 1,
+        name: "My raw draft",
+        disambiguation: "My raw disambiguation",
+      });
+      detailsRevision = 2;
+      detailsName = "Remote Artist";
       return HttpResponse.json({ detail: "stale revision" }, { status: 409 });
     }),
-    http.get("*/api/library/artists/:id/metadata", () =>
-      HttpResponse.json({
-        revision: latestDetails.revision,
-        envelope: {
-          version: 1,
-          scope: "artist",
-          desired: { sort_name: { state: "absent" } },
-        },
-        publication_applied: false,
-        provider_genre_baseline: null,
-      }),
-    ),
     http.get("*/api/library/releases", () =>
       HttpResponse.json({
         items: [],
@@ -407,34 +347,48 @@ it("preserves a conflicting artist-details draft and ignores a late save after a
     </QueryClientProvider>
   );
   const rendered = render(renderScreen(artistId));
-  const editor = await screen.findByRole("region", { name: "Artist name" });
-  const edit = within(editor).getByRole("button", { name: "Edit" });
+  const card = await screen.findByRole("region", { name: "Artist metadata" });
+  const edit = within(card).getByRole("button", { name: "Edit" });
   await waitFor(() => expect(edit).toBeEnabled());
   fireEvent.click(edit);
-  fireEvent.change(screen.getByRole("textbox", { name: "Artist name" }), {
+  fireEvent.change(within(card).getByRole("textbox", { name: "Name" }), {
     target: { value: "My raw draft" },
   });
-  fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
+  fireEvent.change(
+    within(card).getByRole("textbox", { name: "Disambiguation" }),
+    { target: { value: "My raw disambiguation" } },
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
     "Your draft is preserved",
   );
-  expect(screen.getByRole("textbox", { name: "Artist name" })).toHaveValue(
+  await waitFor(() =>
+    expect(within(card).getByRole("button", { name: "Save" })).toBeEnabled(),
+  );
+  expect(within(card).getByRole("textbox", { name: "Name" })).toHaveValue(
     "My raw draft",
   );
+  expect(
+    within(card).getByRole("textbox", { name: "Disambiguation" }),
+  ).toHaveValue("My raw disambiguation");
 
-  fireEvent.keyDown(screen.getByRole("textbox", { name: "Artist name" }), {
+  fireEvent.keyDown(within(card).getByRole("textbox", { name: "Name" }), {
     key: "Escape",
   });
   expect(
-    await screen.findByRole("heading", { name: "Remote Artist", level: 1 }),
+    screen.queryByRole("textbox", { name: "Name" }),
+  ).not.toBeInTheDocument();
+  expect(within(card).getByText("Remote Artist")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Artist", level: 1 }),
   ).toBeVisible();
 
   deferNextSave = true;
-  fireEvent.click(within(editor).getByRole("button", { name: "Edit" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Artist name" }), {
+  fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+  fireEvent.change(within(card).getByRole("textbox", { name: "Name" }), {
     target: { value: "Late stale save" },
   });
-  fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+  fireEvent.click(within(card).getByRole("button", { name: "Save" }));
   await latePatchStarted;
 
   window.location.hash = `#/library/artists/${otherArtistId}`;
@@ -442,17 +396,31 @@ it("preserves a conflicting artist-details draft and ignores a late save after a
   expect(
     await screen.findByRole("heading", { name: "Second Artist", level: 1 }),
   ).toBeVisible();
+
+  window.location.hash = `#/library/artists/${artistId}`;
+  rendered.rerender(renderScreen(artistId));
+  const reopened = within(
+    await screen.findByRole("region", { name: "Artist metadata" }),
+  );
+  expect(reopened.getByText("Remote Artist")).toBeVisible();
+  detailsRevision = 3;
+  detailsName = "Late stale save";
   resolveLatePatch(
     HttpResponse.json({
-      id: artistId,
-      name: "Late stale save",
-      disambiguation: null,
       revision: 3,
+      envelope: {
+        version: 1,
+        scope: "artist",
+        desired: {
+          sort_name: { state: "absent" },
+          genre: { state: "absent" },
+        },
+      },
       publication_applied: false,
     }),
   );
+  expect(await reopened.findByText("Late stale save")).toBeVisible();
   expect(
-    screen.getByRole("heading", { name: "Second Artist", level: 1 }),
+    await screen.findByRole("heading", { name: "Late stale save", level: 1 }),
   ).toBeVisible();
-  expect(screen.queryByText("Late stale save")).not.toBeInTheDocument();
 });

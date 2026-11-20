@@ -377,6 +377,12 @@ export function LibraryCatalogRows({
 					publishedCount: release.tracks.filter((track) =>
 						Boolean(track.published),
 					).length,
+					publicationCoverage: {
+						total: release.tracks.length,
+						complete:
+							Boolean(provider?.tracks.length) &&
+							provider?.tracks.length === release.tracks.length,
+					},
 					provider: provider ? "musicbrainz" : "local",
 					selection: selectionControl(
 						release.tracks.map((track) => track.id),

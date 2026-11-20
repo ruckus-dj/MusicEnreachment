@@ -58,7 +58,7 @@ func (repository *repositoryWithoutGenreCatalog) ReadMetadata(context.Context, l
 	return repository.current, nil
 }
 
-func (repository *repositoryWithoutGenreCatalog) UpdateMetadata(_ context.Context, _ librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope) (persistence.LibraryMetadata, error) {
+func (repository *repositoryWithoutGenreCatalog) UpdateMetadata(_ context.Context, _ librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope, _ *persistence.LibraryArtistDetailsChange) (persistence.LibraryMetadata, error) {
 	repository.updates++
 	return persistence.LibraryMetadata{Envelope: envelope, Revision: expected + 1}, nil
 }
@@ -67,7 +67,7 @@ func (repository *fakeLibraryMetadataRepository) ReadMetadata(context.Context, l
 	return repository.current, repository.readErr
 }
 
-func (repository *fakeLibraryMetadataRepository) UpdateMetadata(_ context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, envelope librarymetadata.Envelope) (persistence.LibraryMetadata, error) {
+func (repository *fakeLibraryMetadataRepository) UpdateMetadata(_ context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, envelope librarymetadata.Envelope, _ *persistence.LibraryArtistDetailsChange) (persistence.LibraryMetadata, error) {
 	repository.updates = append(repository.updates, libraryMetadataUpdateCall{scope: scope, releaseID: releaseID, ownerID: ownerID, expected: expected, envelope: envelope})
 	if repository.updateErr != nil {
 		return persistence.LibraryMetadata{}, repository.updateErr

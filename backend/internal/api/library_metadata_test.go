@@ -39,7 +39,7 @@ func (fixture *libraryMetadataRepositoryFixture) ReadMetadataDisplay(context.Con
 	return persistence.LibraryMetadataDisplay{Metadata: fixture.read}, fixture.readErr
 }
 
-func (fixture *libraryMetadataRepositoryFixture) UpdateMetadata(_ context.Context, _ librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope) (persistence.LibraryMetadata, error) {
+func (fixture *libraryMetadataRepositoryFixture) UpdateMetadata(_ context.Context, _ librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope, _ *persistence.LibraryArtistDetailsChange) (persistence.LibraryMetadata, error) {
 	fixture.updated = envelope
 	if fixture.updateErr != nil {
 		return persistence.LibraryMetadata{}, fixture.updateErr

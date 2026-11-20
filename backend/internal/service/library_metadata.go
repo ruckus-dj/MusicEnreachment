@@ -81,7 +81,7 @@ var (
 
 type libraryMetadataRepository interface {
 	ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error)
-	UpdateMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID, int64, librarymetadata.Envelope) (persistence.LibraryMetadata, error)
+	UpdateMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID, int64, librarymetadata.Envelope, *persistence.LibraryArtistDetailsChange) (persistence.LibraryMetadata, error)
 }
 
 type libraryMetadataDisplayRepository interface {
@@ -180,6 +180,21 @@ func mapLibraryArtistCredits(credits []librarymetadata.ArtistCredit) []LibraryMe
 }
 
 func (service *LibraryMetadataService) Update(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, changes map[string]json.RawMessage) (LibraryMetadataResult, error) {
+	return service.update(ctx, scope, releaseID, ownerID, expected, changes, nil)
+}
+
+// UpdateArtist saves artist-card details and desired metadata changes under one
+// revision. Changes and artist details are both optional, but at least one must
+// be present.
+func (service *LibraryMetadataService) UpdateArtist(ctx context.Context, artistID uuid.UUID, expected int64, changes map[string]json.RawMessage, name, disambiguation *string) (LibraryMetadataResult, error) {
+	var artist *persistence.LibraryArtistDetailsChange
+	if name != nil || disambiguation != nil {
+		artist = &persistence.LibraryArtistDetailsChange{Name: name, Disambiguation: disambiguation}
+	}
+	return service.update(ctx, librarymetadata.ScopeArtist, uuid.Nil, artistID, expected, changes, artist)
+}
+
+func (service *LibraryMetadataService) update(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, changes map[string]json.RawMessage, artist *persistence.LibraryArtistDetailsChange) (LibraryMetadataResult, error) {
 	if service == nil || service.repository == nil {
 		return LibraryMetadataResult{}, errors.New("library metadata is unavailable")
 	}
@@ -190,7 +205,10 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 		}
 		defer release()
 	}
-	if expected < 1 || len(changes) == 0 {
+	if expected < 1 || (len(changes) == 0 && artist == nil) {
+		return LibraryMetadataResult{}, ErrLibraryMetadataInvalidRequest
+	}
+	if artist != nil && artist.Name != nil && strings.TrimSpace(*artist.Name) == "" {
 		return LibraryMetadataResult{}, ErrLibraryMetadataInvalidRequest
 	}
 	current, err := service.repository.ReadMetadata(ctx, scope, releaseID, ownerID)
@@ -257,7 +275,7 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 		}
 		current.Envelope.Desired[name] = field
 	}
-	result, err := service.repository.UpdateMetadata(ctx, scope, releaseID, ownerID, expected, current.Envelope)
+	result, err := service.repository.UpdateMetadata(ctx, scope, releaseID, ownerID, expected, current.Envelope, artist)
 	if errors.Is(err, persistence.ErrLibraryMetadataArtistNotFound) {
 		return LibraryMetadataResult{}, fmt.Errorf("%w: artist_credit references an unknown local artist", ErrLibraryMetadataInvalidRequest)
 	}

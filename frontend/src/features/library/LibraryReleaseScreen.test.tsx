@@ -453,9 +453,21 @@ it("shows and localizes saved loudness measurements for the current publication"
 
 it("invalidates preview context immediately even if release detail refresh fails", async () => {
   let releaseReads = 0;
+  let saves = 0;
   let resolveReleaseRefresh!: (response: Response) => void;
   const releaseGenreMetadata: LibraryMetadataResponse = {
-    envelope: { desired: {}, scope: "release", version: 1 },
+    envelope: {
+      desired: {
+        title: {
+          state: "value",
+          value: "Contextual Release",
+          authority: "manual",
+          provenance: { kind: "manual" },
+        },
+      },
+      scope: "release",
+      version: 1,
+    },
     publication_applied: false,
     revision: 1,
   };
@@ -471,15 +483,40 @@ it("invalidates preview context immediately even if release detail refresh fails
     http.get("*/api/library/releases/:releaseId/metadata", () =>
       HttpResponse.json(releaseGenreMetadata),
     ),
-    http.patch("*/api/library/releases/:releaseId/metadata", () =>
-      HttpResponse.json({
-        ...releaseGenreMetadata,
-        revision: 2,
-        envelope: {
-          ...releaseGenreMetadata.envelope,
-          desired: { genre: { state: "explicit_empty" } },
-        },
-      }),
+    http.patch(
+      "*/api/library/releases/:releaseId/metadata",
+      async ({ request }) => {
+        expect(await request.json()).toEqual({
+          expected_revision: 1,
+          changes: {
+            title: { state: "value", value: "New Release Title" },
+            genre: { state: "explicit_empty" },
+          },
+        });
+        saves += 1;
+        if (saves === 1) {
+          return HttpResponse.json(
+            { detail: "temporary save failure" },
+            { status: 503 },
+          );
+        }
+        return HttpResponse.json({
+          ...releaseGenreMetadata,
+          revision: 2,
+          envelope: {
+            ...releaseGenreMetadata.envelope,
+            desired: {
+              title: {
+                state: "value",
+                value: "New Release Title",
+                authority: "manual",
+                provenance: { kind: "manual" },
+              },
+              genre: { state: "explicit_empty", authority: "manual" },
+            },
+          },
+        });
+      },
     ),
     http.get(
       "*/api/library/releases/:releaseId/positions/:positionId/metadata",
@@ -498,17 +535,31 @@ it("invalidates preview context immediately even if release detail refresh fails
     screen.queryByRole("region", { name: "Current publication" }),
   ).toBeNull();
   const initialToken = preview.getAttribute("data-refresh-token");
-  const genres = await screen.findByRole("region", {
-    name: "Release genres",
-  });
-  await waitFor(() =>
-    expect(within(genres).getByRole("button", { name: "Edit" })).toBeEnabled(),
+  const card = within(
+    await screen.findByRole("region", {
+      name: "Release metadata",
+    }),
   );
-  fireEvent.click(within(genres).getByRole("button", { name: "Edit" }));
-  fireEvent.click(within(genres).getByRole("button", { name: "Clear genres" }));
-  fireEvent.click(within(genres).getByRole("button", { name: "Save" }));
+  const edit = card.getByRole("button", { name: "Edit" });
+  await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit);
+  fireEvent.change(card.getByRole("textbox", { name: "Title" }), {
+    target: { value: "New Release Title" },
+  });
+  fireEvent.click(card.getByRole("button", { name: "Clear genres" }));
+  const save = card.getByRole("button", { name: "Save" });
+  fireEvent.click(save);
+  expect(await card.findByRole("alert")).toHaveTextContent(
+    "temporary save failure",
+  );
+  expect(card.getByRole("textbox", { name: "Title" })).toHaveValue(
+    "New Release Title",
+  );
+  expect(preview).toHaveAttribute("data-refresh-token", initialToken);
+  fireEvent.click(save);
 
   await waitFor(() => expect(releaseReads).toBeGreaterThan(1));
+  expect(saves).toBe(2);
   await waitFor(() =>
     expect(preview).not.toHaveAttribute("data-refresh-token", initialToken),
   );
@@ -522,6 +573,11 @@ it("invalidates preview context immediately even if release detail refresh fails
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "detail refresh failed",
   );
+  await waitFor(() =>
+    expect(card.getByRole("button", { name: "Edit" })).toBeEnabled(),
+  );
+  expect(card.getByText("New Release Title")).toBeVisible();
+  expect(card.getByText("Genres are explicitly cleared.")).toBeVisible();
 });
 
 it("replaces the release-detail publication summary with refreshed position state", async () => {

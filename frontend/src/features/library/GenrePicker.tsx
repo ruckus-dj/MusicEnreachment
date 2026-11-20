@@ -10,10 +10,36 @@ import {
   ModalOverlay,
   SearchField,
 } from "react-aria-components";
-import type { GenreCatalogStatus } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import type { GenreReference } from "./GenreMetadataEditor";
 import type { GenreMessages } from "./genreMessages";
+
+export type GenreReference = {
+  id: string;
+  source_name: string;
+  name: string;
+};
+
+export type GenrePickerCatalog = {
+  options: readonly GenreReference[];
+  query: string;
+  onQueryChange: (query: string) => void;
+  loading: boolean;
+  catalogError: string;
+  onClearCatalogError: () => void;
+  onRetryCatalog: () => void;
+  catalogStatus?: {
+    updated_at?: string | null;
+    count: number;
+    last_error?: string | null;
+  };
+  catalogStatusLoading: boolean;
+  catalogStatusError: string;
+  bundledCatalogReady?: boolean;
+  onLoadBundledCatalog?: () => void;
+  settingsHref?: string;
+  onOpenCatalog: () => void;
+  onRetryStatus: () => void;
+};
 
 export type GenreOption = GenreReference;
 
@@ -33,6 +59,9 @@ export function GenrePicker({
   catalogStatus,
   catalogStatusLoading,
   catalogStatusError,
+  bundledCatalogReady,
+  onLoadBundledCatalog,
+  settingsHref = "#/settings",
   onOpenCatalog,
   onRetryStatus,
   disabled,
@@ -42,26 +71,17 @@ export function GenrePicker({
   editing: boolean;
   label: string;
   copy: GenreMessages;
-  options: readonly GenreOption[];
-  query: string;
-  onQueryChange: (query: string) => void;
-  loading: boolean;
-  catalogError: string;
-  onClearCatalogError: () => void;
-  onRetryCatalog: () => void;
-  catalogStatus?: GenreCatalogStatus;
-  catalogStatusLoading: boolean;
-  catalogStatusError: string;
-  onOpenCatalog: () => void;
-  onRetryStatus: () => void;
   disabled: boolean;
-}) {
+} & GenrePickerCatalog) {
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(60);
-  const visibleOptions = options.slice(0, visibleCount);
+  const visibleOptions = useMemo(
+    () => options.slice(0, visibleCount),
+    [options, visibleCount],
+  );
   const visibleOptionIds = useMemo(
-    () => new Set(options.map((item) => item.id)),
-    [options],
+    () => new Set(visibleOptions.map((item) => item.id)),
+    [visibleOptions],
   );
   const selectedKeys = useMemo(
     () =>
@@ -71,7 +91,8 @@ export function GenrePicker({
     [value, visibleOptionIds],
   );
   const catalogAvailable = Boolean(
-    catalogStatus?.updated_at && catalogStatus.count > 0,
+    bundledCatalogReady ||
+      (catalogStatus?.updated_at && catalogStatus.count > 0),
   );
 
   function close() {
@@ -87,7 +108,7 @@ export function GenrePicker({
         ? visibleOptions.map((item) => item.id)
         : Array.from(selection, String);
     const retained = value.filter((item) => !visibleOptionIds.has(item.id));
-    const added = options.filter((item) => selected.includes(item.id));
+    const added = visibleOptions.filter((item) => selected.includes(item.id));
     onChange([...retained, ...added]);
   }
 
@@ -212,7 +233,7 @@ export function GenrePicker({
                       {" · "}
                       <a
                         className="underline underline-offset-2"
-                        href="#/settings"
+                        href={settingsHref}
                       >
                         {copy.openSettings}
                       </a>
@@ -220,15 +241,22 @@ export function GenrePicker({
                   ) : null}
                   {!catalogStatusLoading &&
                   !catalogStatusError &&
-                  !catalogStatus ? (
+                  !catalogStatus &&
+                  !bundledCatalogReady ? (
                     <p role="status" className="mt-2 text-[var(--muted)]">
                       {copy.catalogUnloaded}{" "}
-                      <a
-                        className="underline underline-offset-2"
-                        href="#/settings"
-                      >
-                        {copy.openSettings}
-                      </a>
+                      {onLoadBundledCatalog ? (
+                        <AppButton type="button" onPress={onLoadBundledCatalog}>
+                          {copy.loadBundledCatalog}
+                        </AppButton>
+                      ) : (
+                        <a
+                          className="underline underline-offset-2"
+                          href={settingsHref}
+                        >
+                          {copy.openSettings}
+                        </a>
+                      )}
                     </p>
                   ) : null}
                   {!catalogStatusLoading &&
@@ -243,7 +271,7 @@ export function GenrePicker({
                         : copy.catalogUnloaded}{" "}
                       <a
                         className="underline underline-offset-2"
-                        href="#/settings"
+                        href={settingsHref}
                       >
                         {copy.openSettings}
                       </a>

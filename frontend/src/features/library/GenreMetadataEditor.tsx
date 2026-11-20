@@ -18,14 +18,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import { GenrePicker } from "./GenrePicker";
+import { GenrePicker, type GenreReference } from "./GenrePicker";
 import { genreMessages } from "./genreMessages";
 
-export type GenreReference = {
-  id: string;
-  source_name: string;
-  name: string;
-};
+export type { GenreReference } from "./GenrePicker";
 
 export type GenreOwner = "artist" | "release" | "recording";
 type GenreState = "absent" | "explicit_empty" | "value";

@@ -57,65 +57,105 @@ func TestLibraryArtistMetadataHTTPUsesPersistedCatalogAndRevision(t *testing.T) 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("unknown genre PATCH status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body)
 	}
-	if _, err := db.NewRaw(`UPDATE local_artist SET metadata=metadata || '{"genres":["keep genre"],"provenance":{"source":"keep provenance"}}'::jsonb WHERE id=?`, artistID).Exec(ctx); err != nil {
+	if _, err := db.NewRaw(`UPDATE local_artist SET metadata=metadata || '{"genres":["keep genre"],"provenance":{"source":"keep provenance"},"unrelated":{"keep":"root"}}'::jsonb WHERE id=?`, artistID).Exec(ctx); err != nil {
 		t.Fatalf("seed artist metadata to preserve: %v", err)
 	}
-	detailsPath := "/library/artists/" + artistID.String() + "/details"
-	response = libraryMetadataRequest(t, handler, http.MethodPatch, detailsPath, `{"expected_revision":2,"name":"  Local Artist  ","disambiguation":""}`)
+	type artistState struct {
+		Name              string
+		HasDisambiguation bool
+		Disambiguation    string
+		Revision          int64
+		Metadata          map[string]json.RawMessage
+	}
+	readArtist := func() artistState {
+		t.Helper()
+		var state artistState
+		var raw string
+		if err := db.NewRaw(`SELECT name,metadata->'disambiguation' IS NOT NULL,COALESCE(metadata->>'disambiguation',''),metadata_revision,metadata::text FROM local_artist WHERE id=?`, artistID).Scan(ctx, &state.Name, &state.HasDisambiguation, &state.Disambiguation, &state.Revision, &raw); err != nil {
+			t.Fatalf("read artist state: %v", err)
+		}
+		if err := json.Unmarshal([]byte(raw), &state.Metadata); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	desiredSort := func(state artistState) string {
+		t.Helper()
+		var envelope librarymetadata.Envelope
+		if err := json.Unmarshal(state.Metadata["local_metadata"], &envelope); err != nil {
+			t.Fatal(err)
+		}
+		value, _ := envelope.Desired["sort_name"].Value.(string)
+		return value
+	}
+	mixedBody := `{"expected_revision":2,"name":"  Local Artist  ","disambiguation":"","changes":{"sort_name":{"state":"value","value":"Local Artist, The"},"genre":{"state":"value","value":[{"id":"66666666-6666-4666-8666-666666666666","source_name":"dream pop","name":"Dream Pop"}]}}}`
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, mixedBody)
 	if response.Code != http.StatusOK {
-		t.Fatalf("artist details PATCH status = %d: %s", response.Code, response.Body)
+		t.Fatalf("mixed artist metadata PATCH status = %d: %s", response.Code, response.Body)
 	}
-	var details struct {
-		ID                 uuid.UUID `json:"id"`
-		Name               string    `json:"name"`
-		Disambiguation     *string   `json:"disambiguation"`
-		Revision           int64     `json:"revision"`
-		PublicationApplied bool      `json:"publication_applied"`
+	var mixed struct {
+		Envelope librarymetadata.Envelope `json:"envelope"`
+		Revision int64                    `json:"revision"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &details); err != nil {
+	if err := json.Unmarshal(response.Body.Bytes(), &mixed); err != nil {
 		t.Fatal(err)
 	}
-	if details.ID != artistID || details.Name != "  Local Artist  " || details.Disambiguation == nil || *details.Disambiguation != "" || details.Revision != 3 || details.PublicationApplied {
-		t.Fatalf("artist details PATCH response = %+v", details)
+	mixedSort, _ := mixed.Envelope.Desired["sort_name"].Value.(string)
+	if mixed.Revision != 3 || mixedSort != "Local Artist, The" {
+		t.Fatalf("mixed artist metadata PATCH response = %+v", mixed)
 	}
-	var metadataJSON string
-	if err := db.NewRaw(`SELECT metadata::text FROM local_artist WHERE id=?`, artistID).Scan(ctx, &metadataJSON); err != nil {
-		t.Fatalf("read artist metadata after details PATCH: %v", err)
+	mixedGenres, ok := mixed.Envelope.Desired["genre"].Value.([]any)
+	if !ok || len(mixedGenres) != 1 {
+		t.Fatalf("mixed artist metadata genre = %#v", mixed.Envelope.Desired["genre"].Value)
 	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		t.Fatal(err)
+	if canonical, ok := mixedGenres[0].(map[string]any); !ok || canonical["id"] != genreID || canonical["source_name"] != "dream pop" || canonical["name"] != "Dream Pop" {
+		t.Fatalf("mixed artist metadata genre = %#v", mixedGenres[0])
+	}
+	afterMixed := readArtist()
+	if afterMixed.Revision != 3 || afterMixed.Name != "  Local Artist  " || !afterMixed.HasDisambiguation || afterMixed.Disambiguation != "" || desiredSort(afterMixed) != "Local Artist, The" {
+		t.Fatalf("artist after mixed PATCH = %+v", afterMixed)
 	}
 	var preservedGenres []string
 	var preservedProvenance struct {
 		Source string `json:"source"`
 	}
-	var preservedDisambiguation string
-	if err := json.Unmarshal(metadata["genres"], &preservedGenres); err != nil {
+	var preservedUnrelated struct {
+		Keep string `json:"keep"`
+	}
+	if err := json.Unmarshal(afterMixed.Metadata["genres"], &preservedGenres); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(metadata["provenance"], &preservedProvenance); err != nil {
+	if err := json.Unmarshal(afterMixed.Metadata["provenance"], &preservedProvenance); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(metadata["disambiguation"], &preservedDisambiguation); err != nil {
+	if err := json.Unmarshal(afterMixed.Metadata["unrelated"], &preservedUnrelated); err != nil {
 		t.Fatal(err)
 	}
-	if len(preservedGenres) != 1 || preservedGenres[0] != "keep genre" || preservedProvenance.Source != "keep provenance" || len(metadata["local_metadata"]) == 0 || preservedDisambiguation != "" {
-		t.Fatalf("artist metadata after details PATCH = %s", metadataJSON)
+	if len(preservedGenres) != 1 || preservedGenres[0] != "keep genre" || preservedProvenance.Source != "keep provenance" || preservedUnrelated.Keep != "root" {
+		t.Fatalf("artist metadata after mixed PATCH = %+v", afterMixed.Metadata)
 	}
-	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, `{"expected_revision":2,"changes":{"genre":{"state":"value","value":[{"id":"66666666-6666-4666-8666-666666666666","source_name":"dream pop","name":"Dream Pop"}]}}}`)
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, `{"expected_revision":3,"name":"Rejected Name","disambiguation":"Rejected Disambiguation","changes":{"sort_name":{"state":"value","value":"Rejected Sort"},"genre":{"state":"value","value":[{"id":"77777777-7777-4777-8777-777777777777","source_name":"unknown","name":"Unknown"}]}}}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid mixed artist metadata PATCH status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body)
+	}
+	state := readArtist()
+	if state.Revision != afterMixed.Revision || state.Name != afterMixed.Name || state.HasDisambiguation != afterMixed.HasDisambiguation || state.Disambiguation != afterMixed.Disambiguation || desiredSort(state) != desiredSort(afterMixed) || string(state.Metadata["local_metadata"]) != string(afterMixed.Metadata["local_metadata"]) {
+		t.Fatalf("artist after invalid mixed PATCH = %+v", state)
+	}
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, `{"expected_revision":2,"name":"Stale Name","disambiguation":"Stale Disambiguation","changes":{"sort_name":{"state":"value","value":"Stale Sort"},"genre":{"state":"value","value":[{"id":"66666666-6666-4666-8666-666666666666","source_name":"dream pop","name":"Dream Pop"}]}}}`)
 	if response.Code != http.StatusConflict {
-		t.Fatalf("stale artist metadata PATCH status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body)
+		t.Fatalf("stale mixed artist metadata PATCH status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body)
 	}
-	response = libraryMetadataRequest(t, handler, http.MethodPatch, detailsPath, `{"expected_revision":3,"name":" \t "}`)
+	state = readArtist()
+	if state.Revision != afterMixed.Revision || state.Name != afterMixed.Name || state.HasDisambiguation != afterMixed.HasDisambiguation || state.Disambiguation != afterMixed.Disambiguation || desiredSort(state) != desiredSort(afterMixed) || string(state.Metadata["local_metadata"]) != string(afterMixed.Metadata["local_metadata"]) {
+		t.Fatalf("artist after stale mixed PATCH = %+v", state)
+	}
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, `{"expected_revision":3,"name":" \t "}`)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("blank artist name PATCH status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body)
 	}
-	var revision int64
-	if err := db.NewRaw(`SELECT metadata_revision FROM local_artist WHERE id=?`, artistID).Scan(ctx, &revision); err != nil {
-		t.Fatalf("read artist revision after rejected details PATCH: %v", err)
-	}
-	if revision != 3 {
-		t.Fatalf("artist revision after rejected details PATCH = %d, want 3", revision)
+	state = readArtist()
+	if state.Revision != 3 || state.Name != afterMixed.Name || !state.HasDisambiguation || state.Disambiguation != "" || desiredSort(state) != desiredSort(afterMixed) || string(state.Metadata["local_metadata"]) != string(afterMixed.Metadata["local_metadata"]) {
+		t.Fatalf("artist after rejected details PATCH = %+v", state)
 	}
 }

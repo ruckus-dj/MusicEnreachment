@@ -66,7 +66,7 @@ type coordinatedMetadataRepository struct {
 func (r *coordinatedMetadataRepository) ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error) {
 	return persistence.LibraryMetadata{Revision: 1, Envelope: librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease, Desired: map[string]librarymetadata.FieldValue{}}}, nil
 }
-func (r *coordinatedMetadataRepository) UpdateMetadata(_ context.Context, scope librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope) (persistence.LibraryMetadata, error) {
+func (r *coordinatedMetadataRepository) UpdateMetadata(_ context.Context, scope librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope, _ *persistence.LibraryArtistDetailsChange) (persistence.LibraryMetadata, error) {
 	r.once.Do(func() { close(r.called) })
 	return persistence.LibraryMetadata{Revision: expected + 1, Envelope: envelope}, nil
 }

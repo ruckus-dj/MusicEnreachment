@@ -41,7 +41,11 @@ const mobileRow = (title: string) =>
 		.find((article): article is HTMLElement => Boolean(article));
 
 it("opens album tracks below the entire album row", () => {
-	const { rerender } = render(rows("albums", originalFiles, [release]));
+	const partial = {
+		...release,
+		tracks: [{ ...release.tracks[0], published: null }],
+	};
+	const { rerender } = render(rows("albums", originalFiles, [partial]));
 	const grid = screen.getByRole("grid", { name: "Альбомы медиатеки" });
 	const trigger = within(grid).getByRole("button", { name: release.title });
 	const albumRow = trigger.closest("tr");
@@ -50,6 +54,8 @@ it("opens album tracks below the entire album row", () => {
 	if (!span || !detailsRow || !albumRow)
 		throw new Error("Missing album details row");
 	expect(albumRow.querySelector("table")).toBeNull();
+	expect(albumRow).toHaveTextContent("0 / 1");
+	expect(albumRow).toHaveTextContent("Полнота неизвестна");
 	expect(detailsRow.children).toHaveLength(1);
 	expect(
 		span.getAttribute("colspan") ?? span.getAttribute("aria-colspan"),
@@ -60,7 +66,7 @@ it("opens album tracks below the entire album row", () => {
 		}),
 	).toBeVisible();
 
-	rerender(rows("albums", originalFiles, [release], null));
+	rerender(rows("albums", originalFiles, [partial], null));
 	expect(
 		within(grid).getByRole("button", { name: release.title }),
 	).toHaveAttribute("aria-expanded", "false");
