@@ -52,12 +52,14 @@ const RELEASE_TOTAL = 52;
 const DETAIL_POSITION = 51;
 const UNIQUE_POSITION = 52;
 const UNIQUE_TITLE = "Unique Target Release";
+const releaseId = (position: number) =>
+  `00000000-0000-4000-8001-${String(position).padStart(12, "0")}`;
 
 function releaseRow(position: number): LocalProviderItem {
   const title =
     position === UNIQUE_POSITION ? UNIQUE_TITLE : `Local Release ${position}`;
   return {
-    id: `release-${position}`,
+    id: releaseId(position),
     kind: "release",
     provider_id: "local-provider",
     provider_code: "local",
@@ -76,7 +78,7 @@ const releases = Array.from({ length: RELEASE_TOTAL }, (_, index) =>
 );
 
 const artists: LocalProviderItem[] = [1, 2, 3, 4].map((position) => ({
-  id: `artist-${position}`,
+  id: `00000000-0000-4000-8002-${String(position).padStart(12, "0")}`,
   kind: "artist",
   provider_id: "local-provider",
   provider_code: "local",
@@ -182,7 +184,7 @@ beforeEach(() => {
       item
         ? {
             status: 200,
-            data: detail(item, Number(id.replace("release-", ""))),
+            data: detail(item, Number(id.slice(-12))),
           }
         : { status: 404, data: { title: "Not Found", status: 404 } },
     );
@@ -201,7 +203,7 @@ beforeEach(() => {
         status: 200,
         data: {
           ...releaseRow(1),
-          id: "created-release",
+          id: releaseId(RELEASE_TOTAL + 1),
           provider_key: "created-release",
           title: String(body.title),
           release_group_title: String(body.release_group_title),
@@ -214,7 +216,7 @@ beforeEach(() => {
         status: 200,
         data: {
           ...artists[0],
-          id: "created-artist",
+          id: "00000000-0000-4000-8002-000000000005",
           provider_key: "created-artist",
           name: String(body.name),
           genres: (body.genres as LocalProviderItem["genres"]) ?? [],
@@ -328,7 +330,7 @@ it("pages, filters the whole Local list from offset zero, and restores filter an
   await waitFor(() =>
     expect(
       api.readLocalProviderRelease.mock.calls.some(
-        ([id]) => id === `release-${DETAIL_POSITION}`,
+        ([id]) => id === releaseId(DETAIL_POSITION),
       ),
     ).toBe(true),
   );
@@ -347,7 +349,7 @@ it("pages, filters the whole Local list from offset zero, and restores filter an
   ).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
   expect(window.location.hash).toBe(
-    `#/own-catalog?type=releases&id=release-${DETAIL_POSITION}`,
+    `#/own-catalog?type=releases&id=${releaseId(DETAIL_POSITION)}`,
   );
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByText(secondPageRow)).toBeInTheDocument();
@@ -446,14 +448,42 @@ it("opens a direct detail link and only edits a successfully loaded record", asy
     window.history.pushState(
       null,
       "",
-      "/#/own-catalog?type=releases&id=missing",
+      "/#/own-catalog?type=releases&id=../malformed",
     );
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   expect(await screen.findByRole("alert")).toBeVisible();
+  expect(api.readLocalProviderRelease).toHaveBeenCalledTimes(1);
   expect(
     screen.queryByRole("button", { name: "Edit" }),
   ).not.toBeInTheDocument();
+});
+
+it("does not navigate when a create completes after leaving and returning to its tab", async () => {
+  let completeCreate: (() => void) | undefined;
+  api.createLocalProviderArtist.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        completeCreate = () => resolve({ status: 200, data: artists[0] });
+      }),
+  );
+  render(
+    <I18nProvider>
+      <OwnCatalogScreen />
+    </I18nProvider>,
+  );
+  fireEvent.click(await screen.findByRole("tab", { name: "Artists: 4" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create artist" }));
+  fireEvent.change(field(/^name/i), { target: { value: "Deferred artist" } });
+  fireEvent.click(press(/^(Create (Local )?artist|Save( changes)?)$/i));
+  await waitFor(() => expect(api.createLocalProviderArtist).toHaveBeenCalled());
+  window.history.back();
+  expect(await screen.findByText("Local Release 1")).toBeVisible();
+  window.history.forward();
+  expect(await screen.findByText("Local Artist 1")).toBeVisible();
+  await act(async () => completeCreate?.());
+  expect(window.location.hash).toBe("#/own-catalog?type=artists");
+  expect(api.readLocalProviderArtist).not.toHaveBeenCalled();
 });
 
 it("creates a Local release explicitly without searching external editions", async () => {

@@ -1,4 +1,10 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Button,
   Input,
@@ -102,7 +108,7 @@ type DetailState = {
   full: boolean;
 };
 
-type EditorState = EditorDraft & { hash: string; visit: number };
+type EditorState = EditorDraft & { hash: string };
 
 type EditorDraft =
   | { kind: "create"; type: OwnCatalogType }
@@ -111,6 +117,7 @@ type EditorDraft =
 type OwnCatalogHistoryState = { ownCatalogDetail?: string };
 
 const emptyDetail: DetailState = { loading: false, full: false };
+const catalogID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 
 function hashURL(href: string) {
   return `${window.location.pathname}${window.location.search}${href}`;
@@ -158,6 +165,7 @@ async function readOwnCatalog(
   id: string,
   options: RequestInit,
 ): Promise<LocalProviderItem> {
+  if (!catalogID.test(id)) throw new Error();
   const response =
     type === "releases"
       ? await readLocalProviderRelease(id, options)
@@ -219,8 +227,7 @@ export function OwnCatalogScreen() {
     recordings: 0,
     artists: 0,
   });
-  const nextEditorVisit = useRef(0);
-  const activeEditorVisit = useRef<number | undefined>(undefined);
+  const activeEditor = useRef<EditorState | undefined>(undefined);
   const initialType = useRef(route.type);
 
   const m = (
@@ -232,9 +239,13 @@ export function OwnCatalogScreen() {
 
   useEffect(() => {
     return () => {
-      activeEditorVisit.current = undefined;
+      activeEditor.current = undefined;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (activeEditor.current?.hash !== hash) activeEditor.current = undefined;
+  }, [hash]);
 
   const [visitHash, setVisitHash] = useState(hash);
   if (visitHash !== hash) {
@@ -450,14 +461,15 @@ export function OwnCatalogScreen() {
   };
 
   const openEditor = (next: EditorDraft) => {
-    const visit = ++nextEditorVisit.current;
-    activeEditorVisit.current = visit;
+    if (currentWrites.current > 0) return;
+    const draft = { ...next, hash };
+    activeEditor.current = draft;
     setNotice(undefined);
-    setEditor({ ...next, hash, visit });
+    setEditor(draft);
   };
 
   const closeEditor = () => {
-    activeEditorVisit.current = undefined;
+    activeEditor.current = undefined;
     setEditor(undefined);
   };
 
@@ -548,29 +560,41 @@ export function OwnCatalogScreen() {
     return recording;
   };
 
-  function saveRecord(
+  const isActiveEditor = () =>
+    editor !== undefined &&
+    activeEditor.current === editor &&
+    window.location.hash === hash;
+
+  async function saveRecord(
     type: OwnCatalogType,
     kind: "artist" | "recording" | "release",
     record: LocalProviderItem | undefined,
     body: LocalProviderWrite,
     title: string,
   ) {
-    return runWrite(() =>
-      record
-        ? writeCatalogRecord(`${kind}:update:${record.id}`, () =>
-            updateOwnCatalog(type, record.id, body),
-          )
-        : writeCatalogRecord(catalogCreateIdentity(kind, title), () =>
-            createOwnCatalog(type, body),
-          ),
-    );
+    try {
+      return await runWrite(() =>
+        record
+          ? writeCatalogRecord(`${kind}:update:${record.id}`, () =>
+              updateOwnCatalog(type, record.id, body),
+            )
+          : writeCatalogRecord(catalogCreateIdentity(kind, title), () =>
+              createOwnCatalog(type, body),
+            ),
+      );
+    } finally {
+      if (record && !isActiveEditor()) {
+        const currentRoute = parseOwnCatalogRoute(window.location.hash);
+        if (currentRoute?.type === type && currentRoute.id === record.id)
+          setDetailRetry((attempt) => attempt + 1);
+      }
+    }
   }
 
   const saveArtistDraft = async (
     draft: ArtistFormDraft,
     record: LocalProviderItem | undefined,
   ) => {
-    const visit = editor?.visit;
     const body = artistDraftToWrite(draft);
     const item = await saveRecord(
       "artists",
@@ -586,11 +610,7 @@ export function OwnCatalogScreen() {
         provider: "Local",
       },
     ]);
-    if (
-      visit === undefined ||
-      activeEditorVisit.current !== visit ||
-      window.location.hash !== hash
-    ) {
+    if (!isActiveEditor()) {
       refreshCatalog("artists");
       return;
     }
@@ -601,7 +621,6 @@ export function OwnCatalogScreen() {
     draft: RecordingFormDraft,
     record: LocalProviderItem | undefined,
   ) => {
-    const visit = editor?.visit;
     const body = recordingDraftToWrite(record, draft);
     const item = await saveRecord(
       "recordings",
@@ -610,11 +629,7 @@ export function OwnCatalogScreen() {
       body,
       draft.title,
     );
-    if (
-      visit === undefined ||
-      activeEditorVisit.current !== visit ||
-      window.location.hash !== hash
-    ) {
+    if (!isActiveEditor()) {
       refreshCatalog("recordings");
       return;
     }
@@ -625,7 +640,6 @@ export function OwnCatalogScreen() {
     draft: LocalReleaseDraft,
     record: LocalProviderItem | undefined,
   ) => {
-    const visit = editor?.visit;
     const body = releaseDraftToWrite(record, draft, knownArtists.current);
     const item = await saveRecord(
       "releases",
@@ -634,11 +648,7 @@ export function OwnCatalogScreen() {
       body,
       draft.release_group_title,
     );
-    if (
-      visit === undefined ||
-      activeEditorVisit.current !== visit ||
-      window.location.hash !== hash
-    ) {
+    if (!isActiveEditor()) {
       refreshCatalog("releases");
       return;
     }
@@ -691,7 +701,7 @@ export function OwnCatalogScreen() {
         onRetry={() => setDetailRetry((attempt) => attempt + 1)}
         onBack={closeDetails}
         onEdit={
-          fullDetailItem
+          fullDetailItem && !saving
             ? () =>
                 openEditor({
                   kind: "edit",
@@ -840,6 +850,7 @@ export function OwnCatalogScreen() {
               </SearchField>
               <Button
                 className={primary}
+                isDisabled={saving}
                 onPress={() => openEditor({ kind: "create", type: route.type })}
               >
                 {m(createMessage[route.type])}
