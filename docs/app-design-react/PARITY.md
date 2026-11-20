@@ -56,15 +56,16 @@ source channel, а fixture макета такого происхождения 
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
 | Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
-| Настройки: карточки пакетов, подтверждение загрузки и сводка переноса | `features/settings/SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
+| Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки и поля переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
 | Первый запуск: каркас мастера, поля выбора папок и выбор версии инструмента | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx` | Те же пути |
-| Медиатека: карточки артистов, раскрытые позиции издания и проверка выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumPositionsView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
+| Медиатека: карточки артистов, позиции издания, выбор издания и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
-адаптерах. Во вкладке инструментов ещё различаются действия над каталогом,
-редактирование нового пути и оболочка диалога переноса. Приложение открывает
+адаптерах. На вкладке «Инструменты» обновление каталога есть только в приложении.
+Поля переноса в приложении находятся внутри диалога, в макете — прямо на
+вкладке. Приложение открывает
 подтверждение загрузки только для конфликтного preflight и показывает серверные
 пути; макет показывает имена
 проверяемых программ, не имитируя серверные пути. Форма токена общая: макет
@@ -72,9 +73,9 @@ source channel, а fixture макета такого происхождения 
 их на сервере. Не переносились остальные диалоги настроек.
 В первом запуске совпадают каркас и отдельные поля, но не порядок
 шагов и не полные тела шагов. В списке альбомов совпадает раскрытый список
-позиций конкретного издания, но не строки сводки и не выбор издания
-для отсутствующей группы MusicBrainz. Редакторы медиатеки и предпросмотр
-публикации пока не перенесены дословно.
+позиций конкретного издания и форма выбора издания MusicBrainz. Строки сводки
+и место раскрытия отсутствующей группы ещё различаются. Редакторы медиатеки и
+предпросмотр публикации пока не перенесены дословно.
 
 ## Проверка
 

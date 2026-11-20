@@ -40,7 +40,6 @@ import type {
   UpdateSettingsExpectedBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -71,7 +70,12 @@ import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
 import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
+import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
 import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
+import {
+  SettingsToolsCatalogSummary,
+  SettingsToolsRootHeader,
+} from "./SettingsToolsOverview";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -2841,9 +2845,6 @@ export function SettingsScreen() {
   const platformReady = Boolean(
     state?.platform.supported && !state.platform.diagnostic,
   );
-  const persistedTime = checkedAt
-    ? new Date(checkedAt).toLocaleString(locale)
-    : t("catalogNotChecked");
   const concurrencyDraft = sourceFileConcurrency.snapshot();
   const templateDraft = publicationPathTemplate.snapshot();
   const workDraft = workDirectory.snapshot();
@@ -3155,41 +3156,23 @@ export function SettingsScreen() {
                   />
                 ) : null,
               )}
-              {!!operations.length && (
-                <p className="my-2 max-w-[70ch] text-[var(--muted)]">
-                  {t("toolOperationsHint")}{" "}
-                  <a
-                    className="text-[var(--accent)] underline decoration-[var(--line)] underline-offset-2 hover:decoration-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-                    href="#/operations"
-                  >
-                    {t("openOperations")}
-                  </a>
-                </p>
-              )}
-              <section
-                aria-labelledby="tools-root-title"
-                className="setup-panel settings-panel"
-              >
-                <h2 id="tools-root-title">{t("toolsDirectory")}</h2>
-                <p>
-                  {t("toolsDirectory")}:{" "}
-                  <code>{state.settings.tools_directory}</code>
-                </p>
-                <AppButton
-                  isDisabled={!platformReady || effectiveBusy}
-                  onPress={(event) => {
-                    dialogReturnFocusRef.current = event.target as HTMLElement;
+              <SettingsToolsRootHeader
+                locale={locale}
+                savedDirectory={state.settings.tools_directory}
+                operationsHref={operations.length ? "#/operations" : undefined}
+                move={{
+                  disabled: !platformReady || effectiveBusy,
+                  onPress: (opener) => {
+                    dialogReturnFocusRef.current = opener;
                     setError("");
                     setMoveDialogError("");
                     moveSessionRevision.current += 1;
                     moveInputRevision.current += 1;
                     setMovePlan(undefined);
                     setMoveDialog(true);
-                  }}
-                >
-                  {t("moveToolsDirectory")}
-                </AppButton>
-              </section>
+                  },
+                }}
+              />
               <section aria-labelledby="managed-title" className="grid gap-3">
                 <GitHubTokenForm
                   hasToken={state.settings.has_github_token}
@@ -3197,20 +3180,18 @@ export function SettingsScreen() {
                     await refreshState();
                   }}
                 />
-                <div className="setup-panel settings-panel">
-                  <h2 id="managed-title">{t("managedTools")}</h2>
-                  <p>
-                    {t("lastCatalogCheck")} {persistedTime}
-                  </p>
-                  {catalogError && (
-                    <p ref={catalogAlert} tabIndex={-1} role="alert">
-                      {feedbackText(catalogError, locale)}
-                    </p>
-                  )}
-                  <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
-                    {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
-                  </AppButton>
-                </div>
+                <SettingsToolsCatalogSummary
+                  locale={locale}
+                  refresh={{
+                    checkedAt,
+                    busy: catalogBusy,
+                    onRefresh: loadCatalogNow,
+                    error: catalogError
+                      ? feedbackText(catalogError, locale)
+                      : undefined,
+                    errorRef: catalogAlert,
+                  }}
+                />
                 <SettingsManagedPackageCards
                   locale={locale}
                   packages={(["ffmpeg", "fpcalc"] as const).map(
@@ -3541,38 +3522,32 @@ export function SettingsScreen() {
           }}
         >
           <h2 id="move-dialog-title">{t("moveToolsTitle")}</h2>
-          <DirectoryPathField
-            id="settings-move-tools-directory"
-            label={t("newToolsDirectory")}
-            value={moveDirectory}
-            onSelect={setMoveDirectoryValue}
+          <SettingsToolsMoveEditor
+            locale={locale}
+            destination={{
+              kind: "picker",
+              value: moveDirectory,
+              onSelect: setMoveDirectoryValue,
+              browse: browseServerDirectory,
+            }}
+            removeOld={{ checked: removeOld, onChange: setRemoveOldValue }}
+            error={
+              moveDialogError
+                ? feedbackText(moveDialogError, locale)
+                : undefined
+            }
+            errorRef={moveDialogAlert}
+            preflight={
+              movePlan
+                ? undefined
+                : {
+                    disabled: effectiveBusy,
+                    onPress: () => void preflightMove(),
+                    onCancel: closeMoveDialog,
+                  }
+            }
           />
-          <label className="settings-inline">
-            <input
-              type="checkbox"
-              checked={removeOld}
-              onChange={(event) => setRemoveOldValue(event.target.checked)}
-            />{" "}
-            {t("removeOldManagedFiles")}
-          </label>
-          {moveDialogError && (
-            <p ref={moveDialogAlert} tabIndex={-1} role="alert">
-              {feedbackText(moveDialogError, locale)}
-            </p>
-          )}
-          {!movePlan ? (
-            <>
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() => void preflightMove()}
-              >
-                {t("checkMove")}
-              </AppButton>
-              <AppButton isDisabled={effectiveBusy} onPress={closeMoveDialog}>
-                {t("cancel")}
-              </AppButton>
-            </>
-          ) : (
+          {movePlan && (
             <SettingsToolsMoveReview
               locale={locale}
               sourceDirectory={movePlan.sourceDirectory}

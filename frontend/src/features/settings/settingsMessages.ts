@@ -56,7 +56,6 @@ const english = {
   cannotRemoveActive:
     "An active version or one used by an operation cannot be removed.",
   removedVersion: "{kind} {version} removed.",
-  catalogNotChecked: "Catalog has not been checked yet.",
   currentOutputPath: "Current output directory",
   unsavedPublicationChanges: "Publication changes are unsaved.",
   deleteSourcePermission: "Allow source deletion after publication",
@@ -85,12 +84,6 @@ const english = {
   unhealthyConfiguration: "Configuration issues were found.",
   platformUnavailable:
     "Platform unavailable: tool operations are disabled. Settings can still be corrected.",
-  toolsDirectory: "Tools directory",
-  moveToolsDirectory: "Move tools directory",
-  managedTools: "Managed tools",
-  lastCatalogCheck: "Last successful catalog check:",
-  refreshingCatalog: "Refreshing catalog…",
-  refreshCatalog: "Refresh catalog",
   ffmpegPackage: "FFmpeg package",
   activeVersion: "Active version",
   noActiveVersion: "No active version",
@@ -107,9 +100,6 @@ const english = {
   installWithoutActivation: "Install without activation",
   loadingCatalog: "Loading catalog…",
   catalogNotLoaded: "Catalog has not been loaded yet.",
-  toolOperationsHint:
-    "Tool operations continue in the background; progress, retry, and error dismissal are on the Operations screen.",
-  openOperations: "Open operations",
   refreshState: "Refresh state",
   settingsConflict: "Settings conflict: {label}",
   changedSavedValue: "The saved value for “{label}” changed:",
@@ -128,9 +118,6 @@ const english = {
   replaceSaved: "Replace saved value",
   cancel: "Cancel",
   moveToolsTitle: "Move tools directory",
-  newToolsDirectory: "New tools directory",
-  removeOldManagedFiles: "Remove old managed files after a successful move",
-  checkMove: "Check move",
   waitForRunningOperations:
     "Wait for running operations to finish before changing the publication directory.",
   errorSavingDraft:
@@ -207,7 +194,6 @@ const russian: Record<SettingsMessageKey, string> = {
   activatedVersion: "{kind} {version} активирован.",
   cannotRemoveActive: "Активную или занятую операцией версию удалить нельзя.",
   removedVersion: "{kind} {version} удалён.",
-  catalogNotChecked: "Каталог ещё не проверялся.",
   currentOutputPath: "Текущий каталог публикации",
   unsavedPublicationChanges: "Есть несохранённые изменения публикации.",
   deleteSourcePermission: "Разрешить удаление исходников после публикации",
@@ -236,12 +222,6 @@ const russian: Record<SettingsMessageKey, string> = {
   unhealthyConfiguration: "Есть проблемы конфигурации.",
   platformUnavailable:
     "Платформа недоступна: операции с инструментами отключены. Настройки можно исправлять.",
-  toolsDirectory: "Каталог инструментов",
-  moveToolsDirectory: "Перенести каталог",
-  managedTools: "Управляемые инструменты",
-  lastCatalogCheck: "Последняя успешная проверка каталога:",
-  refreshingCatalog: "Обновление каталога…",
-  refreshCatalog: "Обновить каталог",
   ffmpegPackage: "Пакет FFmpeg",
   activeVersion: "Активная версия",
   noActiveVersion: "Нет активной версии",
@@ -258,9 +238,6 @@ const russian: Record<SettingsMessageKey, string> = {
   installWithoutActivation: "Установить без активации",
   loadingCatalog: "Загрузка каталога…",
   catalogNotLoaded: "Каталог пока не загружен.",
-  toolOperationsHint:
-    "Ход операций с инструментами, повтор и закрытие ошибок — в разделе «Операции».",
-  openOperations: "Открыть операции",
   refreshState: "Обновить состояние",
   settingsConflict: "Конфликт настроек: {label}",
   changedSavedValue: "Сохранённое значение для «{label}» изменилось:",
@@ -279,10 +256,6 @@ const russian: Record<SettingsMessageKey, string> = {
   replaceSaved: "Заменить сохранённое значение",
   cancel: "Отмена",
   moveToolsTitle: "Перенос каталога инструментов",
-  newToolsDirectory: "Новый каталог инструментов",
-  removeOldManagedFiles:
-    "Удалить прежние управляемые файлы после успешного переноса",
-  checkMove: "Проверить перенос",
   waitForRunningOperations:
     "Дождитесь завершения выполняющихся операций, прежде чем менять каталог публикации.",
   errorSavingDraft:

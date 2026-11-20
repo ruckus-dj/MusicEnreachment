@@ -2,15 +2,7 @@ import { type Key, useEffect, useRef, useState } from "react";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
 import type { BrowseDirectory } from "../../components/DirectoryPickerView";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import {
-	Button,
-	Dialog,
-	Heading,
-	Input,
-	Label,
-	Modal,
-	TextField,
-} from "../../components/ui";
+import { Button, Dialog, Heading, Modal } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { settingsMessages } from "../../i18n/namespaces/settings";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
@@ -44,7 +36,12 @@ import {
 	settingsTabKeys,
 } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
+import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
 import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
+import {
+	SettingsToolsCatalogSummary,
+	SettingsToolsRootHeader,
+} from "./SettingsToolsOverview";
 import {
 	getSettingsDraftStorage,
 	mergeSettingsDraft,
@@ -1163,40 +1160,42 @@ export function SettingsScreen({
 					/>
 				</SettingsTabPanel>
 				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
-					<h2>{copy.tools}</h2>
-					<GitHubTokenDemo
+					<SettingsToolsRootHeader
 						locale={locale}
-						hasGitHubToken={settings.hasGitHubToken ?? false}
-						onGitHubTokenChange={(hasGitHubToken) => update({ hasGitHubToken })}
+						savedDirectory={settings.toolsPath}
 					/>
-					<SettingsManagedPackageCards
-						locale={locale}
-						packages={managedPackages}
-					/>
-					<section className="grid max-w-2xl gap-2 border-t border-[var(--line)] pt-3">
-						<h3>{copy.moveRoot}</h3>
-						<p>
-							{copy.toolsRoot}:{" "}
-							<code className="break-all">{settings.toolsPath}</code>
-						</p>
-						<div className={styles.objectActions}>
-							<TextField
-								value={moveCandidate}
-								onChange={(value) => {
-									updateDraft({ toolsPathCandidate: value });
-									setMovePlan(null);
+					<section aria-labelledby="managed-title" className="grid gap-3">
+						<GitHubTokenDemo
+							locale={locale}
+							hasGitHubToken={settings.hasGitHubToken ?? false}
+							onGitHubTokenChange={(hasGitHubToken) =>
+								update({ hasGitHubToken })
+							}
+						/>
+						<SettingsToolsCatalogSummary locale={locale} />
+						<SettingsManagedPackageCards
+							locale={locale}
+							packages={managedPackages}
+						/>
+						<section className="grid max-w-2xl gap-2 border-t border-[var(--line)] pt-3">
+							<h3>{copy.moveRoot}</h3>
+							<SettingsToolsMoveEditor
+								locale={locale}
+								destination={{
+									kind: "editable",
+									value: moveCandidate,
+									onChange: (value) => {
+										updateDraft({ toolsPathCandidate: value });
+										setMovePlan(null);
+									},
+									onBrowse: () => setPicker("tools"),
 								}}
-							>
-								<Label>{copy.newRoot}</Label>
-								<Input />
-							</TextField>
-							<Button onPress={() => setPicker("tools")}>
-								{copy.chooseFolder}
-							</Button>
-							<Button isDisabled={platformMismatch} onPress={requestMove}>
-								{copy.preflight}
-							</Button>
-						</div>
+								preflight={{
+									disabled: platformMismatch,
+									onPress: requestMove,
+								}}
+							/>
+						</section>
 					</section>
 				</SettingsTabPanel>
 				<SettingsTabPanel id="providers">

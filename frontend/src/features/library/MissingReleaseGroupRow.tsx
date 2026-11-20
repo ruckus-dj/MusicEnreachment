@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { apiResponseError } from "../../api/client/errors";
 import {
   useGetLibraryReleaseGroupEditionTracks,
   useListLibraryReleaseGroupEditions,
@@ -10,6 +9,13 @@ import type {
   MissingReleaseGroupSummary,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type LibraryEditionPagination,
+  type LibraryEditionsStatus,
+  type LibraryEditionTracks,
+  type LibraryEditionTracksStatus,
+  LibraryMissingEditionView,
+} from "./LibraryMissingEditionView";
 
 const EDITION_PAGE_SIZE = 50;
 
@@ -20,28 +26,11 @@ const messages = {
     titleUnknown: "Untitled edition",
     groupTitleUnknown: "Untitled release group",
     editions: "Choose an edition",
-    chooseEdition: "Choose an edition to inspect",
     loadEditions: "Browse editions",
-    loadingEditions: "Loading editions…",
-    editionsError: "Could not load MusicBrainz editions.",
-    retry: "Retry",
-    trackCount: "Tracks",
-    noTrackCount: "—",
-    loadingTracks: "Loading track list…",
-    tracksError: "Could not load this edition’s track list.",
-    noTracks: "No tracks are listed for this edition.",
-    partialCache:
-      "The cached track list is incomplete; it may not represent the full edition.",
-    unknownCache: "Track-list completeness is unknown.",
-    page: "Page",
-    previous: "Previous editions",
-    next: "More editions",
-    emptyEditionPage: "No editions on this page.",
     mbid: "MusicBrainz ID",
     missingFromLibrary: "No library entry",
     cacheNotice:
       "Known MusicBrainz cache entries only; this may not be a complete discography.",
-    noKnownEditions: "No editions are known in the local cache.",
   },
   ru: {
     artist: "Артист",
@@ -49,28 +38,11 @@ const messages = {
     titleUnknown: "Издание без названия",
     groupTitleUnknown: "Группа релизов без названия",
     editions: "Выберите издание",
-    chooseEdition: "Выберите издание для просмотра",
     loadEditions: "Показать издания",
-    loadingEditions: "Загрузка изданий…",
-    editionsError: "Не удалось загрузить издания MusicBrainz.",
-    retry: "Повторить",
-    trackCount: "Треков",
-    noTrackCount: "—",
-    loadingTracks: "Загрузка списка треков…",
-    tracksError: "Не удалось загрузить список треков этого издания.",
-    noTracks: "Для этого издания треки не указаны.",
-    partialCache:
-      "Кэшированный список неполный и может не включать все треки издания.",
-    unknownCache: "Полнота списка треков неизвестна.",
-    page: "Страница",
-    previous: "Предыдущие издания",
-    next: "Следующие издания",
-    emptyEditionPage: "На этой странице нет изданий.",
     mbid: "MusicBrainz ID",
     missingFromLibrary: "В медиатеке отсутствует",
     cacheNotice:
       "Показаны только известные записи кэша MusicBrainz; это может быть не полная дискография.",
-    noKnownEditions: "В локальном кэше нет известных изданий.",
   },
 } as const;
 
@@ -131,20 +103,21 @@ function editionLabel(
   return `${edition.title || unknownTitle}${details ? ` — ${details}` : ""}`;
 }
 
-function durationLabel(duration: number | null) {
-  if (duration === null) return "—";
-  const seconds = Math.floor(duration / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function responseError(
-  query: { data?: { status: number; data?: unknown }; error?: unknown },
-  fallback: string,
-) {
-  if (query.data?.status !== undefined && query.data.status !== 200) {
-    return apiResponseError(query.data, fallback).message;
+function responseError(query: {
+  data?: { status: number; data?: unknown };
+  error?: unknown;
+}): string | null {
+  const response = query.data;
+  if (response?.status !== undefined && response.status !== 200) {
+    const body = response.data;
+    return typeof body === "object" &&
+      body !== null &&
+      "detail" in body &&
+      typeof body.detail === "string"
+      ? body.detail
+      : "";
   }
-  return query.error instanceof Error ? query.error.message : "";
+  return query.error instanceof Error ? query.error.message : null;
 }
 
 export function MissingReleaseGroupRow({
@@ -192,12 +165,55 @@ export function MissingReleaseGroupRow({
     )
       ? [selectedEdition, ...pageEditions]
       : pageEditions;
-  const editionsError = responseError(editionsQuery, text.editionsError);
-  const tracksError = responseError(tracksQuery, text.tracksError);
+  const editionsError = responseError(editionsQuery);
+  const tracksError = responseError(tracksQuery);
   const trackList =
     tracksQuery.data?.status === 200 ? tracksQuery.data.data : undefined;
   const credits = creditNames(group.artists);
   const title = group.title || text.groupTitleUnknown;
+
+  const editionsStatus: LibraryEditionsStatus = editionsQuery.isLoading
+    ? "loading"
+    : editionsError !== null
+      ? "error"
+      : editions?.total === 0
+        ? "empty"
+        : "ready";
+  const tracksStatus: LibraryEditionTracksStatus = tracksQuery.isLoading
+    ? "loading"
+    : tracksError !== null
+      ? "error"
+      : "ready";
+  const editionChoices = editionOptions.map((edition) => ({
+    key: edition.provider_key,
+    label: editionLabel(edition, text.titleUnknown),
+    trackCount: edition.track_count,
+  }));
+  const tracks: LibraryEditionTracks | null =
+    selectedEditionID && trackList
+      ? {
+          complete: trackList.complete,
+          trackCount: trackList.track_count,
+          tracks: trackList.tracks.map((track) => ({
+            key: `${track.medium}:${track.position}`,
+            title: track.title,
+            positionLabel: `${track.medium}.${track.number}`,
+            recordingTitle: track.recording_title,
+            durationMs: track.duration_ms,
+          })),
+        }
+      : null;
+  const pagination: LibraryEditionPagination | null =
+    editions && (editionOffset > 0 || editions.total > EDITION_PAGE_SIZE)
+      ? {
+          page: Math.floor(editionOffset / EDITION_PAGE_SIZE) + 1,
+          hasPrevious: editionOffset > 0,
+          hasNext: editionOffset + EDITION_PAGE_SIZE < editions.total,
+          onPrevious: () =>
+            setEditionOffset(Math.max(0, editionOffset - EDITION_PAGE_SIZE)),
+          onNext: () => setEditionOffset(editionOffset + EDITION_PAGE_SIZE),
+        }
+      : null;
 
   const details = (
     <div className="catalog-missing-release-details">
@@ -222,142 +238,27 @@ export function MissingReleaseGroupRow({
       )}
       {pickerOpen && (
         <div>
-          {editionsQuery.isLoading ? (
-            <p role="status">{text.loadingEditions}</p>
-          ) : editionsError ? (
-            <section
-              className="catalog-state catalog-state--error"
-              role="alert"
-            >
-              <p>{editionsError}</p>
-              <button
-                type="button"
-                onClick={() => void editionsQuery.refetch()}
-              >
-                {text.retry}
-              </button>
-            </section>
-          ) : editions?.total === 0 ? (
-            <p className="catalog-muted">{text.noKnownEditions}</p>
-          ) : editions ? (
-            <>
-              {pageEditions.length === 0 && editionOptions.length === 0 ? (
-                <p className="catalog-muted">{text.emptyEditionPage}</p>
-              ) : (
-                <label>
-                  {text.editions}
-                  <select
-                    value={selectedEditionID}
-                    onChange={(event) => {
-                      const editionID = event.currentTarget.value;
-                      setSelectedEdition(
-                        editionOptions.find(
-                          (edition) => edition.provider_key === editionID,
-                        ) ?? null,
-                      );
-                    }}
-                  >
-                    <option value="">{text.chooseEdition}</option>
-                    {editionOptions.map((edition) => (
-                      <option
-                        key={edition.provider_key}
-                        value={edition.provider_key}
-                      >
-                        {editionLabel(edition, text.titleUnknown)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {(editionOffset > 0 || editions.total > EDITION_PAGE_SIZE) && (
-                <nav className="catalog-pagination" aria-label={text.editions}>
-                  <span>
-                    {text.page}{" "}
-                    {Math.floor(editionOffset / EDITION_PAGE_SIZE) + 1}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={editionOffset === 0}
-                    onClick={() =>
-                      setEditionOffset(
-                        Math.max(0, editionOffset - EDITION_PAGE_SIZE),
-                      )
-                    }
-                  >
-                    {text.previous}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={
-                      editionOffset + EDITION_PAGE_SIZE >= editions.total
-                    }
-                    onClick={() =>
-                      setEditionOffset(editionOffset + EDITION_PAGE_SIZE)
-                    }
-                  >
-                    {text.next}
-                  </button>
-                </nav>
-              )}
-            </>
-          ) : null}
+          <LibraryMissingEditionView
+            locale={locale}
+            editions={editionChoices}
+            editionsStatus={editionsStatus}
+            editionsError={editionsError}
+            onRetryEditions={() => void editionsQuery.refetch()}
+            selectedEditionKey={selectedEditionID}
+            onSelectEdition={(editionKey) =>
+              setSelectedEdition(
+                editionOptions.find(
+                  (edition) => edition.provider_key === editionKey,
+                ) ?? null,
+              )
+            }
+            pagination={pagination}
+            tracksStatus={tracksStatus}
+            tracksError={tracksError}
+            onRetryTracks={() => void tracksQuery.refetch()}
+            tracks={tracks}
+          />
         </div>
-      )}
-      {selectedEditionID && (
-        <section
-          aria-label={
-            selectedEdition
-              ? editionLabel(selectedEdition, text.titleUnknown)
-              : text.editions
-          }
-        >
-          <p>
-            {text.trackCount}:{" "}
-            {trackList?.track_count ??
-              selectedEdition?.track_count ??
-              text.noTrackCount}
-          </p>
-          {tracksQuery.isLoading ? (
-            <p role="status">{text.loadingTracks}</p>
-          ) : tracksError ? (
-            <section
-              className="catalog-state catalog-state--error"
-              role="alert"
-            >
-              <p>{tracksError}</p>
-              <button type="button" onClick={() => void tracksQuery.refetch()}>
-                {text.retry}
-              </button>
-            </section>
-          ) : trackList ? (
-            <>
-              {trackList.complete === false && (
-                <p className="catalog-muted">{text.partialCache}</p>
-              )}
-              {trackList.complete === null && (
-                <p className="catalog-muted">{text.unknownCache}</p>
-              )}
-              {trackList.tracks.length ? (
-                <ol className="catalog-position-list">
-                  {trackList.tracks.map((track) => (
-                    <li key={`${track.medium}:${track.position}`}>
-                      <span>
-                        {track.medium}.{track.number} {track.title}
-                      </span>
-                      <span>
-                        {track.recording_title ?? ""}
-                        {track.recording_title ? " · " : ""}
-                        {durationLabel(track.duration_ms)}
-                      </span>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="catalog-muted">{text.noTracks}</p>
-              )}
-            </>
-          ) : null}
-        </section>
       )}
     </div>
   );

@@ -5,12 +5,7 @@ import {
 	Button,
 	Checkbox,
 	Input,
-	ListBox,
-	ListBoxItem,
-	Popover,
 	SearchField,
-	Select,
-	SelectValue,
 	Tab,
 	TabList,
 	TabPanel,
@@ -57,6 +52,7 @@ import {
 	trackSearchText,
 } from "../features/library/catalogViewModel";
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
+import { LibraryMissingEditionDemo } from "../features/library/LibraryMissingEditionDemo";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
@@ -1370,63 +1366,29 @@ export function CatalogDemo({
 							/>
 						</section>
 						{view === "albums" &&
-							pageAlbumPage.missingGroups.map((group) => {
-								const chosen = group.editions.find(
-									(edition) => edition.id === editions[group.id],
-								);
-								return (
-									<section
-										className={catalogueStyles.detailSelect}
-										key={group.id}
-									>
-										<h2>{group.title}</h2>
-										<p>
-											{artistName(group.artistId) || msg("artistNotSpecified")}{" "}
-											· {msg("missingAlbum")}
-										</p>
-										<Select
-											aria-label={msg("chooseEditionFor", {
-												title: group.title,
-											})}
-											selectedKey={editions[group.id] ?? "none"}
-											onSelectionChange={(key) => {
-												const value = String(key) === "none" ? "" : String(key);
-												setEditions((previous) => ({
-													...previous,
-													[group.id]: value,
-												}));
-											}}
-											className={catalogueStyles.select}
-										>
-											<Button>
-												<SelectValue />
-												<span aria-hidden="true">⌄</span>
-											</Button>
-											<Popover className={catalogueStyles.popover}>
-												<ListBox>
-													<ListBoxItem id="none">
-														{msg("chooseEdition")}
-													</ListBoxItem>
-													{group.editions.map((edition) => (
-														<ListBoxItem key={edition.id} id={edition.id}>
-															{edition.year} · {edition.country} ·{" "}
-															{edition.format} · {edition.disambiguation}
-														</ListBoxItem>
-													))}
-												</ListBox>
-											</Popover>
-										</Select>
-										{chosen && (
-											<ol>
-												{chosen.titles.map((title) => (
-													<li key={title}>{title}</li>
-												))}
-											</ol>
-										)}
-										<p>{msg("previewDoesNotAdd")}</p>
-									</section>
-								);
-							})}
+							pageAlbumPage.missingGroups.map((group) => (
+								<section
+									className={catalogueStyles.detailSelect}
+									key={group.id}
+								>
+									<h2>{group.title}</h2>
+									<p>
+										{artistName(group.artistId) || msg("artistNotSpecified")} ·{" "}
+										{msg("missingAlbum")}
+									</p>
+									<LibraryMissingEditionDemo
+										locale={locale}
+										editions={group.editions}
+										selectedEditionKey={editions[group.id] ?? ""}
+										onSelectEdition={(editionKey) =>
+											setEditions((previous) => ({
+												...previous,
+												[group.id]: editionKey,
+											}))
+										}
+									/>
+								</section>
+							))}
 						<LibraryPagination
 							page={currentPage}
 							totalPages={totalPages}

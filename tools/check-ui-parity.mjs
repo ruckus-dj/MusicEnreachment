@@ -35,6 +35,8 @@ const pairs = [
       "SettingsTabs.tsx",
       "SettingsToolInstallDialog.tsx",
       "SettingsToolsMoveReview.tsx",
+      "SettingsToolsMoveEditor.tsx",
+      "SettingsToolsOverview.tsx",
     ],
   ],
   ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
@@ -45,6 +47,7 @@ const pairs = [
     [
       "LibraryAlbumPositionsView.tsx",
       "LibraryArtistCards.tsx",
+      "LibraryMissingEditionView.tsx",
       "LibrarySelectionReviewView.tsx",
       "libraryArtistCardStyles.ts",
     ],

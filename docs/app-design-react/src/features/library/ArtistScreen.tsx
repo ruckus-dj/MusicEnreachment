@@ -1,8 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TagScope } from "./TagsComparison";
+import type { DeletionOperation } from "../../components/DeletionRequest";
+import { DeletionRequest } from "../../components/DeletionRequest";
+import { demoGenres } from "../../components/GenreLibrary";
+import {
+	Button,
+	Checkbox,
+	Disclosure,
+	DisclosureGroup,
+	DisclosurePanel,
+	Heading,
+	Input,
+	SearchField,
+} from "../../components/ui";
+import { useI18n } from "../../i18n/I18nProvider";
+import { audioProperties } from "../../metadata/audioProperties";
 import { ObjectMetadataForm } from "../../metadata/ObjectMetadataForm";
 import { ReleaseMetadataEditor } from "../../metadata/ReleaseMetadataEditor";
-import { demoGenres } from "../../components/GenreLibrary";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	availabilityRowClass,
@@ -20,28 +33,11 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
-import { audioProperties } from "../../metadata/audioProperties";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { DeletionRequest } from "../../components/DeletionRequest";
+import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
-import { useI18n } from "../../i18n/I18nProvider";
-import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
+import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
+import type { TagScope } from "./TagsComparison";
 import { trackMessage } from "./trackMessages";
-import {
-	Button,
-	Checkbox,
-	Disclosure,
-	DisclosureGroup,
-	DisclosurePanel,
-	Heading,
-	Input,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	SearchField,
-	Select,
-	SelectValue,
-} from "../../components/ui";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
@@ -735,85 +731,35 @@ export function ArtistScreen({
 						<table>
 							<thead>
 								<tr>
-									{[
-										"columnAlbum",
-										"columnChooseEdition",
-										"columnEditionDetails",
-										"columnTracks",
-									].map((label) => (
-										<th scope="col" key={label}>
-											{m(label as CatalogueMessage)}
-										</th>
-									))}
+									<th scope="col">{m("columnAlbum")}</th>
+									<th scope="col">{m("columnChooseEdition")}</th>
 								</tr>
 							</thead>
 							<tbody>
-								{filteredMissingGroups.map((group) => {
-									const chosen = group.editions.find(
-										(edition) => edition.id === absentEdition[group.id],
-									);
-									return (
-										<tr key={group.id}>
-											<th scope="row">
-												{group.title}
-												<span className={catalogueStyles.secondary}>
-													{originalArtistName(group.artistId, artists)} ·
-													{m("albumNotInLibrary")}
-												</span>
-											</th>
-											<td>
-												<Select
-													aria-label={m("chooseEditionForGroup", {
-														group: group.title,
-													})}
-													selectedKey={absentEdition[group.id] || "none"}
-													onSelectionChange={(key) =>
-														setAbsentEdition((value) => ({
-															...value,
-															[group.id]:
-																String(key) === "none" ? "" : String(key),
-														}))
-													}
-													className={catalogueStyles.select}
-												>
-													<Button>
-														<SelectValue />
-														<span aria-hidden="true">⌄</span>
-													</Button>
-													<Popover className={catalogueStyles.popover}>
-														<ListBox>
-															<ListBoxItem id="none">
-																{m("chooseSpecificEdition")}
-															</ListBoxItem>
-															{group.editions.map((edition) => (
-																<ListBoxItem key={edition.id} id={edition.id}>
-																	{edition.year} · {edition.country} ·{" "}
-																	{edition.format} · {edition.titles.length}{" "}
-																	{m("positionAbbreviation")} ·{" "}
-																	{edition.disambiguation}
-																</ListBoxItem>
-															))}
-														</ListBox>
-													</Popover>
-												</Select>
-											</td>
-											<td>
-												{chosen
-													? `${chosen.year} · ${chosen.country} · ${chosen.format} · ${chosen.disambiguation}`
-													: "—"}
-											</td>
-											<td>
-												{chosen
-													? chosen.titles.map((title, index) => (
-															<div key={`${index}:${title}`}>
-																{index + 1}. {title}
-															</div>
-														))
-													: m("chooseEditionNoLibraryChange")}
-											</td>
-										</tr>
-									);
-								})}
+								{filteredMissingGroups.map((group) => (
+									<tr key={group.id}>
+										<th scope="row">
+											{group.title}
+											<span className={catalogueStyles.secondary}>
+												{originalArtistName(group.artistId, artists)} ·
+												{m("albumNotInLibrary")}
+											</span>
+										</th>
+										<td>
+											<LibraryMissingEditionDemo
+												locale={locale}
+												editions={group.editions}
+												selectedEditionKey={absentEdition[group.id] ?? ""}
+												onSelectEdition={(editionKey) =>
+													setAbsentEdition((value) => ({
+														...value,
+														[group.id]: editionKey,
+													}))
+												}
+											/>
+										</td>
+									</tr>
+								))}
 							</tbody>
 						</table>
 					</div>
