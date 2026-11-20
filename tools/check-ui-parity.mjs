@@ -34,6 +34,7 @@ const pairs = [
       "SettingsProvidersSection.tsx",
       "SettingsTabs.tsx",
       "SettingsToolInstallDialog.tsx",
+      "SettingsToolsMoveReview.tsx",
     ],
   ],
   ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupWizard.tsx"]],

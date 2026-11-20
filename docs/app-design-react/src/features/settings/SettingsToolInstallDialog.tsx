@@ -79,7 +79,7 @@ export function SettingsToolInstallDialog({
       ref={dialog}
       aria-modal="true"
       aria-labelledby={title}
-      className="m-auto max-h-[calc(100dvh-24px)] w-[min(620px,calc(100vw-24px))] gap-3 overflow-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)] shadow-[0_16px_48px_#0003] backdrop:bg-black/45 open:grid"
+      className="m-auto max-h-[calc(100dvh-24px)] w-[min(620px,calc(100vw-24px))] gap-3 overflow-auto overscroll-contain rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)] shadow-[0_16px_48px_#0003] backdrop:bg-black/45 open:grid"
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();

@@ -44,6 +44,7 @@ import {
 	settingsTabKeys,
 } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
+import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
 import {
 	getSettingsDraftStorage,
 	mergeSettingsDraft,
@@ -224,9 +225,9 @@ export function SettingsScreen({
 	const [outputFeedback, setOutputFeedback] = useState<
 		OutputResetFeedback | undefined
 	>();
-	const [movePlan, setMovePlan] = useState<ReturnType<
-		typeof movePreflightDemo
-	> | null>(null);
+	const [movePlan, setMovePlan] = useState<
+		(ReturnType<typeof movePreflightDemo> & { sourceDirectory: string }) | null
+	>(null);
 	const [moveConflictsAcknowledged, setMoveConflictsAcknowledged] =
 		useState(false);
 	const [installPlan, setInstallPlan] = useState<{
@@ -974,7 +975,10 @@ export function SettingsScreen({
 			setNotice("pathOverlap");
 			return;
 		}
-		setMovePlan(movePreflightDemo(moveCandidate, managedCount));
+		setMovePlan({
+			...movePreflightDemo(moveCandidate, managedCount),
+			sourceDirectory: settings.toolsPath,
+		});
 		setMoveConflictsAcknowledged(false);
 	};
 	const confirmMove = () => {
@@ -1386,33 +1390,21 @@ export function SettingsScreen({
 				>
 					<Dialog>
 						<Heading slot="title">{copy.moveRoot}</Heading>
-						<p className="break-all">{movePlan.path}</p>
-						<p>
-							{movePlan.managedCount} ·{" "}
-							{movePlan.conflicts.length ? copy.conflicts : ""}
-						</p>
-						{movePlan.conflicts.length > 0 && (
-							<label className="flex items-center gap-2">
-								<input
-									type="checkbox"
-									checked={moveConflictsAcknowledged}
-									onChange={(event) =>
-										setMoveConflictsAcknowledged(event.target.checked)
-									}
-								/>
-								{copy.conflicts}
-							</label>
-						)}
-						<Button
-							isDisabled={
-								platformMismatch ||
-								(movePlan.conflicts.length > 0 && !moveConflictsAcknowledged)
-							}
-							onPress={confirmMove}
-						>
-							{copy.confirmMove}
-						</Button>
-						<Button onPress={() => setMovePlan(null)}>{copy.cancel}</Button>
+						<SettingsToolsMoveReview
+							locale={locale}
+							sourceDirectory={movePlan.sourceDirectory}
+							destinationDirectory={movePlan.path}
+							managedCount={movePlan.managedCount}
+							conflicts={movePlan.conflicts}
+							acknowledgement={{
+								checked: moveConflictsAcknowledged,
+								onChange: setMoveConflictsAcknowledged,
+							}}
+							busy={false}
+							confirmDisabled={platformMismatch}
+							onConfirm={confirmMove}
+							onDismiss={() => setMovePlan(null)}
+						/>
 					</Dialog>
 				</Modal>
 			)}

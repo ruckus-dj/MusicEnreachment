@@ -71,6 +71,7 @@ import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
 import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
+import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -1004,6 +1005,17 @@ export function SettingsScreen() {
     if (moveDialogError && moveDialogRef.current?.open)
       moveDialogAlert.current?.focus();
   }, [moveDialogError]);
+  useLayoutEffect(() => {
+    const dialog = moveDialogRef.current;
+    if (!movePlan || effectiveBusy || !dialog?.open || moveDialogError) return;
+    if (
+      document.activeElement === document.body ||
+      document.activeElement === dialog
+    )
+      dialog
+        .querySelector<HTMLElement>("[data-settings-move-confirm]")
+        ?.focus();
+  }, [effectiveBusy, moveDialogError, movePlan]);
   useLayoutEffect(() => {
     const target = pendingTabFocusTarget.current;
     if (!target) return;
@@ -3549,47 +3561,30 @@ export function SettingsScreen() {
             </p>
           )}
           {!movePlan ? (
-            <AppButton
-              isDisabled={effectiveBusy}
-              onPress={() => void preflightMove()}
-            >
-              {t("checkMove")}
-            </AppButton>
-          ) : (
             <>
-              <p>
-                {t("sourceDirectory")} <code>{movePlan.sourceDirectory}</code>
-              </p>
-              <p>
-                {t("destinationDirectory")} <code>{movePlan.directory}</code>
-              </p>
-              <p>
-                {t("removeOldFiles")} {movePlan.removeOld ? t("yes") : t("no")}
-              </p>
-              <p>
-                {t("managedFileCount")} {movePlan.plan.managed_file_count}
-              </p>
-              <p>
-                {t("conflictCount")} {movePlan.plan.conflicts?.length || 0}
-              </p>
-              <ConflictList conflicts={movePlan.plan.conflicts || []} />
               <AppButton
                 isDisabled={effectiveBusy}
-                onPress={() => void confirmMove()}
+                onPress={() => void preflightMove()}
               >
-                {t("confirmMove")}
+                {t("checkMove")}
+              </AppButton>
+              <AppButton isDisabled={effectiveBusy} onPress={closeMoveDialog}>
+                {t("cancel")}
               </AppButton>
             </>
+          ) : (
+            <SettingsToolsMoveReview
+              locale={locale}
+              sourceDirectory={movePlan.sourceDirectory}
+              destinationDirectory={movePlan.directory}
+              removeOld={movePlan.removeOld}
+              managedCount={movePlan.plan.managed_file_count}
+              conflicts={movePlan.plan.conflicts || []}
+              busy={effectiveBusy}
+              onConfirm={() => void confirmMove()}
+              onDismiss={closeMoveDialog}
+            />
           )}
-          <AppButton
-            isDisabled={effectiveBusy}
-            onPress={() => {
-              setMovePlan(undefined);
-              closeMoveDialog();
-            }}
-          >
-            {t("cancel")}
-          </AppButton>
         </dialog>
       )}
     </section>
@@ -3603,42 +3598,6 @@ function showSettingsDialog(dialog: HTMLDialogElement | null) {
     "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
   );
   firstControl?.focus();
-}
-
-function ConflictList({
-  conflicts,
-  targets = [],
-}: {
-  conflicts: string[];
-  targets?: string[];
-}) {
-  const { locale } = useI18n();
-  const t = (key: Parameters<typeof settingsMessage>[1]) =>
-    settingsMessage(locale, key);
-  return (
-    <div>
-      <h3>{t("targetFiles")}</h3>
-      <ul>
-        {targets.map((path) => (
-          <li key={path}>
-            <code>{path}</code>
-          </li>
-        ))}
-      </ul>
-      <h3>{t("conflictsToConfirm")}</h3>
-      {conflicts.length ? (
-        <ul>
-          {conflicts.map((path) => (
-            <li key={path}>
-              <code>{path}</code>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>{t("noConflicts")}</p>
-      )}
-    </div>
-  );
 }
 
 // Follows only tool operations for automatic settings refresh; progress,

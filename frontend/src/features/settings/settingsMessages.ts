@@ -131,17 +131,6 @@ const english = {
   newToolsDirectory: "New tools directory",
   removeOldManagedFiles: "Remove old managed files after a successful move",
   checkMove: "Check move",
-  sourceDirectory: "Source directory:",
-  destinationDirectory: "Destination directory:",
-  removeOldFiles: "Remove old managed files:",
-  yes: "Yes",
-  no: "No",
-  managedFileCount: "Managed files:",
-  conflictCount: "Conflicts:",
-  confirmMove: "Confirm move",
-  targetFiles: "Target files",
-  conflictsToConfirm: "Conflicts to confirm",
-  noConflicts: "No conflicts.",
   waitForRunningOperations:
     "Wait for running operations to finish before changing the publication directory.",
   errorSavingDraft:
@@ -294,17 +283,6 @@ const russian: Record<SettingsMessageKey, string> = {
   removeOldManagedFiles:
     "Удалить прежние управляемые файлы после успешного переноса",
   checkMove: "Проверить перенос",
-  sourceDirectory: "Исходный каталог:",
-  destinationDirectory: "Каталог назначения:",
-  removeOldFiles: "Удалить прежние управляемые файлы:",
-  yes: "Да",
-  no: "Нет",
-  managedFileCount: "Управляемых файлов:",
-  conflictCount: "Конфликтов:",
-  confirmMove: "Подтвердить перенос",
-  targetFiles: "Целевые файлы",
-  conflictsToConfirm: "Конфликты для подтверждения",
-  noConflicts: "Конфликтов нет.",
   waitForRunningOperations:
     "Дождитесь завершения выполняющихся операций, прежде чем менять каталог публикации.",
   errorSavingDraft:
