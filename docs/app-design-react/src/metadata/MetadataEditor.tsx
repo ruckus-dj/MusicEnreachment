@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "../i18n";
 import { Button, Dialog, Heading, Modal } from "../components/ui";
+import { MetadataCardActions } from "../features/library/MetadataCardActions";
+import { useI18n } from "../i18n";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
+import {
+	type MetadataMessageKey,
+	metadataExtraFieldLabel,
+	metadataMessage,
+} from "./messages";
 import {
 	type MetadataContributor,
 	type MetadataCredit,
@@ -16,22 +22,17 @@ import {
 import {
 	type MetadataValidationIssue,
 	type MetadataValues,
-	validateMetadataIssues,
 	metadataValidationMessage,
+	validateMetadataIssues,
 } from "./projection";
 import {
 	fieldByKey,
 	fieldsForScope,
-	metadataFieldLabel,
-	metadataGroupLabel,
 	type MetadataField,
 	type MetadataScope,
+	metadataFieldLabel,
+	metadataGroupLabel,
 } from "./registry";
-import {
-	metadataExtraFieldLabel,
-	metadataMessage,
-	type MetadataMessageKey,
-} from "./messages";
 
 type ArtistOption = {
 	id: string;
@@ -421,7 +422,7 @@ export function MetadataEditor({
 	useEffect(() => {
 		if (!editing) setAddedRoles([]);
 	}, [editing]);
-	const actionRef = useRef<HTMLButtonElement>(null);
+	const actionRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<HTMLElement>(null);
 	const fields = useMemo(() => fieldsForScope(scope), [scope]);
 	const editableFields = fields.filter(
@@ -478,7 +479,9 @@ export function MetadataEditor({
 		setDraftExtras({});
 		setDirtyExtras(new Set());
 		setAddedRoles([]);
-		requestAnimationFrame(() => actionRef.current?.focus());
+		requestAnimationFrame(() =>
+			actionRef.current?.querySelector("button")?.focus(),
+		);
 	};
 	const complete = async (next: MetadataValues, details?: SaveDetails) => {
 		setSaving(true);
@@ -742,34 +745,17 @@ export function MetadataEditor({
 				}
 			}}
 		>
-			<div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-				<h2 className="m-0 text-sm font-semibold">{label}</h2>
-				<div
-					aria-hidden={hideActions}
-					className={`flex min-h-[30px] items-center gap-2 ${hideActions ? "invisible" : ""}`}
-				>
-					<Button
-						ref={actionRef}
-						className="w-[132px] shrink-0"
-						isDisabled={hideActions || readOnly || saving}
-						onPress={editing ? save : begin}
-					>
-						{saving
-							? m("action.saving")
-							: editing
-								? m("action.save")
-								: m("action.edit")}
-					</Button>
-					<Button
-						className={`w-[132px] shrink-0 ${!hideActions && editing ? "visible" : "invisible"}`}
-						isDisabled={hideActions || !editing || saving}
-						aria-hidden={!editing}
-						onPress={cancel}
-					>
-						{m("action.cancel")}
-					</Button>
-				</div>
-			</div>
+			<MetadataCardActions
+				locale={locale}
+				title={label}
+				editing={editing}
+				saving={saving}
+				editOrSaveDisabled={readOnly}
+				hidden={hideActions}
+				actionsRef={actionRef}
+				onEditOrSave={editing ? save : begin}
+				onCancel={cancel}
+			/>
 			{foreignFields.length > 0 && (
 				<p className="m-0 text-xs text-[var(--muted)]">
 					{m("label.foreignFields")}

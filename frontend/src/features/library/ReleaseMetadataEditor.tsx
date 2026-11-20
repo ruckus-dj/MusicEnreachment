@@ -29,6 +29,7 @@ import {
 import { artistCreditMessages } from "./artistCreditMessages";
 import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
+import { MetadataCardActions } from "./MetadataCardActions";
 import {
   createMetadataDraftRowKey,
   type MetadataMovementDraft,
@@ -236,9 +237,6 @@ const copy = {
     emptyValue: "Empty value",
     dateHint: "Enter the date in the format accepted by the server.",
     listHint: "Enter one value per line; order is preserved.",
-    edit: "Edit",
-    save: "Save",
-    cancel: "Cancel",
     inherit: "Inherit",
     clear: "Clear",
     loading: "Loading saved metadata…",
@@ -350,9 +348,6 @@ const copy = {
     emptyValue: "Пустое значение",
     dateHint: "Введите дату в формате, который принимает сервер.",
     listHint: "Введите каждое значение с новой строки; порядок сохраняется.",
-    edit: "Изменить",
-    save: "Сохранить",
-    cancel: "Отмена",
     inherit: "Наследовать",
     clear: "Очистить",
     loading: "Загрузка сохранённых метаданных…",
@@ -1576,35 +1571,20 @@ function LibraryScopedMetadataEditorSession({
         cancelEdit();
       }}
     >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-sm font-semibold">{title}</h2>
-        <div className="grid grid-cols-[7.5rem_7.5rem] gap-2">
-          <AppButton
-            type="button"
-            isDisabled={
-              loading ||
-              !!readError ||
-              saving ||
-              refreshConflict ||
-              (editing && !dirtyFields.size)
-            }
-            onPress={() => (editing ? void saveDraft() : beginEdit())}
-            className="min-w-0 justify-center"
-          >
-            {editing ? text.save : text.edit}
-          </AppButton>
-          <AppButton
-            type="button"
-            isDisabled={!editing || saving}
-            aria-hidden={!editing}
-            excludeFromTabOrder={!editing}
-            onPress={cancelEdit}
-            className={`min-w-0 justify-center ${editing ? "" : "invisible"}`}
-          >
-            {text.cancel}
-          </AppButton>
-        </div>
-      </div>
+      <MetadataCardActions
+        locale={locale}
+        title={title}
+        editing={editing}
+        saving={saving}
+        editOrSaveDisabled={
+          loading ||
+          !!readError ||
+          refreshConflict ||
+          (editing && !dirtyFields.size)
+        }
+        onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
+        onCancel={cancelEdit}
+      />
       <div className="grid min-w-0 gap-2">
         {genres && genreValue && (
           <section

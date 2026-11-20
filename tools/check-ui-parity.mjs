@@ -59,6 +59,7 @@ const pairs = [
       "LibrarySelectionPreviewView.tsx",
       "LibrarySelectionReviewView.tsx",
       "LibraryTrackListView.tsx",
+      "MetadataCardActions.tsx",
       "PublicationAudioMeasurementsView.tsx",
       "PublicationCurrentSummaryView.tsx",
       "PublicationPreviewDetailsView.tsx",

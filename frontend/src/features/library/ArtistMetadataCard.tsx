@@ -6,6 +6,7 @@ import {
   type GenreReference,
 } from "./GenrePicker";
 import { genreMessages } from "./genreMessages";
+import { MetadataCardActions } from "./MetadataCardActions";
 
 const copy = {
   en: {
@@ -233,12 +234,13 @@ export function ArtistMetadataCard({
                   ? draft.sortName === null
                   : draft.disambiguation === "")
               }
-              onPress={() =>
+              onPress={(event) => {
+                event.target.parentElement?.querySelector("input")?.focus();
                 setDraft((current) => ({
                   ...current,
                   [key]: key === "sortName" ? null : "",
-                }))
-              }
+                }));
+              }}
               className="shrink-0"
             >
               {text.clear}
@@ -260,29 +262,16 @@ export function ArtistMetadataCard({
         cancelEdit();
       }}
     >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-sm font-semibold">{text.title}</h2>
-        <div ref={actions} className="grid grid-cols-[7.5rem_7.5rem] gap-2">
-          <AppButton
-            type="button"
-            isDisabled={busy || (editing && !hasChanges)}
-            onPress={() => (editing ? void saveDraft() : beginEdit())}
-            className="min-w-0 justify-center"
-          >
-            {editing ? genreCopy.save : genreCopy.edit}
-          </AppButton>
-          <AppButton
-            type="button"
-            isDisabled={!editing || saving}
-            aria-hidden={!editing}
-            excludeFromTabOrder={!editing}
-            onPress={cancelEdit}
-            className={`min-w-0 justify-center ${editing ? "" : "invisible"}`}
-          >
-            {genreCopy.cancel}
-          </AppButton>
-        </div>
-      </div>
+      <MetadataCardActions
+        locale={locale}
+        title={text.title}
+        editing={editing}
+        saving={saving}
+        editOrSaveDisabled={busy || (editing && !hasChanges)}
+        actionsRef={actions}
+        onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
+        onCancel={cancelEdit}
+      />
       <div className="grid min-w-0 gap-2">
         <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {(
