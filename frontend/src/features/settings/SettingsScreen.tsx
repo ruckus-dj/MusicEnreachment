@@ -61,6 +61,12 @@ import {
   type SettingsGeneralFailureModel,
   SettingsGeneralSection,
 } from "./SettingsGeneralSection";
+import {
+  type ManagedPackageCardModel,
+  type ManagedPackageCatalog,
+  type ManagedPackageLifeState,
+  SettingsManagedPackageCards,
+} from "./SettingsManagedPackageCards";
 import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import {
@@ -3183,159 +3189,117 @@ export function SettingsScreen() {
                   {t("moveToolsDirectory")}
                 </AppButton>
               </section>
-              <section
-                aria-labelledby="managed-title"
-                className="setup-panel settings-panel"
-              >
-                <GitHubTokenForm
-                  hasToken={state.settings.has_github_token}
-                  onChanged={async () => {
-                    await refreshState();
-                  }}
-                />
-                <h2 id="managed-title">{t("managedTools")}</h2>
-                <p>
-                  {t("lastCatalogCheck")} {persistedTime}
-                </p>
-                {catalogError && (
-                  <p ref={catalogAlert} tabIndex={-1} role="alert">
-                    {feedbackText(catalogError, locale)}
+              <section aria-labelledby="managed-title" className="grid gap-3">
+                <div className="setup-panel settings-panel">
+                  <GitHubTokenForm
+                    hasToken={state.settings.has_github_token}
+                    onChanged={async () => {
+                      await refreshState();
+                    }}
+                  />
+                  <h2 id="managed-title">{t("managedTools")}</h2>
+                  <p>
+                    {t("lastCatalogCheck")} {persistedTime}
                   </p>
-                )}
-                <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
-                  {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
-                </AppButton>
-                <div className="settings-grid">
-                  {(["ffmpeg", "fpcalc"] as const).map((kind) => {
-                    const installed = installations.filter(
-                      (item) => item.package_kind === kind,
-                    );
-                    const releases = catalog[kind]?.releases || [];
-                    const occupied = (item: InstallationResponse) =>
-                      operations.some(
-                        (op) =>
-                          op.target_installation_id === item.id &&
-                          activeOperation(op),
+                  {catalogError && (
+                    <p ref={catalogAlert} tabIndex={-1} role="alert">
+                      {feedbackText(catalogError, locale)}
+                    </p>
+                  )}
+                  <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
+                    {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
+                  </AppButton>
+                </div>
+                <SettingsManagedPackageCards
+                  locale={locale}
+                  packages={(["ffmpeg", "fpcalc"] as const).map(
+                    (kind): ManagedPackageCardModel => {
+                      const installed = installations.filter(
+                        (item) => item.package_kind === kind,
                       );
-                    return (
-                      <section
-                        key={kind}
-                        aria-labelledby={`${kind}-title`}
-                        className="setup-tool"
-                      >
-                        <h3 id={`${kind}-title`}>
-                          {kind === "ffmpeg" ? t("ffmpegPackage") : "fpcalc"}
-                        </h3>
-                        <h4>{t("activeVersion")}</h4>
-                        <ul>
-                          {installed
-                            .filter((item) => item.active)
-                            .map((item) => (
-                              <li key={item.id}>
-                                {item.version} — {t("active")}
-                              </li>
-                            ))}
-                          {!installed.some((item) => item.active) && (
-                            <li>{t("noActiveVersion")}</li>
-                          )}
-                        </ul>
-                        <h4>{t("installedVersions")}</h4>
-                        <ul>
-                          {installed.map((item) => (
-                            <li key={item.id}>
-                              {item.version} (
-                              {item.state === "ready"
-                                ? t("ready")
-                                : item.state === "preparing"
-                                  ? t("preparing")
-                                  : item.state === "failed"
-                                    ? t("failed")
-                                    : item.state}
-                              ) {item.active && `— ${t("active")}`}
-                              <AppButton
-                                isDisabled={
-                                  !platformReady ||
-                                  effectiveBusy ||
-                                  item.active ||
-                                  occupied(item) ||
-                                  item.state !== "ready"
-                                }
-                                onPress={() => void activate(item, kind)}
-                              >
-                                {t("activateVersion", {
-                                  version: item.version,
-                                })}
-                              </AppButton>
-                              <AppButton
-                                isDisabled={
-                                  !platformReady ||
-                                  effectiveBusy ||
-                                  item.active ||
-                                  occupied(item)
-                                }
-                                onPress={() => void remove(item, kind)}
-                              >
-                                {t("removeVersion", { version: item.version })}
-                              </AppButton>
-                            </li>
-                          ))}
-                        </ul>
-                        <h4>{t("availableVersions")}</h4>
-                        {catalog[kind] ? (
-                          <>
-                            {catalog[kind]?.notice && (
-                              <p>{catalog[kind]?.notice}</p>
-                            )}
-                            <label>
-                              {t("versionToInstall")}
-                              <select
-                                aria-label={t("versionLabel", { kind })}
-                                value={selectedRelease[kind] || ""}
-                                onChange={(event) =>
-                                  setSelectedRelease((previous) => ({
-                                    ...previous,
-                                    [kind]: event.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">{t("chooseVersion")}</option>
-                                {releases.map((release) => (
-                                  <option
-                                    key={release.identity}
-                                    value={release.identity}
-                                  >
-                                    {release.identity} ({release.source})
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <AppButton
-                              isDisabled={
+                      const occupied = (item: InstallationResponse) =>
+                        operations.some(
+                          (op) =>
+                            op.target_installation_id === item.id &&
+                            activeOperation(op),
+                        );
+                      const body = catalog[kind];
+                      const releases = body?.releases || [];
+                      const catalogState: ManagedPackageCatalog =
+                        body === undefined
+                          ? catalogBusy
+                            ? { state: "loading" }
+                            : { state: "notLoaded" }
+                          : releases.length === 0
+                            ? { state: "empty", notice: body.notice }
+                            : {
+                                state: "loaded",
+                                releases: releases.map((release) => ({
+                                  identity: release.identity,
+                                  source: release.source,
+                                })),
+                                notice: body.notice,
+                              };
+                      return {
+                        kind,
+                        installations: installed.map((item) => {
+                          const lifeState: ManagedPackageLifeState =
+                            item.state === "ready" ||
+                            item.state === "preparing" ||
+                            item.state === "failed"
+                              ? item.state
+                              : "unknown";
+                          return {
+                            id: item.id,
+                            release: {
+                              identity: item.version,
+                              source: item.source_name,
+                            },
+                            active: item.active,
+                            lifeState,
+                            occupied: occupied(item),
+                            activate: {
+                              disabled:
                                 !platformReady ||
                                 effectiveBusy ||
-                                !selectedRelease[kind]
-                              }
-                              onPress={(event) => {
-                                dialogReturnFocusRef.current =
-                                  event.target as HTMLElement;
-                                setError("");
-                                void preflightInstall(kind);
-                              }}
-                            >
-                              {t("installWithoutActivation")}
-                            </AppButton>
-                          </>
-                        ) : (
-                          <p>
-                            {catalogBusy
-                              ? t("loadingCatalog")
-                              : t("catalogNotLoaded")}
-                          </p>
-                        )}
-                      </section>
-                    );
-                  })}
-                </div>
+                                item.active ||
+                                occupied(item) ||
+                                item.state !== "ready",
+                              onPress: () => void activate(item, kind),
+                            },
+                            remove: {
+                              disabled:
+                                !platformReady ||
+                                effectiveBusy ||
+                                item.active ||
+                                occupied(item),
+                              onPress: () => void remove(item, kind),
+                            },
+                          };
+                        }),
+                        catalog: catalogState,
+                        selectedRelease: selectedRelease[kind],
+                        onReleaseChange: (identity) =>
+                          setSelectedRelease((previous) => ({
+                            ...previous,
+                            [kind]: identity,
+                          })),
+                        downloadAndVerify: {
+                          disabled:
+                            !platformReady ||
+                            effectiveBusy ||
+                            !selectedRelease[kind],
+                          onPress: (trigger) => {
+                            dialogReturnFocusRef.current =
+                              trigger as HTMLElement;
+                            setError("");
+                            void preflightInstall(kind);
+                          },
+                        },
+                      };
+                    },
+                  )}
+                />
               </section>
             </SettingsTabPanel>
             <SettingsTabPanel id="providers" forceMount>

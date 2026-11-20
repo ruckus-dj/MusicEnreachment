@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { GenreLibrary } from "../../components/GenreLibrary";
 import {
 	Button,
 	Dialog,
@@ -13,31 +14,33 @@ import {
 	SelectValue,
 	TextField,
 } from "../../components/ui";
-import { DirectoryPicker } from "../../components/DirectoryPicker";
-import { GenreLibrary } from "../../components/GenreLibrary";
-import type {
-	DemoSettings,
-	SettingsScreenProps,
-} from "../settings/SettingsScreen";
-import { formStyles as styles } from "../../components/styles/formStyles";
 import {
-	activateOrCreateDemoInstallation,
-	isAbsoluteDemoServerPath,
-	type ManagedToolPackage,
-} from "../settings/ToolLifecycleDemo";
-import { SetupWizard } from "./SetupWizard";
-import {
-	setupToolExecutables,
-	setupToolReleases,
-	setupToolStateAfterAttempt,
-	type SetupToolKind,
-} from "./setupToolsLifecycle";
+	browseDemoDirectory,
+	demoDirectoryStart,
+} from "../../fixtures/directoryBrowseDemo";
 import { useI18n } from "../../i18n";
 import { settingsMessages } from "../../i18n/namespaces/settings";
 import {
 	isValidMusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
 } from "../../infrastructure/providerValidation";
+import type {
+	DemoSettings,
+	SettingsScreenProps,
+} from "../settings/SettingsScreen";
+import {
+	activateOrCreateDemoInstallation,
+	isAbsoluteDemoServerPath,
+	type ManagedToolPackage,
+} from "../settings/ToolLifecycleDemo";
+import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
+import { SetupWizard } from "./SetupWizard";
+import {
+	type SetupToolKind,
+	setupToolExecutables,
+	setupToolReleases,
+	setupToolStateAfterAttempt,
+} from "./setupToolsLifecycle";
 
 const stepKeys = ["directories", "tools", "publication", "summary"] as const;
 type NoticeKey =
@@ -60,7 +63,6 @@ export function SetupScreen({
 	const copy = settingsMessages[locale];
 	const [localStep, setLocalStep] = useState(0);
 	const step = savedStep ?? localStep;
-	const [picker, setPicker] = useState<"tools" | "output" | null>(null);
 	const [notice, setNotice] = useState<NoticeKey | "">("");
 	const [installTarget, setInstallTarget] = useState<ManagedToolPackage | null>(
 		null,
@@ -131,7 +133,6 @@ export function SetupScreen({
 			});
 			setNotice(accepted ? "" : "missingPublication");
 		}
-		setPicker(null);
 	};
 	const requestInstall = (kind: SetupToolKind) => {
 		const release = toolSelection[kind];
@@ -249,20 +250,19 @@ export function SetupScreen({
 			>
 				{step === 0 && (
 					<>
-						<TextField
-							className={styles.searchField}
-							value={settings.toolsPath}
-							isReadOnly
-						>
-							<Label>{copy.toolsDirectory}</Label>
-							<div className={styles.objectActions}>
-								<Input id="tools-path" />
-								<Button onPress={() => setPicker("tools")}>
-									{copy.chooseDirectory}
-								</Button>
-							</div>
-							<small>{copy.absolutePathHelp}</small>
-						</TextField>
+						<SetupDirectoryFieldsView
+							fields={[
+								{
+									kind: "tools",
+									value: settings.toolsPath,
+									onSelect: (path) => choosePath("tools", path),
+								},
+							]}
+							locale={locale}
+							browse={browseDemoDirectory}
+							resolveInitialPath={demoDirectoryStart}
+							description={copy.absolutePathHelp}
+						/>
 						{settings.pathChecked && <p role="status">{copy.pathReady}</p>}
 					</>
 				)}
@@ -351,15 +351,18 @@ export function SetupScreen({
 						<section className="grid gap-2">
 							<h3 className="m-0 font-semibold">{copy.publication}</h3>
 							<p>{copy.outputDescription}</p>
-							<div className={styles.objectActions}>
-								<TextField value={outputPath} isReadOnly>
-									<Label>{copy.publicationDirectory}</Label>
-									<Input />
-								</TextField>
-								<Button onPress={() => setPicker("output")}>
-									{copy.chooseDirectory}
-								</Button>
-							</div>
+							<SetupDirectoryFieldsView
+								fields={[
+									{
+										kind: "output",
+										value: outputPath,
+										onSelect: (path) => choosePath("output", path),
+									},
+								]}
+								locale={locale}
+								browse={browseDemoDirectory}
+								resolveInitialPath={demoDirectoryStart}
+							/>
 						</section>
 						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
 							<h3 className="m-0 font-semibold">{copy.musicbrainz}</h3>
@@ -446,16 +449,6 @@ export function SetupScreen({
 					</dl>
 				)}
 			</SetupWizard>
-			{picker && (
-				<DirectoryPicker
-					key={`setup-${picker}`}
-					initialPath={
-						picker === "tools" ? settings.toolsPath || "/" : outputPath || "/"
-					}
-					onChoose={(path) => choosePath(picker, path)}
-					onClose={() => setPicker(null)}
-				/>
-			)}
 			{installTarget && toolSelection[installTarget] && (
 				<Modal
 					isOpen

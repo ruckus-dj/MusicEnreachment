@@ -29,12 +29,21 @@ const pairs = [
       "GenreCatalogView.tsx",
       "SettingsFoldersSection.tsx",
       "SettingsGeneralSection.tsx",
+      "SettingsManagedPackageCards.tsx",
       "SettingsOutputResetDialog.tsx",
       "SettingsTabs.tsx",
     ],
   ],
-  ["features/setup", "features/setup", ["SetupWizard.tsx"]],
-  ["features/library", "features/library", ["LibrarySelectionReviewView.tsx"]],
+  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupWizard.tsx"]],
+  [
+    "features/library",
+    "features/library",
+    [
+      "LibraryArtistCards.tsx",
+      "LibrarySelectionReviewView.tsx",
+      "libraryArtistCardStyles.ts",
+    ],
+  ],
   [
     "features/matching",
     "features/matchingWorkspace",

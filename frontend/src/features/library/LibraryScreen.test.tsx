@@ -16,6 +16,7 @@ import { server } from "../../test/server";
 import { LibraryScreen } from "./LibraryScreen";
 
 const artistId = "123e4567-e89b-42d3-a456-426614174000";
+const secondArtistId = "223e4567-e89b-42d3-a456-426614174001";
 const summary = {
   artist_count: 1,
   release_count: 1,
@@ -76,11 +77,46 @@ it("renders server summary, artist cards and preserves search and pagination in 
             available_position_count: 1,
             published_position_count: 1,
           },
+          {
+            id: secondArtistId,
+            name: "B Artist",
+            disambiguation: null,
+            genres: [],
+            provider_links: [],
+            release_count: 1,
+            position_count: 1,
+            available_position_count: 1,
+            published_position_count: 0,
+          },
         ],
         total: 51,
         limit: 50,
         offset: Number(url.searchParams.get("offset")),
         summary,
+      });
+    }),
+    http.post("*/api/library/selection/resolve", async ({ request }) => {
+      expect(await request.json()).toEqual({
+        artist_ids: [artistId, secondArtistId],
+        release_ids: [],
+      });
+      return HttpResponse.json({
+        positions: [
+          {
+            release_id: "release-a",
+            position_id: "position-a",
+            title: "A Track",
+            release_title: "A Album",
+            artist_ids: [artistId],
+          },
+          {
+            release_id: "release-b",
+            position_id: "position-b",
+            title: "B Track",
+            release_title: "B Album",
+            artist_ids: [secondArtistId],
+          },
+        ],
       });
     }),
   );
@@ -100,11 +136,31 @@ it("renders server summary, artist cards and preserves search and pagination in 
   expect(
     screen.getByText("1 артист · 1 релиз · 2 позиции · 1 опубликовано"),
   ).toBeInTheDocument();
-  expect(artistLink).toHaveTextContent("Аудио: 1 · 1 опубликовано");
+  expect(artistLink).toHaveTextContent("Аудио: 1 / 2");
   expect(
     screen.getByRole("navigation", { name: "Страницы медиатеки" }),
   ).toHaveTextContent("Страница 1 из 2 · Всего: 51");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  const artistCheckbox = screen.getByRole("checkbox", {
+    name: "Выбрать позиции артиста A Artist",
+  });
+  const pageCheckbox = screen.getByRole("checkbox", {
+    name: "Выбрать на этой странице",
+  });
+  await waitFor(() => expect(artistCheckbox).toBeEnabled());
+  fireEvent.click(artistCheckbox);
+  const dock = await screen.findByRole("region", {
+    name: "Выбранные позиции",
+  });
+  expect(dock).toHaveTextContent("Выбрано позиций: 1");
+  expect(artistCheckbox).toBeChecked();
+  expect(pageCheckbox).not.toBeChecked();
+
+  fireEvent.click(pageCheckbox);
+  await waitFor(() => expect(dock).toHaveTextContent("Выбрано позиций: 2"));
+  expect(artistCheckbox).toBeChecked();
+  expect(pageCheckbox).toBeChecked();
 
   // The search field is debounced: several keystrokes coalesce into one request.
   const search = screen.getByRole("searchbox");

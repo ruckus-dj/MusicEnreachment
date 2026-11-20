@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Checkbox } from "react-aria-components";
 import { resolveLibrarySelection } from "../../api/generated/client";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { ArtistCardSelectionControl } from "./LibraryArtistCards";
 import {
   libraryPositionKey,
   type SelectedLibraryPosition,
@@ -66,35 +67,49 @@ export function useLibrarySelection({
     });
   }
 
-  function renderCheckbox(scope: LibrarySelectionScope, label: string) {
-    let items: readonly SelectedLibraryPosition[];
+  function itemsFor(
+    scope: LibrarySelectionScope,
+  ): readonly SelectedLibraryPosition[] {
     switch (scope.kind) {
       case "page":
-        items = pagePositions;
-        break;
+        return pagePositions;
       case "artist":
-        items =
+        return (
           membership.data?.filter((row) => row.artist_ids.includes(scope.id)) ??
-          noPositions;
-        break;
+          noPositions
+        );
       case "release":
-        items = pagePositions.filter((row) => row.release_id === scope.id);
-        break;
+        return pagePositions.filter((row) => row.release_id === scope.id);
       case "position":
-        items = [scope.position];
-        break;
+        return [scope.position];
     }
+  }
+
+  function selectionControl(
+    scope: LibrarySelectionScope,
+  ): ArtistCardSelectionControl {
+    const items = itemsFor(scope);
     const count = items.filter((item) =>
       selected.has(libraryPositionKey(item)),
     ).length;
+    return {
+      isSelected: count > 0 && count === items.length,
+      isIndeterminate: count > 0 && count < items.length,
+      isDisabled: items.length === 0 || (scope.kind !== "position" && !known),
+      onChange: (value) => select(items, value),
+    };
+  }
+
+  function renderCheckbox(scope: LibrarySelectionScope, label: string) {
+    const control = selectionControl(scope);
     return (
       <Checkbox
         slot={null}
         aria-label={label}
-        isSelected={count > 0 && count === items.length}
-        isIndeterminate={count > 0 && count < items.length}
-        isDisabled={items.length === 0 || (scope.kind !== "position" && !known)}
-        onChange={(value) => select(items, value)}
+        isSelected={control.isSelected}
+        isIndeterminate={control.isIndeterminate}
+        isDisabled={control.isDisabled}
+        onChange={control.onChange}
         className="group inline-flex size-6 shrink-0 cursor-pointer items-center justify-center data-[disabled]:cursor-default data-[disabled]:opacity-45"
       >
         <span
@@ -136,6 +151,7 @@ export function useLibrarySelection({
 
   return {
     renderCheckbox,
+    selectionControl,
     positions,
     hiddenCount: known
       ? positions.filter(

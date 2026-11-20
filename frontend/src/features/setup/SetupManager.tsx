@@ -16,8 +16,9 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
+import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
 import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
@@ -213,19 +214,21 @@ export function SetupManager({
       )}
       {step === 1 && (
         <div className="grid gap-3">
-          <DirectoryPathField
-            id="setup-tools-directory"
-            label={messages.toolsDirectory}
-            value={toolsDirectory}
-            onSelect={setToolsDirectory}
-            disabled={pending}
-            aria-describedby="setup-directory-help"
-          />
-          <DirectoryPathField
-            id="setup-output-directory"
-            label={messages.outputDirectory}
-            value={outputDirectory}
-            onSelect={setOutputDirectory}
+          <SetupDirectoryFieldsView
+            fields={[
+              {
+                kind: "tools",
+                value: toolsDirectory,
+                onSelect: setToolsDirectory,
+              },
+              {
+                kind: "output",
+                value: outputDirectory,
+                onSelect: setOutputDirectory,
+              },
+            ]}
+            locale={locale}
+            browse={browseServerDirectory}
             disabled={pending}
             aria-describedby="setup-directory-help"
           />

@@ -21,17 +21,19 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { LibraryAlbumRows } from "./LibraryAlbumRows";
 import {
+  type LibraryArtistCard,
+  LibraryArtistCards,
+} from "./LibraryArtistCards";
+import {
   LibrarySelectionDock,
   librarySelectionButtonClass,
 } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
-import {
-  LibraryArtistCards,
-  LibraryPositionRows,
-} from "./LibraryTrackArtistRows";
+import { LibraryPositionRows } from "./LibraryTrackArtistRows";
 import {
   type LibraryRoute,
   type LibraryView,
+  libraryArtistRouteHref,
   libraryRouteHref,
   parseLibraryRoute,
 } from "./libraryRoute";
@@ -299,6 +301,20 @@ function pageForOffset(offset: number) {
   return Math.floor(offset / PAGE_SIZE) + 1;
 }
 
+const artistPalettes = ["clay", "forest", "dusk", "sand", "slate"] as const;
+
+function artistPalette(id: string) {
+  let hash = 0;
+  for (const character of id) {
+    hash = (hash * 31 + (character.codePointAt(0) ?? 0)) | 0;
+  }
+  return artistPalettes[Math.abs(hash) % artistPalettes.length];
+}
+
+function artistMonogram(name: string) {
+  return name.trim().charAt(0).toLocaleUpperCase() || "?";
+}
+
 function formatCopy(template: string, values: Record<string, string | number>) {
   return template.replace(/\{([^}]+)\}/g, (_, name: string) =>
     String(values[name] ?? `{${name}}`),
@@ -534,6 +550,26 @@ export function LibraryScreen() {
         : undefined,
     pageReady: !!body && !error,
   });
+  const artistCards: LibraryArtistCard[] =
+    view === "artists" && artistsBody
+      ? artistsBody.items.map((artist) => ({
+          id: artist.id,
+          name: artist.name,
+          href: libraryArtistRouteHref(artist.id, route),
+          monogram: artistMonogram(artist.name),
+          palette: artistPalette(artist.id),
+          genres: artist.genres,
+          releaseCount: artist.release_count,
+          positionCount: artist.position_count,
+          availableCount: artist.available_position_count,
+          publishedCount: artist.published_position_count,
+          partialProviderScope: true,
+          selection: selection.selectionControl({
+            kind: "artist",
+            id: artist.id,
+          }),
+        }))
+      : [];
 
   function retry() {
     void activeQuery.refetch();
@@ -686,9 +722,11 @@ export function LibraryScreen() {
               )}
               {view === "artists" && artistsBody && (
                 <LibraryArtistCards
-                  items={artistsBody.items}
-                  route={route}
-                  renderCheckbox={selection.renderCheckbox}
+                  locale={locale}
+                  artists={artistCards}
+                  pageSelectionControl={selection.selectionControl({
+                    kind: "page",
+                  })}
                 />
               )}
               {view === "albums" && releasesBody && (

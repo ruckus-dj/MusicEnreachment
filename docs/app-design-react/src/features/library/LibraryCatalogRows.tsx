@@ -81,16 +81,26 @@ const duration = (seconds: number | null) =>
 	seconds === null
 		? "—"
 		: `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
-const emptySelectedIds: ReadonlySet<string> = new Set();
-const artistCardRows = (
+function artistCardModels(
 	artists: CatalogArtist[],
 	releases: Release[],
 	missingCounts: Map<string, number>,
 	hasAudio: (track: Release["tracks"][number]) => boolean,
 	selection?: ArtistSelectionState,
-): LibraryArtistCard[] => {
-	const selectedIds = selection?.selectedIds ?? emptySelectedIds;
-	return artists.map((artist) => {
+) {
+	const pageIds = new Set<string>();
+	const selectionControl = (ids: string[]) => {
+		const selectedCount = ids.filter((id) =>
+			selection?.selectedIds.has(id),
+		).length;
+		return {
+			isSelected: ids.length > 0 && selectedCount === ids.length,
+			isIndeterminate: selectedCount > 0 && selectedCount < ids.length,
+			isDisabled: !selection || ids.length === 0,
+			onChange: (selected: boolean) => selection?.onChange(ids, selected),
+		};
+	};
+	const rows: LibraryArtistCard[] = artists.map((artist) => {
 		const own = releases.filter(
 			(release) =>
 				release.artistId === artist.id ||
@@ -98,8 +108,7 @@ const artistCardRows = (
 		);
 		const ownTracks = own.flatMap((release) => release.tracks);
 		const trackIds = ownTracks.map((track) => track.id);
-		const selectedCount = trackIds.filter((id) => selectedIds.has(id)).length;
-		const isSelected = trackIds.length > 0 && selectedCount === trackIds.length;
+		for (const id of trackIds) pageIds.add(id);
 		const missingEditionCount = missingCounts.get(artist.id);
 		return {
 			id: artist.id,
@@ -114,15 +123,16 @@ const artistCardRows = (
 			availableCount: ownTracks.filter(hasAudio).length,
 			publishedCount: ownTracks.filter((track) => Boolean(track.published))
 				.length,
-			selection: {
-				isSelected,
-				isIndeterminate: selectedCount > 0 && !isSelected,
-				isDisabled: trackIds.length === 0,
-				onChange: (selected) => selection?.onChange(trackIds, selected),
-			},
+			selection: selectionControl(trackIds),
 		};
 	});
-};
+	return {
+		rows,
+		pageSelectionControl: selection
+			? selectionControl([...pageIds])
+			: undefined,
+	};
+}
 
 export function LibraryCatalogRows({
 	view,
@@ -147,16 +157,18 @@ export function LibraryCatalogRows({
 		pageScopedSelection ? "selectAllPagePositions" : "selectAllTablePositions",
 	);
 	if (view === "artists") {
+		const { rows, pageSelectionControl } = artistCardModels(
+			artists,
+			releases,
+			missingCounts,
+			hasAudio,
+			pageSelection,
+		);
 		return (
 			<LibraryArtistCards
 				locale={locale}
-				artists={artistCardRows(
-					artists,
-					releases,
-					missingCounts,
-					hasAudio,
-					pageSelection,
-				)}
+				artists={rows}
+				pageSelectionControl={pageSelectionControl}
 			/>
 		);
 	}
