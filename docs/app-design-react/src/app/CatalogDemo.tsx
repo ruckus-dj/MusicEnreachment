@@ -1378,6 +1378,7 @@ export function CatalogDemo({
 									</p>
 									<LibraryMissingEditionDemo
 										locale={locale}
+										groupTitle={group.title}
 										editions={group.editions}
 										selectedEditionKey={editions[group.id] ?? ""}
 										onSelectEdition={(editionKey) =>

@@ -32,11 +32,13 @@ const editionLabel = (edition: MissingEditionFixture) =>
  */
 export function LibraryMissingEditionDemo({
 	locale,
+	groupTitle,
 	editions,
 	selectedEditionKey,
 	onSelectEdition,
 }: {
 	locale: Locale;
+	groupTitle: string;
 	editions: readonly MissingEditionFixture[];
 	selectedEditionKey: string;
 	onSelectEdition: (editionKey: string) => void;
@@ -63,6 +65,7 @@ export function LibraryMissingEditionDemo({
 	return (
 		<LibraryMissingEditionView
 			locale={locale}
+			groupTitle={groupTitle}
 			editions={options}
 			editionsStatus={editions.length ? "ready" : "empty"}
 			selectedEditionKey={selectedEditionKey}

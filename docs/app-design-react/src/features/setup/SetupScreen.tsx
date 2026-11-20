@@ -1,19 +1,6 @@
 import { useState } from "react";
 import { GenreLibrary } from "../../components/GenreLibrary";
-import {
-	Button,
-	Dialog,
-	Heading,
-	Input,
-	Label,
-	ListBox,
-	ListBoxItem,
-	Modal,
-	Popover,
-	Select,
-	SelectValue,
-	TextField,
-} from "../../components/ui";
+import { Button, Dialog, Heading, Modal } from "../../components/ui";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -35,6 +22,7 @@ import {
 } from "../settings/ToolLifecycleDemo";
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
+import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
 import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
 import { SetupWizard } from "./SetupWizard";
 import {
@@ -363,43 +351,20 @@ export function SetupScreen({
 							/>
 						</section>
 						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
-							<h3 className="m-0 font-semibold">{copy.musicbrainz}</h3>
-							<p>{copy.providerDescription}</p>
-							<Select
-								selectedKey={musicBrainzMode || null}
-								onSelectionChange={(key) =>
+							<SetupMusicBrainzFields
+								locale={locale}
+								mode={musicBrainzMode}
+								baseURL={musicBrainzURL}
+								onModeChange={(mode) =>
 									update({
-										musicBrainzMode: key
-											? (String(key) as "public" | "self-hosted")
-											: "",
+										musicBrainzMode: mode,
 										musicBrainzVerified: false,
 									})
 								}
-							>
-								<Label>{copy.musicbrainz}</Label>
-								<Button>
-									<SelectValue />
-								</Button>
-								<Popover>
-									<ListBox>
-										<ListBoxItem id="public">{copy.publicSource}</ListBoxItem>
-										<ListBoxItem id="self-hosted">
-											{copy.privateSource}
-										</ListBoxItem>
-									</ListBox>
-								</Popover>
-							</Select>
-							{musicBrainzMode === "self-hosted" && (
-								<TextField
-									value={musicBrainzURL}
-									onChange={(musicBrainzURL) =>
-										update({ musicBrainzURL, musicBrainzVerified: false })
-									}
-								>
-									<Label>{copy.baseUrl}</Label>
-									<Input type="url" />
-								</TextField>
-							)}
+								onBaseURLChange={(musicBrainzURL) =>
+									update({ musicBrainzURL, musicBrainzVerified: false })
+								}
+							/>
 						</section>
 						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
 							<h3 className="m-0 font-semibold">{copy.genreOptional}</h3>

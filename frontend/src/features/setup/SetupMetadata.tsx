@@ -5,16 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  CheckboxButton,
-  CheckboxField,
-  Input,
-  Label,
-  RadioButton,
-  RadioField,
-  RadioGroup,
-  TextField,
-} from "react-aria-components";
+import { CheckboxButton, CheckboxField } from "react-aria-components";
 import {
   checkMusicbrainz,
   saveSetupLrclib,
@@ -27,6 +18,7 @@ import type {
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
+import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -146,27 +138,13 @@ export function SetupMetadata({
   }, [pending, keyPending, onBusyChange]);
   return (
     <div className="setup-metadata">
-      <RadioGroup
-        aria-label="MusicBrainz"
-        value={mode}
-        onChange={(value) =>
-          setMode(value === "self-hosted" ? "self-hosted" : "public")
-        }
-      >
-        <Label>{messages.musicBrainz}</Label>
-        <RadioField value="public">
-          <RadioButton>{messages.public}</RadioButton>
-        </RadioField>
-        <RadioField value="self-hosted">
-          <RadioButton>{messages.selfHosted}</RadioButton>
-        </RadioField>
-      </RadioGroup>
-      {mode === "self-hosted" && (
-        <TextField value={baseURL} onChange={setBaseURL}>
-          <Label>{messages.musicBrainzBaseUrl}</Label>
-          <Input />
-        </TextField>
-      )}
+      <SetupMusicBrainzFields
+        locale={locale}
+        mode={mode}
+        baseURL={baseURL}
+        onModeChange={setMode}
+        onBaseURLChange={setBaseURL}
+      />
       <CheckboxField isSelected={lrclib} onChange={setLrclib}>
         <CheckboxButton>{messages.lrclibEnabled}</CheckboxButton>
       </CheckboxField>

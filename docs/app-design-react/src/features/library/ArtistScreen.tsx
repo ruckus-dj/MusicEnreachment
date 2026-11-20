@@ -748,6 +748,7 @@ export function ArtistScreen({
 										<td>
 											<LibraryMissingEditionDemo
 												locale={locale}
+												groupTitle={group.title}
 												editions={group.editions}
 												selectedEditionKey={absentEdition[group.id] ?? ""}
 												onSelectEdition={(editionKey) =>

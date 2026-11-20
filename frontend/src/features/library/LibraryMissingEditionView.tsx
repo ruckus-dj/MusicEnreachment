@@ -55,6 +55,8 @@ export type LibraryEditionTracksStatus = "loading" | "error" | "ready";
 
 export interface LibraryMissingEditionViewProps {
   locale: "en" | "ru";
+  groupTitle?: string;
+  pickerVisible?: boolean;
   /** Options for the loaded page; the host must include an off-page selection. */
   editions: readonly LibraryEditionOption[];
   editionsStatus: LibraryEditionsStatus;
@@ -75,6 +77,7 @@ export interface LibraryMissingEditionViewProps {
 const copy = {
   en: {
     editions: "Choose an edition",
+    editionsFor: (title: string) => `Choose an edition for ${title}`,
     chooseEdition: "Choose an edition to inspect",
     loadingEditions: "Loading editions…",
     editionsError: "Could not load MusicBrainz editions.",
@@ -96,6 +99,7 @@ const copy = {
   },
   ru: {
     editions: "Выберите издание",
+    editionsFor: (title: string) => `Выберите издание для «${title}»`,
     chooseEdition: "Выберите издание для просмотра",
     loadingEditions: "Загрузка изданий…",
     editionsError: "Не удалось загрузить издания MusicBrainz.",
@@ -177,6 +181,8 @@ function TrackRow({ track }: { track: LibraryEditionTrack }) {
  */
 export function LibraryMissingEditionView({
   locale,
+  groupTitle,
+  pickerVisible = true,
   editions,
   editionsStatus,
   editionsError,
@@ -196,45 +202,50 @@ export function LibraryMissingEditionView({
 
   return (
     <div className={styles.root}>
-      {editionsStatus === "loading" ? (
-        <p className={styles.status} role="status">
-          {text.loadingEditions}
-        </p>
-      ) : editionsStatus === "error" ? (
-        <section className={styles.error} role="alert">
-          <p>{errorMessage(editionsError, text.editionsError)}</p>
-          {onRetryEditions && (
-            <AppButton className="justify-self-start" onPress={onRetryEditions}>
-              {text.retry}
-            </AppButton>
-          )}
-        </section>
-      ) : editionsStatus === "empty" ? (
-        <p className={styles.muted}>{text.noKnownEditions}</p>
-      ) : editions.length === 0 ? (
-        <p className={styles.muted}>{text.emptyEditionPage}</p>
-      ) : (
-        <div className={styles.field}>
-          <label className={styles.label} htmlFor={selectId}>
-            {text.editions}
-          </label>
-          <select
-            className={styles.select}
-            id={selectId}
-            value={selectedEditionKey}
-            onChange={(event) => onSelectEdition(event.currentTarget.value)}
-          >
-            <option value="">{text.chooseEdition}</option>
-            {editions.map((edition) => (
-              <option key={edition.key} value={edition.key}>
-                {edition.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      {pickerVisible &&
+        (editionsStatus === "loading" ? (
+          <p className={styles.status} role="status">
+            {text.loadingEditions}
+          </p>
+        ) : editionsStatus === "error" ? (
+          <section className={styles.error} role="alert">
+            <p>{errorMessage(editionsError, text.editionsError)}</p>
+            {onRetryEditions && (
+              <AppButton
+                className="justify-self-start"
+                onPress={onRetryEditions}
+              >
+                {text.retry}
+              </AppButton>
+            )}
+          </section>
+        ) : editionsStatus === "empty" ? (
+          <p className={styles.muted}>{text.noKnownEditions}</p>
+        ) : editions.length === 0 ? (
+          <p className={styles.muted}>{text.emptyEditionPage}</p>
+        ) : (
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor={selectId}>
+              {text.editions}
+            </label>
+            <select
+              className={styles.select}
+              id={selectId}
+              aria-label={groupTitle ? text.editionsFor(groupTitle) : undefined}
+              value={selectedEditionKey}
+              onChange={(event) => onSelectEdition(event.currentTarget.value)}
+            >
+              <option value="">{text.chooseEdition}</option>
+              {editions.map((edition) => (
+                <option key={edition.key} value={edition.key}>
+                  {edition.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
 
-      {pagination && editionsStatus === "ready" && (
+      {pickerVisible && pagination && editionsStatus === "ready" && (
         <nav
           className={styles.pagination}
           aria-label={`${text.page} ${pagination.page}`}

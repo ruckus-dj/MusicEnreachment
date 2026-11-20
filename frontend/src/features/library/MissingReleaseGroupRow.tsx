@@ -236,10 +236,11 @@ export function MissingReleaseGroupRow({
           {pickerOpen ? text.editions : text.loadEditions}
         </button>
       )}
-      {pickerOpen && (
+      {(pickerOpen || selectedEditionID !== "") && (
         <div>
           <LibraryMissingEditionView
             locale={locale}
+            pickerVisible={pickerOpen}
             editions={editionChoices}
             editionsStatus={editionsStatus}
             editionsError={editionsError}

@@ -58,7 +58,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки и поля переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: каркас мастера, поля выбора папок и выбор версии инструмента | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx` | Те же пути |
+| Первый запуск: каркас мастера, поля папок, выбор версии инструмента и MusicBrainz | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx`, `SetupMusicBrainzFields.tsx` | Те же пути |
 | Медиатека: карточки артистов, позиции издания, выбор издания и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
