@@ -31,6 +31,7 @@ const pairs = [
       "SettingsGeneralSection.tsx",
       "SettingsManagedPackageCards.tsx",
       "SettingsOutputResetDialog.tsx",
+      "SettingsProvidersSection.tsx",
       "SettingsTabs.tsx",
     ],
   ],

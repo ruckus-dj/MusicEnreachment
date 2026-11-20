@@ -68,6 +68,7 @@ import {
   SettingsManagedPackageCards,
 } from "./SettingsManagedPackageCards";
 import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
+import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import {
   getSettingsDraftStorage,
@@ -3303,131 +3304,53 @@ export function SettingsScreen() {
               </section>
             </SettingsTabPanel>
             <SettingsTabPanel id="providers" forceMount>
-              <section
-                aria-labelledby="providers-title"
-                className="setup-panel settings-panel"
-              >
-                <h2 id="providers-title">{t("metadataProviders")}</h2>
-                <label>
-                  {t("acoustIdKey")}
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    value={acoustIDApplicationKey}
-                    onChange={(event) =>
-                      setAcoustIDApplicationKey(event.target.value)
-                    }
-                    maxLength={4096}
-                  />
-                </label>
-                <p>
-                  {state.settings.has_acoustid_application_key
-                    ? t("keySaved")
-                    : t("keyMissing")}
-                </p>
-                <div className="settings-actions">
-                  <AppButton
-                    isDisabled={
-                      effectiveBusy || acoustIDApplicationKey.length === 0
-                    }
-                    onPress={() => void saveAcoustIDApplicationKey()}
-                  >
-                    {t("saveAcoustIdKey")}
-                  </AppButton>
-                  {state.settings.has_acoustid_application_key && (
-                    <AppButton
-                      isDisabled={effectiveBusy}
-                      onPress={() => void deleteAcoustIDApplicationKey()}
-                    >
-                      {t("deleteAcoustIdKey")}
-                    </AppButton>
-                  )}
-                </div>
-                <label>
-                  {t("musicBrainzMode")}
-                  <select
-                    value={musicBrainz.value?.mode ?? "public"}
-                    onChange={(event) =>
-                      saveMusicBrainzMode(
-                        event.target.value as UpdateMusicBrainzBodyMode,
-                      )
-                    }
-                  >
-                    <option value="public">{t("public")}</option>
-                    <option value="self-hosted">{t("selfHosted")}</option>
-                  </select>
-                </label>
-                {musicBrainz.value?.mode === "self-hosted" && (
-                  <>
-                    <label>
-                      {t("musicBrainzBaseUrl")}
-                      <input
-                        value={musicBrainz.value?.baseURL ?? ""}
-                        onChange={(event) => {
-                          const currentValue = musicBrainz.value;
-                          if (currentValue === undefined) return;
-                          musicBrainz.update({
-                            ...currentValue,
-                            baseURL: event.target.value,
-                          });
-                        }}
-                      />
-                    </label>
-                    <label className="settings-inline">
-                      <input
-                        type="checkbox"
-                        checked={musicBrainz.value?.selfHostedThrottle ?? false}
-                        onChange={(event) =>
-                          saveMusicBrainzThrottle(event.target.checked)
-                        }
-                      />{" "}
-                      {t("throttleMusicBrainz")}
-                    </label>
-                    <label>
-                      {t("requestInterval")}
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        min="0"
-                        max="60"
-                        step="any"
-                        required
-                        value={
-                          musicBrainz.value?.selfHostedDelaySeconds ?? "0.5"
-                        }
-                        onChange={(event) => {
-                          const currentValue = musicBrainz.value;
-                          if (currentValue === undefined) return;
-                          musicBrainz.update({
-                            ...currentValue,
-                            selfHostedDelaySeconds: event.target.value,
-                          });
-                        }}
-                      />
-                    </label>
-                  </>
-                )}
-                <p>
-                  {t("lastCheck")}{" "}
-                  {state.settings.musicbrainz_verified_at || t("notChecked")}
-                </p>
-                {musicBrainz.dirty && <p>{t("unsavedMusicBrainz")}</p>}
-                <AppButton
-                  isDisabled={effectiveBusy}
-                  onPress={() => void checkMusicBrainz()}
-                >
-                  {t("saveAndCheckMusicBrainz")}
-                </AppButton>
-                <label className="settings-inline">
-                  <input
-                    type="checkbox"
-                    checked={lrclib.value ?? state.settings.lrclib_enabled}
-                    onChange={(event) => saveLrclib(event.target.checked)}
-                  />{" "}
-                  {t("lrclibEnabled")}
-                </label>
-                {lrclib.dirty && <p>{t("unsavedLrclib")}</p>}
-              </section>
+              <SettingsProvidersSection
+                locale={locale}
+                snapshot={{
+                  busy: effectiveBusy,
+                  acoustID: {
+                    applicationKey: acoustIDApplicationKey,
+                    hasKey: state.settings.has_acoustid_application_key,
+                  },
+                  musicBrainz: {
+                    mode: musicBrainz.value?.mode ?? "public",
+                    baseURL: musicBrainz.value?.baseURL ?? "",
+                    throttle: musicBrainz.value?.selfHostedThrottle ?? false,
+                    delaySeconds:
+                      musicBrainz.value?.selfHostedDelaySeconds ?? "0.5",
+                    verifiedAt: state.settings.musicbrainz_verified_at ?? null,
+                    dirty: musicBrainz.dirty,
+                  },
+                  lrclib: {
+                    enabled: lrclib.value ?? state.settings.lrclib_enabled,
+                    dirty: lrclib.dirty,
+                  },
+                }}
+                actions={{
+                  onAcoustIDApplicationKeyChange: setAcoustIDApplicationKey,
+                  onSaveAcoustIDApplicationKey: () =>
+                    void saveAcoustIDApplicationKey(),
+                  onDeleteAcoustIDApplicationKey: () =>
+                    void deleteAcoustIDApplicationKey(),
+                  onMusicBrainzModeChange: saveMusicBrainzMode,
+                  onMusicBrainzBaseURLChange: (baseURL) => {
+                    const currentValue = musicBrainz.value;
+                    if (currentValue)
+                      musicBrainz.update({ ...currentValue, baseURL });
+                  },
+                  onMusicBrainzThrottleChange: saveMusicBrainzThrottle,
+                  onMusicBrainzDelaySecondsChange: (selfHostedDelaySeconds) => {
+                    const currentValue = musicBrainz.value;
+                    if (currentValue)
+                      musicBrainz.update({
+                        ...currentValue,
+                        selfHostedDelaySeconds,
+                      });
+                  },
+                  onSaveAndCheckMusicBrainz: () => void checkMusicBrainz(),
+                  onLrclibEnabledChange: saveLrclib,
+                }}
+              />
             </SettingsTabPanel>
             <SettingsTabPanel id="genres" forceMount>
               <GenreCatalogPanel />

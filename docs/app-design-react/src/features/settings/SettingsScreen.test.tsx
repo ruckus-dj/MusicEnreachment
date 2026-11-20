@@ -68,7 +68,7 @@ it("consumes replacement approval before saving a different conflicting field gr
 	);
 	fireEvent.click(screen.getByRole("tab", { name: "Providers" }));
 	const saveProviders = screen.getByRole("button", {
-		name: "Save provider settings",
+		name: "Save and check MusicBrainz",
 	});
 	expect(saveProviders).toBeDisabled();
 	fireEvent.click(screen.getByRole("button", { name: "Continue editing" }));
@@ -245,19 +245,19 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /providers|провайдеры/i }));
-		fireEvent.click(screen.getByRole("button", { name: /MusicBrainz/i }));
-		fireEvent.click(
-			await screen.findByRole("option", {
-				name: /self-hosted|собственный сервер/i,
+		fireEvent.change(
+			screen.getByRole("combobox", {
+				name: /MusicBrainz mode|режим MusicBrainz/i,
 			}),
+			{ target: { value: "self-hosted" } },
 		);
 		const input = screen.getByLabelText(
-			/self-hosted server base URL|базовый URL собственного сервера/i,
+			/MusicBrainz base URL|базовый URL MusicBrainz/i,
 		);
 		fireEvent.change(input, { target: { value: "not-a-url" } });
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /save provider settings|сохранить настройки провайдера/i,
+				name: /save and check MusicBrainz|сохранить и проверить MusicBrainz/i,
 			}),
 		);
 		expect(input).toHaveFocus();
@@ -279,24 +279,26 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /providers|провайдеры/i }));
-		const chooseMode = async (name: RegExp) => {
-			fireEvent.click(screen.getByRole("button", { name: /MusicBrainz/i }));
-			fireEvent.click(await screen.findByRole("option", { name }));
+		const chooseMode = (value: "public" | "self-hosted") => {
+			fireEvent.change(
+				screen.getByRole("combobox", {
+					name: /MusicBrainz mode|режим MusicBrainz/i,
+				}),
+				{ target: { value } },
+			);
 		};
-		await chooseMode(/self-hosted|собственный сервер/i);
+		chooseMode("self-hosted");
 		fireEvent.change(
-			screen.getByLabelText(
-				/self-hosted server base URL|базовый URL собственного сервера/i,
-			),
+			screen.getByLabelText(/MusicBrainz base URL|базовый URL MusicBrainz/i),
 			{ target: { value: "https://mb.example.org" } },
 		);
 		fireEvent.change(
-			screen.getByLabelText(/request delay|задержка запросов/i),
+			screen.getByLabelText(/request interval|интервал запросов/i),
 			{
 				target: { value: "3" },
 			},
 		);
-		await chooseMode(/public service|публичный сервис/i);
+		chooseMode("public");
 		expect(onSettings).toHaveBeenLastCalledWith(
 			expect.objectContaining({
 				musicBrainzMode: "public",
@@ -342,7 +344,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		fireEvent.click(screen.getByRole("tab", { name: /providers|провайдеры/i }));
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /save provider settings|сохранить настройки провайдера/i,
+				name: /save and check MusicBrainz|сохранить и проверить MusicBrainz/i,
 			}),
 		);
 		expect(onSettings).toHaveBeenLastCalledWith(

@@ -8,12 +8,7 @@ import {
 	Heading,
 	Input,
 	Label,
-	ListBox,
-	ListBoxItem,
 	Modal,
-	Popover,
-	Select,
-	SelectValue,
 	TextField,
 } from "../../components/ui";
 import { useI18n } from "../../i18n";
@@ -40,6 +35,7 @@ import {
 	type OutputResetFeedback,
 	SettingsOutputResetDialog,
 } from "./SettingsOutputResetDialog";
+import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import {
 	type SettingsTabKey,
 	SettingsTabPanel,
@@ -86,6 +82,13 @@ const inactiveDirectoryBrowse: BrowseDirectory = async (path) => ({
 	offset: 0,
 });
 
+const validProviderDelay = (value: string) => {
+	const trimmed = value.trim();
+	return (
+		trimmed === "" || (/^\d+(?:\.\d+)?$/.test(trimmed) && Number(trimmed) <= 60)
+	);
+};
+
 export interface DemoSettings {
 	toolsPath: string;
 	workDirectory: string;
@@ -104,6 +107,7 @@ export interface DemoSettings {
 	musicBrainzDelay?: string;
 	musicBrainzVerified?: boolean;
 	musicBrainzVerifiedFingerprint?: string;
+	hasAcoustIDApplicationKey?: boolean;
 	lrclibEnabled?: boolean;
 	sha256Enabled?: boolean;
 	concurrency?: string;
@@ -136,6 +140,7 @@ export const initialDemoSettings: DemoSettings = {
 	musicBrainzThrottle: false,
 	musicBrainzDelay: "",
 	musicBrainzVerified: false,
+	hasAcoustIDApplicationKey: false,
 	lrclibEnabled: true,
 	sha256Enabled: true,
 	concurrency: "4",
@@ -206,6 +211,7 @@ export function SettingsScreen({
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
 	const [picker, setPicker] = useState<PickerTarget | null>(null);
+	const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
 	const [confirming, setConfirming] = useState<{
 		path: string;
@@ -282,10 +288,22 @@ export function SettingsScreen({
 		}));
 	const fieldDirty = (key: keyof SettingsTextDraft) =>
 		draftState.value[key] !== draftState.baseline[key];
-	const providerDirty =
-		fieldDirty("musicBrainzMode") ||
-		fieldDirty("musicBrainzURL") ||
-		fieldDirty("musicBrainzDelay");
+	const providerFields = [
+		"musicBrainzMode",
+		"musicBrainzURL",
+		"musicBrainzDelay",
+	] as const;
+	const selfHostedDraft = draftState.value.musicBrainzMode === "self-hosted";
+	const isApplicableProviderField = (field: keyof SettingsTextDraft) =>
+		field === "musicBrainzMode" ||
+		(selfHostedDraft &&
+			(field === "musicBrainzURL" || field === "musicBrainzDelay"));
+	const providerDirty = providerFields.some(
+		(field) => isApplicableProviderField(field) && fieldDirty(field),
+	);
+	const providerConflict = draftConflicts.some((field) =>
+		isApplicableProviderField(field),
+	);
 	useEffect(() => {
 		const persisted = writeSettingsDraft(
 			getSettingsDraftStorage(),
@@ -393,8 +411,8 @@ export function SettingsScreen({
 			errors.musicBrainzURL = copy.invalidProvider;
 		if (
 			providerDirty &&
-			value.musicBrainzDelay.trim() !== "" &&
-			!/^\d+(?:\.\d+)?$/.test(value.musicBrainzDelay.trim())
+			value.musicBrainzMode === "self-hosted" &&
+			!validProviderDelay(value.musicBrainzDelay)
 		)
 			errors.musicBrainzDelay = copy.invalidDelay;
 		setFieldErrors(errors);
@@ -416,14 +434,14 @@ export function SettingsScreen({
 		setNotice("");
 		const merged = mergeSettingsDraft(draftState, currentDraftValues);
 		if (!validateDraft(merged)) return false;
-		const {
-			concurrency,
-			musicBrainzMode,
-			musicBrainzURL,
-			musicBrainzDelay,
-			publicationTemplate,
-			workDirectory,
-		} = merged;
+		const { concurrency, musicBrainzMode, publicationTemplate, workDirectory } =
+			merged;
+		const musicBrainzURL = selfHostedDraft
+			? merged.musicBrainzURL
+			: currentDraftValues.musicBrainzURL;
+		const musicBrainzDelay = selfHostedDraft
+			? merged.musicBrainzDelay
+			: currentDraftValues.musicBrainzDelay;
 		if (
 			(fieldDirty("publicationTemplate") &&
 				!validateTemplate(publicationTemplate)) ||
@@ -458,8 +476,7 @@ export function SettingsScreen({
 			...draftState.value,
 			concurrency,
 			musicBrainzMode,
-			musicBrainzURL,
-			musicBrainzDelay,
+			...(selfHostedDraft && { musicBrainzURL, musicBrainzDelay }),
 			publicationTemplate,
 			workDirectory,
 		};
@@ -625,8 +642,8 @@ export function SettingsScreen({
 		)
 			errors.musicBrainzURL = copy.invalidProvider;
 		if (
-			musicBrainzDelay.trim() !== "" &&
-			!/^\d+(?:\.\d+)?$/.test(musicBrainzDelay.trim())
+			musicBrainzMode === "self-hosted" &&
+			!validProviderDelay(musicBrainzDelay)
 		)
 			errors.musicBrainzDelay = copy.invalidDelay;
 		setFieldErrors((current) => ({
@@ -647,25 +664,24 @@ export function SettingsScreen({
 				?.focus();
 			return;
 		}
-		const fields = [
-			"musicBrainzMode",
-			"musicBrainzURL",
-			"musicBrainzDelay",
-		] as const;
-		const conflicts = draftConflicts.filter((key) =>
-			fields.includes(key as (typeof fields)[number]),
-		);
-		if (conflicts.length && !conflictAcknowledged) return;
-		if (conflicts.length && !forceReplace) {
+		if (providerConflict && !conflictAcknowledged) return;
+		if (providerConflict && !forceReplace) {
 			pendingReplacement.current = "providers";
 			setReplacementPrompt(true);
 			return;
 		}
+		const selfHosted = musicBrainzMode === "self-hosted";
+		const savedMusicBrainzURL = selfHosted
+			? musicBrainzURL
+			: (settings.musicBrainzURL ?? "");
+		const savedMusicBrainzDelay = selfHosted
+			? musicBrainzDelay
+			: (settings.musicBrainzDelay ?? "");
 		const configuration = {
 			mode: musicBrainzMode,
-			url: musicBrainzURL,
+			url: savedMusicBrainzURL,
 			throttle: settings.musicBrainzThrottle,
-			delay: musicBrainzDelay,
+			delay: savedMusicBrainzDelay,
 		};
 		if (!isValidMusicBrainzConfiguration(configuration)) {
 			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
@@ -679,20 +695,22 @@ export function SettingsScreen({
 		const baseline = {
 			...draftState.baseline,
 			musicBrainzMode,
-			musicBrainzURL,
-			musicBrainzDelay,
+			musicBrainzURL: savedMusicBrainzURL,
+			musicBrainzDelay: savedMusicBrainzDelay,
 		};
-		const value = {
-			...draftState.value,
-			musicBrainzMode,
-			musicBrainzURL,
-			musicBrainzDelay,
-		};
+		const value = selfHosted
+			? {
+					...draftState.value,
+					musicBrainzMode,
+					musicBrainzURL,
+					musicBrainzDelay,
+				}
+			: { ...draftState.value, musicBrainzMode };
 		onSettings({
 			...settings,
 			musicBrainzMode,
-			musicBrainzURL,
-			musicBrainzDelay,
+			musicBrainzURL: savedMusicBrainzURL,
+			musicBrainzDelay: savedMusicBrainzDelay,
 			musicBrainzVerified: true,
 			musicBrainzVerifiedFingerprint:
 				musicBrainzConfigurationFingerprint(configuration),
@@ -701,10 +719,9 @@ export function SettingsScreen({
 		setConflictAcknowledged(false);
 		setNotice("providerSaved");
 	};
-	const selectMusicBrainzMode = (key: Key | null) => {
-		const musicBrainzMode = key
-			? (String(key) as SettingsTextDraft["musicBrainzMode"])
-			: "";
+	const selectMusicBrainzMode = (
+		musicBrainzMode: SettingsTextDraft["musicBrainzMode"],
+	) => {
 		const musicBrainzURL = settings.musicBrainzURL ?? "";
 		const musicBrainzDelay = settings.musicBrainzDelay ?? "";
 		const configuration = {
@@ -837,6 +854,15 @@ export function SettingsScreen({
 	});
 	const saveProviders = () => {
 		commitProviders();
+	};
+	const saveAcoustIDApplicationKey = () => {
+		if (!acoustIDApplicationKey) return;
+		update({ hasAcoustIDApplicationKey: true });
+		setAcoustIDApplicationKey("");
+	};
+	const deleteAcoustIDApplicationKey = () => {
+		update({ hasAcoustIDApplicationKey: false });
+		setAcoustIDApplicationKey("");
 	};
 	const leaveWithDraft = (discard: boolean) => {
 		if (discard) {
@@ -1161,133 +1187,52 @@ export function SettingsScreen({
 						</div>
 					</section>
 				</SettingsTabPanel>
-				<SettingsTabPanel
-					id="providers"
-					className={`${styles.panel} grid max-w-3xl gap-4`}
-				>
-					<h2>{copy.providers}</h2>
-					<Select
-						selectedKey={draftState.value.musicBrainzMode}
-						onSelectionChange={selectMusicBrainzMode}
-					>
-						<Label>{copy.musicbrainz}</Label>
-						<Button
-							id="settings-musicBrainzMode"
-							aria-invalid={Boolean(fieldErrors.musicBrainzMode)}
-							aria-describedby={
-								fieldErrors.musicBrainzMode
-									? "settings-musicBrainzMode-error"
-									: undefined
-							}
-						>
-							<SelectValue />
-						</Button>
-						<Popover>
-							<ListBox>
-								<ListBoxItem id="public">{copy.publicService}</ListBoxItem>
-								<ListBoxItem id="self-hosted">{copy.selfHosted}</ListBoxItem>
-							</ListBox>
-						</Popover>
-					</Select>
-					{fieldErrors.musicBrainzMode && (
-						<p
-							id="settings-musicBrainzMode-error"
-							className="m-0 text-[var(--error)]"
-							role="alert"
-						>
-							{fieldErrors.musicBrainzMode}
-						</p>
-					)}
-					{draftState.value.musicBrainzMode === "self-hosted" && (
-						<TextField
-							value={draftState.value.musicBrainzURL}
-							onChange={(musicBrainzURL) => updateDraft({ musicBrainzURL })}
-						>
-							<Label>{copy.baseUrl}</Label>
-							<Input
-								id="settings-musicBrainzURL"
-								type="url"
-								aria-invalid={Boolean(fieldErrors.musicBrainzURL)}
-								aria-describedby={
-									fieldErrors.musicBrainzURL
-										? "settings-musicBrainzURL-error"
-										: undefined
-								}
-							/>
-						</TextField>
-					)}
-					{fieldErrors.musicBrainzURL && (
-						<p
-							id="settings-musicBrainzURL-error"
-							className="m-0 text-[var(--error)]"
-							role="alert"
-						>
-							{fieldErrors.musicBrainzURL}
-						</p>
-					)}
-					<label className="flex items-center gap-2">
-						<input
-							type="checkbox"
-							disabled={settings.musicBrainzMode !== "self-hosted"}
-							checked={settings.musicBrainzThrottle ?? false}
-							onChange={(event) =>
-								update({ musicBrainzThrottle: event.target.checked })
-							}
-						/>
-						{copy.throttle}
-					</label>
-					<TextField
-						value={draftState.value.musicBrainzDelay}
-						onChange={(musicBrainzDelay) => updateDraft({ musicBrainzDelay })}
-					>
-						<Label>{copy.delay}</Label>
-						<Input
-							id="settings-musicBrainzDelay"
-							type="number"
-							min="0"
-							aria-invalid={Boolean(fieldErrors.musicBrainzDelay)}
-							aria-describedby={
-								fieldErrors.musicBrainzDelay
-									? "settings-musicBrainzDelay-error"
-									: undefined
-							}
-						/>
-					</TextField>
-					{fieldErrors.musicBrainzDelay && (
-						<p
-							id="settings-musicBrainzDelay-error"
-							className="m-0 text-[var(--error)]"
-							role="alert"
-						>
-							{fieldErrors.musicBrainzDelay}
-						</p>
-					)}
-					<p>{musicBrainzIsVerified ? copy.verified : copy.notVerified}</p>
-					<Button
-						isDisabled={
-							draftConflicts.some((field) =>
-								[
-									"musicBrainzMode",
-									"musicBrainzURL",
-									"musicBrainzDelay",
-								].includes(field),
-							) && !conflictAcknowledged
-						}
-						onPress={saveProviders}
-					>
-						{copy.saveProviders}
-					</Button>
-					<label className="flex items-center gap-2">
-						<input
-							type="checkbox"
-							checked={settings.lrclibEnabled ?? true}
-							onChange={(event) =>
-								update({ lrclibEnabled: event.target.checked })
-							}
-						/>
-						{copy.lrclib}
-					</label>
-					<small>{copy.lrclibHelp}</small>
+				<SettingsTabPanel id="providers">
+					<SettingsProvidersSection
+						locale={locale}
+						snapshot={{
+							busy: false,
+							acoustID: {
+								applicationKey: acoustIDApplicationKey,
+								hasKey: settings.hasAcoustIDApplicationKey ?? false,
+							},
+							musicBrainz: {
+								mode: draftState.value.musicBrainzMode,
+								baseURL: draftState.value.musicBrainzURL,
+								throttle: settings.musicBrainzThrottle ?? false,
+								throttleDisabled: settings.musicBrainzMode !== "self-hosted",
+								delaySeconds: draftState.value.musicBrainzDelay,
+								verifiedAt: null,
+								checked: musicBrainzIsVerified,
+								checkDisabled: providerConflict && !conflictAcknowledged,
+								dirty: providerDirty,
+							},
+							lrclib: {
+								enabled: settings.lrclibEnabled ?? true,
+								dirty: false,
+							},
+							errors: {
+								musicBrainzMode: Boolean(fieldErrors.musicBrainzMode),
+								musicBrainzBaseURL: Boolean(fieldErrors.musicBrainzURL),
+								musicBrainzDelaySeconds: Boolean(fieldErrors.musicBrainzDelay),
+							},
+						}}
+						actions={{
+							onAcoustIDApplicationKeyChange: setAcoustIDApplicationKey,
+							onSaveAcoustIDApplicationKey: saveAcoustIDApplicationKey,
+							onDeleteAcoustIDApplicationKey: deleteAcoustIDApplicationKey,
+							onMusicBrainzModeChange: selectMusicBrainzMode,
+							onMusicBrainzBaseURLChange: (musicBrainzURL) =>
+								updateDraft({ musicBrainzURL }),
+							onMusicBrainzThrottleChange: (musicBrainzThrottle) =>
+								update({ musicBrainzThrottle }),
+							onMusicBrainzDelaySecondsChange: (musicBrainzDelay) =>
+								updateDraft({ musicBrainzDelay }),
+							onSaveAndCheckMusicBrainz: saveProviders,
+							onLrclibEnabledChange: (lrclibEnabled) =>
+								update({ lrclibEnabled }),
+						}}
+					/>
 				</SettingsTabPanel>
 				<SettingsTabPanel id="genres" forceMount>
 					<GenreCatalogDemoProvider
