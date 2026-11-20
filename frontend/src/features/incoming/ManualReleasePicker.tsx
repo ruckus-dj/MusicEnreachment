@@ -25,7 +25,21 @@ type Props = {
   evaluationRevision?: string;
   disabled?: boolean;
   searchRelease?: string;
+  /**
+   * Explicit release choice made in the unified search. Every distinct sequence
+   * admits at most one preparation; it is never triggered by `searchRelease`,
+   * which only prefills the manual form.
+   */
+  requestedRelease?: { id: string; sequence: number };
+  /** Reports this picker's own admitting/following state to the parent. */
+  onPendingChange?: (pending: boolean) => void;
   onPrepared: (releaseMBID: string) => void;
+};
+
+type RevisionIntent = {
+  groupId: string;
+  groupRevision: string;
+  evaluationRevision?: string;
 };
 
 type RequestBody = {
@@ -77,12 +91,27 @@ function matchesRequestBody(
   );
 }
 
+function operationIsPending(
+  groupState: GroupState,
+  snapshots: Record<string, OperationResponse>,
+): boolean {
+  const operationId = groupState.operationId;
+  if (groupState.admitting) return true;
+  if (!operationId) return false;
+  const snapshot = snapshots[operationId];
+  return (
+    !snapshot || snapshot.state === "queued" || snapshot.state === "running"
+  );
+}
+
 export function ManualReleasePicker({
   groupId,
   groupRevision,
   evaluationRevision,
   disabled = false,
   searchRelease,
+  requestedRelease,
+  onPendingChange,
   onPrepared,
 }: Props) {
   const { locale } = useI18n();
@@ -98,9 +127,27 @@ export function ManualReleasePicker({
   const [operationErrors, setOperationErrors] = useState<
     Record<string, IncomingOperationError>
   >({});
+  const statesRef = useRef(states);
+  const snapshotsRef = useRef(snapshots);
   const currentGroupRef = useRef(groupId);
   const refreshers = useRef<Record<string, () => Promise<void>>>({});
+  const handledRequestedSequence = useRef<number | undefined>(undefined);
+  const pendingReporter = useRef(onPendingChange);
+  const reportedPending = useRef<boolean | undefined>(undefined);
+  const admitRef = useRef<
+    | ((
+        selection: string,
+        options?: {
+          allowDisabled?: boolean;
+          intent?: RevisionIntent;
+        },
+      ) => Promise<void>)
+    | undefined
+  >(undefined);
+  statesRef.current = states;
+  snapshotsRef.current = snapshots;
   currentGroupRef.current = groupId;
+  pendingReporter.current = onPendingChange;
   const currentRevisionsRef = useRef({ groupRevision, evaluationRevision });
   currentRevisionsRef.current = { groupRevision, evaluationRevision };
   const state = states[groupId] ?? { value: "" };
@@ -123,12 +170,7 @@ export function ManualReleasePicker({
     ([, item]) => item.operationId,
   );
   const operation = snapshots[state.operationId ?? ""];
-  const operationPending =
-    Boolean(state.admitting) ||
-    (Boolean(state.operationId) &&
-      (!operation ||
-        operation.state === "queued" ||
-        operation.state === "running"));
+  const operationPending = operationIsPending(state, snapshots);
   const errors: ManualReleasePreparationError[] = [];
   if (state.error || state.errorKey) {
     errors.push({
@@ -148,6 +190,20 @@ export function ManualReleasePicker({
       onRetry: () => void refreshers.current[operationId]?.(),
     });
   }
+
+  useEffect(() => {
+    if (reportedPending.current === operationPending) return;
+    reportedPending.current = operationPending;
+    pendingReporter.current?.(operationPending);
+  }, [operationPending]);
+  useEffect(
+    () => () => {
+      if (!reportedPending.current) return;
+      reportedPending.current = false;
+      pendingReporter.current?.(false);
+    },
+    [],
+  );
 
   useEffect(() => {
     for (const [submittedGroupId, submitted] of operations) {
@@ -226,27 +282,46 @@ export function ManualReleasePicker({
     }
   }, [onPrepared, operations, queryClient, snapshots]);
 
-  async function submit() {
-    if (!state.value.trim() || operationPending) return;
+  async function admit(
+    selection: string,
+    options: {
+      allowDisabled?: boolean;
+      intent?: RevisionIntent;
+    } = {},
+  ) {
     const requestedGroupId = groupId;
-    const revisions = { groupRevision, evaluationRevision };
-    let body = matchesRequestBody(state.body, state.value, revisions)
-      ? state.body
-      : undefined;
-    if (!body) {
-      body = {
-        expected_group_revision: groupRevision,
-        ...(evaluationRevision
-          ? { expected_evaluation_revision: evaluationRevision }
-          : {}),
-        selected_release: state.value,
-        request_id: crypto.randomUUID(),
-      };
-    }
+    const intent = options.intent ?? {
+      groupId: requestedGroupId,
+      ...currentRevisionsRef.current,
+    };
+    const latest = statesRef.current[requestedGroupId] ?? { value: "" };
+    if (!selection.trim()) return;
+    if (!options.allowDisabled && disabled) return;
+    if (operationIsPending(latest, snapshotsRef.current)) return;
+    // An action observed for a previous group or revision must not admit a
+    // request against the group the picker happens to show now.
+    if (
+      intent.groupId !== requestedGroupId ||
+      intent.groupRevision !== currentRevisionsRef.current.groupRevision ||
+      intent.evaluationRevision !==
+        currentRevisionsRef.current.evaluationRevision
+    )
+      return;
+    const body = matchesRequestBody(latest.body, selection, intent)
+      ? latest.body
+      : {
+          expected_group_revision: intent.groupRevision,
+          ...(intent.evaluationRevision
+            ? { expected_evaluation_revision: intent.evaluationRevision }
+            : {}),
+          selected_release: selection,
+          request_id: crypto.randomUUID(),
+        };
     setStates((current) => ({
       ...current,
       [requestedGroupId]: {
-        ...state,
+        ...(current[requestedGroupId] ?? { value: selection }),
+        value: selection,
         body,
         admitting: true,
         error: undefined,
@@ -298,6 +373,43 @@ export function ManualReleasePicker({
         },
       }));
     }
+  }
+
+  admitRef.current = admit;
+
+  useEffect(() => {
+    if (!requestedRelease) return;
+    if (handledRequestedSequence.current === requestedRelease.sequence) return;
+    handledRequestedSequence.current = requestedRelease.sequence;
+    const intent = { groupId, groupRevision, evaluationRevision };
+    if (
+      currentGroupRef.current !== intent.groupId ||
+      currentRevisionsRef.current.groupRevision !== intent.groupRevision ||
+      currentRevisionsRef.current.evaluationRevision !==
+        intent.evaluationRevision
+    )
+      return;
+    setStates((current) => ({
+      ...current,
+      [groupId]: {
+        ...current[groupId],
+        value: requestedRelease.id,
+        error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
+        finished: false,
+      },
+    }));
+    // The explicit search action must still admit when the surrounding
+    // controls are disabled for unrelated in-flight work.
+    void admitRef.current?.(requestedRelease.id, {
+      allowDisabled: true,
+      intent,
+    });
+  }, [evaluationRevision, groupId, groupRevision, requestedRelease]);
+
+  function submit() {
+    void admit(state.value);
   }
 
   return (

@@ -60,6 +60,22 @@ func TestLocalProviderCRUDPreservesIdentityAndCrossProviderReferencesPostgreSQL(
 	if updated.ProviderKey != created.ProviderKey || updated.Tracks[0].ID != trackID || updated.Title != "Renamed edition" {
 		t.Fatalf("update changed native or track identity: before=%#v after=%#v", created, updated)
 	}
+	for _, kind := range []string{"release", "releases"} {
+		page, err := catalog.List(ctx, kind, "renamed live external", "local", 10, 0)
+		if err != nil {
+			t.Fatalf("list local releases by title and ordered credit terms: %v", err)
+		}
+		if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != created.ID {
+			t.Fatalf("multi-term local release search across title, credit name and artist name = %#v", page)
+		}
+		page, err = catalog.List(ctx, kind, "renamed live absent", "local", 10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != 0 || len(page.Items) != 0 {
+			t.Fatalf("local release search did not require every term: %#v", page)
+		}
+	}
 
 	genreAID, genreBID := uuid.NewString(), uuid.NewString()
 	genreCatalog := &localProviderGenreFixture{items: []librarymetadata.GenreReference{{ID: genreAID, SourceName: "old source name", Name: "Old name"}}}

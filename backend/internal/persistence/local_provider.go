@@ -93,10 +93,25 @@ func (r *LocalProviderRepository) List(ctx context.Context, kind, query, provide
 	}
 	pattern := "%" + strings.TrimSpace(query) + "%"
 	where := "(?='all' OR p.code=?) AND (e." + fieldSearch + " ILIKE ? OR e.provider_key ILIKE ?)"
-	if err := r.db.NewRaw("SELECT count(*) FROM "+table+" e JOIN provider p ON p.id=e.provider_id WHERE "+where, provider, provider, pattern, pattern).Scan(ctx, &result.Total); err != nil {
+	args := []any{provider, provider, pattern, pattern}
+	// Local release search matches every whitespace-separated term across the
+	// title and the release's ordered artist credits, while provider keys keep
+	// matching the whole query.
+	if kind == "releases" && provider == "local" && strings.TrimSpace(query) != "" {
+		terms := strings.Fields(query)
+		matches := make([]string, 0, len(terms))
+		args = []any{provider, provider, pattern}
+		for _, term := range terms {
+			termPattern := "%" + term + "%"
+			matches = append(matches, `(e.title ILIKE ? OR EXISTS (SELECT 1 FROM provider_release_artist_credit credit JOIN provider_artist artist ON artist.id=credit.artist_id WHERE credit.provider_id=e.provider_id AND credit.release_id=e.id AND credit.present AND (credit.credit_name ILIKE ? OR artist.name ILIKE ?)))`)
+			args = append(args, termPattern, termPattern, termPattern)
+		}
+		where = "(?='all' OR p.code=?) AND (e.provider_key ILIKE ? OR (" + strings.Join(matches, " AND ") + "))"
+	}
+	if err := r.db.NewRaw("SELECT count(*) FROM "+table+" e JOIN provider p ON p.id=e.provider_id WHERE "+where, args...).Scan(ctx, &result.Total); err != nil {
 		return LocalProviderList{}, fmt.Errorf("count local provider catalog: %w", err)
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT e.id,e.provider_id,e.provider_key,e.`+titleExpr+`,e.metadata::text,p.code FROM `+table+` e JOIN provider p ON p.id=e.provider_id WHERE `+where+` ORDER BY e.`+titleExpr+`,e.id LIMIT ? OFFSET ?`, provider, provider, pattern, pattern, limit, offset)
+	rows, err := r.db.QueryContext(ctx, `SELECT e.id,e.provider_id,e.provider_key,e.`+titleExpr+`,e.metadata::text,p.code FROM `+table+` e JOIN provider p ON p.id=e.provider_id WHERE `+where+` ORDER BY e.`+titleExpr+`,e.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return LocalProviderList{}, fmt.Errorf("list local provider catalog: %w", err)
 	}

@@ -35,6 +35,9 @@ function editionDetails(
           .join(" · ")
       : formats;
   return [
+    item.releaseGroupTitle
+      ? message("releaseGroup", { title: item.releaseGroupTitle })
+      : undefined,
     item.date ? message("releaseDate", { date: item.date }) : undefined,
     item.country
       ? message("releaseCountry", { country: item.country })
@@ -56,17 +59,46 @@ function editionDetails(
 
 function chooseLabel(
   item: ManualSearchViewItem,
+  selected: boolean,
+  showProvider: boolean,
   message: (
     key: ManualSearchMessageKey,
     values?: Record<string, string | number>,
   ) => string,
 ) {
-  const details = [item.artistCredit, ...editionDetails(item, message)]
+  const details = [
+    showProvider ? item.provider : undefined,
+    item.artistCredit,
+    ...editionDetails(item, message),
+  ]
     .filter(Boolean)
     .join(", ");
   return details
-    ? message("selectReleaseDescribed", { title: item.title, details })
-    : message("selectReleaseTitled", { title: item.title });
+    ? message(
+        selected ? "selectedReleaseDescribed" : "selectReleaseDescribed",
+        { title: item.title, details },
+      )
+    : message(selected ? "selectedReleaseTitled" : "selectReleaseTitled", {
+        title: item.title,
+      });
+}
+
+function normalizedSelection(value: string | null | undefined) {
+  return value?.trim() || undefined;
+}
+
+function isItemSelected(
+  item: ManualSearchViewItem,
+  selectedReleaseId: string | undefined,
+  selectedLocalReleaseId: string | undefined,
+  selectedItemId: string | undefined,
+) {
+  if (selectedLocalReleaseId !== undefined)
+    return item.provider === "Local" && item.id === selectedLocalReleaseId;
+  if (selectedReleaseId !== undefined)
+    return item.provider === "MusicBrainz" && item.id === selectedReleaseId;
+  if (selectedItemId !== undefined) return item.id === selectedItemId;
+  return false;
 }
 
 function pageLimitValue(limit: string) {
@@ -83,11 +115,14 @@ export function ManualSearchView({
   pending = false,
   results,
   errors = [],
+  selectedReleaseId,
+  selectedLocalReleaseId,
   selectedItemId,
   onQueryChange,
   onLimitChange,
   onSearch,
   onSelectRelease,
+  onSelectLocalRelease,
   onPrevious,
   onNext,
 }: ManualSearchViewProps) {
@@ -97,6 +132,14 @@ export function ManualSearchView({
   ) => manualSearchMessage(locale, key, values);
   const pageLimit = pageLimitValue(limit);
   const canSearch = Boolean(query.trim() && pageLimit && !pending && !disabled);
+  const showSources = Boolean(onSelectLocalRelease);
+  const activeReleaseId = normalizedSelection(selectedReleaseId);
+  const activeLocalReleaseId = normalizedSelection(selectedLocalReleaseId);
+  const activeItemId = normalizedSelection(selectedItemId);
+  const hasSelection =
+    activeReleaseId !== undefined ||
+    activeLocalReleaseId !== undefined ||
+    activeItemId !== undefined;
 
   return (
     <section
@@ -104,9 +147,13 @@ export function ManualSearchView({
       aria-labelledby="manual-search-title"
     >
       <h2 id="manual-search-title" className="font-semibold">
-        {message("searchTitle")}
+        {message(showSources ? "searchTitleEditions" : "searchTitle")}
       </h2>
-      <p className="mt-1 text-sm">{message("searchDescription")}</p>
+      <p className="mt-1 text-sm">
+        {message(
+          showSources ? "searchDescriptionEditions" : "searchDescription",
+        )}
+      </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <label className="sr-only" htmlFor="manual-search-query">
           {message("searchQuery")}
@@ -138,7 +185,7 @@ export function ManualSearchView({
       </div>
       {pending ? (
         <p role="status" className="mt-2">
-          {message("searching")}
+          {message(showSources ? "searchingEditions" : "searching")}
         </p>
       ) : null}
       {errors.map((error) =>
@@ -149,7 +196,9 @@ export function ManualSearchView({
             key={error.id}
           >
             <p>{error.message}</p>
-            <Button onPress={error.onRetry}>{message("retryReading")}</Button>
+            <Button onPress={error.onRetry} isDisabled={disabled}>
+              {message("retryReading")}
+            </Button>
           </div>
         ) : (
           <p role="alert" className="mt-2 text-[var(--error)]" key={error.id}>
@@ -167,9 +216,15 @@ export function ManualSearchView({
             <ul className="mt-3 divide-y divide-[var(--line)] rounded border border-[var(--line)]">
               {results.items.map((item) => {
                 const details = editionDetails(item, message);
+                const selected = isItemSelected(
+                  item,
+                  activeReleaseId,
+                  activeLocalReleaseId,
+                  activeItemId,
+                );
                 return (
                   <li
-                    key={item.id}
+                    key={`${item.provider}:${item.id}`}
                     className="flex flex-wrap items-start justify-between gap-3 p-3"
                   >
                     <div className="min-w-0 flex-1">
@@ -181,7 +236,16 @@ export function ManualSearchView({
                           </span>
                         ) : null}
                       </p>
-                      {item.artistCredit ? (
+                      {showSources ? (
+                        <p className="mt-1 flex flex-wrap items-center gap-2 text-sm wrap-anywhere">
+                          <span className="rounded border border-[var(--line)] bg-[var(--raised)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
+                            {item.provider}
+                          </span>
+                          {item.artistCredit ? (
+                            <span>{item.artistCredit}</span>
+                          ) : null}
+                        </p>
+                      ) : item.artistCredit ? (
                         <p className="text-sm">{item.artistCredit}</p>
                       ) : null}
                       {details.length ? (
@@ -191,39 +255,55 @@ export function ManualSearchView({
                       ) : null}
                     </div>
                     <Button
-                      aria-label={chooseLabel(item, message)}
-                      aria-pressed={
-                        selectedItemId === undefined
-                          ? undefined
-                          : selectedItemId === item.id
-                      }
-                      onPress={() => onSelectRelease(item.id)}
+                      aria-label={chooseLabel(
+                        item,
+                        selected,
+                        showSources,
+                        message,
+                      )}
+                      aria-pressed={hasSelection ? selected : undefined}
+                      aria-disabled={disabled || selected || undefined}
+                      onPress={() => {
+                        if (disabled || selected) return;
+                        if (item.provider === "Local") {
+                          onSelectLocalRelease?.(item.id);
+                          return;
+                        }
+                        onSelectRelease(item.id);
+                      }}
                     >
-                      {message("selectRelease")}
+                      {message(selected ? "selectedRelease" : "selectRelease")}
                     </Button>
                   </li>
                 );
               })}
             </ul>
           )}
-          <div className="mt-3 flex items-center gap-2">
-            <span>
-              {message("resultRange", {
-                start: offset + 1,
-                end: Math.min(offset + pageLimit, results.count),
-                count: results.count,
-              })}
-            </span>
-            <Button onPress={onPrevious} isDisabled={offset === 0 || pending}>
-              {message("previous")}
-            </Button>
-            <Button
-              onPress={onNext}
-              isDisabled={offset + pageLimit >= results.count || pending}
-            >
-              {message("next")}
-            </Button>
-          </div>
+          {results.count > 0 && offset < results.count ? (
+            <div className="mt-3 flex items-center gap-2">
+              <span>
+                {message("resultRange", {
+                  start: offset + 1,
+                  end: Math.min(offset + pageLimit, results.count),
+                  count: results.count,
+                })}
+              </span>
+              <Button
+                onPress={onPrevious}
+                isDisabled={disabled || offset === 0 || pending}
+              >
+                {message("previous")}
+              </Button>
+              <Button
+                onPress={onNext}
+                isDisabled={
+                  disabled || offset + pageLimit >= results.count || pending
+                }
+              >
+                {message("next")}
+              </Button>
+            </div>
+          ) : null}
         </>
       ) : null}
     </section>

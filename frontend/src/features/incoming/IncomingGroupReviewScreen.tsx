@@ -38,6 +38,7 @@ import {
   matchingBoardClass,
   matchingBoardClasses,
 } from "../matchingWorkspace/matchingBoardStyles";
+import type { MatchingWorkspacePosition } from "../matchingWorkspace/types";
 import { apiMatchingSources } from "./apiMatchingSources";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
@@ -61,7 +62,7 @@ import {
   incomingScreenClass,
   incomingViewHeadingClass,
 } from "./incomingStyles";
-import { LocalReleaseEditor } from "./LocalReleaseEditor";
+import { useLocalMatching } from "./LocalReleaseEditor";
 import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
@@ -157,7 +158,7 @@ function layoutLabel(
 }
 
 function positionLabel(
-  position: NonNullable<MatchingReviewRelease["positions"]>[number],
+  position: MatchingWorkspacePosition,
   copy: IncomingMessages,
 ) {
   const number = position.displayed_number || `${position.position + 1}`;
@@ -231,6 +232,9 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const matchingActive = route.view === "matching" && !creatingLocalRelease;
   const preferredLocalReleaseId =
     route.view === "matching" ? route.localReleaseId : undefined;
+  const localMode = Boolean(preferredLocalReleaseId);
+  const activeLocalReleaseRef = useRef(preferredLocalReleaseId);
+  activeLocalReleaseRef.current = preferredLocalReleaseId;
   const prepareReleaseId =
     route.view === "matching" ? route.prepareReleaseId : undefined;
   const [retainedGroupId, setRetainedGroupId] = useState("");
@@ -256,9 +260,18 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const [inspectedMemberId, setInspectedMemberId] = useState("");
   const [inspectedTrackId, setInspectedTrackId] = useState("");
   const [preparedReleaseMBID, setPreparedReleaseMBID] = useState("");
-  const [searchReleaseSelections, setSearchReleaseSelections] = useState<
-    Record<string, string>
-  >({});
+  const [requestedRelease, setRequestedRelease] = useState<{
+    groupId: string;
+    id: string;
+    sequence: number;
+  }>();
+  const [preparingRelease, setPreparingRelease] = useState(false);
+  const preparationRoute = useRef("");
+  const preparationSequence = useRef(0);
+  const onPreparationPendingChange = useCallback((pending: boolean) => {
+    if (pending) preparationRoute.current = window.location.hash;
+    setPreparingRelease(pending);
+  }, []);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [tagOverrideDrafts, setTagOverrideDrafts] = useState<
     Record<string, Record<string, TrackTagOverrideDraft>>
@@ -291,14 +304,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const matchingHeadingRef = useRef<HTMLHeadingElement>(null);
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
   const focusedPreview = useRef<MatchingManualPreview | undefined>(undefined);
-
-  useEffect(() => {
-    if (!matchingActive || !groupId || !prepareReleaseId) return;
-    setSearchReleaseSelections((current) => ({
-      ...current,
-      [groupId]: prepareReleaseId,
-    }));
-  }, [groupId, matchingActive, prepareReleaseId]);
 
   function scopeIdentity() {
     const scope = scopeRef.current;
@@ -346,6 +351,8 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     };
     setSelectedReleaseId("");
     setPreparedReleaseMBID("");
+    setRequestedRelease(undefined);
+    setPreparingRelease(false);
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
@@ -455,9 +462,9 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   useEffect(() => {
     if (
       !matchingActive ||
-      preferredLocalReleaseId ||
       !preparedReleaseMBID ||
-      !groupId
+      !groupId ||
+      preparationRoute.current !== window.location.hash
     )
       return;
     const chosen = releases.find(
@@ -478,13 +485,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       groupId,
       chosen.provider_release_id,
     );
-  }, [
-    groupId,
-    matchingActive,
-    preferredLocalReleaseId,
-    preparedReleaseMBID,
-    releases,
-  ]);
+  }, [groupId, matchingActive, preparedReleaseMBID, releases]);
 
   useEffect(() => {
     if (!groupId || !review || seededGroup.current === groupId) return;
@@ -541,6 +542,31 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }, [drafts, draftKey, release, savedAssignments]);
   const tagOverridesByTrack = tagOverrideDrafts[draftKey] ?? {};
   const files = groupsQuery.data?.files ?? [];
+  const local = useLocalMatching({
+    group,
+    files,
+    authorityRevision: review?.authority_revision,
+    preferredReleaseId: preferredLocalReleaseId,
+    onConfirmed: async (result) => {
+      if (
+        scopeRef.current.groupId === groupId &&
+        activeLocalReleaseRef.current === result.provider_release_id
+      ) {
+        invalidateIntent();
+        setPreview(undefined);
+        setConfirmIntent(undefined);
+        setAuthorityIntent(undefined);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: getGetIncomingGroupsQueryKey(),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+        }),
+      ]);
+    },
+  });
   const groupFiles = useMemo(() => {
     const ids = new Set(group?.members ?? []);
     return files.filter((file) => ids.has(file.variant_id));
@@ -555,6 +581,35 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     proposalFiles,
     copy.file,
   );
+  const workspaceMembers = localMode ? (group?.members ?? []) : memberIds;
+  const workspaceSources = localMode
+    ? apiMatchingSources(workspaceMembers, groupFiles, new Map(), copy.file)
+        .sources
+    : boardSources;
+  const workspaceRelease = localMode ? local.workspaceRelease : release;
+  const workspaceAssignments = localMode
+    ? local.assignments
+    : assignmentsByMember;
+  function assignWorkspaceFile(memberId: string, trackId: string) {
+    if (!localMode) return assign(memberId, trackId);
+    if (
+      workspaceBusy ||
+      !workspaceMembers.includes(memberId) ||
+      (trackId &&
+        !workspaceRelease?.positions?.some(
+          (track) => track.track_id === trackId,
+        ))
+    )
+      return false;
+    if (trackId && workspaceAssignments[memberId] === trackId) return false;
+    const next = { ...workspaceAssignments };
+    if (trackId) next[memberId] = trackId;
+    else delete next[memberId];
+    local.setAssignments(next);
+    setInspectedMemberId(memberId);
+    setInspectedTrackId(trackId);
+    return true;
+  }
   const savedScores = release
     ? matchingBoardScoresFromCandidates(review?.candidates, release)
     : {};
@@ -643,7 +698,11 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   // Group-scoped in-flight identity: independent of intent generation, so a
   // same-group request keeps draft controls locked even if the scope drifts.
   const sameGroupInFlight =
-    pendingRequest !== undefined && pendingRequest.groupId === groupId;
+    (pendingRequest !== undefined && pendingRequest.groupId === groupId) ||
+    Boolean(local.busy);
+  const workspaceBusy = sameGroupInFlight || preparingRelease;
+  const releaseSelectionLocked =
+    workspaceBusy || local.pending || Boolean(currentRetryIntent);
 
   function authorityScope() {
     const scope = scopeRef.current;
@@ -651,7 +710,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }
 
   async function performAuthorityAction() {
-    if (!group || !review || sameGroupInFlight) return;
+    if (!group || !review || releaseSelectionLocked) return;
     const action = "automatic" as const;
     const actionIntent = `${group.revision}:${review.authority_revision}:${action}`;
     const preserved =
@@ -730,7 +789,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }
 
   function changeRelease(nextReleaseId: string) {
-    if (sameGroupInFlight) return;
+    if (releaseSelectionLocked) return;
     applyReleaseSelection(nextReleaseId);
     window.location.hash = incomingGroupMatchingHref(groupId, nextReleaseId);
   }
@@ -876,27 +935,32 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     setNotice({ key: "refreshNotice" });
   }
 
-  const inspectedFileMemberId = memberIds.includes(inspectedMemberId)
+  const inspectedFileMemberId = workspaceMembers.includes(inspectedMemberId)
     ? inspectedMemberId
     : "";
-  const inspectedPosition = release?.positions?.find(
-    (position) => position.track_id === inspectedTrackId,
-  );
+  const inspectedPosition: MatchingWorkspacePosition | undefined =
+    workspaceRelease?.positions?.find(
+      (position) => position.track_id === inspectedTrackId,
+    );
   const inspectedFile = groupFiles.find(
     (file) => file.variant_id === inspectedFileMemberId,
   );
-  const inspectedSavedFacts = proposalFiles.get(inspectedFileMemberId);
+  const inspectedSavedFacts = localMode
+    ? undefined
+    : proposalFiles.get(inspectedFileMemberId);
   const inspectedFileTitle =
     inspectedSavedFacts?.raw_tags?.TITLE?.[0] ||
     inspectedFile?.tags?.TITLE?.[0] ||
     inspectedFile?.locations?.[0]?.relative_path.split(/[\\/]/).at(-1) ||
     copy.file;
-  const inspectedCandidate = review?.candidates?.find(
-    (item) =>
-      item.file_member_id === inspectedFileMemberId &&
-      (item.release_id === release?.release_id ||
-        item.release_id === release?.provider_release_id),
-  );
+  const inspectedCandidate = !localMode
+    ? review?.candidates?.find(
+        (item) =>
+          item.file_member_id === inspectedFileMemberId &&
+          (item.release_id === release?.release_id ||
+            item.release_id === release?.provider_release_id),
+      )
+    : undefined;
 
   const matchingHref = incomingGroupMatchingHref(groupId, routeReleaseId, {
     localReleaseId: preferredLocalReleaseId,
@@ -921,10 +985,14 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             onCancel={() => window.location.replace(matchingHref)}
             onSelect={(id, kind) => {
               if (window.location.hash !== creationHash) return;
-              const next = incomingGroupMatchingHref(group.id, routeReleaseId, {
-                localReleaseId: kind === "local" ? id : preferredLocalReleaseId,
-                prepareReleaseId: kind === "musicbrainz" ? id : undefined,
-              });
+              const next = incomingGroupMatchingHref(
+                group.id,
+                kind === "local" ? "" : routeReleaseId,
+                {
+                  localReleaseId: kind === "local" ? id : undefined,
+                  prepareReleaseId: kind === "musicbrainz" ? id : undefined,
+                },
+              );
               window.location.replace(next);
             }}
           />
@@ -1061,37 +1129,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               </label>
             ) : null}
 
-            {group && groupsQuery.data ? (
-              <details
-                className="rounded border border-stone-300 p-3"
-                open={preferredLocalReleaseId ? true : undefined}
-              >
-                <summary className="cursor-pointer font-semibold">
-                  {localMatchingCopy.sectionSummary}
-                </summary>
-                <LocalReleaseEditor
-                  group={group}
-                  files={groupsQuery.data.files ?? []}
-                  authorityRevision={review?.authority_revision}
-                  preferredReleaseId={preferredLocalReleaseId}
-                  onConfirmed={async () => {
-                    invalidateIntent();
-                    setPreview(undefined);
-                    setConfirmIntent(undefined);
-                    setAuthorityIntent(undefined);
-                    await Promise.all([
-                      queryClient.invalidateQueries({
-                        queryKey: getGetIncomingGroupsQueryKey(),
-                      }),
-                      queryClient.invalidateQueries({
-                        queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-                      }),
-                    ]);
-                  }}
-                />
-              </details>
-            ) : null}
-            {group && !sameGroupInFlight && (
+            {group && !releaseSelectionLocked && (
               <a
                 className="inline-block rounded border border-[var(--control)] px-2.5 py-1.5 text-sm text-[var(--ink)] no-underline hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
                 href={incomingGroupMatchingHref(group.id, routeReleaseId, {
@@ -1160,7 +1198,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                 {review.authority_mode === "manual" ? (
                   <div className="mt-3">
                     <AppButton
-                      isDisabled={sameGroupInFlight}
+                      isDisabled={workspaceBusy}
                       onPress={() => void performAuthorityAction()}
                     >
                       {currentAuthorityIntent?.action === "automatic"
@@ -1191,39 +1229,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               </p>
             ) : null}
 
-            {group && !(review?.evaluated && review.proposal_available) ? (
-              <section
-                className="grid gap-3 rounded border border-stone-300 bg-white p-3 lg:grid-cols-2"
-                aria-label={copy.searchPreparationLabel}
-              >
-                <ManualSearchPicker
-                  groupId={groupId}
-                  groupRevision={group.revision}
-                  disabled={
-                    !review || busy || authorityBusy || sameGroupInFlight
-                  }
-                  onSelectRelease={(releaseId) =>
-                    setSearchReleaseSelections((current) => ({
-                      ...current,
-                      [groupId]: releaseId,
-                    }))
-                  }
-                />
-                <ManualReleasePicker
-                  groupId={groupId}
-                  groupRevision={group.revision}
-                  evaluationRevision={review?.evaluation_revision || undefined}
-                  disabled={
-                    !review || busy || authorityBusy || sameGroupInFlight
-                  }
-                  searchRelease={
-                    searchReleaseSelections[groupId] ?? prepareReleaseId
-                  }
-                  onPrepared={setPreparedReleaseMBID}
-                />
-              </section>
-            ) : null}
-
             {review?.evaluated &&
             review.proposal_available &&
             review.releases?.length === 0 ? (
@@ -1232,7 +1237,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               </p>
             ) : null}
 
-            {review?.evaluated && review.proposal_available ? (
+            {group ? (
               <MatchingWorkspaceLayout>
                 <section
                   data-matching-candidates
@@ -1247,15 +1252,42 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                       <ManualSearchPicker
                         groupId={groupId}
                         groupRevision={group.revision}
-                        disabled={
-                          !review || busy || authorityBusy || sameGroupInFlight
+                        disabled={!review || releaseSelectionLocked}
+                        selectedReleaseId={
+                          localMode ? undefined : release?.release_id
                         }
-                        onSelectRelease={(releaseId) =>
-                          setSearchReleaseSelections((current) => ({
-                            ...current,
-                            [groupId]: releaseId,
-                          }))
-                        }
+                        selectedLocalReleaseId={preferredLocalReleaseId}
+                        onSelectLocalRelease={(id) => {
+                          if (
+                            releaseSelectionLocked ||
+                            id === preferredLocalReleaseId
+                          )
+                            return;
+                          applyReleaseSelection("");
+                          window.location.hash = incomingGroupMatchingHref(
+                            groupId,
+                            "",
+                            {
+                              localReleaseId: id,
+                            },
+                          );
+                        }}
+                        onSelectRelease={(id) => {
+                          if (releaseSelectionLocked) return;
+                          const existing = releases.find(
+                            (item) => item.release_id === id,
+                          );
+                          if (existing) {
+                            changeRelease(existing.provider_release_id);
+                            return;
+                          }
+                          preparationRoute.current = window.location.hash;
+                          setRequestedRelease({
+                            groupId,
+                            id,
+                            sequence: ++preparationSequence.current,
+                          });
+                        }}
                       />
                       <ManualReleasePicker
                         groupId={groupId}
@@ -1263,142 +1295,160 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         evaluationRevision={
                           review?.evaluation_revision || undefined
                         }
-                        disabled={
-                          !review || busy || authorityBusy || sameGroupInFlight
+                        disabled={!review || releaseSelectionLocked}
+                        searchRelease={prepareReleaseId}
+                        requestedRelease={
+                          requestedRelease?.groupId === groupId
+                            ? requestedRelease
+                            : undefined
                         }
-                        searchRelease={
-                          searchReleaseSelections[groupId] ?? prepareReleaseId
-                        }
-                        onPrepared={setPreparedReleaseMBID}
+                        onPendingChange={onPreparationPendingChange}
+                        onPrepared={(id) => {
+                          if (
+                            preparationRoute.current === window.location.hash
+                          ) {
+                            setPreparedReleaseMBID(id);
+                          }
+                        }}
                       />
                     </>
                   ) : null}
-                  <h3 className="font-medium">{copy.savedEvaluation}</h3>
-                  <label className="block text-sm font-medium">
-                    {copy.releaseSelectionLabel}
-                    <select
-                      disabled={busy || authorityBusy || sameGroupInFlight}
-                      className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
-                      value={selectedReleaseId}
-                      onChange={(event) => changeRelease(event.target.value)}
-                    >
-                      <option value="">{copy.chooseRelease}</option>
-                      {releases.map((item) => (
-                        <option
-                          key={item.provider_release_id}
-                          value={item.provider_release_id}
+                  {review?.evaluated && review.proposal_available ? (
+                    <>
+                      <h3 className="font-medium">{copy.savedEvaluation}</h3>
+                      <label className="block text-sm font-medium">
+                        {copy.releaseSelectionLabel}
+                        <select
+                          disabled={releaseSelectionLocked}
+                          className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
+                          value={localMode ? "" : selectedReleaseId}
+                          onChange={(event) =>
+                            changeRelease(event.target.value)
+                          }
                         >
-                          {layoutLabel(item, releases, copy)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {savedSelectedId && selectedReleaseId === savedSelectedId ? (
-                    <p className="text-sm">{copy.savedRelease}</p>
-                  ) : null}
-                  <details className="rounded border border-[var(--line)] p-2">
-                    <summary className="cursor-pointer font-medium">
-                      {copy.savedCandidatesHeading}
-                    </summary>
-                    {review.candidates?.length ? (
-                      <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto text-sm">
-                        {review.candidates.flatMap((candidate) =>
-                          candidate.positions?.length
-                            ? candidate.positions.map((position) => (
-                                <li
-                                  key={`${candidate.file_member_id}-${position.track_id}`}
-                                  className="rounded border border-stone-200 p-2"
-                                >
-                                  <strong>
-                                    {fileLabel(
-                                      candidate.file_member_id,
-                                      memberIds.indexOf(
-                                        candidate.file_member_id,
-                                      ),
-                                    )}
-                                  </strong>
-                                  <p>
-                                    {releases.find(
-                                      (item) =>
-                                        item.release_id ===
-                                          candidate.release_id ||
-                                        item.provider_release_id ===
-                                          candidate.release_id,
-                                    )?.title ?? copy.releaseOutsideLayout}
-                                  </p>
-                                  <p>
-                                    {copy.releaseConfidence}{" "}
-                                    {Number.isFinite(
-                                      candidate.release_confidence,
-                                    )
-                                      ? candidate.release_confidence
-                                      : copy.unknown}{" "}
-                                    · {copy.positions}{" "}
-                                    {position.displayed_number ||
-                                      position.position + 1}{" "}
-                                    —{" "}
-                                    {position.assignment_confidence ??
-                                      copy.unknown}
-                                  </p>
-                                </li>
-                              ))
-                            : [
-                                <li
-                                  key={`${candidate.file_member_id}-${candidate.release_id}`}
-                                  className="rounded border border-stone-200 p-2"
-                                >
-                                  <strong>
-                                    {fileLabel(
-                                      candidate.file_member_id,
-                                      memberIds.indexOf(
-                                        candidate.file_member_id,
-                                      ),
-                                    )}
-                                  </strong>
-                                  <p>
-                                    {releases.find(
-                                      (item) =>
-                                        item.release_id ===
-                                          candidate.release_id ||
-                                        item.provider_release_id ===
-                                          candidate.release_id,
-                                    )?.title ?? copy.releaseOutsideLayout}
-                                  </p>
-                                  <p>
-                                    {copy.releaseConfidence}{" "}
-                                    {Number.isFinite(
-                                      candidate.release_confidence,
-                                    )
-                                      ? candidate.release_confidence
-                                      : copy.unknown}
-                                  </p>
-                                </li>,
-                              ],
+                          <option value="">{copy.chooseRelease}</option>
+                          {releases.map((item) => (
+                            <option
+                              key={item.provider_release_id}
+                              value={item.provider_release_id}
+                            >
+                              {layoutLabel(item, releases, copy)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {!localMode &&
+                      savedSelectedId &&
+                      selectedReleaseId === savedSelectedId ? (
+                        <p className="text-sm">{copy.savedRelease}</p>
+                      ) : null}
+                      <details className="rounded border border-[var(--line)] p-2">
+                        <summary className="cursor-pointer font-medium">
+                          {copy.savedCandidatesHeading}
+                        </summary>
+                        {review.candidates?.length ? (
+                          <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto text-sm">
+                            {review.candidates.flatMap((candidate) =>
+                              candidate.positions?.length
+                                ? candidate.positions.map((position) => (
+                                    <li
+                                      key={`${candidate.file_member_id}-${position.track_id}`}
+                                      className="rounded border border-stone-200 p-2"
+                                    >
+                                      <strong>
+                                        {fileLabel(
+                                          candidate.file_member_id,
+                                          memberIds.indexOf(
+                                            candidate.file_member_id,
+                                          ),
+                                        )}
+                                      </strong>
+                                      <p>
+                                        {releases.find(
+                                          (item) =>
+                                            item.release_id ===
+                                              candidate.release_id ||
+                                            item.provider_release_id ===
+                                              candidate.release_id,
+                                        )?.title ?? copy.releaseOutsideLayout}
+                                      </p>
+                                      <p>
+                                        {copy.releaseConfidence}{" "}
+                                        {Number.isFinite(
+                                          candidate.release_confidence,
+                                        )
+                                          ? candidate.release_confidence
+                                          : copy.unknown}{" "}
+                                        · {copy.positions}{" "}
+                                        {position.displayed_number ||
+                                          position.position + 1}{" "}
+                                        —{" "}
+                                        {position.assignment_confidence ??
+                                          copy.unknown}
+                                      </p>
+                                    </li>
+                                  ))
+                                : [
+                                    <li
+                                      key={`${candidate.file_member_id}-${candidate.release_id}`}
+                                      className="rounded border border-stone-200 p-2"
+                                    >
+                                      <strong>
+                                        {fileLabel(
+                                          candidate.file_member_id,
+                                          memberIds.indexOf(
+                                            candidate.file_member_id,
+                                          ),
+                                        )}
+                                      </strong>
+                                      <p>
+                                        {releases.find(
+                                          (item) =>
+                                            item.release_id ===
+                                              candidate.release_id ||
+                                            item.provider_release_id ===
+                                              candidate.release_id,
+                                        )?.title ?? copy.releaseOutsideLayout}
+                                      </p>
+                                      <p>
+                                        {copy.releaseConfidence}{" "}
+                                        {Number.isFinite(
+                                          candidate.release_confidence,
+                                        )
+                                          ? candidate.release_confidence
+                                          : copy.unknown}
+                                      </p>
+                                    </li>,
+                                  ],
+                            )}
+                          </ul>
+                        ) : (
+                          <p className="text-sm">{copy.noCandidateEdges}</p>
                         )}
-                      </ul>
-                    ) : (
-                      <p className="text-sm">{copy.noCandidateEdges}</p>
-                    )}
-                  </details>
+                      </details>
+                    </>
+                  ) : null}
                 </section>
 
-                {release ? (
+                {workspaceRelease ? (
                   <MatchingBoard
                     groupId={groupId}
-                    release={release}
-                    members={memberIds}
-                    sources={boardSources}
-                    assignments={assignmentsByMember}
-                    automaticAssignments={savedAssignments}
-                    savedScores={savedScores}
-                    disabled={busy || authorityBusy || sameGroupInFlight}
+                    release={workspaceRelease}
+                    members={workspaceMembers}
+                    sources={workspaceSources}
+                    assignments={workspaceAssignments}
+                    automaticAssignments={
+                      localMode ? undefined : savedAssignments
+                    }
+                    savedScores={localMode ? undefined : savedScores}
+                    disabled={workspaceBusy}
                     inspectedTrackId={inspectedPosition?.track_id}
-                    onAssign={assign}
-                    onUnassign={(memberId) => assign(memberId, "")}
+                    onAssign={assignWorkspaceFile}
+                    onUnassign={(memberId) => assignWorkspaceFile(memberId, "")}
                     onInspectPosition={(trackId) => {
                       setInspectedTrackId(trackId);
-                      const assigned = memberIds.filter(
-                        (id) => assignmentsByMember[id] === trackId,
+                      const assigned = workspaceMembers.filter(
+                        (id) => workspaceAssignments[id] === trackId,
                       );
                       setInspectedMemberId((current) =>
                         assigned.includes(current)
@@ -1410,33 +1460,44 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     }}
                     onInspectSource={(memberId) => {
                       setInspectedMemberId(memberId);
-                      setInspectedTrackId(assignmentsByMember[memberId] ?? "");
+                      setInspectedTrackId(workspaceAssignments[memberId] ?? "");
                     }}
                     onInspectPair={(memberId, trackId) => {
                       setInspectedMemberId(memberId);
                       setInspectedTrackId(trackId);
                     }}
-                    renderPositionMeta={({ position }) => (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-xs text-stone-700">
-                          {evidenceOverrideMessages[locale].tagOverridesLegend(
-                            positionLabel(position, copy),
-                          )}
-                        </summary>
-                        <TrackTagOverrides
-                          title={positionLabel(position, copy)}
-                          trackId={position.track_id}
-                          override={
-                            tagOverridesByTrack[position.track_id] ??
-                            emptyTrackTagOverride()
-                          }
-                          disabled={busy || authorityBusy || sameGroupInFlight}
-                          onChange={(override) =>
-                            updateTrackTagOverride(position.track_id, override)
-                          }
-                        />
-                      </details>
-                    )}
+                    renderPositionMeta={
+                      localMode
+                        ? undefined
+                        : ({ position }) => (
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-xs text-stone-700">
+                                {evidenceOverrideMessages[
+                                  locale
+                                ].tagOverridesLegend(
+                                  positionLabel(position, copy),
+                                )}
+                              </summary>
+                              <TrackTagOverrides
+                                title={positionLabel(position, copy)}
+                                trackId={position.track_id}
+                                override={
+                                  tagOverridesByTrack[position.track_id] ??
+                                  emptyTrackTagOverride()
+                                }
+                                disabled={
+                                  busy || authorityBusy || sameGroupInFlight
+                                }
+                                onChange={(override) =>
+                                  updateTrackTagOverride(
+                                    position.track_id,
+                                    override,
+                                  )
+                                }
+                              />
+                            </details>
+                          )
+                    }
                   />
                 ) : (
                   <>
@@ -1451,9 +1512,22 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                       >
                         {copy.positionHeading}
                       </h2>
-                      <p className={matchingBoardClass.instructions}>
-                        {copy.choosePrepareRelease}
-                      </p>
+                      {local.status === "loading" ? (
+                        <p
+                          role="status"
+                          className={matchingBoardClass.instructions}
+                        >
+                          {localMatchingCopy.loadingTracks}
+                        </p>
+                      ) : local.status === "error" ? (
+                        <AppButton onPress={() => void local.read()}>
+                          {copy.retryReading}
+                        </AppButton>
+                      ) : (
+                        <p className={matchingBoardClass.instructions}>
+                          {copy.choosePrepareRelease}
+                        </p>
+                      )}
                     </section>
                     <section
                       data-matching-sources
@@ -1534,7 +1608,26 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     className={matchingInspectorActions}
                     aria-label={copy.assignmentActions}
                   >
-                    {error ? (
+                    {localMode && local.error ? (
+                      <p
+                        role="alert"
+                        className="w-full rounded border border-red-600 p-2 text-sm"
+                      >
+                        {local.error}
+                      </p>
+                    ) : null}
+                    {localMode && local.notice ? (
+                      <p
+                        role="status"
+                        className="w-full rounded border border-green-700 p-2 text-sm"
+                      >
+                        {localMatchingCopy.notice(local.notice)}
+                      </p>
+                    ) : null}
+                    {localMode && local.stale ? (
+                      <p role="status">{localMatchingCopy.staleNotice}</p>
+                    ) : null}
+                    {!localMode && error ? (
                       <p
                         role="alert"
                         className="w-full rounded border border-red-600 p-2 text-sm"
@@ -1542,7 +1635,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         {incomingFeedbackText(locale, error)}
                       </p>
                     ) : null}
-                    {notice ? (
+                    {!localMode && notice ? (
                       <p
                         role="status"
                         className="w-full rounded border border-green-700 p-2 text-sm"
@@ -1550,19 +1643,41 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         {incomingFeedbackText(locale, notice)}
                       </p>
                     ) : null}
-                    <AppButton
-                      isDisabled={
-                        sameGroupInFlight ||
-                        !release ||
-                        !review.evaluation_revision
-                      }
-                      onPress={() => void createPreview()}
-                    >
-                      {busy && !currentRetryIntent
-                        ? copy.processing
-                        : copy.previewAll}
-                    </AppButton>
-                    {error?.refresh === "evaluation" ? (
+                    {localMode ? (
+                      <AppButton
+                        isDisabled={workspaceBusy || !local.canPreview}
+                        onPress={() => void local.preview()}
+                      >
+                        {local.busy === "preview"
+                          ? copy.processing
+                          : copy.previewAll}
+                      </AppButton>
+                    ) : (
+                      <AppButton
+                        isDisabled={
+                          workspaceBusy ||
+                          !release ||
+                          !review?.evaluation_revision
+                        }
+                        onPress={() => void createPreview()}
+                      >
+                        {busy && !currentRetryIntent
+                          ? copy.processing
+                          : copy.previewAll}
+                      </AppButton>
+                    )}
+                    {localMode &&
+                    local.pending &&
+                    local.release &&
+                    !local.previewResult ? (
+                      <AppButton
+                        isDisabled={workspaceBusy || !local.canConfirm}
+                        onPress={() => void local.confirm()}
+                      >
+                        {copy.retryConfirmation}
+                      </AppButton>
+                    ) : null}
+                    {!localMode && error?.refresh === "evaluation" ? (
                       <AppButton
                         isDisabled={sameGroupInFlight}
                         onPress={() => void reloadReview()}
@@ -1647,7 +1762,51 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               </section>
             ) : null}
 
-            {currentPreview ? (
+            {localMode && local.previewResult ? (
+              <MatchingPreview
+                heading={copy.previewHeading}
+                releaseTitle={local.previewResult.release_title}
+                summary={copy.previewSummary(
+                  local.previewResult.sources?.length ?? 0,
+                  local.previewResult.omitted_file_member_ids?.length ?? 0,
+                )}
+                locale={locale}
+                rows={[
+                  ...(local.previewResult.sources ?? []).map(
+                    (source, index) => {
+                      const position = workspaceRelease?.positions?.find(
+                        (track) =>
+                          track.track_id ===
+                          workspaceAssignments[source.file_member_id],
+                      );
+                      return {
+                        key: source.file_member_id,
+                        source:
+                          source.locations?.find(Boolean) ??
+                          fileLabel(source.file_member_id, index),
+                        position: position
+                          ? positionLabel(position, copy)
+                          : undefined,
+                      };
+                    },
+                  ),
+                  ...(local.previewResult.omitted_file_member_ids ?? []).map(
+                    (id) => ({
+                      key: id,
+                      source: fileLabel(id, workspaceMembers.indexOf(id)),
+                    }),
+                  ),
+                ]}
+                primary={{
+                  label: local.pending
+                    ? copy.retryConfirmation
+                    : copy.confirmExplicitly,
+                  onPress: () => void local.confirm(),
+                  disabled: workspaceBusy || !local.canConfirm,
+                }}
+              />
+            ) : null}
+            {!localMode && currentPreview ? (
               <MatchingPreview
                 heading={copy.previewHeading}
                 headingRef={previewHeadingRef}
@@ -1718,7 +1877,15 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                 ) : null}
               </MatchingPreview>
             ) : null}
-            {receipt?.groupId === groupId ? (
+            {localMode && local.receipt ? (
+              <p
+                role="status"
+                className="rounded border border-green-700 bg-white p-4"
+              >
+                {localMatchingCopy.receipt(local.receipt.release_title)}
+              </p>
+            ) : null}
+            {!localMode && receipt?.groupId === groupId ? (
               <section
                 className="rounded border border-green-700 bg-white p-4"
                 aria-labelledby="receipt-title"

@@ -29,7 +29,6 @@ import {
   incomingGroupsListRoute,
   parseIncomingGroupsRoute,
 } from "./incomingGroupsRoute";
-import { localMatchingMessages } from "./localMatchingMessages";
 
 const ids = {
   group: "group-1",
@@ -254,7 +253,14 @@ function setup(
   window.location.hash =
     initialRoute.view === "list"
       ? incomingGroupsListHref(initialRoute.expandedGroupIds)
-      : incomingGroupMatchingHref(initialRoute.groupId, initialRoute.releaseId);
+      : incomingGroupMatchingHref(
+          initialRoute.groupId,
+          initialRoute.releaseId,
+          {
+            localReleaseId: initialRoute.localReleaseId,
+            prepareReleaseId: initialRoute.prepareReleaseId,
+          },
+        );
   server.use(
     http.get("/api/incoming-groups", () => {
       if (counts) counts.groups += 1;
@@ -347,17 +353,52 @@ afterEach(() => {
 it.each([
   "ru",
   "en",
-] as const)("shows the localized Local provider matching summary (%s)", async (locale) => {
-  setup(review(), locale, undefined, false, {
-    view: "matching",
-    groupId: ids.group,
-  });
+] as const)("opens a deep-linked Local release in the common board without a saved evaluation (%s)", async (locale) => {
+  server.use(
+    http.get("/api/provider-catalog/releases/local-edition", () =>
+      HttpResponse.json({
+        id: "local-edition",
+        title: "Local compilation",
+        kind: "release",
+        provider_code: "local",
+        tracks: [
+          {
+            id: "local-track",
+            recording_id: "local-recording",
+            recording_title: "Local track",
+            position: 0,
+            displayed_number: "1",
+          },
+        ],
+      }),
+    ),
+  );
+  setup(
+    review({
+      evaluated: false,
+      proposal_available: false,
+      members: [],
+      releases: [],
+    }),
+    locale,
+    undefined,
+    false,
+    {
+      view: "matching",
+      groupId: ids.group,
+      localReleaseId: "local-edition",
+    },
+  );
   const matching = await openMatching(locale);
   expect(
-    await within(matching).findByText(
-      localMatchingMessages[locale].sectionSummary,
-    ),
+    await within(matching).findByRole("heading", { name: /Local compilation/ }),
   ).toBeVisible();
+  const position =
+    locale === "ru"
+      ? "Диск 1 · трек 1 · Local track"
+      : "Disc 1 · track 1 · Local track";
+  assignFromRail("folder/01.flac", position, locale);
+  expectAssigned("folder/01.flac", position, locale);
 });
 
 it("opens one group matching route from the list and keeps the draft when returning", async () => {

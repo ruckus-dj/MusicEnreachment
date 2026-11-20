@@ -1,16 +1,18 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   IncomingFileResponse,
   IncomingGroupResponse,
   LocalProviderItem,
+  LocalProviderTrack,
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { LocalReleaseEditor } from "./LocalReleaseEditor";
+import { useLocalMatching } from "./LocalReleaseEditor";
+import { localMatchingMessages } from "./localMatchingMessages";
 
 const releaseID = "local-provider-release";
 const fileID = "incoming-member";
@@ -102,6 +104,11 @@ function incomingFile(
   };
 }
 
+function trackLabel(track: LocalProviderTrack) {
+  const number = track.displayed_number.trim() || String(track.position + 1);
+  return `${number}. ${track.title_override || track.recording_title}`;
+}
+
 function LocaleToggle() {
   const { locale, setPreference } = useI18n();
   return (
@@ -111,6 +118,124 @@ function LocaleToggle() {
     >
       Toggle locale
     </button>
+  );
+}
+
+interface HarnessProps {
+  group: IncomingGroupResponse | undefined;
+  files: IncomingFileResponse[];
+  authorityRevision: number | undefined;
+  preferredReleaseId?: string;
+  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
+}
+
+/**
+ * Minimal host for the headless controller. It mirrors the production widgets
+ * the removed panel used to own: release summary, per-file assignment selects,
+ * preview/confirm actions and localized status output.
+ */
+function LocalMatchingHarness({
+  group,
+  files,
+  authorityRevision,
+  preferredReleaseId,
+  onConfirmed,
+}: HarnessProps) {
+  const { locale } = useI18n();
+  const copy = localMatchingMessages[locale];
+  const matching = useLocalMatching({
+    group,
+    files,
+    authorityRevision,
+    preferredReleaseId,
+    onConfirmed,
+  });
+
+  function assign(fileMemberID: string, trackID: string) {
+    const next: Record<string, string> = { ...matching.assignments };
+    if (trackID) next[fileMemberID] = trackID;
+    else delete next[fileMemberID];
+    matching.setAssignments(next);
+  }
+
+  return (
+    <section>
+      <h2>{copy.heading}</h2>
+      {matching.release && (
+        <p role="status">
+          {copy.releaseTrackCount(
+            matching.release.title,
+            matching.tracks.length,
+          )}
+        </p>
+      )}
+      {matching.release &&
+        matching.files.map((member) => {
+          const name =
+            member.locations?.[0]?.relative_path || member.variant_id;
+          return (
+            <label key={member.variant_id}>
+              {name}
+              <select
+                aria-label={copy.trackForFile(name)}
+                value={matching.assignments[member.variant_id] ?? ""}
+                disabled={matching.pending || matching.confirmationPending}
+                onChange={(event) =>
+                  assign(member.variant_id, event.target.value)
+                }
+              >
+                <option value="">{copy.unassigned}</option>
+                {matching.tracks.map((track) => (
+                  <option key={track.id} value={track.id}>
+                    {trackLabel(track)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      {matching.error && <p role="alert">{matching.error}</p>}
+      {matching.notice && <p role="status">{copy.notice(matching.notice)}</p>}
+      {matching.stale && <p role="status">{copy.staleNotice}</p>}
+      <button
+        type="button"
+        disabled={!matching.canPreview}
+        onClick={() => void matching.preview()}
+      >
+        {matching.busy === "preview" ? copy.previewing : copy.previewAction}
+      </button>
+      {(matching.pending || matching.previewResult) && (
+        <button
+          type="button"
+          disabled={!matching.canConfirm}
+          onClick={() => void matching.confirm()}
+        >
+          {matching.pending ? copy.confirmRetry : copy.confirmAction}
+        </button>
+      )}
+      <button type="button" onClick={() => void matching.read()}>
+        Reread release
+      </button>
+      {matching.previewResult && (
+        <section aria-label={copy.previewTitle}>
+          <h3>{copy.previewTitle}</h3>
+          <p>
+            {copy.previewSummary(
+              matching.previewResult.release_title,
+              matching.previewResult.tracks?.length ?? 0,
+            )}
+          </p>
+          <p>
+            {copy.omittedFiles(
+              matching.previewResult.omitted_file_member_ids?.length ?? 0,
+            )}
+          </p>
+        </section>
+      )}
+      {matching.receipt?.local_release_id && (
+        <p role="status">{copy.receipt(matching.receipt.release_title)}</p>
+      )}
+    </section>
   );
 }
 
@@ -138,7 +263,7 @@ it("opens the exact catalog release with no file assignments or matching writes"
   );
   render(
     <I18nProvider>
-      <LocalReleaseEditor
+      <LocalMatchingHarness
         group={group}
         files={[file]}
         authorityRevision={2}
@@ -149,7 +274,9 @@ it("opens the exact catalog release with no file assignments or matching writes"
   expect(
     await screen.findByRole("option", { name: "1. Переименованная дорожка" }),
   ).toBeInTheDocument();
-  expect(screen.getByLabelText("Локальный релиз")).toHaveValue(releaseID);
+  expect(
+    screen.getByText("Мой локальный альбом · 1 дорожка"),
+  ).toBeInTheDocument();
   expect(screen.getByLabelText("Дорожка для файла album/01.flac")).toHaveValue(
     "",
   );
@@ -157,25 +284,13 @@ it("opens the exact catalog release with no file assignments or matching writes"
   expect(matching).not.toHaveBeenCalled();
 });
 
-it("selects a local provider release, assigns an incoming file, and confirms the frozen preview", async () => {
+it("assigns an incoming file and confirms the frozen preview with an exact retry", async () => {
   let previewBody: Record<string, unknown> | undefined;
-  let catalogRequests = 0;
   let releaseRequests = 0;
   let previewRequests = 0;
   const confirmBodies: Record<string, unknown>[] = [];
   let failFirstConfirmation = true;
   server.use(
-    http.get("/api/provider-catalog/releases", ({ request }) => {
-      catalogRequests += 1;
-      const url = new URL(request.url);
-      expect(url.searchParams.get("provider")).toBe("local");
-      return HttpResponse.json({
-        items: [release],
-        limit: 100,
-        offset: 0,
-        total: 1,
-      });
-    }),
     http.get(`/api/provider-catalog/releases/${releaseID}`, () => {
       releaseRequests += 1;
       return HttpResponse.json(release);
@@ -207,21 +322,15 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   const view = render(
     <I18nProvider>
       <LocaleToggle />
-      <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />
+      <LocalMatchingHarness
+        group={group}
+        files={[file]}
+        authorityRevision={2}
+        preferredReleaseId={releaseID}
+      />
     </I18nProvider>,
   );
 
-  fireEvent.click(
-    screen.getByRole("button", { name: "Загрузить локальные релизы" }),
-  );
-  fireEvent.change(await screen.findByLabelText("Локальный релиз"), {
-    target: { value: releaseID },
-  });
-  expect(
-    await screen.findByRole("option", {
-      name: "1. Переименованная дорожка",
-    }),
-  ).toBeInTheDocument();
   fireEvent.change(
     await screen.findByLabelText("Дорожка для файла album/01.flac"),
     { target: { value: trackID } },
@@ -241,7 +350,6 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   expect(
     screen.getByText(/Мой локальный альбом · 0 tracks/),
   ).toBeInTheDocument();
-  expect(catalogRequests).toBe(1);
   expect(releaseRequests).toBe(1);
   expect(previewRequests).toBe(1);
   fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
@@ -250,7 +358,6 @@ it("selects a local provider release, assigns an incoming file, and confirms the
       name: "Предпросмотр — только чтение",
     }),
   ).toBeInTheDocument();
-  expect(catalogRequests).toBe(1);
   expect(releaseRequests).toBe(1);
   expect(previewRequests).toBe(1);
 
@@ -294,7 +401,6 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   expect(screen.getByLabelText("Track for file album/01.flac")).toHaveValue(
     trackID,
   );
-  expect(catalogRequests).toBe(1);
   expect(releaseRequests).toBe(1);
   expect(previewRequests).toBe(1);
   fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
@@ -311,9 +417,17 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   storage.setItem("melotrove-language", "en");
   render(
     <I18nProvider>
-      <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />
+      <LocalMatchingHarness
+        group={group}
+        files={[file]}
+        authorityRevision={2}
+        preferredReleaseId={releaseID}
+      />
     </I18nProvider>,
   );
+  expect(
+    await screen.findByLabelText("Track for file album/01.flac"),
+  ).toBeInTheDocument();
   expect(
     screen.getByRole("heading", { name: "Match with a Local release" }),
   ).toBeInTheDocument();
@@ -356,7 +470,7 @@ it("orders assignment files by disc and track and previews the chosen variant", 
   );
   render(
     <I18nProvider>
-      <LocalReleaseEditor
+      <LocalMatchingHarness
         group={shuffledGroup}
         files={shuffledFiles}
         authorityRevision={2}
@@ -392,4 +506,155 @@ it("orders assignment files by disc and track and previews the chosen variant", 
     expected_group_revision: group.revision,
     provider_release_id: releaseID,
   });
+});
+
+it("keeps the draft while invalidating a stale preview and replays an uncertain confirmation exactly after a revision change", async () => {
+  let releaseRequests = 0;
+  const previewBodies: Record<string, unknown>[] = [];
+  const confirmBodies: Record<string, unknown>[] = [];
+  let failFirstConfirmation = true;
+  server.use(
+    http.get(`/api/provider-catalog/releases/${releaseID}`, () => {
+      releaseRequests += 1;
+      return HttpResponse.json(release);
+    }),
+    http.post(
+      `/api/incoming-groups/${group.id}/matching/local/preview`,
+      async ({ request }) => {
+        previewBodies.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json(matchingPreview);
+      },
+    ),
+    http.post(
+      `/api/incoming-groups/${group.id}/matching/local/confirm`,
+      async ({ request }) => {
+        confirmBodies.push((await request.json()) as Record<string, unknown>);
+        if (failFirstConfirmation) {
+          failFirstConfirmation = false;
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({
+          ...matchingPreview,
+          local_release_id: "library-release",
+        });
+      },
+    ),
+  );
+
+  const view = render(
+    <I18nProvider>
+      <LocalMatchingHarness
+        group={group}
+        files={[file]}
+        authorityRevision={2}
+        preferredReleaseId={releaseID}
+      />
+    </I18nProvider>,
+  );
+
+  fireEvent.change(
+    await screen.findByLabelText("Дорожка для файла album/01.flac"),
+    { target: { value: trackID } },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр назначения" }),
+  );
+  await screen.findByRole("heading", { name: "Предпросмотр — только чтение" });
+  expect(previewBodies).toEqual([
+    {
+      assignments: [{ file_member_id: fileID, provider_track_id: trackID }],
+      expected_authority_revision: 2,
+      expected_group_revision: group.revision,
+      provider_release_id: releaseID,
+    },
+  ]);
+
+  // A repeated read keeps the draft but must discard the stale preview.
+  fireEvent.click(screen.getByRole("button", { name: "Reread release" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("heading", { name: "Предпросмотр — только чтение" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    await screen.findByLabelText("Дорожка для файла album/01.flac"),
+  ).toHaveValue(trackID);
+  expect(releaseRequests).toBe(2);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр назначения" }),
+  );
+  await screen.findByRole("heading", { name: "Предпросмотр — только чтение" });
+
+  // A new authority revision invalidates the preview without touching the draft.
+  view.rerender(
+    <I18nProvider>
+      <LocalMatchingHarness
+        group={group}
+        files={[file]}
+        authorityRevision={3}
+        preferredReleaseId={releaseID}
+      />
+    </I18nProvider>,
+  );
+  await screen.findByText(
+    /Снимок изменился\. После обновления данных создайте новый предпросмотр/,
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Предпросмотр — только чтение" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Дорожка для файла album/01.flac")).toHaveValue(
+    trackID,
+  );
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр назначения" }),
+  );
+  await screen.findByRole("heading", { name: "Предпросмотр — только чтение" });
+  expect(previewBodies.at(-1)).toMatchObject({
+    assignments: [{ file_member_id: fileID, provider_track_id: trackID }],
+    expected_authority_revision: 3,
+  });
+
+  // The uncertain confirmation retains its body and request id.
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подтвердить сопоставление" }),
+  );
+  await screen.findByText(
+    /Повторите запрос, чтобы безопасно проверить тот же результат/,
+  );
+
+  // A later scope change hides the preview but must not drop the pending replay.
+  view.rerender(
+    <I18nProvider>
+      <LocalMatchingHarness
+        group={group}
+        files={[file]}
+        authorityRevision={4}
+        preferredReleaseId={releaseID}
+      />
+    </I18nProvider>,
+  );
+  await screen.findByText(
+    /Снимок изменился\. После обновления данных создайте новый предпросмотр/,
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Повторить тот же запрос подтверждения",
+    }),
+  );
+  await screen.findByText(
+    /Сопоставление подтверждено для релиза Мой локальный альбом/,
+  );
+
+  expect(confirmBodies).toHaveLength(2);
+  expect(confirmBodies[1]).toEqual(confirmBodies[0]);
+  expect(confirmBodies[0]).toMatchObject({
+    assignments: [{ file_member_id: fileID, provider_track_id: trackID }],
+    expected_authority_revision: 3,
+    expected_group_revision: group.revision,
+    preview_digest: matchingPreview.preview_digest,
+    provider_release_id: releaseID,
+  });
+  expect(confirmBodies[0]?.request_id).toEqual(expect.any(String));
 });

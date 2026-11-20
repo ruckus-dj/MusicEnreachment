@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
@@ -6,7 +6,6 @@ import {
 import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupLocalMatching,
-  listLocalProviderReleases,
   previewIncomingGroupLocalMatching,
   readLocalProviderRelease,
 } from "../../api/generated/client";
@@ -14,11 +13,12 @@ import type {
   IncomingFileResponse,
   IncomingGroupResponse,
   LocalProviderItem,
+  LocalProviderTrack,
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { compareSourceFiles } from "../matchingWorkspace/sourceFileOrder";
+import type { MatchingWorkspaceRelease } from "../matchingWorkspace/types";
 import {
   incomingSourceFileName,
   readIncomingSourceTrackOrder,
@@ -57,13 +57,9 @@ type EditorState = {
   busy?: "preview" | "confirm";
   busyRequest?: number;
   error?: string;
+  readError?: string;
   notice?: LocalMatchingNotice;
   stale?: boolean;
-};
-type CatalogState = {
-  items?: LocalProviderItem[];
-  busy?: boolean;
-  error?: string;
 };
 
 const emptyEditorState = (): EditorState => ({
@@ -71,6 +67,76 @@ const emptyEditorState = (): EditorState => ({
   assignments: {},
   assignmentDrafts: {},
 });
+
+const noMembers: readonly string[] = [];
+
+export type LocalMatchingStatus = "idle" | "loading" | "ready" | "error";
+
+export interface LocalMatchingProps {
+  group: IncomingGroupResponse | undefined;
+  files: IncomingFileResponse[];
+  authorityRevision: number | undefined;
+  preferredReleaseId?: string;
+  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
+}
+
+export interface LocalMatchingController {
+  /** The exact Local catalog release loaded for `preferredReleaseId`. */
+  release: LocalProviderItem | undefined;
+  /** Pure neutral adapter for `MatchingBoard` and other workspace UI. */
+  workspaceRelease: MatchingWorkspaceRelease | undefined;
+  /** Group members in assignment source order (disc, track, then name). */
+  files: readonly IncomingFileResponse[];
+  /** Tracks of the loaded release, in catalog order. */
+  tracks: readonly LocalProviderTrack[];
+  /** Read-only draft, keyed by incoming file member/variant id. */
+  assignments: Readonly<Record<string, string>>;
+  /** Replaces the draft and invalidates any preview for the old draft. */
+  setAssignments: (next: Readonly<Record<string, string>>) => void;
+  /** Re-reads the intended release. Keeps drafts and a pending retry. */
+  read: () => Promise<void>;
+  preview: () => Promise<void>;
+  confirm: () => Promise<void>;
+  /** Frozen preview response, only while it belongs to the current scope. */
+  previewResult: MatchingLocalPreview | undefined;
+  receipt: MatchingLocalPreview | undefined;
+  error: string | undefined;
+  notice: LocalMatchingNotice | undefined;
+  stale: boolean;
+  busy: "preview" | "confirm" | undefined;
+  /** An uncertain confirmation body/id is retained for an exact replay. */
+  pending: boolean;
+  /** The confirmation request is in flight right now. */
+  confirmationPending: boolean;
+  /** Release-read state; action errors are reported separately via `error`. */
+  status: LocalMatchingStatus;
+  canPreview: boolean;
+  canConfirm: boolean;
+}
+
+/**
+ * Pure projection from the Local catalog shape to the neutral matching
+ * workspace release shape. Local releases have a single flat medium.
+ */
+export function localMatchingWorkspaceRelease(
+  release: LocalProviderItem | undefined,
+): MatchingWorkspaceRelease | undefined {
+  if (!release) return undefined;
+  return {
+    release_id: release.id,
+    provider_release_id: release.id,
+    title: release.title || "",
+    tracklist_complete: true,
+    positions: (release.tracks ?? []).map((track) => ({
+      track_id: track.id,
+      medium: 0,
+      position: track.position,
+      displayed_number: track.displayed_number,
+      recording_id: track.recording_id,
+      title: track.title_override || track.recording_title,
+    })),
+  };
+}
 
 function message(reason: unknown, fallback: string) {
   return sharedErrorMessage(reason, fallback) || fallback;
@@ -85,46 +151,43 @@ function responseMessage(
     .message;
 }
 
-function fileLabel(file: IncomingFileResponse) {
-  return file.locations?.[0]?.relative_path || file.variant_id;
-}
-
-function trackLabel(track: NonNullable<LocalProviderItem["tracks"]>[number]) {
-  const number = track.displayed_number.trim() || String(track.position + 1);
-  return `${number}. ${track.title_override || track.recording_title}`;
-}
-
-export interface LocalReleaseEditorProps {
-  group: IncomingGroupResponse;
-  files: IncomingFileResponse[];
-  authorityRevision: number | undefined;
-  preferredReleaseId?: string;
-  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
-}
-
-export function LocalReleaseEditor({
+/**
+ * Headless controller for exact Local release matching. The intended release is
+ * `preferredReleaseId`; there is no catalog list or release selector here.
+ *
+ * Every preview/confirm body keeps the captured group revision, authority
+ * revision, assignment draft and frozen preview digest. An uncertain confirm
+ * keeps its original body and `request_id`, so `confirm()` can replay it even
+ * after the preview has been hidden by a scope change.
+ */
+export function useLocalMatching({
   group,
   files,
   authorityRevision,
   preferredReleaseId,
   onConfirmed,
-}: LocalReleaseEditorProps) {
+}: LocalMatchingProps): LocalMatchingController {
   const { locale } = useI18n();
   const copy = localMatchingMessages[locale];
   const [states, setStates] = useState<Record<string, EditorState>>({});
-  const [catalogs, setCatalogs] = useState<Record<string, CatalogState>>({});
+  const statesRef = useRef<Record<string, EditorState>>({});
   const sequence = useRef(0);
-  const catalogRequests = useRef<Record<string, number>>({});
-  const detailRequest = useRef(0);
+  const detailRequests = useRef<Record<string, number>>({});
+  const targets = useRef<Record<string, string>>({});
   const previousScopes = useRef<Record<string, string>>({});
   const appliedPreferredReleases = useRef<Record<string, string>>({});
-  const selectedReleaseRef = useRef("");
-  const currentScope = `${group.id}:${group.revision}:${authorityRevision === undefined ? "unknown" : authorityRevision}`;
+  const groupID = group?.id ?? "";
+  const targetReleaseID = preferredReleaseId ?? "";
+  const currentScope = group
+    ? `${group.id}:${group.revision}:${authorityRevision === undefined ? "unknown" : authorityRevision}`
+    : "";
   const currentScopeRef = useRef(currentScope);
   currentScopeRef.current = currentScope;
-  const state = states[group.id] ?? emptyEditorState();
-  selectedReleaseRef.current = state.selectedReleaseID;
-  const memberIds = group.members;
+  const state = groupID
+    ? (states[groupID] ?? emptyEditorState())
+    : emptyEditorState();
+  if (groupID) targets.current[groupID] = targetReleaseID;
+  const memberIds = group?.members ?? noMembers;
   const scopedFiles = useMemo(() => {
     const members = new Set(memberIds);
     const collator = new Intl.Collator(locale, {
@@ -143,118 +206,68 @@ export function LocalReleaseEditor({
       .sort((a, b) => compareSourceFiles(a, b, "track", collator))
       .map(({ file }) => file);
   }, [files, memberIds, locale]);
-  const tracks = state.release?.tracks ?? [];
-  const exactRelease =
-    state.release?.id === state.selectedReleaseID ? state.release : undefined;
-  const catalogItems = catalogs[group.id]?.items;
-  const releaseOptions =
-    catalogItems === undefined
-      ? exactRelease
-        ? [exactRelease]
-        : undefined
-      : exactRelease &&
-          !catalogItems.some((item) => item.id === exactRelease.id)
-        ? [exactRelease, ...catalogItems]
-        : catalogItems;
-  const confirmationInFlight = state.busy === "confirm";
+  const release =
+    group && targetReleaseID && state.selectedReleaseID === targetReleaseID
+      ? state.release
+      : undefined;
+  const tracks = release?.tracks ?? [];
+  const previewCurrent =
+    state.preview?.scope === currentScope &&
+    state.selectedReleaseID === targetReleaseID &&
+    state.preview.body.provider_release_id === targetReleaseID &&
+    state.preview.response.provider_release_id === targetReleaseID
+      ? state.preview
+      : undefined;
+  const confirmationPending = state.busy === "confirm";
+  const status: LocalMatchingStatus =
+    !group || !targetReleaseID
+      ? "idle"
+      : state.selectedReleaseID !== targetReleaseID
+        ? "loading"
+        : release
+          ? "ready"
+          : state.readError
+            ? "error"
+            : "loading";
+  const pending = Boolean(
+    targetReleaseID &&
+      state.pending?.body.provider_release_id === targetReleaseID,
+  );
+  const canPreview =
+    Boolean(group && targetReleaseID && release) &&
+    authorityRevision !== undefined &&
+    state.busy === undefined &&
+    state.pending === undefined;
+  const canConfirm = state.busy === undefined && (pending || !!previewCurrent);
 
-  function update(updateState: (current: EditorState) => EditorState) {
-    setStates((current) => ({
-      ...current,
-      [group.id]: updateState(current[group.id] ?? emptyEditorState()),
-    }));
+  function editorState(targetGroupID: string) {
+    return targetGroupID
+      ? (statesRef.current[targetGroupID] ?? emptyEditorState())
+      : emptyEditorState();
   }
 
-  useEffect(() => {
-    const previous = previousScopes.current[group.id];
-    previousScopes.current[group.id] = currentScope;
-    if (previous === undefined || previous === currentScope) return;
-    sequence.current += 1;
-    setStates((current) => {
-      const existing = current[group.id] ?? emptyEditorState();
-      return {
-        ...current,
-        [group.id]: {
-          ...existing,
-          preview: undefined,
-          stale: true,
-          notice: {
-            key: existing.receipt
-              ? "scopeChangedAfterConfirm"
-              : "scopeChangedBeforeConfirm",
-          },
-        },
+  const updateState = useCallback(
+    (targetGroupID: string, update: (current: EditorState) => EditorState) => {
+      const current = statesRef.current[targetGroupID] ?? emptyEditorState();
+      const next = {
+        ...statesRef.current,
+        [targetGroupID]: update(current),
       };
-    });
-  }, [currentScope, group.id]);
+      statesRef.current = next;
+      setStates(next);
+    },
+    [],
+  );
 
-  async function loadCatalog() {
-    const request = (catalogRequests.current[group.id] ?? 0) + 1;
-    catalogRequests.current[group.id] = request;
-    setCatalogs((current) => ({
-      ...current,
-      [group.id]: { ...current[group.id], busy: true, error: undefined },
-    }));
-    try {
-      const items: LocalProviderItem[] = [];
-      let offset = 0;
-      let total = Number.POSITIVE_INFINITY;
-      while (offset < total) {
-        const response = await listLocalProviderReleases(
-          { provider: "local", limit: 100, offset },
-          { cache: "no-store" },
-        );
-        if (request !== catalogRequests.current[group.id]) return;
-        if (response.status !== 200) {
-          setCatalogs((current) => ({
-            ...current,
-            [group.id]: {
-              ...current[group.id],
-              error: responseMessage(response, copy.loadReleasesError, copy),
-            },
-          }));
-          return;
-        }
-        const page = response.data.items ?? [];
-        items.push(...page);
-        total = response.data.total;
-        offset += page.length;
-        if (page.length === 0) break;
-      }
-      if (request !== catalogRequests.current[group.id]) return;
-      setCatalogs((current) => ({
-        ...current,
-        [group.id]: { items },
-      }));
-    } catch (reason) {
-      if (request === catalogRequests.current[group.id]) {
-        setCatalogs((current) => ({
-          ...current,
-          [group.id]: {
-            ...current[group.id],
-            error: message(reason, copy.loadReleasesError),
-          },
-        }));
-      }
-    } finally {
-      if (request === catalogRequests.current[group.id]) {
-        setCatalogs((current) => ({
-          ...current,
-          [group.id]: { ...current[group.id], busy: false },
-        }));
-      }
-    }
-  }
-
-  async function selectRelease(
+  async function loadRelease(
+    targetGroupID: string,
     releaseID: string,
-    { restoreDraft = true }: { restoreDraft?: boolean } = {},
+    fresh: boolean,
   ) {
-    if (state.pending) return;
-    const request = ++detailRequest.current;
-    selectedReleaseRef.current = releaseID;
+    const request = (detailRequests.current[targetGroupID] ?? 0) + 1;
+    detailRequests.current[targetGroupID] = request;
     sequence.current += 1;
-    update((current) => {
+    updateState(targetGroupID, (current) => {
       const assignmentDrafts = { ...current.assignmentDrafts };
       if (current.selectedReleaseID) {
         assignmentDrafts[current.selectedReleaseID] = current.assignments;
@@ -264,13 +277,14 @@ export function LocalReleaseEditor({
         selectedReleaseID: releaseID,
         release: undefined,
         assignmentDrafts,
-        assignments: restoreDraft
+        assignments: fresh
           ? { ...(assignmentDrafts[releaseID] ?? {}) }
-          : {},
+          : current.assignments,
         preview: undefined,
-        receipt: undefined,
+        receipt: fresh ? undefined : current.receipt,
         error: undefined,
-        notice: undefined,
+        readError: undefined,
+        notice: fresh ? undefined : current.notice,
         stale: false,
       };
     });
@@ -280,74 +294,119 @@ export function LocalReleaseEditor({
         cache: "no-store",
       });
       if (
-        request !== detailRequest.current ||
-        selectedReleaseRef.current !== releaseID
+        request !== detailRequests.current[targetGroupID] ||
+        statesRef.current[targetGroupID]?.selectedReleaseID !== releaseID
       )
         return;
       if (response.status !== 200) {
-        update((current) => ({
+        const text = responseMessage(response, copy.releaseReadError, copy);
+        updateState(targetGroupID, (current) => ({
           ...current,
-          error: responseMessage(response, copy.releaseReadError, copy),
+          release: undefined,
+          readError: text,
+          error: text,
         }));
         return;
       }
-      update((current) => ({ ...current, release: response.data }));
+      updateState(targetGroupID, (current) => ({
+        ...current,
+        release: response.data,
+        readError: undefined,
+      }));
     } catch (reason) {
       if (
-        request === detailRequest.current &&
-        selectedReleaseRef.current === releaseID
+        request === detailRequests.current[targetGroupID] &&
+        statesRef.current[targetGroupID]?.selectedReleaseID === releaseID
       ) {
-        update((current) => ({
+        const text = message(reason, copy.releaseReadError);
+        updateState(targetGroupID, (current) => ({
           ...current,
-          error: message(reason, copy.releaseReadError),
+          release: undefined,
+          readError: text,
+          error: text,
         }));
       }
     }
+  }
+
+  async function selectRelease(
+    releaseID: string,
+    { restoreDraft = true }: { restoreDraft?: boolean } = {},
+  ) {
+    if (!group) return;
+    const current = editorState(group.id);
+    if (current.pending) return;
+    await loadRelease(group.id, releaseID, !restoreDraft);
   }
 
   const selectReleaseRef = useRef(selectRelease);
   selectReleaseRef.current = selectRelease;
 
   useEffect(() => {
+    if (!groupID) return;
+    const previous = previousScopes.current[groupID];
+    previousScopes.current[groupID] = currentScope;
+    if (previous === undefined || previous === currentScope) return;
+    sequence.current += 1;
+    updateState(groupID, (existing) => ({
+      ...existing,
+      preview: undefined,
+      stale: true,
+      notice: {
+        key: existing.receipt
+          ? "scopeChangedAfterConfirm"
+          : "scopeChangedBeforeConfirm",
+      },
+    }));
+  }, [currentScope, groupID, updateState]);
+
+  useEffect(() => {
+    if (!groupID) return;
     if (!preferredReleaseId) {
-      delete appliedPreferredReleases.current[group.id];
+      delete appliedPreferredReleases.current[groupID];
       return;
     }
-    if (appliedPreferredReleases.current[group.id] === preferredReleaseId) {
+    if (appliedPreferredReleases.current[groupID] === preferredReleaseId) {
       return;
     }
     if (state.pending || state.busy === "confirm") return;
-    appliedPreferredReleases.current[group.id] = preferredReleaseId;
+    appliedPreferredReleases.current[groupID] = preferredReleaseId;
     if (state.selectedReleaseID !== preferredReleaseId)
-      void selectReleaseRef.current(preferredReleaseId, {
-        restoreDraft: false,
-      });
+      void selectReleaseRef.current(preferredReleaseId);
   }, [
     preferredReleaseId,
-    group.id,
+    groupID,
     state.pending,
     state.busy,
     state.selectedReleaseID,
   ]);
 
   function makePreviewBody(): PreviewBody | undefined {
+    if (!group) return undefined;
+    const current = editorState(group.id);
     if (authorityRevision === undefined) {
-      update((current) => ({
-        ...current,
+      updateState(group.id, (latest) => ({
+        ...latest,
         error: copy.authorityNotReady,
       }));
       return undefined;
     }
-    if (!state.release || !state.selectedReleaseID) {
-      update((current) => ({
-        ...current,
+    if (
+      !targetReleaseID ||
+      current.selectedReleaseID !== targetReleaseID ||
+      !current.release
+    ) {
+      updateState(group.id, (latest) => ({
+        ...latest,
         error: copy.selectReleaseFirst,
       }));
       return undefined;
     }
     const allowedMembers = new Set(scopedFiles.map((file) => file.variant_id));
-    const allowedTracks = new Set(tracks.map((track) => track.id));
-    const assignments = Object.entries(state.assignments)
+    const allowedTracks = new Set(
+      (current.release.tracks ?? []).map((track) => track.id),
+    );
+    const assignments = Object.entries(current.assignments)
       .filter(
         ([fileID, trackID]) =>
           allowedMembers.has(fileID) && allowedTracks.has(trackID),
@@ -357,28 +416,63 @@ export function LocalReleaseEditor({
         provider_track_id,
       }));
     if (assignments.length === 0) {
-      update((current) => ({
-        ...current,
+      updateState(group.id, (latest) => ({
+        ...latest,
         error: copy.assignAtLeastOne,
       }));
       return undefined;
     }
     return {
-      provider_release_id: state.selectedReleaseID,
+      provider_release_id: current.selectedReleaseID,
       expected_group_revision: group.revision,
       expected_authority_revision: authorityRevision,
       assignments,
     };
   }
 
+  function setAssignments(next: Readonly<Record<string, string>>) {
+    if (!group) return;
+    const current = editorState(group.id);
+    if (current.pending || current.busy === "confirm") return;
+    sequence.current += 1;
+    updateState(group.id, (latest) => {
+      if (latest.pending || latest.busy === "confirm") return latest;
+      return {
+        ...latest,
+        assignments: { ...next },
+        preview: undefined,
+        receipt: undefined,
+        error: undefined,
+        notice: undefined,
+        stale: false,
+      };
+    });
+  }
+
+  async function read() {
+    if (!group) return;
+    const releaseID = targetReleaseID;
+    if (!releaseID) return;
+    const current = editorState(group.id);
+    await loadRelease(
+      group.id,
+      releaseID,
+      current.selectedReleaseID !== releaseID,
+    );
+  }
+
   async function preview() {
-    if (state.pending) return;
+    if (!group) return;
+    const current = editorState(group.id);
+    if (current.pending || current.busy) return;
     const body = makePreviewBody();
     if (!body) return;
+    const targetGroupID = group.id;
+    const requestedReleaseID = body.provider_release_id;
     const request = ++sequence.current;
     const requestedScope = currentScope;
-    update((current) => ({
-      ...current,
+    updateState(targetGroupID, (latest) => ({
+      ...latest,
       busy: "preview",
       busyRequest: request,
       error: undefined,
@@ -386,19 +480,23 @@ export function LocalReleaseEditor({
       stale: false,
     }));
     try {
-      const response = await previewIncomingGroupLocalMatching(group.id, body);
+      const response = await previewIncomingGroupLocalMatching(
+        targetGroupID,
+        body,
+      );
       if (
         request !== sequence.current ||
-        currentScopeRef.current !== requestedScope
+        currentScopeRef.current !== requestedScope ||
+        targets.current[targetGroupID] !== requestedReleaseID
       )
         return;
       if (response.status !== 200) {
-        update((current) => ({
-          ...current,
+        updateState(targetGroupID, (latest) => ({
+          ...latest,
           busy: undefined,
           busyRequest: undefined,
           preview: undefined,
-          pending: response.status === 409 ? undefined : current.pending,
+          pending: response.status === 409 ? undefined : latest.pending,
           stale: response.status === 409,
           error:
             response.status === 409
@@ -407,8 +505,8 @@ export function LocalReleaseEditor({
         }));
         return;
       }
-      update((current) => ({
-        ...current,
+      updateState(targetGroupID, (latest) => ({
+        ...latest,
         busy: undefined,
         busyRequest: undefined,
         preview: { scope: requestedScope, body, response: response.data },
@@ -416,51 +514,76 @@ export function LocalReleaseEditor({
         receipt: undefined,
       }));
     } catch (reason) {
-      if (request === sequence.current) {
-        update((current) => ({
-          ...current,
+      if (
+        request === sequence.current &&
+        currentScopeRef.current === requestedScope &&
+        targets.current[targetGroupID] === requestedReleaseID
+      ) {
+        updateState(targetGroupID, (latest) => ({
+          ...latest,
           busy: undefined,
           busyRequest: undefined,
           error: message(reason, copy.previewError),
         }));
       }
     } finally {
-      update((current) =>
-        current.busyRequest === request
-          ? { ...current, busy: undefined, busyRequest: undefined }
-          : current,
+      updateState(targetGroupID, (latest) =>
+        latest.busyRequest === request
+          ? { ...latest, busy: undefined, busyRequest: undefined }
+          : latest,
       );
     }
   }
 
   async function confirm() {
-    const pending =
-      state.pending ??
-      (state.preview?.scope === currentScope
+    if (!group || !targetReleaseID) return;
+    const targetGroupID = group.id;
+    const current = editorState(targetGroupID);
+    const retainedPending =
+      current.pending &&
+      current.pending.body.provider_release_id === targetReleaseID
+        ? current.pending
+        : undefined;
+    if (current.pending && !retainedPending) return;
+    const pendingConfirmation =
+      retainedPending ??
+      (current.preview?.scope === currentScope &&
+      current.selectedReleaseID === targetReleaseID &&
+      current.preview.body.provider_release_id === targetReleaseID &&
+      current.preview.response.provider_release_id === targetReleaseID
         ? {
             scope: currentScope,
             body: {
-              ...state.preview.body,
-              preview_digest: state.preview.response.preview_digest,
+              ...current.preview.body,
+              preview_digest: current.preview.response.preview_digest,
               request_id: createUUID(),
             },
           }
         : undefined);
-    if (!pending || state.busy) return;
-    if (!state.pending) update((current) => ({ ...current, pending }));
-    update((current) => ({ ...current, busy: "confirm", error: undefined }));
+    if (!pendingConfirmation || current.busy) return;
+    if (!retainedPending) {
+      updateState(targetGroupID, (latest) => ({
+        ...latest,
+        pending: pendingConfirmation,
+      }));
+    }
+    updateState(targetGroupID, (latest) => ({
+      ...latest,
+      busy: "confirm",
+      error: undefined,
+    }));
     try {
       const response = await confirmIncomingGroupLocalMatching(
-        group.id,
-        pending.body,
+        targetGroupID,
+        pendingConfirmation.body,
       );
       if (response.status !== 200) {
-        update((current) => ({
-          ...current,
+        updateState(targetGroupID, (latest) => ({
+          ...latest,
           busy: undefined,
           stale: response.status === 409,
-          preview: response.status === 409 ? undefined : current.preview,
-          pending: response.status === 409 ? undefined : current.pending,
+          preview: response.status === 409 ? undefined : latest.preview,
+          pending: response.status === 409 ? undefined : latest.pending,
           error:
             response.status === 409
               ? copy.confirmConflict
@@ -468,8 +591,8 @@ export function LocalReleaseEditor({
         }));
         return;
       }
-      update((current) => ({
-        ...current,
+      updateState(targetGroupID, (latest) => ({
+        ...latest,
         busy: undefined,
         receipt: response.data,
         pending: undefined,
@@ -479,8 +602,8 @@ export function LocalReleaseEditor({
       try {
         await onConfirmed?.(response.data);
       } catch (reason) {
-        update((current) => ({
-          ...current,
+        updateState(targetGroupID, (latest) => ({
+          ...latest,
           notice: {
             key: "confirmedRefreshError",
             reason: sharedErrorMessage(reason, "") || undefined,
@@ -488,193 +611,34 @@ export function LocalReleaseEditor({
         }));
       }
     } catch (reason) {
-      update((current) => ({
-        ...current,
+      updateState(targetGroupID, (latest) => ({
+        ...latest,
         busy: undefined,
         error: `${message(reason, copy.confirmError)} ${copy.confirmRetryNotice}`,
       }));
     }
   }
 
-  const previewCurrent =
-    state.preview?.scope === currentScope ? state.preview : undefined;
-  const canPreview =
-    authorityRevision !== undefined &&
-    state.busy === undefined &&
-    !confirmationInFlight &&
-    state.pending === undefined;
-
-  return (
-    <section
-      aria-labelledby={`local-release-${group.id}`}
-      className="space-y-4 rounded border border-stone-300 p-4"
-    >
-      <h2 id={`local-release-${group.id}`} className="text-lg font-semibold">
-        {copy.heading}
-      </h2>
-      <p>
-        {copy.intro}{" "}
-        {state.pending ? (
-          copy.ownCatalog
-        ) : (
-          <a className="underline" href="#/own-catalog">
-            {copy.ownCatalog}
-          </a>
-        )}
-        .
-      </p>
-
-      <fieldset
-        disabled={state.pending !== undefined || confirmationInFlight}
-        className="space-y-3 rounded border border-stone-300 p-3"
-      >
-        <legend className="font-medium">{copy.releaseLegend}</legend>
-        <AppButton
-          type="button"
-          isDisabled={catalogs[group.id]?.busy}
-          onPress={loadCatalog}
-        >
-          {catalogs[group.id]?.busy ? copy.loadingReleases : copy.loadReleases}
-        </AppButton>
-        {catalogs[group.id]?.error && (
-          <p role="alert">{catalogs[group.id].error}</p>
-        )}
-        {(releaseOptions || state.selectedReleaseID) && (
-          <label className="block">
-            {copy.releaseLabel}
-            <select
-              className="block w-full rounded border p-2"
-              value={state.selectedReleaseID}
-              onChange={(event) => void selectRelease(event.target.value)}
-            >
-              <option value="">{copy.chooseRelease}</option>
-              {releaseOptions?.map((release) => (
-                <option key={release.id} value={release.id}>
-                  {release.title || release.id}
-                </option>
-              ))}
-              {state.selectedReleaseID &&
-                !releaseOptions?.some(
-                  (release) => release.id === state.selectedReleaseID,
-                ) && (
-                  <option value={state.selectedReleaseID}>
-                    {exactRelease?.title || state.selectedReleaseID}
-                  </option>
-                )}
-            </select>
-          </label>
-        )}
-        {state.selectedReleaseID && !state.release && !state.error && (
-          <p role="status">{copy.loadingTracks}</p>
-        )}
-        {state.release && (
-          <p role="status">
-            {copy.releaseTrackCount(state.release.title, tracks.length)}
-          </p>
-        )}
-      </fieldset>
-
-      {state.release && (
-        <fieldset
-          disabled={state.pending !== undefined || confirmationInFlight}
-          className="space-y-3 rounded border border-stone-300 p-3"
-        >
-          <legend className="font-medium">{copy.assignmentsLegend}</legend>
-          {scopedFiles.map((file) => (
-            <label className="block" key={file.variant_id}>
-              {fileLabel(file)}
-              <select
-                className="block w-full rounded border p-2"
-                aria-label={copy.trackForFile(fileLabel(file))}
-                value={state.assignments[file.variant_id] ?? ""}
-                onChange={(event) => {
-                  if (state.pending) return;
-                  sequence.current += 1;
-                  const trackID = event.target.value;
-                  update((current) => {
-                    if (current.pending) return current;
-                    const assignments = trackID
-                      ? {
-                          ...current.assignments,
-                          [file.variant_id]: trackID,
-                        }
-                      : Object.fromEntries(
-                          Object.entries(current.assignments).filter(
-                            ([memberID]) => memberID !== file.variant_id,
-                          ),
-                        );
-                    return {
-                      ...current,
-                      assignments,
-                      preview: undefined,
-                      receipt: undefined,
-                      error: undefined,
-                      notice: undefined,
-                      stale: false,
-                    };
-                  });
-                }}
-              >
-                <option value="">{copy.unassigned}</option>
-                {tracks.map((track) => (
-                  <option key={track.id} value={track.id}>
-                    {trackLabel(track)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </fieldset>
-      )}
-
-      {state.error && <p role="alert">{state.error}</p>}
-      {state.notice && <p role="status">{copy.notice(state.notice)}</p>}
-      {state.stale && <p role="status">{copy.staleNotice}</p>}
-      <div className="flex flex-wrap gap-2">
-        <AppButton type="button" isDisabled={!canPreview} onPress={preview}>
-          {state.busy === "preview" ? copy.previewing : copy.previewAction}
-        </AppButton>
-        {previewCurrent && (
-          <AppButton
-            type="button"
-            isDisabled={state.busy !== undefined}
-            onPress={confirm}
-          >
-            {state.pending ? copy.confirmRetry : copy.confirmAction}
-          </AppButton>
-        )}
-        {state.pending && !previewCurrent && (
-          <AppButton
-            type="button"
-            isDisabled={state.busy !== undefined}
-            onPress={confirm}
-          >
-            {copy.confirmRetry}
-          </AppButton>
-        )}
-      </div>
-      {previewCurrent && (
-        <section
-          aria-label={copy.previewTitle}
-          className="space-y-2 rounded bg-stone-100 p-3"
-        >
-          <h3 className="font-medium">{copy.previewTitle}</h3>
-          <p>
-            {copy.previewSummary(
-              previewCurrent.response.release_title,
-              previewCurrent.response.tracks?.length ?? 0,
-            )}
-          </p>
-          <p>
-            {copy.omittedFiles(
-              previewCurrent.response.omitted_file_member_ids?.length ?? 0,
-            )}
-          </p>
-        </section>
-      )}
-      {state.receipt?.local_release_id && (
-        <p role="status">{copy.receipt(state.receipt.release_title)}</p>
-      )}
-    </section>
-  );
+  return {
+    release,
+    workspaceRelease: localMatchingWorkspaceRelease(release),
+    files: scopedFiles,
+    tracks,
+    assignments: state.assignments,
+    setAssignments,
+    read,
+    preview,
+    confirm,
+    previewResult: previewCurrent?.response,
+    receipt: state.receipt,
+    error: state.error,
+    notice: state.notice,
+    stale: state.stale ?? false,
+    busy: state.busy,
+    pending,
+    confirmationPending,
+    status,
+    canPreview,
+    canConfirm,
+  };
 }

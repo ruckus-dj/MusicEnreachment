@@ -1,17 +1,10 @@
-import type { ReactNode } from "react";
-import type {
-  MatchingReviewCandidate,
-  MatchingReviewLayoutPosition,
-  MatchingReviewRelease,
-} from "../../api/generated/client.schemas";
+import type { MatchingReviewCandidate } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   MatchingBoard as MatchingBoardView,
   type MatchingBoardProps as MatchingBoardViewProps,
-  type MatchingWorkspacePositionContext,
-  type MatchingWorkspaceSavedReference,
-  type MatchingWorkspaceSource,
 } from "../matchingWorkspace";
+import type { MatchingWorkspaceRelease } from "../matchingWorkspace/types";
 
 export {
   matchingBoardAutomaticForRelease,
@@ -22,24 +15,13 @@ export {
 } from "../matchingWorkspace/scoring";
 export type {
   MatchingWorkspaceAutomaticAssignments as MatchingBoardAutomaticAssignments,
+  MatchingWorkspacePositionContext as MatchingBoardPositionContext,
   MatchingWorkspaceSavedReference as MatchingBoardSavedReference,
   MatchingWorkspaceSavedScores as MatchingBoardSavedScores,
   MatchingWorkspaceSource as MatchingBoardSource,
 } from "../matchingWorkspace/types";
 
-export type MatchingBoardPositionContext = {
-  position: MatchingReviewLayoutPosition;
-  assigned: readonly MatchingWorkspaceSource[];
-  saved: readonly MatchingWorkspaceSavedReference[];
-};
-
-export type MatchingBoardProps = Omit<
-  MatchingBoardViewProps,
-  "release" | "locale" | "renderPositionMeta"
-> & {
-  release: MatchingReviewRelease;
-  renderPositionMeta?: (context: MatchingBoardPositionContext) => ReactNode;
-};
+export type MatchingBoardProps = Omit<MatchingBoardViewProps, "locale">;
 
 /**
  * Project saved candidate edges for exactly one release into the board's
@@ -48,7 +30,7 @@ export type MatchingBoardProps = Omit<
  */
 export function matchingBoardScoresFromCandidates(
   candidates: readonly MatchingReviewCandidate[] | null | undefined,
-  release: MatchingReviewRelease,
+  release: MatchingWorkspaceRelease,
 ): Readonly<Record<string, Readonly<Record<string, number>>>> {
   const tracks = new Set(
     (release.positions ?? []).map((position) => position.track_id),
@@ -86,27 +68,7 @@ export function matchingBoardScoresFromCandidates(
  * from the application i18n provider here; the portable view receives it as an
  * explicit prop.
  */
-export function MatchingBoard({
-  release,
-  renderPositionMeta,
-  ...props
-}: MatchingBoardProps) {
+export function MatchingBoard(props: MatchingBoardProps) {
   const { locale } = useI18n();
-  return (
-    <MatchingBoardView
-      {...props}
-      release={release}
-      locale={locale}
-      renderPositionMeta={
-        renderPositionMeta
-          ? (context: MatchingWorkspacePositionContext) =>
-              renderPositionMeta({
-                position: context.position as MatchingReviewLayoutPosition,
-                assigned: context.assigned,
-                saved: context.saved,
-              })
-          : undefined
-      }
-    />
-  );
+  return <MatchingBoardView {...props} locale={locale} />;
 }

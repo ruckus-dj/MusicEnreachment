@@ -1,13 +1,11 @@
-import type {
-  MatchingReviewCandidate,
-  MatchingReviewLayoutPosition,
-} from "../../api/generated/client.schemas";
+import type { MatchingReviewCandidate } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { MatchingEvidenceInspector as MatchingEvidenceInspectorView } from "../matchingWorkspace";
+import type { MatchingWorkspacePosition } from "../matchingWorkspace/types";
 
 type MatchingEvidenceInspectorProps = {
   candidate?: MatchingReviewCandidate;
-  position: MatchingReviewLayoutPosition;
+  position: MatchingWorkspacePosition;
   rawTags?: Record<string, string[] | null>;
 };
 
