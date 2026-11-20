@@ -164,7 +164,7 @@ function GroupCheckbox({
 }: {
 	ids: string[];
 	label: string;
-	selected: Set<string>;
+	selected: ReadonlySet<string>;
 	onChange: (ids: string[], checked: boolean) => void;
 	appearance?: "table" | "artwork";
 }) {
@@ -1366,6 +1366,7 @@ export function CatalogDemo({
 								expanded={expanded}
 								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
 								pageScopedSelection
+								pageSelection={{ selectedIds: selected, onChange: update }}
 							/>
 						</section>
 						{view === "albums" &&

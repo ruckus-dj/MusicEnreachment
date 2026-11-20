@@ -1,4 +1,17 @@
 import type { ReactNode } from "react";
+import {
+	Button,
+	Cell,
+	Column,
+	Row,
+	Table,
+	TableBody,
+	TableHeader,
+} from "../../components/ui";
+import { useI18n } from "../../i18n/I18nProvider";
+import { audioProperties } from "../../metadata/audioProperties";
+import { artistReleaseHref } from "./artistReleaseRoute";
+import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import type {
 	CatalogArtist,
 	OriginalRelease,
@@ -10,28 +23,16 @@ import {
 	originalProviders,
 	trackNumberLabel,
 } from "./catalogData";
-import { audioProperties } from "../../metadata/audioProperties";
-import {
-	availabilityRowClass,
-	type CatalogFilter,
-} from "./availabilityRows";
-import { artistReleaseHref } from "./artistReleaseRoute";
 import { catalogueStyles, catalogueTableWidths } from "./catalogueStyles";
-import { useI18n } from "../../i18n/I18nProvider";
 import {
-	libraryRowsMessage,
+	type ArtistSelectionState,
+	type LibraryArtistCard,
+	LibraryArtistCards,
+} from "./LibraryArtistCards";
+import {
 	type LibraryRowsMessage,
+	libraryRowsMessage,
 } from "./libraryRowsMessages";
-import {
-	Button,
-	Cell,
-	Column,
-	Link,
-	Row,
-	Table,
-	TableBody,
-	TableHeader,
-} from "../../components/ui";
 
 type View = "artists" | "albums" | "tracks";
 type CatalogTrack = Omit<OriginalTrack, "published"> & {
@@ -55,6 +56,8 @@ interface Props {
 	onToggleAlbum: (id: string) => void;
 	/** Bulk selection covers only the rows currently passed for this page. */
 	pageScopedSelection?: boolean;
+	/** Raw page-scoped selection used to derive artist card state; tables keep using groupCheckbox. */
+	pageSelection?: ArtistSelectionState;
 }
 const sourceIds = (track: Pick<OriginalTrack, "sourceId" | "sourceIds">) => [
 	...new Set([
@@ -78,6 +81,48 @@ const duration = (seconds: number | null) =>
 	seconds === null
 		? "—"
 		: `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+const emptySelectedIds: ReadonlySet<string> = new Set();
+const artistCardRows = (
+	artists: CatalogArtist[],
+	releases: Release[],
+	missingCounts: Map<string, number>,
+	hasAudio: (track: Release["tracks"][number]) => boolean,
+	selection?: ArtistSelectionState,
+): LibraryArtistCard[] => {
+	const selectedIds = selection?.selectedIds ?? emptySelectedIds;
+	return artists.map((artist) => {
+		const own = releases.filter(
+			(release) =>
+				release.artistId === artist.id ||
+				release.credits?.some((credit) => credit.artistId === artist.id),
+		);
+		const ownTracks = own.flatMap((release) => release.tracks);
+		const trackIds = ownTracks.map((track) => track.id);
+		const selectedCount = trackIds.filter((id) => selectedIds.has(id)).length;
+		const isSelected = trackIds.length > 0 && selectedCount === trackIds.length;
+		const missingEditionCount = missingCounts.get(artist.id);
+		return {
+			id: artist.id,
+			name: artist.name,
+			href: `#artist/${artist.id}`,
+			monogram: artist.name.slice(0, 1),
+			palette: artist.color || "clay",
+			genres: artist.genre ? [artist.genre] : [],
+			releaseCount: own.length + (missingEditionCount ?? 0),
+			missingEditionCount,
+			positionCount: ownTracks.length,
+			availableCount: ownTracks.filter(hasAudio).length,
+			publishedCount: ownTracks.filter((track) => Boolean(track.published))
+				.length,
+			selection: {
+				isSelected,
+				isIndeterminate: selectedCount > 0 && !isSelected,
+				isDisabled: trackIds.length === 0,
+				onChange: (selected) => selection?.onChange(trackIds, selected),
+			},
+		};
+	});
+};
 
 export function LibraryCatalogRows({
 	view,
@@ -91,6 +136,7 @@ export function LibraryCatalogRows({
 	expanded,
 	onToggleAlbum,
 	pageScopedSelection = false,
+	pageSelection,
 }: Props) {
 	const { locale } = useI18n();
 	const m = (
@@ -102,101 +148,16 @@ export function LibraryCatalogRows({
 	);
 	if (view === "artists") {
 		return (
-			<div
-				className={catalogueStyles.artistGrid}
-				aria-label={m("artistsLibrary")}
-			>
-				{artists.length ? (
-					artists.map((artist) => {
-						const own = releases.filter(
-							(release) =>
-								release.artistId === artist.id ||
-								release.credits?.some(
-									(credit) => credit.artistId === artist.id,
-								),
-						);
-						const ownTracks = own.flatMap((release) => release.tracks);
-						const availableCount = ownTracks.filter(hasAudio).length;
-						const publishedCount = ownTracks.filter((track) =>
-							Boolean(track.published),
-						).length;
-						return (
-							<article className={catalogueStyles.artistCard} key={artist.id}>
-								<div
-									className={catalogueStyles.artistArt}
-									data-palette={artist.color || "clay"}
-								>
-									<Link
-										href={`#artist/${artist.id}`}
-										className={catalogueStyles.artistCardLink}
-									>
-										<span
-											className={catalogueStyles.artistMonogram}
-											aria-hidden="true"
-										>
-											{artist.name.slice(0, 1)}
-										</span>
-										<span className={catalogueStyles.artistOverlay}>
-											<span className={catalogueStyles.artistCopy}>
-												<strong>{artist.name}</strong>
-												<span>{artist.genre || m("performer")}</span>
-											</span>
-											<span className={catalogueStyles.artistStats}>
-												<span>
-													<strong>
-														{m("releasesCount", {
-															count:
-																own.length +
-																(missingCounts.get(artist.id) ?? 0),
-														})}
-													</strong>
-												</span>
-												<span>
-													<strong>
-														{m("positionsCount", { count: ownTracks.length })}
-													</strong>
-												</span>
-												<span>
-													<strong>
-														{m("audioCount", {
-															available: availableCount,
-															total: ownTracks.length,
-														})}
-													</strong>
-												</span>
-												<span>
-													<strong>
-														{m("publishedCount", {
-															published: publishedCount,
-															total: ownTracks.length,
-														})}
-													</strong>
-												</span>
-												<span>
-													<strong>
-														{m("missingEditionsCount", {
-															count: missingCounts.get(artist.id) || "—",
-														})}
-													</strong>
-												</span>
-											</span>
-										</span>
-									</Link>
-									<div className={catalogueStyles.cardSelection}>
-										{groupCheckbox(
-											ownTracks.map((track) => track.id),
-											m("selectArtistPositions", { artist: artist.name }),
-											"artwork",
-										)}
-									</div>
-								</div>
-							</article>
-						);
-					})
-				) : (
-					<div className={catalogueStyles.empty}>{m("noArtists")}</div>
+			<LibraryArtistCards
+				locale={locale}
+				artists={artistCardRows(
+					artists,
+					releases,
+					missingCounts,
+					hasAudio,
+					pageSelection,
 				)}
-			</div>
+			/>
 		);
 	}
 	const tracks = releases.flatMap((release) =>

@@ -32,6 +32,11 @@ import {
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import {
+	type ManagedPackageCardModel,
+	type ManagedPackageInstallation,
+	SettingsManagedPackageCards,
+} from "./SettingsManagedPackageCards";
+import {
 	type OutputResetFeedback,
 	SettingsOutputResetDialog,
 } from "./SettingsOutputResetDialog";
@@ -55,6 +60,7 @@ import {
 import {
 	activateDemoInstallation,
 	availableToolReleases,
+	canDeleteDemoInstallation,
 	createDemoInstallation,
 	type DemoInstallation,
 	initialDemoInstallations,
@@ -756,6 +762,79 @@ export function SettingsScreen({
 	const musicBrainzIsVerified =
 		settings.musicBrainzVerified &&
 		settings.musicBrainzVerifiedFingerprint === musicBrainzFingerprint;
+	const managedPackages: ManagedPackageCardModel[] = (
+		["ffmpeg", "fpcalc"] as const
+	).map((kind): ManagedPackageCardModel => {
+		const releases = catalog[kind] ?? [];
+		return {
+			kind,
+			installations: installations
+				.filter((item) => item.package === kind)
+				.map(
+					(item): ManagedPackageInstallation => ({
+						id: item.id,
+						release: { identity: item.release },
+						active: item.status === "active",
+						lifeState: "ready",
+						occupied: item.occupied,
+						activate:
+							item.status === "installed"
+								? {
+										disabled: platformMismatch || item.occupied,
+										onPress: () =>
+											update({
+												installations: activateDemoInstallation(
+													installations,
+													item.id,
+												),
+											}),
+									}
+								: undefined,
+						remove: canDeleteDemoInstallation(item)
+							? {
+									disabled: platformMismatch,
+									onPress: () => {
+										if (!canDeleteDemoInstallation(item)) return;
+										update({
+											installations: installations.filter(
+												(candidate) => candidate.id !== item.id,
+											),
+										});
+									},
+								}
+							: undefined,
+					}),
+				),
+			catalog:
+				releases.length > 0
+					? {
+							state: "loaded",
+							releases: releases.map((identity) => ({ identity })),
+						}
+					: { state: "empty" },
+			selectedRelease: selectedRelease[kind],
+			onReleaseChange: (identity) =>
+				update({
+					selectedRelease: {
+						...selectedRelease,
+						[kind]: identity || undefined,
+					},
+				}),
+			downloadAndVerify: {
+				disabled: platformMismatch || !selectedRelease[kind],
+				onPress: () => {
+					const release = selectedRelease[kind];
+					if (!release) return;
+					setInstallPlan({
+						kind,
+						release,
+						root: settings.toolsPath,
+						token: [kind, release, settings.toolsPath].join("|"),
+					});
+				},
+			},
+		};
+	});
 	const saveProviders = () => {
 		commitProviders();
 	};
@@ -1052,103 +1131,10 @@ export function SettingsScreen({
 				</SettingsTabPanel>
 				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
 					<h2>{copy.tools}</h2>
-					{(["ffmpeg", "fpcalc"] as const).map((kind) => {
-						const active = installations.find(
-							(item) => item.package === kind && item.status === "active",
-						);
-						const versions = installations.filter(
-							(item) => item.package === kind,
-						);
-						return (
-							<section
-								className="grid gap-2 border-b border-[var(--line)] pb-3"
-								key={kind}
-								aria-label={kind === "ffmpeg" ? copy.ffmpeg : copy.fpcalc}
-							>
-								<div className="flex flex-wrap items-baseline justify-between gap-2">
-									<h3 className="m-0">
-										{kind === "ffmpeg" ? copy.ffmpeg : copy.fpcalc}
-									</h3>
-									<span className="text-xs text-[var(--muted)]">
-										{copy.status}:{" "}
-										{active
-											? `${copy.active} · ${active.release}`
-											: copy.available}
-									</span>
-								</div>
-								{versions.map((item) => (
-									<div
-										key={item.id}
-										className="flex flex-wrap items-center justify-between gap-2 text-sm"
-									>
-										<span>
-											{item.release} ·{" "}
-											{item.status === "active" ? copy.active : copy.installed}
-											{item.occupied ? ` · ${copy.occupied}` : ""}
-										</span>
-										{item.status === "installed" && (
-											<Button
-												isDisabled={platformMismatch || item.occupied}
-												onPress={() =>
-													update({
-														installations: activateDemoInstallation(
-															installations,
-															item.id,
-														),
-													})
-												}
-											>
-												{copy.activate}
-											</Button>
-										)}
-									</div>
-								))}
-								<div className="flex flex-wrap items-end gap-2">
-									<Select
-										className="min-w-48 flex-1"
-										selectedKey={selectedRelease[kind] ?? null}
-										onSelectionChange={(key) =>
-											update({
-												selectedRelease: {
-													...selectedRelease,
-													[kind]: key ? String(key) : undefined,
-												},
-											})
-										}
-									>
-										<Label>{copy.chooseVersion}</Label>
-										<Button>
-											<SelectValue />
-										</Button>
-										<Popover>
-											<ListBox>
-												{(catalog[kind] ?? []).map((release) => (
-													<ListBoxItem id={release} key={release}>
-														{release}
-													</ListBoxItem>
-												))}
-											</ListBox>
-										</Popover>
-									</Select>
-									<Button
-										isDisabled={platformMismatch || !selectedRelease[kind]}
-										onPress={() => {
-											const release = selectedRelease[kind];
-											if (!release) return;
-											setInstallPlan({
-												kind,
-												release,
-												root: settings.toolsPath,
-												token: [kind, release, settings.toolsPath].join("|"),
-											});
-										}}
-									>
-										{copy.install}
-									</Button>
-								</div>
-							</section>
-						);
-					})}
+					<SettingsManagedPackageCards
+						locale={locale}
+						packages={managedPackages}
+					/>
 					<section className="grid max-w-2xl gap-2 border-t border-[var(--line)] pt-3">
 						<h3>{copy.moveRoot}</h3>
 						<p>
