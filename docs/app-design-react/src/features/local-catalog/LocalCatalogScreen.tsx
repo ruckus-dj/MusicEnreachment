@@ -391,12 +391,26 @@ export function LocalCatalogScreen({
 				onSelectionChange={changeTab}
 			>
 				<TabList aria-label={m("tabListLabel")} className={styles.localTabList}>
-					{localCatalogTypes.map((kind) => (
-						<Tab className={styles.localTab} key={kind} id={kind}>
-							{m(tabMessage[kind])}
-							<span>{localCatalogRecords(state, kind).length}</span>
-						</Tab>
-					))}
+					{localCatalogTypes.map((kind) => {
+						const label = m(tabMessage[kind]);
+						const count = localCatalogRecords(state, kind).length;
+						return (
+							<Tab
+								aria-label={`${label}: ${count}`}
+								className={`${styles.localTab} inline-flex items-center gap-1.5 whitespace-nowrap max-sm:px-2`}
+								key={kind}
+								id={kind}
+							>
+								<span>{label}</span>
+								<span
+									aria-hidden="true"
+									className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-1 text-xs leading-none font-medium text-[var(--ink)] tabular-nums"
+								>
+									{count}
+								</span>
+							</Tab>
+						);
+					})}
 				</TabList>
 				<TabPanel id={type} className="pt-2">
 					<section className={`${panel} grid gap-2`}>

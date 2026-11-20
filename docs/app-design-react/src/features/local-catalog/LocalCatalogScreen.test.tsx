@@ -67,9 +67,8 @@ const row = (title: string) =>
 it("filters Local records before paging and restores the tab, filter and page after a record", () => {
 	render(<LocalCatalogScreen state={state} onState={() => undefined} />);
 
-	const releasesTab = screen.getByRole("tab", { name: /^Релизы/ });
-	expect(releasesTab).toHaveTextContent("7");
-	expect(releasesTab).not.toHaveTextContent("8");
+	const releasesTab = screen.getByRole("tab", { name: "Релизы: 7" });
+	expect(within(releasesTab).getByText("7")).toBeInTheDocument();
 	expectPage(1, 3);
 	expect(row("Synthetic Release 1")).toBeInTheDocument();
 	expect(
