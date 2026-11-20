@@ -1,1406 +1,924 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  Button,
+  Input,
+  Label,
+  SearchField,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
+} from "react-aria-components";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   createLocalProviderArtist,
   createLocalProviderRecording,
   createLocalProviderRelease,
-  getGenreCatalog,
   listLocalProviderArtists,
   listLocalProviderRecordings,
   listLocalProviderReleases,
   readLocalProviderArtist,
   readLocalProviderRecording,
   readLocalProviderRelease,
-  searchGenreCatalog,
   updateLocalProviderArtist,
   updateLocalProviderRecording,
   updateLocalProviderRelease,
 } from "../../api/generated/client";
 import type {
-  GenreCatalogItem,
-  GenreCatalogStatus,
   LocalProviderItem,
+  LocalProviderPage,
   LocalProviderWrite,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import { GenrePicker } from "../library/GenrePicker";
-import { type GenreMessages, genreMessages } from "../library/genreMessages";
-import { durationForSave, formatDuration, parseDuration } from "./duration";
-import "./own-catalog.css";
+import { useHashLocation } from "../../navigation/hashLocation";
+import type {
+  LocalRecordingDraft,
+  LocalReleaseArtist,
+  LocalReleaseDraft,
+  LocalReleaseRecording,
+} from "../local-release/localReleaseFormModel";
+import {
+  findLocalReleaseArtists,
+  findSavedLocalReleaseRecordings,
+} from "../local-release/localReleaseLookups";
+import { primary } from "../local-release/localReleaseUi";
+import {
+  catalogCreateIdentity,
+  writeCatalogRecord,
+} from "../local-release/localReleaseWrites";
+import { OwnCatalogDetails } from "./OwnCatalogDetails";
+import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
+import { OwnCatalogPagination } from "./OwnCatalogPagination";
+import {
+  OwnCatalogArtistForm,
+  OwnCatalogRecordingForm,
+} from "./OwnCatalogRecordEditors";
+import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
+import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
+import {
+  type OwnCatalogMessage,
+  ownCatalogMessage,
+} from "./ownCatalogMessages";
+import {
+  type ArtistFormDraft,
+  artistDraftToWrite,
+  OWN_CATALOG_PAGE_SIZE,
+  type OwnCatalogType,
+  ownCatalogPageCount,
+  ownCatalogRowDetails,
+  ownCatalogTitle,
+  ownCatalogTypes,
+  type RecordingFormDraft,
+  recordingDraftToWrite,
+  releaseDraftToWrite,
+  releaseRecordRecordings,
+} from "./ownCatalogModel";
+import {
+  defaultOwnCatalogRoute,
+  ownCatalogRouteHref,
+  parseOwnCatalogRoute,
+} from "./ownCatalogRoute";
 
-type Kind = "artists" | "recordings" | "releases";
-type CatalogEntry = LocalProviderItem;
-type CreditDraft = {
-  clientKey: string;
-  artist_id: string;
-  credit_name: string;
-  join_phrase: string;
+type ListParams = {
+  q?: string;
+  provider?: string;
+  limit?: number;
+  offset?: number;
 };
-type TrackDraft = {
-  clientKey: string;
+
+type PageData = {
+  key: string;
+  items: LocalProviderItem[];
+  total: number;
+};
+
+type DetailState = {
+  type?: OwnCatalogType;
   id?: string;
-  recording_id: string;
-  recording_title: string;
-  recording_duration_ms: number | null;
-  title_override: string;
-  duration: string;
-  originalDurationMS?: number | null;
-  durationEdited: boolean;
-};
-type Draft = {
-  name: string;
-  sort_name: string;
-  title: string;
-  release_group_title: string;
-  duration: string;
-  originalDurationMS?: number;
-  durationEdited: boolean;
-  primary_type: string;
-  secondary_types: string;
-  language: string;
-  script: string;
-  tags: string;
-  genres: GenreCatalogItem[];
-  credits: CreditDraft[];
-  tracks: TrackDraft[];
+  retry?: number;
+  item?: LocalProviderItem;
+  loading: boolean;
+  error?: string | null;
+  full: boolean;
 };
 
-const emptyDraft = (): Draft => ({
-  name: "",
-  sort_name: "",
-  title: "",
-  release_group_title: "",
-  duration: "",
-  durationEdited: false,
-  primary_type: "",
-  secondary_types: "",
-  language: "",
-  script: "",
-  tags: "",
-  genres: [],
-  credits: [],
-  tracks: [],
-});
+type EditorState = EditorDraft & { hash: string; visit: number };
 
-function asGenre(item: GenreCatalogItem): GenreCatalogItem {
-  return { id: item.id, name: item.name, source_name: item.source_name };
+type EditorDraft =
+  | { kind: "create"; type: OwnCatalogType }
+  | { kind: "edit"; type: OwnCatalogType; id: string };
+
+type OwnCatalogHistoryState = { ownCatalogDetail?: string };
+
+const emptyDetail: DetailState = { loading: false, full: false };
+
+function hashURL(href: string) {
+  return `${window.location.pathname}${window.location.search}${href}`;
 }
 
-function draftFromItem(item: CatalogEntry): Draft {
-  return {
-    ...emptyDraft(),
-    name: item.name ?? "",
-    sort_name: item.sort_name ?? "",
-    title: item.title ?? "",
-    release_group_title: item.release_group_title ?? "",
-    duration: item.duration_ms == null ? "" : formatDuration(item.duration_ms),
-    originalDurationMS: item.duration_ms,
-    durationEdited: false,
-    primary_type: item.release_group_primary_type ?? "",
-    secondary_types: (item.release_group_secondary_types ?? []).join(", "),
-    language: item.language ?? "",
-    script: item.script ?? "",
-    tags: (item.tags ?? []).join(", "),
-    genres: (item.genres ?? []).map(asGenre),
-    credits: (item.credits ?? []).map((credit) => ({
-      clientKey: crypto.randomUUID(),
-      artist_id: credit.artist_id,
-      credit_name: credit.credit_name,
-      join_phrase: credit.join_phrase,
-    })),
-    tracks: (item.tracks ?? []).map((track) => ({
-      clientKey: crypto.randomUUID(),
-      id: track.id,
-      recording_id: track.recording_id,
-      recording_title: track.recording_title,
-      recording_duration_ms: track.recording_duration_ms,
-      title_override: track.title_override ?? "",
-      originalDurationMS: track.duration_override_ms,
-      durationEdited: false,
-      duration:
-        track.duration_override_ms == null
-          ? ""
-          : formatDuration(track.duration_override_ms),
-    })),
-  };
+function publishHashChange() {
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
-function writeBody(kind: Kind, draft: Draft): LocalProviderWrite {
-  const body: LocalProviderWrite = {
-    genres: draft.genres,
-    tags: kind === "artists" || kind === "recordings" ? split(draft.tags) : [],
-    credits:
-      kind === "recordings" || kind === "releases"
-        ? draft.credits.map(({ artist_id, credit_name, join_phrase }) => ({
-            artist_id,
-            credit_name,
-            join_phrase,
-          }))
-        : [],
-    tracks:
-      kind === "releases"
-        ? draft.tracks.map((track) => {
-            const duration = durationForSave(
-              track.originalDurationMS,
-              track.durationEdited,
-              track.duration,
-            );
-            return {
-              ...(track.id ? { id: track.id } : {}),
-              recording_id: track.recording_id,
-              ...(track.title_override
-                ? { title_override: track.title_override }
-                : {}),
-              ...(duration !== undefined
-                ? { duration_override_ms: duration }
-                : {}),
-            };
-          })
-        : [],
-  };
-  if (kind === "artists") {
-    body.name = draft.name;
-    if (draft.sort_name) body.sort_name = draft.sort_name;
-  } else {
-    body.title = draft.title;
-    if (kind === "recordings") {
-      const duration = durationForSave(
-        draft.originalDurationMS,
-        draft.durationEdited,
-        draft.duration,
-      );
-      if (duration !== undefined) body.duration_ms = duration;
-    } else {
-      body.release_group_title = draft.release_group_title;
-      if (draft.primary_type)
-        body.release_group_primary_type = draft.primary_type;
-      body.release_group_secondary_types = split(draft.secondary_types);
-      if (draft.language) body.language = draft.language;
-      if (draft.script) body.script = draft.script;
-    }
-  }
-  return body;
+function pushCatalogHash(
+  href: string,
+  state: OwnCatalogHistoryState | null = null,
+) {
+  if (window.location.hash === href) return;
+  window.history.pushState(state, "", hashURL(href));
+  publishHashChange();
 }
 
-function split(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+function replaceCatalogHash(href: string) {
+  if (window.location.hash === href) return;
+  window.history.replaceState(null, "", hashURL(href));
+  publishHashChange();
 }
 
-function formatEffectiveDuration(
-  track: TrackDraft,
-  notSpecified: string,
-): string {
-  const override = durationForSave(
-    track.originalDurationMS,
-    track.durationEdited,
-    track.duration,
-  );
-  const duration =
-    override == null || Number.isNaN(override)
-      ? track.recording_duration_ms
-      : override;
-  return duration == null ? notSpecified : formatDuration(duration);
+const requestOptions = (signal?: AbortSignal) =>
+  ({ cache: "no-store", signal }) satisfies RequestInit;
+
+async function listOwnCatalog(
+  type: OwnCatalogType,
+  params: ListParams,
+  options: RequestInit,
+): Promise<LocalProviderPage> {
+  const response =
+    type === "releases"
+      ? await listLocalProviderReleases(params, options)
+      : type === "recordings"
+        ? await listLocalProviderRecordings(params, options)
+        : await listLocalProviderArtists(params, options);
+  if (response.status !== 200) throw apiResponseError(response);
+  return response.data;
 }
 
-const apiFor = {
-  artists: {
-    list: listLocalProviderArtists,
-    read: readLocalProviderArtist,
-    create: createLocalProviderArtist,
-    update: updateLocalProviderArtist,
-  },
-  recordings: {
-    list: listLocalProviderRecordings,
-    read: readLocalProviderRecording,
-    create: createLocalProviderRecording,
-    update: updateLocalProviderRecording,
-  },
-  releases: {
-    list: listLocalProviderReleases,
-    read: readLocalProviderRelease,
-    create: createLocalProviderRelease,
-    update: updateLocalProviderRelease,
-  },
-} as const;
+async function readOwnCatalog(
+  type: OwnCatalogType,
+  id: string,
+  options: RequestInit,
+): Promise<LocalProviderItem> {
+  const response =
+    type === "releases"
+      ? await readLocalProviderRelease(id, options)
+      : type === "recordings"
+        ? await readLocalProviderRecording(id, options)
+        : await readLocalProviderArtist(id, options);
+  if (response.status !== 200) throw apiResponseError(response);
+  if (response.data.id !== id || response.data.provider_code !== "local")
+    throw new Error();
+  return response.data;
+}
+
+function createOwnCatalog(type: OwnCatalogType, body: LocalProviderWrite) {
+  if (type === "releases") return createLocalProviderRelease(body);
+  if (type === "recordings") return createLocalProviderRecording(body);
+  return createLocalProviderArtist(body);
+}
+
+function updateOwnCatalog(
+  type: OwnCatalogType,
+  id: string,
+  body: LocalProviderWrite,
+) {
+  if (type === "releases") return updateLocalProviderRelease(id, body);
+  if (type === "recordings") return updateLocalProviderRecording(id, body);
+  return updateLocalProviderArtist(id, body);
+}
 
 export function OwnCatalogScreen() {
   const { locale } = useI18n();
-  const copy = ownCatalogMessages[locale];
-  const genreCopy = genreMessages[locale];
-  const [kind, setKind] = useState<Kind>("artists");
-  const [searchInput, setSearchInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [items, setItems] = useState<CatalogEntry[]>([]);
-  const [selected, setSelected] = useState<CatalogEntry>();
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [genreStatus, setGenreStatus] = useState<GenreCatalogStatus>();
-  const [genreQuery, setGenreQuery] = useState("");
-  const [genreOptions, setGenreOptions] = useState<GenreCatalogItem[]>([]);
-  const [genreLoading, setGenreLoading] = useState(false);
-  const [genreError, setGenreError] = useState("");
-  const [genreStatusLoading, setGenreStatusLoading] = useState(false);
-  const [genreStatusError, setGenreStatusError] = useState("");
-  const [genreRetry, setGenreRetry] = useState(0);
-  const [artistQuery, setArtistQuery] = useState("");
-  const [artists, setArtists] = useState<CatalogEntry[]>([]);
-  const [recordingQuery, setRecordingQuery] = useState("");
-  const [recordings, setRecordings] = useState<CatalogEntry[]>([]);
-  const genreRetryRef = useRef(genreRetry);
-  genreRetryRef.current = genreRetry;
-  const detailReadGeneration = useRef(0);
-  const currentKind = useRef(kind);
-  currentKind.current = kind;
-
-  useEffect(() => {
-    if (!query) {
-      setItems([]);
-      setSelected(undefined);
-      setLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setLoading(true);
-    setError("");
-    void apiFor[kind]
-      .list(
-        { q: query, provider: "all", limit: 100, offset: 0 },
-        { signal: controller.signal, cache: "no-store" },
-      )
-      .then((response) => {
-        if (response.status !== 200) throw apiResponseError(response);
-        setItems(response.data.items ?? []);
-        setSelected(undefined);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted)
-          setError(errorMessage(reason, copy.loadError));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [copy.loadError, kind, query]);
-
-  useEffect(() => {
-    if (!editing && !creating) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (kind === "recordings" || kind === "releases") {
-        void listLocalProviderArtists(
-          { q: artistQuery, provider: "all", limit: 20, offset: 0 },
-          { signal: controller.signal, cache: "no-store" },
-        )
-          .then((response) => {
-            if (response.status === 200) setArtists(response.data.items ?? []);
-          })
-          .catch(() => undefined);
-      }
-      if (kind === "releases") {
-        void listLocalProviderRecordings(
-          { q: recordingQuery, provider: "all", limit: 20, offset: 0 },
-          { signal: controller.signal, cache: "no-store" },
-        )
-          .then((response) => {
-            if (response.status === 200)
-              setRecordings(response.data.items ?? []);
-          })
-          .catch(() => undefined);
-      }
-    }, 180);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [artistQuery, creating, editing, kind, recordingQuery]);
-
-  useEffect(() => {
-    const retryAttempt = genreRetry;
-    if (!genreQuery.trim() || !genreStatus?.updated_at || !genreStatus.count) {
-      setGenreOptions([]);
-      return;
-    }
-    const controller = new AbortController();
-    setGenreLoading(true);
-    setGenreError("");
-    void searchGenreCatalog(
-      { query: genreQuery.trim(), limit: 40 },
-      { signal: controller.signal, cache: "no-store" },
-    )
-      .then((response) => {
-        if (retryAttempt !== genreRetryRef.current) return;
-        if (response.status !== 200) throw apiResponseError(response);
-        setGenreOptions(response.data.items ?? []);
-      })
-      .catch((reason: unknown) => {
-        if (
-          !controller.signal.aborted &&
-          retryAttempt === genreRetryRef.current
-        )
-          setGenreError(errorMessage(reason, copy.loadError));
-      })
-      .finally(() => {
-        if (
-          !controller.signal.aborted &&
-          retryAttempt === genreRetryRef.current
-        )
-          setGenreLoading(false);
-      });
-    return () => controller.abort();
-  }, [copy.loadError, genreQuery, genreRetry, genreStatus]);
-
-  const hasLocalMatch = items.some((item) => item.provider_code === "local");
-  const genreAvailable = Boolean(
-    genreStatus?.updated_at && genreStatus.count > 0,
+  const hash = useHashLocation();
+  const route = parseOwnCatalogRoute(hash) ?? defaultOwnCatalogRoute;
+  const [filterInput, setFilterInput] = useState("");
+  const [filter, setFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [editorState, setEditor] = useState<EditorState>();
+  const editor = editorState?.hash === hash ? editorState : undefined;
+  const [pageData, setPageData] = useState<PageData>({
+    key: "",
+    items: [],
+    total: 0,
+  });
+  const [totals, setTotals] = useState<Partial<Record<OwnCatalogType, number>>>(
+    {},
   );
-  const selectedTitle =
-    selected?.kind === "artist" ? selected.name : selected?.title;
-  const savingAllowed =
-    !saving &&
-    (!creating && selected ? selected.provider_code === "local" : true);
+  const [listLoading, setListLoading] = useState(false);
+  const [listLoaded, setListLoaded] = useState(false);
+  const [listError, setListError] = useState<string>();
+  const [listVersion, setListVersion] = useState(0);
+  const [detail, setDetail] = useState<DetailState>(emptyDetail);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const [notice, setNotice] = useState<"created" | "updated">();
+  const [artists, setArtists] = useState<LocalReleaseArtist[]>([]);
+  const knownArtists = useRef(new Map<string, string>());
+  const currentWrites = useRef(0);
+  const [saving, setSaving] = useState(false);
+  const countGeneration = useRef<Record<OwnCatalogType, number>>({
+    releases: 0,
+    recordings: 0,
+    artists: 0,
+  });
+  const nextEditorVisit = useRef(0);
+  const activeEditorVisit = useRef<number | undefined>(undefined);
+  const initialType = useRef(route.type);
 
-  async function search(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving) return;
-    detailReadGeneration.current += 1;
-    setLoading(false);
-    setQuery(searchInput.trim());
-    setNotice("");
-    setError("");
-    setSelected(undefined);
-    setCreating(false);
-    setEditing(false);
+  const m = (
+    key: OwnCatalogMessage,
+    values?: Record<string, string | number>,
+  ) => ownCatalogMessage(locale, key, values);
+  const loadError = ownCatalogMessage(locale, "loadError");
+  const detailLoadError = ownCatalogMessage(locale, "detailLoadError");
+
+  useEffect(() => {
+    return () => {
+      activeEditorVisit.current = undefined;
+    };
+  }, []);
+
+  const [visitHash, setVisitHash] = useState(hash);
+  if (visitHash !== hash) {
+    setVisitHash(hash);
+    setEditor(undefined);
+    if (!route.id) setNotice(undefined);
   }
 
-  async function select(item: CatalogEntry) {
-    if (saving) return;
-    const requestKind = kind;
-    const generation = ++detailReadGeneration.current;
-    setError("");
-    setNotice("");
-    setCreating(false);
-    setEditing(false);
-    setSelected(undefined);
-    if (item.provider_code !== "local") {
-      setSelected(item);
-      setLoading(false);
-      return;
+  useEffect(() => {
+    const controller = new AbortController();
+    for (const kind of ownCatalogTypes) {
+      if (kind === initialType.current) continue;
+      const generation = countGeneration.current[kind];
+      void listOwnCatalog(
+        kind,
+        { provider: "local", limit: 1, offset: 0 },
+        requestOptions(controller.signal),
+      )
+        .then((result) => {
+          if (
+            !controller.signal.aborted &&
+            generation === countGeneration.current[kind]
+          )
+            setTotals((current) => ({ ...current, [kind]: result.total }));
+        })
+        .catch(() => undefined);
     }
-    setLoading(true);
-    try {
-      const response = await apiFor[requestKind].read(item.id, {
-        cache: "no-store",
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const next = filterInput.trim();
+    if (next === filter) return;
+    const timer = window.setTimeout(() => {
+      setFilter(next);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [filter, filterInput]);
+
+  const [pageType, setPageType] = useState(route.type);
+  if (pageType !== route.type) {
+    setPageType(route.type);
+    setPage(1);
+    setPageData({ key: "", items: [], total: 0 });
+    setListLoaded(false);
+    setListError(undefined);
+  }
+
+  const listKey = JSON.stringify([route.type, filter, page, listVersion]);
+  const listRequestGeneration = useRef(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    const generation = ++listRequestGeneration.current;
+    const countVersion = countGeneration.current[route.type];
+    setListLoading(true);
+    setListError(undefined);
+    void listOwnCatalog(
+      route.type,
+      {
+        provider: "local",
+        ...(filter ? { q: filter } : {}),
+        limit: OWN_CATALOG_PAGE_SIZE,
+        offset: (page - 1) * OWN_CATALOG_PAGE_SIZE,
+      },
+      requestOptions(controller.signal),
+    )
+      .then((result) => {
+        if (
+          controller.signal.aborted ||
+          generation !== listRequestGeneration.current
+        )
+          return;
+        const totalPages = ownCatalogPageCount(result.total);
+        if (page > totalPages) {
+          setPage(totalPages);
+          return;
+        }
+        setPageData({
+          key: listKey,
+          items: result.items ?? [],
+          total: result.total,
+        });
+        setListLoaded(true);
+        if (!filter && countVersion === countGeneration.current[route.type])
+          setTotals((current) =>
+            current[route.type] === result.total
+              ? current
+              : { ...current, [route.type]: result.total },
+          );
+      })
+      .catch((reason: unknown) => {
+        if (
+          !controller.signal.aborted &&
+          generation === listRequestGeneration.current
+        )
+          setListError(errorMessage(reason, loadError));
+      })
+      .finally(() => {
+        if (
+          !controller.signal.aborted &&
+          generation === listRequestGeneration.current
+        )
+          setListLoading(false);
       });
-      if (
-        generation !== detailReadGeneration.current ||
-        currentKind.current !== requestKind
-      )
-        return;
-      if (response.status !== 200) throw apiResponseError(response);
-      setSelected(response.data);
-    } catch (reason) {
-      if (
-        generation === detailReadGeneration.current &&
-        currentKind.current === requestKind
-      )
-        setError(errorMessage(reason, copy.loadError));
-    } finally {
-      if (
-        generation === detailReadGeneration.current &&
-        currentKind.current === requestKind
-      )
-        setLoading(false);
-    }
-  }
+    return () => controller.abort();
+  }, [filter, listKey, loadError, page, route.type]);
 
-  function beginCreate() {
-    if (saving) return;
-    detailReadGeneration.current += 1;
-    setLoading(false);
-    setSelected(undefined);
-    setDraft(emptyDraft());
-    setCreating(true);
-    setEditing(true);
-    setError("");
-    setNotice("");
-  }
-
-  function beginEdit() {
-    if (!selected || selected.provider_code !== "local") return;
-    setDraft(draftFromItem(selected));
-    setEditing(true);
-    setError("");
-    setNotice("");
-  }
-
-  function cancel() {
-    if (saving) return;
-    setEditing(false);
-    setCreating(false);
-    setDraft(emptyDraft());
-    setError("");
-  }
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving) return;
-    if (!formIsValid(kind, draft)) {
-      setError(copy.invalidDuration);
+  const detailRequestGeneration = useRef(0);
+  useEffect(() => {
+    const generation = ++detailRequestGeneration.current;
+    if (!route.id) {
+      setDetail(emptyDetail);
       return;
     }
+    const controller = new AbortController();
+    const detailType = route.type;
+    const detailId = route.id;
+    setDetail((current) =>
+      current.type === detailType && current.id === detailId
+        ? {
+            ...current,
+            retry: detailRetry,
+            loading: true,
+            error: undefined,
+            full: false,
+          }
+        : {
+            type: detailType,
+            id: detailId,
+            retry: detailRetry,
+            loading: true,
+            full: false,
+          },
+    );
+    void readOwnCatalog(detailType, detailId, requestOptions(controller.signal))
+      .then((item) => {
+        if (
+          !controller.signal.aborted &&
+          generation === detailRequestGeneration.current
+        )
+          setDetail({
+            type: detailType,
+            id: detailId,
+            retry: detailRetry,
+            item,
+            loading: false,
+            full: true,
+          });
+      })
+      .catch((reason: unknown) => {
+        if (
+          !controller.signal.aborted &&
+          generation === detailRequestGeneration.current
+        )
+          setDetail({
+            type: detailType,
+            id: detailId,
+            retry: detailRetry,
+            loading: false,
+            error:
+              reason instanceof Error && reason.message ? reason.message : null,
+            full: false,
+          });
+      });
+    return () => controller.abort();
+  }, [detailRetry, route.id, route.type]);
+
+  const scopedDetail =
+    route.id &&
+    detail.type === route.type &&
+    detail.id === route.id &&
+    detail.retry === detailRetry
+      ? detail
+      : undefined;
+  const activeDetail: DetailState =
+    scopedDetail ??
+    (route.id
+      ? { type: route.type, id: route.id, loading: true, full: false }
+      : emptyDetail);
+  const fullDetailItem: LocalProviderItem | undefined =
+    activeDetail.full && !activeDetail.error && !activeDetail.loading
+      ? activeDetail.item
+      : undefined;
+
+  const openDetails = (kind: OwnCatalogType, item: LocalProviderItem) => {
+    setNotice(undefined);
+    setDetail({
+      type: kind,
+      id: item.id,
+      retry: detailRetry,
+      item,
+      loading: true,
+      full: false,
+    });
+    const href = ownCatalogRouteHref({ type: kind, id: item.id });
+    pushCatalogHash(href, { ownCatalogDetail: href });
+  };
+
+  const closeDetails = () => {
+    setNotice(undefined);
+    if (!route.id) return;
+    const detailHref = ownCatalogRouteHref({
+      type: route.type,
+      id: route.id,
+    });
+    const state = window.history.state as OwnCatalogHistoryState | null;
+    if (state?.ownCatalogDetail === detailHref) {
+      window.history.back();
+      return;
+    }
+    replaceCatalogHash(ownCatalogRouteHref({ type: route.type }));
+  };
+
+  const openEditor = (next: EditorDraft) => {
+    const visit = ++nextEditorVisit.current;
+    activeEditorVisit.current = visit;
+    setNotice(undefined);
+    setEditor({ ...next, hash, visit });
+  };
+
+  const closeEditor = () => {
+    activeEditorVisit.current = undefined;
+    setEditor(undefined);
+  };
+
+  const backFromEditor = () => {
+    if (currentWrites.current > 0) return;
+    closeEditor();
+  };
+
+  function refreshCatalog(kind: OwnCatalogType) {
+    const generation = ++countGeneration.current[kind];
+    setListVersion((version) => version + 1);
+    void listOwnCatalog(
+      kind,
+      { provider: "local", limit: 1, offset: 0 },
+      requestOptions(),
+    )
+      .then((result) => {
+        if (generation === countGeneration.current[kind])
+          setTotals((current) => ({ ...current, [kind]: result.total }));
+      })
+      .catch(() => undefined);
+  }
+
+  async function runWrite<T>(write: () => Promise<T>): Promise<T> {
+    currentWrites.current++;
     setSaving(true);
-    setError("");
     try {
-      const body = writeBody(kind, draft);
-      const response = creating
-        ? await apiFor[kind].create(body)
-        : selected
-          ? await apiFor[kind].update(selected.id, body)
-          : undefined;
-      if (!response) return;
-      if (response.status !== 200) throw apiResponseError(response);
-      setSelected(response.data);
-      setItems((current) => [
-        response.data,
-        ...current.filter((item) => item.id !== response.data.id),
-      ]);
-      setCreating(false);
-      setEditing(false);
-      setNotice(creating ? copy.created : copy.updated);
-    } catch (reason) {
-      setError(errorMessage(reason, copy.saveError));
+      return await write();
     } finally {
-      setSaving(false);
+      if (--currentWrites.current === 0) setSaving(false);
     }
   }
 
-  async function loadGenreStatus() {
-    if (genreStatus || genreStatusLoading) return;
-    setGenreStatusLoading(true);
-    setGenreStatusError("");
-    try {
-      const response = await getGenreCatalog({ cache: "no-store" });
-      if (response.status !== 200) throw apiResponseError(response);
-      setGenreStatus(response.data);
-    } catch (reason) {
-      setGenreStatusError(errorMessage(reason, copy.loadError));
-    } finally {
-      setGenreStatusLoading(false);
+  const commitRecord = (
+    kind: OwnCatalogType,
+    item: LocalProviderItem,
+    created: boolean,
+  ) => {
+    closeEditor();
+    setDetail({
+      type: kind,
+      id: item.id,
+      retry: detailRetry,
+      item,
+      loading: false,
+      full: true,
+    });
+    setNotice(created ? "created" : "updated");
+    refreshCatalog(kind);
+    if (created) {
+      const href = ownCatalogRouteHref({ type: kind, id: item.id });
+      pushCatalogHash(href, { ownCatalogDetail: href });
     }
+  };
+
+  const rememberArtists = (found: readonly LocalReleaseArtist[]) => {
+    setArtists((current) => {
+      const merged = new Map(current.map((artist) => [artist.id, artist]));
+      for (const artist of found) merged.set(artist.id, artist);
+      return [...merged.values()];
+    });
+    for (const artist of found)
+      knownArtists.current.set(artist.id, artist.name ?? "");
+  };
+
+  const findArtists = async (query: string, signal?: AbortSignal) => {
+    const found = await findLocalReleaseArtists(query, signal);
+    rememberArtists(found);
+    return found;
+  };
+
+  const findRecordings = (
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<readonly LocalReleaseRecording[]> =>
+    findSavedLocalReleaseRecordings(query, signal);
+
+  const createArtist = async (data: { name: string }) => {
+    const artist = await runWrite(() => saveLocalArtist(data));
+    rememberArtists([artist]);
+    refreshCatalog("artists");
+    return artist;
+  };
+
+  const saveReleaseRecording = async (data: LocalRecordingDraft) => {
+    const recording = await runWrite(() => saveLocalRecording(data));
+    refreshCatalog("recordings");
+    return recording;
+  };
+
+  function saveRecord(
+    type: OwnCatalogType,
+    kind: "artist" | "recording" | "release",
+    record: LocalProviderItem | undefined,
+    body: LocalProviderWrite,
+    title: string,
+  ) {
+    return runWrite(() =>
+      record
+        ? writeCatalogRecord(`${kind}:update:${record.id}`, () =>
+            updateOwnCatalog(type, record.id, body),
+          )
+        : writeCatalogRecord(catalogCreateIdentity(kind, title), () =>
+            createOwnCatalog(type, body),
+          ),
+    );
   }
 
-  return (
-    <section
-      className="library-catalog own-catalog"
-      aria-labelledby="own-catalog-title"
-    >
-      <header className="catalog-header">
-        <div>
-          <h1 id="own-catalog-title">{copy.title}</h1>
-          <p className="catalog-muted">{copy.description}</p>
-        </div>
-      </header>
-      <nav
-        className="catalog-segments own-catalog-tabs"
-        aria-label={copy.entityTypes}
-      >
-        {(["artists", "recordings", "releases"] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            aria-pressed={kind === tab}
-            disabled={saving}
-            onClick={() => {
-              detailReadGeneration.current += 1;
-              setLoading(false);
-              setKind(tab);
-              setSearchInput("");
-              setQuery("");
-              setItems([]);
-              setSelected(undefined);
-              setCreating(false);
-              setEditing(false);
-              setError("");
-              setNotice("");
-            }}
-          >
-            {copy[tab]}
-          </button>
-        ))}
-      </nav>
-      <div className="own-catalog-workspace">
-        <section
-          className="catalog-state own-catalog-list"
-          aria-labelledby="own-catalog-search-title"
-        >
-          <h2 id="own-catalog-search-title">{copy.searchTitle}</h2>
-          <p>{copy.searchBeforeCreate}</p>
-          <form className="catalog-search" onSubmit={search}>
-            <label className="catalog-sr-only" htmlFor="own-catalog-search">
-              {copy.searchLabel}
-            </label>
-            <input
-              id="own-catalog-search"
-              type="search"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.currentTarget.value)}
-              placeholder={copy.searchPlaceholder}
-              disabled={saving}
-            />
-            <button type="submit" disabled={saving}>
-              {copy.search}
-            </button>
-          </form>
-          {loading && <p role="status">{copy.loading}</p>}
-          {error && (
-            <p className="own-catalog-error" role="alert">
-              {error}
-            </p>
-          )}
-          {query && !loading && !error && (
-            <div className="own-catalog-empty">
-              {items.length === 0 ? <p>{copy.noResults}</p> : null}
-              <AppButton isDisabled={saving} onPress={beginCreate}>
-                {copy.createNoMatch[kind]}
-              </AppButton>
-            </div>
-          )}
-          <ul className="own-catalog-results">
-            {items.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  disabled={saving}
-                  className={selected?.id === item.id ? "is-selected" : ""}
-                  onClick={() => void select(item)}
-                >
-                  <span>
-                    <strong>
-                      {item.kind === "artist" ? item.name : item.title}
-                    </strong>
-                    <small>
-                      {item.provider_code}
-                      {item.kind === "release" && item.release_group_title
-                        ? ` · ${item.release_group_title}`
-                        : ""}
-                    </small>
-                  </span>
-                  <span className="own-catalog-provider">
-                    {item.provider_code}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {query && items.length > 0 && !hasLocalMatch && (
-            <p className="catalog-muted">{copy.externalCandidate}</p>
-          )}
-        </section>
+  const saveArtistDraft = async (
+    draft: ArtistFormDraft,
+    record: LocalProviderItem | undefined,
+  ) => {
+    const visit = editor?.visit;
+    const body = artistDraftToWrite(draft);
+    const item = await saveRecord(
+      "artists",
+      "artist",
+      record,
+      body,
+      draft.name,
+    );
+    rememberArtists([
+      {
+        id: item.id,
+        name: item.name ?? draft.name,
+        provider: "Local",
+      },
+    ]);
+    if (
+      visit === undefined ||
+      activeEditorVisit.current !== visit ||
+      window.location.hash !== hash
+    ) {
+      refreshCatalog("artists");
+      return;
+    }
+    commitRecord("artists", item, !record);
+  };
 
-        <section
-          className="catalog-state own-catalog-detail"
-          aria-labelledby="own-catalog-detail-title"
-        >
-          <h2 id="own-catalog-detail-title">{copy.details}</h2>
-          {selected && !editing ? (
-            <div>
-              <h3>{selectedTitle || copy.untitled}</h3>
-              <p className="catalog-muted">
-                {selected.provider_code} · {selected.provider_key}
-              </p>
-              {selected.provider_code === "local" ? (
-                <>
-                  {selected.kind === "artist" && (
-                    <p>{selected.sort_name || copy.noSortName}</p>
-                  )}
-                  {selected.kind !== "artist" && <p>{selected.title}</p>}
-                  {selected.genres?.length ? (
-                    <p>
-                      {selected.genres.map((genre) => genre.name).join(", ")}
-                    </p>
-                  ) : null}
-                  {selected.kind === "recording" &&
-                    selected.duration_ms != null && (
-                      <p>{formatDuration(selected.duration_ms)}</p>
-                    )}
-                  {selected.kind === "release" && (
-                    <ol className="own-catalog-positions">
-                      {(selected.tracks ?? []).map((track) => {
-                        const duration =
-                          track.duration_override_ms ??
-                          track.recording_duration_ms;
-                        return (
-                          <li key={track.id}>
-                            {track.displayed_number}.{" "}
-                            {track.title_override || track.recording_title}{" "}
-                            <small>
-                              {duration == null
-                                ? copy.durationNotSpecified
-                                : formatDuration(duration)}
-                            </small>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                  <AppButton onPress={beginEdit}>{copy.edit}</AppButton>
-                </>
-              ) : (
-                <p>{copy.externalReadOnly}</p>
-              )}
-            </div>
-          ) : creating || editing ? (
-            <form
-              className="own-catalog-form"
-              onSubmit={(event) => void save(event)}
-            >
-              <h3>{creating ? copy.create[kind] : copy.editing}</h3>
-              <fieldset disabled={saving} className="own-catalog-edit-fields">
-                {kind === "artists" ? (
-                  <>
-                    <Field
-                      label={copy.name}
-                      value={draft.name}
-                      required
-                      onChange={(name) => setDraft({ ...draft, name })}
-                    />
-                    <Field
-                      label={copy.sortName}
-                      value={draft.sort_name}
-                      onChange={(sort_name) =>
-                        setDraft({ ...draft, sort_name })
-                      }
-                    />
-                    <GenreField
-                      kind={kind}
-                      saving={saving}
-                      draft={draft}
-                      setDraft={setDraft}
-                      genreCopy={genreCopy}
-                      locale={locale}
-                      genreStatus={genreStatus}
-                      genreQuery={genreQuery}
-                      setGenreQuery={setGenreQuery}
-                      genreOptions={genreOptions}
-                      genreLoading={genreLoading}
-                      genreError={genreError}
-                      genreStatusLoading={genreStatusLoading}
-                      genreStatusError={genreStatusError}
-                      genreAvailable={genreAvailable}
-                      onLoad={loadGenreStatus}
-                      onRetry={() => setGenreRetry((retry) => retry + 1)}
-                    />
-                    <Field
-                      label={copy.tags}
-                      value={draft.tags}
-                      onChange={(tags) => setDraft({ ...draft, tags })}
-                    />
-                  </>
-                ) : kind === "recordings" ? (
-                  <>
-                    <Field
-                      label={copy.titleField}
-                      value={draft.title}
-                      required
-                      onChange={(title) => setDraft({ ...draft, title })}
-                    />
-                    <Field
-                      label={copy.duration}
-                      value={draft.duration}
-                      placeholder="3:42"
-                      onChange={(duration) =>
-                        setDraft({ ...draft, duration, durationEdited: true })
-                      }
-                    />
-                    <ReferenceSearch
-                      label={copy.performers}
-                      query={artistQuery}
-                      onQuery={setArtistQuery}
-                      results={artists}
-                      copy={copy}
-                      onChoose={(item) => {
-                        const credit = {
-                          clientKey: crypto.randomUUID(),
-                          artist_id: item.id,
-                          credit_name: item.name ?? "",
-                          join_phrase: draft.credits.length ? ", " : "",
-                        };
-                        setDraft({
-                          ...draft,
-                          credits: [...draft.credits, credit],
-                        });
-                      }}
-                    />
-                    <CreditList
-                      credits={draft.credits}
-                      artists={artists}
-                      copy={copy}
-                      onChange={(credits) => setDraft({ ...draft, credits })}
-                    />
-                    <GenreField
-                      kind={kind}
-                      saving={saving}
-                      draft={draft}
-                      setDraft={setDraft}
-                      genreCopy={genreCopy}
-                      locale={locale}
-                      genreStatus={genreStatus}
-                      genreQuery={genreQuery}
-                      setGenreQuery={setGenreQuery}
-                      genreOptions={genreOptions}
-                      genreLoading={genreLoading}
-                      genreError={genreError}
-                      genreStatusLoading={genreStatusLoading}
-                      genreStatusError={genreStatusError}
-                      genreAvailable={genreAvailable}
-                      onLoad={loadGenreStatus}
-                      onRetry={() => setGenreRetry((retry) => retry + 1)}
-                    />
-                    <Field
-                      label={copy.tags}
-                      value={draft.tags}
-                      onChange={(tags) => setDraft({ ...draft, tags })}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Field
-                      label={copy.releaseGroupTitle}
-                      value={draft.release_group_title}
-                      required
-                      onChange={(release_group_title) =>
-                        setDraft({ ...draft, release_group_title })
-                      }
-                    />
-                    <Field
-                      label={copy.titleField}
-                      value={draft.title}
-                      required
-                      onChange={(title) => setDraft({ ...draft, title })}
-                    />
-                    <div className="own-catalog-grid">
-                      <Field
-                        label={copy.primaryType}
-                        value={draft.primary_type}
-                        onChange={(primary_type) =>
-                          setDraft({ ...draft, primary_type })
-                        }
-                      />
-                      <Field
-                        label={copy.secondaryTypes}
-                        value={draft.secondary_types}
-                        onChange={(secondary_types) =>
-                          setDraft({ ...draft, secondary_types })
-                        }
-                      />
-                      <Field
-                        label={copy.language}
-                        value={draft.language}
-                        onChange={(language) =>
-                          setDraft({ ...draft, language })
-                        }
-                      />
-                      <Field
-                        label={copy.script}
-                        value={draft.script}
-                        onChange={(script) => setDraft({ ...draft, script })}
-                      />
-                    </div>
-                    <GenreField
-                      kind={kind}
-                      saving={saving}
-                      draft={draft}
-                      setDraft={setDraft}
-                      genreCopy={genreCopy}
-                      locale={locale}
-                      genreStatus={genreStatus}
-                      genreQuery={genreQuery}
-                      setGenreQuery={setGenreQuery}
-                      genreOptions={genreOptions}
-                      genreLoading={genreLoading}
-                      genreError={genreError}
-                      genreStatusLoading={genreStatusLoading}
-                      genreStatusError={genreStatusError}
-                      genreAvailable={genreAvailable}
-                      onLoad={loadGenreStatus}
-                      onRetry={() => setGenreRetry((retry) => retry + 1)}
-                    />
-                    <ReferenceSearch
-                      label={copy.performers}
-                      query={artistQuery}
-                      onQuery={setArtistQuery}
-                      results={artists}
-                      copy={copy}
-                      onChoose={(item) => {
-                        setDraft({
-                          ...draft,
-                          credits: [
-                            ...draft.credits,
-                            {
-                              clientKey: crypto.randomUUID(),
-                              artist_id: item.id,
-                              credit_name: item.name ?? "",
-                              join_phrase: draft.credits.length ? ", " : "",
-                            },
-                          ],
-                        });
-                      }}
-                    />
-                    <CreditList
-                      credits={draft.credits}
-                      artists={artists}
-                      copy={copy}
-                      onChange={(credits) => setDraft({ ...draft, credits })}
-                    />
-                    <fieldset className="own-catalog-track-editor">
-                      <legend>{copy.positions}</legend>
-                      <ReferenceSearch
-                        label={copy.existingRecording}
-                        query={recordingQuery}
-                        onQuery={setRecordingQuery}
-                        results={recordings}
-                        copy={copy}
-                        onChoose={(item) =>
-                          setDraft({
-                            ...draft,
-                            tracks: [
-                              ...draft.tracks,
-                              {
-                                clientKey: crypto.randomUUID(),
-                                recording_id: item.id,
-                                recording_title: item.title ?? "",
-                                recording_duration_ms: item.duration_ms ?? null,
-                                title_override: "",
-                                duration: "",
-                                originalDurationMS: null,
-                                durationEdited: false,
-                              },
-                            ],
-                          })
-                        }
-                      />
-                      {draft.tracks.map((track, index) => (
-                        <div
-                          className="own-catalog-track"
-                          key={track.clientKey}
-                        >
-                          <span>
-                            {index + 1}.{" "}
-                            {track.title_override || track.recording_title}
-                            <small className="catalog-muted">
-                              {copy.recordingDefault}:{" "}
-                              {track.recording_title || copy.recordingSelected}{" "}
-                              ·{" "}
-                              {track.recording_duration_ms == null
-                                ? copy.durationNotSpecified
-                                : formatDuration(track.recording_duration_ms)}
-                            </small>
-                            <small className="catalog-muted">
-                              {copy.effectivePosition}:{" "}
-                              {track.title_override ||
-                                track.recording_title ||
-                                copy.recordingSelected}{" "}
-                              ·{" "}
-                              {formatEffectiveDuration(
-                                track,
-                                copy.durationNotSpecified,
-                              )}
-                            </small>
-                          </span>
-                          <Field
-                            label={copy.positionTitle}
-                            value={track.title_override}
-                            onChange={(title_override) =>
-                              setDraft({
-                                ...draft,
-                                tracks: draft.tracks.map((item, i) =>
-                                  i === index
-                                    ? { ...item, title_override }
-                                    : item,
-                                ),
-                              })
-                            }
-                          />
-                          <Field
-                            label={copy.durationOverride}
-                            value={track.duration}
-                            placeholder="3:42"
-                            onChange={(duration) =>
-                              setDraft({
-                                ...draft,
-                                tracks: draft.tracks.map((item, i) =>
-                                  i === index
-                                    ? {
-                                        ...item,
-                                        duration,
-                                        durationEdited: true,
-                                      }
-                                    : item,
-                                ),
-                              })
-                            }
-                          />
-                          <div className="own-catalog-track-actions">
-                            <button
-                              type="button"
-                              disabled={index === 0}
-                              aria-label={`${copy.moveUp} ${index + 1}`}
-                              onClick={() => reorderTracks(index, -1)}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              disabled={index === draft.tracks.length - 1}
-                              aria-label={`${copy.moveDown} ${index + 1}`}
-                              onClick={() => reorderTracks(index, 1)}
-                            >
-                              ↓
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDraft({
-                                  ...draft,
-                                  tracks: draft.tracks.filter(
-                                    (_, i) => i !== index,
-                                  ),
-                                })
-                              }
-                            >
-                              {copy.remove}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </fieldset>
-                  </>
-                )}
-              </fieldset>
-              {error && (
-                <p role="alert" className="own-catalog-error">
-                  {error}
-                </p>
-              )}
-              <div className="own-catalog-actions">
-                <button type="submit" disabled={!savingAllowed}>
-                  {saving
-                    ? copy.saving
-                    : creating
-                      ? copy.create[kind]
-                      : copy.save}
-                </button>
-                <button type="button" disabled={saving} onClick={cancel}>
-                  {copy.cancel}
-                </button>
-              </div>
-              <p className="catalog-muted">{copy.localOnly}</p>
-            </form>
-          ) : (
-            <p className="catalog-muted">
-              {query ? copy.selectResult : copy.searchPrompt}
-            </p>
-          )}
-        </section>
-      </div>
-      {notice && (
-        <p className="own-catalog-notice" role="status">
-          {notice}
+  const saveRecordingDraft = async (
+    draft: RecordingFormDraft,
+    record: LocalProviderItem | undefined,
+  ) => {
+    const visit = editor?.visit;
+    const body = recordingDraftToWrite(record, draft);
+    const item = await saveRecord(
+      "recordings",
+      "recording",
+      record,
+      body,
+      draft.title,
+    );
+    if (
+      visit === undefined ||
+      activeEditorVisit.current !== visit ||
+      window.location.hash !== hash
+    ) {
+      refreshCatalog("recordings");
+      return;
+    }
+    commitRecord("recordings", item, !record);
+  };
+
+  const saveReleaseDraft = async (
+    draft: LocalReleaseDraft,
+    record: LocalProviderItem | undefined,
+  ) => {
+    const visit = editor?.visit;
+    const body = releaseDraftToWrite(record, draft, knownArtists.current);
+    const item = await saveRecord(
+      "releases",
+      "release",
+      record,
+      body,
+      draft.release_group_title,
+    );
+    if (
+      visit === undefined ||
+      activeEditorVisit.current !== visit ||
+      window.location.hash !== hash
+    ) {
+      refreshCatalog("releases");
+      return;
+    }
+    commitRecord("releases", item, !record);
+  };
+
+  const changeTab = (key: string | number) => {
+    const next = ownCatalogTypes.find((kind) => kind === key);
+    if (!next || next === route.type) return;
+    setNotice(undefined);
+    closeEditor();
+    pushCatalogHash(ownCatalogRouteHref({ type: next }));
+  };
+
+  const changeFilter = (value: string) => {
+    setFilterInput(value);
+  };
+
+  const clearFilter = () => {
+    setFilterInput("");
+    setFilter("");
+    setPage(1);
+  };
+
+  const activePage = pageData.key === listKey ? pageData : undefined;
+  const pageCount = ownCatalogPageCount(activePage?.total ?? 0);
+  const currentPage = Math.min(Math.max(1, page), pageCount);
+  const pagerBusy = listLoading || !activePage || filterInput.trim() !== filter;
+  const shell = (content: ReactNode) => (
+    <section className="mx-auto max-w-none p-3">
+      {content}
+      {notice ? (
+        <p className="mt-3 text-sm text-[var(--ink)]" role="status">
+          {m(notice)}
         </p>
-      )}
+      ) : null}
     </section>
   );
 
-  function reorderTracks(index: number, direction: -1 | 1) {
-    const next = [...draft.tracks];
-    const target = index + direction;
-    [next[index], next[target]] = [next[target], next[index]];
-    setDraft({ ...draft, tracks: next });
-  }
-}
-
-function formIsValid(kind: Kind, draft: Draft): boolean {
-  if (kind === "artists") return Boolean(draft.name.trim());
-  if (!draft.title.trim()) return false;
-  if (kind === "recordings")
-    return !Number.isNaN(parseDuration(draft.duration));
-  return (
-    Boolean(draft.release_group_title.trim()) &&
-    draft.tracks.every((track) => !Number.isNaN(parseDuration(track.duration)))
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  required,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  required?: boolean;
-  placeholder?: string;
-}) {
-  return (
-    <label className="own-catalog-field">
-      <span>
-        {label}
-        {required ? " *" : ""}
-      </span>
-      <input
-        required={required}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-    </label>
-  );
-}
-
-function ReferenceSearch({
-  label,
-  query,
-  onQuery,
-  results,
-  copy,
-  onChoose,
-}: {
-  label: string;
-  query: string;
-  onQuery: (value: string) => void;
-  results: CatalogEntry[];
-  copy: OwnCatalogMessages;
-  onChoose: (item: CatalogEntry) => void;
-}) {
-  return (
-    <div className="own-catalog-reference-search">
-      <label className="own-catalog-field">
-        <span>{label}</span>
-        <input
-          value={query}
-          onChange={(event) => onQuery(event.currentTarget.value)}
-          placeholder={copy.referenceSearch}
-        />
-      </label>
-      {query.trim() && results.length > 0 && (
-        <ul>
-          {results.map((item) => (
-            <li key={item.id}>
-              <button type="button" onClick={() => onChoose(item)}>
-                {item.name || item.title} <small>{item.provider_code}</small>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function CreditList({
-  credits,
-  artists,
-  copy,
-  onChange,
-}: {
-  credits: CreditDraft[];
-  artists: CatalogEntry[];
-  copy: OwnCatalogMessages;
-  onChange: (credits: CreditDraft[]) => void;
-}) {
-  return credits.length ? (
-    <ol className="own-catalog-credit-list">
-      {credits.map((credit, index) => (
-        <li key={credit.clientKey}>
-          <span>
-            {artists.find((artist) => artist.id === credit.artist_id)?.name ||
-              credit.credit_name}
-          </span>
-          <label>
-            {copy.creditName}
-            <input
-              value={credit.credit_name}
-              onChange={(event) =>
-                onChange(
-                  credits.map((item, i) =>
-                    i === index
-                      ? { ...item, credit_name: event.currentTarget.value }
-                      : item,
-                  ),
-                )
-              }
-            />
-          </label>
-          <label>
-            {copy.joinPhrase}
-            <input
-              value={credit.join_phrase}
-              onChange={(event) =>
-                onChange(
-                  credits.map((item, i) =>
-                    i === index
-                      ? { ...item, join_phrase: event.currentTarget.value }
-                      : item,
-                  ),
-                )
-              }
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => onChange(credits.filter((_, i) => i !== index))}
-          >
-            {copy.remove}
-          </button>
-        </li>
-      ))}
-    </ol>
-  ) : null;
-}
-
-function GenreField({
-  kind,
-  saving,
-  draft,
-  setDraft,
-  genreCopy,
-  locale,
-  genreStatus,
-  genreQuery,
-  setGenreQuery,
-  genreOptions,
-  genreLoading,
-  genreError,
-  genreStatusLoading,
-  genreStatusError,
-  genreAvailable,
-  onLoad,
-  onRetry,
-}: {
-  kind: Kind;
-  saving: boolean;
-  draft: Draft;
-  setDraft: (draft: Draft) => void;
-  genreCopy: GenreMessages;
-  locale: "en" | "ru";
-  genreStatus?: GenreCatalogStatus;
-  genreQuery: string;
-  setGenreQuery: (value: string) => void;
-  genreOptions: GenreCatalogItem[];
-  genreLoading: boolean;
-  genreError: string;
-  genreStatusLoading: boolean;
-  genreStatusError: string;
-  genreAvailable: boolean;
-  onLoad: () => void;
-  onRetry: () => void;
-}) {
-  const owner =
-    kind === "artists"
-      ? "artist"
-      : kind === "releases"
-        ? "release"
-        : "recording";
-  return (
-    <div className="own-catalog-genre">
-      <span>{genreCopy.label[owner]}</span>
-      <GenrePicker
-        value={draft.genres}
-        onChange={(genres) =>
-          setDraft({ ...draft, genres: genres.map(asGenre) })
+  if (route.id && !editor) {
+    return shell(
+      <OwnCatalogDetails
+        locale={locale}
+        type={route.type}
+        item={activeDetail.item}
+        loading={activeDetail.loading}
+        error={
+          activeDetail.error === null ? detailLoadError : activeDetail.error
         }
-        editing
-        label={genreCopy.label[owner]}
-        copy={genreCopy}
-        options={genreOptions}
-        query={genreQuery}
-        onQueryChange={setGenreQuery}
-        loading={genreLoading}
-        catalogError={genreError}
-        onClearCatalogError={() => undefined}
-        onRetryCatalog={onRetry}
-        catalogStatus={genreStatus}
-        catalogStatusLoading={genreStatusLoading}
-        catalogStatusError={genreStatusError}
-        onOpenCatalog={onLoad}
-        onRetryStatus={onLoad}
-        disabled={saving}
-      />
-      {!genreAvailable && !genreStatusLoading && (
-        <small>
-          {locale === "ru"
-            ? "Каталог жанров недоступен; запись без жанров можно сохранить."
-            : "The genre catalog is unavailable; the record can still be saved without genres."}
-        </small>
-      )}
-    </div>
+        onRetry={() => setDetailRetry((attempt) => attempt + 1)}
+        onBack={closeDetails}
+        onEdit={
+          fullDetailItem
+            ? () =>
+                openEditor({
+                  kind: "edit",
+                  type: route.type,
+                  id: fullDetailItem.id,
+                })
+            : undefined
+        }
+      />,
+    );
+  }
+
+  if (editor) {
+    const record =
+      editor.kind === "edit" && fullDetailItem?.id === editor.id
+        ? fullDetailItem
+        : undefined;
+    if (editor.kind !== "edit" || record) {
+      const kind = editor.type;
+      const back = backFromEditor;
+      const recordArtists: LocalReleaseArtist[] = (record?.credits ?? []).map(
+        (credit) => ({
+          id: credit.artist_id,
+          name: credit.credit_name || credit.artist_name,
+          provider:
+            credit.provider_code === "local" ? "Local" : credit.provider_code,
+        }),
+      );
+      if (kind === "releases") {
+        return shell(
+          <OwnCatalogReleaseEditor
+            locale={locale}
+            record={record}
+            artists={[...recordArtists, ...artists]}
+            recordings={record ? releaseRecordRecordings(record) : []}
+            findRecordings={findRecordings}
+            findArtists={findArtists}
+            saveRecording={saveReleaseRecording}
+            saveArtist={createArtist}
+            onSave={(draft) => saveReleaseDraft(draft, record)}
+            onBack={back}
+          />,
+        );
+      }
+      if (kind === "recordings") {
+        return shell(
+          <OwnCatalogEditorShell
+            eyebrow={m("eyebrow")}
+            title={record ? m("editRecording") : m("createRecording")}
+            backLabel={m("back")}
+            backDisabled={saving}
+            onBack={back}
+          >
+            <OwnCatalogRecordingForm
+              locale={locale}
+              record={record}
+              findArtists={findArtists}
+              saveArtist={createArtist}
+              onSave={(draft) => saveRecordingDraft(draft, record)}
+              onBack={back}
+            />
+          </OwnCatalogEditorShell>,
+        );
+      }
+      return shell(
+        <OwnCatalogEditorShell
+          eyebrow={m("eyebrow")}
+          title={record ? m("editArtist") : m("createArtist")}
+          backLabel={m("back")}
+          backDisabled={saving}
+          onBack={back}
+        >
+          <OwnCatalogArtistForm
+            locale={locale}
+            record={record}
+            onSave={(draft) => saveArtistDraft(draft, record)}
+            onBack={back}
+          />
+        </OwnCatalogEditorShell>,
+      );
+    }
+  }
+
+  const emptyMessage: Record<OwnCatalogType, OwnCatalogMessage> = {
+    releases: "emptyReleases",
+    recordings: "emptyRecordings",
+    artists: "emptyArtists",
+  };
+  const createMessage: Record<OwnCatalogType, OwnCatalogMessage> = {
+    releases: "createRelease",
+    recordings: "createRecording",
+    artists: "createArtist",
+  };
+
+  return shell(
+    <section className="mx-auto max-w-none">
+      <header className="mb-3">
+        <h1 className="m-0 text-2xl font-semibold">{m("title")}</h1>
+        <p className="m-0 text-sm text-[var(--muted)]">{m("description")}</p>
+      </header>
+      <Tabs
+        selectedKey={route.type}
+        onSelectionChange={changeTab}
+        className="grid min-w-0 gap-2"
+      >
+        <TabList
+          aria-label={m("tabListLabel")}
+          className="flex flex-wrap gap-[3px] text-xs"
+        >
+          {ownCatalogTypes.map((kind) => {
+            const label = m(kind as OwnCatalogMessage);
+            const count = totals[kind] ?? 0;
+            return (
+              <Tab
+                key={kind}
+                id={kind}
+                aria-label={`${label}: ${count}`}
+                className="flex min-h-9 cursor-pointer items-center gap-1.5 rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold whitespace-nowrap text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] max-sm:px-2"
+              >
+                <span>{label}</span>
+                <span
+                  aria-hidden="true"
+                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-1 text-xs leading-none font-medium text-[var(--ink)] tabular-nums"
+                >
+                  {count}
+                </span>
+              </Tab>
+            );
+          })}
+        </TabList>
+        <TabPanel id={route.type} className="min-w-0 pt-2">
+          <section className="grid min-w-0 gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 sm:p-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <SearchField
+                className="grid w-full min-w-0 gap-1 sm:max-w-[32rem] sm:flex-1"
+                value={filterInput}
+                onChange={changeFilter}
+              >
+                <Label className="text-xs font-medium">
+                  {m("filterLabel")}
+                </Label>
+                <Input
+                  className="min-h-8 w-full rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
+                  placeholder={m("filterPlaceholder")}
+                />
+              </SearchField>
+              <Button
+                className={primary}
+                onPress={() => openEditor({ kind: "create", type: route.type })}
+              >
+                {m(createMessage[route.type])}
+              </Button>
+            </div>
+            {listLoading ? (
+              <p className="m-0 text-xs text-[var(--muted)]" role="status">
+                {m("loading")}
+              </p>
+            ) : null}
+            {listError ? (
+              <div className="grid justify-items-start gap-2">
+                <p
+                  className="m-0 text-xs font-medium text-[var(--error)]"
+                  role="alert"
+                >
+                  {listError}
+                </p>
+                <Button
+                  className={primary}
+                  onPress={() => setListVersion((attempt) => attempt + 1)}
+                >
+                  {m("retry")}
+                </Button>
+              </div>
+            ) : null}
+            {!listError &&
+            activePage &&
+            listLoaded &&
+            activePage.total === 0 ? (
+              filter ? (
+                <div className="grid justify-items-start gap-2">
+                  <p className="m-0 text-xs text-[var(--muted)]">
+                    {m("noMatches")}
+                  </p>
+                  <Button onPress={clearFilter}>{m("clearFilter")}</Button>
+                </div>
+              ) : (
+                <p className="m-0 text-xs text-[var(--muted)]">
+                  {m(emptyMessage[route.type])}
+                </p>
+              )
+            ) : null}
+            {!listError && activePage && activePage.items.length > 0 ? (
+              <ul className="m-0 list-none divide-y divide-[var(--line)] border-y border-[var(--line)] p-0">
+                {activePage.items.map((item) => {
+                  const title = ownCatalogTitle(route.type, item);
+                  return (
+                    <li key={item.id}>
+                      <Button
+                        className="flex min-h-14 w-full justify-start gap-2 border-0 bg-transparent px-3 py-2 text-left hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus)]"
+                        isDisabled={pagerBusy}
+                        onPress={() => openDetails(route.type, item)}
+                      >
+                        <span className="min-w-0">
+                          <strong className="block wrap-anywhere">
+                            {title || "—"}
+                          </strong>
+                          <small className="block text-[var(--muted)] wrap-anywhere">
+                            {ownCatalogRowDetails(route.type, item, m)}
+                          </small>
+                        </span>
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+            <OwnCatalogPagination
+              locale={locale}
+              page={currentPage}
+              totalPages={pageCount}
+              totalItems={activePage?.total ?? 0}
+              busy={pagerBusy}
+              onPageChange={setPage}
+            />
+          </section>
+        </TabPanel>
+      </Tabs>
+    </section>,
   );
 }
-
-type OwnCatalogMessages =
-  (typeof ownCatalogMessages)[keyof typeof ownCatalogMessages];
-const ownCatalogMessages = {
-  en: {
-    title: "Own catalog",
-    description:
-      "Search provider records, then create or edit records owned by Local.",
-    entityTypes: "Provider record types",
-    artists: "Artists",
-    recordings: "Recordings",
-    releases: "Releases",
-    searchTitle: "Find a provider record",
-    searchBeforeCreate:
-      "Search existing providers before creating a Local record.",
-    searchLabel: "Search provider records",
-    searchPlaceholder: "Enter a name or title",
-    search: "Search",
-    loading: "Searching…",
-    loadError: "Could not load provider records.",
-    noResults: "No provider records match this search.",
-    createNoMatch: {
-      artists: "None of these — create a Local artist",
-      recordings: "None of these — create a Local recording",
-      releases: "None of these — create a Local release",
-    },
-    externalCandidate:
-      "Existing external provider records are shown first; select one to inspect it instead of creating a duplicate.",
-    create: {
-      artists: "Create Local artist",
-      recordings: "Create Local recording",
-      releases: "Create Local release",
-    },
-    details: "Record details",
-    untitled: "Untitled record",
-    noSortName: "No sort name",
-    externalReadOnly:
-      "External provider records are read-only here. They can be selected as references in Local records.",
-    edit: "Edit Local record",
-    editing: "Edit record",
-    name: "Name",
-    sortName: "Sort name",
-    titleField: "Title",
-    duration: "Duration (seconds or M:SS)",
-    tags: "Tags (comma-separated)",
-    releaseGroupTitle: "Release group title",
-    primaryType: "Primary type",
-    secondaryTypes: "Secondary types (comma-separated)",
-    language: "Language",
-    script: "Script",
-    performers: "Artists",
-    referenceSearch: "Search existing providers",
-    creditName: "Credit name",
-    joinPhrase: "Join phrase",
-    positions: "Medium 1 positions",
-    existingRecording: "Existing recording",
-    recordingSelected: "Recording",
-    recordingDefault: "Recording default",
-    effectivePosition: "Position values",
-    durationNotSpecified: "duration not specified",
-    positionTitle: "Title override",
-    durationOverride: "Duration override (seconds or M:SS)",
-    moveUp: "Move up",
-    moveDown: "Move down",
-    remove: "Remove",
-    createAction: "Create",
-    save: "Save changes",
-    cancel: "Cancel",
-    saving: "Saving…",
-    invalidDuration:
-      "Check the required fields and enter duration as whole seconds or M:SS.",
-    saveError: "Could not save the provider record.",
-    created: "Local provider record created.",
-    updated: "Local provider record updated.",
-    localOnly:
-      "Only Local records can be changed here. Saving provider metadata does not publish audio or create library records.",
-    selectResult: "Select a result to view its details.",
-    searchPrompt:
-      "Search all providers to view records or create a Local record.",
-  },
-  ru: {
-    title: "Собственный каталог",
-    description:
-      "Ищите записи провайдеров, создавайте и редактируйте записи Local.",
-    entityTypes: "Типы записей провайдера",
-    artists: "Артисты",
-    recordings: "Композиции",
-    releases: "Релизы",
-    searchTitle: "Найти запись провайдера",
-    searchBeforeCreate:
-      "Перед созданием записи Local поищите её у существующих провайдеров.",
-    searchLabel: "Поиск записей провайдера",
-    searchPlaceholder: "Введите имя или название",
-    search: "Найти",
-    loading: "Поиск…",
-    loadError: "Не удалось загрузить записи провайдера.",
-    noResults: "По этому запросу ничего не найдено.",
-    createNoMatch: {
-      artists: "Нет подходящего — создать артиста Local",
-      recordings: "Нет подходящей — создать композицию Local",
-      releases: "Нет подходящего — создать релиз Local",
-    },
-    externalCandidate:
-      "Сначала показаны записи внешних провайдеров: выберите запись, чтобы проверить её и не создавать дубликат.",
-    create: {
-      artists: "Создать артиста Local",
-      recordings: "Создать композицию Local",
-      releases: "Создать релиз Local",
-    },
-    details: "Данные записи",
-    untitled: "Без названия",
-    noSortName: "Имя для сортировки не задано",
-    externalReadOnly:
-      "Внешние записи доступны только для чтения. Их можно выбирать как ссылки в записях Local.",
-    edit: "Изменить запись Local",
-    editing: "Изменение записи",
-    name: "Имя",
-    sortName: "Имя для сортировки",
-    titleField: "Название",
-    duration: "Длительность (секунды или М:СС)",
-    tags: "Теги (через запятую)",
-    releaseGroupTitle: "Название группы релизов",
-    primaryType: "Основной тип",
-    secondaryTypes: "Дополнительные типы (через запятую)",
-    language: "Язык",
-    script: "Письменность",
-    performers: "Артисты",
-    referenceSearch: "Поиск существующих провайдеров",
-    creditName: "Имя в кредите",
-    joinPhrase: "Связка имени",
-    positions: "Позиции носителя 1",
-    existingRecording: "Существующая композиция",
-    recordingSelected: "Композиция",
-    recordingDefault: "Данные композиции",
-    effectivePosition: "Данные позиции",
-    durationNotSpecified: "длительность не указана",
-    positionTitle: "Переопределение названия",
-    durationOverride: "Переопределение длительности (секунды или М:СС)",
-    moveUp: "Переместить выше",
-    moveDown: "Переместить ниже",
-    remove: "Убрать",
-    createAction: "Создать",
-    save: "Сохранить изменения",
-    cancel: "Отмена",
-    saving: "Сохранение…",
-    invalidDuration:
-      "Проверьте обязательные поля и введите длительность в секундах или формате М:СС.",
-    saveError: "Не удалось сохранить запись провайдера.",
-    created: "Запись Local создана.",
-    updated: "Запись Local обновлена.",
-    localOnly:
-      "Здесь можно менять только записи Local. Сохранение метаданных не публикует аудио и не создаёт записи медиатеки.",
-    selectResult: "Выберите результат, чтобы просмотреть подробности.",
-    searchPrompt:
-      "Ищите во всех провайдерах, чтобы просмотреть записи или создать запись Local.",
-  },
-} as const;

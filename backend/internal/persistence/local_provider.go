@@ -37,12 +37,17 @@ type LocalProviderTrack struct {
 	DurationOverrideMS  *int64    `json:"duration_override_ms"`
 }
 
-// LocalProviderEdition is the compact edition summary returned for release
-// list rows. Only canonical positions from the provider release graph are
-// counted; credits retain their stored join phrases verbatim.
+// LocalProviderEdition combines saved edition facts with the release graph's
+// ordered artist credit and count of present positions.
 type LocalProviderEdition struct {
-	ArtistCredit string `json:"artist_credit,omitempty"`
-	TrackCount   int    `json:"track_count"`
+	ArtistCredit   string `json:"artist_credit,omitempty"`
+	TrackCount     int    `json:"track_count"`
+	ReleaseDate    string `json:"release_date,omitempty"`
+	Country        string `json:"country,omitempty"`
+	Format         string `json:"format,omitempty"`
+	Label          string `json:"label,omitempty"`
+	CatalogNumber  string `json:"catalog_number,omitempty"`
+	Disambiguation string `json:"disambiguation,omitempty"`
 }
 
 type LocalProviderItem struct {
@@ -63,6 +68,7 @@ type LocalProviderItem struct {
 	Genres            json.RawMessage       `json:"genres"`
 	Tags              []string              `json:"tags"`
 	Credits           []LocalProviderCredit `json:"credits"`
+	ArtistCredit      string                `json:"artist_credit,omitempty"`
 	Tracks            []LocalProviderTrack  `json:"tracks"`
 	Edition           *LocalProviderEdition `json:"edition,omitempty"`
 }
@@ -117,6 +123,23 @@ func (r *LocalProviderRepository) List(ctx context.Context, kind, query, provide
 		}
 		where = "(?='all' OR p.code=?) AND (e.provider_key ILIKE ? OR (" + strings.Join(matches, " AND ") + "))"
 	}
+	// Recording lookup also matches ordered credit names and stored artist names
+	// for the same page. Local credits come from recording metadata; external
+	// credits come only from accepted recording projections.
+	if kind == "recordings" && strings.TrimSpace(query) != "" {
+		terms := strings.Fields(query)
+		matches := make([]string, 0, len(terms))
+		args = []any{provider, provider, pattern}
+		for _, term := range terms {
+			termPattern := "%" + term + "%"
+			matches = append(matches, `(e.title ILIKE ? OR (p.code='local' AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.metadata->'credits')='array' THEN e.metadata->'credits' ELSE '[]'::jsonb END) c
+				LEFT JOIN provider_artist a ON a.id::text=(c->>'artist_id')
+				WHERE c->>'credit_name' ILIKE ? OR a.name ILIKE ?)))`)
+			args = append(args, termPattern, termPattern, termPattern)
+		}
+		where = "(?='all' OR p.code=?) AND (e.provider_key ILIKE ? OR (" + strings.Join(matches, " AND ") + "))"
+	}
 	if err := r.db.NewRaw("SELECT count(*) FROM "+table+" e JOIN provider p ON p.id=e.provider_id WHERE "+where, args...).Scan(ctx, &result.Total); err != nil {
 		return LocalProviderList{}, fmt.Errorf("count local provider catalog: %w", err)
 	}
@@ -144,14 +167,22 @@ func (r *LocalProviderRepository) List(ctx context.Context, kind, query, provide
 		if item.Kind == "release" {
 			item.Tags = nil
 		}
-		item.Credits, item.Tracks = []LocalProviderCredit{}, []LocalProviderTrack{}
+		if item.Kind != "recording" || item.ProviderCode != "local" || item.Credits == nil {
+			item.Credits = []LocalProviderCredit{}
+		}
+		item.Tracks = []LocalProviderTrack{}
 		result.Items = append(result.Items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return LocalProviderList{}, fmt.Errorf("iterate local provider catalog: %w", err)
 	}
-	if kind == "releases" {
+	switch kind {
+	case "releases":
 		if err := r.readReleaseEditions(ctx, result.Items); err != nil {
+			return LocalProviderList{}, err
+		}
+	case "recordings":
+		if err := r.readListedRecordingCredits(ctx, result.Items); err != nil {
 			return LocalProviderList{}, err
 		}
 	}
@@ -167,7 +198,9 @@ func (r *LocalProviderRepository) readReleaseEditions(ctx context.Context, items
 		if items[i].ProviderCode != "local" {
 			continue
 		}
-		items[i].Edition = &LocalProviderEdition{}
+		if items[i].Edition == nil {
+			items[i].Edition = &LocalProviderEdition{}
+		}
 		ids = append(ids, items[i].ID)
 		editions[items[i].ID] = items[i].Edition
 	}
@@ -251,16 +284,34 @@ func (r *LocalProviderRepository) Read(ctx context.Context, kind string, id uuid
 		if err := r.readReleaseGraph(ctx, &item); err != nil {
 			return LocalProviderItem{}, err
 		}
-	}
-	if kind == "recording" {
-		for i := range item.Credits {
-			if err := r.db.NewRaw(`SELECT a.provider_id,p.code,a.name FROM provider_artist a JOIN provider p ON p.id=a.provider_id WHERE a.id=?`, item.Credits[i].ArtistID).Scan(ctx, &item.Credits[i].ProviderID, &item.Credits[i].ProviderCode, &item.Credits[i].ArtistName); err != nil {
-				return LocalProviderItem{}, fmt.Errorf("read recording credit provider: %w", err)
-			}
+		if item.Edition == nil {
+			item.Edition = &LocalProviderEdition{}
 		}
+		item.Edition.TrackCount = len(item.Tracks)
+		item.Edition.ArtistCredit = localCatalogCreditCaption(item.Credits)
 	}
 	item.ProviderCode = "local"
+	if kind == "recording" {
+		items := []LocalProviderItem{item}
+		if err := r.readListedLocalRecordingCredits(ctx, items); err != nil {
+			return LocalProviderItem{}, err
+		}
+		item = items[0]
+	}
 	return item, nil
+}
+
+func localCatalogCreditCaption(credits []LocalProviderCredit) string {
+	var caption strings.Builder
+	for _, credit := range credits {
+		name := credit.Name
+		if name == "" {
+			name = credit.ArtistName
+		}
+		caption.WriteString(name)
+		caption.WriteString(credit.JoinPhrase)
+	}
+	return caption.String()
 }
 
 func (r *LocalProviderRepository) Save(ctx context.Context, item LocalProviderItem, create bool) (LocalProviderItem, error) {
@@ -353,6 +404,7 @@ func decodeLocalProviderMetadata(item *LocalProviderItem, data []byte) error {
 		Genres            json.RawMessage       `json:"genres"`
 		Tags              []string              `json:"tags"`
 		Credits           []LocalProviderCredit `json:"credits"`
+		Edition           *LocalProviderEdition `json:"edition"`
 	}
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("decode local provider metadata: %w", err)
@@ -364,6 +416,9 @@ func decodeLocalProviderMetadata(item *LocalProviderItem, data []byte) error {
 	}
 	item.Tags = fields.Tags
 	item.Credits = fields.Credits
+	if item.Kind == "release" {
+		item.Edition = fields.Edition
+	}
 	if item.Tags == nil {
 		item.Tags = []string{}
 	}
@@ -402,6 +457,24 @@ func encodeLocalProviderMetadata(item LocalProviderItem) ([]byte, error) {
 		}
 		if item.Script != nil {
 			fields["script"] = item.Script
+		}
+		if edition := item.Edition; edition != nil {
+			values := map[string]string{}
+			for key, value := range map[string]string{
+				"release_date":   edition.ReleaseDate,
+				"country":        edition.Country,
+				"format":         edition.Format,
+				"label":          edition.Label,
+				"catalog_number": edition.CatalogNumber,
+				"disambiguation": edition.Disambiguation,
+			} {
+				if value != "" {
+					values[key] = value
+				}
+			}
+			if len(values) > 0 {
+				fields["edition"] = values
+			}
 		}
 	default:
 		return nil, fmt.Errorf("invalid local provider catalog kind")

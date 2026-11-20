@@ -357,7 +357,7 @@ func validateTypedValue(valueType ValueType, value any) error {
 		}
 	case TypeDate:
 		date, ok := value.(string)
-		if !ok || !validPartialDate(date) {
+		if !ok || !ValidPartialDate(date) {
 			return fmt.Errorf("value must be a valid partial date in YYYY, YYYY-MM, or YYYY-MM-DD form")
 		}
 	case TypeAdvisory:
@@ -479,7 +479,9 @@ func numericValue(value any) (float64, bool) {
 	}
 }
 
-func validPartialDate(value string) bool {
+// ValidPartialDate reports whether value is a calendar date at year, month,
+// or day precision.
+func ValidPartialDate(value string) bool {
 	if !partialDatePattern.MatchString(value) {
 		return false
 	}

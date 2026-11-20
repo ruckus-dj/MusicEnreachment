@@ -32,6 +32,14 @@ type localProviderTrackInput struct {
 	TitleOverride      *string   `json:"title_override,omitempty"`
 	DurationOverrideMS *int64    `json:"duration_override_ms,omitempty"`
 }
+type localProviderEditionInput struct {
+	ReleaseDate    string `json:"release_date,omitempty"`
+	Country        string `json:"country,omitempty"`
+	Format         string `json:"format,omitempty"`
+	Label          string `json:"label,omitempty"`
+	CatalogNumber  string `json:"catalog_number,omitempty"`
+	Disambiguation string `json:"disambiguation,omitempty"`
+}
 type localProviderWrite struct {
 	Name              string                     `json:"name,omitempty"`
 	SortName          *string                    `json:"sort_name,omitempty"`
@@ -46,6 +54,7 @@ type localProviderWrite struct {
 	Tags              []string                   `json:"tags,omitempty"`
 	Credits           []localProviderCreditInput `json:"credits,omitempty"`
 	Tracks            []localProviderTrackInput  `json:"tracks,omitempty"`
+	Edition           *localProviderEditionInput `json:"edition,omitempty"`
 }
 type localProviderCreateInput struct {
 	Body localProviderWrite `json:"body"`
@@ -117,6 +126,16 @@ func registerLocalProviderCatalog(api huma.API, catalog *service.LocalProviderCa
 
 func localProviderWriteItem(input localProviderWrite) service.LocalProviderItem {
 	item := service.LocalProviderItem{Name: input.Name, SortName: input.SortName, Title: input.Title, ReleaseGroupTitle: input.ReleaseGroupTitle, DurationMS: input.DurationMS, PrimaryType: input.PrimaryType, SecondaryTypes: input.SecondaryTypes, Language: input.Language, Script: input.Script, Genres: service.LocalProviderGenreReferences(input.Genres), Tags: input.Tags}
+	if edition := input.Edition; edition != nil {
+		item.Edition = &service.LocalProviderEdition{
+			ReleaseDate:    edition.ReleaseDate,
+			Country:        edition.Country,
+			Format:         edition.Format,
+			Label:          edition.Label,
+			CatalogNumber:  edition.CatalogNumber,
+			Disambiguation: edition.Disambiguation,
+		}
+	}
 	for _, credit := range input.Credits {
 		item.Credits = append(item.Credits, service.LocalProviderCredit{ArtistID: credit.ArtistID, Name: credit.Name, JoinPhrase: credit.JoinPhrase})
 	}

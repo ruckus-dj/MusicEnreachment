@@ -174,13 +174,13 @@ func TestFieldValueDirectConstructionKeepsPresenceConsistent(t *testing.T) {
 
 func TestPartialDatesValidateCalendar(t *testing.T) {
 	for _, value := range []string{"2024", "2024-02", "2024-02-29", "2000-02-29", "2026-10-17"} {
-		if !validPartialDate(value) {
-			t.Errorf("validPartialDate(%q) = false", value)
+		if !ValidPartialDate(value) {
+			t.Errorf("ValidPartialDate(%q) = false", value)
 		}
 	}
 	for _, value := range []string{"", "24", "2024-2", "2023-02-29", "2024-13", "2024-00-01", "2024-04-31", "2024-01-01T00:00:00Z"} {
-		if validPartialDate(value) {
-			t.Errorf("validPartialDate(%q) = true", value)
+		if ValidPartialDate(value) {
+			t.Errorf("ValidPartialDate(%q) = true", value)
 		}
 	}
 }

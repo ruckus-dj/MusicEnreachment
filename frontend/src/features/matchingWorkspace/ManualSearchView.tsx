@@ -5,12 +5,6 @@ import {
   manualSearchMessage,
 } from "./manualSearchContract";
 
-function labelText(label: { name?: string; catalogNumber?: string }) {
-  if (label.name && label.catalogNumber)
-    return `${label.name} (${label.catalogNumber})`;
-  return label.name ?? label.catalogNumber ?? "";
-}
-
 function Button({ className, ...props }: ButtonProps) {
   return (
     <AriaButton
@@ -28,12 +22,12 @@ function editionDetails(
   ) => string,
 ) {
   const formats = item.formats.join(" / ");
-  const media =
-    item.mediaCount > 1
-      ? [formats, message("discCount", { count: item.mediaCount })]
-          .filter(Boolean)
-          .join(" · ")
-      : formats;
+  const labels = item.labels.flatMap(({ name, catalogNumber }) =>
+    name ? [catalogNumber ? `${name} (${catalogNumber})` : name] : [],
+  );
+  const unpairedNumbers = item.labels.flatMap(({ name, catalogNumber }) =>
+    !name && catalogNumber ? [catalogNumber] : [],
+  );
   return [
     item.releaseGroupTitle
       ? message("releaseGroup", { title: item.releaseGroupTitle })
@@ -45,11 +39,15 @@ function editionDetails(
     item.trackCount !== undefined
       ? message("releaseTracks", { count: item.trackCount })
       : undefined,
-    media ? message("releaseFormats", { formats: media }) : undefined,
-    item.labels.length
-      ? message("releaseLabels", {
-          labels: item.labels.map(labelText).join(", "),
-        })
+    formats ? message("releaseFormats", { formats }) : undefined,
+    item.mediaCount > 1
+      ? message("discCount", { count: item.mediaCount })
+      : undefined,
+    labels.length
+      ? message("releaseLabels", { labels: labels.join(", ") })
+      : undefined,
+    unpairedNumbers.length
+      ? message("catalogNumbers", { numbers: unpairedNumbers.join(", ") })
       : undefined,
     item.score !== undefined
       ? message("score", { score: item.score })
@@ -68,7 +66,10 @@ function chooseLabel(
 ) {
   const details = [
     showProvider ? item.provider : undefined,
-    item.artistCredit,
+    item.disambiguation,
+    item.artistCredit
+      ? message("releaseArtist", { artist: item.artistCredit })
+      : undefined,
     ...editionDetails(item, message),
   ]
     .filter(Boolean)
@@ -242,11 +243,19 @@ export function ManualSearchView({
                             {item.provider}
                           </span>
                           {item.artistCredit ? (
-                            <span>{item.artistCredit}</span>
+                            <span>
+                              {message("releaseArtist", {
+                                artist: item.artistCredit,
+                              })}
+                            </span>
                           ) : null}
                         </p>
                       ) : item.artistCredit ? (
-                        <p className="text-sm">{item.artistCredit}</p>
+                        <p className="text-sm">
+                          {message("releaseArtist", {
+                            artist: item.artistCredit,
+                          })}
+                        </p>
                       ) : null}
                       {details.length ? (
                         <p className="mt-1 text-xs text-[var(--muted)] wrap-anywhere">

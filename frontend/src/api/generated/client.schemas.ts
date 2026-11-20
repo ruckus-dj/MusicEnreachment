@@ -1418,7 +1418,22 @@ export interface LocalProviderCreditInput {
 
 export interface LocalProviderEdition {
   artist_credit?: string;
+  catalog_number?: string;
+  country?: string;
+  disambiguation?: string;
+  format?: string;
+  label?: string;
+  release_date?: string;
   track_count: number;
+}
+
+export interface LocalProviderEditionInput {
+  catalog_number?: string;
+  country?: string;
+  disambiguation?: string;
+  format?: string;
+  label?: string;
+  release_date?: string;
 }
 
 export interface LocalProviderTrack {
@@ -1440,6 +1455,7 @@ export interface LocalProviderTrack {
 export interface LocalProviderItem {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  artist_credit?: string;
   /** @nullable */
   credits: LocalProviderCredit[] | null;
   duration_ms?: number;
@@ -1489,6 +1505,7 @@ export interface LocalProviderWrite {
   /** @nullable */
   credits?: LocalProviderCreditInput[] | null;
   duration_ms?: number;
+  edition?: LocalProviderEditionInput;
   /** @nullable */
   genres?: GenreCatalogItem[] | null;
   language?: string;

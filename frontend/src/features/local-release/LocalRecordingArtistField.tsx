@@ -31,6 +31,7 @@ function formatArtistName(artist: LocalReleaseArtist): string {
 
 export function LocalRecordingArtistField({
   copy,
+  scope = "recording",
   findArtists,
   saveArtist,
   credits,
@@ -41,6 +42,7 @@ export function LocalRecordingArtistField({
   onSaved,
 }: {
   copy: LocalReleaseCopy;
+  scope?: "release" | "recording";
   findArtists: FindLocalArtists;
   saveArtist: SaveLocalArtist;
   credits: readonly LocalRecordingCreditSelection[];
@@ -181,16 +183,22 @@ export function LocalRecordingArtistField({
   }
   return (
     <section
-      aria-label={copy.recordingArtist}
+      aria-label={scope === "release" ? copy.artists : copy.recordingArtist}
       className="grid gap-2 rounded border border-[var(--line)] p-2"
     >
       <div className="grid gap-1">
-        <h4 className="m-0 text-sm font-semibold">{copy.recordingArtist}</h4>
-        <p className={muted}>{copy.recordingArtistHelp}</p>
+        <h4 className="m-0 text-sm font-semibold">
+          {scope === "release" ? copy.artists : copy.recordingArtist}
+        </h4>
+        <p className={muted}>
+          {scope === "release" ? copy.artistHelp : copy.recordingArtistHelp}
+        </p>
       </div>
       {credits.length > 0 ? (
         <fieldset
-          aria-label={copy.recordingCredits}
+          aria-label={
+            scope === "release" ? copy.creditsPreview : copy.recordingCredits
+          }
           className="grid min-w-0 gap-1 rounded border border-[var(--accent)] bg-[var(--accent-soft)] p-2"
         >
           <p className="m-0 min-w-0 text-xs wrap-anywhere">
@@ -253,7 +261,8 @@ export function LocalRecordingArtistField({
         </fieldset>
       ) : (
         <p className={muted}>
-          {copy.noArtistSelected} {copy.recordingArtistOptional}
+          {copy.noArtistSelected}
+          {scope === "recording" ? ` ${copy.recordingArtistOptional}` : null}
         </p>
       )}
       <form

@@ -183,12 +183,12 @@ it("sends the freeform release query unchanged and keeps pagination, results, an
   );
   expect(
     screen.getByRole("button", {
-      name: /Choose “Выходи за меня” \(Anacondaz,.*Format: CD/,
+      name: /Choose “Выходи за меня” \(deluxe edition, Artist: Anacondaz,.*Format: CD/,
     }),
   ).toBeInTheDocument();
   fireEvent.click(
     screen.getByRole("button", {
-      name: /Choose “Выходи за меня” \(Anacondaz,.*Format: Vinyl \/ CD/,
+      name: /Choose “Выходи за меня” \(Artist: Anacondaz,.*Format: Vinyl \/ CD/,
     }),
   );
   expect(onSelectRelease).toHaveBeenCalledWith(
@@ -236,7 +236,7 @@ it("sends the freeform release query unchanged and keeps pagination, results, an
   expect(screen.getByText("Выходи за меня (live)")).toBeInTheDocument();
   expect(
     screen.getByRole("button", {
-      name: /Выбрать «Выходи за меня \(live\)» \(Anacondaz,.*2021-11-12/,
+      name: /Выбрать «Выходи за меня \(live\)» \(Исполнитель: Anacondaz,.*2021-11-12/,
     }),
   ).toBeInTheDocument();
   await waitFor(() => {
@@ -419,7 +419,16 @@ it("shows Local and MusicBrainz editions with shared metadata and no relevance s
             id: localReleaseId,
             title: "Local anthology",
             provider_code: "local",
-            edition: { artist_credit: "Various Artists", track_count: 21 },
+            edition: {
+              artist_credit: "Various Artists",
+              track_count: 21,
+              release_date: "2021-04",
+              country: "GB",
+              format: "CD",
+              label: "Edition label",
+              catalog_number: "EX-01",
+              disambiguation: "Reissue",
+            },
           },
         ],
         total: 1,
@@ -450,7 +459,7 @@ it("shows Local and MusicBrainz editions with shared metadata and no relevance s
             {
               id: musicBrainzReleaseId,
               title: "MusicBrainz anthology",
-              "artist-credit": [{ name: "Anacondaz" }],
+              "artist-credit": [{ name: "MusicBrainz anthology" }],
               "track-count": 12,
               score: 100,
             },
@@ -488,9 +497,15 @@ it("shows Local and MusicBrainz editions with shared metadata and no relevance s
     .getByText("MusicBrainz anthology")
     .closest("li");
   if (!localRow || !musicBrainzRow) throw new Error("Missing result rows");
-  expect(within(localRow).getByText("Various Artists")).toBeInTheDocument();
-  expect(within(localRow).getByText(/Tracks: 21/)).toBeInTheDocument();
-  expect(within(musicBrainzRow).getByText("Anacondaz")).toBeInTheDocument();
+  expect(
+    within(localRow).getByText("Artist: Various Artists"),
+  ).toBeInTheDocument();
+  expect(localRow).toHaveTextContent(
+    /Reissue.*Released: 2021-04.*Country: GB.*Tracks: 21.*Format: CD.*Edition label \(EX-01\)/,
+  );
+  expect(
+    within(musicBrainzRow).getByText("Artist: MusicBrainz anthology"),
+  ).toBeInTheDocument();
   expect(within(musicBrainzRow).getByText(/Tracks: 12/)).toBeInTheDocument();
   expect(
     within(musicBrainzRow).queryByText(/MusicBrainz score/),

@@ -270,18 +270,27 @@ function parseLocalPage(
         : {};
     const artistCredit = nonEmptyString(edition.artist_credit);
     const trackCount = nonNegativeInteger(edition.track_count);
+    const date = nonEmptyString(edition.release_date);
+    const country = nonEmptyString(edition.country);
+    const format = nonEmptyString(edition.format);
+    const label = nonEmptyString(edition.label);
+    const catalogNumber = nonEmptyString(edition.catalog_number);
+    const disambiguation = nonEmptyString(edition.disambiguation);
     return {
       id,
       title,
       provider: "Local",
       ...(artistCredit ? { artistCredit } : {}),
       ...(trackCount !== undefined ? { trackCount } : {}),
+      ...(date ? { date } : {}),
+      ...(country ? { country } : {}),
+      ...(disambiguation ? { disambiguation } : {}),
       ...(releaseGroupTitle && releaseGroupTitle !== title
         ? { releaseGroupTitle }
         : {}),
-      formats: [],
+      formats: format ? [format] : [],
       mediaCount: 0,
-      labels: [],
+      labels: label || catalogNumber ? [{ name: label, catalogNumber }] : [],
     };
   });
   return { total: total as number, items };

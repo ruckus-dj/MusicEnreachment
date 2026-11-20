@@ -48,13 +48,20 @@ type LocalProviderItem struct {
 	Genres            []librarymetadata.GenreReference `json:"genres"`
 	Tags              []string                         `json:"tags,omitempty"`
 	Credits           []LocalProviderCredit            `json:"credits"`
+	ArtistCredit      string                           `json:"artist_credit,omitempty"`
 	Tracks            []LocalProviderTrack             `json:"tracks"`
 	Edition           *LocalProviderEdition            `json:"edition,omitempty"`
 }
 
 type LocalProviderEdition struct {
-	ArtistCredit string `json:"artist_credit,omitempty"`
-	TrackCount   int    `json:"track_count"`
+	ArtistCredit   string `json:"artist_credit,omitempty"`
+	TrackCount     int    `json:"track_count"`
+	ReleaseDate    string `json:"release_date,omitempty"`
+	Country        string `json:"country,omitempty"`
+	Format         string `json:"format,omitempty"`
+	Label          string `json:"label,omitempty"`
+	CatalogNumber  string `json:"catalog_number,omitempty"`
+	Disambiguation string `json:"disambiguation,omitempty"`
 }
 
 type LocalProviderCredit struct {
@@ -172,6 +179,22 @@ func (catalog *LocalProviderCatalog) validate(ctx context.Context, item LocalPro
 	if item.Kind == "release" && strings.TrimSpace(item.ReleaseGroupTitle) == "" {
 		return item, ErrLocalProviderInvalid
 	}
+	if edition := item.Edition; edition != nil {
+		if item.Kind != "release" {
+			return item, ErrLocalProviderInvalid
+		}
+		item.Edition = &LocalProviderEdition{
+			ReleaseDate:    strings.TrimSpace(edition.ReleaseDate),
+			Country:        strings.TrimSpace(edition.Country),
+			Format:         strings.TrimSpace(edition.Format),
+			Label:          strings.TrimSpace(edition.Label),
+			CatalogNumber:  strings.TrimSpace(edition.CatalogNumber),
+			Disambiguation: strings.TrimSpace(edition.Disambiguation),
+		}
+		if item.Edition.ReleaseDate != "" && !librarymetadata.ValidPartialDate(item.Edition.ReleaseDate) {
+			return item, ErrLocalProviderInvalid
+		}
+	}
 	switch item.Kind {
 	case "artist":
 		if item.DurationMS != nil || item.ReleaseGroupTitle != "" || item.Title != "" || item.PrimaryType != nil || len(item.SecondaryTypes) > 0 || item.Language != nil || item.Script != nil || len(item.Credits) > 0 || len(item.Tracks) > 0 {
@@ -273,11 +296,10 @@ func validLocalProviderKind(kind string) bool {
 
 func localProviderItem(item persistence.LocalProviderItem) (LocalProviderItem, error) {
 	result := LocalProviderItem{ID: item.ID, ProviderID: item.ProviderID, ProviderCode: item.ProviderCode, ProviderKey: item.ProviderKey, Kind: item.Kind, Name: item.Name, SortName: item.SortName, Title: item.Title, ReleaseGroupTitle: item.ReleaseGroupTitle, DurationMS: item.DurationMS, PrimaryType: item.PrimaryType, SecondaryTypes: item.SecondaryTypes, Language: item.Language, Script: item.Script, Tags: item.Tags, Credits: make([]LocalProviderCredit, 0, len(item.Credits)), Tracks: make([]LocalProviderTrack, 0, len(item.Tracks))}
+	result.ArtistCredit = item.ArtistCredit
 	if item.Edition != nil {
-		result.Edition = &LocalProviderEdition{
-			ArtistCredit: item.Edition.ArtistCredit,
-			TrackCount:   item.Edition.TrackCount,
-		}
+		edition := LocalProviderEdition(*item.Edition)
+		result.Edition = &edition
 	}
 	if err := json.Unmarshal(item.Genres, &result.Genres); err != nil {
 		return LocalProviderItem{}, fmt.Errorf("decode local provider genres: %w", err)
@@ -294,6 +316,10 @@ func localProviderItem(item persistence.LocalProviderItem) (LocalProviderItem, e
 func persistenceLocalProviderItem(item LocalProviderItem) persistence.LocalProviderItem {
 	genres, _ := json.Marshal(item.Genres)
 	result := persistence.LocalProviderItem{ID: item.ID, ProviderID: item.ProviderID, ProviderCode: item.ProviderCode, ProviderKey: item.ProviderKey, Kind: item.Kind, Name: item.Name, SortName: item.SortName, Title: item.Title, ReleaseGroupTitle: item.ReleaseGroupTitle, DurationMS: item.DurationMS, PrimaryType: item.PrimaryType, SecondaryTypes: item.SecondaryTypes, Language: item.Language, Script: item.Script, Genres: genres, Tags: item.Tags}
+	if item.Edition != nil {
+		edition := persistence.LocalProviderEdition(*item.Edition)
+		result.Edition = &edition
+	}
 	for _, credit := range item.Credits {
 		result.Credits = append(result.Credits, persistence.LocalProviderCredit{ArtistID: credit.ArtistID, ProviderID: credit.ProviderID, ProviderCode: credit.ProviderCode, ArtistName: credit.ArtistName, Name: credit.Name, JoinPhrase: credit.JoinPhrase})
 	}

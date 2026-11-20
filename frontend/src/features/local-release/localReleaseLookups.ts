@@ -6,7 +6,6 @@ import {
   listLocalProviderArtists,
   listLocalProviderRecordings,
   listLocalProviderReleases,
-  readLocalProviderRecording,
   startIncomingGroupManualPickerSearch,
   startLibraryRecordingSearch,
 } from "../../api/generated/client";
@@ -40,9 +39,10 @@ export function formProviderRecord(
     name: item.name,
     title: item.title,
     duration_ms: item.duration_ms,
+    artistCredit: item.artist_credit,
     credits: item.credits?.map((credit) => ({
       artistId: credit.artist_id,
-      creditName: credit.credit_name,
+      creditName: credit.credit_name || credit.artist_name,
       joinPhrase: credit.join_phrase,
     })),
   };
@@ -204,11 +204,31 @@ export async function checkLocalReleaseEditions(
     ...(local.data.items ?? []).map((item) => ({
       id: item.id,
       title: item.title ?? item.release_group_title ?? "",
-      artist: "",
+      artist: item.edition?.artist_credit ?? "",
       provider: "Local",
+      details:
+        [
+          item.edition?.release_date,
+          item.edition?.country,
+          item.edition?.disambiguation,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
     })),
     ...external,
   ];
+}
+
+export async function findSavedLocalReleaseRecordings(
+  query: string,
+  signal?: AbortSignal,
+): Promise<LocalReleaseRecording[]> {
+  const result = await listLocalProviderRecordings(
+    { provider: "all", q: query, limit },
+    requestOptions(signal),
+  );
+  if (result.status !== 200) throw new Error("saved recordings unavailable");
+  return (result.data.items ?? []).map(formProviderRecord);
 }
 
 export async function findLocalReleaseRecordings(
@@ -222,24 +242,7 @@ export async function findLocalReleaseRecordings(
       opts,
     );
     if (local.status !== 200) throw new Error("Local recordings unavailable");
-    // Catalog pages omit recording credits. Reopen the bounded result page
-    // without treating an unavailable detail as an artistless recording.
-    const items = local.data.items ?? [];
-    const result: LocalReleaseRecording[] = [];
-    for (let offset = 0; offset < items.length; offset += 5) {
-      signal?.throwIfAborted();
-      result.push(
-        ...(await Promise.all(
-          items.slice(offset, offset + 5).map(async ({ id }) => {
-            const detail = await readLocalProviderRecording(id, opts);
-            if (detail.status !== 200)
-              throw new Error("Local recording details unavailable");
-            return formProviderRecord(detail.data);
-          }),
-        )),
-      );
-    }
-    return result;
+    return (local.data.items ?? []).map(formProviderRecord);
   };
   const musicBrainz = async () => {
     const start = await startLibraryRecordingSearch(

@@ -142,7 +142,7 @@ func enrichLibraryCatalogPositionProvider(ctx context.Context, tx bun.Tx, rows [
 	return nil
 }
 
-func catalogMusicBrainzSource(ctx context.Context, tx bun.Tx) (catalogProviderSource, bool, error) {
+func catalogMusicBrainzSource(ctx context.Context, tx bun.IDB) (catalogProviderSource, bool, error) {
 	var config struct {
 		Mode     string `bun:"mode"`
 		BaseURL  string `bun:"base_url"`
