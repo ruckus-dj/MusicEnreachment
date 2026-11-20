@@ -37,7 +37,7 @@ const pairs = [
       "SettingsToolsMoveReview.tsx",
     ],
   ],
-  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupWizard.tsx"]],
+  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
   ["features/tools", "features/tools", ["GitHubTokenFormView.tsx", "toolMessages.ts"]],
   [
     "features/library",

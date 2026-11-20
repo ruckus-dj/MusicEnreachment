@@ -41,11 +41,6 @@
 .setup-shell [role="alert"] { background: var(--setup-error-soft); color: var(--setup-error); border-left: 3px solid var(--setup-error); padding: 8px 10px; margin: 8px 0; }
 .setup-shell .setup-tool { border: 1px solid var(--setup-line); background: var(--setup-raised); border-radius: 5px; padding: 8px; margin: 8px 0; }
 .setup-shell .setup-tool .react-aria-Label { display: block; }
-.setup-shell .setup-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 148px; margin: 4px 0; }
-.setup-select-popover { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 4px; max-height: 240px; overflow: auto; }
-.setup-select-popover .react-aria-ListBoxItem { min-height: 28px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-.setup-select-popover .react-aria-ListBoxItem[data-focused], .setup-select-popover .react-aria-ListBoxItem[data-selected] { background: var(--accent-soft); }
-.setup-select-popover .react-aria-ListBoxItem[data-focus-visible] { outline: 2px solid var(--ink); outline-offset: -2px; }
 .setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
 @media (max-width: 599px) { .setup-shell button:not(.ui-button), .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
 

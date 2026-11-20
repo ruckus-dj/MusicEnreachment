@@ -1,13 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Button,
-  Label,
-  ListBox,
-  ListBoxItem,
-  Popover,
-  Select,
-  SelectValue,
-} from "react-aria-components";
 import { apiResponseError } from "../../api/client/errors";
 import { listInstallations, listOperations } from "../../api/generated/client";
 import type {
@@ -33,6 +24,7 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
+import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -257,39 +249,20 @@ export function SetupTools({
           ) : (
             <>
               <p>{catalog[kind]?.notice}</p>
-              <Select
-                value={selected[kind] || null}
-                placeholder={messages.selectVersion}
-                isDisabled={pending || !catalog[kind]?.releases?.length}
-                onChange={(key) => {
+              <SetupToolReleasePicker
+                locale={locale}
+                kind={kind}
+                selected={selected[kind] || null}
+                releases={catalog[kind]?.releases || []}
+                pending={pending}
+                onChange={(identity) => {
                   setSelected((previous) => ({
                     ...previous,
-                    [kind]: key === null ? "" : String(key),
+                    [kind]: identity ?? "",
                   }));
                   setPreflight(undefined);
                 }}
-              >
-                <Label>
-                  {messages.toolVersion}
-                  {kind}
-                </Label>
-                <Button className="setup-select-trigger">
-                  <SelectValue />
-                  <span aria-hidden="true">▾</span>
-                </Button>
-                <Popover className="setup-select-popover">
-                  <ListBox items={catalog[kind]?.releases || []}>
-                    {(release) => (
-                      <ListBoxItem
-                        id={release.identity}
-                        textValue={`${release.identity} (${release.source})`}
-                      >
-                        {release.identity} ({release.source})
-                      </ListBoxItem>
-                    )}
-                  </ListBox>
-                </Popover>
-              </Select>
+              />
               <AppButton
                 isDisabled={pending || !selected[kind]}
                 onPress={() => {

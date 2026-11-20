@@ -35,6 +35,7 @@ import {
 } from "../settings/ToolLifecycleDemo";
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
+import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
 import { SetupWizard } from "./SetupWizard";
 import {
 	type SetupToolKind,
@@ -285,13 +286,18 @@ export function SetupScreen({
 											? copy.ffmpegPackage
 											: copy.fpcalcPackage}
 									</h3>
-									<Select
-										selectedKey={toolSelection[kind] ?? null}
-										onSelectionChange={(key) =>
+									<SetupToolReleasePicker
+										locale={locale}
+										kind={kind}
+										selected={toolSelection[kind] ?? null}
+										releases={setupToolReleases[kind].map((release) => ({
+											identity: release,
+										}))}
+										onChange={(identity) =>
 											update({
 												selectedRelease: {
 													...toolSelection,
-													[kind]: key ? String(key) : undefined,
+													[kind]: identity ?? undefined,
 												},
 												setupVerified: {
 													...settings.setupVerified,
@@ -303,23 +309,7 @@ export function SetupScreen({
 												},
 											})
 										}
-									>
-										<Label>
-											{copy.versionLabel} · {kind}
-										</Label>
-										<Button>
-											<SelectValue />
-										</Button>
-										<Popover>
-											<ListBox>
-												{setupToolReleases[kind].map((release) => (
-													<ListBoxItem id={release} key={release}>
-														{release}
-													</ListBoxItem>
-												))}
-											</ListBox>
-										</Popover>
-									</Select>
+									/>
 									<p className="m-0">
 										{copy.status}:{" "}
 										{settings.setupVerified?.[kind] === toolSelection[kind] &&

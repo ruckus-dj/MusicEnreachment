@@ -58,7 +58,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: карточки пакетов, подтверждение загрузки и сводка переноса | `features/settings/SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: каркас мастера и поля выбора папок | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx` | Те же пути |
+| Первый запуск: каркас мастера, поля выбора папок и выбор версии инструмента | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx` | Те же пути |
 | Медиатека: карточки артистов и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibrarySelectionReviewView.tsx` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
@@ -70,8 +70,8 @@ source channel, а fixture макета такого происхождения 
 проверяемых программ, не имитируя серверные пути. Форма токена общая: макет
 имитирует сохранение и проверку без запросов в GitHub, а приложение выполняет
 их на сервере. Не переносились остальные диалоги настроек.
-В первом запуске совпадают каркас и поля папок, но не порядок
-шагов и не остальные тела шагов. Редакторы медиатеки и предпросмотр публикации
+В первом запуске совпадают каркас и отдельные поля, но не порядок
+шагов и не полные тела шагов. Редакторы медиатеки и предпросмотр публикации
 пока не перенесены дословно.
 
 ## Проверка
