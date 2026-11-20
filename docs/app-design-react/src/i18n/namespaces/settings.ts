@@ -75,6 +75,7 @@ export const settingsMessages = createNamespace({
 		staleOutput: "Settings changed. Check the directory again.",
 		staleMove: "Move settings changed. Check again.",
 		invalidPath: "Choose an absolute server path.",
+		invalidTemplate: "Enter a valid relative publication path template.",
 		pathOverlap:
 			"This directory overlaps the shared work directory, a source directory, the tools directory, or the publication directory.",
 		setup: "Initial setup",
@@ -199,6 +200,7 @@ export const settingsMessages = createNamespace({
 		staleOutput: "Параметры изменились. Проверьте каталог ещё раз.",
 		staleMove: "Параметры переноса изменились. Повторите проверку.",
 		invalidPath: "Выберите абсолютный путь на сервере.",
+		invalidTemplate: "Введите корректный относительный шаблон пути публикации.",
 		pathOverlap:
 			"Этот каталог пересекается с общей рабочей папкой, каталогом источника, каталогом инструментов или каталогом публикации.",
 		setup: "Первый запуск",

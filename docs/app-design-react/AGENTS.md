@@ -116,6 +116,9 @@ unavailable.
   Isolate sessionStorage and the route-independent draft fallback between tests,
   not just localStorage; restoration fixtures must be seeded explicitly within
   their own test. Otherwise earlier drafts produce false rebase conflicts.
+- Save-and-leave must persist the acknowledged browser draft before assigning
+  the hash. The route can unmount before the draft effect runs. Validate only
+  dirty groups and do not reuse one field's overwrite approval for another.
 - Desktop matching geometry must reserve a real inspector row, not overlay the
   last target rows or preview actions with a fixed panel. Class-name assertions
   are not enough: check the last row and confirmation buttons by browser

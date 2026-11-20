@@ -25,6 +25,10 @@ import {
 } from "../../infrastructure/providerValidation";
 import { setupToolExecutables } from "../setup/setupToolsLifecycle";
 import { GenreCatalogDemoProvider } from "./GenreCatalogDemoProvider";
+import {
+	defaultPublicationTemplate,
+	validDemoPublicationTemplate,
+} from "./publicationTemplateDemo";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import {
@@ -75,9 +79,6 @@ const inactiveDirectoryBrowse: BrowseDirectory = async (path) => ({
 	directories: [],
 	offset: 0,
 });
-
-const defaultPublicationTemplate =
-	'{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}';
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -151,13 +152,40 @@ export type SettingsScreenProps = {
 	resolveDirectoryPath?: (path: string) => string;
 };
 
+function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
+	return {
+		concurrency: settings.concurrency ?? "4",
+		toolsPath: settings.toolsPath,
+		toolsPathCandidate: "",
+		publicationTemplate:
+			settings.publicationTemplate ?? defaultPublicationTemplate,
+		workDirectory: settings.workDirectory,
+		outputDirectory: settings.currentOutput ?? "/srv/music",
+		musicBrainzMode: settings.musicBrainzMode ?? "",
+		musicBrainzURL: settings.musicBrainzURL ?? "",
+		musicBrainzDelay: settings.musicBrainzDelay ?? "",
+	};
+}
+
 type PickerTarget = "tools";
+type FolderDraftField =
+	| "publicationTemplate"
+	| "workDirectory"
+	| "outputDirectory";
+type FolderReplacement = {
+	field: FolderDraftField;
+	saved: string;
+	draft: string;
+};
 type NoticeKey =
 	| "staleMove"
 	| "invalidPath"
 	| "conflicts"
 	| "invalidProvider"
 	| "providerSaved"
+	| "invalidTemplate"
+	| "staleOutput"
+	| "busy"
 	| "pathOverlap";
 
 export function SettingsScreen({
@@ -173,7 +201,10 @@ export function SettingsScreen({
 	const copy = settingsMessages[locale];
 	const [picker, setPicker] = useState<PickerTarget | null>(null);
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
-	const [confirming, setConfirming] = useState<string | null>(null);
+	const [confirming, setConfirming] = useState<{
+		path: string;
+		expected: string;
+	} | null>(null);
 	const [confirmingFromLeave, setConfirmingFromLeave] = useState(false);
 	const [outputFeedback, setOutputFeedback] = useState<
 		OutputResetFeedback | undefined
@@ -189,36 +220,19 @@ export function SettingsScreen({
 		root: string;
 		token: string;
 	} | null>(null);
-	const baselineFromSettings = (): SettingsTextDraft => ({
-		concurrency: settings.concurrency ?? "4",
-		toolsPath: settings.toolsPath,
-		toolsPathCandidate: "",
-		publicationTemplate:
-			settings.publicationTemplate ?? defaultPublicationTemplate,
-		workDirectory: settings.workDirectory,
-		outputDirectory: settings.currentOutput ?? "/srv/music",
-		musicBrainzMode: settings.musicBrainzMode ?? "",
-		musicBrainzURL: settings.musicBrainzURL ?? "",
-		musicBrainzDelay: settings.musicBrainzDelay ?? "",
-	});
 	const [draftState, setDraftState] = useState(() => {
-		const baseline = baselineFromSettings();
+		const baseline = settingsTextBaseline(settings);
 		const restored = readSettingsDraft(getSettingsDraftStorage());
 		return restored ?? { value: baseline, baseline };
 	});
 	const moveCandidate = draftState.value.toolsPathCandidate;
-	const [replacementConfirmed, setReplacementConfirmed] = useState(false);
+	const [folderReplacement, setFolderReplacement] =
+		useState<FolderReplacement>();
 	const [conflictAcknowledged, setConflictAcknowledged] = useState(false);
 	const [replacementPrompt, setReplacementPrompt] = useState(false);
 	const [leavePrompt, setLeavePrompt] = useState(false);
 	const pendingHash = useRef<string | null>(null);
-	const pendingReplacement = useRef<
-		| "all"
-		| "concurrency"
-		| "providers"
-		| "publicationTemplate"
-		| "workDirectory"
-	>("all");
+	const pendingReplacement = useRef<"concurrency" | "providers">("concurrency");
 	const allowNavigation = useRef(false);
 	const previousHash = useRef(
 		typeof window === "undefined" ? "" : window.location.hash,
@@ -245,7 +259,7 @@ export function SettingsScreen({
 	>({});
 	const [draftStorageWarning, setDraftStorageWarning] = useState(false);
 	const previousDraftDirty = useRef(false);
-	const currentDraftValues = baselineFromSettings();
+	const currentDraftValues = settingsTextBaseline(settings);
 	const draftConflicts = settingsDraftConflicts(
 		draftState.baseline,
 		currentDraftValues,
@@ -260,6 +274,12 @@ export function SettingsScreen({
 			...current,
 			value: { ...current.value, ...values },
 		}));
+	const fieldDirty = (key: keyof SettingsTextDraft) =>
+		draftState.value[key] !== draftState.baseline[key];
+	const providerDirty =
+		fieldDirty("musicBrainzMode") ||
+		fieldDirty("musicBrainzURL") ||
+		fieldDirty("musicBrainzDelay");
 	useEffect(() => {
 		const persisted = writeSettingsDraft(
 			getSettingsDraftStorage(),
@@ -271,18 +291,9 @@ export function SettingsScreen({
 		previousDraftDirty.current = draftDirty;
 	}, [draftDirty, draftState]);
 	useEffect(() => {
-		const current = baselineFromSettings();
+		const current = settingsTextBaseline(settings);
 		setDraftState((draft) => rebaseSettingsDraft(draft, current));
-	}, [
-		settings.concurrency,
-		settings.toolsPath,
-		settings.publicationTemplate,
-		settings.workDirectory,
-		settings.currentOutput,
-		settings.musicBrainzMode,
-		settings.musicBrainzURL,
-		settings.musicBrainzDelay,
-	]);
+	}, [settings]);
 	useEffect(() => {
 		const beforeUnload = (event: BeforeUnloadEvent) => {
 			if (!draftDirty) return;
@@ -353,17 +364,18 @@ export function SettingsScreen({
 		};
 	}, [draftDirty]);
 	const takeSavedSettings = () => {
-		const baseline = baselineFromSettings();
+		const baseline = settingsTextBaseline(settings);
 		setDraftState({ value: baseline, baseline });
 		setFieldErrors({});
-		setReplacementConfirmed(false);
 		setConflictAcknowledged(false);
 	};
 	const validateDraft = (value = draftState.value) => {
 		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
-		if (!value.musicBrainzMode) errors.musicBrainzMode = copy.invalidProvider;
+		if (providerDirty && !value.musicBrainzMode)
+			errors.musicBrainzMode = copy.invalidProvider;
 		if (!validConcurrency(value.concurrency)) errors.concurrency = "invalid";
 		if (
+			providerDirty &&
 			value.musicBrainzMode === "self-hosted" &&
 			!isValidMusicBrainzConfiguration({
 				mode: value.musicBrainzMode,
@@ -374,6 +386,7 @@ export function SettingsScreen({
 		)
 			errors.musicBrainzURL = copy.invalidProvider;
 		if (
+			providerDirty &&
 			value.musicBrainzDelay.trim() !== "" &&
 			!/^\d+(?:\.\d+)?$/.test(value.musicBrainzDelay.trim())
 		)
@@ -391,20 +404,12 @@ export function SettingsScreen({
 		}
 		return Object.keys(errors).length === 0;
 	};
-	const commitDraft = (forceReplace = false) => {
+	const commitDraft = () => {
+		if (!draftDirty) return true;
+		if (draftConflicts.length) return false;
+		setNotice("");
 		const merged = mergeSettingsDraft(draftState, currentDraftValues);
 		if (!validateDraft(merged)) return false;
-		if (
-			draftConflicts.length &&
-			conflictAcknowledged &&
-			!replacementConfirmed &&
-			!forceReplace
-		) {
-			pendingReplacement.current = "all";
-			setReplacementPrompt(true);
-			return false;
-		}
-		if (draftConflicts.length && !conflictAcknowledged) return false;
 		const {
 			concurrency,
 			musicBrainzMode,
@@ -413,7 +418,11 @@ export function SettingsScreen({
 			publicationTemplate,
 			workDirectory,
 		} = merged;
-		if (!publicationTemplate || !validateWorkDirectory(workDirectory))
+		if (
+			(fieldDirty("publicationTemplate") &&
+				!validateTemplate(publicationTemplate)) ||
+			(fieldDirty("workDirectory") && !validateWorkDirectory(workDirectory))
+		)
 			return false;
 		const configuration = {
 			mode: musicBrainzMode,
@@ -421,7 +430,7 @@ export function SettingsScreen({
 			throttle: settings.musicBrainzThrottle,
 			delay: musicBrainzDelay,
 		};
-		if (!isValidMusicBrainzConfiguration(configuration)) {
+		if (providerDirty && !isValidMusicBrainzConfiguration(configuration)) {
 			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
 			setFieldErrors((current) => ({
 				...current,
@@ -456,14 +465,22 @@ export function SettingsScreen({
 			musicBrainzDelay,
 			publicationTemplate,
 			workDirectory,
-			musicBrainzVerified: true,
-			musicBrainzVerifiedFingerprint:
-				musicBrainzConfigurationFingerprint(configuration),
+			...(providerDirty && {
+				musicBrainzVerified: true,
+				musicBrainzVerifiedFingerprint:
+					musicBrainzConfigurationFingerprint(configuration),
+			}),
 			runtimeSaved: true,
 		});
 		setDraftState({ value, baseline });
+		// Navigation can unmount this screen before the draft effect runs.
+		setDraftStorageWarning(
+			!writeSettingsDraft(
+				getSettingsDraftStorage(),
+				settingsDraftIsDirty(value, baseline) ? { value, baseline } : null,
+			),
+		);
 		setFieldErrors({});
-		setReplacementConfirmed(false);
 		setConflictAcknowledged(false);
 		setReplacementPrompt(false);
 		setNotice("saved");
@@ -499,28 +516,43 @@ export function SettingsScreen({
 		});
 		setDraftState({ baseline, value });
 		setFieldErrors((current) => ({ ...current, concurrency: undefined }));
-		setReplacementConfirmed(false);
 		setConflictAcknowledged(false);
 		setNotice("saved");
 	};
 	const confirmFolderConflict = (
-		field: "publicationTemplate" | "workDirectory",
-		forceReplace: boolean,
+		field: FolderDraftField,
+		approval?: FolderReplacement,
 	) => {
-		if (forceReplace || !draftConflicts.includes(field)) return false;
+		const saved = currentDraftValues[field];
+		const draft = draftState.value[field];
+		if (approval) {
+			if (
+				approval.field === field &&
+				approval.saved === saved &&
+				approval.draft === draft
+			)
+				return false;
+			setNotice("staleOutput");
+			return true;
+		}
+		if (!draftConflicts.includes(field)) return false;
 		if (conflictAcknowledged) {
-			pendingReplacement.current = field;
-			setReplacementPrompt(true);
+			setFolderReplacement({ field, saved, draft });
 		}
 		return true;
 	};
-	const commitTemplate = (forceReplace = false) => {
+	const validateTemplate = (template: string) => {
+		if (validDemoPublicationTemplate(template)) return true;
+		setNotice("invalidTemplate");
+		return false;
+	};
+	const commitTemplate = (approval?: FolderReplacement) => {
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
 			"publicationTemplate",
 		]);
 		const publicationTemplate = merged.publicationTemplate;
-		if (!publicationTemplate) return;
-		if (confirmFolderConflict("publicationTemplate", forceReplace)) return;
+		if (!validateTemplate(publicationTemplate)) return;
+		if (confirmFolderConflict("publicationTemplate", approval)) return;
 		onSettings({ ...settings, publicationTemplate });
 		setDraftState((current) => ({
 			baseline: { ...current.baseline, publicationTemplate },
@@ -531,7 +563,10 @@ export function SettingsScreen({
 	};
 	const validateWorkDirectory = (workDirectory: string) => {
 		if (workDirectory === settings.workDirectory) return true;
-		if (workDirectoryBusy) return false;
+		if (workDirectoryBusy) {
+			setNotice("busy");
+			return false;
+		}
 		if (workDirectory && !isAbsoluteDemoServerPath(workDirectory)) {
 			setNotice("invalidPath");
 			return false;
@@ -549,13 +584,13 @@ export function SettingsScreen({
 		}
 		return true;
 	};
-	const commitWorkDirectory = (forceReplace = false) => {
+	const commitWorkDirectory = (approval?: FolderReplacement) => {
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
 			"workDirectory",
 		]);
 		const workDirectory = merged.workDirectory.trim();
 		if (!validateWorkDirectory(workDirectory)) return;
-		if (confirmFolderConflict("workDirectory", forceReplace)) return;
+		if (confirmFolderConflict("workDirectory", approval)) return;
 		onSettings({ ...settings, workDirectory });
 		setDraftState((current) => ({
 			baseline: { ...current.baseline, workDirectory },
@@ -615,7 +650,7 @@ export function SettingsScreen({
 			fields.includes(key as (typeof fields)[number]),
 		);
 		if (conflicts.length && !conflictAcknowledged) return;
-		if (conflicts.length && !replacementConfirmed && !forceReplace) {
+		if (conflicts.length && !forceReplace) {
 			pendingReplacement.current = "providers";
 			setReplacementPrompt(true);
 			return;
@@ -657,7 +692,6 @@ export function SettingsScreen({
 				musicBrainzConfigurationFingerprint(configuration),
 		});
 		setDraftState({ baseline, value });
-		setReplacementConfirmed(false);
 		setConflictAcknowledged(false);
 		setNotice("providerSaved");
 	};
@@ -730,7 +764,7 @@ export function SettingsScreen({
 			setDraftStorageWarning(
 				!writeSettingsDraft(getSettingsDraftStorage(), null),
 			);
-			const baseline = baselineFromSettings();
+			const baseline = settingsTextBaseline(settings);
 			setDraftState({ value: baseline, baseline });
 		}
 		const target = pendingHash.current;
@@ -746,26 +780,28 @@ export function SettingsScreen({
 		setConfirmingFromLeave(false);
 		setOutputFeedback(undefined);
 	};
-	const openOutputReset = (fromLeave = false) => {
+	const openOutputReset = (fromLeave = false, approval?: FolderReplacement) => {
+		if (confirmFolderConflict("outputDirectory", approval)) return;
 		setOutputFeedback(undefined);
 		setConfirmingFromLeave(fromLeave);
-		setConfirming(candidate);
+		setConfirming({ path: candidate, expected: currentOutput });
 	};
 	const confirmOutputReset = () => {
+		if (!confirming) return;
 		if (blocked) {
 			setOutputFeedback({ kind: "running" });
 			return;
 		}
 		if (
-			candidate !== confirming ||
-			draftState.baseline.outputDirectory !== currentOutput
+			candidate !== confirming.path ||
+			confirming.expected !== currentOutput
 		) {
 			setOutputFeedback({ kind: "error", detail: copy.staleOutput });
 			return;
 		}
-		if (!confirming) return;
+		const { path } = confirming;
 		if (
-			overlapsAnyDemoPath(confirming, [
+			overlapsAnyDemoPath(path, [
 				settings.workDirectory,
 				settings.toolsPath,
 				...sourceRoots,
@@ -774,12 +810,12 @@ export function SettingsScreen({
 			setOutputFeedback({ kind: "error", detail: copy.pathOverlap });
 			return;
 		}
-		update({ currentOutput: confirming });
+		update({ currentOutput: path });
 		setDraftState((current) => ({
-			baseline: { ...current.baseline, outputDirectory: confirming },
-			value: { ...current.value, outputDirectory: confirming },
+			baseline: { ...current.baseline, outputDirectory: path },
+			value: { ...current.value, outputDirectory: path },
 		}));
-		onOutputReset?.(confirming);
+		onOutputReset?.(path);
 		closeOutputReset();
 		setNotice("");
 	};
@@ -1283,6 +1319,10 @@ export function SettingsScreen({
 					<Dialog>
 						<Heading slot="title">{copy.leaveSettingsTitle}</Heading>
 						<p>{copy.leaveSettingsText}</p>
+						{(notice === "invalidTemplate" ||
+							notice === "invalidPath" ||
+							notice === "busy" ||
+							notice === "pathOverlap") && <p role="alert">{copy[notice]}</p>}
 						{draftStorageWarning && (
 							<p role="status">{copy.draftStorageWarning}</p>
 						)}
@@ -1310,20 +1350,37 @@ export function SettingsScreen({
 					</Dialog>
 				</Modal>
 			)}
-			{replacementPrompt && (
+			{(replacementPrompt || folderReplacement) && (
 				<Modal
 					isOpen
-					onOpenChange={(open) => !open && setReplacementPrompt(false)}
+					onOpenChange={(open) => {
+						if (open) return;
+						setReplacementPrompt(false);
+						setFolderReplacement(undefined);
+					}}
 					isDismissable
 				>
 					<Dialog>
 						<Heading slot="title">{copy.replaceSettingsTitle}</Heading>
 						<p>{copy.replaceSettingsText}</p>
+						{folderReplacement && (
+							<p className="wrap-anywhere">
+								<code>{folderReplacement.saved}</code>
+								{" → "}
+								<code>{folderReplacement.draft}</code>
+							</p>
+						)}
 						<Button
 							onPress={() => {
-								setReplacementConfirmed(true);
 								setReplacementPrompt(false);
-								if (pendingReplacement.current === "concurrency") {
+								setFolderReplacement(undefined);
+								if (folderReplacement) {
+									if (folderReplacement.field === "publicationTemplate")
+										commitTemplate(folderReplacement);
+									else if (folderReplacement.field === "workDirectory")
+										commitWorkDirectory(folderReplacement);
+									else openOutputReset(false, folderReplacement);
+								} else if (pendingReplacement.current === "concurrency") {
 									const baseline = {
 										...draftState.baseline,
 										concurrency: draftState.value.concurrency,
@@ -1334,21 +1391,19 @@ export function SettingsScreen({
 										concurrency: draftState.value.concurrency,
 										runtimeSaved: true,
 									});
-									setReplacementConfirmed(false);
 									setConflictAcknowledged(false);
 									setNotice("saved");
-								} else if (pendingReplacement.current === "providers")
-									commitProviders(true);
-								else if (pendingReplacement.current === "publicationTemplate")
-									commitTemplate(true);
-								else if (pendingReplacement.current === "workDirectory")
-									commitWorkDirectory(true);
-								else commitDraft(true);
+								} else commitProviders(true);
 							}}
 						>
 							{copy.confirmReplace}
 						</Button>
-						<Button onPress={() => setReplacementPrompt(false)}>
+						<Button
+							onPress={() => {
+								setReplacementPrompt(false);
+								setFolderReplacement(undefined);
+							}}
+						>
 							{copy.cancel}
 						</Button>
 					</Dialog>
