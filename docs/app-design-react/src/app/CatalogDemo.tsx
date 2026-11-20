@@ -1,15 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ComponentsScreen } from "../components/ComponentsScreen";
 import type { DeletionOperation } from "../components/DeletionRequest";
-import {
-	Button,
-	Input,
-	SearchField,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
-} from "../components/ui";
+import { Button, TabPanel, Tabs } from "../components/ui";
 import { IncomingScreen } from "../features/incoming/IncomingScreen";
 import {
 	createIncomingState,
@@ -27,7 +19,6 @@ import {
 } from "../features/library";
 import { ArtistScreen } from "../features/library/ArtistScreen";
 import { artistReleaseHref } from "../features/library/artistReleaseRoute";
-import { CatalogFilter as CatalogFilterControl } from "../features/library/CatalogFilter";
 import {
 	applyMetadataPreview,
 	type CatalogArtist,
@@ -49,6 +40,11 @@ import {
 	normalizeCatalogSearch,
 	trackSearchText,
 } from "../features/library/catalogViewModel";
+import {
+	LibraryCatalogQueryControls,
+	LibraryCatalogTabList,
+	libraryViewLabel,
+} from "../features/library/LibraryCatalogControls";
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
 import {
 	type LibrarySelectionPreviewPosition,
@@ -770,11 +766,6 @@ export function CatalogDemo({
 		}));
 		window.location.hash = "publications";
 	};
-	const tabs: [View, string][] = [
-		["artists", msg("artists")],
-		["albums", msg("allAlbums")],
-		["tracks", msg("allTracks")],
-	];
 	const selectionPreviewDialog = selectionPreview && (
 		<LibrarySelectionPreviewView
 			locale={locale}
@@ -1381,30 +1372,19 @@ export function CatalogDemo({
 						setArtistId(null);
 						setExpanded(null);
 					}}
-					className={catalogueStyles.tabs}
 				>
-					<TabList aria-label={msg("libraryView")}>
-						{tabs.map(([key, label]) => (
-							<Tab key={key} id={key}>
-								{label}
-							</Tab>
-						))}
-					</TabList>
+					<LibraryCatalogTabList locale={locale} />
 					<TabPanel id={view} className={catalogueStyles.tabsPanel}>
-						<div className={catalogueStyles.panelControls}>
-							<SearchField
-								aria-label={msg("searchLibrary")}
-								value={searchInput}
-								onChange={setSearch}
-								className={catalogueStyles.search}
-							>
-								<Input placeholder={msg("searchPlaceholder")} />
-							</SearchField>
-							<CatalogFilterControl value={filter} onChange={setFilter} />
-						</div>
+						<LibraryCatalogQueryControls
+							locale={locale}
+							search={searchInput}
+							onSearch={setSearch}
+							filter={filter}
+							onFilter={setFilter}
+						/>
 						<section
 							className={catalogueStyles.list}
-							aria-label={tabs.find(([key]) => key === view)?.[1]}
+							aria-label={libraryViewLabel(locale, view)}
 						>
 							<LibraryCatalogRows
 								view={view}

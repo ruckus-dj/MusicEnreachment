@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Button,
-  Input,
-  SearchField,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs,
-} from "react-aria-components";
+import { Button, TabPanel, Tabs } from "react-aria-components";
 import { apiResponseError } from "../../api/client/errors";
 import {
   useListLibraryArtists,
@@ -22,7 +14,10 @@ import {
   LibraryArtistCards,
 } from "./LibraryArtistCards";
 import {
-  LibraryCatalogFilterView,
+  LibraryCatalogQueryControls,
+  LibraryCatalogTabList,
+} from "./LibraryCatalogControls";
+import {
   type LibraryStateFilter,
   libraryFilterOptions,
 } from "./LibraryCatalogFilterView";
@@ -69,10 +64,6 @@ const screenCopy = {
       ru: ["позиция", "позиции", "позиций"],
     },
     incoming: "Review incoming groups",
-    view: "Library view",
-    views: { artists: "Artists", albums: "All releases", tracks: "All tracks" },
-    search: "Search the library",
-    searchPlaceholder: "Artist, release, track…",
     loading: "Loading library…",
     requestError: "Could not load the library (HTTP {status}).",
     error: "Could not load the library.",
@@ -129,10 +120,6 @@ const screenCopy = {
       ru: ["позиция", "позиции", "позиций"],
     },
     incoming: "Разобрать входящие группы",
-    view: "Раздел медиатеки",
-    views: { artists: "Артисты", albums: "Все релизы", tracks: "Все треки" },
-    search: "Поиск в медиатеке",
-    searchPlaceholder: "Артист, релиз, трек…",
     loading: "Загрузка медиатеки…",
     requestError: "Не удалось загрузить медиатеку (HTTP {status}).",
     error: "Не удалось загрузить медиатеку.",
@@ -402,7 +389,6 @@ export function useLibraryController() {
 export function LibraryScreen() {
   const { locale } = useI18n();
   const copy = screenCopy[locale];
-  const viewLabels: Record<LibraryView, string> = copy.views;
   const {
     route,
     view,
@@ -572,39 +558,15 @@ export function LibraryScreen() {
         selectedKey={view}
         onSelectionChange={(key) => setView(key as LibraryView)}
       >
-        <TabList
-          aria-label={copy.view}
-          className="mb-3 flex flex-wrap gap-[3px] text-xs"
-        >
-          {(Object.keys(viewLabels) as LibraryView[]).map((tab) => (
-            <Tab
-              key={tab}
-              id={tab}
-              className="flex min-h-9 cursor-pointer items-center rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"
-            >
-              {viewLabels[tab]}
-            </Tab>
-          ))}
-        </TabList>
+        <LibraryCatalogTabList locale={locale} />
         <TabPanel id={view} className="min-w-0">
-          <div className="mb-3 grid grid-cols-[minmax(220px,1fr)_minmax(340px,1fr)] items-end gap-3 max-[1100px]:grid-cols-1 max-[600px]:gap-2">
-            <SearchField
-              aria-label={copy.search}
-              className="min-h-[34px] min-w-0 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1"
-              value={searchInput}
-              onChange={setSearch}
-            >
-              <Input
-                className="min-h-8 w-full text-xs outline-none"
-                placeholder={copy.searchPlaceholder}
-              />
-            </SearchField>
-            <LibraryCatalogFilterView
-              locale={locale}
-              value={filter}
-              onChange={setFilter}
-            />
-          </div>
+          <LibraryCatalogQueryControls
+            locale={locale}
+            search={searchInput}
+            onSearch={setSearch}
+            filter={filter}
+            onFilter={setFilter}
+          />
 
           {activeQuery.isLoading ? (
             <p className={statePanelClass} role="status">

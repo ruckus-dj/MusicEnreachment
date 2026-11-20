@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import type { DeletionOperation } from "../../components/DeletionRequest";
 import {
 	Button,
 	Disclosure,
@@ -7,37 +8,34 @@ import {
 	Radio,
 	RadioGroup,
 } from "../../components/ui";
-import { TrackActions } from "./TrackActions";
-import { TagsComparison } from "./TagsComparison";
-import { artistReleaseHref } from "./artistReleaseRoute";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { catalogueStyles } from "./catalogueStyles";
+import { useI18n } from "../../i18n/I18nProvider";
 import { TrackMetadataEditors } from "../../metadata/TrackMetadataEditors";
-import { audioMeasurementKeys } from "../../metadata/audioMeasurements";
-import { metadataMessage } from "../../metadata/messages";
-import { metadataFieldLabel } from "../../metadata/registry";
-import {
-	catalogData,
-	originalArtistName,
-	originalFiles,
-	originalProviders,
-	type OriginalRelease,
-	type OriginalTrack,
-	type SourceFiles,
-	type CatalogArtist,
-} from "./catalogData";
 import {
 	MetadataDiff,
 	publicationMetadataDiff,
 } from "../publication/publicationMetadataDiff";
-import { useI18n } from "../../i18n/I18nProvider";
+import { artistReleaseHref } from "./artistReleaseRoute";
+import {
+	type CatalogArtist,
+	catalogData,
+	type OriginalRelease,
+	type OriginalTrack,
+	originalArtistName,
+	originalFiles,
+	originalProviders,
+	type SourceFiles,
+} from "./catalogData";
+import { catalogueStyles } from "./catalogueStyles";
+import {
+	PublicationAudioMeasurementsView,
+	publicationAudioMeasurementTags,
+} from "./PublicationAudioMeasurementsView";
+import { TagsComparison } from "./TagsComparison";
+import { TrackActions } from "./TrackActions";
 import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 const duration = (seconds: number) =>
 	`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
-const audioMeasurementTags = new Set(
-	audioMeasurementKeys.map((key) => key.toUpperCase()),
-);
 
 export function TrackScreen({
 	release,
@@ -76,7 +74,6 @@ export function TrackScreen({
 }) {
 	const { locale } = useI18n();
 	const publishedTags = track.published?.tags;
-	const loudnessLabel = trackMessage(locale, "publishedLoudness");
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
 	const tagComparisonRef = useRef<HTMLDetailsElement>(null);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
@@ -321,7 +318,9 @@ export function TrackScreen({
 										<dt>{trackMessage(locale, "tagSnapshot")}</dt>
 										<dd>
 											{Object.entries(track.published.tags)
-												.filter(([key]) => !audioMeasurementTags.has(key))
+												.filter(
+													([key]) => !publicationAudioMeasurementTags.has(key),
+												)
 												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
 												.join("; ")}
 										</dd>
@@ -329,25 +328,10 @@ export function TrackScreen({
 										<dd>{track.published.readAt}</dd>
 									</dl>
 									{publishedTags && (
-										<section
-											aria-label={loudnessLabel}
-											className="min-w-0 border-t border-[var(--line)] pt-2"
-										>
-											<h3>{loudnessLabel}</h3>
-											<dl className={catalogueStyles.facts}>
-												{audioMeasurementKeys.map((key) => [
-													<dt key={`${key}-label`}>
-														{metadataFieldLabel(key, locale)}
-													</dt>,
-													<dd key={`${key}-value`}>
-														{publishedTags[key.toUpperCase()]
-															?.filter((value) => value.trim() !== "")
-															.join(" · ") ||
-															metadataMessage(locale, "state.notCalculated")}
-													</dd>,
-												])}
-											</dl>
-										</section>
+										<PublicationAudioMeasurementsView
+											locale={locale}
+											tags={publishedTags}
+										/>
 									)}
 								</DisclosurePanel>
 							</Disclosure>

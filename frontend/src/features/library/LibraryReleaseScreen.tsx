@@ -45,6 +45,10 @@ import {
 } from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 import {
+  PublicationAudioMeasurementsView,
+  publicationAudioMeasurementTags,
+} from "./PublicationAudioMeasurementsView";
+import {
   ReleaseMetadataEditor,
   ScopedLibraryMetadataEditor,
 } from "./ReleaseMetadataEditor";
@@ -66,22 +70,6 @@ type PositionData = {
   primaryArtistSaving?: boolean;
   writePending?: boolean;
 };
-
-const publicationMeasurementFields = [
-  { tag: "REPLAYGAIN_TRACK_GAIN", label: "measurementReplayGainTrack" },
-  { tag: "REPLAYGAIN_TRACK_PEAK", label: "measurementReplayGainTrackPeak" },
-  { tag: "REPLAYGAIN_ALBUM_GAIN", label: "measurementReplayGainAlbum" },
-  { tag: "REPLAYGAIN_ALBUM_PEAK", label: "measurementReplayGainAlbumPeak" },
-  { tag: "R128_TRACK_GAIN", label: "measurementR128Track" },
-  { tag: "R128_ALBUM_GAIN", label: "measurementR128Album" },
-] as const satisfies ReadonlyArray<{
-  tag: string;
-  label: LibraryReleaseMessage;
-}>;
-
-const publicationMeasurementTags = new Set<string>(
-  publicationMeasurementFields.map(({ tag }) => tag),
-);
 
 function errorMessage(data: { detail?: string }, status: number): Error {
   if (data.detail) return new Error(data.detail);
@@ -1680,7 +1668,7 @@ export function LibraryReleaseScreen({
         const publicationTags = publication?.current_metadata?.tags;
         const summaryTags = publicationTags
           ? Object.entries(publicationTags).filter(
-              ([name]) => !publicationMeasurementTags.has(name),
+              ([name]) => !publicationAudioMeasurementTags.has(name),
             )
           : undefined;
         const summaryTagText = summaryTags
@@ -2046,33 +2034,10 @@ export function LibraryReleaseScreen({
                   .
                 </p>
                 {measurementTags && (
-                  <section
-                    className="min-w-0 border-t border-[var(--line)] pt-2"
-                    aria-label={text("audioMeasurements")}
-                  >
-                    <h3 className="font-semibold">
-                      {text("audioMeasurements")}
-                    </h3>
-                    <dl className="grid min-w-0 gap-x-4 gap-y-1 sm:grid-cols-[max-content_minmax(0,1fr)]">
-                      {publicationMeasurementFields.map(({ tag, label }) => {
-                        const values = (measurementTags[tag] ?? []).filter(
-                          (value) => value.trim() !== "",
-                        );
-                        return (
-                          <Fragment key={tag}>
-                            <dt className="text-[var(--muted)]">
-                              {text(label)}
-                            </dt>
-                            <dd className="[overflow-wrap:anywhere]">
-                              {values.length > 0
-                                ? values.join(" · ")
-                                : text("measurementNotCalculated")}
-                            </dd>
-                          </Fragment>
-                        );
-                      })}
-                    </dl>
-                  </section>
+                  <PublicationAudioMeasurementsView
+                    locale={locale}
+                    tags={measurementTags}
+                  />
                 )}
                 {publication?.manual_lyrics_receipt && (
                   <p>

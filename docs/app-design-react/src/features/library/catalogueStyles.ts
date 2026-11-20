@@ -12,7 +12,6 @@ export const catalogueStyles = {
   tabsPanel: "min-w-0",
   panelControls:
     "mb-3 grid grid-cols-[minmax(220px,1fr)_minmax(340px,1fr)] items-end gap-3 max-[1100px]:grid-cols-1 max-[600px]:gap-2",
-  tabs: "min-w-0 [&_.react-aria-TabList]:gap-[3px] [&_.react-aria-TabList]:border-0 [&_.react-aria-Tab]:min-h-9 [&_.react-aria-Tab]:rounded-[4px] [&_.react-aria-Tab]:border [&_.react-aria-Tab]:border-transparent [&_.react-aria-Tab]:px-[11px] [&_.react-aria-Tab]:py-[7px] [&_.react-aria-Tab]:font-semibold [&_.react-aria-Tab[data-selected]]:border-[var(--line)] [&_.react-aria-Tab[data-selected]]:bg-[var(--surface)] [&_.react-aria-Tab[data-selected]]:text-[var(--accent)] [&_.react-aria-Tab[data-selected]]:shadow-[0_1px_2px_#0001] max-[600px]:overflow-x-auto max-[600px]:[&_.react-aria-TabList]:flex-nowrap max-[600px]:[&_.react-aria-Tab]:whitespace-nowrap",
   search:
     "min-h-[34px] rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1 [&_.react-aria-Input]:min-h-8 [&_.react-aria-Input]:border-0 [&_.react-aria-Input]:outline-none [&_.react-aria-Input]:shadow-none",
   select:
