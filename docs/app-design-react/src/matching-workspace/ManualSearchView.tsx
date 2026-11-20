@@ -176,7 +176,7 @@ export function ManualSearchView({
 							{message("noMatches")}
 						</p>
 					) : (
-						<ul className="mt-3 divide-y divide-[var(--line)] rounded border border-[var(--line)]">
+						<ul className="mt-3 max-h-60 overflow-y-auto divide-y divide-[var(--line)] rounded border border-[var(--line)]">
 							{results.items.map((item) => {
 								const details = editionDetails(item, message);
 								const selected = selectedItemId === item.id;

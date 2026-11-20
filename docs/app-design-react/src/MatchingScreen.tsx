@@ -594,11 +594,11 @@ export function MatchingScreen({
 								.join(" · ")}
 				</span>
 			</div>
-			<MatchingWorkspaceLayout>
-				<section data-matching-candidates className={matchingCandidatesPanel}>
-					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-						{matchingMessage(locale, "findRelease")}
-					</h2>
+			<section data-matching-candidates className={matchingCandidatesPanel}>
+				<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+					{matchingMessage(locale, "findRelease")}
+				</h2>
+				<div className="grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
 					<MatchingSearchPicker
 						artists={artists}
 						releases={searchableEditions}
@@ -615,14 +615,14 @@ export function MatchingScreen({
 							return true;
 						}}
 					/>
-					<MatchingReleasePreparation
-						key={group.id}
-						releaseId={prepareReleaseId}
-						resolveRelease={resolveMusicBrainzEdition}
-						onPrepared={setCandidate}
-					/>
-					{createLocalReleaseHref && (
-						<div className="mt-3 grid gap-2 border-t border-[var(--line)] pt-3">
+					<div className="grid min-w-0 gap-2">
+						<MatchingReleasePreparation
+							key={group.id}
+							releaseId={prepareReleaseId}
+							resolveRelease={resolveMusicBrainzEdition}
+							onPrepared={setCandidate}
+						/>
+						{createLocalReleaseHref && (
 							<a
 								className="demo-button w-fit max-w-full text-center no-underline max-[520px]:w-full"
 								href={createLocalReleaseHref}
@@ -631,9 +631,11 @@ export function MatchingScreen({
 									? "Создать свой релиз"
 									: "Create your own release"}
 							</a>
-						</div>
-					)}
-				</section>
+						)}
+					</div>
+				</div>
+			</section>
+			<MatchingWorkspaceLayout>
 				<MatchingBoard
 					{...fixtureBoard}
 					locale={locale}

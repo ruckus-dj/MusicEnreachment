@@ -51,6 +51,7 @@ export function fixtureMatchingBoard(
 						{
 							id,
 							label: file.name,
+							path: file.locations?.[0]?.path || file.path,
 							fileName: file.name,
 							...readSourceTrackOrder(file.tags),
 							detail: [file.tags.ARTIST?.[0], file.tags.TITLE?.[0]]

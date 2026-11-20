@@ -204,6 +204,9 @@ it("reserves a bounded inspector grid row and keeps the target list independentl
 	const sources = container.querySelector<HTMLElement>(
 		"[data-matching-sources]",
 	);
+	const search = container.querySelector<HTMLElement>(
+		"[data-matching-candidates]",
+	);
 	expect(main?.className).toContain("min-[1400px]:h-full");
 	expect(main?.className).toContain("min-[1400px]:flex-col");
 	expect(layout?.className).toContain(
@@ -214,7 +217,10 @@ it("reserves a bounded inspector grid row and keeps the target list independentl
 	);
 	expect(inspector).not.toBeNull();
 	expect(inspector?.parentElement).toBe(layout);
-	expect(inspector?.className).toContain("min-[1400px]:col-span-3");
+	expect(layout?.className).toContain(
+		"[&>[data-matching-inspector]]:col-span-full",
+	);
+	expect(layout?.previousElementSibling).toBe(search);
 	expect(inspector?.className).not.toContain("min-[1400px]:fixed");
 	expect(target?.parentElement).toBe(layout);
 	expect(sources?.parentElement).toBe(layout);
