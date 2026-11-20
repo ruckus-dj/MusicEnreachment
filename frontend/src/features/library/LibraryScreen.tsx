@@ -733,6 +733,7 @@ export function LibraryScreen() {
                 <LibraryAlbumRows
                   items={releasesBody.items}
                   renderCheckbox={selection.renderCheckbox}
+                  selectionControl={selection.selectionControl}
                 />
               )}
               {view === "tracks" && positionsBody && (

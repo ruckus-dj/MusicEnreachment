@@ -59,7 +59,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: карточки пакетов, подтверждение загрузки и сводка переноса | `features/settings/SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
 | Первый запуск: каркас мастера, поля выбора папок и выбор версии инструмента | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx` | Те же пути |
-| Медиатека: карточки артистов и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibrarySelectionReviewView.tsx` | Те же пути |
+| Медиатека: карточки артистов, раскрытые позиции издания и проверка выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumPositionsView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
@@ -71,8 +71,10 @@ source channel, а fixture макета такого происхождения 
 имитирует сохранение и проверку без запросов в GitHub, а приложение выполняет
 их на сервере. Не переносились остальные диалоги настроек.
 В первом запуске совпадают каркас и отдельные поля, но не порядок
-шагов и не полные тела шагов. Редакторы медиатеки и предпросмотр публикации
-пока не перенесены дословно.
+шагов и не полные тела шагов. В списке альбомов совпадает раскрытый список
+позиций конкретного издания, но не строки сводки и не выбор издания
+для отсутствующей группы MusicBrainz. Редакторы медиатеки и предпросмотр
+публикации пока не перенесены дословно.
 
 ## Проверка
 

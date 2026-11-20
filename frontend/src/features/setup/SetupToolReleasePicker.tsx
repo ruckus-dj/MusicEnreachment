@@ -68,13 +68,16 @@ export function SetupToolReleasePicker({
           />
         </svg>
       </AppButton>
-      <Popover className="max-h-[min(15rem,var(--available-height))] w-[var(--trigger-width)] overflow-auto overscroll-contain rounded border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_5px_16px_#0002]">
+      <Popover
+        maxHeight={240}
+        className="w-[var(--trigger-width)] overflow-auto overscroll-contain rounded border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_5px_16px_#0002]"
+      >
         <ListBox items={releases} className="outline-none">
           {(release) => (
             <ListBoxItem
               id={release.identity}
               textValue={caption(release)}
-              className="min-h-8 cursor-pointer rounded px-2 py-1.5 wrap-anywhere outline-none data-[focused]:bg-[var(--accent-soft)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:-outline-offset-2"
+              className="min-h-8 cursor-pointer rounded px-2 py-1.5 wrap-anywhere data-[focused]:bg-[var(--accent-soft)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:-outline-offset-2"
             >
               {caption(release)}
             </ListBoxItem>

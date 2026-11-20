@@ -25,6 +25,10 @@ import {
 } from "./catalogData";
 import { catalogueStyles, catalogueTableWidths } from "./catalogueStyles";
 import {
+	type LibraryAlbumPosition,
+	LibraryAlbumPositionsView,
+} from "./LibraryAlbumPositionsView";
+import {
 	type ArtistSelectionState,
 	type LibraryArtistCard,
 	LibraryArtistCards,
@@ -65,6 +69,17 @@ const sourceIds = (track: Pick<OriginalTrack, "sourceId" | "sourceIds">) => [
 		...(track.sourceId ? [track.sourceId] : []),
 	]),
 ];
+const selectionControl = (ids: string[], selection?: ArtistSelectionState) => {
+	const selectedCount = ids.filter((id) =>
+		selection?.selectedIds.has(id),
+	).length;
+	return {
+		isSelected: ids.length > 0 && selectedCount === ids.length,
+		isIndeterminate: selectedCount > 0 && selectedCount < ids.length,
+		isDisabled: !selection || ids.length === 0,
+		onChange: (selected: boolean) => selection?.onChange(ids, selected),
+	};
+};
 const MobileField = ({
 	label,
 	children,
@@ -89,17 +104,6 @@ function artistCardModels(
 	selection?: ArtistSelectionState,
 ) {
 	const pageIds = new Set<string>();
-	const selectionControl = (ids: string[]) => {
-		const selectedCount = ids.filter((id) =>
-			selection?.selectedIds.has(id),
-		).length;
-		return {
-			isSelected: ids.length > 0 && selectedCount === ids.length,
-			isIndeterminate: selectedCount > 0 && selectedCount < ids.length,
-			isDisabled: !selection || ids.length === 0,
-			onChange: (selected: boolean) => selection?.onChange(ids, selected),
-		};
-	};
 	const rows: LibraryArtistCard[] = artists.map((artist) => {
 		const own = releases.filter(
 			(release) =>
@@ -123,13 +127,13 @@ function artistCardModels(
 			availableCount: ownTracks.filter(hasAudio).length,
 			publishedCount: ownTracks.filter((track) => Boolean(track.published))
 				.length,
-			selection: selectionControl(trackIds),
+			selection: selectionControl(trackIds, selection),
 		};
 	});
 	return {
 		rows,
 		pageSelectionControl: selection
-			? selectionControl([...pageIds])
+			? selectionControl([...pageIds], selection)
 			: undefined,
 	};
 }
@@ -182,6 +186,59 @@ export function LibraryCatalogRows({
 			? [summary, { id: `${release.id}:tracks`, release, detail: true }]
 			: [summary];
 	});
+	const positionsFor = (release: Release): LibraryAlbumPosition[] =>
+		release.tracks.map((track) => {
+			const ids = sourceIds(track);
+			const source = track.sourceId ? files[track.sourceId] : undefined;
+			const published =
+				track.published && typeof track.published === "object"
+					? track.published
+					: null;
+			const rowClass = availabilityRowClass(
+				track as OriginalTrack,
+				filter,
+				hasAudio,
+			);
+			const filterState: LibraryAlbumPosition["filterState"] =
+				rowClass === "filter-match"
+					? "match"
+					: rowClass === "filter-muted"
+						? "muted"
+						: undefined;
+			const publication: LibraryAlbumPosition["publication"] = published
+				? {
+						state: "published",
+						container: published.container,
+						codec: published.codec,
+						title: published.tags.TITLE?.join(", ") || track.title,
+					}
+				: { state: "not-published" };
+			const sourceSelection: LibraryAlbumPosition["sourceSelection"] =
+				source?.codec ? undefined : ids.length > 0 ? "unselected" : "missing";
+			return {
+				id: track.id,
+				numberLabel: trackNumberLabel(release, track),
+				title: track.title,
+				recordingHref: `#track/${track.id}`,
+				tagsHref: `#tags/${track.id}/track`,
+				artist: originalArtistName(track.artistId, artists),
+				recordingTitle: track.recordingTitle,
+				durationMs:
+					track.duration === null ? null : Math.round(track.duration) * 1000,
+				sourceCount: ids.length,
+				hasAudio: hasAudio(track),
+				sourceLabel: source?.codec ?? null,
+				...(sourceSelection ? { sourceSelection } : {}),
+				paths: ids
+					.map((id) => files[id]?.path || files[id]?.name)
+					.filter((path): path is string => Boolean(path)),
+				properties: audioProperties(source),
+				publication,
+				isNewRecording: !track.recordingId,
+				...(filterState ? { filterState } : {}),
+				selection: selectionControl([track.id], pageSelection),
+			};
+		});
 	const albumColumnWidths = [
 		catalogueStyles.selectionColumn,
 		"", // The title gets the space left after the other columns.
@@ -191,17 +248,6 @@ export function LibraryCatalogRows({
 		"w-[8%]",
 		"w-[9%]",
 		"w-[12%]",
-		"w-[9%]",
-	];
-	const trackDetailColumnWidths = [
-		catalogueStyles.selectionColumn,
-		"w-[8%]",
-		"",
-		"w-[7%]",
-		"w-[13%]",
-		"w-[9%]",
-		"w-[24%]",
-		"w-[11%]",
 		"w-[9%]",
 	];
 	const columns =
@@ -344,85 +390,12 @@ export function LibraryCatalogRows({
 										{provider ? "MusicBrainz" : m("localCollection")}
 									</MobileField>
 									{expanded === release.id && (
-										<div className={catalogueStyles.mobileCatalogTracks}>
-											{release.tracks.map((track) => {
-												const ids = sourceIds(track);
-												const source = track.sourceId
-													? files[track.sourceId]
-													: undefined;
-												const pub =
-													track.published && typeof track.published === "object"
-														? track.published
-														: null;
-												return (
-													<div
-														className={`${catalogueStyles.mobileCatalogGroup} ${availabilityRowClass(track as OriginalTrack, filter, hasAudio)} ${catalogueStyles.filterRows} [&.filter-muted>dl]:opacity-[.55] [&.filter-muted:focus-within>dl]:opacity-100`}
-														key={track.id}
-													>
-														<MobileField label={m("select")}>
-															{groupCheckbox(
-																[track.id],
-																m("selectTrack", { track: track.title }),
-															)}
-														</MobileField>
-														<MobileField label={m("mediumNumber")}>
-															{trackNumberLabel(release, track)}
-														</MobileField>
-														<MobileField label={m("recording")}>
-															<a href={`#track/${track.id}`}>{track.title}</a>
-															<span className={catalogueStyles.sub}>
-																{originalArtistName(track.artistId, artists)}
-																{track.recordingTitle
-																	? ` · ${track.recordingTitle}`
-																	: ""}
-															</span>
-															{!track.recordingId && (
-																<span className={catalogueStyles.sub}>
-																	{m("newRecording")}
-																</span>
-															)}
-														</MobileField>
-														<MobileField label={m("duration")}>
-															{duration(track.duration)}
-														</MobileField>
-														<MobileField label={m("source")}>
-															{source?.codec ??
-																(ids.length
-																	? m("noSourceSelected")
-																	: m("noFile"))}
-															<span className={catalogueStyles.sub}>
-																{m("sourceCount", { count: ids.length })} ·{" "}
-																{hasAudio(track) ? m("hasAudio") : m("noAudio")}
-															</span>
-														</MobileField>
-														<MobileField label={m("properties")}>
-															{audioProperties(source)}
-														</MobileField>
-														<MobileField label={m("filePath")}>
-															{ids
-																.map((id) => files[id]?.path || files[id]?.name)
-																.filter(Boolean)
-																.join(" · ") || "—"}
-														</MobileField>
-														<MobileField label={m("publication")}>
-															{pub
-																? `${pub.container} · ${pub.codec}`
-																: m("notPublished")}
-														</MobileField>
-														<MobileField label={m("tags")}>
-															<a href={`#tags/${track.id}/track`}>
-																{m("tags")}
-															</a>
-															{pub && (
-																<span className={catalogueStyles.sub}>
-																	{pub.tags.TITLE?.join(", ") || track.title}
-																</span>
-															)}
-														</MobileField>
-													</div>
-												);
-											})}
-										</div>
+										<LibraryAlbumPositionsView
+											locale={locale}
+											releaseTitle={release.title}
+											positions={positionsFor(release)}
+											layout="mobile"
+										/>
 									)}
 								</article>
 							);
@@ -550,6 +523,7 @@ export function LibraryCatalogRows({
 								files,
 								expanded,
 								filter,
+								pageSelection,
 							]}
 							renderEmptyState={() => (
 								<div className={catalogueStyles.empty}>{m("noResults")}</div>
@@ -566,149 +540,16 @@ export function LibraryCatalogRows({
 												colSpan={columns.length}
 												className="w-auto! min-w-0! max-w-none! px-2! text-left!"
 											>
-												<div className="w-full min-w-0 rounded border border-[var(--line)] bg-[var(--raised)]">
-													<table
-														className={`${catalogueStyles.inlineTable} min-w-0! table-fixed wrap-anywhere`}
-													>
-														<thead>
-															<tr>
-																{[
-																	m("select"),
-																	m("mediumNumber"),
-																	m("recording"),
-																	m("duration"),
-																	m("source"),
-																	m("properties"),
-																	m("filePath"),
-																	m("publication"),
-																	m("tags"),
-																].map((heading, headingIndex) => (
-																	<th
-																		key={heading}
-																		scope="col"
-																		className={
-																			trackDetailColumnWidths[headingIndex]
-																		}
-																	>
-																		{headingIndex === 0
-																			? groupCheckbox(
-																					release.tracks.map(
-																						(track) => track.id,
-																					),
-																					m("selectAllReleasePositions"),
-																				)
-																			: heading}
-																	</th>
-																))}
-															</tr>
-														</thead>
-														<tbody>
-															{release.tracks.map((track) => {
-																const ids = sourceIds(track);
-																const source = track.sourceId
-																	? files[track.sourceId]
-																	: undefined;
-																const pub =
-																	track.published &&
-																	typeof track.published === "object"
-																		? track.published
-																		: null;
-																return (
-																	<tr
-																		key={track.id}
-																		className={`${availabilityRowClass(
-																			track as OriginalTrack,
-																			filter,
-																			hasAudio,
-																		)} ${catalogueStyles.filterRows}`}
-																	>
-																		<td
-																			className={
-																				catalogueStyles.selectionColumn
-																			}
-																		>
-																			{groupCheckbox(
-																				[track.id],
-																				m("selectTrack", {
-																					track: track.title,
-																				}),
-																			)}
-																		</td>
-																		<td>{trackNumberLabel(release, track)}</td>
-																		<td>
-																			<a href={`#track/${track.id}`}>
-																				{track.title}
-																			</a>
-																			<span className={catalogueStyles.sub}>
-																				{originalArtistName(
-																					track.artistId,
-																					artists,
-																				)}
-																				{track.recordingTitle
-																					? ` · ${track.recordingTitle}`
-																					: ""}
-																			</span>
-																			{track.recordingId ? null : (
-																				<span className={catalogueStyles.sub}>
-																					{m("newRecording")}
-																				</span>
-																			)}
-																		</td>
-																		<td>{duration(track.duration)}</td>
-																		<td>
-																			{source?.codec ??
-																				(ids.length
-																					? m("noSourceSelected")
-																					: m("noFile"))}
-																			<span className={catalogueStyles.sub}>
-																				{m("sourceCount", {
-																					count: ids.length,
-																				})}{" "}
-																				·{" "}
-																				{hasAudio(track)
-																					? m("hasAudio")
-																					: m("noAudio")}
-																			</span>
-																		</td>
-																		<td>{audioProperties(source)}</td>
-																		<td>
-																			{ids
-																				.map(
-																					(id) =>
-																						files[id]?.path || files[id]?.name,
-																				)
-																				.filter(Boolean)
-																				.map((path) => (
-																					<span
-																						className={catalogueStyles.path}
-																						key={path}
-																					>
-																						{path}
-																					</span>
-																				))}
-																		</td>
-																		<td>
-																			{pub
-																				? `${pub.container} · ${pub.codec}`
-																				: m("notPublished")}
-																		</td>
-																		<td>
-																			<a href={`#tags/${track.id}/track`}>
-																				{m("tags")}
-																			</a>
-																			{pub && (
-																				<span className={catalogueStyles.sub}>
-																					{pub.tags.TITLE?.join(", ") ||
-																						track.title}
-																				</span>
-																			)}
-																		</td>
-																	</tr>
-																);
-															})}
-														</tbody>
-													</table>
-												</div>
+												<LibraryAlbumPositionsView
+													locale={locale}
+													releaseTitle={release.title}
+													positions={positionsFor(release)}
+													layout="desktop"
+													releaseSelection={selectionControl(
+														release.tracks.map((track) => track.id),
+														pageSelection,
+													)}
+												/>
 											</Cell>
 										</Row>
 									);

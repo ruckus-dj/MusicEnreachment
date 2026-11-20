@@ -43,6 +43,7 @@ const pairs = [
     "features/library",
     "features/library",
     [
+      "LibraryAlbumPositionsView.tsx",
       "LibraryArtistCards.tsx",
       "LibrarySelectionReviewView.tsx",
       "libraryArtistCardStyles.ts",

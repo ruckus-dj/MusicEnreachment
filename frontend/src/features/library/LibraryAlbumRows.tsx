@@ -15,6 +15,10 @@ import type {
   LibraryReleaseSummary,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  LibraryAlbumPositionsView,
+  type LibraryPositionSelectionControl,
+} from "./LibraryAlbumPositionsView";
 import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
@@ -29,17 +33,6 @@ const widths = [
   "w-[8%]",
   "w-[9%]",
   "w-[12%]",
-  "w-[9%]",
-];
-const trackWidths = [
-  selectColumn,
-  "w-[8%]",
-  "",
-  "w-[7%]",
-  "w-[13%]",
-  "w-[9%]",
-  "w-[24%]",
-  "w-[11%]",
   "w-[9%]",
 ];
 const tableClass =
@@ -71,19 +64,11 @@ const copy = {
     missing: "Missing from library",
     untitled: "Untitled",
     unknown: "Completeness unknown",
-    number: "No.",
     track: "Recording",
-    duration: "Duration",
-    source: "Source",
-    properties: "Properties",
-    file: "File path",
-    tags: "Tags",
     loading: "Loading tracks…",
     error: "Could not load tracks.",
     retry: "Retry",
-    empty: "No tracks.",
     notPublished: "Not published",
-    available: "Available",
   },
   ru: {
     table: "Альбомы медиатеки",
@@ -102,19 +87,11 @@ const copy = {
     missing: "Нет в медиатеке",
     untitled: "Без названия",
     unknown: "Полнота неизвестна",
-    number: "№",
     track: "Запись",
-    duration: "Длительность",
-    source: "Источник",
-    properties: "Свойства",
-    file: "Путь к файлу",
-    tags: "Теги",
     loading: "Загрузка треков…",
     error: "Не удалось загрузить треки.",
     retry: "Повторить",
-    empty: "Нет треков.",
     notPublished: "Не опубликовано",
-    available: "Есть",
   },
 };
 
@@ -123,6 +100,9 @@ type RenderCheckbox = (
   scope: LibrarySelectionScope,
   label: string,
 ) => ReactNode;
+type SelectionControl = (
+  scope: LibrarySelectionScope,
+) => LibraryPositionSelectionControl;
 
 function releaseHref(id: string) {
   return `#/library/releases/${encodeURIComponent(id)}`;
@@ -201,12 +181,14 @@ function fields(item: LibraryReleaseItem, text: Text) {
 function AlbumTracks({
   release,
   text,
-  renderCheckbox,
+  locale,
+  selectionControl,
   mobile,
 }: {
   release: LibraryReleaseSummary;
   text: Text;
-  renderCheckbox: RenderCheckbox;
+  locale: "en" | "ru";
+  selectionControl: SelectionControl;
   mobile: boolean;
 }) {
   const query = useGetLibraryRelease(release.id);
@@ -228,19 +210,7 @@ function AlbumTracks({
   const tracks = [...(query.data.data.tracks ?? [])].sort(
     (a, b) => a.medium - b.medium || a.position - b.position,
   );
-  if (!tracks.length) return <p className="p-2">{text.empty}</p>;
-  const labels = [
-    "",
-    text.number,
-    text.track,
-    text.duration,
-    text.source,
-    text.properties,
-    text.file,
-    text.publication,
-    text.tags,
-  ];
-  const rows = tracks.map((track) => {
+  const positions = tracks.map((track) => {
     const sources = track.sources ?? [];
     const paths = [
       ...new Set(
@@ -250,116 +220,64 @@ function AlbumTracks({
         ),
       ),
     ];
-    const duration =
-      track.duration_ms == null
-        ? "—"
-        : `${Math.floor(track.duration_ms / 60000)}:${String(Math.floor(track.duration_ms / 1000) % 60).padStart(2, "0")}`;
     const href = `${releaseHref(release.id)}/positions/${encodeURIComponent(track.id)}`;
     return {
       id: track.id,
-      cells: [
-        renderCheckbox(
-          {
-            kind: "position",
-            position: {
-              release_id: release.id,
-              position_id: track.id,
-              title: track.title,
-              release_title: release.title,
-            },
-          },
-          `${text.select}: ${track.title}`,
-        ),
-        `${track.medium}.${track.displayed_number || track.position}`,
-        <>
-          <a className={linkClass} href={href}>
-            {track.title || text.untitled}
-          </a>
-          <span className={subClass}>{creditsText(track.artists ?? [])}</span>
-        </>,
-        duration,
-        sources.length || "—",
-        "—",
-        paths.join(" · ") || "—",
-        track.publication
-          ? `${track.publication.container} · ${track.publication.codec}`
-          : text.notPublished,
-        <a key="tags" href={href} className={linkClass}>
-          {text.tags}
-        </a>,
-      ],
+      numberLabel: `${track.medium}.${track.displayed_number || track.position}`,
+      title: track.title,
+      recordingHref: href,
+      tagsHref: href,
+      artist: creditsText(track.artists ?? []),
+      durationMs: track.duration_ms ?? undefined,
+      sourceCount: sources.length,
+      paths,
+      publication: track.publication
+        ? {
+            state: "published" as const,
+            container: track.publication.container,
+            codec: track.publication.codec,
+          }
+        : { state: "not-published" as const },
+      selection: selectionControl({
+        kind: "position",
+        position: {
+          release_id: release.id,
+          position_id: track.id,
+          title: track.title,
+          release_title: release.title,
+        },
+      }),
     };
   });
-  if (mobile)
-    return (
-      <div className="grid gap-2 border-t border-[var(--line)] pt-2">
-        {rows.map(({ id, cells }) => (
-          <div
-            key={id}
-            className="grid min-w-0 gap-1 border-b border-[var(--line)] pb-2"
-          >
-            <div className="flex items-center gap-2">
-              {cells[0]} {cells[1]} {cells[2]}
-            </div>
-            {cells.slice(3).map((cell, index) => (
-              <div key={labels[index + 3]}>
-                <strong>{labels[index + 3]}:</strong> {cell}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
   return (
-    <div className={detailClass}>
-      <table
-        aria-label={`${text.track} · ${release.title}`}
-        className={tableClass}
-      >
-        <thead>
-          <tr>
-            {labels.map((label, index) => (
-              <th scope="col" className={trackWidths[index]} key={label}>
-                {label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ id, cells }) => (
-            <tr key={id}>
-              {cells.map((cell, index) => (
-                <td
-                  className={index === 0 ? selectColumn : undefined}
-                  key={labels[index]}
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <LibraryAlbumPositionsView
+      locale={locale}
+      releaseTitle={release.title}
+      positions={positions}
+      layout={mobile ? "mobile" : "desktop"}
+    />
   );
 }
 
 function AlbumDetail({
   item,
   text,
-  renderCheckbox,
+  locale,
+  selectionControl,
   mobile = false,
 }: {
   item: LibraryReleaseItem;
   text: Text;
-  renderCheckbox: RenderCheckbox;
+  locale: "en" | "ru";
+  selectionControl: SelectionControl;
   mobile?: boolean;
 }) {
   return item.library_release ? (
     <AlbumTracks
       release={item.library_release}
       text={text}
-      renderCheckbox={renderCheckbox}
+      locale={locale}
+      selectionControl={selectionControl}
       mobile={mobile}
     />
   ) : item.missing_release_group ? (
@@ -375,9 +293,11 @@ function AlbumDetail({
 export function LibraryAlbumRows({
   items,
   renderCheckbox,
+  selectionControl,
 }: {
   items: LibraryReleaseItem[];
   renderCheckbox: RenderCheckbox;
+  selectionControl: SelectionControl;
 }) {
   const { locale } = useI18n();
   const text = copy[locale];
@@ -472,7 +392,8 @@ export function LibraryAlbumRows({
               <AlbumDetail
                 item={item}
                 text={text}
-                renderCheckbox={renderCheckbox}
+                locale={locale}
+                selectionControl={selectionControl}
                 mobile
               />
             )}
@@ -496,7 +417,13 @@ export function LibraryAlbumRows({
           </TableHeader>
           <TableBody
             items={rows}
-            dependencies={[renderCheckbox, expanded, text]}
+            dependencies={[
+              renderCheckbox,
+              selectionControl,
+              expanded,
+              text,
+              locale,
+            ]}
           >
             {({ id, title, item, detail }) =>
               detail ? (
@@ -508,7 +435,8 @@ export function LibraryAlbumRows({
                     <AlbumDetail
                       item={item}
                       text={text}
-                      renderCheckbox={renderCheckbox}
+                      locale={locale}
+                      selectionControl={selectionControl}
                     />
                   </Cell>
                 </Row>
