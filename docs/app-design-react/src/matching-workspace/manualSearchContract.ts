@@ -69,9 +69,6 @@ export const manualSearchViewMessages = {
 		releaseLabels: "Labels: {labels}",
 		selectRelease: "Choose",
 		selectReleaseDescribed: "Choose “{title}” ({details})",
-		prepareAndSelectRelease: "Prepare and choose",
-		prepareAndSelectReleaseDescribed:
-			"Prepare and choose “{title}” ({details})",
 		selectedRelease: "Selected",
 		selectedReleaseDescribed: "Selected: “{title}” ({details})",
 		prepareFailed: "Could not prepare the release.",
@@ -103,9 +100,6 @@ export const manualSearchViewMessages = {
 		releaseLabels: "Лейблы: {labels}",
 		selectRelease: "Выбрать",
 		selectReleaseDescribed: "Выбрать «{title}» ({details})",
-		prepareAndSelectRelease: "Подготовить и выбрать",
-		prepareAndSelectReleaseDescribed:
-			"Подготовить и выбрать «{title}» ({details})",
 		selectedRelease: "Выбрано",
 		selectedReleaseDescribed: "Выбрано: «{title}» ({details})",
 		prepareFailed: "Не удалось подготовить издание.",

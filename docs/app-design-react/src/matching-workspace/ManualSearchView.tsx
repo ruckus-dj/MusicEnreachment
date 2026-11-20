@@ -70,11 +70,7 @@ function chooseLabel(
 		.filter(Boolean)
 		.join(", ");
 	return message(
-		selected
-			? "selectedReleaseDescribed"
-			: item.provider === "MusicBrainz"
-				? "prepareAndSelectReleaseDescribed"
-				: "selectReleaseDescribed",
+		selected ? "selectedReleaseDescribed" : "selectReleaseDescribed",
 		{ title: item.title, details },
 	);
 }
@@ -221,13 +217,7 @@ export function ManualSearchView({
 												if (!selected) onSelectRelease(item.id);
 											}}
 										>
-											{message(
-												selected
-													? "selectedRelease"
-													: item.provider === "MusicBrainz"
-														? "prepareAndSelectRelease"
-														: "selectRelease",
-											)}
+											{message(selected ? "selectedRelease" : "selectRelease")}
 										</Button>
 									</li>
 								);

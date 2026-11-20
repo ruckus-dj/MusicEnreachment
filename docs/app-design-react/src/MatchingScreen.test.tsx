@@ -83,7 +83,7 @@ it("switches between Local and MusicBrainz search results without losing the dra
 		name: /^Выбрать «Northern Lines» \(Local,/,
 	});
 	const remote = search.getAllByRole("button", {
-		name: /^Подготовить и выбрать «Northern Lines» \(MusicBrainz,/,
+		name: /^Выбрать «Northern Lines» \(MusicBrainz,/,
 	})[0];
 	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
 		/MusicBrainz/,
