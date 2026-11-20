@@ -30,6 +30,7 @@ import {
 	PublicationAudioMeasurementsView,
 	publicationAudioMeasurementTags,
 } from "./PublicationAudioMeasurementsView";
+import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
 import { formatTrackMessage, trackMessage } from "./trackMessages";
@@ -312,9 +313,21 @@ export function TrackScreen({
 									</Button>
 								</Heading>
 								<DisclosurePanel>
+									<PublicationCurrentSummaryView
+										locale={locale}
+										current={{
+											details: {
+												container: track.published.container,
+												codec: track.published.codec,
+												path: track.published.path,
+												observed: {
+													kind: "snapshot",
+													value: track.published.readAt,
+												},
+											},
+										}}
+									/>
 									<dl className={catalogueStyles.facts}>
-										<dt>{trackMessage(locale, "path")}</dt>
-										<dd>{track.published.path}</dd>
 										<dt>{trackMessage(locale, "tagSnapshot")}</dt>
 										<dd>
 											{Object.entries(track.published.tags)
@@ -324,8 +337,6 @@ export function TrackScreen({
 												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
 												.join("; ")}
 										</dd>
-										<dt>{trackMessage(locale, "readAt")}</dt>
-										<dd>{track.published.readAt}</dd>
 									</dl>
 									{publishedTags && (
 										<PublicationAudioMeasurementsView

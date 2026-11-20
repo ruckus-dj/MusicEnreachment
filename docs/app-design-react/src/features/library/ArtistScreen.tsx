@@ -233,9 +233,11 @@ export function ArtistScreen({
 		const updated = {
 			...artist,
 			...(changes.name !== undefined ? { name: changes.name } : {}),
-			...(changes.sortName !== undefined ? { sortName: changes.sortName } : {}),
+			...(changes.sortName !== undefined
+				? { sortName: changes.sortName ?? undefined }
+				: {}),
 			...(changes.disambiguation !== undefined
-				? { disambiguation: changes.disambiguation }
+				? { disambiguation: changes.disambiguation ?? "" }
 				: {}),
 			...(changes.tags !== undefined
 				? {
@@ -371,8 +373,8 @@ export function ArtistScreen({
 					revision={artist.id}
 					values={{
 						name: artist.name,
-						sortName: artist.sortName ?? "",
-						disambiguation: artist.disambiguation ?? "",
+						sortName: artist.sortName ?? null,
+						disambiguation: artist.disambiguation ?? null,
 						tags: artist.tags?.join(", ") ?? "",
 						genre: {
 							state: selectedGenres.length

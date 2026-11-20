@@ -43,7 +43,6 @@ export const trackMessages = createNamespace({
 		currentPublication: "Current publication",
 		path: "Path",
 		tagSnapshot: "Tag snapshot",
-		readAt: "Read at",
 		localChangesHelp:
 			"Local metadata is compared with the last successful publication.",
 		compareFileAndPublication: "Compare source and publication tags",
@@ -120,7 +119,6 @@ export const trackMessages = createNamespace({
 		currentPublication: "Текущая публикация",
 		path: "Путь",
 		tagSnapshot: "Снимок тегов",
-		readAt: "Прочитано",
 		localChangesHelp:
 			"Локальные метаданные сравниваются с последней успешной публикацией.",
 		compareFileAndPublication: "Сравнить теги источника и публикации",

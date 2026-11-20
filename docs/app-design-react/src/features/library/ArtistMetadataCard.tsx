@@ -12,7 +12,10 @@ const copy = {
     title: "Artist metadata",
     name: "Name",
     sortName: "Sort name",
+    clear: "Clear",
+    clearSortName: "Clear sort name",
     disambiguation: "Disambiguation",
+    clearDisambiguation: "Clear disambiguation",
     tags: "Tags",
     nameRequired: "Enter the artist’s name.",
     saveError: "Could not save artist metadata.",
@@ -21,7 +24,10 @@ const copy = {
     title: "Метаданные артиста",
     name: "Имя",
     sortName: "Имя для сортировки",
+    clear: "Очистить",
+    clearSortName: "Очистить имя для сортировки",
     disambiguation: "Уточнение",
+    clearDisambiguation: "Очистить уточнение",
     tags: "Теги",
     nameRequired: "Укажите имя артиста.",
     saveError: "Не удалось сохранить метаданные артиста.",
@@ -30,8 +36,8 @@ const copy = {
 
 export type ArtistMetadataValues = {
   name: string;
-  disambiguation: string;
-  sortName: string;
+  disambiguation: string | null;
+  sortName: string | null;
   genre: {
     state: "absent" | "explicit_empty" | "value";
     value: GenreReference[];
@@ -56,8 +62,8 @@ type ArtistMetadataCardProps = {
 
 type DraftValues = {
   name: string;
-  disambiguation: string;
-  sortName: string;
+  disambiguation: string | null;
+  sortName: string | null;
   genre: ArtistMetadataValues["genre"];
   tags: string;
 };
@@ -198,19 +204,45 @@ export function ArtistMetadataCard({
         className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
       >
         <dt className="text-xs text-[var(--muted)]">{label}</dt>
-        <dd className="m-0 min-w-0 text-sm">
+        <dd className="m-0 flex min-h-9 min-w-0 items-center gap-1.5 text-sm">
           {editing ? (
             <input
               aria-label={label}
-              className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-              value={draft[key]}
+              className="min-h-9 min-w-0 flex-1 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+              value={draft[key] ?? ""}
               disabled={busy}
               onChange={(event) => updateText(key, event.currentTarget.value)}
             />
           ) : (
             <span className="block whitespace-pre-wrap break-words">
-              {displayed[key]}
+              {displayed[key] ??
+                (key === "sortName" ? genreCopy.noOverride : "")}
             </span>
+          )}
+          {editing && (key === "sortName" || key === "disambiguation") && (
+            <AppButton
+              type="button"
+              aria-label={
+                key === "sortName"
+                  ? text.clearSortName
+                  : text.clearDisambiguation
+              }
+              isDisabled={
+                busy ||
+                (key === "sortName"
+                  ? draft.sortName === null
+                  : draft.disambiguation === "")
+              }
+              onPress={() =>
+                setDraft((current) => ({
+                  ...current,
+                  [key]: key === "sortName" ? null : "",
+                }))
+              }
+              className="shrink-0"
+            >
+              {text.clear}
+            </AppButton>
           )}
         </dd>
       </div>

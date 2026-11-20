@@ -48,6 +48,7 @@ import {
   PublicationAudioMeasurementsView,
   publicationAudioMeasurementTags,
 } from "./PublicationAudioMeasurementsView";
+import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
 import {
   ReleaseMetadataEditor,
   ScopedLibraryMetadataEditor,
@@ -1732,43 +1733,30 @@ export function LibraryReleaseScreen({
                   {track.displayed_number.trim() || track.position}.{" "}
                   {track.title}
                 </h2>
-                <section
-                  className="grid gap-2 rounded border border-stone-300 bg-stone-50 px-3 py-3 text-sm"
-                  aria-label={text("currentPublication")}
-                >
-                  <h3 className="font-semibold">
-                    {publicationSummary
-                      ? text("published")
-                      : text("notPublished")}
-                  </h3>
-                  {publicationSummary?.relative_path &&
-                    publicationSummary.validated_at &&
-                    publicationSummary.container &&
-                    publicationSummary.codec && (
-                      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
-                        <dt className="text-stone-600">{text("format")}</dt>
-                        <dd>
-                          {publicationSummary.container} ·{" "}
-                          {publicationSummary.codec}
-                        </dd>
-                        <dt className="text-stone-600">{text("path")}</dt>
-                        <dd className="break-all font-mono">
-                          {publicationSummary.relative_path}
-                        </dd>
-                        <dt className="text-stone-600">{text("checked")}</dt>
-                        <dd>
-                          <time dateTime={publicationSummary.validated_at}>
-                            {new Intl.DateTimeFormat(locale, {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            }).format(
-                              new Date(publicationSummary.validated_at),
-                            )}
-                          </time>
-                        </dd>
-                      </dl>
-                    )}
-                </section>
+                <PublicationCurrentSummaryView
+                  locale={locale}
+                  current={
+                    publicationSummary
+                      ? {
+                          details:
+                            publicationSummary.relative_path &&
+                            publicationSummary.validated_at &&
+                            publicationSummary.container &&
+                            publicationSummary.codec
+                              ? {
+                                  path: publicationSummary.relative_path,
+                                  container: publicationSummary.container,
+                                  codec: publicationSummary.codec,
+                                  observed: {
+                                    kind: "verified",
+                                    value: publicationSummary.validated_at,
+                                  },
+                                }
+                              : undefined,
+                        }
+                      : null
+                  }
+                />
                 <LibraryDeletionControl
                   target={{
                     type: "publication",

@@ -66,7 +66,7 @@ function desired(metadata: LibraryMetadataResponse) {
     sortName:
       sortName?.state === "value" && typeof sortName.value === "string"
         ? sortName.value
-        : "",
+        : null,
     genre: { state, value: genres } satisfies ArtistMetadataValues["genre"],
   };
 }
@@ -107,7 +107,7 @@ export function LibraryArtistMetadataCard({
         providerGenres: provider ? (provider.genres ?? []) : null,
         values: {
           name: details.data.name,
-          disambiguation: details.data.disambiguation ?? "",
+          disambiguation: details.data.disambiguation ?? null,
           ...desired(metadata.data),
         },
       };
@@ -125,9 +125,10 @@ export function LibraryArtistMetadataCard({
       throw new Error(text.conflict);
     const fields: Record<string, unknown> = {};
     if (changes.sortName !== undefined) {
-      fields.sort_name = changes.sortName.trim()
-        ? { state: "value", value: changes.sortName }
-        : { state: "absent" };
+      fields.sort_name =
+        changes.sortName === null
+          ? { state: "absent" }
+          : { state: "value", value: changes.sortName };
     }
     if (changes.genre) {
       fields.genre =
@@ -140,7 +141,7 @@ export function LibraryArtistMetadataCard({
       ...(Object.keys(fields).length ? { changes: fields } : {}),
       ...(changes.name !== undefined ? { name: changes.name } : {}),
       ...(changes.disambiguation !== undefined
-        ? { disambiguation: changes.disambiguation }
+        ? { disambiguation: changes.disambiguation ?? "" }
         : {}),
     };
     const response = await patchLibraryArtistMetadata(artistId, body);

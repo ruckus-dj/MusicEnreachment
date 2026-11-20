@@ -60,6 +60,7 @@ const pairs = [
       "LibrarySelectionReviewView.tsx",
       "LibraryTrackListView.tsx",
       "PublicationAudioMeasurementsView.tsx",
+      "PublicationCurrentSummaryView.tsx",
       "PublicationPreviewDetailsView.tsx",
       "firstPublicationPreviewMessages.ts",
       "genreMessages.ts",
