@@ -113,7 +113,9 @@ unavailable.
 - Desktop matching geometry must reserve a real inspector row, not overlay the
   last target rows or preview actions with a fixed panel. Class-name assertions
   are not enough: check the last row and confirmation buttons by browser
-  visibility and hit-testing at the supported desktop sizes.
+  visibility and hit-testing at the supported desktop sizes. Keep the bounded
+  workspace from flex-shrinking when the search above it expands; verify with
+  results open on a wide, short viewport.
 
 - RU/EN copy uses semantic catalogs; store persistent notices as descriptors and
   format at render time. Do not translate metadata values, paths, filenames or

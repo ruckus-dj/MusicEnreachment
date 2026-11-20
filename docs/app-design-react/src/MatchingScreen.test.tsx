@@ -212,6 +212,7 @@ it("reserves a bounded inspector grid row and keeps the target list independentl
 	expect(layout?.className).toContain(
 		"min-[1400px]:h-[clamp(520px,72dvh,880px)]",
 	);
+	expect(layout?.className).toContain("min-[1400px]:shrink-0");
 	expect(layout?.className).toContain(
 		"min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]",
 	);
