@@ -30,6 +30,11 @@ tasks:
       - node_modules/.bin/vitest run
       - node_modules/.bin/vite build
 
+  design:parity:
+    desc: Compare the exact UI source pairs after a prototype-to-application port
+    cmds:
+      - node tools/check-ui-parity.mjs
+
   default:
     desc: Build the complete application
     cmds:

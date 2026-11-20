@@ -3,10 +3,8 @@ import { createNamespace } from "../createNamespace";
 export const settingsMessages = createNamespace({
 	en: {
 		tabFolders: "Folders",
-		tabGenres: "Genres",
 		title: "Settings",
 		subtitle: "Library configuration and connected services",
-		general: "General settings",
 		output: "Publication directory",
 		currentOutput: "Current directory",
 		newOutput: "New directory",
@@ -26,19 +24,8 @@ export const settingsMessages = createNamespace({
 		preflight: "Check move requirements",
 		confirmMove: "Move directory",
 		conflicts: "The check found conflicts. Resolve them before continuing.",
-		publicationFormat: "Publication format",
-		original: "Original format",
-		mka: "MKA",
-		concurrency: "File processing concurrency",
-		sha: "Calculate source SHA-256",
-		cleanup: "Allow source deletion after successful publication",
-		cleanupTitle: "Source deletion",
-		cleanupHelp:
-			"Off by default. An original file is eligible for removal only after every segment assigned to it has been successfully published, including segments not queued yet. Active consumers and retained holds also block removal. Filesystem permission is required; working copies and manual safeguards are unchanged.",
-		log: "Log level",
 		save: "Save settings",
 		saved: "Settings saved",
-		invalidConcurrency: "Enter a whole number greater than zero.",
 		invalidDelay: "Enter a non-negative delay in seconds.",
 		settingsConflict:
 			"These settings changed elsewhere while you were editing.",
@@ -91,6 +78,7 @@ export const settingsMessages = createNamespace({
 		pathOverlap:
 			"This directory overlaps the shared work directory, a source directory, the tools directory, or the publication directory.",
 		setup: "Initial setup",
+		refreshGenres: "Refresh genre catalog",
 		pathReady: "Directory selected",
 		selectVersion: "Choose a version for each tool.",
 		verifiedTool: "Installed and verified",
@@ -135,14 +123,11 @@ export const settingsMessages = createNamespace({
 		genreUnavailable: "Not loaded · optional",
 		ffmpegName: "FFmpeg",
 		fpcalcName: "fpcalc",
-		refreshGenres: "Refresh genre catalog",
 	},
 	ru: {
 		tabFolders: "Папки",
-		tabGenres: "Жанры",
 		title: "Настройки",
 		subtitle: "Параметры библиотеки и её подключений",
-		general: "Общие настройки",
 		output: "Каталог публикации",
 		currentOutput: "Текущий каталог",
 		newOutput: "Новый каталог",
@@ -163,19 +148,8 @@ export const settingsMessages = createNamespace({
 		confirmMove: "Выполнить перенос",
 		conflicts:
 			"При проверке обнаружены конфликты. Разрешите их перед продолжением.",
-		publicationFormat: "Формат публикации",
-		original: "Исходный формат",
-		mka: "MKA",
-		concurrency: "Параллельность обработки файлов",
-		sha: "Вычислять SHA-256 источников",
-		cleanup: "Разрешить удаление исходного файла после успешной публикации",
-		cleanupTitle: "Удаление исходников",
-		cleanupHelp:
-			"Выключено по умолчанию. Исходный файл можно удалить только после успешной публикации всех назначенных ему сегментов, включая ещё не поставленные в очередь. Активные потребители и сохранённые блокировки также запрещают удаление. Требуется разрешение файловой системы; рабочие копии и ручная защита не затрагиваются.",
-		log: "Уровень журнала",
 		save: "Сохранить настройки",
 		saved: "Настройки сохранены",
-		invalidConcurrency: "Введите целое число больше нуля.",
 		invalidDelay: "Введите неотрицательную задержку в секундах.",
 		settingsConflict:
 			"Эти настройки изменились в другом месте, пока вы редактировали их.",
@@ -228,6 +202,7 @@ export const settingsMessages = createNamespace({
 		pathOverlap:
 			"Этот каталог пересекается с общей рабочей папкой, каталогом источника, каталогом инструментов или каталогом публикации.",
 		setup: "Первый запуск",
+		refreshGenres: "Обновить каталог жанров",
 		pathReady: "Каталог выбран",
 		selectVersion: "Выберите версию для каждого инструмента.",
 		verifiedTool: "Установлено и проверено",
@@ -272,6 +247,5 @@ export const settingsMessages = createNamespace({
 		genreUnavailable: "Не загружен · необязательно",
 		ffmpegName: "FFmpeg",
 		fpcalcName: "fpcalc",
-		refreshGenres: "Обновить каталог жанров",
 	},
 });

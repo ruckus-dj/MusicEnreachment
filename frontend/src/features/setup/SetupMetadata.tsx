@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import {
   CheckboxButton,
   CheckboxField,
@@ -30,13 +36,25 @@ import {
   setupMessages,
 } from "./setupMessages";
 
+export interface SetupMetadataAction {
+  continue: () => void;
+  isBusy: () => boolean;
+}
+
 type Props = {
   state: SetupStateBody;
   refresh: () => Promise<SetupStateBody>;
   onContinue: () => void;
-  onBack: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  actionRef?: RefObject<SetupMetadataAction | null>;
 };
-export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
+export function SetupMetadata({
+  state,
+  refresh,
+  onContinue,
+  onBusyChange,
+  actionRef,
+}: Props) {
   const { locale } = useI18n();
   const messages = setupMessages[locale];
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>(
@@ -50,6 +68,7 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
   const [keyPending, setKeyPending] = useState(false);
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [notice, setNotice] = useState<SetupFeedback | null>(null);
+  const submitting = useRef(false);
   const alert = useRef<HTMLParagraphElement>(null);
   const changed =
     mode !== state.settings.musicbrainz_mode ||
@@ -59,6 +78,8 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
     if (error) alert.current?.focus();
   }, [error]);
   async function check() {
+    if (submitting.current || keyPending) return;
+    submitting.current = true;
     setPending(true);
     setError(null);
     setNotice(null);
@@ -83,10 +104,13 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
     } catch (reason) {
       setError(setupFeedback(reason, "unknownError"));
     } finally {
+      submitting.current = false;
       setPending(false);
     }
   }
   async function continueStep() {
+    if (submitting.current || keyPending) return;
+    submitting.current = true;
     setPending(true);
     setError(null);
     setNotice(null);
@@ -106,9 +130,20 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
     } catch (reason) {
       setError(setupFeedback(reason, "unknownError"));
     } finally {
+      submitting.current = false;
       setPending(false);
     }
   }
+  useImperativeHandle(actionRef, () => ({
+    isBusy: () => submitting.current || keyPending,
+    continue: () => {
+      void continueStep();
+    },
+  }));
+  useEffect(() => {
+    onBusyChange?.(pending || keyPending);
+    return () => onBusyChange?.(false);
+  }, [pending, keyPending, onBusyChange]);
   return (
     <div className="setup-metadata">
       <RadioGroup
@@ -159,14 +194,6 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
       )}
       {notice && <p role="status">{setupFeedbackText(notice, locale)}</p>}
       {pending && <p role="status">{messages.requestInProgress}</p>}
-      <div className="setup-navigation">
-        <AppButton isDisabled={pending || keyPending} onPress={onBack}>
-          {messages.back}
-        </AppButton>
-        <AppButton isDisabled={pending || keyPending} onPress={continueStep}>
-          {messages.continue}
-        </AppButton>
-      </div>
     </div>
   );
 }

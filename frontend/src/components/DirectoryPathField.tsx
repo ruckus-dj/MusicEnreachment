@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
-import { directoryMessages } from "../i18n/directoryMessages";
 import { useI18n } from "../i18n/I18nProvider";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { directoryPickerMessages } from "./DirectoryPickerMessages";
 import "./DirectoryPathField.css";
 
 export function DirectoryPathField({
@@ -22,7 +22,7 @@ export function DirectoryPathField({
   "aria-describedby"?: string;
 }) {
   const { locale } = useI18n();
-  const copy = directoryMessages[locale];
+  const copy = directoryPickerMessages[locale];
   const [pickerOpen, setPickerOpen] = useState(false);
   const descriptionId = useId();
   const helpIds = [ariaDescribedBy, description ? descriptionId : undefined]

@@ -55,7 +55,10 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
-import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import {
+  type SettingsGeneralFailureModel,
+  SettingsGeneralSection,
+} from "./SettingsGeneralSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import {
   getSettingsDraftStorage,
@@ -1723,6 +1726,32 @@ export function SettingsScreen() {
     });
   }
 
+  function generalFailurePresentations(): SettingsGeneralFailureModel[] {
+    return (["publicationFormat", "sha256", "logLevel"] as const).flatMap(
+      (setting) => {
+        const failure = generalFailures[setting];
+        if (!failure) return [];
+        const attempt: SettingsGeneralFailureModel["attempt"] =
+          setting === "publicationFormat"
+            ? {
+                setting,
+                value: failure.value as UpdateSettingsBodyPublicationFormat,
+              }
+            : setting === "sha256"
+              ? { setting, value: failure.value as boolean }
+              : { setting, value: String(failure.value) };
+        return [
+          {
+            phase: failure.phase,
+            attempt,
+            disabled: effectiveBusy,
+            onAction: () => retryGeneralFailure(setting),
+          },
+        ];
+      },
+    );
+  }
+
   function retryGeneralFailure(setting: GeneralSettingKey) {
     const failure = generalFailures[setting];
     if (!failure) return;
@@ -3039,93 +3068,48 @@ export function SettingsScreen() {
           >
             <SettingsTabPanel id="general" forceMount>
               <SettingsGeneralSection
-                publicationFormat={publicationFormat.value ?? "mka"}
-                onPublicationFormatChange={savePublicationFormat}
-                sourceFileConcurrency={
-                  sourceFileConcurrency.value ??
-                  String(state.settings.source_file_concurrency)
-                }
-                concurrencyInvalid={
-                  sourceFileConcurrency.value !== undefined &&
-                  !validConcurrency(sourceFileConcurrency.value)
-                }
-                concurrencySavingDisabled={effectiveBusy}
-                concurrencyDirty={sourceFileConcurrency.dirty}
-                onConcurrencyChange={sourceFileConcurrency.update}
-                onSaveConcurrency={saveConcurrency}
-                sha256Enabled={sha256.value ?? state.settings.sha256_enabled}
-                onSha256Change={saveSha256}
-                logLevel={logLevel.value ?? "info"}
-                onLogLevelChange={saveLogLevel}
-              />
-              {(["publicationFormat", "sha256", "logLevel"] as const).map(
-                (setting) => {
-                  const failure = generalFailures[setting];
-                  if (!failure) return null;
-                  const label =
-                    setting === "publicationFormat"
-                      ? t("publicationFormatLabel")
-                      : setting === "sha256"
-                        ? "SHA-256"
-                        : t("logLevelLabel");
-                  const value =
-                    setting === "publicationFormat"
-                      ? failure.value === "source"
-                        ? t("originalFormat")
-                        : failure.value === "m4a"
-                          ? "M4A"
-                          : t("mkaRemux")
-                      : setting === "sha256"
-                        ? failure.value
-                          ? t("enabled")
-                          : t("disabled")
-                        : String(failure.value);
-                  return (
-                    <fieldset
-                      key={setting}
-                      className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
-                      aria-label={t("unsavedChanges")}
-                    >
-                      <p className="m-0" role="status">
-                        {failure.phase === "write"
-                          ? t("saveFailed", { label, value })
-                          : t("saveUnconfirmed", { label, value })}
-                      </p>
-                      <AppButton
-                        isDisabled={effectiveBusy}
-                        onPress={() => retryGeneralFailure(setting)}
-                      >
-                        {failure.phase === "write"
-                          ? t("retrySave", { label, value })
-                          : t("retryConfirm", { label, value })}
-                      </AppButton>
-                    </fieldset>
-                  );
-                },
-              )}
-              <section
-                aria-labelledby="source-deletion-title"
-                className="setup-panel settings-panel"
-              >
-                <h2 id="source-deletion-title">{t("sourceDeletionTitle")}</h2>
-                <label className="settings-inline">
-                  <input
-                    type="checkbox"
-                    checked={
+                model={{
+                  locale,
+                  format: {
+                    value: publicationFormat.value ?? "mka",
+                    choices: ["source", "mka", "m4a"],
+                    onChange: savePublicationFormat,
+                  },
+                  concurrency: {
+                    value:
+                      sourceFileConcurrency.value ??
+                      String(state.settings.source_file_concurrency),
+                    invalid:
+                      sourceFileConcurrency.value !== undefined &&
+                      !validConcurrency(sourceFileConcurrency.value),
+                    dirty: sourceFileConcurrency.dirty,
+                    saveDisabled:
+                      effectiveBusy ||
+                      (sourceFileConcurrency.value !== undefined &&
+                        !validConcurrency(sourceFileConcurrency.value)) ||
+                      !sourceFileConcurrency.value,
+                    onChange: sourceFileConcurrency.update,
+                    onSave: saveConcurrency,
+                  },
+                  sha256: {
+                    enabled: sha256.value ?? state.settings.sha256_enabled,
+                    onChange: saveSha256,
+                  },
+                  logLevel: {
+                    value: logLevel.value ?? "info",
+                    onChange: (value) =>
+                      saveLogLevel(value as UpdateLogLevelBodyLevel),
+                  },
+                  cleanup: {
+                    enabled:
                       publicationRemoveSources.value ??
-                      state.settings.publication_remove_sources
-                    }
-                    onChange={(event) =>
-                      savePublicationRemoveSources(event.target.checked)
-                    }
-                  />{" "}
-                  {t("allowSourceDeletion")}
-                </label>
-                <p role="note">{t("sourceDeletionHelp")}</p>
-                {publicationRemoveSources.dirty && (
-                  <p>{t("unsavedSourceDeletion")}</p>
-                )}
-              </section>
+                      state.settings.publication_remove_sources,
+                    dirty: publicationRemoveSources.dirty,
+                    onChange: savePublicationRemoveSources,
+                  },
+                  failures: generalFailurePresentations(),
+                }}
+              />
             </SettingsTabPanel>
             <SettingsTabPanel id="folders" forceMount>
               <div className="settings-grid">

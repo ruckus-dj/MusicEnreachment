@@ -16,16 +16,16 @@
   padding: 12px;
   min-height: 100dvh;
 }
-.setup-shell header { background: var(--setup-surface); border-color: var(--setup-line); padding: 8px 12px; }
-.setup-shell h1 { font-size: 20px; line-height: 26px; font-weight: 650; }
+.setup-shell > header { background: var(--setup-surface); border-color: var(--setup-line); padding: 8px 12px; }
+.setup-shell #diagnostic-title { font-size: 20px; line-height: 26px; font-weight: 650; }
 .setup-shell h2, .setup-shell h3 { font-size: 14px; line-height: 20px; font-weight: 600; }
 .setup-shell .setup-panel { background: var(--setup-surface); border: 1px solid var(--setup-line); border-radius: 5px; padding: 10px; }
 .setup-shell .setup-stepper { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
 .setup-shell .setup-stepper li { padding: 6px 10px; border-bottom: 2px solid var(--setup-line); color: var(--setup-muted); }
 .setup-shell .setup-stepper li[aria-current="step"] { border-color: var(--setup-accent); color: var(--setup-accent); font-weight: 600; }
-.setup-shell button { min-height: 28px; padding: 4px 8px; background: var(--setup-surface); color: var(--setup-ink); border: 1px solid var(--setup-control); border-radius: 4px; }
-.setup-shell button:hover { background: var(--setup-raised); border-color: var(--setup-accent); }
-.setup-shell button:disabled { background: var(--setup-raised); color: var(--setup-muted); border-color: var(--setup-line); }
+.setup-shell button:not(.ui-button) { min-height: 28px; padding: 4px 8px; background: var(--setup-surface); color: var(--setup-ink); border: 1px solid var(--setup-control); border-radius: 4px; }
+.setup-shell button:not(.ui-button):hover { background: var(--setup-raised); border-color: var(--setup-accent); }
+.setup-shell button:not(.ui-button):disabled { background: var(--setup-raised); color: var(--setup-muted); border-color: var(--setup-line); }
 .setup-shell input:not([type="radio"]):not([type="checkbox"]), .setup-shell select { min-height: 30px; padding: 4px 8px; color: var(--setup-ink); background: var(--setup-raised); border: 1px solid var(--setup-control); border-radius: 4px; }
 .setup-shell input[type="radio"], .setup-shell input[type="checkbox"] { accent-color: var(--setup-accent); }
 .setup-shell .react-aria-TextField .react-aria-Label, .setup-shell .react-aria-RadioGroup > .react-aria-Label { display: block; font-weight: 600; }
@@ -47,7 +47,7 @@
 .setup-select-popover .react-aria-ListBoxItem[data-focused], .setup-select-popover .react-aria-ListBoxItem[data-selected] { background: var(--accent-soft); }
 .setup-select-popover .react-aria-ListBoxItem[data-focus-visible] { outline: 2px solid var(--ink); outline-offset: -2px; }
 .setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
-@media (max-width: 599px) { .setup-shell button, .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
+@media (max-width: 599px) { .setup-shell button:not(.ui-button), .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
 
 .setup-shell .setup-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 12px; }
 .setup-shell .setup-help { color: var(--setup-muted); }

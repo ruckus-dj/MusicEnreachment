@@ -1,4 +1,4 @@
-import type { Locale } from "./locale";
+export type DirectoryPickerLocale = "en" | "ru";
 
 const english = {
   title: "Server folder",
@@ -9,19 +9,24 @@ const english = {
   editPath: "Edit path",
   enterPath: "Enter path",
   pathLabel: "Folder path",
+  go: "Go",
   folders: "Folders",
   serverRoots: "Server roots",
   empty: "This folder has no subfolders.",
   loading: "Loading folders…",
   error: "Could not read the server directory.",
+  notFound: "Folder not found. Check the folder path.",
+  unreadable: "The server cannot read this folder.",
   retry: "Retry",
   cancel: "Cancel",
   choose: "Choose folder",
 } as const;
 
-export type DirectoryMessageKey = keyof typeof english;
+export type DirectoryPickerCopy = {
+  [Key in keyof typeof english]: string;
+};
 
-const russian: Record<DirectoryMessageKey, string> = {
+const russian: DirectoryPickerCopy = {
   title: "Папка на сервере",
   help: "Выберите папку, доступную серверу MeloTrove.",
   close: "Закрыть",
@@ -30,19 +35,22 @@ const russian: Record<DirectoryMessageKey, string> = {
   editPath: "Изменить путь",
   enterPath: "Ввести путь",
   pathLabel: "Путь к папке",
+  go: "Перейти",
   folders: "Папки",
   serverRoots: "Корни сервера",
   empty: "В этой папке нет подпапок.",
   loading: "Загрузка папок…",
   error: "Не удалось прочитать каталог сервера.",
+  notFound: "Папка не найдена. Проверьте путь к папке.",
+  unreadable: "Сервер не может прочитать эту папку.",
   retry: "Повторить",
   cancel: "Отмена",
   choose: "Выбрать папку",
 };
 
-export const directoryMessages: Record<
-  Locale,
-  Record<DirectoryMessageKey, string>
+export const directoryPickerMessages: Record<
+  DirectoryPickerLocale,
+  DirectoryPickerCopy
 > = {
   en: english,
   ru: russian,

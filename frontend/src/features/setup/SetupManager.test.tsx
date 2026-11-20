@@ -182,6 +182,11 @@ describe("SetupManager", () => {
 
   it("requires an explicit format and submits the current publication settings", async () => {
     let current = state(installed);
+    const lrclib = vi.fn();
+    let acceptLrclib = () => {};
+    const held = new Promise<void>((resolve) => {
+      acceptLrclib = resolve;
+    });
     const saved = vi.fn((_body: unknown) => {
       current = state(published);
       return new HttpResponse(null, { status: 204 });
@@ -191,6 +196,22 @@ describe("SetupManager", () => {
       http.put("/api/setup/runtime", async ({ request }) =>
         saved(await request.json()),
       ),
+      http.put(
+        "/api/setup/musicbrainz",
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+      http.post("/api/setup/check-musicbrainz", () => {
+        current = state({
+          ...published,
+          musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+        });
+        return HttpResponse.json({ success: true });
+      }),
+      http.put("/api/setup/lrclib", async () => {
+        lrclib();
+        await held;
+        return new HttpResponse(null, { status: 204 });
+      }),
     );
     renderSetup(current);
     await click("Продолжить");
@@ -205,5 +226,21 @@ describe("SetupManager", () => {
       publication_format: "source",
       publication_remove_sources: false,
     });
+    await click("Продолжить");
+    await screen.findByRole("alert");
+    expect(lrclib).not.toHaveBeenCalled();
+    await click("Проверить MusicBrainz");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Продолжить" })).toBeEnabled(),
+    );
+    await click("Продолжить");
+    try {
+      await waitFor(() => expect(lrclib).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole("button", { name: "Назад" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Продолжить" })).toBeDisabled();
+    } finally {
+      acceptLrclib();
+    }
+    await waitFor(() => expect(heading("Итог")).toBeVisible());
   });
 });

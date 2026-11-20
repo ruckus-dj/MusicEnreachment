@@ -1,6 +1,5 @@
 import { type Key, useEffect, useRef, useState } from "react";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
-import { GenreLibrary } from "../../components/GenreLibrary";
 import { formStyles as styles } from "../../components/styles/formStyles";
 import {
 	Button,
@@ -24,6 +23,8 @@ import {
 	musicBrainzConfigurationFingerprint,
 } from "../../infrastructure/providerValidation";
 import { setupToolExecutables } from "../setup/setupToolsLifecycle";
+import { GenreCatalogDemoProvider } from "./GenreCatalogDemoProvider";
+import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import {
 	type SettingsTabKey,
 	SettingsTabPanel,
@@ -323,8 +324,7 @@ export function SettingsScreen({
 	const validateDraft = (value = draftState.value) => {
 		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
 		if (!value.musicBrainzMode) errors.musicBrainzMode = copy.invalidProvider;
-		if (!validConcurrency(value.concurrency))
-			errors.concurrency = copy.invalidConcurrency;
+		if (!validConcurrency(value.concurrency)) errors.concurrency = "invalid";
 		if (
 			value.musicBrainzMode === "self-hosted" &&
 			!isValidMusicBrainzConfiguration({
@@ -420,7 +420,7 @@ export function SettingsScreen({
 		if (!validConcurrency(draftState.value.concurrency)) {
 			setFieldErrors((current) => ({
 				...current,
-				concurrency: copy.invalidConcurrency,
+				concurrency: "invalid",
 			}));
 			document.getElementById("settings-concurrency")?.focus();
 			return;
@@ -793,133 +793,51 @@ export function SettingsScreen({
 				selectedKey={activeTab}
 				onSelectionChange={selectTab}
 			>
-				<SettingsTabPanel id="general" className={styles.panel}>
-					<h2>{copy.general}</h2>
-					<div className="grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:gap-x-6">
-						<div className="grid content-start gap-3 min-[600px]:grid-cols-2">
-							<Select
-								selectedKey={settings.publicationFormat ?? ""}
-								onSelectionChange={(key) =>
+				<SettingsTabPanel id="general">
+					<SettingsGeneralSection
+						model={{
+							locale,
+							format: {
+								value:
+									settings.publicationFormat === "original" ? "source" : "mka",
+								choices: ["mka", "source"],
+								onChange: (publicationFormat) =>
 									update({
-										publicationFormat: key
-											? (String(key) as DemoSettings["publicationFormat"])
-											: "",
-									})
-								}
-							>
-								<Label>{copy.publicationFormat}</Label>
-								<Button>
-									<SelectValue />
-								</Button>
-								<Popover>
-									<ListBox>
-										<ListBoxItem id="mka">{copy.mka}</ListBoxItem>
-										<ListBoxItem id="original">{copy.original}</ListBoxItem>
-									</ListBox>
-								</Popover>
-							</Select>
-							<div className="grid content-start gap-2">
-								<TextField
-									value={draftState.value.concurrency}
-									onChange={(concurrency) => updateDraft({ concurrency })}
-								>
-									<Label>{copy.concurrency}</Label>
-									<Input
-										id="settings-concurrency"
-										type="number"
-										min="1"
-										aria-invalid={Boolean(fieldErrors.concurrency)}
-										aria-describedby={
-											fieldErrors.concurrency
-												? "settings-concurrency-error"
-												: undefined
-										}
-									/>
-								</TextField>
-								{fieldErrors.concurrency && (
-									<p
-										id="settings-concurrency-error"
-										className="m-0 text-[var(--error)]"
-										role="alert"
-									>
-										{fieldErrors.concurrency}
-									</p>
-								)}
-								<Button
-									className="justify-self-start"
-									isDisabled={
-										draftConflicts.includes("concurrency") &&
-										!conflictAcknowledged
-									}
-									onPress={commitConcurrency}
-								>
-									{copy.save}
-								</Button>
-							</div>
-							<label className="flex items-center gap-2">
-								<input
-									type="checkbox"
-									checked={settings.sha256Enabled ?? true}
-									onChange={(event) =>
-										update({ sha256Enabled: event.target.checked })
-									}
-								/>
-								{copy.sha}
-							</label>
-							<Select
-								selectedKey={settings.logLevel ?? "info"}
-								onSelectionChange={(key) =>
+										publicationFormat:
+											publicationFormat === "source" ? "original" : "mka",
+									}),
+							},
+							concurrency: {
+								value: draftState.value.concurrency,
+								invalid: Boolean(fieldErrors.concurrency),
+								dirty:
+									draftState.value.concurrency !==
+									draftState.baseline.concurrency,
+								saveDisabled:
+									draftConflicts.includes("concurrency") &&
+									!conflictAcknowledged,
+								onChange: (concurrency) => updateDraft({ concurrency }),
+								onSave: commitConcurrency,
+							},
+							sha256: {
+								enabled: settings.sha256Enabled ?? true,
+								onChange: (sha256Enabled) => update({ sha256Enabled }),
+							},
+							logLevel: {
+								value: settings.logLevel ?? "info",
+								onChange: (logLevel) =>
 									update({
-										logLevel: key
-											? (String(key) as NonNullable<DemoSettings["logLevel"]>)
-											: "",
-									})
-								}
-							>
-								<Label>{copy.log}</Label>
-								<Button>
-									<SelectValue />
-								</Button>
-								<Popover>
-									<ListBox>
-										{["debug", "info", "warn", "error"].map((level) => (
-											<ListBoxItem id={level} key={level}>
-												{level}
-											</ListBoxItem>
-										))}
-									</ListBox>
-								</Popover>
-							</Select>
-						</div>
-						<section
-							aria-labelledby="source-cleanup-title"
-							className="grid content-start gap-2 border-t border-[var(--line)] pt-3 min-[1400px]:border-t-0 min-[1400px]:pt-0"
-						>
-							<h3
-								id="source-cleanup-title"
-								className="m-0 text-sm font-semibold"
-							>
-								{copy.cleanupTitle}
-							</h3>
-							<label className="flex items-center gap-2">
-								<input
-									type="checkbox"
-									aria-describedby="source-cleanup-help"
-									checked={settings.sourceCleanupEnabled ?? false}
-									onChange={(event) =>
-										update({ sourceCleanupEnabled: event.target.checked })
-									}
-								/>
-								{copy.cleanup}
-							</label>
-							<p
-								id="source-cleanup-help"
-								className="m-0 text-xs text-[var(--warning)]"
-							>
-								{copy.cleanupHelp}
-							</p>
-						</section>
-					</div>
+										logLevel: logLevel as NonNullable<DemoSettings["logLevel"]>,
+									}),
+							},
+							cleanup: {
+								enabled: settings.sourceCleanupEnabled ?? false,
+								dirty: false,
+								onChange: (sourceCleanupEnabled) =>
+									update({ sourceCleanupEnabled }),
+							},
+						}}
+					/>
 				</SettingsTabPanel>
 				<SettingsTabPanel
 					id="folders"
@@ -1220,12 +1138,10 @@ export function SettingsScreen({
 					</label>
 					<small>{copy.lrclibHelp}</small>
 				</SettingsTabPanel>
-				<SettingsTabPanel id="genres" className={`${styles.panel} grid gap-2`}>
-					<h2>{copy.tabGenres}</h2>
-					<GenreLibrary
+				<SettingsTabPanel id="genres" forceMount>
+					<GenreCatalogDemoProvider
 						loaded={settings.genresLoaded}
-						onLoadedChange={(genresLoaded) => update({ genresLoaded })}
-						buttonLabel={copy.refreshGenres}
+						onRefresh={() => update({ genresLoaded: true })}
 					/>
 				</SettingsTabPanel>
 			</SettingsTabs>

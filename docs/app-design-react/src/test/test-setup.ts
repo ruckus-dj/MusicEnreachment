@@ -31,3 +31,13 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+// JSDOM does not implement the native dialog lifecycle used by both frontends.
+if (!HTMLDialogElement.prototype.showModal) {
+	HTMLDialogElement.prototype.showModal = function () {
+		this.setAttribute("open", "");
+	};
+	HTMLDialogElement.prototype.close = function () {
+		this.removeAttribute("open");
+	};
+}

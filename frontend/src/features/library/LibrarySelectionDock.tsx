@@ -7,6 +7,10 @@ import {
   ModalOverlay,
 } from "react-aria-components";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  LibrarySelectionReviewButton,
+  LibrarySelectionReviewView,
+} from "./LibrarySelectionReviewView";
 
 export interface SelectedLibraryPosition {
   release_id: string;
@@ -26,11 +30,7 @@ const copyByLocale = {
     label: "Selected positions",
     count: "Selected positions",
     hidden: "Not on this page",
-    review: "Review selection",
-    deselect: "Deselect",
     preview: "Preview publication",
-    empty: "Nothing selected.",
-    close: "Close",
     clear: "Clear selection",
     limit:
       "Up to 100 positions can be previewed. Review the selection to remove positions.",
@@ -39,11 +39,7 @@ const copyByLocale = {
     label: "Выбранные позиции",
     count: "Выбрано позиций",
     hidden: "Вне этой страницы",
-    review: "Проверить выбор",
-    deselect: "Снять выбор",
     preview: "Предпросмотр публикации",
-    empty: "Ничего не выбрано.",
-    close: "Закрыть",
     clear: "Снять выбор",
     limit:
       "Для предпросмотра можно выбрать до 100 позиций. Откройте список и снимите лишние отметки.",
@@ -103,15 +99,7 @@ export function LibrarySelectionDock({
   const { locale } = useI18n();
   const copy = copyByLocale[locale];
   const [reviewOpen, setReviewOpen] = useState(false);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  function closeReview(open: boolean) {
-    setReviewOpen(open);
-    if (!open && positions.length === 0) {
-      requestAnimationFrame(() =>
-        document.querySelector<HTMLElement>("main h1")?.focus(),
-      );
-    }
-  }
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
   return (
     <>
       {positions.length > 0 && (
@@ -124,12 +112,10 @@ export function LibrarySelectionDock({
             <p className="text-xs">{copy.limit}</p>
           )}
           <div className="flex flex-wrap gap-2 max-[600px]:grid max-[600px]:grid-cols-2 max-[600px]:text-xs">
-            <Button
-              className={`${librarySelectionButtonClass} max-[600px]:col-span-full`}
-              onPress={() => setReviewOpen(true)}
-            >
-              {copy.review}
-            </Button>
+            <LibrarySelectionReviewButton
+              triggerRef={reviewTrigger}
+              onOpen={() => setReviewOpen(true)}
+            />
             <Button
               className={`${librarySelectionButtonClass} border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90`}
               isDisabled={positions.length > maxLibraryPreviewPositions}
@@ -149,52 +135,22 @@ export function LibrarySelectionDock({
           </div>
         </section>
       )}
-      <LibrarySelectionDialog
-        title={copy.review}
+      <LibrarySelectionReviewView
         isOpen={reviewOpen}
-        onOpenChange={closeReview}
-      >
-        {positions.length === 0 ? (
-          <p className="my-3">{copy.empty}</p>
-        ) : (
-          <ul className="my-3 max-h-[52dvh] list-none overflow-auto p-0">
-            {positions.map((position) => (
-              <li
-                key={libraryPositionKey(position)}
-                className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] py-2"
-              >
-                <span className="min-w-0 wrap-anywhere">
-                  <strong>{position.title}</strong> · {position.release_title}
-                </span>
-                <Button
-                  className={librarySelectionButtonClass}
-                  aria-label={`${copy.deselect}: ${position.title} · ${position.release_title}`}
-                  onPress={(event) => {
-                    const row = event.target.closest("li");
-                    const adjacent =
-                      row?.nextElementSibling ?? row?.previousElementSibling;
-                    (
-                      adjacent?.querySelector("button") ?? closeButton.current
-                    )?.focus();
-                    onDeselect(position);
-                  }}
-                >
-                  {copy.deselect}
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="mt-3 flex justify-end">
-          <Button
-            ref={closeButton}
-            className={librarySelectionButtonClass}
-            onPress={() => closeReview(false)}
-          >
-            {copy.close}
-          </Button>
-        </div>
-      </LibrarySelectionDialog>
+        triggerRef={reviewTrigger}
+        rows={positions.map((position) => ({
+          id: libraryPositionKey(position),
+          title: position.title,
+          releaseTitle: position.release_title,
+        }))}
+        onClose={() => setReviewOpen(false)}
+        onDeselect={(row) => {
+          const position = positions.find(
+            (item) => libraryPositionKey(item) === row.id,
+          );
+          if (position) onDeselect(position);
+        }}
+      />
     </>
   );
 }

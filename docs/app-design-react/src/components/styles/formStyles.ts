@@ -33,14 +33,6 @@ export const formStyles = {
 		"overflow-auto rounded-[7px] border border-[var(--line)] bg-[var(--surface)] [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs [&_th]:bg-[var(--raised)] [&_th]:p-2 [&_th]:text-left [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_td]:p-2 [&_td]:text-left [&_td]:align-top [&_td]:border-b [&_td]:border-[var(--line)] [&_th]:border-b [&_th]:border-[var(--line)]",
 	modeChoice:
 		"rounded-md border border-[var(--line)] px-3 py-[10px] [&>p]:ml-[25px] [&>p]:my-[3px] [&>p]:text-xs [&>p]:text-[var(--muted)]",
-	directoryDialog:
-		"grid max-h-[min(82dvh,720px)] grid-rows-[auto_auto_minmax(100px,1fr)_auto] gap-[14px] max-[600px]:max-h-[calc(100dvh-24px)] max-[600px]:p-[14px] [&>[slot=title]]:m-0",
-	directoryBreadcrumbs:
-		"flex flex-wrap items-center gap-[5px] rounded-md border border-[var(--line)] bg-[var(--raised)] p-[9px]",
-	directoryList:
-		"min-h-0 max-h-[44dvh] overflow-auto overscroll-contain rounded-md border border-[var(--line)] max-[600px]:max-h-[34dvh] [&_.demo-directory-list]:my-0",
-	directoryFooter:
-		"flex justify-end border-t border-[var(--line)] pt-[10px] max-[600px]:[&>*]:flex-1",
 	operationSummary: "flex flex-wrap gap-[10px]",
 	operationError:
 		"min-w-[180px] max-w-[300px] text-[var(--error)] [overflow-wrap:anywhere]",

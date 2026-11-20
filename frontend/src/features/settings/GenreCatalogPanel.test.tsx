@@ -78,10 +78,28 @@ describe("GenreCatalogPanel", () => {
   });
 
   it("shows the current catalog status", async () => {
+    vi.mocked(getGenreCatalog).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        ...status,
+        count: 2,
+        items: [
+          { id: "tone", name: "2 Tone", source_name: "two tone" },
+          { id: "ambient", name: "Ambient", source_name: "ambient" },
+        ],
+      },
+      headers: new Headers(),
+    } as never);
     render(<GenreCatalogPanel />);
 
-    expect(await screen.findByText("128")).toBeInTheDocument();
+    expect(await screen.findByText("2")).toBeInTheDocument();
     expect(screen.getByText("Last attempt")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search genres" }), {
+      target: { value: "two tone" },
+    });
+    expect(screen.getByText("2 Tone")).toBeInTheDocument();
+    expect(screen.queryByText("Ambient")).not.toBeInTheDocument();
+    expect(refreshGenreCatalog).not.toHaveBeenCalled();
   });
 
   it("reports a status request error without discarding the catalog", async () => {

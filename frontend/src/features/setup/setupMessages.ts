@@ -1,19 +1,6 @@
 import type { Locale } from "../../i18n/locale";
 
 const english = {
-  steps: [
-    "Platform",
-    "Directories",
-    "Tools",
-    "Publication",
-    "Metadata providers",
-    "Summary",
-  ],
-  firstRun: "First run",
-  server: "Server",
-  setupSteps: "Setup steps",
-  aboutCurrentStep: "About this step",
-  platformSupported: "This platform is supported.",
   directories: "Directories",
   toolsDirectory: "Tools directory",
   outputDirectory: "Output directory",
@@ -28,10 +15,6 @@ const english = {
   preserveSourcesDescription:
     "When disabled, source files are kept. They are removed only after successful publication, never after a failure.",
   updateCheck: "Refresh check",
-  finishSetup: "Finish setup",
-  continue: "Continue",
-  back: "Back",
-  importantToKnow: "Important to know",
   platformHelp:
     "The server determines its platform; it does not change with the browser. Check the OS and architecture before setup.",
   directoryHelpDetails:
@@ -159,25 +142,10 @@ const english = {
   operationFailed: "Could not refresh tool inventory.",
 } as const;
 
-type SetupMessageKey = Exclude<keyof typeof english, "steps">;
-type SetupMessages = Record<SetupMessageKey, string> & {
-  steps: readonly string[];
-};
+type SetupMessageKey = keyof typeof english;
+type SetupMessages = Record<SetupMessageKey, string>;
 
 const russian: SetupMessages = {
-  steps: [
-    "Платформа",
-    "Каталоги",
-    "Инструменты",
-    "Публикация",
-    "Провайдеры метаданных",
-    "Итог",
-  ],
-  firstRun: "Первый запуск",
-  server: "Сервер",
-  setupSteps: "Шаги настройки",
-  aboutCurrentStep: "О текущем шаге",
-  platformSupported: "Платформа поддерживается.",
   directories: "Каталоги",
   toolsDirectory: "Каталог инструментов",
   outputDirectory: "Каталог публикации",
@@ -192,10 +160,6 @@ const russian: SetupMessages = {
   preserveSourcesDescription:
     "Если флажок снят, исходники останутся. Они удаляются только после успешной публикации, не при ошибке.",
   updateCheck: "Обновить проверку",
-  finishSetup: "Завершить настройку",
-  continue: "Продолжить",
-  back: "Назад",
-  importantToKnow: "Важно знать",
   platformHelp:
     "Платформа определяется сервером и не меняется в браузере. Проверьте ОС и архитектуру перед настройкой.",
   directoryHelpDetails:

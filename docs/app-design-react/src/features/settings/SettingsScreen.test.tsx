@@ -38,7 +38,7 @@ it("consumes replacement approval before saving a different conflicting field gr
 		</I18nProvider>
 	);
 	view = render(element());
-	fireEvent.change(screen.getByLabelText(/file processing concurrency/i), {
+	fireEvent.change(screen.getByLabelText(/concurrent files/i), {
 		target: { value: "9" },
 	});
 	fireEvent.click(screen.getByRole("tab", { name: "Providers" }));
@@ -53,7 +53,7 @@ it("consumes replacement approval before saving a different conflicting field gr
 	};
 	view.rerender(element());
 	fireEvent.click(screen.getByRole("button", { name: "Continue editing" }));
-	fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+	fireEvent.click(screen.getByRole("button", { name: "Save concurrency" }));
 	await screen.findByRole("dialog");
 	fireEvent.click(screen.getByRole("button", { name: "Replace saved values" }));
 	await waitFor(() =>
@@ -108,7 +108,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		const cleanup = within(section).getByRole("checkbox");
 		expect(cleanup).not.toBeChecked();
 		expect(
-			within(section).getByText(/filesystem permission|разрешени/i),
+			within(section).getByText(/off by default|выключено по умолчанию/i),
 		).toBeInTheDocument();
 		fireEvent.click(cleanup);
 		expect(cleanup).toBeChecked();
@@ -140,13 +140,13 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		const input = screen.getByLabelText(
-			/file processing concurrency|параллельность обработки файлов/i,
+			/concurrent files|одновременные файлы/i,
 		);
 		fireEvent.change(input, { target: { value: "7" } });
 		expect(onSettings).not.toHaveBeenCalled();
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /save settings|сохранить настройки/i,
+				name: /save concurrency|сохранить параллельность/i,
 			}),
 		);
 		expect(onSettings).toHaveBeenCalledWith(
@@ -166,12 +166,12 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		const input = screen.getByLabelText(
-			/file processing concurrency|параллельность обработки файлов/i,
+			/concurrent files|одновременные файлы/i,
 		);
 		fireEvent.change(input, { target: { value: "0" } });
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /save settings|сохранить настройки/i,
+				name: /save concurrency|сохранить параллельность/i,
 			}),
 		);
 		expect(input).toHaveFocus();
@@ -190,7 +190,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		const input = screen.getByLabelText(
-			/file processing concurrency|параллельность обработки файлов/i,
+			/concurrent files|одновременные файлы/i,
 		);
 		fireEvent.change(input, { target: { value: "" } });
 		window.history.pushState(null, "", "#library");
@@ -324,9 +324,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		fireEvent.change(
-			screen.getByLabelText(
-				/file processing concurrency|параллельность обработки файлов/i,
-			),
+			screen.getByLabelText(/concurrent files|одновременные файлы/i),
 			{ target: { value: "9" } },
 		);
 		const current = {
@@ -371,9 +369,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		fireEvent.change(
-			screen.getByLabelText(
-				/file processing concurrency|параллельность обработки файлов/i,
-			),
+			screen.getByLabelText(/concurrent files|одновременные файлы/i),
 			{ target: { value: "9" } },
 		);
 		const latest = {
@@ -459,7 +455,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		const input = screen.getByLabelText(
-			/file processing concurrency|параллельность обработки файлов/i,
+			/concurrent files|одновременные файлы/i,
 		);
 		fireEvent.change(input, { target: { value: "0" } });
 		await screen.findByText(
@@ -480,10 +476,8 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			</I18nProvider>,
 		);
 		expect(
-			screen.getByLabelText(
-				/file processing concurrency|параллельность обработки файлов/i,
-			),
-		).toHaveValue(0);
+			screen.getByLabelText(/concurrent files|одновременные файлы/i),
+			).toHaveValue("0");
 		expect(
 			screen.getByText(
 				/browser storage is unavailable|хранилище браузера недоступно/i,

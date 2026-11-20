@@ -12,6 +12,10 @@ import {
 	libraryRowsMessage,
 } from "./libraryRowsMessages";
 import { Button, Dialog, Heading, Modal } from "../../components/ui";
+import {
+	LibrarySelectionReviewButton,
+	LibrarySelectionReviewView,
+} from "./LibrarySelectionReviewView";
 
 type FrozenPublication = {
 	releaseId: string;
@@ -41,7 +45,7 @@ export function SelectionDock({
 	) => libraryRowsMessage(locale, key, values);
 	const [open, setOpen] = useState(false);
 	const [reviewOpen, setReviewOpen] = useState(false);
-	const reviewClose = useRef<HTMLButtonElement>(null);
+	const reviewTrigger = useRef<HTMLButtonElement>(null);
 	const [frozen, setFrozen] = useState<FrozenPublication[]>([]);
 	const [frozenSelectionCount, setFrozenSelectionCount] = useState(0);
 	const selectedTracks = releases.flatMap((release) =>
@@ -82,14 +86,6 @@ export function SelectionDock({
 		setOpen(true);
 	};
 	const skippedUnpublished = frozenSelectionCount - frozen.length;
-	const changeReviewOpen = (nextOpen: boolean) => {
-		setReviewOpen(nextOpen);
-		if (!nextOpen && selected.size === 0) {
-			requestAnimationFrame(() =>
-				document.querySelector<HTMLElement>("#content h1")?.focus(),
-			);
-		}
-	};
 	return createPortal(
 		<>
 			{selected.size > 0 && (
@@ -104,9 +100,10 @@ export function SelectionDock({
 					</span>
 					<div className={catalogueStyles.dockActions}>
 						{visiblePositionIds && (
-							<Button onPress={() => setReviewOpen(true)}>
-								{m("reviewSelection")}
-							</Button>
+							<LibrarySelectionReviewButton
+								triggerRef={reviewTrigger}
+								onOpen={() => setReviewOpen(true)}
+							/>
 						)}
 						<Button
 							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
@@ -123,51 +120,22 @@ export function SelectionDock({
 					</div>
 				</section>
 			)}
-			<Modal isOpen={reviewOpen} onOpenChange={changeReviewOpen} isDismissable>
-				<Dialog
-					aria-labelledby="library-selection-title"
-					className={catalogueStyles.dockDialog}
-				>
-					<Heading slot="title" id="library-selection-title">
-						{m("reviewSelection")}
-					</Heading>
-					{selectedTracks.length ? (
-						<ul className="my-3 max-h-[52dvh] list-none overflow-auto p-0">
-							{selectedTracks.map(({ releaseId, releaseTitle, track }) => (
-								<li
-									key={`${releaseId}:${track.id}`}
-									className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] py-2"
-								>
-									<span className="min-w-0 wrap-anywhere">
-										<strong>{track.title}</strong> · {releaseTitle}
-									</span>
-									<Button
-										aria-label={`${m("deselectPosition")}: ${track.title} · ${releaseTitle}`}
-										onPress={(event) => {
-											const row = event.target.closest("li");
-											const adjacent =
-												row?.nextElementSibling ?? row?.previousElementSibling;
-											(
-												adjacent?.querySelector("button") ?? reviewClose.current
-											)?.focus();
-											onSelect([track.id], false);
-										}}
-									>
-										{m("deselectPosition")}
-									</Button>
-								</li>
-							))}
-						</ul>
-					) : (
-						<p>{m("emptySelection")}</p>
-					)}
-					<div className={catalogueStyles.dockDialogFooter}>
-						<Button ref={reviewClose} onPress={() => changeReviewOpen(false)}>
-							{m("closeSelection")}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
+			<LibrarySelectionReviewView
+				isOpen={reviewOpen}
+				triggerRef={reviewTrigger}
+				rows={selectedTracks.map(({ releaseId, releaseTitle, track }) => ({
+					id: `${releaseId}:${track.id}`,
+					title: track.title,
+					releaseTitle,
+				}))}
+				onClose={() => setReviewOpen(false)}
+				onDeselect={(row) => {
+					const selection = selectedTracks.find(
+						({ releaseId, track }) => `${releaseId}:${track.id}` === row.id,
+					);
+					if (selection) onSelect([selection.track.id], false);
+				}}
+			/>
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog
 					aria-labelledby="selection-deletion-title"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Label,
   RadioButton,
@@ -18,9 +18,10 @@ import type {
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { useI18n } from "../../i18n/I18nProvider";
-import { SetupMetadata } from "./SetupMetadata";
+import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
+import { SetupPlatformStep, SetupWizard } from "./SetupWizard";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -32,7 +33,15 @@ import {
 import "./setup.css";
 
 const stepKey = "melotrove.setup.step";
-const stepCount = 6;
+const steps = [
+  "platform",
+  "directories",
+  "tools",
+  "publication",
+  "metadata",
+  "summary",
+] as const;
+const stepCount = steps.length;
 function earliest(state: SetupStateBody) {
   const s = state.settings;
   if (!s.tools_directory && !s.output_directory) return 0;
@@ -67,7 +76,6 @@ export function SetupManager({
 }) {
   const { locale } = useI18n();
   const messages = setupMessages[locale];
-  const steps = messages.steps;
   const [state, setState] = useState(initialState);
   const [step, setStep] = useState(() => restoredStep(initialState));
   const [toolsDirectory, setToolsDirectory] = useState(
@@ -87,8 +95,8 @@ export function SetupManager({
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [notice, setNotice] = useState<SetupFeedback | null>(null);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
-  const heading = useRef<HTMLHeadingElement>(null);
-  const alert = useRef<HTMLParagraphElement>(null);
+  const metadataAction = useRef<SetupMetadataAction | null>(null);
+  const [metadataBusy, setMetadataBusy] = useState(false);
   const updateToolsBlocked = useCallback((blocked: boolean) => {
     setToolsBlocked(blocked);
   }, []);
@@ -98,12 +106,6 @@ export function SetupManager({
     setStep(next);
     window.localStorage.setItem(stepKey, String(next));
   }
-  useEffect(() => {
-    if (step >= 0 && step < stepCount) heading.current?.focus();
-  }, [step]);
-  useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
   async function refresh() {
     const response = await getSetupState({ cache: "no-store" });
     if (response.status !== 200) throw setupHttpError(response);
@@ -172,157 +174,133 @@ export function SetupManager({
       setPending(false);
     }
   }
+  const stepHelp = [
+    messages.platformHelp,
+    messages.directoryHelpDetails,
+    messages.toolsHelp,
+    messages.publicationHelp,
+    messages.metadataHelp,
+    messages.summaryHelp,
+  ][step];
   return (
-    <section aria-labelledby="setup-title" className="mx-auto max-w-6xl py-3">
-      <h1 id="setup-title" className="text-xl font-semibold">
-        {messages.firstRun}
-      </h1>
-      <ol aria-label={messages.setupSteps} className="setup-stepper">
-        {steps.map((name, index) => (
-          <li key={name} aria-current={index === step ? "step" : undefined}>
-            {index + 1}. {name}
-          </li>
-        ))}
-      </ol>
-      <div className="setup-layout">
-        <div className="setup-panel">
-          <h2 ref={heading} tabIndex={-1} className="font-semibold">
-            {steps[step]}
-          </h2>
-          {step === 0 && (
-            <p>
-              {messages.server}: {state.platform.goos}/{state.platform.goarch}.{" "}
-              {state.platform.supported
-                ? messages.platformSupported
-                : state.platform.reason}
-            </p>
-          )}
-          {step === 1 && (
-            <div className="grid gap-3">
-              <DirectoryPathField
-                id="setup-tools-directory"
-                label={messages.toolsDirectory}
-                value={toolsDirectory}
-                onSelect={setToolsDirectory}
-                disabled={pending}
-                aria-describedby="setup-directory-help"
-              />
-              <DirectoryPathField
-                id="setup-output-directory"
-                label={messages.outputDirectory}
-                value={outputDirectory}
-                onSelect={setOutputDirectory}
-                disabled={pending}
-                aria-describedby="setup-directory-help"
-              />
-              <p id="setup-directory-help">{messages.directoryHelp}</p>
-            </div>
-          )}
-          {step === 2 && (
-            <SetupTools
-              onBlockedChange={updateToolsBlocked}
-              hasGitHubToken={state.settings.has_github_token}
-              onGitHubTokenChanged={async () => {
-                await refresh();
-              }}
-            />
-          )}
-          {step === 3 && (
-            <div>
-              <RadioGroup
-                isDisabled={pending}
-                value={format}
-                onChange={(value) => {
-                  if (value === "source" || value === "mka" || value === "m4a")
-                    setFormat(value);
-                }}
-              >
-                <Label>{messages.format}</Label>
-                <RadioField value="source">
-                  <RadioButton>{messages.sourceFormat}</RadioButton>
-                </RadioField>
-                <RadioField value="mka">
-                  <RadioButton>{messages.mkaRemux}</RadioButton>
-                </RadioField>
-                <RadioField value="m4a">
-                  <RadioButton>M4A</RadioButton>
-                </RadioField>
-              </RadioGroup>
-              <label className="mt-4 flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={removeSources}
-                  disabled={pending}
-                  onChange={(event) => setRemoveSources(event.target.checked)}
-                />
-                <span>
-                  <span className="block">{messages.removeSources}</span>
-                  <span className="block text-sm">
-                    {messages.preserveSourcesDescription}
-                  </span>
-                </span>
-              </label>
-            </div>
-          )}
-          {step === 4 && (
-            <SetupMetadata
-              state={state}
-              refresh={refresh}
-              onContinue={() => navigate(5)}
-              onBack={() => navigate(3)}
-            />
-          )}
-          {step === 5 && (
-            <div>
-              <SetupSummary key={summaryRefreshToken} state={state} />
-              <AppButton
-                isDisabled={pending}
-                onPress={() => {
-                  void verifySummary();
-                }}
-              >
-                {messages.updateCheck}
-              </AppButton>
-            </div>
-          )}
-          {error && (
-            <p ref={alert} tabIndex={-1} role="alert">
-              {setupFeedbackText(error, locale)}
-            </p>
-          )}
-          {notice && <p role="status">{setupFeedbackText(notice, locale)}</p>}
-          {pending && <p role="status">{messages.requestInProgress}</p>}
-          {step !== 4 && (
-            <div className="setup-navigation">
-              <AppButton
-                isDisabled={step === 0 || pending}
-                onPress={() => navigate(step - 1)}
-              >
-                {messages.back}
-              </AppButton>
-              <AppButton
-                isDisabled={pending || (step === 2 && toolsBlocked)}
-                onPress={advance}
-              >
-                {step === 5 ? messages.finishSetup : messages.continue}
-              </AppButton>
-            </div>
-          )}
+    <SetupWizard
+      locale={locale}
+      steps={steps}
+      step={step}
+      help={stepHelp}
+      error={error ? setupFeedbackText(error, locale) : undefined}
+      notice={notice ? setupFeedbackText(notice, locale) : undefined}
+      pending={pending}
+      onBack={() => {
+        if (pending || (step === 4 && metadataAction.current?.isBusy())) return;
+        navigate(step - 1);
+      }}
+      onNext={() => {
+        if (step === 4) metadataAction.current?.continue();
+        else void advance();
+      }}
+      nextDisabled={pending || metadataBusy || (step === 2 && toolsBlocked)}
+      backDisabled={pending || metadataBusy}
+    >
+      {step === 0 && (
+        <SetupPlatformStep
+          locale={locale}
+          goos={state.platform.goos}
+          goarch={state.platform.goarch}
+          supported={state.platform.supported}
+          reason={state.platform.reason}
+        />
+      )}
+      {step === 1 && (
+        <div className="grid gap-3">
+          <DirectoryPathField
+            id="setup-tools-directory"
+            label={messages.toolsDirectory}
+            value={toolsDirectory}
+            onSelect={setToolsDirectory}
+            disabled={pending}
+            aria-describedby="setup-directory-help"
+          />
+          <DirectoryPathField
+            id="setup-output-directory"
+            label={messages.outputDirectory}
+            value={outputDirectory}
+            onSelect={setOutputDirectory}
+            disabled={pending}
+            aria-describedby="setup-directory-help"
+          />
+          <p id="setup-directory-help">{messages.directoryHelp}</p>
         </div>
-        <aside
-          className="setup-panel setup-help"
-          aria-label={messages.aboutCurrentStep}
-        >
-          <h2>{messages.importantToKnow}</h2>
-          {step === 0 && <p>{messages.platformHelp}</p>}
-          {step === 1 && <p>{messages.directoryHelpDetails}</p>}
-          {step === 2 && <p>{messages.toolsHelp}</p>}
-          {step === 3 && <p>{messages.publicationHelp}</p>}
-          {step === 4 && <p>{messages.metadataHelp}</p>}
-          {step === 5 && <p>{messages.summaryHelp}</p>}
-        </aside>
-      </div>
-    </section>
+      )}
+      {step === 2 && (
+        <SetupTools
+          onBlockedChange={updateToolsBlocked}
+          hasGitHubToken={state.settings.has_github_token}
+          onGitHubTokenChanged={async () => {
+            await refresh();
+          }}
+        />
+      )}
+      {step === 3 && (
+        <div>
+          <RadioGroup
+            isDisabled={pending}
+            value={format}
+            onChange={(value) => {
+              if (value === "source" || value === "mka" || value === "m4a")
+                setFormat(value);
+            }}
+          >
+            <Label>{messages.format}</Label>
+            <RadioField value="source">
+              <RadioButton>{messages.sourceFormat}</RadioButton>
+            </RadioField>
+            <RadioField value="mka">
+              <RadioButton>{messages.mkaRemux}</RadioButton>
+            </RadioField>
+            <RadioField value="m4a">
+              <RadioButton>M4A</RadioButton>
+            </RadioField>
+          </RadioGroup>
+          <label className="mt-4 flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={removeSources}
+              disabled={pending}
+              onChange={(event) => setRemoveSources(event.target.checked)}
+            />
+            <span>
+              <span className="block">{messages.removeSources}</span>
+              <span className="block text-sm">
+                {messages.preserveSourcesDescription}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+      {step === 4 && (
+        <SetupMetadata
+          state={state}
+          refresh={refresh}
+          onContinue={() => navigate(5)}
+          onBusyChange={setMetadataBusy}
+          actionRef={metadataAction}
+        />
+      )}
+      {step === 5 && (
+        <div>
+          <SetupSummary key={summaryRefreshToken} state={state} />
+          <AppButton
+            isDisabled={pending}
+            onPress={() => {
+              void verifySummary();
+            }}
+          >
+            {messages.updateCheck}
+          </AppButton>
+        </div>
+      )}
+    </SetupWizard>
   );
   async function verifySummary() {
     setPending(true);

@@ -1,30 +1,13 @@
 import type { Locale } from "../../i18n/locale";
 
 const english = {
-  generalTitle: "General",
-  publicationFormat: "Publication format",
-  originalFormat: "Original format",
-  mkaRemux: "MKA remux",
-  m4aHelp:
-    "M4A keeps AAC and ALAC without transcoding; other lossless formats are encoded to ALAC, and other lossy formats to AAC.",
-  concurrentFiles: "Concurrent files",
-  concurrencyHelp:
-    "A positive whole number of files to process at once. The value must be represented exactly in the browser.",
-  concurrencyInvalid:
-    "Enter a positive whole number that can be represented exactly in the browser.",
-  concurrencyDirty: "Concurrency has an unsaved change.",
-  saveConcurrency: "Save concurrency",
-  calculateSha: "Calculate SHA-256",
-  shaHelp:
-    "This setting applies to future analyses. Changing it does not delete saved results or start a bulk recalculation.",
-  logLevel: "Log level",
-  pageTitle: "Settings",
   conflictConcurrency: "analysis concurrency",
   conflictTemplate: "publication path template",
   conflictMusicBrainz: "MusicBrainz settings",
   conflictWorkDirectory: "work directory",
   conflictToolsDirectory: "tools directory",
   conflictOutputDirectory: "publication directory",
+  pageTitle: "Settings",
   requestFailed: "The request could not be completed.",
   httpError: "The server returned HTTP {status}.",
   settingsConflictRefreshFailed:
@@ -74,12 +57,6 @@ const english = {
     "An active version or one used by an operation cannot be removed.",
   removedVersion: "{kind} {version} removed.",
   catalogNotChecked: "Catalog has not been checked yet.",
-  unsavedChanges: "There are unsaved changes.",
-  saveFailed: "Could not save {label}: {value}.",
-  saveUnconfirmed:
-    "The server accepted {label} ({value}), but reading it for confirmation failed.",
-  retrySave: "Retry save: {label} ({value})",
-  retryConfirm: "Retry confirmation: {label} ({value})",
   currentOutputPath: "Current output directory",
   unsavedPublicationChanges: "Publication changes are unsaved.",
   deleteSourcePermission: "Allow source deletion after publication",
@@ -95,10 +72,6 @@ const english = {
   lastVerifiedCatalog: "Last successful catalog check:",
   operationError: "Operation error:",
   configurationHealth: "Configuration health",
-  publicationFormatLabel: "publication format",
-  logLevelLabel: "log level",
-  enabled: "enabled",
-  disabled: "disabled",
   versionLabel: "Version {kind}",
   pageDescription:
     "After setup, configuration issues are shown here and do not return the application to the setup wizard.",
@@ -120,11 +93,6 @@ const english = {
     "Tokens in braces are filled from metadata. Add a fallback after | when a value may be missing. The template can contain a file name only, not directories.",
   unsavedTemplate: "The publication path template has unsaved changes.",
   saveTemplate: "Save path template",
-  allowSourceDeletion: "Allow source deletion after publication",
-  sourceDeletionTitle: "Source deletion",
-  sourceDeletionHelp:
-    "Off by default. When enabled, future deletion is permitted only after publication is verified successfully. Changing this setting does not delete existing files or start processing.",
-  unsavedSourceDeletion: "The source deletion setting has unsaved changes.",
   changeOutput: "Change output directory",
   sourceProcessing: "Source processing",
   workDirectory: "Work directory for staged copies",
@@ -231,22 +199,6 @@ const english = {
   saveLeaveUncertain:
     "The save could not be confirmed. Review the current state and try again.",
   saveLeaveFailed: "Settings could not be saved before leaving.",
-  genres: "Genre catalog",
-  genreCatalogDescription: "The MusicBrainz catalog is used to choose genres.",
-  genreRefreshRequested: "A genre catalog refresh has been requested.",
-  genreRefreshError: "Could not refresh the genre catalog.",
-  genreStatusError: "Could not load genre catalog status.",
-  operationStatusError: "Could not load operation status.",
-  genreRefreshSending: "Sending request…",
-  genreRefresh: "Refresh catalog",
-  loadingStatus: "Loading status…",
-  genreCount: "Genres",
-  lastSuccessfulUpdate: "Last successful update",
-  lastAttempt: "Last attempt",
-  lastError: "Last error:",
-  catalogUpdating: "Catalog refresh:",
-  queued: "queued",
-  running: "running",
 } as const;
 
 export type SettingsMessageKey = keyof typeof english;
@@ -308,12 +260,6 @@ const russian: Record<SettingsMessageKey, string> = {
   cannotRemoveActive: "Активную или занятую операцией версию удалить нельзя.",
   removedVersion: "{kind} {version} удалён.",
   catalogNotChecked: "Каталог ещё не проверялся.",
-  unsavedChanges: "Есть несохранённые изменения.",
-  saveFailed: "Не удалось сохранить {label}: {value}.",
-  saveUnconfirmed:
-    "Значение {label} ({value}) принято сервером, но чтение для подтверждения не удалось.",
-  retrySave: "Повторить сохранение: {label} ({value})",
-  retryConfirm: "Повторить подтверждение: {label} ({value})",
   currentOutputPath: "Текущий каталог публикации",
   unsavedPublicationChanges: "Есть несохранённые изменения публикации.",
   deleteSourcePermission: "Разрешить удаление исходников после публикации",
@@ -328,28 +274,7 @@ const russian: Record<SettingsMessageKey, string> = {
   lastVerifiedCatalog: "Последняя успешная проверка каталога:",
   operationError: "Ошибка операции:",
   configurationHealth: "Состояние конфигурации",
-  publicationFormatLabel: "формат публикации",
-  logLevelLabel: "уровень журнала",
-  enabled: "включено",
-  disabled: "выключено",
   versionLabel: "Версия {kind}",
-  generalTitle: "Общие",
-  publicationFormat: "Формат публикации",
-  originalFormat: "Исходный формат",
-  mkaRemux: "Ремакс в MKA",
-  m4aHelp:
-    "M4A сохраняет AAC и ALAC без перекодирования; другие lossless кодируются в ALAC, другие lossy — в AAC с потерями.",
-  concurrentFiles: "Одновременные файлы",
-  concurrencyHelp:
-    "Положительное целое число файлов, обрабатываемых одновременно. Значение должно точно представляться в браузере.",
-  concurrencyInvalid:
-    "Введите положительное целое число, точно представимое в браузере.",
-  concurrencyDirty: "Есть несохранённое изменение параллельности.",
-  saveConcurrency: "Сохранить параллельность",
-  calculateSha: "Вычислять SHA-256",
-  shaHelp:
-    "Настройка применяется к последующим анализам. Её изменение не удаляет сохранённые результаты и не запускает массовый пересчёт.",
-  logLevel: "Уровень журнала",
   pageTitle: "Настройки",
   pageDescription:
     "После завершения первичной настройки проблемы конфигурации отображаются здесь и не возвращают приложение в мастер настройки.",
@@ -371,11 +296,6 @@ const russian: Record<SettingsMessageKey, string> = {
     "Токены в фигурных скобках подставляются из метаданных; для отсутствующего значения задайте альтернативу через |. Шаблон может содержать только имя файла без каталогов.",
   unsavedTemplate: "Есть несохранённый шаблон пути публикации.",
   saveTemplate: "Сохранить шаблон пути",
-  allowSourceDeletion: "Разрешить удаление исходников после публикации",
-  sourceDeletionTitle: "Удаление исходников",
-  sourceDeletionHelp:
-    "Выключено по умолчанию. При включении удаление в будущем может применяться только после успешной проверки публикации; изменение настройки не удаляет существующие файлы и не запускает обработку.",
-  unsavedSourceDeletion: "Есть несохранённая настройка удаления исходников.",
   changeOutput: "Сменить каталог публикации",
   sourceProcessing: "Обработка источников",
   workDirectory: "Рабочая папка для подготовленных копий",
@@ -483,23 +403,6 @@ const russian: Record<SettingsMessageKey, string> = {
   saveLeaveUncertain:
     "Не удалось подтвердить сохранение. Проверьте состояние и повторите попытку.",
   saveLeaveFailed: "Не удалось сохранить настройки перед выходом.",
-  genres: "Жанровый каталог",
-  genreCatalogDescription:
-    "Каталог MusicBrainz используется для подбора жанров.",
-  genreRefreshRequested: "Запрошено обновление жанрового каталога.",
-  genreRefreshError: "Не удалось обновить жанровый каталог.",
-  genreStatusError: "Не удалось загрузить статус жанрового каталога.",
-  operationStatusError: "Не удалось загрузить статус операции.",
-  genreRefreshSending: "Запрос отправляется…",
-  genreRefresh: "Обновить каталог",
-  loadingStatus: "Загрузка статуса…",
-  genreCount: "Жанров",
-  lastSuccessfulUpdate: "Последнее успешное обновление",
-  lastAttempt: "Последняя попытка",
-  lastError: "Последняя ошибка:",
-  catalogUpdating: "Обновление каталога:",
-  queued: "в очереди",
-  running: "выполняется",
 };
 
 export type SettingsMessageValue =
