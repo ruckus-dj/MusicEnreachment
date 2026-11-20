@@ -33,6 +33,7 @@ import {
 	isAbsoluteDemoServerPath,
 	type ManagedToolPackage,
 } from "../settings/ToolLifecycleDemo";
+import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
 import { SetupWizard } from "./SetupWizard";
 import {
@@ -344,6 +345,13 @@ export function SetupScreen({
 								{nextTool === "ffmpeg" ? copy.ffmpegName : copy.fpcalcName}
 							</p>
 						)}
+						<GitHubTokenDemo
+							locale={locale}
+							hasGitHubToken={settings.hasGitHubToken ?? false}
+							onGitHubTokenChange={(hasGitHubToken) =>
+								update({ hasGitHubToken })
+							}
+						/>
 					</>
 				)}
 				{step === 2 && (

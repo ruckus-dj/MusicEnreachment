@@ -3191,13 +3191,13 @@ export function SettingsScreen() {
                 </AppButton>
               </section>
               <section aria-labelledby="managed-title" className="grid gap-3">
+                <GitHubTokenForm
+                  hasToken={state.settings.has_github_token}
+                  onChanged={async () => {
+                    await refreshState();
+                  }}
+                />
                 <div className="setup-panel settings-panel">
-                  <GitHubTokenForm
-                    hasToken={state.settings.has_github_token}
-                    onChanged={async () => {
-                      await refreshState();
-                    }}
-                  />
                   <h2 id="managed-title">{t("managedTools")}</h2>
                   <p>
                     {t("lastCatalogCheck")} {persistedTime}

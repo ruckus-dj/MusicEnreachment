@@ -36,6 +36,7 @@ const pairs = [
     ],
   ],
   ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupWizard.tsx"]],
+  ["features/tools", "features/tools", ["GitHubTokenFormView.tsx", "toolMessages.ts"]],
   [
     "features/library",
     "features/library",

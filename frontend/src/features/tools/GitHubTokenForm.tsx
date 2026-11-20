@@ -1,22 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { deleteGithubToken, setGithubToken } from "../../api/generated/client";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import "./github-token.css";
-import { type ToolMessages, toolMessages } from "./toolMessages";
-
-const tokenGuide =
-  "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
-const tokenCreate =
-  "https://github.com/settings/personal-access-tokens/new?name=MeloTrove+release+reader&description=Read-only+public+release+metadata&expires_in=90";
-const redactionMarker = "\u0000redacted\u0000";
-
-type TokenError =
-  | { kind: "saveFailed" }
-  | { kind: "deleteFailed" }
-  | { kind: "refreshFailed" }
-  | { kind: "http"; status: number }
-  | { kind: "diagnostic"; text: string };
+import {
+  GitHubTokenFormView,
+  redactionMarker,
+  type TokenError,
+} from "./GitHubTokenFormView";
 
 function responseDetail(response: { data?: unknown }): string | undefined {
   const data = response.data;
@@ -55,21 +44,6 @@ function thrownFailure(
     : fallback;
 }
 
-function errorText(error: TokenError, copy: ToolMessages) {
-  switch (error.kind) {
-    case "diagnostic":
-      return error.text.replaceAll(redactionMarker, copy.redacted);
-    case "http":
-      return copy.httpError(error.status);
-    case "saveFailed":
-      return copy.saveError;
-    case "deleteFailed":
-      return copy.deleteError;
-    case "refreshFailed":
-      return copy.refreshError;
-  }
-}
-
 export function GitHubTokenForm({
   hasToken,
   onChanged,
@@ -78,13 +52,10 @@ export function GitHubTokenForm({
   onChanged?: () => void | Promise<void>;
 }) {
   const { locale } = useI18n();
-  const copy = toolMessages[locale];
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TokenError | null>(null);
   const [saved, setSaved] = useState(false);
-  const headingId = useId();
-  const inputId = useId();
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -146,79 +117,20 @@ export function GitHubTokenForm({
   }
 
   return (
-    <section className="github-token" aria-labelledby={headingId}>
-      <h2 id={headingId}>{copy.heading}</h2>
-      <p>{copy.rateLimit}</p>
-      <p>
-        {copy.recommendation[0]}
-        <code>repo</code>
-        {copy.recommendation[1]}
-        <code>public_repo</code>
-        {copy.recommendation[2]}
-      </p>
-      <p>{copy.tokenStorage}</p>
-      <p>{copy.tokenTransport}</p>
-      <p>
-        <a href={tokenCreate} target="_blank" rel="noreferrer">
-          {copy.createToken}
-        </a>{" "}
-        ({copy.expiryNote}) ·{" "}
-        <a href={tokenGuide} target="_blank" rel="noreferrer">
-          {copy.guide}
-        </a>
-        .
-      </p>
-      <ol>
-        <li>{copy.stepOpenSettings}</li>
-        <li>{copy.stepChooseOwner}</li>
-        <li>
-          {copy.stepCopyToken[0]}
-          <code>repo</code>
-          {copy.stepCopyToken[1]}
-          <code>public_repo</code>
-          {copy.stepCopyToken[2]}
-        </li>
-      </ol>
-      <label htmlFor={inputId}>{copy.tokenLabel}</label>
-      <input
-        id={inputId}
-        type="password"
-        autoComplete="new-password"
-        value={draft}
-        disabled={busy}
-        onChange={(event) => {
-          setDraft(event.currentTarget.value);
-          setError(null);
-          setSaved(false);
-        }}
-      />
-      <div className="github-token-actions">
-        <AppButton isDisabled={busy || !draft} onPress={() => void save()}>
-          {copy.verifyAndSave}
-        </AppButton>
-        {hasToken && (
-          <AppButton isDisabled={busy} onPress={() => void remove()}>
-            {copy.removeSaved}
-          </AppButton>
-        )}
-      </div>
-      <p role="status">{hasToken ? copy.tokenSaved : copy.tokenMissing}</p>
-      {saved && <p role="status">{copy.tokenVerified}</p>}
-      {busy && <p role="status">{copy.requestInProgress}</p>}
-      {error && <p role="alert">{errorText(error, copy)}</p>}
-      {hasToken && (
-        <p>
-          {copy.revokeHelp}{" "}
-          <a
-            href="https://github.com/settings/personal-access-tokens"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {copy.revokeLink}
-          </a>
-          .
-        </p>
-      )}
-    </section>
+    <GitHubTokenFormView
+      locale={locale}
+      hasToken={hasToken}
+      draft={draft}
+      busy={busy}
+      saved={saved}
+      error={error}
+      onDraftChange={(next) => {
+        setDraft(next);
+        setError(null);
+        setSaved(false);
+      }}
+      onSave={save}
+      onRemove={remove}
+    />
   );
 }

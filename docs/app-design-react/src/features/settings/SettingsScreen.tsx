@@ -19,6 +19,7 @@ import {
 	musicBrainzConfigurationFingerprint,
 } from "../../infrastructure/providerValidation";
 import { setupToolExecutables } from "../setup/setupToolsLifecycle";
+import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { GenreCatalogDemoProvider } from "./GenreCatalogDemoProvider";
 import {
 	defaultPublicationTemplate,
@@ -108,6 +109,7 @@ export interface DemoSettings {
 	musicBrainzVerified?: boolean;
 	musicBrainzVerifiedFingerprint?: string;
 	hasAcoustIDApplicationKey?: boolean;
+	hasGitHubToken?: boolean;
 	lrclibEnabled?: boolean;
 	sha256Enabled?: boolean;
 	concurrency?: string;
@@ -1157,6 +1159,11 @@ export function SettingsScreen({
 				</SettingsTabPanel>
 				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
 					<h2>{copy.tools}</h2>
+					<GitHubTokenDemo
+						locale={locale}
+						hasGitHubToken={settings.hasGitHubToken ?? false}
+						onGitHubTokenChange={(hasGitHubToken) => update({ hasGitHubToken })}
+					/>
 					<SettingsManagedPackageCards
 						locale={locale}
 						packages={managedPackages}
