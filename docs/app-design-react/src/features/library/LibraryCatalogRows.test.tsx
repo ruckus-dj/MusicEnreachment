@@ -198,13 +198,13 @@ it("uses only recorded technical source properties and shows unknown otherwise",
 	files["north-f1"].bits = null;
 	files["north-f1"].sampleRate = undefined;
 	render(rows("tracks", files, [release]));
-	const mobile = screen.getByLabelText("Треки медиатеки", { selector: "div" });
+	const mobile = screen.getByRole("list", { name: "Треки медиатеки" });
 	expect(mobile.className).toContain("max-[599px]:grid");
 	const desktop = screen.getByRole("grid", { name: "Треки медиатеки" });
 	expect(desktop).toBeTruthy();
 	const trackRow = within(mobile)
 		.getByRole("link", { name: /First Light/ })
-		.closest("article");
+		.closest("li");
 	expect(trackRow).not.toBeNull();
 	const propertiesLabel = within(trackRow as HTMLElement).getByText(
 		"Параметры",

@@ -739,7 +739,7 @@ export function LibraryScreen() {
               {view === "tracks" && positionsBody && (
                 <LibraryPositionRows
                   items={positionsBody.items}
-                  renderCheckbox={selection.renderCheckbox}
+                  selectionControl={selection.selectionControl}
                 />
               )}
               <nav

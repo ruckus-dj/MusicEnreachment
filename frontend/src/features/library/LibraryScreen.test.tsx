@@ -542,10 +542,11 @@ it("keeps a page selection off-page and previews only the frozen position", asyn
     }),
   );
   renderScreen(<LibraryScreen />, "en");
-  const row = await screen.findByRole("row", { name: /Selected/ });
-  const table = row.closest("table");
-  if (!table) throw new Error("Track table missing");
-  const page = within(table).getAllByRole("checkbox")[0];
+  const grid = await screen.findByRole("grid", { name: "Library tracks" });
+  await within(grid).findByRole("row", { name: /Selected/ });
+  const page = within(grid).getByRole("checkbox", {
+    name: "Select all tracks on this page",
+  });
   fireEvent.click(page);
   expect(page).toBeChecked();
   fireEvent.change(screen.getByRole("searchbox"), {
