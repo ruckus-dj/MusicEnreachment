@@ -15,28 +15,13 @@ export const catalogueStyles = {
   tabs: "min-w-0 [&_.react-aria-TabList]:gap-[3px] [&_.react-aria-TabList]:border-0 [&_.react-aria-Tab]:min-h-9 [&_.react-aria-Tab]:rounded-[4px] [&_.react-aria-Tab]:border [&_.react-aria-Tab]:border-transparent [&_.react-aria-Tab]:px-[11px] [&_.react-aria-Tab]:py-[7px] [&_.react-aria-Tab]:font-semibold [&_.react-aria-Tab[data-selected]]:border-[var(--line)] [&_.react-aria-Tab[data-selected]]:bg-[var(--surface)] [&_.react-aria-Tab[data-selected]]:text-[var(--accent)] [&_.react-aria-Tab[data-selected]]:shadow-[0_1px_2px_#0001] max-[600px]:overflow-x-auto max-[600px]:[&_.react-aria-TabList]:flex-nowrap max-[600px]:[&_.react-aria-Tab]:whitespace-nowrap",
   search:
     "min-h-[34px] rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1 [&_.react-aria-Input]:min-h-8 [&_.react-aria-Input]:border-0 [&_.react-aria-Input]:outline-none [&_.react-aria-Input]:shadow-none",
-  filter:
-    "min-w-0 [&_.react-aria-Label]:mb-1 [&_.react-aria-Label]:block [&_.react-aria-Label]:text-[11px] [&_.react-aria-Label]:font-semibold [&_.react-aria-Label]:text-[var(--muted)]",
-  segments:
-    "flex min-h-[34px] flex-wrap overflow-visible rounded-md border border-[var(--control)] bg-[var(--surface)]",
-  segment:
-    "flex min-w-[82px] flex-[1_1_82px] cursor-pointer items-center justify-center px-[7px] py-[5px] text-center text-[11px] leading-[1.2] text-[var(--muted)] transition-colors duration-[120ms] [overflow-wrap:anywhere] [white-space:normal] [&+*]:border-l [&+*]:border-[var(--line)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--ink)] data-[selected]:font-bold data-[selected]:shadow-[inset_0_-2px_var(--accent)] data-[hovered]:not-data-[selected]:bg-[var(--raised)] data-[hovered]:not-data-[selected]:text-[var(--ink)] data-[focus-visible]:relative data-[focus-visible]:z-[1] data-[focus-visible]:outline data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:-outline-offset-[3px]",
   select:
     "min-w-0 [&>.react-aria-Button]:flex [&>.react-aria-Button]:min-h-[34px] [&>.react-aria-Button]:w-full [&>.react-aria-Button]:items-center [&>.react-aria-Button]:justify-between [&>.react-aria-Button]:gap-2.5 [&>.react-aria-Button]:rounded-[4px] [&>.react-aria-Button]:border [&>.react-aria-Button]:border-[var(--control)] [&>.react-aria-Button]:bg-[var(--surface)] [&>.react-aria-Button]:px-[9px] [&>.react-aria-Button]:py-[5px] [&>.react-aria-Button]:text-left [&>.react-aria-Button]:text-[var(--ink)]",
   popover:
     "z-50 max-h-[300px] min-w-[var(--trigger-width)] overflow-auto rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_28px_color-mix(in_srgb,var(--ink)_6%,transparent)] [&_.react-aria-ListBox]:grid [&_.react-aria-ListBox]:gap-0.5 [&_.react-aria-ListBox]:outline-none [&_.react-aria-ListBoxItem]:cursor-pointer [&_.react-aria-ListBoxItem]:rounded-[3px] [&_.react-aria-ListBoxItem]:px-[9px] [&_.react-aria-ListBoxItem]:py-[7px] [&_.react-aria-ListBoxItem[data-focused]]:bg-[var(--raised)] [&_.react-aria-ListBoxItem[data-selected]]:bg-[var(--accent-soft)] [&_.react-aria-ListBoxItem[data-selected]]:text-[var(--accent)]",
   dockScreen:
     "pb-[calc(136px+env(safe-area-inset-bottom))] max-[600px]:pb-[calc(190px+env(safe-area-inset-bottom))]",
-  dock: "fixed bottom-[calc(16px+env(safe-area-inset-bottom))] right-6 z-[60] grid w-[min(680px,calc(100vw-48px))] gap-2 rounded-lg border border-[color-mix(in_srgb,var(--accent)_38%,var(--line))] bg-[var(--accent-soft)] px-[14px] py-3 text-[var(--ink)] shadow-[0_12px_36px_color-mix(in_srgb,var(--ink)_18%,transparent)] max-[600px]:inset-x-2 max-[600px]:bottom-[env(safe-area-inset-bottom)] max-[600px]:w-auto max-[600px]:gap-[7px] max-[600px]:p-[10px]",
-  dockActions:
-    "flex flex-wrap gap-2 max-[600px]:grid max-[600px]:grid-cols-2 [&_.react-aria-Button]:min-h-9 [&_.react-aria-Button]:rounded-[5px] [&_.react-aria-Button]:border [&_.react-aria-Button]:border-[var(--line)] [&_.react-aria-Button]:bg-[var(--surface)] [&_.react-aria-Button]:px-[10px] [&_.react-aria-Button]:py-[6px] [&_.react-aria-Button]:text-[var(--ink)] max-[600px]:[&_.react-aria-Button]:min-w-0 max-[600px]:[&_.react-aria-Button]:px-[5px] max-[600px]:[&_.react-aria-Button]:text-xs max-[600px]:[&_.react-aria-Button:first-child]:col-span-full [&_.react-aria-Button.ui-button--primary]:border-[var(--accent)] [&_.react-aria-Button.ui-button--primary]:bg-[var(--accent)] [&_.react-aria-Button.ui-button--primary]:text-[var(--button-text)]",
   list: "overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-[0_8px_28px_color-mix(in_srgb,var(--ink)_6%,transparent)]",
-  tableScroll: "w-full overflow-auto [overscroll-behavior-inline:contain]",
-  mobileCatalog: "hidden max-[599px]:grid gap-2",
-  mobileCatalogRow:
-    "grid min-w-0 gap-2 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2 text-xs [font-variant-numeric:tabular-nums]",
-  mobileCatalogField:
-    "grid min-w-0 grid-cols-[minmax(76px,.7fr)_minmax(0,1.5fr)] gap-2 border-b border-[var(--line)] pb-1.5 last:border-b-0 last:pb-0 [&>dt]:text-[11px] [&>dt]:text-[var(--muted)] [&>dd]:m-0 [&>dd]:[overflow-wrap:anywhere] [&_a]:font-semibold [&_a]:text-[var(--accent)] [&_a]:underline-offset-2 [&_a:hover]:underline",
   mobileCatalogGroup:
     "grid gap-2 border-t border-[var(--line)] pt-2 first:border-0 first:pt-0",
   mobileCatalogTracks: "grid gap-2 border-t border-[var(--line)] pt-2",
@@ -90,7 +75,6 @@ export const catalogueStyles = {
   secondary:
     "mt-[3px] block text-[11px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
   sub: "mt-[3px] block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
-  path: "block font-[var(--mono)] text-[11px] [overflow-wrap:anywhere]",
   expander:
     "min-h-0 border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-[var(--accent)] hover:underline",
   previewTable:
@@ -121,10 +105,6 @@ export const catalogueStyles = {
     "w-full min-w-[700px] border-collapse text-xs [&_th]:bg-[var(--surface)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_th]:text-left [&_th]:align-middle [&_th]:px-[6px] [&_th]:py-[5px] [&_td]:px-[6px] [&_td]:py-[5px] [&_td]:align-top [&_td:nth-child(2)]:align-middle [&_td]:[overflow-wrap:anywhere] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_tr:last-child>*]:border-b-0",
   empty: "p-7 px-4 text-center text-[var(--muted)]",
   absPanel: "min-w-0",
-  detailSelect:
-    "mt-3 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-[14px] [&_h2]:mb-1 [&_h2]:text-[15px] [&_p]:my-1 [&_p]:mb-3 [&_p]:text-xs [&_p]:text-[var(--muted)] [&_label]:grid [&_label]:max-w-[440px] [&_label]:gap-[5px] [&_label]:text-[11px] [&_label]:text-[var(--muted)] [&_select]:min-h-[34px] [&_select]:rounded-[4px] [&_select]:border [&_select]:border-[var(--control)] [&_select]:bg-[var(--surface)] [&_select]:px-2 [&_select]:py-[5px]",
-  filterRows:
-    "[&.filter-match]:bg-[linear-gradient(to_right,color-mix(in_srgb,var(--accent)_4%,transparent),transparent)] [&.filter-match]:bg-left-top [&.filter-match]:bg-no-repeat [&.filter-match]:[background-size:9%_100%] [&.filter-muted>td]:opacity-[.55] [&.filter-muted:focus-within>td]:opacity-100",
   tableCheckbox:
     "group mx-auto grid h-8 w-[34px] flex-[0_0_34px] cursor-pointer place-items-center",
   cardCheckbox: "group grid size-6 cursor-pointer place-items-center",
@@ -149,12 +129,3 @@ export const catalogueStyles = {
   trackPublication:
     "[&_[slot=trigger]]:border-0 [&_[slot=trigger]]:bg-transparent [&_[slot=trigger]]:px-0 [&_[slot=trigger]]:py-1 [&_[slot=trigger]]:text-[var(--accent)]",
 } as const;
-
-export const catalogueTableWidths: Record<
-  "artists" | "albums" | "tracks",
-  string
-> = {
-  artists: "min-w-[680px]",
-  albums: "min-w-[940px]",
-  tracks: "min-w-[1050px]",
-};

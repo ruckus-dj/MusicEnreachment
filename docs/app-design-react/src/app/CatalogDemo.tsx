@@ -3,7 +3,6 @@ import { ComponentsScreen } from "../components/ComponentsScreen";
 import type { DeletionOperation } from "../components/DeletionRequest";
 import {
 	Button,
-	Checkbox,
 	Input,
 	SearchField,
 	Tab,
@@ -24,7 +23,6 @@ import {
 	libraryPageSlice,
 	libraryTrackPositionIds,
 	sliceTrackReleasePage,
-	splitLibraryAlbumEntries,
 	useLibraryRouteState,
 } from "../features/library";
 import { ArtistScreen } from "../features/library/ArtistScreen";
@@ -52,7 +50,6 @@ import {
 	trackSearchText,
 } from "../features/library/catalogViewModel";
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
-import { LibraryMissingEditionDemo } from "../features/library/LibraryMissingEditionDemo";
 import {
 	type LibrarySelectionPreviewPosition,
 	type LibrarySelectionPreviewState,
@@ -167,49 +164,6 @@ const recordingIdentity = (track: OriginalTrack) =>
 		: track.recordingId
 			? `musicbrainz:${track.recordingId}`
 			: null;
-
-function GroupCheckbox({
-	ids,
-	label,
-	selected,
-	onChange,
-	appearance = "table",
-}: {
-	ids: string[];
-	label: string;
-	selected: ReadonlySet<string>;
-	onChange: (ids: string[], checked: boolean) => void;
-	appearance?: "table" | "artwork";
-}) {
-	const count = ids.filter((id) => selected.has(id)).length;
-	const checked = ids.length > 0 && count === ids.length;
-	return (
-		<Checkbox
-			slot="selection"
-			className={
-				appearance === "artwork"
-					? catalogueStyles.cardCheckbox
-					: catalogueStyles.tableCheckbox
-			}
-			aria-label={label}
-			isSelected={checked}
-			isIndeterminate={count > 0 && !checked}
-			isDisabled={ids.length === 0}
-			onChange={(value) => onChange(ids, value)}
-		>
-			<span
-				className={
-					appearance === "artwork"
-						? catalogueStyles.cardCheckboxBox
-						: catalogueStyles.checkboxBox
-				}
-				aria-hidden="true"
-			>
-				{count > 0 && !checked ? "−" : checked ? "✓" : ""}
-			</span>
-		</Checkbox>
-	);
-}
 
 const trackIds = (tracks: Track[]) => tracks.map((track) => track.id);
 
@@ -717,14 +671,16 @@ export function CatalogDemo({
 	const currentPage = Math.min(page, totalPages);
 	const pageArtists = libraryPageSlice(visibleArtists, currentPage);
 	const pageAlbumEntries = libraryPageSlice(albumEntries, currentPage);
-	const pageAlbumPage = splitLibraryAlbumEntries(pageAlbumEntries);
+	const pageAlbumReleases = pageAlbumEntries.flatMap((entry) =>
+		entry.kind === "release" ? [entry.release] : [],
+	);
 	const pageTracks = libraryPageSlice(visibleTrackRefs, currentPage);
 	const pageTrackReleases = sliceTrackReleasePage(releases, pageTracks);
 	const visiblePositionIds = new Set(
 		view === "artists"
 			? libraryArtistPositionIds(pageArtists, releases)
 			: view === "albums"
-				? pageAlbumPage.releases.flatMap((release) =>
+				? pageAlbumReleases.flatMap((release) =>
 						release.tracks.map((track) => track.id),
 					)
 				: libraryTrackPositionIds(pageTracks),
@@ -1455,10 +1411,18 @@ export function CatalogDemo({
 								artists={view === "artists" ? pageArtists : fixture.artists}
 								releases={
 									view === "albums"
-										? pageAlbumPage.releases
+										? pageAlbumReleases
 										: view === "tracks"
 											? pageTrackReleases
 											: releases
+								}
+								albumEntries={view === "albums" ? pageAlbumEntries : undefined}
+								selectedEditions={editions}
+								onSelectEdition={(groupId, editionKey) =>
+									setEditions((previous) => ({
+										...previous,
+										[groupId]: editionKey,
+									}))
 								}
 								missingCounts={
 									new Map(
@@ -1473,46 +1437,11 @@ export function CatalogDemo({
 								hasAudio={(track) => hasAudio(track as Track)}
 								files={files}
 								filter={filter}
-								groupCheckbox={(ids, label, appearance) => (
-									<GroupCheckbox
-										ids={ids}
-										label={label}
-										appearance={appearance}
-										selected={selected}
-										onChange={update}
-									/>
-								)}
 								expanded={expanded}
 								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-								pageScopedSelection
 								pageSelection={{ selectedIds: selected, onChange: update }}
 							/>
 						</section>
-						{view === "albums" &&
-							pageAlbumPage.missingGroups.map((group) => (
-								<section
-									className={catalogueStyles.detailSelect}
-									key={group.id}
-								>
-									<h2>{group.title}</h2>
-									<p>
-										{artistName(group.artistId) || msg("artistNotSpecified")} ·{" "}
-										{msg("missingAlbum")}
-									</p>
-									<LibraryMissingEditionDemo
-										locale={locale}
-										groupTitle={group.title}
-										editions={group.editions}
-										selectedEditionKey={editions[group.id] ?? ""}
-										onSelectEdition={(editionKey) =>
-											setEditions((previous) => ({
-												...previous,
-												[group.id]: editionKey,
-											}))
-										}
-									/>
-								</section>
-							))}
 						<LibraryPagination
 							page={currentPage}
 							totalPages={totalPages}

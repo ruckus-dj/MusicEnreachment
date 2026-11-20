@@ -2,9 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Input,
-  Label,
-  Radio,
-  RadioGroup,
   SearchField,
   Tab,
   TabList,
@@ -24,6 +21,12 @@ import {
   type LibraryArtistCard,
   LibraryArtistCards,
 } from "./LibraryArtistCards";
+import {
+  LibraryCatalogFilterView,
+  type LibraryStateFilter,
+  libraryFilterOptions,
+} from "./LibraryCatalogFilterView";
+import { LibraryPaginationView } from "./LibraryPaginationView";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
 import { librarySelectionButtonClass } from "./LibrarySelectionPreviewView";
@@ -41,17 +44,6 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 const statePanelClass =
   "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm";
-const segmentClass =
-  "flex min-w-[82px] flex-[1_1_82px] cursor-pointer items-center justify-center px-[7px] py-[5px] text-center text-[11px] leading-[1.2] text-[var(--muted)] wrap-anywhere [&+*]:border-l [&+*]:border-[var(--line)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:font-bold data-[selected]:text-[var(--ink)] data-[selected]:shadow-[inset_0_-2px_var(--accent)] data-[hovered]:not-data-[selected]:bg-[var(--raised)] data-[focus-visible]:relative data-[focus-visible]:z-[1] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:-outline-offset-[3px]";
-
-export type LibraryStateFilter = "all" | "missing" | "available" | "published";
-
-const stateFilters: readonly LibraryStateFilter[] = [
-  "all",
-  "missing",
-  "available",
-  "published",
-];
 
 const fallbackRoute: LibraryRoute = {
   view: "artists",
@@ -81,13 +73,6 @@ const screenCopy = {
     views: { artists: "Artists", albums: "All releases", tracks: "All tracks" },
     search: "Search the library",
     searchPlaceholder: "Artist, release, track…",
-    state: "Status",
-    stateOptions: {
-      all: "All",
-      missing: "Missing audio",
-      available: "Has audio",
-      published: "Published",
-    },
     loading: "Loading library…",
     requestError: "Could not load the library (HTTP {status}).",
     error: "Could not load the library.",
@@ -102,11 +87,6 @@ const screenCopy = {
     noViewRecords: "There are no records in this view yet.",
     resetFilters: "Reset filters",
     addSource: "Add a source",
-    pages: "Library pages",
-    pageStatus: "Page {page} of {pages}",
-    totalItems: "Total: {count}",
-    previousPage: "Previous page",
-    nextPage: "Next page",
     countPublished: "published",
     countAvailable: "with audio",
     completenessUnknown: "completeness unknown",
@@ -153,13 +133,6 @@ const screenCopy = {
     views: { artists: "Артисты", albums: "Все релизы", tracks: "Все треки" },
     search: "Поиск в медиатеке",
     searchPlaceholder: "Артист, релиз, трек…",
-    state: "Состояние",
-    stateOptions: {
-      all: "Все",
-      missing: "Не хватает",
-      available: "В наличии",
-      published: "Опубликовано",
-    },
     loading: "Загрузка медиатеки…",
     requestError: "Не удалось загрузить медиатеку (HTTP {status}).",
     error: "Не удалось загрузить медиатеку.",
@@ -174,11 +147,6 @@ const screenCopy = {
     noViewRecords: "В этом разделе пока нет записей.",
     resetFilters: "Сбросить фильтры",
     addSource: "Добавить источник",
-    pages: "Страницы медиатеки",
-    pageStatus: "Страница {page} из {pages}",
-    totalItems: "Всего: {count}",
-    previousPage: "Предыдущая страница",
-    nextPage: "Следующая страница",
     countPublished: "опубликовано",
     countAvailable: "с аудио",
     completenessUnknown: "полнота неизвестна",
@@ -280,7 +248,7 @@ function libraryControllerRoute(hash: string): LibraryRoute | undefined {
     !params.has("publication") &&
     !params.has("availability") &&
     requestedFilter &&
-    stateFilters.includes(requestedFilter as LibraryStateFilter)
+    libraryFilterOptions.includes(requestedFilter as LibraryStateFilter)
   ) {
     next = withStateFilter(next, requestedFilter as LibraryStateFilter);
   }
@@ -311,12 +279,6 @@ function artistPalette(id: string) {
 
 function artistMonogram(name: string) {
   return name.trim().charAt(0).toLocaleUpperCase() || "?";
-}
-
-function formatCopy(template: string, values: Record<string, string | number>) {
-  return template.replace(/\{([^}]+)\}/g, (_, name: string) =>
-    String(values[name] ?? `{${name}}`),
-  );
 }
 
 /**
@@ -637,23 +599,11 @@ export function LibraryScreen() {
                 placeholder={copy.searchPlaceholder}
               />
             </SearchField>
-            <RadioGroup
-              orientation="horizontal"
-              className="min-w-0"
+            <LibraryCatalogFilterView
+              locale={locale}
               value={filter}
-              onChange={(next) => setFilter(next as LibraryStateFilter)}
-            >
-              <Label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">
-                {copy.state}
-              </Label>
-              <div className="flex min-h-[34px] flex-wrap rounded-md border border-[var(--control)] bg-[var(--surface)]">
-                {stateFilters.map((option) => (
-                  <Radio key={option} value={option} className={segmentClass}>
-                    {copy.stateOptions[option]}
-                  </Radio>
-                ))}
-              </div>
-            </RadioGroup>
+              onChange={setFilter}
+            />
           </div>
 
           {activeQuery.isLoading ? (
@@ -730,7 +680,6 @@ export function LibraryScreen() {
               {view === "albums" && releasesBody && (
                 <LibraryAlbumRows
                   items={releasesBody.items}
-                  renderCheckbox={selection.renderCheckbox}
                   selectionControl={selection.selectionControl}
                 />
               )}
@@ -740,34 +689,15 @@ export function LibraryScreen() {
                   selectionControl={selection.selectionControl}
                 />
               )}
-              <nav
-                className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs"
-                aria-label={copy.pages}
-              >
-                <span className="text-[var(--muted)]" role="status">
-                  {formatCopy(copy.pageStatus, {
-                    page: currentPage,
-                    pages: totalPages,
-                  })}{" "}
-                  · {formatCopy(copy.totalItems, { count: total })}
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    className={librarySelectionButtonClass}
-                    isDisabled={route.offset === 0}
-                    onPress={() => setPage(currentPage - 1, totalPages)}
-                  >
-                    {copy.previousPage}
-                  </Button>
-                  <Button
-                    className={librarySelectionButtonClass}
-                    isDisabled={route.offset + PAGE_SIZE >= total}
-                    onPress={() => setPage(currentPage + 1, totalPages)}
-                  >
-                    {copy.nextPage}
-                  </Button>
-                </div>
-              </nav>
+              <LibraryPaginationView
+                locale={locale}
+                page={currentPage}
+                totalPages={totalPages}
+                totalItems={total}
+                hasPrevious={route.offset !== 0}
+                hasNext={route.offset + PAGE_SIZE < total}
+                onPageChange={(next) => setPage(next, totalPages)}
+              />
             </>
           )}
         </TabPanel>

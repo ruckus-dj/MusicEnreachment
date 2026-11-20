@@ -1,13 +1,3 @@
-import type { ReactNode } from "react";
-import {
-	Button,
-	Cell,
-	Column,
-	Row,
-	Table,
-	TableBody,
-	TableHeader,
-} from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
 import { artistReleaseHref } from "./artistReleaseRoute";
@@ -23,21 +13,26 @@ import {
 	originalProviders,
 	trackNumberLabel,
 } from "./catalogData";
-import { catalogueStyles } from "./catalogueStyles";
+import type { AbsentCatalogGroup } from "./catalogViewModel";
 import {
-	type LibraryAlbumPosition,
-	LibraryAlbumPositionsView,
-} from "./LibraryAlbumPositionsView";
+	type LibraryAlbumCredit,
+	type LibraryAlbumDetail,
+	LibraryAlbumListView,
+	type LibraryAlbumRow,
+} from "./LibraryAlbumListView";
+import type { LibraryAlbumPosition } from "./LibraryAlbumPositionsView";
 import {
 	type ArtistSelectionState,
 	type LibraryArtistCard,
 	LibraryArtistCards,
 } from "./LibraryArtistCards";
+import { missingEditionChooserProps } from "./LibraryMissingEditionDemo";
 import {
 	type LibraryTrackCredit,
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "./LibraryTrackListView";
+import type { LibraryAlbumEntry } from "./libraryCatalogPage";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -48,6 +43,9 @@ type CatalogTrack = Omit<OriginalTrack, "published"> & {
 	published: boolean | OriginalTrack["published"];
 };
 type Release = Omit<OriginalRelease, "tracks"> & { tracks: CatalogTrack[] };
+type AlbumEntry =
+	| { kind: "release"; release: Release }
+	| { kind: "missing"; group: AbsentCatalogGroup };
 interface Props {
 	view: View;
 	artists: CatalogArtist[];
@@ -56,16 +54,14 @@ interface Props {
 	hasAudio: (track: Release["tracks"][number]) => boolean;
 	files: SourceFiles;
 	filter?: CatalogFilter;
-	groupCheckbox: (
-		ids: string[],
-		label: string,
-		appearance?: "table" | "artwork",
-	) => ReactNode;
+	/** Ordered, page-sliced album entries; local releases and absent groups. */
+	albumEntries?: readonly LibraryAlbumEntry[];
+	/** Explicit edition selection per absent group, owned by the host. */
+	selectedEditions?: Readonly<Record<string, string>>;
+	onSelectEdition?: (groupId: string, editionKey: string) => void;
 	expanded: string | null;
 	onToggleAlbum: (id: string) => void;
-	/** Bulk selection covers only the rows currently passed for this page. */
-	pageScopedSelection?: boolean;
-	/** Raw page-scoped selection used to derive artist card state; tables keep using groupCheckbox. */
+	/** Raw page-scoped selection used to derive artist cards and row controls. */
 	pageSelection?: ArtistSelectionState;
 }
 const sourceIds = (track: Pick<OriginalTrack, "sourceId" | "sourceIds">) => [
@@ -85,18 +81,6 @@ const selectionControl = (ids: string[], selection?: ArtistSelectionState) => {
 		onChange: (selected: boolean) => selection?.onChange(ids, selected),
 	};
 };
-const MobileField = ({
-	label,
-	children,
-}: {
-	label: string;
-	children: ReactNode;
-}) => (
-	<dl className={`${catalogueStyles.mobileCatalogField} m-0`}>
-		<dt>{label}</dt>
-		<dd>{children}</dd>
-	</dl>
-);
 function artistCardModels(
 	artists: CatalogArtist[],
 	releases: Release[],
@@ -147,10 +131,11 @@ export function LibraryCatalogRows({
 	hasAudio,
 	files,
 	filter = "all",
-	groupCheckbox,
+	albumEntries,
+	selectedEditions,
+	onSelectEdition,
 	expanded,
 	onToggleAlbum,
-	pageScopedSelection = false,
 	pageSelection,
 }: Props) {
 	const { locale } = useI18n();
@@ -158,9 +143,6 @@ export function LibraryCatalogRows({
 		key: LibraryRowsMessage,
 		values?: Record<string, string | number>,
 	) => libraryRowsMessage(locale, key, values);
-	const bulkSelectionLabel = m(
-		pageScopedSelection ? "selectAllPagePositions" : "selectAllTablePositions",
-	);
 	if (view === "artists") {
 		const { rows, pageSelectionControl } = artistCardModels(
 			artists,
@@ -266,12 +248,6 @@ export function LibraryCatalogRows({
 			/>
 		);
 	}
-	const albumRows = releases.flatMap((release) => {
-		const summary = { id: release.id, release, detail: false };
-		return expanded === release.id
-			? [summary, { id: `${release.id}:tracks`, release, detail: true }]
-			: [summary];
-	});
 	const positionsFor = (release: Release): LibraryAlbumPosition[] =>
 		release.tracks.map((track) => {
 			const ids = sourceIds(track);
@@ -300,7 +276,7 @@ export function LibraryCatalogRows({
 					}
 				: { state: "not-published" };
 			const sourceSelection: LibraryAlbumPosition["sourceSelection"] =
-				source?.codec ? undefined : ids.length > 0 ? "unselected" : "missing";
+				track.sourceId ? undefined : ids.length > 0 ? "unselected" : "missing";
 			return {
 				id: track.id,
 				numberLabel: trackNumberLabel(release, track),
@@ -325,298 +301,162 @@ export function LibraryCatalogRows({
 				selection: selectionControl([track.id], pageSelection),
 			};
 		});
-	const albumColumnWidths = [
-		catalogueStyles.selectionColumn,
-		"", // The title gets the space left after the other columns.
-		"w-[15%]",
-		"w-[12%]",
-		"w-[8%]",
-		"w-[8%]",
-		"w-[9%]",
-		"w-[12%]",
-		"w-[9%]",
-	];
-	const columns = [
-		m("select"),
-		m("album"),
-		m("artist"),
-		m("yearEdition"),
-		m("positions"),
-		m("sources"),
-		m("audio"),
-		m("publication"),
-		m("provider"),
-	];
-	return (
-		<div className="w-full min-w-0">
-			<div
-				className="hidden gap-2 max-[900px]:grid"
-				aria-label={m("albumsTable")}
-			>
-				{releases.length === 0 ? (
-					<div className={catalogueStyles.empty}>{m("noResults")}</div>
-				) : (
-					<div className={catalogueStyles.mobileCatalogRow}>
-						<MobileField label={bulkSelectionLabel}>
-							{groupCheckbox(tableTrackIds, bulkSelectionLabel)}
-						</MobileField>
-					</div>
-				)}
-				{releases.map((release) => {
-					const provider = originalProviders.find(
-						(item) => item.id === release.providerId,
-					);
-					const published = release.tracks.filter((track) =>
-						Boolean(track.published),
-					).length;
-					const sourceCount = release.tracks.filter(
+	const albumListEntries: AlbumEntry[] =
+		albumEntries?.map(
+			(entry): AlbumEntry =>
+				entry.kind === "release"
+					? { kind: "release", release: entry.release }
+					: { kind: "missing", group: entry.group },
+		) ?? releases.map((release): AlbumEntry => ({ kind: "release", release }));
+	const albumTrackIds = albumListEntries.flatMap((entry) =>
+		entry.kind === "release"
+			? entry.release.tracks.map((track) => track.id)
+			: [],
+	);
+	const albumPageSelection = selectionControl(albumTrackIds, pageSelection);
+	const artistName = (id: string | null | undefined) => {
+		if (!id) return null;
+		return artists.find((artist) => artist.id === id)?.name ?? null;
+	};
+	const artistCredit = (
+		id: string | null | undefined,
+		fallbackName?: string | null,
+	) => {
+		const name = fallbackName || artistName(id);
+		if (!name) return null;
+		return {
+			name,
+			...(id ? { href: `#artist/${id}` } : {}),
+			joinPhrase: null,
+		};
+	};
+	const releaseCredits = (release: Release): LibraryAlbumCredit[] => {
+		const sourceCredits = release.credits ?? [];
+		const explicit = sourceCredits.flatMap((credit, index) => {
+			const entry = artistCredit(
+				credit.artistId,
+				credit.credit || credit.name || null,
+			);
+			return entry
+				? [
+						{
+							...entry,
+							joinPhrase:
+								credit.joinPhrase ??
+								(index < sourceCredits.length - 1 ? ", " : ""),
+						},
+					]
+				: [];
+		});
+		if (explicit.length) return explicit;
+		const fallback = artistCredit(release.artistId);
+		return fallback ? [fallback] : [];
+	};
+	const albums: LibraryAlbumRow[] = albumListEntries.map(
+		(entry): LibraryAlbumRow => {
+			if (entry.kind === "release") {
+				const release = entry.release;
+				const provider = originalProviders.find(
+					(item) => item.id === release.providerId,
+				);
+				const credits = releaseCredits(release);
+				return {
+					id: release.id,
+					title: release.title,
+					href: artistReleaseHref(release, artists),
+					artist: credits.length ? undefined : m("artistNotSpecified"),
+					artistCredits: credits,
+					date: release.year || m("dateNotSpecified"),
+					editionNote: `${release.country || m("local")} · ${release.catalog || "—"}`,
+					positionCount: release.tracks.length,
+					sourceCount: release.tracks.filter(
 						(track) => sourceIds(track).length > 0,
-					).length;
-					return (
-						<article
-							className={catalogueStyles.mobileCatalogRow}
-							key={release.id}
-						>
-							<MobileField label={m("select")}>
-								{groupCheckbox(
-									release.tracks.map((track) => track.id),
-									m("selectAlbumPositions", { album: release.title }),
-								)}
-							</MobileField>
-							<MobileField label={m("album")}>
-								<Button
-									className={catalogueStyles.expander}
-									aria-expanded={expanded === release.id}
-									onPress={() => onToggleAlbum(release.id)}
-								>
-									{release.title || m("untitled")}
-								</Button>
-								{artistReleaseHref(release, artists) && (
-									<a
-										className={catalogueStyles.sub}
-										href={artistReleaseHref(release, artists)!}
-									>
-										{m("openRelease")}
-									</a>
-								)}
-							</MobileField>
-							<MobileField label={m("artist")}>
-								{release.credits?.length ? (
-									release.credits.map((credit, index) => (
-										<span key={`${credit.artistId ?? "credit"}-${index}`}>
-											{index > 0 && ", "}
-											{credit.artistId ? (
-												<a href={`#artist/${credit.artistId}`}>
-													{credit.credit || credit.name}
-												</a>
-											) : (
-												credit.credit || credit.name
-											)}
-										</span>
-									))
-								) : release.artistId ? (
-									<a href={`#artist/${release.artistId}`}>
-										{originalArtistName(release.artistId, artists)}
-									</a>
-								) : (
-									m("artistNotSpecified")
-								)}
-							</MobileField>
-							<MobileField label={m("yearEdition")}>
-								{release.year || m("dateNotSpecified")} ·{" "}
-								{release.country || m("local")} · {release.catalog || "—"}
-							</MobileField>
-							<MobileField label={m("positions")}>
-								{release.tracks.length}
-							</MobileField>
-							<MobileField label={m("sources")}>{sourceCount}</MobileField>
-							<MobileField label={m("audio")}>
-								{m("audioSummary", {
-									count: release.tracks.filter(hasAudio).length,
-								})}
-								{provider?.tracks.length ? ` / ${provider.tracks.length}` : ""}
-							</MobileField>
-							<MobileField label={m("publication")}>
-								{m("publishedCount", {
-									published,
-									total: release.tracks.length,
-								})}
-								<span className={catalogueStyles.sub}>
-									{provider?.tracks.length === release.tracks.length
-										? m("completenessKnown")
-										: m("completenessUnknown")}
-								</span>
-							</MobileField>
-							<MobileField label={m("provider")}>
-								{provider ? "MusicBrainz" : m("localCollection")}
-							</MobileField>
-							{expanded === release.id && (
-								<LibraryAlbumPositionsView
-									locale={locale}
-									releaseTitle={release.title}
-									positions={positionsFor(release)}
-									layout="mobile"
-								/>
-							)}
-						</article>
-					);
-				})}
-			</div>
-			<div className="min-w-0 max-[900px]:hidden">
-				<Table
-					key={view}
-					aria-label={m("albumsTable")}
-					className={`${catalogueStyles.table} table-fixed`}
-				>
-					<TableHeader>
-						{columns.map((column, index) => (
-							<Column
-								key={column}
-								isRowHeader={index === 1}
-								className={`${albumColumnWidths[index]} whitespace-normal! wrap-anywhere`}
-							>
-								{index === 0
-									? groupCheckbox(tableTrackIds, bulkSelectionLabel)
-									: column}
-							</Column>
-						))}
-					</TableHeader>
-					<TableBody
-						items={albumRows}
-						dependencies={[
-							releases,
-							artists,
-							groupCheckbox,
-							hasAudio,
-							files,
-							expanded,
-							filter,
-							pageSelection,
-						]}
-						renderEmptyState={() => (
-							<div className={catalogueStyles.empty}>{m("noResults")}</div>
-						)}
-					>
-						{({ id, release, detail }) => {
-							if (detail) {
-								return (
-									<Row
-										id={id}
-										aria-label={`${m("recording")} · ${release.title}`}
-									>
-										<Cell
-											colSpan={columns.length}
-											className="w-auto! min-w-0! max-w-none! px-2! text-left!"
-										>
-											<LibraryAlbumPositionsView
-												locale={locale}
-												releaseTitle={release.title}
-												positions={positionsFor(release)}
-												layout="desktop"
-												releaseSelection={selectionControl(
-													release.tracks.map((track) => track.id),
-													pageSelection,
-												)}
-											/>
-										</Cell>
-									</Row>
-								);
-							}
-							const provider = originalProviders.find(
-								(item) => item.id === release.providerId,
-							);
-							const published = release.tracks.filter((track) =>
-								Boolean(track.published),
-							).length;
-							const sourceCount = release.tracks.filter(
-								(track) => sourceIds(track).length > 0,
-							).length;
-							return (
-								<Row id={id}>
-									<Cell>
-										{groupCheckbox(
-											release.tracks.map((track) => track.id),
-											m("selectAlbumPositions", { album: release.title }),
-										)}
-									</Cell>
-									<Cell>
-										<Button
-											className={`${catalogueStyles.expander} max-w-full wrap-anywhere`}
-											aria-expanded={expanded === release.id}
-											onPress={() => onToggleAlbum(release.id)}
-										>
-											{release.title || m("untitled")}
-										</Button>
-										<span className={catalogueStyles.sub}>
-											{artistReleaseHref(release, artists) ? (
-												<a
-													href={
-														artistReleaseHref(release, artists) ?? undefined
-													}
-												>
-													{m("openRelease")}
-												</a>
-											) : (
-												m("artistNotSpecified")
-											)}
-										</span>
-									</Cell>
-									<Cell>
-										{release.credits?.length ? (
-											release.credits.map((credit, index) => (
-												<span key={`${credit.artistId ?? "credit"}-${index}`}>
-													{index > 0 && ", "}
-													{credit.artistId ? (
-														<a href={`#artist/${credit.artistId}`}>
-															{credit.credit || credit.name}
-														</a>
-													) : (
-														credit.credit || credit.name
-													)}
-												</span>
-											))
-										) : release.artistId ? (
-											<a href={`#artist/${release.artistId}`}>
-												{originalArtistName(release.artistId, artists)}
-											</a>
-										) : (
-											m("artistNotSpecified")
-										)}
-									</Cell>
-									<Cell>
-										{release.year || m("dateNotSpecified")}
-										<span className={catalogueStyles.sub}>
-											{release.country || m("local")} · {release.catalog || "—"}
-										</span>
-									</Cell>
-									<Cell>{release.tracks.length}</Cell>
-									<Cell>{sourceCount}</Cell>
-									<Cell>
-										{m("audioSummary", {
-											count: release.tracks.filter(hasAudio).length,
-										})}
-										{provider?.tracks.length
-											? ` / ${provider.tracks.length}`
-											: ""}
-									</Cell>
-									<Cell>
-										{m("publishedCount", {
-											published,
-											total: release.tracks.length,
-										})}
-										<span className={catalogueStyles.sub}>
-											{provider?.tracks.length === release.tracks.length
-												? m("completenessKnown")
-												: m("completenessUnknown")}
-										</span>
-									</Cell>
-									<Cell>{provider ? "MusicBrainz" : m("localCollection")}</Cell>
-								</Row>
-							);
-						}}
-					</TableBody>
-				</Table>
-			</div>
-		</div>
+					).length,
+					availableCount: release.tracks.filter(hasAudio).length,
+					providerPositionCount: provider?.tracks.length ?? null,
+					publishedCount: release.tracks.filter((track) =>
+						Boolean(track.published),
+					).length,
+					provider: provider ? "musicbrainz" : "local",
+					selection: selectionControl(
+						release.tracks.map((track) => track.id),
+						pageSelection,
+					),
+				};
+			}
+			const group = entry.group;
+			const credit = artistCredit(group.artistId);
+			return {
+				id: `provider:${group.groupId || group.id}`,
+				title: group.title,
+				href: null,
+				missing: true,
+				artist: credit?.name ?? m("artistNotSpecified"),
+				artistCredits: credit ? [credit] : [],
+				date: null,
+				editionNote: null,
+				positionCount: null,
+				sourceCount: null,
+				availableCount: null,
+				providerPositionCount: null,
+				publishedCount: null,
+				provider: "musicbrainz",
+				selection: null,
+			};
+		},
+	);
+	const expandedEntry = albumListEntries.find((entry) => {
+		if (entry.kind === "release") return entry.release.id === expanded;
+		return `provider:${entry.group.groupId || entry.group.id}` === expanded;
+	});
+	const expandedPositionIds =
+		expandedEntry?.kind === "release"
+			? expandedEntry.release.tracks.map((track) => track.id)
+			: [];
+	const detail: LibraryAlbumDetail | null = !expandedEntry
+		? null
+		: expandedEntry.kind === "release"
+			? {
+					kind: "positions" as const,
+					releaseTitle: expandedEntry.release.title,
+					positions: positionsFor(expandedEntry.release),
+					releaseSelection: selectionControl(
+						expandedPositionIds,
+						pageSelection,
+					),
+				}
+			: (() => {
+					const group = expandedEntry.group;
+					const credit = artistCredit(group.artistId);
+					const chooser = missingEditionChooserProps({
+						locale,
+						groupTitle: group.title,
+						editions: group.editions,
+						selectedEditionKey: selectedEditions?.[group.id] ?? "",
+						onSelectEdition: (editionKey) =>
+							onSelectEdition?.(group.id, editionKey),
+					});
+					return {
+						kind: "missing-edition" as const,
+						groupTitle: chooser.groupTitle,
+						editions: chooser.editions,
+						editionsStatus: chooser.editionsStatus,
+						selectedEditionKey: chooser.selectedEditionKey,
+						onSelectEdition: chooser.onSelectEdition,
+						tracksStatus: chooser.tracksStatus,
+						tracks: chooser.tracks,
+						originalReleaseDate: null,
+						credits: credit ? [credit] : undefined,
+					};
+				})();
+	return (
+		<LibraryAlbumListView
+			locale={locale}
+			albums={albums}
+			expandedId={expanded}
+			onToggleExpanded={onToggleAlbum}
+			pageSelection={albumPageSelection}
+			detail={detail}
+		/>
 	);
 }

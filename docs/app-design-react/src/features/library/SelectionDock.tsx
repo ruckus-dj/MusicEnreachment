@@ -8,10 +8,8 @@ import { Button, Dialog, Heading, Modal } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 import { catalogueStyles } from "./catalogueStyles";
-import {
-	LibrarySelectionReviewButton,
-	LibrarySelectionReviewView,
-} from "./LibrarySelectionReviewView";
+import { LibrarySelectionDockView } from "./LibrarySelectionDockView";
+import { LibrarySelectionReviewView } from "./LibrarySelectionReviewView";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -89,36 +87,22 @@ export function SelectionDock({
 	return createPortal(
 		<>
 			{selected.size > 0 && (
-				<section
-					className={catalogueStyles.dock}
-					aria-label={m("selectSelectedPositions")}
-				>
-					<span role="status">
-						{m("selectedPositionsCount", { count: selected.size })}
-						{hiddenCount > 0 &&
-							` · ${m("hiddenSelectedPositions", { count: hiddenCount })}`}
-					</span>
-					<div className={catalogueStyles.dockActions}>
-						{visiblePositionIds && (
-							<LibrarySelectionReviewButton
-								triggerRef={reviewTrigger}
-								onOpen={() => setReviewOpen(true)}
-							/>
-						)}
-						<Button
-							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-							onPress={() => onPreview([...selected])}
-						>
-							{m("previewSelection")}
-						</Button>
-						<Button onPress={openDeleteConfirmation}>
-							{m("deletePublications")}
-						</Button>
-						<Button onPress={() => onSelect([...selected], false)}>
-							{m("clearSelection")}
-						</Button>
-					</div>
-				</section>
+				<LibrarySelectionDockView
+					locale={locale}
+					count={selected.size}
+					hiddenCount={hiddenCount}
+					review={
+						visiblePositionIds
+							? {
+									triggerRef: reviewTrigger,
+									onOpen: () => setReviewOpen(true),
+								}
+							: undefined
+					}
+					onPreview={() => onPreview([...selected])}
+					onDelete={openDeleteConfirmation}
+					onClear={() => onSelect([...selected], false)}
+				/>
 			)}
 			<LibrarySelectionReviewView
 				isOpen={reviewOpen}

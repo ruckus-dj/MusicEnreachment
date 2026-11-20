@@ -60,8 +60,8 @@ source channel, а fixture макета такого происхождения 
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки и поля переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: каркас мастера, поля папок, выбор версии инструмента, MusicBrainz и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolReleasePicker.tsx`, `SetupMusicBrainzFields.tsx`, `SetupSummaryView.tsx` | Те же пути |
-| Медиатека: карточки артистов, список треков, позиции издания, выбор издания и проверка выбранных позиций | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
+| Первый запуск: каркас мастера, поля папок, карточки инструментов и выбор версий, MusicBrainz и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupMusicBrainzFields.tsx`, `SetupSummaryView.tsx` | Те же пути |
+| Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Публикация: сводка по выбору, подготовка и инспектор релиза | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
@@ -75,9 +75,9 @@ source channel, а fixture макета такого происхождения 
 имитирует сохранение и проверку без запросов в GitHub, а приложение выполняет
 их на сервере. Не переносились остальные диалоги настроек.
 В первом запуске совпадают каркас и отдельные поля, но не порядок
-шагов и не полные тела шагов. В списке альбомов совпадает раскрытый список
-позиций конкретного издания и форма выбора издания MusicBrainz. Строки сводки
-и место раскрытия отсутствующей группы ещё различаются. Редакторы медиатеки и
+шагов и не полные тела шагов. Список альбомов использует общие строки и раскрытие
+позиций либо кэшированных изданий MusicBrainz; выборка и подсчёты остаются у провайдеров.
+Редакторы медиатеки и
 отдельные сценарии публикации из входящих и карточки трека пока не перенесены дословно.
 
 ## Проверка

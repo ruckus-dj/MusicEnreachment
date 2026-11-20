@@ -7,13 +7,8 @@ describe("library row localization", () => {
 		expect(catalog.libraryRows).toBe(libraryRowsMessages);
 	});
 
-	it("provides complete English and Russian filter and selection labels", () => {
+	it("provides an English and Russian deletion confirmation label", () => {
 		for (const locale of ["en", "ru"] as const) {
-			expect(libraryRowsMessage(locale, "filterState")).toBeTruthy();
-			expect(libraryRowsMessage(locale, "filterAll")).toBeTruthy();
-			expect(libraryRowsMessage(locale, "filterMissing")).toBeTruthy();
-			expect(libraryRowsMessage(locale, "filterAvailable")).toBeTruthy();
-			expect(libraryRowsMessage(locale, "filterPublished")).toBeTruthy();
 			expect(libraryRowsMessage(locale, "confirmDeletion")).toBeTruthy();
 		}
 	});

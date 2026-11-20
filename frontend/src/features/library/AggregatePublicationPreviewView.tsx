@@ -150,7 +150,7 @@ const copy = {
 type Text = (typeof copy)[AggregatePublicationPreviewLocale];
 
 const styles = {
-  root: "space-y-3 rounded border border-stone-300 p-4",
+  root: "min-w-0 space-y-3 rounded border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)]",
   title: "font-semibold",
   summary: "grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]",
   summaryRow: "contents",
@@ -164,19 +164,19 @@ const styles = {
   positionItem: "min-w-0",
   positionRow:
     "grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-1",
-  positionRowSelected: "border-stone-500 bg-stone-100",
-  positionRowIdle: "border-stone-200",
+  positionRowSelected: "border-[var(--accent)] bg-[var(--accent-soft)]",
+  positionRowIdle: "border-[var(--line)]",
   positionButton:
     "min-w-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2",
   positionLabel: "block truncate font-medium",
-  positionStatus: "block truncate text-xs text-stone-600",
+  positionStatus: "block truncate text-xs text-[var(--muted)]",
   includeLabel: "flex items-center gap-1 text-xs",
   inspectorPanel:
-    "min-w-0 rounded border border-stone-200 p-3 max-[899px]:hidden",
+    "min-w-0 rounded border border-[var(--line)] p-3 max-[899px]:hidden",
   inspectorHeading: "mb-2 font-medium",
   inspectorBody: "max-h-[34rem] min-w-0 overflow-y-auto",
   dialog:
-    "m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-stone-300 p-4 backdrop:bg-black/40",
+    "m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] backdrop:bg-black/40",
   dialogHeader: "mb-3 flex items-center justify-between gap-3",
   dialogTitle: "font-semibold",
   actions: "flex flex-wrap gap-2",

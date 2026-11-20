@@ -1,7 +1,9 @@
 import type { Locale } from "../../i18n";
 import {
 	type LibraryEditionOption,
+	type LibraryEditionsStatus,
 	type LibraryEditionTracks,
+	type LibraryEditionTracksStatus,
 	LibraryMissingEditionView,
 } from "./LibraryMissingEditionView";
 
@@ -25,24 +27,41 @@ const editionLabel = (edition: MissingEditionFixture) =>
 		.join(" · ");
 
 /**
- * Projects the prototype's absent-group editions into the shared chooser.
- * The fixture list order is stable, so index-based keys are unique even when
- * two positions share a title. Empty keys mean no edition is selected, and
- * selection is stored by the host under the group ID.
+ * Data-only projection for the shared edition chooser. Hosts and shared list
+ * views can consume these typed props without passing rendered controls.
  */
-export function LibraryMissingEditionDemo({
-	locale,
-	groupTitle,
-	editions,
-	selectedEditionKey,
-	onSelectEdition,
-}: {
+export interface MissingEditionChooserProps {
+	locale: Locale;
+	groupTitle: string;
+	editions: LibraryEditionOption[];
+	editionsStatus: LibraryEditionsStatus;
+	selectedEditionKey: string;
+	onSelectEdition: (editionKey: string) => void;
+	tracksStatus: LibraryEditionTracksStatus;
+	tracks: LibraryEditionTracks | null;
+}
+
+export interface MissingEditionChooserInput {
 	locale: Locale;
 	groupTitle: string;
 	editions: readonly MissingEditionFixture[];
 	selectedEditionKey: string;
 	onSelectEdition: (editionKey: string) => void;
-}) {
+}
+
+/**
+ * Projects the prototype's absent-group editions into the shared chooser.
+ * The fixture list order is stable, so index-based keys are unique even when
+ * two positions share a title. Empty keys mean no edition is selected, and
+ * selection is stored by the host under the group ID.
+ */
+export function missingEditionChooserProps({
+	locale,
+	groupTitle,
+	editions,
+	selectedEditionKey,
+	onSelectEdition,
+}: MissingEditionChooserInput): MissingEditionChooserProps {
 	const options: LibraryEditionOption[] = editions.map((edition) => ({
 		key: edition.id,
 		label: editionLabel(edition),
@@ -62,16 +81,22 @@ export function LibraryMissingEditionDemo({
 			}
 		: null;
 
-	return (
-		<LibraryMissingEditionView
-			locale={locale}
-			groupTitle={groupTitle}
-			editions={options}
-			editionsStatus={editions.length ? "ready" : "empty"}
-			selectedEditionKey={selectedEditionKey}
-			onSelectEdition={onSelectEdition}
-			tracksStatus="ready"
-			tracks={tracks}
-		/>
-	);
+	return {
+		locale,
+		groupTitle,
+		editions: options,
+		editionsStatus: editions.length ? "ready" : "empty",
+		selectedEditionKey,
+		onSelectEdition,
+		tracksStatus: "ready",
+		tracks,
+	};
+}
+
+/**
+ * Fixture-backed presentation of the chooser, retained for screens that own
+ * their selection state directly (for example the artist screen).
+ */
+export function LibraryMissingEditionDemo(props: MissingEditionChooserInput) {
+	return <LibraryMissingEditionView {...missingEditionChooserProps(props)} />;
 }

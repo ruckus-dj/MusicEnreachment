@@ -1,11 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { audioProperties } from "../../metadata/audioProperties";
 import {
 	originalArtists,
 	originalFiles,
 	originalReleases,
 } from "./catalogData";
-import { audioProperties } from "../../metadata/audioProperties";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
 
 const release = originalReleases[0];
@@ -28,11 +28,17 @@ const rows = (
 		missingCounts={new Map()}
 		hasAudio={() => true}
 		files={files}
-		groupCheckbox={(_ids, label) => <button type="button">{label}</button>}
 		expanded={expanded}
 		onToggleAlbum={() => undefined}
+		pageSelection={{ selectedIds: new Set(), onChange: () => undefined }}
 	/>
 );
+
+const mobileRow = (title: string) =>
+	screen
+		.getAllByRole("button", { name: title })
+		.map((button) => button.closest("article"))
+		.find((article): article is HTMLElement => Boolean(article));
 
 it("opens album tracks below the entire album row", () => {
 	const { rerender } = render(rows("albums", originalFiles, [release]));
@@ -96,22 +102,19 @@ it("switches desktop catalog views without hook-order warnings", () => {
 
 it("renders mobile albums as labeled rows with expansion and selection controls", () => {
 	render(rows("albums", originalFiles, [release]));
-	const mobile = screen.getByLabelText("Альбомы медиатеки", {
-		selector: "div",
-	});
 	// JSDOM renders both responsive surfaces; identify desktop semantically.
 	expect(screen.getByRole("grid", { name: "Альбомы медиатеки" })).toBeTruthy();
-	const albumRow = within(mobile)
-		.getByRole("button", { name: release.title })
-		.closest("article");
+	const albumRow = mobileRow(release.title);
 	expect(albumRow).not.toBeNull();
 	if (!albumRow) throw new Error("expected the mobile album article");
-	expect(within(albumRow).getByText("Артист")).toBeTruthy();
+	expect(within(albumRow).getByText("Исполнитель")).toBeTruthy();
 	expect(
 		within(albumRow).getByRole("button", { name: release.title }),
 	).toHaveAttribute("aria-expanded", "true");
 	expect(
-		within(albumRow).getByRole("button", { name: /Выбрать позиции альбома/ }),
+		within(albumRow).getByRole("checkbox", {
+			name: `Выбрать позиции: ${release.title}`,
+		}),
 	).toBeTruthy();
 	expect(
 		within(albumRow).getByRole("link", { name: /First Light/ }),
@@ -142,16 +145,14 @@ it("renders mobile album credits, fallback artist links, and unknown artists", (
 		artistId: null,
 	};
 	render(rows("albums", originalFiles, [credited, fallback, unknown]));
-	const mobile = screen.getByLabelText("Альбомы медиатеки", {
-		selector: "div",
-	});
-	const creditRow = within(mobile)
-		.getByRole("button", { name: credited.title })
-		.closest("article");
+	const creditRow = mobileRow(credited.title);
 	expect(creditRow).not.toBeNull();
-	const creditField = within(creditRow as HTMLElement).getByText("Артист", {
-		selector: "dt",
-	}).parentElement;
+	const creditField = within(creditRow as HTMLElement).getByText(
+		"Исполнитель",
+		{
+			selector: "dt",
+		},
+	).parentElement;
 	expect(
 		within(creditField as HTMLElement).getByRole("link", {
 			name: "Credit artist",
@@ -160,24 +161,26 @@ it("renders mobile album credits, fallback artist links, and unknown artists", (
 	expect(creditField?.querySelector("dd")?.textContent).toContain(
 		"Guest credit",
 	);
-	const fallbackRow = within(mobile)
-		.getByRole("button", { name: fallback.title })
-		.closest("article");
-	const fallbackField = within(fallbackRow as HTMLElement).getByText("Артист", {
-		selector: "dt",
-	}).parentElement;
+	const fallbackRow = mobileRow(fallback.title);
+	const fallbackField = within(fallbackRow as HTMLElement).getByText(
+		"Исполнитель",
+		{
+			selector: "dt",
+		},
+	).parentElement;
 	expect(
 		within(fallbackField as HTMLElement).getByRole("link", {
 			name: "Mira Vale",
 		}),
 	).toHaveAttribute("href", `#artist/${originalArtists[0].id}`);
-	const unknownRow = within(mobile)
-		.getByRole("button", { name: unknown.title })
-		.closest("article");
+	const unknownRow = mobileRow(unknown.title);
 	expect(unknownRow).not.toBeNull();
-	const unknownField = within(unknownRow as HTMLElement).getByText("Артист", {
-		selector: "dt",
-	}).parentElement;
+	const unknownField = within(unknownRow as HTMLElement).getByText(
+		"Исполнитель",
+		{
+			selector: "dt",
+		},
+	).parentElement;
 	expect(
 		within(unknownField as HTMLElement).getByText("Артист не указан", {
 			selector: "dd",

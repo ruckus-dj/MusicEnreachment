@@ -13,7 +13,7 @@ const copy = {
   ru: { version: "Версия", placeholder: "Выберите версию" },
 } as const;
 
-interface SetupToolRelease {
+export interface SetupToolRelease {
   identity: string;
   source?: string;
 }

@@ -212,7 +212,7 @@ function TagComparison({
     <div className="overflow-x-auto">
       <table className="w-full table-fixed border-collapse text-left text-xs">
         <thead>
-          <tr className="border-b border-stone-300 text-stone-600">
+          <tr className="border-b border-[var(--line)] text-[var(--muted)]">
             <th scope="col" className="w-1/4 px-2 py-2 font-medium">
               {copy.tagField}
             </th>
@@ -227,11 +227,16 @@ function TagComparison({
         <tbody>
           {firstPublication
             ? planned.map(([key, values]) => (
-                <tr className="border-b border-stone-200 align-top" key={key}>
+                <tr
+                  className="border-b border-[var(--line)] align-top"
+                  key={key}
+                >
                   <th scope="row" className="break-words px-2 py-2 font-medium">
                     {key}
                   </th>
-                  <td className="px-2 py-2 text-stone-500">{copy.noCurrent}</td>
+                  <td className="px-2 py-2 text-[var(--muted)]">
+                    {copy.noCurrent}
+                  </td>
                   <td className="px-2 py-2">
                     <TagValues present values={values} absent={copy.absent} />
                   </td>
@@ -239,7 +244,7 @@ function TagComparison({
               ))
             : differences.map((difference) => (
                 <tr
-                  className="border-b border-stone-200 align-top"
+                  className="border-b border-[var(--line)] align-top"
                   key={difference.key}
                 >
                   <th scope="row" className="break-words px-2 py-2 font-medium">
@@ -279,7 +284,7 @@ function CoverDetails({
   if (!plan && !change) return null;
   return (
     <section
-      className="space-y-2 rounded border border-stone-200 p-3"
+      className="space-y-2 rounded border border-[var(--line)] p-3"
       aria-label={copy.coverPlanAria}
     >
       <h4 className="font-medium">{copy.coverPlan}</h4>
@@ -362,7 +367,7 @@ function LyricsDetails({
     const change = preview.asset_changes?.lyrics;
     return change ? (
       <section
-        className="space-y-2 rounded border border-stone-200 p-3"
+        className="space-y-2 rounded border border-[var(--line)] p-3"
         aria-label={copy.lyricsPlanAria}
       >
         <h4 className="font-medium">{copy.lyricsPlan}</h4>
@@ -376,7 +381,7 @@ function LyricsDetails({
     : (preview.current_comparison?.lyrics_status ?? plan.current_status);
   return (
     <section
-      className="space-y-2 rounded border border-stone-200 p-3"
+      className="space-y-2 rounded border border-[var(--line)] p-3"
       aria-label={copy.lyricsPlanAria}
     >
       <h4 className="font-medium">{copy.lyricsPlan}</h4>
@@ -652,7 +657,7 @@ export function PublicationPreviewDetailsView({
             </section>
           </div>
           <section
-            className="space-y-2 rounded border border-stone-200 p-3"
+            className="space-y-2 rounded border border-[var(--line)] p-3"
             aria-label={copy.tagDifferences}
           >
             <h4 className="font-medium">

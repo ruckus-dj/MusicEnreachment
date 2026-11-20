@@ -24,7 +24,7 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
-import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
+import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -229,6 +229,42 @@ export function SetupTools({
       setPending(false);
     }
   }
+  const cards: SetupToolCard[] = kinds.map((kind): SetupToolCard => {
+    const ready = readyByKind(kind);
+    if (ready.length) {
+      return {
+        kind,
+        state: "ready",
+        versions: ready.map(({ id, version, active }) => ({
+          id,
+          version,
+          active,
+        })),
+      };
+    }
+    return {
+      kind,
+      state: "install",
+      notice: catalog[kind]?.notice,
+      releases: catalog[kind]?.releases ?? [],
+      selected: selected[kind] || null,
+      pending,
+      onSelect: (identity) => {
+        setSelected((previous) => ({
+          ...previous,
+          [kind]: identity ?? "",
+        }));
+        setPreflight(undefined);
+      },
+      action: {
+        kind: "checkInstall",
+        disabled: pending || !selected[kind],
+        onPress: () => {
+          void install(kind);
+        },
+      },
+    };
+  });
   return (
     <div>
       {!legacyConflict && (
@@ -236,47 +272,7 @@ export function SetupTools({
           {messages.toolCatalogRefresh}
         </AppButton>
       )}
-      {kinds.map((kind) => (
-        <div key={kind} className="setup-tool">
-          <h3>{kind}</h3>
-          {legacyConflict ? null : readyByKind(kind).length ? (
-            readyByKind(kind).map((item) => (
-              <p key={item.id} role="status">
-                {item.version}:{" "}
-                {item.active ? messages.active : messages.installedReady}
-              </p>
-            ))
-          ) : (
-            <>
-              <p>{catalog[kind]?.notice}</p>
-              <SetupToolReleasePicker
-                locale={locale}
-                kind={kind}
-                selected={selected[kind] || null}
-                releases={catalog[kind]?.releases || []}
-                pending={pending}
-                onChange={(identity) => {
-                  setSelected((previous) => ({
-                    ...previous,
-                    [kind]: identity ?? "",
-                  }));
-                  setPreflight(undefined);
-                }}
-              />
-              <AppButton
-                isDisabled={pending || !selected[kind]}
-                onPress={() => {
-                  void install(kind);
-                }}
-              >
-                {messages.checkToolInstall}
-                {kind}
-                {messages.install}
-              </AppButton>
-            </>
-          )}
-        </div>
-      ))}
+      {!legacyConflict && <SetupToolCardsView locale={locale} tools={cards} />}
       {!legacyConflict && preflight?.plan.conflicts?.length ? (
         <fieldset aria-label={messages.conflictConfirmation}>
           <legend>{messages.confirmOverwrite}</legend>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useGetLibraryReleaseGroupEditionTracks,
   useListLibraryReleaseGroupEditions,
@@ -15,6 +15,7 @@ import {
   type LibraryEditionTracks,
   type LibraryEditionTracksStatus,
   LibraryMissingEditionView,
+  type LibraryMissingEditionViewProps,
 } from "./LibraryMissingEditionView";
 
 const EDITION_PAGE_SIZE = 50;
@@ -28,7 +29,6 @@ const messages = {
     editions: "Choose an edition",
     loadEditions: "Browse editions",
     mbid: "MusicBrainz ID",
-    missingFromLibrary: "No library entry",
     cacheNotice:
       "Known MusicBrainz cache entries only; this may not be a complete discography.",
   },
@@ -40,7 +40,6 @@ const messages = {
     editions: "Выберите издание",
     loadEditions: "Показать издания",
     mbid: "MusicBrainz ID",
-    missingFromLibrary: "В медиатеке отсутствует",
     cacheNotice:
       "Показаны только известные записи кэша MusicBrainz; это может быть не полная дискография.",
   },
@@ -120,34 +119,78 @@ function responseError(query: {
   return query.error instanceof Error ? query.error.message : null;
 }
 
-export function MissingReleaseGroupRow({
-  group,
-  presentation,
-}: {
-  group: MissingReleaseGroupSummary;
-  presentation: "table" | "artist" | "inline";
-}) {
+interface EditionSelectionState {
+  groupKey: string;
+  pickerOpen: boolean;
+  editionOffset: number;
+  selectedEdition: LibraryReleaseGroupEditionResponse | null;
+}
+
+function resetEditionSelection(
+  groupKey: string,
+  pickerOpen: boolean,
+): EditionSelectionState {
+  return { groupKey, pickerOpen, editionOffset: 0, selectedEdition: null };
+}
+
+/**
+ * Headless MusicBrainz edition projection for one missing release group.
+ * Editions load only while the picker is visible; the read-only track list is
+ * fetched only after an explicit edition choice and stays visible when the
+ * picker closes. The host owns rendering and every control label.
+ */
+export function useMissingReleaseGroupEditions(
+  group: MissingReleaseGroupSummary | null,
+  {
+    enabled = true,
+    initialPickerOpen = false,
+  }: { enabled?: boolean; initialPickerOpen?: boolean } = {},
+) {
   const { locale } = useI18n();
   const text = messages[locale];
-  const [pickerOpen, setPickerOpen] = useState(presentation === "inline");
-  const [editionOffset, setEditionOffset] = useState(0);
-  const [selectedEdition, setSelectedEdition] =
-    useState<LibraryReleaseGroupEditionResponse | null>(null);
-  const selectedEditionID = selectedEdition?.provider_key ?? "";
+  const groupKey = group?.provider_key ?? "";
+  const [state, setState] = useState<EditionSelectionState>(() =>
+    resetEditionSelection(groupKey, initialPickerOpen),
+  );
+  const active =
+    state.groupKey === groupKey
+      ? state
+      : resetEditionSelection(groupKey, initialPickerOpen);
+
+  // A different group starts closed over the previous selection. Collapsing and
+  // re-expanding also reaches the empty key, so a later expansion never reuses
+  // an earlier expanded group's preview.
+  useEffect(() => {
+    if (state.groupKey !== groupKey) {
+      setState(resetEditionSelection(groupKey, initialPickerOpen));
+    }
+  }, [groupKey, initialPickerOpen, state.groupKey]);
+
+  function update(patch: Partial<Omit<EditionSelectionState, "groupKey">>) {
+    setState((current) => {
+      const base =
+        current.groupKey === groupKey
+          ? current
+          : resetEditionSelection(groupKey, initialPickerOpen);
+      return { ...base, ...patch, groupKey };
+    });
+  }
+
+  const selectedEditionID = active.selectedEdition?.provider_key ?? "";
   const editionsQuery = useListLibraryReleaseGroupEditions(
-    group.provider_key,
-    { limit: EDITION_PAGE_SIZE, offset: editionOffset },
-    { query: { enabled: pickerOpen } },
+    groupKey,
+    { limit: EDITION_PAGE_SIZE, offset: active.editionOffset },
+    { query: { enabled: enabled && group !== null && active.pickerOpen } },
   );
   const tracksQuery = useGetLibraryReleaseGroupEditionTracks(
-    group.provider_key,
+    groupKey,
     selectedEditionID,
     {
       query: {
-        enabled: selectedEditionID !== "",
+        enabled: enabled && group !== null && selectedEditionID !== "",
         queryKey: [
           "/api/library/release-groups",
-          group.provider_key,
+          groupKey,
           "editions",
           selectedEditionID,
           "tracks",
@@ -159,18 +202,17 @@ export function MissingReleaseGroupRow({
     editionsQuery.data?.status === 200 ? editionsQuery.data.data : undefined;
   const pageEditions = editions?.editions ?? [];
   const editionOptions =
-    selectedEdition &&
+    active.selectedEdition &&
     !pageEditions.some(
-      (edition) => edition.provider_key === selectedEdition.provider_key,
+      (edition) =>
+        edition.provider_key === active.selectedEdition?.provider_key,
     )
-      ? [selectedEdition, ...pageEditions]
+      ? [active.selectedEdition, ...pageEditions]
       : pageEditions;
   const editionsError = responseError(editionsQuery);
   const tracksError = responseError(tracksQuery);
   const trackList =
     tracksQuery.data?.status === 200 ? tracksQuery.data.data : undefined;
-  const credits = creditNames(group.artists);
-  const title = group.title || text.groupTitleUnknown;
 
   const editionsStatus: LibraryEditionsStatus = editionsQuery.isLoading
     ? "loading"
@@ -204,16 +246,70 @@ export function MissingReleaseGroupRow({
         }
       : null;
   const pagination: LibraryEditionPagination | null =
-    editions && (editionOffset > 0 || editions.total > EDITION_PAGE_SIZE)
+    editions && (active.editionOffset > 0 || editions.total > EDITION_PAGE_SIZE)
       ? {
-          page: Math.floor(editionOffset / EDITION_PAGE_SIZE) + 1,
-          hasPrevious: editionOffset > 0,
-          hasNext: editionOffset + EDITION_PAGE_SIZE < editions.total,
+          page: Math.floor(active.editionOffset / EDITION_PAGE_SIZE) + 1,
+          hasPrevious: active.editionOffset > 0,
+          hasNext: active.editionOffset + EDITION_PAGE_SIZE < editions.total,
           onPrevious: () =>
-            setEditionOffset(Math.max(0, editionOffset - EDITION_PAGE_SIZE)),
-          onNext: () => setEditionOffset(editionOffset + EDITION_PAGE_SIZE),
+            update({
+              editionOffset: Math.max(
+                0,
+                active.editionOffset - EDITION_PAGE_SIZE,
+              ),
+            }),
+          onNext: () =>
+            update({ editionOffset: active.editionOffset + EDITION_PAGE_SIZE }),
         }
       : null;
+  const viewProps: Omit<LibraryMissingEditionViewProps, "locale"> = {
+    pickerVisible: active.pickerOpen,
+    editions: editionChoices,
+    editionsStatus,
+    editionsError,
+    onRetryEditions: () => void editionsQuery.refetch(),
+    selectedEditionKey: selectedEditionID,
+    onSelectEdition: (editionKey) =>
+      update({
+        selectedEdition:
+          editionOptions.find(
+            (edition) => edition.provider_key === editionKey,
+          ) ?? null,
+      }),
+    pagination,
+    tracksStatus,
+    tracksError,
+    onRetryTracks: () => void tracksQuery.refetch(),
+    tracks,
+  };
+
+  return {
+    locale,
+    title: group?.title || text.groupTitleUnknown,
+    credits: creditNames(group?.artists ?? []),
+    originalReleaseDate: group?.original_release_date ?? null,
+    pickerOpen: active.pickerOpen,
+    togglePicker: () => update({ pickerOpen: !active.pickerOpen }),
+    showEditionView: active.pickerOpen || selectedEditionID !== "",
+    viewProps,
+  };
+}
+
+/**
+ * Artist-screen missing release group. The album host projects editions
+ * through `useMissingReleaseGroupEditions` instead of rendering this row.
+ */
+export function MissingReleaseGroupRow({
+  group,
+}: {
+  group: MissingReleaseGroupSummary;
+}) {
+  const { locale } = useI18n();
+  const text = messages[locale];
+  const projection = useMissingReleaseGroupEditions(group);
+  const { pickerOpen, showEditionView, viewProps } = projection;
+  const credits = creditNames(group.artists);
+  const title = group.title || text.groupTitleUnknown;
 
   const details = (
     <div className="catalog-missing-release-details">
@@ -227,66 +323,20 @@ export function MissingReleaseGroupRow({
         ) : null}
       </p>
       <p className="catalog-muted">{text.cacheNotice}</p>
-      {presentation !== "inline" && (
-        <button
-          type="button"
-          aria-expanded={pickerOpen}
-          onClick={() => setPickerOpen((open) => !open)}
-        >
-          {pickerOpen ? text.editions : text.loadEditions}
-        </button>
-      )}
-      {(pickerOpen || selectedEditionID !== "") && (
+      <button
+        type="button"
+        aria-expanded={pickerOpen}
+        onClick={projection.togglePicker}
+      >
+        {pickerOpen ? text.editions : text.loadEditions}
+      </button>
+      {showEditionView && (
         <div>
-          <LibraryMissingEditionView
-            locale={locale}
-            pickerVisible={pickerOpen}
-            editions={editionChoices}
-            editionsStatus={editionsStatus}
-            editionsError={editionsError}
-            onRetryEditions={() => void editionsQuery.refetch()}
-            selectedEditionKey={selectedEditionID}
-            onSelectEdition={(editionKey) =>
-              setSelectedEdition(
-                editionOptions.find(
-                  (edition) => edition.provider_key === editionKey,
-                ) ?? null,
-              )
-            }
-            pagination={pagination}
-            tracksStatus={tracksStatus}
-            tracksError={tracksError}
-            onRetryTracks={() => void tracksQuery.refetch()}
-            tracks={tracks}
-          />
+          <LibraryMissingEditionView locale={locale} {...viewProps} />
         </div>
       )}
     </div>
   );
-
-  if (presentation === "inline") return details;
-  if (presentation === "table") {
-    return (
-      <tr className="catalog-missing-release" aria-label={title}>
-        <td>
-          <span className="catalog-entity">
-            <span className="catalog-cover" aria-hidden="true">
-              {title.trim().charAt(0).toLocaleUpperCase() || "M"}
-            </span>
-            <strong>{title}</strong>
-          </span>
-          <span className="catalog-sub">
-            {text.mbid}: {group.provider_key}
-          </span>
-          {details}
-        </td>
-        <td>{credits ? <CreditNames credits={group.artists} /> : "—"}</td>
-        <td>{group.original_release_date ?? text.dateUnknown}</td>
-        <td>—</td>
-        <td>{text.missingFromLibrary}</td>
-      </tr>
-    );
-  }
 
   return (
     <article className="catalog-artist-release catalog-missing-release">

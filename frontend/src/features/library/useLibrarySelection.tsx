@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Checkbox } from "react-aria-components";
 import { resolveLibrarySelection } from "../../api/generated/client";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { ArtistCardSelectionControl } from "./LibraryArtistCards";
@@ -100,44 +99,6 @@ export function useLibrarySelection({
     };
   }
 
-  function renderCheckbox(scope: LibrarySelectionScope, label: string) {
-    const control = selectionControl(scope);
-    return (
-      <Checkbox
-        slot={null}
-        aria-label={label}
-        isSelected={control.isSelected}
-        isIndeterminate={control.isIndeterminate}
-        isDisabled={control.isDisabled}
-        onChange={control.onChange}
-        className="group inline-flex size-6 shrink-0 cursor-pointer items-center justify-center data-[disabled]:cursor-default data-[disabled]:opacity-45"
-      >
-        <span
-          aria-hidden="true"
-          className="grid size-4 place-items-center rounded-sm border border-[var(--control)] bg-[var(--surface)] text-[var(--button-text)] group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-offset-2 group-data-[focus-visible]:outline-[var(--focus)] group-data-[indeterminate]:bg-[var(--button)] group-data-[selected]:bg-[var(--button)]"
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="size-3.5"
-          >
-            <path
-              d="M3 8l3 3 7-7"
-              className="hidden group-data-[selected]:block"
-            />
-            <path
-              d="M3 8h10"
-              className="hidden group-data-[indeterminate]:block"
-            />
-          </svg>
-        </span>
-      </Checkbox>
-    );
-  }
-
   const membershipError =
     pageReady && hasParents && membership.isError
       ? membership.error.message === "409"
@@ -150,7 +111,6 @@ export function useLibrarySelection({
       : undefined;
 
   return {
-    renderCheckbox,
     selectionControl,
     positions,
     hiddenCount: known

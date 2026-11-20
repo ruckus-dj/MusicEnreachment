@@ -24,7 +24,7 @@ import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
 import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
 import { SetupSummaryView } from "./SetupSummaryView";
-import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
+import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
 import { SetupWizard } from "./SetupWizard";
 import {
 	type SetupToolKind,
@@ -260,29 +260,25 @@ export function SetupScreen({
 				{step === 1 && (
 					<>
 						<p>{copy.toolDescription}</p>
-						{(["ffmpeg", "fpcalc"] as const).map((kind) => {
-							const active = activeInstallation(kind);
-							return (
-								<section
-									className="grid gap-2 border-b border-[var(--line)] pb-3"
-									key={kind}
-									aria-label={
-										kind === "ffmpeg" ? copy.ffmpegPackage : copy.fpcalcPackage
-									}
-								>
-									<h3 className="m-0 font-semibold">
-										{kind === "ffmpeg"
-											? copy.ffmpegPackage
-											: copy.fpcalcPackage}
-									</h3>
-									<SetupToolReleasePicker
-										locale={locale}
-										kind={kind}
-										selected={toolSelection[kind] ?? null}
-										releases={setupToolReleases[kind].map((release) => ({
-											identity: release,
-										}))}
-										onChange={(identity) =>
+						<SetupToolCardsView
+							locale={locale}
+							tools={(["ffmpeg", "fpcalc"] as const).map(
+								(kind): SetupToolCard => {
+									const active = activeInstallation(kind);
+									const selected = toolSelection[kind];
+									const verified =
+										active &&
+										selected &&
+										settings.setupVerified?.[kind] === selected &&
+										active.release === selected;
+									return {
+										kind,
+										state: "install",
+										releases: setupToolReleases[kind].map((identity) => ({
+											identity,
+										})),
+										selected: selected ?? null,
+										onSelect: (identity) =>
 											update({
 												selectedRelease: {
 													...toolSelection,
@@ -296,34 +292,24 @@ export function SetupScreen({
 													...settings.setupFailures,
 													[kind]: undefined,
 												},
-											})
-										}
-									/>
-									<p className="m-0">
-										{copy.status}:{" "}
-										{settings.setupVerified?.[kind] === toolSelection[kind] &&
-										active?.release === toolSelection[kind]
-											? `${copy.verifiedTool} · ${active?.release ?? ""}`
-											: copy.available}
-									</p>
-									<p className="m-0 text-xs text-[var(--muted)]">
-										{setupToolExecutables(kind).join(", ")}
-									</p>
-									<Button
-										isDisabled={!toolSelection[kind] || platformMismatch}
-										onPress={() => requestInstall(kind)}
-									>
-										{copy.install}
-									</Button>
-								</section>
-							);
-						})}
-						{!toolsReady && (
-							<p role="status">
-								{copy.nextInstrument}:{" "}
-								{nextTool === "ffmpeg" ? copy.ffmpegName : copy.fpcalcName}
-							</p>
-						)}
+											}),
+										action: {
+											kind: "install",
+											disabled: !selected || platformMismatch,
+											onPress: () => requestInstall(kind),
+										},
+										verification: verified
+											? {
+													state: "verified",
+													release: active.release,
+												}
+											: { state: "available" },
+										executables: setupToolExecutables(kind),
+									};
+								},
+							)}
+							nextTool={toolsReady ? undefined : nextTool}
+						/>
 						<GitHubTokenDemo
 							locale={locale}
 							hasGitHubToken={settings.hasGitHubToken ?? false}

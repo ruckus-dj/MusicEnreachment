@@ -289,7 +289,6 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                     <MissingReleaseGroupRow
                       key={`missing_release_group:${item.missing_release_group.provider_key}`}
                       group={item.missing_release_group}
-                      presentation="artist"
                     />
                   );
                 }
