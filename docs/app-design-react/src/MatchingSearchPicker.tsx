@@ -1,5 +1,11 @@
 import { useState } from "react";
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
+import { useI18n } from "./i18n/I18nProvider";
+import { ManualSearchView } from "./matching-workspace/ManualSearchView";
+import {
+	type ManualSearchViewItem,
+	manualSearchMessage,
+} from "./matching-workspace/manualSearchContract";
 import {
 	DEFAULT_MATCHING_PAGE_SIZE,
 	matchingArtistCredit,
@@ -7,12 +13,6 @@ import {
 	matchingPage,
 	searchMatchingReleases,
 } from "./matchingSearch";
-import { useI18n } from "./i18n/I18nProvider";
-import { ManualSearchView } from "./matching-workspace/ManualSearchView";
-import {
-	manualSearchMessage,
-	type ManualSearchViewItem,
-} from "./matching-workspace/manualSearchContract";
 
 type Props = {
 	artists: CatalogArtist[];
@@ -33,6 +33,9 @@ function viewItem(
 		title: release.title,
 		provider: release.provider === "Local" ? "Local" : "MusicBrainz",
 		...(artistCredit ? { artistCredit } : {}),
+		...(details.disambiguation
+			? { disambiguation: details.disambiguation }
+			: {}),
 		...(details.date ? { date: details.date } : {}),
 		...(details.country ? { country: details.country } : {}),
 		trackCount: details.trackCount,

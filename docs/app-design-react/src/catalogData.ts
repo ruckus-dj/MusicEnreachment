@@ -70,6 +70,7 @@ export interface OriginalRelease {
 	id: string;
 	releaseGroupId?: string;
 	title: string;
+	disambiguation?: string;
 	artistId: string | null;
 	year: string;
 	country: string;

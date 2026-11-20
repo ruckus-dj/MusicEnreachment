@@ -44,13 +44,23 @@ export type LocalReleaseTrack = {
 
 export type LocalReleaseTrackDraft = Omit<LocalReleaseTrack, "durationInput">;
 
+export type LocalReleaseGenre = { id?: string; name: string };
+
 export type LocalReleaseDraft = {
 	title: string;
 	release_group_title: string;
 	artistIds: string[];
 	primaryType?: string;
+	secondaryTypes?: string[];
 	language?: string;
 	script?: string;
+	release_date?: string;
+	country_code?: string;
+	format?: string;
+	label?: string;
+	catalog_number?: string;
+	disambiguation?: string;
+	genres?: LocalReleaseGenre[];
 	tracks: LocalReleaseTrackDraft[];
 };
 

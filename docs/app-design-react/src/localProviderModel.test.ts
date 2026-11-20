@@ -10,6 +10,7 @@ import {
 	createLocalProviderState,
 	localProviderReleases,
 } from "./localProviderModel";
+import { matchingEditionDetails } from "./matchingSearch";
 
 it("adapts Local records into provider candidates and publishes with Local identity", () => {
 	const local = createLocalProviderState();
@@ -226,13 +227,19 @@ it("keeps Local track identities stable when tracks are reordered or deleted", (
 	expect(deleted.tracks[0].providerTrackId).toBeNull();
 });
 
-it("keeps a newly created Local record out of candidates until explicitly selected for matching", () => {
+it("projects saved Local edition metadata before any track positions are added", () => {
 	const local = createLocalProviderState();
 	const created = {
 		id: "created-local-release",
 		key: "local-release-key",
 		provider: "Local",
 		title: "New release",
+		disambiguation: "Reissue",
+		release_date: "2021-04",
+		country_code: "GB",
+		format: "CD",
+		label: "Example Label",
+		catalog_number: "EX-01",
 		artistIds: [],
 		tracks: [],
 	};
@@ -240,12 +247,22 @@ it("keeps a newly created Local record out of candidates until explicitly select
 		localProviderReleases(local).some((item) => item.id === created.id),
 	).toBe(false);
 	local.items.releases.unshift(created);
-	expect(
-		localProviderReleases(local).find((item) => item.id === created.id),
-	).toMatchObject({
+	const candidate = localProviderReleases(local).find(
+		(item) => item.id === created.id,
+	);
+	if (!candidate) throw new Error("Missing saved release");
+	expect(candidate).toMatchObject({
 		providerId: created.key,
 		title: created.title,
 		tracks: [],
+	});
+	expect(matchingEditionDetails(candidate)).toMatchObject({
+		disambiguation: "Reissue",
+		date: "2021-04",
+		country: "GB",
+		formats: ["CD"],
+		labels: [{ name: "Example Label", catalogNumber: "EX-01" }],
+		trackCount: 0,
 	});
 });
 

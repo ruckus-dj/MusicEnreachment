@@ -1,7 +1,7 @@
-import originalFixtures from "./original-fixtures.json";
 import type { OriginalRelease } from "./catalogData";
 import type { MetadataCredit } from "./metadata/model";
 import type { MetadataValues } from "./metadata/projection";
+import originalFixtures from "./original-fixtures.json";
 
 export type LocalProviderType = "artists" | "releases" | "recordings";
 export type LocalProviderNoticeDescriptor =
@@ -41,6 +41,7 @@ export type LocalProviderRecord = {
 	release_date?: string;
 	label?: string;
 	catalog_number?: string;
+	format?: string;
 	status?: string;
 	packaging?: string;
 	barcode?: string;
@@ -93,6 +94,8 @@ export function localProviderReleases(
 	// itself must be Local to enter this adapter.
 	const artists = state.items.artists;
 	const recordings = state.items.recordings;
+	const metadataFirst = (release: LocalProviderRecord, key: string) =>
+		release.metadataValues?.[key]?.[0] ?? "";
 	return state.items.releases
 		.filter((release) => release.provider === "Local")
 		.map((release) => {
@@ -114,15 +117,17 @@ export function localProviderReleases(
 				id: release.id,
 				provider: "Local",
 				title:
-					release.metadataValues?.album?.[0] ??
-					release.title ??
-					release.release_group_title ??
+					release.metadataValues?.album?.[0] ||
+					release.title ||
+					release.release_group_title ||
 					"",
 				artistId,
-				year: release.release_date ?? "",
-				country: release.country_code ?? "",
-				catalog: release.catalog_number ?? "",
-				label: release.label ?? "",
+				year: release.release_date || metadataFirst(release, "releasedate"),
+				country:
+					release.country_code || metadataFirst(release, "releasecountry"),
+				catalog:
+					release.catalog_number || metadataFirst(release, "catalognumber"),
+				label: release.label || metadataFirst(release, "recordlabel"),
 				providerId: release.key,
 				credits: metadataCredits,
 				metadataValues: structuredClone(release.metadataValues ?? {}),
@@ -181,8 +186,15 @@ export function localProviderReleases(
 					};
 				}),
 			};
+			const format = release.format || release.metadataValues?.media?.[0] || "";
+			const disambiguation =
+				release.disambiguation ||
+				release.metadataValues?.albumversion?.[0] ||
+				"";
 			return Object.assign(candidate, {
 				script: release.script ?? release.metadataValues?.script?.[0],
+				...(disambiguation ? { disambiguation } : {}),
+				...(format ? { media: [{ title: "", format, positions: [] }] } : {}),
 			});
 		});
 }

@@ -25,6 +25,7 @@ import {
 	trackSearchText,
 } from "./catalogViewModel";
 import type { DeletionOperation } from "./DeletionRequest";
+import { IncomingScreen } from "./features/incoming/IncomingScreen";
 import {
 	combineLibraryAlbumEntries,
 	LibraryPagination,
@@ -36,8 +37,13 @@ import {
 	splitLibraryAlbumEntries,
 	useLibraryRouteState,
 } from "./features/library";
-import { OperationsScreen } from "./features/operations/OperationsScreen";
+import { CatalogFilter as CatalogFilterControl } from "./features/library/CatalogFilter";
+import { LibraryCatalogRows } from "./features/library/LibraryCatalogRows";
+import { SelectionDock } from "./features/library/SelectionDock";
+import { LocalCatalogScreen } from "./features/local-catalog";
 import { LocalReleaseEditor } from "./features/local-release/LocalReleaseEditor";
+import { OperationsScreen } from "./features/operations/OperationsScreen";
+import { createLocalCatalogDemoState } from "./fixtures/localCatalogDemo";
 import {
 	appendDemoLocalRecord,
 	checkDemoReleases,
@@ -50,20 +56,13 @@ import {
 } from "./fixtures/localReleaseDemo";
 import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "./fixtures/useSourceScanDemoProvider";
-import { IncomingScreen } from "./features/incoming/IncomingScreen";
 import { useI18n } from "./i18n";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
-import { CatalogFilter as CatalogFilterControl } from "./features/library/CatalogFilter";
-import { LibraryCatalogRows } from "./features/library/LibraryCatalogRows";
-import { LocalProviderScreen } from "./LocalProviderScreen";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "./libraryDeletionModel";
-import {
-	createLocalProviderState,
-	localProviderReleases,
-} from "./localProviderModel";
+import { localProviderReleases } from "./localProviderModel";
 import { MatchingScreen } from "./MatchingScreen";
 import type { ManagedPathObservation } from "./managedPublicationDeletionModel";
 import {
@@ -80,7 +79,6 @@ import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "./publicationOutput";
-import { SelectionDock } from "./features/library/SelectionDock";
 import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
 import { SetupScreen } from "./SetupScreen";
 import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
@@ -200,7 +198,9 @@ export function CatalogDemo({
 		key: Parameters<typeof catalogMessage>[1],
 		values?: Record<string, string | number>,
 	) => catalogMessage(locale, key, values);
-	const [localProvider, setLocalProvider] = useState(createLocalProviderState);
+	const [localProvider, setLocalProvider] = useState(
+		createLocalCatalogDemoState,
+	);
 	const [incoming, setIncoming] = useState(createIncomingState);
 	const incomingCount = incoming.groups.filter(
 		(group) => !group.processed,
@@ -979,31 +979,10 @@ export function CatalogDemo({
 	}
 	if (route === "local")
 		return (
-			<LocalProviderScreen
+			<LocalCatalogScreen
 				state={localProvider}
 				onLoadGenres={loadGenres}
 				onState={setLocalProvider}
-				onMatchRelease={(release) => {
-					const next = structuredClone(incoming);
-					const group = next.groups.find((item) => item.id === next.groupId);
-					if (!group) return;
-					group.mode = "provider";
-					group.candidateId = release.id;
-					next.groupId = group.id;
-					next.selectedTarget = null;
-					next.plan = null;
-					next.notice = "";
-					next.noticeDescriptor = null;
-					next.uiNotice = {
-						namespace: "library",
-						id: "localReleaseSelected",
-						params: {
-							title: release.title ?? release.release_group_title ?? "",
-						},
-					};
-					setIncoming(next);
-					window.location.hash = `match/${group.id}`;
-				}}
 				genresLoaded={settings.genresLoaded}
 			/>
 		);
@@ -1094,8 +1073,14 @@ export function CatalogDemo({
 					);
 					returnToMatching();
 				}}
-				onSave={(data) => {
-					const release = newDemoLocalRecord(data);
+				onSave={({ genres, ...data }) => {
+					const release = newDemoLocalRecord({
+						...data,
+						genres: genres?.map((genre) => genre.id ?? genre.name),
+						genreNamesById: Object.fromEntries(
+							(genres ?? []).map((genre) => [genre.id ?? genre.name, genre.name]),
+						),
+					});
 					setLocalProvider((current) =>
 						appendDemoLocalRecord(current, "releases", release),
 					);

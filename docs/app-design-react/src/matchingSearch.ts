@@ -4,6 +4,7 @@ import { normalized } from "./incomingModel";
 export const DEFAULT_MATCHING_PAGE_SIZE = 10;
 
 export type MatchingEditionDetails = {
+	disambiguation?: string;
 	date?: string;
 	country?: string;
 	trackCount: number;
@@ -35,7 +36,9 @@ export function matchingEditionDetails(
 	const date = present(release.metadata?.date) ?? present(release.year);
 	const country =
 		present(release.metadata?.country) ?? present(release.country);
+	const disambiguation = present(release.disambiguation);
 	return {
+		...(disambiguation ? { disambiguation } : {}),
 		...(date ? { date } : {}),
 		...(country ? { country } : {}),
 		trackCount: release.tracks.length,

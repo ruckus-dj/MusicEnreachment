@@ -13,7 +13,6 @@ export type ManualSearchViewItem = {
 	formats: string[];
 	mediaCount: number;
 	labels: { name?: string; catalogNumber?: string }[];
-	score?: number;
 };
 
 export type ManualSearchViewResults = {
@@ -60,13 +59,14 @@ export const manualSearchViewMessages = {
 		search: "Search",
 		searching: "Searching editions…",
 		noMatches: "No matches found.",
-		score: "MusicBrainz score: {score}",
+		releaseArtist: "Artist: {artist}",
 		releaseDate: "Released: {date}",
 		releaseCountry: "Country: {country}",
 		releaseTracks: "Tracks: {count}",
 		releaseFormats: "Format: {formats}",
 		discCount: "{count} discs",
 		releaseLabels: "Labels: {labels}",
+		catalogNumbers: "Catalog no.: {numbers}",
 		selectRelease: "Choose",
 		selectReleaseDescribed: "Choose “{title}” ({details})",
 		selectedRelease: "Selected",
@@ -91,13 +91,14 @@ export const manualSearchViewMessages = {
 		search: "Искать",
 		searching: "Ищем издания…",
 		noMatches: "Совпадений нет.",
-		score: "Оценка MusicBrainz: {score}",
+		releaseArtist: "Исполнитель: {artist}",
 		releaseDate: "Дата релиза: {date}",
 		releaseCountry: "Страна: {country}",
 		releaseTracks: "Треков: {count}",
 		releaseFormats: "Формат: {formats}",
 		discCount: "носителей: {count}",
 		releaseLabels: "Лейблы: {labels}",
+		catalogNumbers: "Кат. №: {numbers}",
 		selectRelease: "Выбрать",
 		selectReleaseDescribed: "Выбрать «{title}» ({details})",
 		selectedRelease: "Выбрано",

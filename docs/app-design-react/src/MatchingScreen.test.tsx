@@ -1,18 +1,18 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { MatchingScreen } from "./MatchingScreen";
-import {
-	createIncomingState,
-	incomingFixtures,
-	type IncomingReleases,
-} from "./incomingModel";
 import type { CatalogArtist } from "./catalogData";
 import { I18nProvider, useI18n } from "./i18n";
+import {
+	createIncomingState,
+	type IncomingReleases,
+	incomingFixtures,
+} from "./incomingModel";
 import {
 	createLocalProviderState,
 	localProviderReleases,
 } from "./localProviderModel";
+import { MatchingScreen } from "./MatchingScreen";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(
 	HTMLElement.prototype,
@@ -85,6 +85,8 @@ it("switches between Local and MusicBrainz search results without losing the dra
 	const remote = search.getAllByRole("button", {
 		name: /^Выбрать «Northern Lines» \(MusicBrainz,/,
 	})[0];
+	expect(local).toHaveAccessibleName(/Исполнитель: Mira Vale.*Треков: 1\b/);
+	expect(remote).toHaveAccessibleName(/Исполнитель: Mira Vale.*Треков: 11\b/);
 	expect(search.getByRole("button", { pressed: true })).toHaveAccessibleName(
 		/MusicBrainz/,
 	);
