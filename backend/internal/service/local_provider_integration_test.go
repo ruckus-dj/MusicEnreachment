@@ -38,13 +38,16 @@ func TestLocalProviderCRUDPreservesIdentityAndCrossProviderReferencesPostgreSQL(
 	catalog := NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), nil)
 	created, err := catalog.Create(ctx, "release", LocalProviderItem{
 		Title: "Local edition", ReleaseGroupTitle: "Local group",
-		Credits: []LocalProviderCredit{{ArtistID: externalArtistID, Name: "Live credit", JoinPhrase: " & "}},
-		Tracks:  []LocalProviderTrack{{RecordingID: externalRecordingID}},
+		Credits: []LocalProviderCredit{
+			{ArtistID: externalArtistID, Name: "Live credit", JoinPhrase: " & "},
+			{ArtistID: externalArtistID, Name: "Alpha credit"},
+		},
+		Tracks: []LocalProviderTrack{{RecordingID: externalRecordingID}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.ProviderCode != "local" || created.ProviderKey == "" || len(created.Credits) != 1 || created.Credits[0].ProviderID != externalProviderID || created.Credits[0].ProviderCode != "external-fixture" {
+	if created.ProviderCode != "local" || created.ProviderKey == "" || len(created.Credits) != 2 || created.Credits[0].ProviderID != externalProviderID || created.Credits[0].ProviderCode != "external-fixture" || created.Credits[1].Name != "Alpha credit" {
 		t.Fatalf("created release identity and credit ownership = %#v", created)
 	}
 	if len(created.Tracks) != 1 || created.Tracks[0].ProviderID != externalProviderID || created.Tracks[0].ProviderCode != "external-fixture" || created.Tracks[0].Position != 0 || created.Tracks[0].DisplayedNumber != "1" {
@@ -67,6 +70,9 @@ func TestLocalProviderCRUDPreservesIdentityAndCrossProviderReferencesPostgreSQL(
 		}
 		if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != created.ID {
 			t.Fatalf("multi-term local release search across title, credit name and artist name = %#v", page)
+		}
+		if edition := page.Items[0].Edition; edition == nil || edition.ArtistCredit != "Live credit & Alpha credit" || edition.TrackCount != 1 {
+			t.Fatalf("local release %q edition summary = %#v", kind, edition)
 		}
 		page, err = catalog.List(ctx, kind, "renamed live absent", "local", 10, 0)
 		if err != nil {
@@ -112,5 +118,12 @@ func TestLocalProviderCRUDPreservesIdentityAndCrossProviderReferencesPostgreSQL(
 	}
 	if present || medium.Valid || position.Valid {
 		t.Fatalf("omitted track retained live position: present=%v medium=%v position=%v", present, medium, position)
+	}
+	page, err := catalog.List(ctx, "releases", "renamed", "local", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Edition == nil || page.Items[0].Edition.ArtistCredit != "Live credit & Alpha credit" || page.Items[0].Edition.TrackCount != 0 {
+		t.Fatalf("retired local release edition summary = %#v", page)
 	}
 }

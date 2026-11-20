@@ -191,6 +191,13 @@ function parseItems(payload: unknown, offset: number, limit: number) {
     seen.add(id);
     const artistCredit = parseArtistCredit(value["artist-credit"]);
     const disambiguation = nonEmptyString(value.disambiguation);
+    const releaseGroup = value["release-group"];
+    const releaseGroupTitle =
+      releaseGroup &&
+      typeof releaseGroup === "object" &&
+      !Array.isArray(releaseGroup)
+        ? nonEmptyString((releaseGroup as Record<string, unknown>).title)
+        : undefined;
     const date = nonEmptyString(value.date);
     const country = nonEmptyString(value.country);
     const trackCount =
@@ -201,6 +208,9 @@ function parseItems(payload: unknown, offset: number, limit: number) {
       title,
       provider: "MusicBrainz",
       ...(artistCredit ? { artistCredit } : {}),
+      ...(releaseGroupTitle && releaseGroupTitle !== title
+        ? { releaseGroupTitle }
+        : {}),
       ...(disambiguation ? { disambiguation } : {}),
       ...(date ? { date } : {}),
       ...(country ? { country } : {}),
@@ -252,10 +262,20 @@ function parseLocalPage(
       throw new ManualPickerMessageError("invalidLocalResults");
     seen.add(id);
     const releaseGroupTitle = nonEmptyString(value.release_group_title);
+    const edition =
+      value.edition &&
+      typeof value.edition === "object" &&
+      !Array.isArray(value.edition)
+        ? (value.edition as Record<string, unknown>)
+        : {};
+    const artistCredit = nonEmptyString(edition.artist_credit);
+    const trackCount = nonNegativeInteger(edition.track_count);
     return {
       id,
       title,
       provider: "Local",
+      ...(artistCredit ? { artistCredit } : {}),
+      ...(trackCount !== undefined ? { trackCount } : {}),
       ...(releaseGroupTitle && releaseGroupTitle !== title
         ? { releaseGroupTitle }
         : {}),
@@ -377,7 +397,13 @@ export function ManualSearchPicker({
       count: (localPage?.total ?? 0) + (parsed?.count ?? 0),
       items: [
         ...localItems,
-        ...(parsed ? parsed.items.slice(0, remaining) : []),
+        ...(parsed
+          ? parsed.items
+              .slice(0, remaining)
+              .map((item) =>
+                localEnabled ? { ...item, score: undefined } : item,
+              )
+          : []),
       ],
     };
   }

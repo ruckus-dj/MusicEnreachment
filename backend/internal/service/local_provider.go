@@ -49,6 +49,12 @@ type LocalProviderItem struct {
 	Tags              []string                         `json:"tags,omitempty"`
 	Credits           []LocalProviderCredit            `json:"credits"`
 	Tracks            []LocalProviderTrack             `json:"tracks"`
+	Edition           *LocalProviderEdition            `json:"edition,omitempty"`
+}
+
+type LocalProviderEdition struct {
+	ArtistCredit string `json:"artist_credit,omitempty"`
+	TrackCount   int    `json:"track_count"`
 }
 
 type LocalProviderCredit struct {
@@ -267,6 +273,12 @@ func validLocalProviderKind(kind string) bool {
 
 func localProviderItem(item persistence.LocalProviderItem) (LocalProviderItem, error) {
 	result := LocalProviderItem{ID: item.ID, ProviderID: item.ProviderID, ProviderCode: item.ProviderCode, ProviderKey: item.ProviderKey, Kind: item.Kind, Name: item.Name, SortName: item.SortName, Title: item.Title, ReleaseGroupTitle: item.ReleaseGroupTitle, DurationMS: item.DurationMS, PrimaryType: item.PrimaryType, SecondaryTypes: item.SecondaryTypes, Language: item.Language, Script: item.Script, Tags: item.Tags, Credits: make([]LocalProviderCredit, 0, len(item.Credits)), Tracks: make([]LocalProviderTrack, 0, len(item.Tracks))}
+	if item.Edition != nil {
+		result.Edition = &LocalProviderEdition{
+			ArtistCredit: item.Edition.ArtistCredit,
+			TrackCount:   item.Edition.TrackCount,
+		}
+	}
 	if err := json.Unmarshal(item.Genres, &result.Genres); err != nil {
 		return LocalProviderItem{}, fmt.Errorf("decode local provider genres: %w", err)
 	}

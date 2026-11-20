@@ -37,6 +37,14 @@ type LocalProviderTrack struct {
 	DurationOverrideMS  *int64    `json:"duration_override_ms"`
 }
 
+// LocalProviderEdition is the compact edition summary returned for release
+// list rows. Only canonical positions from the provider release graph are
+// counted; credits retain their stored join phrases verbatim.
+type LocalProviderEdition struct {
+	ArtistCredit string `json:"artist_credit,omitempty"`
+	TrackCount   int    `json:"track_count"`
+}
+
 type LocalProviderItem struct {
 	ID                uuid.UUID             `json:"id"`
 	ProviderID        uuid.UUID             `json:"provider_id"`
@@ -56,6 +64,7 @@ type LocalProviderItem struct {
 	Tags              []string              `json:"tags"`
 	Credits           []LocalProviderCredit `json:"credits"`
 	Tracks            []LocalProviderTrack  `json:"tracks"`
+	Edition           *LocalProviderEdition `json:"edition,omitempty"`
 }
 
 type LocalProviderList struct {
@@ -141,7 +150,78 @@ func (r *LocalProviderRepository) List(ctx context.Context, kind, query, provide
 	if err := rows.Err(); err != nil {
 		return LocalProviderList{}, fmt.Errorf("iterate local provider catalog: %w", err)
 	}
+	if kind == "releases" {
+		if err := r.readReleaseEditions(ctx, result.Items); err != nil {
+			return LocalProviderList{}, err
+		}
+	}
 	return result, nil
+}
+
+// readReleaseEditions projects Local release summaries for the current page.
+// A cached external release graph may be partial, so it cannot supply a total.
+func (r *LocalProviderRepository) readReleaseEditions(ctx context.Context, items []LocalProviderItem) error {
+	ids := make([]uuid.UUID, 0, len(items))
+	editions := make(map[uuid.UUID]*LocalProviderEdition, len(items))
+	for i := range items {
+		if items[i].ProviderCode != "local" {
+			continue
+		}
+		items[i].Edition = &LocalProviderEdition{}
+		ids = append(ids, items[i].ID)
+		editions[items[i].ID] = items[i].Edition
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		WITH page_releases AS (
+			SELECT id, provider_id FROM provider_release WHERE id IN (?)
+		),
+		credits AS (
+			SELECT c.release_id,
+				string_agg(COALESCE(NULLIF(c.credit_name,''), NULLIF(a.name,''), '') || c.name_join_phrase, '' ORDER BY c.position) AS artist_credit
+			FROM page_releases page
+			JOIN provider_release_artist_credit c ON c.provider_id=page.provider_id AND c.release_id=page.id
+			JOIN provider_artist a ON a.id=c.artist_id
+			WHERE c.present
+			GROUP BY c.release_id
+		),
+		tracks AS (
+			SELECT t.release_id, count(*) AS track_count
+			FROM page_releases page
+			JOIN provider_release_track t ON t.provider_id=page.provider_id AND t.release_id=page.id
+			WHERE t.present
+			GROUP BY t.release_id
+		)
+		SELECT page.id, credits.artist_credit, COALESCE(tracks.track_count, 0)
+		FROM page_releases page
+		LEFT JOIN credits ON credits.release_id=page.id
+		LEFT JOIN tracks ON tracks.release_id=page.id`, bun.List(ids))
+	if err != nil {
+		return fmt.Errorf("read local provider release editions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id uuid.UUID
+		var artistCredit sql.NullString
+		var trackCount int
+		if err := rows.Scan(&id, &artistCredit, &trackCount); err != nil {
+			return fmt.Errorf("scan local provider release edition: %w", err)
+		}
+		edition, ok := editions[id]
+		if !ok {
+			continue
+		}
+		if artistCredit.Valid {
+			edition.ArtistCredit = artistCredit.String
+		}
+		edition.TrackCount = trackCount
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate local provider release editions: %w", err)
+	}
+	return nil
 }
 
 func (r *LocalProviderRepository) Read(ctx context.Context, kind string, id uuid.UUID) (LocalProviderItem, error) {

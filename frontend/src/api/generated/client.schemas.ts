@@ -1416,6 +1416,11 @@ export interface LocalProviderCreditInput {
   join_phrase: string;
 }
 
+export interface LocalProviderEdition {
+  artist_credit?: string;
+  track_count: number;
+}
+
 export interface LocalProviderTrack {
   displayed_number: string;
   /** @nullable */
@@ -1438,6 +1443,7 @@ export interface LocalProviderItem {
   /** @nullable */
   credits: LocalProviderCredit[] | null;
   duration_ms?: number;
+  edition?: LocalProviderEdition;
   /** @nullable */
   genres: GenreReference[] | null;
   id: string;

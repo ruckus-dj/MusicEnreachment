@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, it, vi } from "vitest";
 import { subscribeToOperation } from "../../api/client/operations";
@@ -392,6 +398,105 @@ it("shows a localized fallback for a detail-less rejection without extra request
     "Поиск не принят (HTTP 503).",
   );
   expect(starts).toBe(1);
+
+  queryClient.clear();
+});
+
+it("shows Local and MusicBrainz editions with shared metadata and no relevance score or implicit selection", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+
+  const localReleaseId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const musicBrainzReleaseId = "11111111-1111-4111-8111-111111111111";
+  const onSelectRelease = vi.fn();
+  const onSelectLocalRelease = vi.fn();
+  server.use(
+    http.get("/api/provider-catalog/releases", () =>
+      HttpResponse.json({
+        items: [
+          {
+            id: localReleaseId,
+            title: "Local anthology",
+            provider_code: "local",
+            edition: { artist_credit: "Various Artists", track_count: 21 },
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      }),
+    ),
+    http.post("/api/incoming-groups/group-1/manual-search", () =>
+      HttpResponse.json({ operation_id: "operation-1" }, { status: 202 }),
+    ),
+    http.get("/api/operations/:operationId", ({ params }) =>
+      HttpResponse.json({
+        id: params.operationId,
+        kind: "provider_fetch",
+        state: "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-11-14T00:00:00Z",
+        updated_at: "2026-11-14T00:00:01Z",
+      }),
+    ),
+    http.get("/api/incoming-groups/group-1/manual-search/:operationId", () =>
+      HttpResponse.json({
+        payload: {
+          count: 1,
+          offset: 0,
+          releases: [
+            {
+              id: musicBrainzReleaseId,
+              title: "MusicBrainz anthology",
+              "artist-credit": [{ name: "Anacondaz" }],
+              "track-count": 12,
+              score: 100,
+            },
+          ],
+        },
+      }),
+    ),
+  );
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <ManualSearchPicker
+          groupId="group-1"
+          groupRevision="revision-1"
+          onSelectRelease={onSelectRelease}
+          onSelectLocalRelease={onSelectLocalRelease}
+        />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Artist and release title" }),
+    { target: { value: freeformQuery } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText("Results 1–2 of 2");
+
+  const localRow = screen.getByText("Local anthology").closest("li");
+  const musicBrainzRow = screen
+    .getByText("MusicBrainz anthology")
+    .closest("li");
+  if (!localRow || !musicBrainzRow) throw new Error("Missing result rows");
+  expect(within(localRow).getByText("Various Artists")).toBeInTheDocument();
+  expect(within(localRow).getByText(/Tracks: 21/)).toBeInTheDocument();
+  expect(within(musicBrainzRow).getByText("Anacondaz")).toBeInTheDocument();
+  expect(within(musicBrainzRow).getByText(/Tracks: 12/)).toBeInTheDocument();
+  expect(
+    within(musicBrainzRow).queryByText(/MusicBrainz score/),
+  ).not.toBeInTheDocument();
+  expect(onSelectRelease).not.toHaveBeenCalled();
+  expect(onSelectLocalRelease).not.toHaveBeenCalled();
 
   queryClient.clear();
 });
