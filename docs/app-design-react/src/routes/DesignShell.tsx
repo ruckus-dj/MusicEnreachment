@@ -1,8 +1,8 @@
 import { type ReactNode, useSyncExternalStore } from "react";
+import { LanguageControl } from "../components/LanguageControl";
+import { ThemeControl } from "../components/ThemeControl";
 import { useI18n } from "../i18n";
 import { shell } from "../i18n/namespaces/shell";
-import { LanguageControl } from "./LanguageControl";
-import { ThemeControl } from "./ThemeControl";
 import { ShellView } from "./ShellView";
 
 const sections = [

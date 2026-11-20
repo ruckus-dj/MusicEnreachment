@@ -155,10 +155,6 @@
   box-shadow: 0 0 0 100vmax rgb(0 0 0 / 50%);
 }
 
-.settings-dialog--destructive {
-  border-color: var(--settings-error);
-}
-
 /* The operation row is a fieldset so its implicit group role carries the
    operation name; neutralize the user-agent box to keep the previous layout. */
 .settings-screen .setup-operation {

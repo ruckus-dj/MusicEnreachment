@@ -11,12 +11,26 @@ import { AppButton } from "./AppButton";
 const optionClassName =
   "react-aria-ListBoxItem cursor-pointer rounded-sm px-2 py-[7px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:outline-none data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]";
 
+const messages = {
+  en: {
+    language: "Interface language",
+    system: "System default",
+    read: "Language preference is active but could not be read from browser storage.",
+    write:
+      "Language preference is active but could not be saved in browser storage.",
+  },
+  ru: {
+    language: "Язык интерфейса",
+    system: "Как в системе",
+    read: "Настройка языка действует, но не удалось прочитать её из хранилища браузера.",
+    write:
+      "Настройка языка действует, но не удалось сохранить её в хранилище браузера.",
+  },
+} as const;
+
 export function LanguageControl() {
-  const { locale, preference, setPreference, persistenceError } = useI18n();
-  const copy =
-    locale === "ru"
-      ? { language: "Язык интерфейса", system: "Как в системе" }
-      : { language: "Interface language", system: "System default" };
+  const { locale, preference, setPreference, persistenceIssue } = useI18n();
+  const copy = messages[locale];
 
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -68,12 +82,12 @@ export function LanguageControl() {
           </ListBox>
         </Popover>
       </Select>
-      {persistenceError && (
+      {persistenceIssue && (
         <span
           role="status"
           className="max-w-[220px] text-[11px] text-[var(--warning)]"
         >
-          {persistenceError}
+          {copy[persistenceIssue]}
         </span>
       )}
     </div>

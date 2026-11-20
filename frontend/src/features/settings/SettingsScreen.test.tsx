@@ -1132,6 +1132,113 @@ describe("SettingsScreen", () => {
     expect(template).toBe(settings.settings.publication_path_template);
   });
 
+  it("keeps the picked output directory as a draft until confirmation confirms no work is running", async () => {
+    let running = true;
+    let savedOutput = settings.settings.output_directory;
+    const runningReads = vi.fn();
+    const writes = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as {
+        output_directory: string;
+        expected: { output_directory: string };
+      };
+      expect(body).toEqual({
+        output_directory: "/srv/music/candidate",
+        expected: { output_directory: "/srv/music" },
+      });
+      savedOutput = body.output_directory;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/setup/directories", ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get("offset")).toBe("0");
+        const path = url.searchParams.get("path") ?? "";
+        if (path === "/srv/music/candidate")
+          return json({
+            current_path: path,
+            parent_path: "/srv/music",
+            directories: [],
+            roots: [],
+            offset: 0,
+          });
+        return json({
+          current_path: "/srv/music",
+          parent_path: "/srv",
+          directories: ["/srv/music/candidate"],
+          roots: [],
+          offset: 0,
+        });
+      }),
+      http.get("/api/operations", ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get("state") !== "running")
+          return json({ operations: [] });
+        runningReads();
+        return json({
+          operations: running ? [{ ...operation, state: "running" }] : [],
+        });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, output_directory: savedOutput },
+        }),
+      ),
+      http.put("/api/settings/runtime", writes),
+    );
+    render(<SettingsScreen />);
+    await selectSettingsTab("Папки");
+    const outputInput = await screen.findByLabelText("Каталог публикации");
+    fireEvent.click(
+      within(outputInput.parentElement as HTMLElement).getByRole("button", {
+        name: "Выбрать папку",
+      }),
+    );
+    const picker = await screen.findByRole("dialog", {
+      name: "Папка на сервере",
+    });
+    fireEvent.click(
+      await within(picker).findByRole("button", { name: "candidate" }),
+    );
+    const choose = within(picker).getByRole("button", {
+      name: "Выбрать папку",
+    });
+    await waitFor(() => expect(choose).toBeEnabled());
+    fireEvent.click(choose);
+    expect(outputInput).toHaveValue("/srv/music/candidate");
+    expect(writes).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сменить каталог публикации" }),
+    );
+    const confirmation = await screen.findByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    const confirm = within(confirmation).getByRole("button", {
+      name: "Подтвердить смену каталога публикации",
+    });
+    fireEvent.click(confirm);
+    expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+      "Дождитесь завершения выполняющихся операций, прежде чем менять каталог публикации.",
+    );
+    expect(runningReads).toHaveBeenCalledOnce();
+    expect(writes).not.toHaveBeenCalled();
+
+    running = false;
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Сменить каталог публикации?",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Каталог публикации изменён.")).toBeInTheDocument();
+    expect(outputInput).toHaveValue("/srv/music/candidate");
+  });
+
   it("continues queued autosaves and initial loading after an earlier write fails", async () => {
     let level = "info";
     let releaseFormat!: () => void;

@@ -1,36 +1,41 @@
 import { useEffect, useState } from "react";
 import { Tooltip, TooltipTrigger } from "react-aria-components";
 import { useI18n } from "../i18n/I18nProvider";
-import { shellMessages } from "../i18n/shellMessages";
 import { AppButton } from "./AppButton";
+import {
+  readThemePreference,
+  saveThemePreference,
+  type ThemePreference,
+} from "./themePreference";
 
-export type ThemePreference = "system" | "light" | "dark";
+export type { ThemePreference } from "./themePreference";
+export { resetThemeSessionPreference } from "./themePreference";
 
-const storageKey = "melotrove-theme";
 const themes: ThemePreference[] = ["system", "light", "dark"];
 
-// Keep a page-session choice even when storage is unavailable or the control remounts.
-let sessionPreference: ThemePreference | undefined;
-
-export function resetThemeSessionPreference() {
-  sessionPreference = undefined;
-}
+const messages = {
+  en: {
+    theme: "Theme",
+    nextTheme: "Next theme",
+    systemTheme: "System default",
+    lightTheme: "Light",
+    darkTheme: "Dark",
+    themeWarning:
+      "Could not save the theme preference. Your choice lasts until the page is closed.",
+  },
+  ru: {
+    theme: "Тема",
+    nextTheme: "Следующая тема",
+    systemTheme: "Как в системе",
+    lightTheme: "Светлая",
+    darkTheme: "Тёмная",
+    themeWarning:
+      "Не удалось сохранить тему. Выбор действует до закрытия страницы.",
+  },
+} as const;
 
 function nextTheme(theme: ThemePreference): ThemePreference {
   return themes[(themes.indexOf(theme) + 1) % themes.length];
-}
-
-function readPreference(): ThemePreference {
-  if (sessionPreference) return sessionPreference;
-  let preference: ThemePreference = "system";
-  try {
-    const stored = window.localStorage.getItem(storageKey);
-    if (stored === "light" || stored === "dark") preference = stored;
-  } catch {
-    // Storage is optional; keep the default usable for this page session.
-  }
-  sessionPreference = preference;
-  return preference;
 }
 
 function systemPrefersDark(): boolean {
@@ -90,13 +95,14 @@ function ThemeIcon({ theme }: { theme: ThemePreference }) {
 
 export function ThemeControl() {
   const { locale } = useI18n();
-  const copy = shellMessages[locale];
+  const copy = messages[locale];
   const labels: Record<ThemePreference, string> = {
     system: copy.systemTheme,
     light: copy.lightTheme,
     dark: copy.darkTheme,
   };
-  const [preference, setPreference] = useState<ThemePreference>(readPreference);
+  const [preference, setPreference] =
+    useState<ThemePreference>(readThemePreference);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [warning, setWarning] = useState(false);
 
@@ -131,13 +137,7 @@ export function ThemeControl() {
           onPress={() => {
             const next = nextTheme(preference);
             setPreference(next);
-            sessionPreference = next;
-            try {
-              window.localStorage.setItem(storageKey, next);
-              setWarning(false);
-            } catch {
-              setWarning(true);
-            }
+            setWarning(!saveThemePreference(next));
           }}
         >
           <ThemeIcon theme={preference} />

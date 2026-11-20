@@ -85,21 +85,6 @@ const english = {
   unhealthyConfiguration: "Configuration issues were found.",
   platformUnavailable:
     "Platform unavailable: tool operations are disabled. Settings can still be corrected.",
-  publication: "Publication",
-  outputDirectory: "Output directory",
-  unsavedPublication: "Publication changes are unsaved.",
-  publicationTemplate: "Publication path template",
-  templateHelp:
-    "Tokens in braces are filled from metadata. Add a fallback after | when a value may be missing. The template can contain a file name only, not directories.",
-  unsavedTemplate: "The publication path template has unsaved changes.",
-  saveTemplate: "Save path template",
-  changeOutput: "Change output directory",
-  sourceProcessing: "Source processing",
-  workDirectory: "Work directory for staged copies",
-  workDirectoryHelp:
-    "This setting is not required for Setup or source-root registration, but is required to process staged sources. It cannot be changed while operations or retained copies exist.",
-  unsavedWorkDirectory: "The work directory has unsaved changes.",
-  saveWorkDirectory: "Save work directory",
   metadataProviders: "Metadata providers",
   acoustIdKey: "AcoustID application key",
   keySaved: "The key is saved. Its value cannot be read from settings.",
@@ -160,10 +145,6 @@ const english = {
     "The current saved value for “{label}” is {value}. Confirm to replace it with this draft. If another conflict occurs, you will need to confirm again.",
   replaceSaved: "Replace saved value",
   cancel: "Cancel",
-  changePublicationTitle: "Change publication directory?",
-  changePublicationWarning:
-    "Changing the output directory cancels queued operations and clears the application's references to previous files. The previous files themselves are not deleted.",
-  confirmOutputChange: "Confirm output directory change",
   confirmInstallation: "Confirm installation of {release}",
   installDoesNotActivate:
     "Installation does not activate the selected version.",
@@ -288,21 +269,6 @@ const russian: Record<SettingsMessageKey, string> = {
   unhealthyConfiguration: "Есть проблемы конфигурации.",
   platformUnavailable:
     "Платформа недоступна: операции с инструментами отключены. Настройки можно исправлять.",
-  publication: "Публикация",
-  outputDirectory: "Каталог публикации",
-  unsavedPublication: "Есть несохранённые изменения публикации.",
-  publicationTemplate: "Шаблон пути публикации",
-  templateHelp:
-    "Токены в фигурных скобках подставляются из метаданных; для отсутствующего значения задайте альтернативу через |. Шаблон может содержать только имя файла без каталогов.",
-  unsavedTemplate: "Есть несохранённый шаблон пути публикации.",
-  saveTemplate: "Сохранить шаблон пути",
-  changeOutput: "Сменить каталог публикации",
-  sourceProcessing: "Обработка источников",
-  workDirectory: "Рабочая папка для подготовленных копий",
-  workDirectoryHelp:
-    "Настройка не требуется для первичной настройки или регистрации корня источников, но обязательна для обработки подготовленных источников. Каталог нельзя изменить, пока существуют операции или сохранённые копии.",
-  unsavedWorkDirectory: "Есть несохранённые изменения рабочей папки.",
-  saveWorkDirectory: "Сохранить рабочую папку",
   metadataProviders: "Провайдеры метаданных",
   acoustIdKey: "Ключ приложения AcoustID",
   keySaved: "Ключ сохранён. Его значение нельзя прочитать из настроек.",
@@ -364,10 +330,6 @@ const russian: Record<SettingsMessageKey, string> = {
     "Для «{label}» сейчас сохранено {value}. Подтвердите замену этим черновиком. При новом конфликте потребуется подтвердить ещё раз.",
   replaceSaved: "Заменить сохранённое значение",
   cancel: "Отмена",
-  changePublicationTitle: "Сменить каталог публикации?",
-  changePublicationWarning:
-    "Изменение каталога отменит все операции в очереди и очистит ссылки приложения на прежние файлы. Сами файлы не удаляются.",
-  confirmOutputChange: "Подтвердить смену каталога публикации",
   confirmInstallation: "Подтверждение установки {release}",
   installDoesNotActivate: "Установка не активирует выбранную версию.",
   confirmConflicts: "Подтвердить перечисленные конфликты",

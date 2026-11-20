@@ -17,19 +17,6 @@ type PreferenceState = {
   persistenceIssue: "read" | "write" | null;
 };
 
-const persistenceMessages: Record<Locale, Record<"read" | "write", string>> = {
-  en: {
-    read: "Language preference is active but could not be read from browser storage.",
-    write:
-      "Language preference is active but could not be saved in browser storage.",
-  },
-  ru: {
-    read: "Настройка языка действует, но не удалось прочитать её из хранилища браузера.",
-    write:
-      "Настройка языка действует, но не удалось сохранить её в хранилище браузера.",
-  },
-};
-
 function isPreference(value: string | null): value is LanguagePreference {
   return value === "system" || value === "en" || value === "ru";
 }
@@ -58,14 +45,14 @@ export type I18nValue = {
   locale: Locale;
   preference: LanguagePreference;
   setPreference: (preference: LanguagePreference) => void;
-  persistenceError: string | null;
+  persistenceIssue: PreferenceState["persistenceIssue"];
 };
 
 const defaultContext: I18nValue = {
   locale: "en",
   preference: "system",
   setPreference: () => undefined,
-  persistenceError: null,
+  persistenceIssue: null,
 };
 
 const I18nContext = createContext<I18nValue>(defaultContext);
@@ -97,18 +84,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     setState({ preference, persistenceIssue });
   }, []);
 
-  const persistenceError = state.persistenceIssue
-    ? persistenceMessages[locale][state.persistenceIssue]
-    : null;
-
   const value = useMemo<I18nValue>(
     () => ({
       locale,
       preference: state.preference,
       setPreference,
-      persistenceError,
+      persistenceIssue: state.persistenceIssue,
     }),
-    [locale, state.preference, persistenceError, setPreference],
+    [locale, state.preference, state.persistenceIssue, setPreference],
   );
 
   return (

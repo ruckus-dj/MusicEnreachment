@@ -1,5 +1,6 @@
 import { type Key, useEffect, useRef, useState } from "react";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
+import type { BrowseDirectory } from "../../components/DirectoryPickerView";
 import { formStyles as styles } from "../../components/styles/formStyles";
 import {
 	Button,
@@ -24,7 +25,12 @@ import {
 } from "../../infrastructure/providerValidation";
 import { setupToolExecutables } from "../setup/setupToolsLifecycle";
 import { GenreCatalogDemoProvider } from "./GenreCatalogDemoProvider";
+import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import {
+	type OutputResetFeedback,
+	SettingsOutputResetDialog,
+} from "./SettingsOutputResetDialog";
 import {
 	type SettingsTabKey,
 	SettingsTabPanel,
@@ -63,9 +69,20 @@ const readSettingsTab = (hash: string): SettingsTabKey => {
 const isSettingsTabDestination = (hash: string) =>
 	hash.replace(/^#/, "").split("?")[0] === "settings";
 
+const inactiveDirectoryBrowse: BrowseDirectory = async (path) => ({
+	currentPath: path || "/",
+	parentPath: "",
+	directories: [],
+	offset: 0,
+});
+
+const defaultPublicationTemplate =
+	'{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}';
+
 export interface DemoSettings {
 	toolsPath: string;
 	workDirectory: string;
+	publicationTemplate?: string;
 	toolsChecked: boolean;
 	toolsUpdated: boolean;
 	pathChecked: boolean;
@@ -98,6 +115,7 @@ export interface DemoSettings {
 export const initialDemoSettings: DemoSettings = {
 	toolsPath: "/var/lib/melotrove/tools",
 	workDirectory: "",
+	publicationTemplate: defaultPublicationTemplate,
 	toolsChecked: false,
 	toolsUpdated: false,
 	pathChecked: false,
@@ -129,11 +147,12 @@ export type SettingsScreenProps = {
 	onOutputReset?: (nextPath: string) => void;
 	workDirectoryBusy?: boolean;
 	sourceRoots?: string[];
+	browseDirectory?: BrowseDirectory;
+	resolveDirectoryPath?: (path: string) => string;
 };
 
-type PickerTarget = "tools" | "work" | "output";
+type PickerTarget = "tools";
 type NoticeKey =
-	| "staleOutput"
 	| "staleMove"
 	| "invalidPath"
 	| "conflicts"
@@ -147,12 +166,18 @@ export function SettingsScreen({
 	onOutputReset,
 	workDirectoryBusy = false,
 	sourceRoots = [],
+	browseDirectory,
+	resolveDirectoryPath,
 }: SettingsScreenProps) {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
 	const [picker, setPicker] = useState<PickerTarget | null>(null);
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
 	const [confirming, setConfirming] = useState<string | null>(null);
+	const [confirmingFromLeave, setConfirmingFromLeave] = useState(false);
+	const [outputFeedback, setOutputFeedback] = useState<
+		OutputResetFeedback | undefined
+	>();
 	const [movePlan, setMovePlan] = useState<ReturnType<
 		typeof movePreflightDemo
 	> | null>(null);
@@ -168,6 +193,10 @@ export function SettingsScreen({
 		concurrency: settings.concurrency ?? "4",
 		toolsPath: settings.toolsPath,
 		toolsPathCandidate: "",
+		publicationTemplate:
+			settings.publicationTemplate ?? defaultPublicationTemplate,
+		workDirectory: settings.workDirectory,
+		outputDirectory: settings.currentOutput ?? "/srv/music",
 		musicBrainzMode: settings.musicBrainzMode ?? "",
 		musicBrainzURL: settings.musicBrainzURL ?? "",
 		musicBrainzDelay: settings.musicBrainzDelay ?? "",
@@ -183,7 +212,13 @@ export function SettingsScreen({
 	const [replacementPrompt, setReplacementPrompt] = useState(false);
 	const [leavePrompt, setLeavePrompt] = useState(false);
 	const pendingHash = useRef<string | null>(null);
-	const pendingReplacement = useRef<"all" | "concurrency" | "providers">("all");
+	const pendingReplacement = useRef<
+		| "all"
+		| "concurrency"
+		| "providers"
+		| "publicationTemplate"
+		| "workDirectory"
+	>("all");
 	const allowNavigation = useRef(false);
 	const previousHash = useRef(
 		typeof window === "undefined" ? "" : window.location.hash,
@@ -241,6 +276,9 @@ export function SettingsScreen({
 	}, [
 		settings.concurrency,
 		settings.toolsPath,
+		settings.publicationTemplate,
+		settings.workDirectory,
+		settings.currentOutput,
 		settings.musicBrainzMode,
 		settings.musicBrainzURL,
 		settings.musicBrainzDelay,
@@ -355,7 +393,7 @@ export function SettingsScreen({
 	};
 	const commitDraft = (forceReplace = false) => {
 		const merged = mergeSettingsDraft(draftState, currentDraftValues);
-		if (!validateDraft(merged)) return;
+		if (!validateDraft(merged)) return false;
 		if (
 			draftConflicts.length &&
 			conflictAcknowledged &&
@@ -364,11 +402,19 @@ export function SettingsScreen({
 		) {
 			pendingReplacement.current = "all";
 			setReplacementPrompt(true);
-			return;
+			return false;
 		}
-		if (draftConflicts.length && !conflictAcknowledged) return;
-		const { concurrency, musicBrainzMode, musicBrainzURL, musicBrainzDelay } =
-			merged;
+		if (draftConflicts.length && !conflictAcknowledged) return false;
+		const {
+			concurrency,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+			publicationTemplate,
+			workDirectory,
+		} = merged;
+		if (!publicationTemplate || !validateWorkDirectory(workDirectory))
+			return false;
 		const configuration = {
 			mode: musicBrainzMode,
 			url: musicBrainzURL,
@@ -382,7 +428,7 @@ export function SettingsScreen({
 				[field]: copy.invalidProvider,
 			}));
 			document.getElementById(`settings-${field}`)?.focus();
-			return;
+			return false;
 		}
 		const baseline = {
 			...draftState.baseline,
@@ -390,6 +436,8 @@ export function SettingsScreen({
 			musicBrainzMode,
 			musicBrainzURL,
 			musicBrainzDelay,
+			publicationTemplate,
+			workDirectory,
 		};
 		const value = {
 			...draftState.value,
@@ -397,6 +445,8 @@ export function SettingsScreen({
 			musicBrainzMode,
 			musicBrainzURL,
 			musicBrainzDelay,
+			publicationTemplate,
+			workDirectory,
 		};
 		onSettings({
 			...settings,
@@ -404,6 +454,8 @@ export function SettingsScreen({
 			musicBrainzMode,
 			musicBrainzURL,
 			musicBrainzDelay,
+			publicationTemplate,
+			workDirectory,
 			musicBrainzVerified: true,
 			musicBrainzVerifiedFingerprint:
 				musicBrainzConfigurationFingerprint(configuration),
@@ -415,6 +467,7 @@ export function SettingsScreen({
 		setConflictAcknowledged(false);
 		setReplacementPrompt(false);
 		setNotice("saved");
+		return true;
 	};
 	const commitConcurrency = () => {
 		if (!validConcurrency(draftState.value.concurrency)) {
@@ -447,6 +500,67 @@ export function SettingsScreen({
 		setDraftState({ baseline, value });
 		setFieldErrors((current) => ({ ...current, concurrency: undefined }));
 		setReplacementConfirmed(false);
+		setConflictAcknowledged(false);
+		setNotice("saved");
+	};
+	const confirmFolderConflict = (
+		field: "publicationTemplate" | "workDirectory",
+		forceReplace: boolean,
+	) => {
+		if (forceReplace || !draftConflicts.includes(field)) return false;
+		if (conflictAcknowledged) {
+			pendingReplacement.current = field;
+			setReplacementPrompt(true);
+		}
+		return true;
+	};
+	const commitTemplate = (forceReplace = false) => {
+		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
+			"publicationTemplate",
+		]);
+		const publicationTemplate = merged.publicationTemplate;
+		if (!publicationTemplate) return;
+		if (confirmFolderConflict("publicationTemplate", forceReplace)) return;
+		onSettings({ ...settings, publicationTemplate });
+		setDraftState((current) => ({
+			baseline: { ...current.baseline, publicationTemplate },
+			value: { ...current.value, publicationTemplate },
+		}));
+		setConflictAcknowledged(false);
+		setNotice("saved");
+	};
+	const validateWorkDirectory = (workDirectory: string) => {
+		if (workDirectory === settings.workDirectory) return true;
+		if (workDirectoryBusy) return false;
+		if (workDirectory && !isAbsoluteDemoServerPath(workDirectory)) {
+			setNotice("invalidPath");
+			return false;
+		}
+		if (
+			workDirectory &&
+			overlapsAnyDemoPath(workDirectory, [
+				settings.toolsPath,
+				currentOutput,
+				...sourceRoots,
+			])
+		) {
+			setNotice("pathOverlap");
+			return false;
+		}
+		return true;
+	};
+	const commitWorkDirectory = (forceReplace = false) => {
+		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
+			"workDirectory",
+		]);
+		const workDirectory = merged.workDirectory.trim();
+		if (!validateWorkDirectory(workDirectory)) return;
+		if (confirmFolderConflict("workDirectory", forceReplace)) return;
+		onSettings({ ...settings, workDirectory });
+		setDraftState((current) => ({
+			baseline: { ...current.baseline, workDirectory },
+			value: { ...current.value, workDirectory },
+		}));
 		setConflictAcknowledged(false);
 		setNotice("saved");
 	};
@@ -593,8 +707,8 @@ export function SettingsScreen({
 	const selectedRelease = settings.selectedRelease ?? {};
 	const catalog = settings.toolCatalog ?? availableToolReleases;
 	const blocked = ["running", "claimed"].includes(settings.outputDemoExecution);
-	const candidate = settings.outputCandidate;
-	const samePath = !candidate || candidate === currentOutput;
+	const candidate = draftState.value.outputDirectory;
+	const outputDirty = candidate !== draftState.baseline.outputDirectory;
 	const managedCount = installations.reduce(
 		(count, item) => count + (item.package === "ffmpeg" ? 2 : 1),
 		0,
@@ -627,10 +741,26 @@ export function SettingsScreen({
 		}
 	};
 
+	const closeOutputReset = () => {
+		setConfirming(null);
+		setConfirmingFromLeave(false);
+		setOutputFeedback(undefined);
+	};
+	const openOutputReset = (fromLeave = false) => {
+		setOutputFeedback(undefined);
+		setConfirmingFromLeave(fromLeave);
+		setConfirming(candidate);
+	};
 	const confirmOutputReset = () => {
-		if (blocked || settings.outputCandidate !== confirming) {
-			setConfirming(null);
-			setNotice("staleOutput");
+		if (blocked) {
+			setOutputFeedback({ kind: "running" });
+			return;
+		}
+		if (
+			candidate !== confirming ||
+			draftState.baseline.outputDirectory !== currentOutput
+		) {
+			setOutputFeedback({ kind: "error", detail: copy.staleOutput });
 			return;
 		}
 		if (!confirming) return;
@@ -641,15 +771,27 @@ export function SettingsScreen({
 				...sourceRoots,
 			])
 		) {
-			setConfirming(null);
-			setNotice("pathOverlap");
+			setOutputFeedback({ kind: "error", detail: copy.pathOverlap });
 			return;
 		}
 		update({ currentOutput: confirming });
+		setDraftState((current) => ({
+			baseline: { ...current.baseline, outputDirectory: confirming },
+			value: { ...current.value, outputDirectory: confirming },
+		}));
 		onOutputReset?.(confirming);
-		setConfirming(null);
+		closeOutputReset();
 		setNotice("");
 	};
+	const outputResetDialog = confirming !== null && (
+		<SettingsOutputResetDialog
+			locale={locale}
+			busy={false}
+			feedback={outputFeedback}
+			onConfirm={confirmOutputReset}
+			onDismiss={closeOutputReset}
+		/>
+	);
 	const startInstall = () => {
 		if (!installPlan || platformMismatch) return;
 		const token = [
@@ -839,51 +981,38 @@ export function SettingsScreen({
 						}}
 					/>
 				</SettingsTabPanel>
-				<SettingsTabPanel
-					id="folders"
-					className={`${styles.panel} grid max-w-3xl gap-4`}
-				>
-					<h2>{copy.tabFolders}</h2>
-					<section className="grid gap-2">
-						<h3>{copy.output}</h3>
-						<TextField isReadOnly value={currentOutput}>
-							<Label>{copy.currentOutput}</Label>
-							<Input />
-						</TextField>
-						<div className={styles.objectActions}>
-							<TextField value={candidate} isReadOnly>
-								<Label>{copy.newOutput}</Label>
-								<Input />
-							</TextField>
-							<Button onPress={() => setPicker("output")}>
-								{copy.chooseFolder}
-							</Button>
-						</div>
-						<p>{copy.outputImpact}</p>
-						<Button
-							isDisabled={blocked || samePath}
-							onPress={() => setConfirming(candidate)}
-						>
-							{copy.changeOutput}
-						</Button>
-						{blocked && <p role="alert">{copy.busy}</p>}
-					</section>
-					<section className="grid gap-2 border-t border-[var(--line)] pt-3">
-						<h3>{copy.work}</h3>
-						<div className={styles.objectActions}>
-							<TextField value={settings.workDirectory} isReadOnly>
-								<Label>{copy.work}</Label>
-								<Input />
-							</TextField>
-							<Button
-								isDisabled={workDirectoryBusy}
-								onPress={() => setPicker("work")}
-							>
-								{copy.chooseFolder}
-							</Button>
-						</div>
-						<small>{copy.workHelp}</small>
-					</section>
+				<SettingsTabPanel id="folders" forceMount>
+					<SettingsFoldersSection
+						locale={locale}
+						browse={browseDirectory ?? inactiveDirectoryBrowse}
+						resolveInitialPath={resolveDirectoryPath}
+						busy={false}
+						output={{
+							value: candidate,
+							dirty: outputDirty,
+							matchesSaved: candidate === currentOutput,
+							onChange: (outputDirectory) => updateDraft({ outputDirectory }),
+							onReset: () => openOutputReset(),
+						}}
+						template={{
+							value: draftState.value.publicationTemplate,
+							dirty:
+								draftState.value.publicationTemplate !==
+								draftState.baseline.publicationTemplate,
+							onChange: (publicationTemplate) =>
+								updateDraft({ publicationTemplate }),
+							onSave: () => commitTemplate(),
+						}}
+						work={{
+							value: draftState.value.workDirectory,
+							dirty:
+								draftState.value.workDirectory !==
+								draftState.baseline.workDirectory,
+							onChange: (workDirectory) => updateDraft({ workDirectory }),
+							onSave: () => commitWorkDirectory(),
+							locked: workDirectoryBusy,
+						}}
+					/>
 				</SettingsTabPanel>
 				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
 					<h2>{copy.tools}</h2>
@@ -1167,14 +1296,17 @@ export function SettingsScreen({
 						{!draftConflicts.length && (
 							<Button
 								onPress={() => {
-									if (!validateDraft()) return;
-									commitDraft();
-									if (!replacementPrompt) leaveWithDraft(false);
+									if (outputDirty) {
+										openOutputReset(true);
+										return;
+									}
+									if (commitDraft()) leaveWithDraft(false);
 								}}
 							>
 								{copy.leaveSave}
 							</Button>
 						)}
+						{confirmingFromLeave && outputResetDialog}
 					</Dialog>
 				</Modal>
 			)}
@@ -1207,6 +1339,10 @@ export function SettingsScreen({
 									setNotice("saved");
 								} else if (pendingReplacement.current === "providers")
 									commitProviders(true);
+								else if (pendingReplacement.current === "publicationTemplate")
+									commitTemplate(true);
+								else if (pendingReplacement.current === "workDirectory")
+									commitWorkDirectory(true);
 								else commitDraft(true);
 							}}
 						>
@@ -1218,56 +1354,19 @@ export function SettingsScreen({
 					</Dialog>
 				</Modal>
 			)}
-			{picker && (
+			{picker === "tools" && (
 				<DirectoryPicker
 					key={picker}
-					initialPath={
-						picker === "tools"
-							? settings.toolsPath
-							: picker === "work"
-								? settings.workDirectory || "/"
-								: candidate || currentOutput
-					}
+					initialPath={settings.toolsPath}
 					onClose={() => setPicker(null)}
 					onChoose={(path) => {
-						if (picker === "work") {
-							if (
-								overlapsAnyDemoPath(path, [
-									settings.toolsPath,
-									currentOutput,
-									...sourceRoots,
-								])
-							) {
-								setNotice("pathOverlap");
-								setPicker(null);
-								return;
-							}
-							update({ workDirectory: path });
-						} else if (picker === "tools")
-							updateDraft({ toolsPathCandidate: path });
-						else update({ outputCandidate: path });
+						updateDraft({ toolsPathCandidate: path });
 						setPicker(null);
 						setNotice("");
 					}}
 				/>
 			)}
-			{confirming !== null && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => !open && setConfirming(null)}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">{copy.changeOutput}?</Heading>
-						<p className="break-all">
-							{currentOutput} → {confirming}
-						</p>
-						<p>{copy.outputImpact}</p>
-						<Button onPress={confirmOutputReset}>{copy.confirmOutput}</Button>
-						<Button onPress={() => setConfirming(null)}>{copy.cancel}</Button>
-					</Dialog>
-				</Modal>
-			)}
+			{!confirmingFromLeave && outputResetDialog}
 			{installPlan && (
 				<Modal
 					isOpen

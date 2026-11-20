@@ -41,6 +41,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   type HashAttempt,
@@ -55,10 +56,12 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
+import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import {
   type SettingsGeneralFailureModel,
   SettingsGeneralSection,
 } from "./SettingsGeneralSection";
+import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import {
   getSettingsDraftStorage,
@@ -571,8 +574,6 @@ export function SettingsScreen() {
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const installDialogAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
-  const outputDialogAlert = useRef<HTMLParagraphElement>(null);
-  const outputDialogRef = useRef<HTMLDialogElement>(null);
   const conflictDialogRef = useRef<HTMLDialogElement>(null);
   const navigationDialogRef = useRef<HTMLDialogElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
@@ -1002,10 +1003,6 @@ export function SettingsScreen() {
       moveDialogAlert.current?.focus();
   }, [moveDialogError]);
   useLayoutEffect(() => {
-    if (outputDialogError && outputDialogRef.current?.open)
-      outputDialogAlert.current?.focus();
-  }, [outputDialogError]);
-  useLayoutEffect(() => {
     const target = pendingTabFocusTarget.current;
     if (!target) return;
     const targetTab = target.closest<HTMLElement>("[data-settings-tab]")
@@ -1039,9 +1036,6 @@ export function SettingsScreen() {
   useLayoutEffect(() => {
     if (moveDialog) showSettingsDialog(moveDialogRef.current);
   }, [moveDialog]);
-  useLayoutEffect(() => {
-    if (outputDialog) showSettingsDialog(outputDialogRef.current);
-  }, [outputDialog]);
   useLayoutEffect(() => {
     if (conflictConfirmation) showSettingsDialog(conflictDialogRef.current);
   }, [conflictConfirmation]);
@@ -1873,8 +1867,6 @@ export function SettingsScreen() {
     dialogFocusRestorePending.current = true;
     setOutputDialogError("");
     setOutputDialog(false);
-    const dialog = outputDialogRef.current;
-    if (dialog?.open) dialog.close();
   }
 
   async function confirmOutputDirectory() {
@@ -3112,82 +3104,38 @@ export function SettingsScreen() {
               />
             </SettingsTabPanel>
             <SettingsTabPanel id="folders" forceMount>
-              <div className="settings-grid">
-                <section
-                  aria-labelledby="runtime-title"
-                  className="setup-panel settings-panel"
-                >
-                  <h2 id="runtime-title">{t("publication")}</h2>
-                  <DirectoryPathField
-                    id="settings-output-directory"
-                    label={t("outputDirectory")}
-                    value={outputDirectory.value ?? ""}
-                    onSelect={outputDirectory.update}
-                    disabled={effectiveBusy}
-                  />
-                  {outputDirectory.dirty && <p>{t("unsavedPublication")}</p>}
-                  <label>
-                    {t("publicationTemplate")}
-                    <input
-                      aria-describedby="publication-template-help"
-                      maxLength={4096}
-                      value={
-                        publicationPathTemplate.value ??
-                        state.settings.publication_path_template
-                      }
-                      onChange={(event) =>
-                        publicationPathTemplate.update(event.target.value)
-                      }
-                    />
-                  </label>
-                  <p id="publication-template-help">{t("templateHelp")}</p>
-                  {publicationPathTemplate.dirty && (
-                    <p>{t("unsavedTemplate")}</p>
-                  )}
-                  <AppButton
-                    isDisabled={effectiveBusy || !publicationPathTemplate.value}
-                    onPress={savePublicationTemplate}
-                  >
-                    {t("saveTemplate")}
-                  </AppButton>
-                  <AppButton
-                    isDisabled={
-                      effectiveBusy ||
-                      outputDirectory.value === state.settings.output_directory
-                    }
-                    onPress={(event) => {
-                      dialogReturnFocusRef.current =
-                        event.target as HTMLElement;
-                      setError("");
-                      setOutputDialogError("");
-                      setOutputDialog(true);
-                    }}
-                  >
-                    {t("changeOutput")}
-                  </AppButton>
-                </section>
-                <section
-                  aria-labelledby="work-directory-title"
-                  className="setup-panel settings-panel"
-                >
-                  <h2 id="work-directory-title">{t("sourceProcessing")}</h2>
-                  <DirectoryPathField
-                    id="settings-work-directory"
-                    label={t("workDirectory")}
-                    value={workDirectory.value ?? ""}
-                    onSelect={workDirectory.update}
-                    disabled={effectiveBusy}
-                  />
-                  <p>{t("workDirectoryHelp")}</p>
-                  {workDirectory.dirty && <p>{t("unsavedWorkDirectory")}</p>}
-                  <AppButton
-                    isDisabled={effectiveBusy || !workDirectory.dirty}
-                    onPress={saveWorkDirectory}
-                  >
-                    {t("saveWorkDirectory")}
-                  </AppButton>
-                </section>
-              </div>
+              <SettingsFoldersSection
+                locale={locale}
+                browse={browseServerDirectory}
+                busy={effectiveBusy}
+                output={{
+                  value: outputDirectory.value ?? "",
+                  dirty: outputDirectory.dirty,
+                  matchesSaved:
+                    outputDirectory.value === state.settings.output_directory,
+                  onChange: outputDirectory.update,
+                  onReset: (trigger) => {
+                    dialogReturnFocusRef.current = trigger as HTMLElement;
+                    setError("");
+                    setOutputDialogError("");
+                    setOutputDialog(true);
+                  },
+                }}
+                template={{
+                  value:
+                    publicationPathTemplate.value ??
+                    state.settings.publication_path_template,
+                  dirty: publicationPathTemplate.dirty,
+                  onChange: publicationPathTemplate.update,
+                  onSave: savePublicationTemplate,
+                }}
+                work={{
+                  value: workDirectory.value ?? "",
+                  dirty: workDirectory.dirty,
+                  onChange: workDirectory.update,
+                  onSave: saveWorkDirectory,
+                }}
+              />
             </SettingsTabPanel>
             <SettingsTabPanel id="tools" forceMount>
               {operations.map((operation) =>
@@ -3656,43 +3604,23 @@ export function SettingsScreen() {
         </dialog>
       )}
       {outputDialog && (
-        <dialog
-          ref={outputDialogRef}
-          aria-modal="true"
-          aria-labelledby="output-dialog-title"
-          aria-describedby="output-dialog-warning"
-          className="settings-dialog settings-dialog--destructive"
-          onClose={() => {
-            dialogFocusRestorePending.current = true;
-            setOutputDialog(false);
-            setOutputDialogError("");
-          }}
-          onKeyDown={(event) => onDialogKeyDown(event, closeOutputDialog)}
-          onCancel={(event) => {
-            event.preventDefault();
-            closeOutputDialog();
-          }}
-        >
-          <h2 id="output-dialog-title">{t("changePublicationTitle")}</h2>
-          <p id="output-dialog-warning">{t("changePublicationWarning")}</p>
-          {outputDialogError && (
-            <p ref={outputDialogAlert} tabIndex={-1} role="alert">
-              {feedbackText(outputDialogError, locale)}
-            </p>
-          )}
-          <AppButton
-            isDisabled={effectiveBusy}
-            onPress={() => void confirmOutputDirectory()}
-          >
-            {t("confirmOutputChange")}
-          </AppButton>
-          <AppButton
-            isDisabled={effectiveBusy}
-            onPress={() => closeOutputDialog()}
-          >
-            {t("cancel")}
-          </AppButton>
-        </dialog>
+        <SettingsOutputResetDialog
+          locale={locale}
+          busy={effectiveBusy}
+          feedback={
+            !outputDialogError
+              ? undefined
+              : typeof outputDialogError !== "string" &&
+                  outputDialogError.key === "waitForRunningOperations"
+                ? { kind: "running" }
+                : {
+                    kind: "error",
+                    detail: feedbackText(outputDialogError, locale),
+                  }
+          }
+          onConfirm={() => void confirmOutputDirectory()}
+          onDismiss={closeOutputDialog}
+        />
       )}
       {installDialog && (
         <dialog

@@ -26,6 +26,9 @@ export type SettingsTextDraft = {
 	concurrency: string;
 	toolsPath: string;
 	toolsPathCandidate: string;
+	publicationTemplate: string;
+	workDirectory: string;
+	outputDirectory: string;
 	musicBrainzMode: "" | "public" | "self-hosted";
 	musicBrainzURL: string;
 	musicBrainzDelay: string;
@@ -51,6 +54,9 @@ export function rebaseSettingsDraft(
 	const fields: SettingsDraftField[] = [
 		"concurrency",
 		"toolsPath",
+		"publicationTemplate",
+		"workDirectory",
+		"outputDirectory",
 		"musicBrainzMode",
 		"musicBrainzURL",
 		"musicBrainzDelay",
@@ -74,6 +80,9 @@ export function mergeSettingsDraft(
 	fields: SettingsDraftField[] = [
 		"concurrency",
 		"toolsPath",
+		"publicationTemplate",
+		"workDirectory",
+		"outputDirectory",
 		"musicBrainzMode",
 		"musicBrainzURL",
 		"musicBrainzDelay",
@@ -121,6 +130,9 @@ export function readSettingsDraft(
 			typeof draft.concurrency === "string" &&
 			typeof draft.toolsPath === "string" &&
 			typeof draft.toolsPathCandidate === "string" &&
+			typeof draft.publicationTemplate === "string" &&
+			typeof draft.workDirectory === "string" &&
+			typeof draft.outputDirectory === "string" &&
 			typeof draft.musicBrainzURL === "string" &&
 			typeof draft.musicBrainzDelay === "string" &&
 			(draft.musicBrainzMode === "" ||

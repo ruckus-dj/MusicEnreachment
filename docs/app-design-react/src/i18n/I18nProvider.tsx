@@ -43,7 +43,7 @@ export type I18nValue = {
 	preference: LanguagePreference;
 	setPreference: (preference: LanguagePreference) => void;
 	t: Translator<typeof catalog>;
-	persistenceError: string | null;
+	persistenceIssue: PreferenceState["persistenceIssue"];
 };
 
 const isolatedTranslator = createTranslator("ru", catalog);
@@ -52,7 +52,7 @@ const defaultContext: I18nValue = {
 	preference: "ru",
 	setPreference: () => undefined,
 	t: isolatedTranslator,
-	persistenceError: null,
+	persistenceIssue: null,
 };
 
 const I18nContext = createContext<I18nValue>(defaultContext);
@@ -90,23 +90,15 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 		}
 		setState({ preference, persistenceIssue });
 	}, []);
-	const persistenceError = state.persistenceIssue
-		? t(
-				state.persistenceIssue === "read"
-					? "common.preferenceReadWarning"
-					: "common.preferenceWriteWarning",
-			)
-		: null;
-
 	const value = useMemo<I18nValue>(
 		() => ({
 			locale,
 			preference: state.preference,
 			setPreference,
 			t,
-			persistenceError,
+			persistenceIssue: state.persistenceIssue,
 		}),
-		[locale, state.preference, persistenceError, setPreference, t],
+		[locale, state.preference, state.persistenceIssue, setPreference, t],
 	);
 
 	return (

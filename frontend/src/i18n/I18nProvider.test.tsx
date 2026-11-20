@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LanguageControl } from "../components/LanguageControl";
 import { createMemoryStorage } from "../test/memoryStorage";
 import { I18nProvider, useI18n } from "./I18nProvider";
 
@@ -22,12 +23,12 @@ function DraftChild() {
 }
 
 function Harness({ draft = false }: { draft?: boolean }) {
-  const { locale, preference, setPreference, persistenceError } = useI18n();
+  const { locale, preference, setPreference } = useI18n();
   return (
     <>
       <span data-testid="locale">{locale}</span>
       <span data-testid="preference">{preference}</span>
-      {persistenceError && <span role="status">{persistenceError}</span>}
+      <LanguageControl />
       <button type="button" onClick={() => setPreference("ru")}>
         use-ru
       </button>

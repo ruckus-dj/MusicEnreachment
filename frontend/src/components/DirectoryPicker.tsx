@@ -5,7 +5,11 @@ import {
   DirectoryPickerView,
 } from "./DirectoryPickerView";
 
-const browse: BrowseDirectory = async (path, offset, signal) => {
+export const browseServerDirectory: BrowseDirectory = async (
+  path,
+  offset,
+  signal,
+) => {
   const response = await browseServerDirectories(
     { path: path || undefined, offset },
     { signal },
@@ -29,5 +33,11 @@ export function DirectoryPicker(props: {
   onClose: () => void;
 }) {
   const { locale } = useI18n();
-  return <DirectoryPickerView {...props} browse={browse} locale={locale} />;
+  return (
+    <DirectoryPickerView
+      {...props}
+      browse={browseServerDirectory}
+      locale={locale}
+    />
+  );
 }

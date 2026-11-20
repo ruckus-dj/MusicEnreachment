@@ -430,6 +430,9 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			concurrency: "4",
 			toolsPath: initialDemoSettings.toolsPath,
 			toolsPathCandidate: "",
+			publicationTemplate: initialDemoSettings.publicationTemplate ?? "",
+			workDirectory: initialDemoSettings.workDirectory,
+			outputDirectory: initialDemoSettings.currentOutput ?? "/srv/music",
 			musicBrainzMode: "" as const,
 			musicBrainzURL: "",
 			musicBrainzDelay: "",
@@ -477,7 +480,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		);
 		expect(
 			screen.getByLabelText(/concurrent files|одновременные файлы/i),
-			).toHaveValue("0");
+		).toHaveValue("0");
 		expect(
 			screen.getByText(
 				/browser storage is unavailable|хранилище браузера недоступно/i,

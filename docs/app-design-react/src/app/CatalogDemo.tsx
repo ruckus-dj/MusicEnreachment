@@ -102,6 +102,10 @@ import {
 	resetSourceProcessingQueue,
 	sourceProcessingLocks,
 } from "../features/sources/sourceProcessingModel";
+import {
+	browseDemoDirectory,
+	demoDirectoryStart,
+} from "../fixtures/directoryBrowseDemo";
 import { LocalReleaseDemoGenres } from "../fixtures/LocalReleaseDemoGenres";
 import { createLocalCatalogDemoState } from "../fixtures/localCatalogDemo";
 import {
@@ -1139,6 +1143,8 @@ export function CatalogDemo({
 				<SettingsScreen
 					settings={settings}
 					sourceRoots={sourceRoots.map((root) => root.path)}
+					browseDirectory={browseDemoDirectory}
+					resolveDirectoryPath={demoDirectoryStart}
 					onSettings={setSettings}
 					workDirectoryBusy={
 						sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange

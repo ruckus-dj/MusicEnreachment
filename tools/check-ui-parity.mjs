@@ -10,7 +10,14 @@ const pairs = [
   [
     "components",
     "components",
-    ["AppButton.tsx", "DirectoryPickerMessages.ts", "DirectoryPickerView.tsx"],
+    [
+      "AppButton.tsx",
+      "DirectoryPathFieldView.tsx",
+      "DirectoryPickerMessages.ts",
+      "DirectoryPickerView.tsx",
+      "LanguageControl.tsx",
+      "ThemeControl.tsx",
+    ],
   ],
   ["features/incoming", "features/incoming", ["IncomingFileActions.tsx"]],
   ["features/operations", "features/operations", ["OperationsList.tsx"]],
@@ -18,7 +25,13 @@ const pairs = [
   [
     "features/settings",
     "features/settings",
-    ["GenreCatalogView.tsx", "SettingsGeneralSection.tsx", "SettingsTabs.tsx"],
+    [
+      "GenreCatalogView.tsx",
+      "SettingsFoldersSection.tsx",
+      "SettingsGeneralSection.tsx",
+      "SettingsOutputResetDialog.tsx",
+      "SettingsTabs.tsx",
+    ],
   ],
   ["features/setup", "features/setup", ["SetupWizard.tsx"]],
   ["features/library", "features/library", ["LibrarySelectionReviewView.tsx"]],

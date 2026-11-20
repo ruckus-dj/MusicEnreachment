@@ -48,21 +48,21 @@ source channel, а fixture макета такого происхождения 
 
 | Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
 | --- | --- | --- |
-| Оболочка | `routes/ShellView.tsx` | `routes/ShellView.tsx` |
+| Оболочка, язык и тема | `routes/ShellView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Те же пути |
 | Источники и операции | `features/sources/SourceRootList.tsx`, `features/sources/SourceScanPanel.tsx`, `features/operations/OperationsList.tsx` | Те же пути |
 | Перенос файла | `components/AppButton.tsx`, `features/incoming/IncomingFileActions.tsx` | Те же пути |
-| Выбор папки | `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
+| Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
 | Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
 | Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
-| Настройки: вкладки, общие параметры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
+| Настройки: вкладки, общие параметры, папки, подтверждение сброса, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Первый запуск: каркас мастера | `features/setup/SetupWizard.tsx` | Тот же путь |
 | Медиатека: проверка выбранных позиций | `features/library/LibrarySelectionReviewView.tsx` | Тот же путь |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
-адаптерах. В настройках ещё различается представление папок, инструментов,
-провайдеров и диалогов. Первый запуск использует общий каркас, но не общие тела
+адаптерах. В настройках ещё различается представление инструментов,
+провайдеров и остальных диалогов. Первый запуск использует общий каркас, но не общие тела
 шагов. Редакторы медиатеки и предпросмотр публикации пока не перенесены дословно.
 
 ## Проверка

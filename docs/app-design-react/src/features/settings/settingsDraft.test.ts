@@ -1,22 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	getSettingsDraftStorage,
-	readSettingsDraft,
 	mergeSettingsDraft,
+	readSettingsDraft,
 	rebaseSettingsDraft,
 	resetSettingsDraftMemory,
+	type SettingsDraftSnapshot,
 	settingsDraftConflicts,
 	settingsDraftIsDirty,
 	settingsDraftStorageKey,
 	validConcurrency,
 	writeSettingsDraft,
-	type SettingsDraftSnapshot,
 } from "./settingsDraft";
 
 const baseline = {
 	concurrency: "4",
 	toolsPath: "/tools",
 	toolsPathCandidate: "",
+	publicationTemplate: "{ALBUM_NAME}",
+	workDirectory: "",
+	outputDirectory: "/srv/music",
 	musicBrainzMode: "public" as const,
 	musicBrainzURL: "",
 	musicBrainzDelay: "0",
