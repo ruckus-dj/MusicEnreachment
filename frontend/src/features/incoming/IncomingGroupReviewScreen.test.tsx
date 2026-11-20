@@ -393,6 +393,11 @@ it.each([
   expect(
     await within(matching).findByRole("heading", { name: /Local compilation/ }),
   ).toBeVisible();
+  const workspace = matching.querySelector("[data-matching-workspace]");
+  expect(workspace).toBeInTheDocument();
+  expect(workspace?.previousElementSibling).toHaveAttribute(
+    "data-matching-candidates",
+  );
   const position =
     locale === "ru"
       ? "Диск 1 · трек 1 · Local track"

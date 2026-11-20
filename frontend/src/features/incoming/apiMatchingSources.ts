@@ -57,6 +57,7 @@ export function apiMatchingSources(
         [title, artist].filter(Boolean).join(" · ") ||
         `${fallbackLabel} ${Math.max(0, index) + 1}`,
       detail: path && detail ? detail : undefined,
+      path,
       fileName: incomingSourceFileName(path),
       discNumber: savedOrder.discNumber ?? incomingOrder.discNumber,
       trackNumber: savedOrder.trackNumber ?? incomingOrder.trackNumber,

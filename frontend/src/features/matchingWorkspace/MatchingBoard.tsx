@@ -14,6 +14,7 @@ import {
   matchingBoardClass,
   matchingBoardClasses,
 } from "./matchingBoardStyles";
+import { readMatchingSourcePath } from "./matchingSourcePath";
 import {
   matchingBoardAutomaticForRelease,
   matchingBoardPercent,
@@ -543,6 +544,7 @@ export function MatchingBoard({
         <ul className={matchingBoardClass.list}>
           {freeMembersInOrder.map((memberId) => {
             const source = sourceFor(memberId);
+            const pathParts = readMatchingSourcePath(source.path);
             const selected = selection === memberId;
             const available = !disabled && source.available !== false;
             return (
@@ -570,17 +572,26 @@ export function MatchingBoard({
                       onInspectSource?.(memberId);
                     }}
                   >
-                    <strong className={matchingBoardClass.sourceName}>
-                      {source.label}
-                    </strong>
+                    <span className="flex min-w-0 items-baseline text-[12px] leading-4">
+                      {pathParts?.parents.length ? (
+                        <span
+                          aria-hidden="true"
+                          dir="rtl"
+                          className="min-w-0 truncate text-[var(--muted)]"
+                        >
+                          <bdi dir="ltr">
+                            {pathParts.truncated ? "…/" : ""}
+                            {pathParts.parents.join("/")}/
+                          </bdi>
+                        </span>
+                      ) : null}
+                      <strong className="min-w-0 max-w-full shrink-0 font-semibold [overflow-wrap:anywhere]">
+                        {pathParts?.fileName ?? source.fileName ?? source.label}
+                      </strong>
+                    </span>
                     {source.detail ? (
                       <span className={matchingBoardClass.sourceMeta}>
                         {source.detail}
-                      </span>
-                    ) : null}
-                    {source.path ? (
-                      <span className={matchingBoardClass.sourceMeta}>
-                        {source.path}
                       </span>
                     ) : null}
                     {source.available === false ? (
