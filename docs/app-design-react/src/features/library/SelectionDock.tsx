@@ -1,21 +1,21 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { OriginalRelease, OriginalTrack } from "./catalogData";
-import { catalogueStyles } from "./catalogueStyles";
 import {
 	type DeletionOperation,
 	publicationSelectionPlan,
 } from "../../components/DeletionRequest";
-import { useI18n } from "../../i18n/I18nProvider";
-import {
-	type LibraryRowsMessage,
-	libraryRowsMessage,
-} from "./libraryRowsMessages";
 import { Button, Dialog, Heading, Modal } from "../../components/ui";
+import { useI18n } from "../../i18n/I18nProvider";
+import type { OriginalRelease, OriginalTrack } from "./catalogData";
+import { catalogueStyles } from "./catalogueStyles";
 import {
 	LibrarySelectionReviewButton,
 	LibrarySelectionReviewView,
 } from "./LibrarySelectionReviewView";
+import {
+	type LibraryRowsMessage,
+	libraryRowsMessage,
+} from "./libraryRowsMessages";
 
 type FrozenPublication = {
 	releaseId: string;
@@ -109,7 +109,7 @@ export function SelectionDock({
 							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							onPress={() => onPreview([...selected])}
 						>
-							{visiblePositionIds ? m("previewSelection") : m("publish")}
+							{m("previewSelection")}
 						</Button>
 						<Button onPress={openDeleteConfirmation}>
 							{m("deletePublications")}

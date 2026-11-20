@@ -23,6 +23,7 @@ import {
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
 import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
+import { SetupSummaryView } from "./SetupSummaryView";
 import { SetupToolReleasePicker } from "./SetupToolReleasePicker";
 import { SetupWizard } from "./SetupWizard";
 import {
@@ -377,39 +378,53 @@ export function SetupScreen({
 					</>
 				)}
 				{step === 3 && (
-					<dl className="my-[10px] grid grid-cols-[minmax(100px,1fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] [&_dd]:[overflow-wrap:anywhere] [&_dd]:my-0 [&_dt]:text-[var(--muted)]">
-						<div>
-							<dt>{copy.summaryTools}</dt>
-							<dd>
-								{(["ffmpeg", "fpcalc"] as const)
-									.map(
-										(kind) =>
-											`${kind} · ${activeInstallation(kind)?.release ?? ""}`,
-									)
-									.join("; ")}
-							</dd>
-						</div>
-						<div>
-							<dt>{copy.summaryDirectory}</dt>
-							<dd>{outputPath}</dd>
-						</div>
-						<div>
-							<dt>{copy.summaryProvider}</dt>
-							<dd>
-								{musicBrainzMode === "public"
-									? copy.publicSource
-									: `${copy.privateSource} · ${musicBrainzURL}`}
-							</dd>
-						</div>
-						<div>
-							<dt>{copy.genreOptional}</dt>
-							<dd>
-								{settings.genresLoaded
+					<SetupSummaryView
+						locale={locale}
+						status={{
+							healthy:
+								!platformMismatch &&
+								settings.pathChecked &&
+								toolsReady &&
+								publicationReady &&
+								isAbsoluteDemoServerPath(outputPath.trim()),
+							problems: [
+								...(platformMismatch ? [copy.conflicts] : []),
+								...(!settings.pathChecked ? [copy.missingPath] : []),
+								...(!toolsReady ? [copy.missingTools] : []),
+								...(!publicationReady ||
+								!isAbsoluteDemoServerPath(outputPath.trim())
+									? [copy.missingPublication]
+									: []),
+							],
+						}}
+						values={{
+							publication: {
+								directory: outputPath,
+								format:
+									settings.publicationFormat === "mka"
+										? "mka"
+										: settings.publicationFormat === "original"
+											? "source"
+											: undefined,
+								removeSources: settings.sourceCleanupEnabled,
+							},
+							tools: {
+								ffmpeg: activeInstallation("ffmpeg")?.release ?? "",
+								fpcalc: activeInstallation("fpcalc")?.release ?? "",
+							},
+							metadata: {
+								lrclibEnabled: settings.lrclibEnabled,
+								hasAcoustIdKey: settings.hasAcoustIDApplicationKey,
+								musicbrainz:
+									musicBrainzMode === "public"
+										? copy.publicSource
+										: `${copy.privateSource} · ${musicBrainzURL}`,
+								genres: settings.genresLoaded
 									? copy.genreLoaded
-									: copy.genreUnavailable}
-							</dd>
-						</div>
-					</dl>
+									: copy.genreUnavailable,
+							},
+						}}
+					/>
 				)}
 			</SetupWizard>
 			{installTarget && toolSelection[installTarget] && (

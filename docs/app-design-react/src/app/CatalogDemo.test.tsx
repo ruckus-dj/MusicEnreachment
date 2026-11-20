@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { CatalogDemo } from "./CatalogDemo";
+
+afterEach(() => {
+	window.history.replaceState(null, "", "#library");
+});
 
 it("renders one keyboard-operable four-option filter radio group", () => {
 	render(<CatalogDemo />);
@@ -18,4 +22,37 @@ it("renders one keyboard-operable four-option filter radio group", () => {
 	expect(radios[2]).toBeChecked();
 	fireEvent.keyDown(radios[2], { key: "ArrowRight" });
 	expect(radios[3]).toBeChecked();
+});
+
+it("shows a read-only preview of the selected library position", async () => {
+	window.history.replaceState(
+		null,
+		"",
+		"#library?tab=tracks&q=First%20Light&filter=all",
+	);
+	render(<CatalogDemo />);
+	const grid = screen.getByRole("grid", { name: "Треки медиатеки" });
+	const track = within(grid)
+		.getAllByRole("link", { name: "First Light" })
+		.find((link) => link.getAttribute("href") === "#track/north-t1")
+		?.closest("tr");
+	if (!track) throw new Error("Missing Northern Lines position");
+	const checkbox = within(track).getByRole("checkbox", {
+		name: "Выбрать трек First Light",
+	});
+	fireEvent.click(checkbox);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Предпросмотр публикации" }),
+	);
+	const dialog = await screen.findByRole("dialog", {
+		name: "Предпросмотр публикации",
+	});
+	expect(within(dialog).getByRole("listitem")).toHaveTextContent(
+		"First Light · Northern Lines",
+	);
+	const close = within(dialog).getByRole("button", { name: "Закрыть" });
+	expect(within(dialog).getAllByRole("button")).toEqual([close]);
+	fireEvent.click(close);
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	expect(checkbox).toBeChecked();
 });

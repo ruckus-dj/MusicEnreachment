@@ -16,6 +16,10 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
 import { ObjectMetadataForm } from "../../metadata/ObjectMetadataForm";
 import { ReleaseMetadataEditor } from "../../metadata/ReleaseMetadataEditor";
+import {
+	ReleasePublicationDemo,
+	type ReleasePublicationDemoProvider,
+} from "../publication/ReleasePublicationDemo";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	availabilityRowClass,
@@ -59,6 +63,7 @@ export function ArtistScreen({
 	onUpdateRelease,
 	initialTags,
 	initialReleaseId,
+	publication,
 	genresLoaded = false,
 	onLoadGenres,
 }: {
@@ -78,6 +83,7 @@ export function ArtistScreen({
 	onUpdateRelease?: (release: OriginalRelease) => void;
 	initialTags?: { scope: TagScope; releaseId?: string };
 	initialReleaseId?: string;
+	publication?: ReleasePublicationDemoProvider;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 }) {
@@ -525,6 +531,12 @@ export function ArtistScreen({
 											onSave={saveRelease}
 										/>
 									</div>
+									{publication && (
+										<ReleasePublicationDemo
+											release={release}
+											provider={publication}
+										/>
+									)}
 									<div className={catalogueStyles.previewTable}>
 										<table>
 											<thead>

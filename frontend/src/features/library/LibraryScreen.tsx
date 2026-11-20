@@ -24,11 +24,9 @@ import {
   type LibraryArtistCard,
   LibraryArtistCards,
 } from "./LibraryArtistCards";
-import {
-  LibrarySelectionDock,
-  librarySelectionButtonClass,
-} from "./LibrarySelectionDock";
+import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
+import { librarySelectionButtonClass } from "./LibrarySelectionPreviewView";
 import { LibraryPositionRows } from "./LibraryTrackArtistRows";
 import {
   type LibraryRoute,

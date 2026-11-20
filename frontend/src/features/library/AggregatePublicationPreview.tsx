@@ -1,34 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type AggregateDisposition,
+  type AggregateInspectorPresentation,
+  type AggregatePositionDiagnostic,
+  type AggregatePositionView,
+  AggregatePublicationPreviewView,
+  aggregateDispositions,
+} from "./AggregatePublicationPreviewView";
 import type {
   PublicationPreviewController,
   PublicationPreviewIdentity,
   PublicationPreviewState,
 } from "./FirstPublicationPreview";
-import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 type AggregatePosition = {
   id: string;
   label: string;
   current: boolean;
 };
-
-type AggregateDisposition =
-  | "create"
-  | "update"
-  | "unchanged"
-  | "skipped"
-  | "unprocessable"
-  | "blocked";
-
-const aggregateDispositions: AggregateDisposition[] = [
-  "create",
-  "update",
-  "unchanged",
-  "skipped",
-  "unprocessable",
-  "blocked",
-];
 
 function dispositionFor(
   position: AggregatePosition,
@@ -62,6 +52,21 @@ function dispositionFor(
   return "blocked";
 }
 
+function diagnosticFor(
+  state: PublicationPreviewState | undefined,
+  controllerAvailable: boolean,
+  disposition: AggregateDisposition,
+): AggregatePositionDiagnostic | undefined {
+  const text =
+    state?.error ||
+    state?.blockers[0] ||
+    state?.confirmationCapabilityReasonCodes?.[0];
+  if (text) return { kind: "text", text };
+  if (!controllerAvailable) return { kind: "no-controller" };
+  if (disposition === "blocked") return { kind: "not-prepared" };
+  return undefined;
+}
+
 export function AggregatePublicationPreview({
   positions,
   controllers,
@@ -82,62 +87,6 @@ export function AggregatePublicationPreview({
   const [selectedPositionID, setSelectedPositionID] = useState(
     positions[0]?.id ?? "",
   );
-  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
-  const mobileDialog = useRef<HTMLDialogElement>(null);
-  const copy =
-    locale === "ru"
-      ? {
-          title: "Общий предпросмотр публикации",
-          independentAdmissions:
-            "Подтверждение запускает отдельные операции по позициям; общей атомарной публикации нет.",
-          include: "Включить позицию",
-          ordinary: "Обычная",
-          forced: "Принудительная",
-          prepare: "Подготовить предпросмотр",
-          confirm: "Подтвердить готовые публикации",
-          loading: "Предпросмотр загружается",
-          notPrepared: "Предпросмотр не подготовлен",
-          noController: "Нет контроллера публикации для этой позиции",
-          none: "Нет выбранных позиций.",
-          select: "Позиция для инспектора",
-          inspector: "Инспектор публикации",
-          noPosition: "Выберите позицию, чтобы посмотреть подробности.",
-          close: "Закрыть",
-          dispositions: {
-            create: "Создать",
-            update: "Обновить",
-            unchanged: "Без изменений",
-            skipped: "Пропущено",
-            unprocessable: "Невозможно обработать метаданные",
-            blocked: "Заблокировано",
-          } satisfies Record<AggregateDisposition, string>,
-        }
-      : {
-          title: "Aggregate publication preview",
-          independentAdmissions:
-            "Confirmation starts independent operations per position; there is no atomic batch publication.",
-          include: "Include position",
-          ordinary: "Ordinary",
-          forced: "Forced",
-          prepare: "Prepare preview",
-          confirm: "Confirm ready publications",
-          loading: "Preview is loading",
-          notPrepared: "Preview has not been prepared",
-          noController: "No publication controller for this position",
-          none: "No selected positions.",
-          select: "Position inspector",
-          inspector: "Publication inspector",
-          noPosition: "Select a position to inspect its details.",
-          close: "Close",
-          dispositions: {
-            create: "Create",
-            update: "Update",
-            unchanged: "Unchanged",
-            skipped: "Skipped",
-            unprocessable: "Unprocessable metadata",
-            blocked: "Blocked",
-          } satisfies Record<AggregateDisposition, string>,
-        };
   const selected = positions.filter((position) => included.has(position.id));
   const selectedStates = selected.map((position) => states[position.id]);
   const allControllersAvailable = selected.every((position) =>
@@ -185,17 +134,34 @@ export function AggregatePublicationPreview({
   const selectedController = selectedPosition
     ? controllers.get(selectedPosition.id)
     : undefined;
-
-  useEffect(() => {
-    if (
-      mobileInspectorOpen &&
-      mobileDialog.current &&
-      !mobileDialog.current.open
-    )
-      mobileDialog.current.showModal();
-    if (!mobileInspectorOpen && mobileDialog.current?.open)
-      mobileDialog.current.close();
-  }, [mobileInspectorOpen]);
+  const positionViews: AggregatePositionView[] = positions.map((position) => {
+    const state = states[position.id];
+    const disposition = dispositions.get(position.id) ?? "blocked";
+    return {
+      id: position.id,
+      label: position.label,
+      status: state?.loading
+        ? { kind: "loading" }
+        : preparedMode !== mode
+          ? { kind: "not-prepared" }
+          : { kind: "disposition", disposition },
+      diagnostic: diagnosticFor(
+        state,
+        controllers.has(position.id),
+        disposition,
+      ),
+    };
+  });
+  const inspector: AggregateInspectorPresentation = selectedState
+    ? {
+        kind: "publication",
+        details: selectedState,
+        onSourceChoice: (choice) => selectedController?.selectSource(choice),
+        onRefresh: () => selectedController?.refresh(),
+      }
+    : selectedPosition
+      ? { kind: "not-prepared" }
+      : { kind: "empty" };
 
   function prepare() {
     if (!selected.length || !allControllersAvailable) return;
@@ -227,181 +193,33 @@ export function AggregatePublicationPreview({
       controller.confirm(identity);
   }
 
-  function selectPosition(positionID: string) {
-    setSelectedPositionID(positionID);
-    const isNarrow = window.matchMedia
-      ? window.matchMedia("(max-width: 899px)").matches
-      : window.innerWidth < 900;
-    if (isNarrow) setMobileInspectorOpen(true);
-  }
-
-  const inspector = selectedState ? (
-    <PublicationPreviewDetails
-      state={selectedState}
-      sourceGroupName={`aggregate-publication-source-${selectedPosition?.id ?? "none"}`}
-      onSourceChoice={(choice) => selectedController?.selectSource(choice)}
-      onRefresh={() => selectedController?.refresh()}
-    />
-  ) : (
-    <p>{selectedPosition ? copy.notPrepared : copy.noPosition}</p>
-  );
-
   return (
-    <section
-      className="space-y-3 rounded border border-stone-300 p-4"
-      aria-label={copy.title}
-    >
-      <h2 className="font-semibold">{copy.title}</h2>
-      <p role="note">{copy.independentAdmissions}</p>
-      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
-        {aggregateDispositions.map((disposition) => (
-          <div className="contents" key={disposition}>
-            <dt>{copy.dispositions[disposition]}</dt>
-            <dd>{counts[disposition]}</dd>
-          </div>
-        ))}
-      </dl>
-      <fieldset className="flex flex-wrap gap-4">
-        <legend className="font-medium">
-          {locale === "ru"
-            ? "Режим повторной публикации CURRENT"
-            : "CURRENT republish mode"}
-        </legend>
-        <label>
-          <input
-            type="radio"
-            name="aggregate-publication-mode"
-            checked={mode === "ordinary"}
-            onChange={() => {
-              setMode("ordinary");
-              setPreparedMode(null);
-            }}
-          />{" "}
-          {copy.ordinary}
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="aggregate-publication-mode"
-            checked={mode === "forced"}
-            onChange={() => {
-              setMode("forced");
-              setPreparedMode(null);
-            }}
-          />{" "}
-          {copy.forced}
-        </label>
-      </fieldset>
-      {!positions.length ? (
-        <p>{copy.none}</p>
-      ) : (
-        <div className="grid min-w-0 gap-3 min-[900px]:grid-cols-1 min-[1400px]:grid-cols-[minmax(220px,0.38fr)_minmax(0,1fr)]">
-          <section aria-label={copy.select} className="min-w-0">
-            <h3 className="sr-only">{copy.select}</h3>
-            <ul className="max-h-80 space-y-1 overflow-y-auto min-[1400px]:max-h-[34rem]">
-              {positions.map((position) => {
-                const isIncluded = included.has(position.id);
-                const state = states[position.id];
-                const disposition = dispositions.get(position.id) ?? "blocked";
-                const status = state?.loading
-                  ? copy.loading
-                  : preparedMode !== mode
-                    ? copy.notPrepared
-                    : copy.dispositions[disposition];
-                const reason =
-                  state?.error ||
-                  state?.blockers[0] ||
-                  state?.confirmationCapabilityReasonCodes?.[0] ||
-                  (!controllers.has(position.id)
-                    ? copy.noController
-                    : disposition === "blocked"
-                      ? copy.notPrepared
-                      : "");
-                const isSelected = position.id === selectedPosition?.id;
-                return (
-                  <li className="min-w-0" key={position.id}>
-                    <div
-                      className={`grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-1 ${isSelected ? "border-stone-500 bg-stone-100" : "border-stone-200"}`}
-                    >
-                      <button
-                        type="button"
-                        aria-pressed={isSelected}
-                        aria-label={position.label}
-                        className="min-w-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2"
-                        onClick={() => selectPosition(position.id)}
-                      >
-                        <span className="block truncate font-medium">
-                          {position.label}
-                        </span>
-                        <span className="block truncate text-xs text-stone-600">
-                          {status}
-                          {isIncluded && reason ? ` · ${reason}` : ""}
-                        </span>
-                      </button>
-                      <label className="flex items-center gap-1 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={isIncluded}
-                          aria-label={`${copy.include}: ${position.label}`}
-                          onChange={() =>
-                            setIncluded((current) => {
-                              const next = new Set(current);
-                              if (next.has(position.id))
-                                next.delete(position.id);
-                              else next.add(position.id);
-                              return next;
-                            })
-                          }
-                        />
-                        {copy.include}
-                      </label>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-          <section
-            aria-label={copy.inspector}
-            className="min-w-0 rounded border border-stone-200 p-3 max-[899px]:hidden"
-          >
-            <h3 className="mb-2 font-medium">
-              {selectedPosition?.label ?? copy.inspector}
-            </h3>
-            <div className="max-h-[34rem] min-w-0 overflow-y-auto">
-              {!mobileInspectorOpen && inspector}
-            </div>
-          </section>
-        </div>
-      )}
-      <dialog
-        ref={mobileDialog}
-        aria-label={copy.inspector}
-        className="m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-stone-300 p-4 backdrop:bg-black/40"
-        onClose={() => setMobileInspectorOpen(false)}
-      >
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="font-semibold">
-            {selectedPosition?.label ?? copy.inspector}
-          </h2>
-          <button type="button" onClick={() => setMobileInspectorOpen(false)}>
-            {copy.close}
-          </button>
-        </div>
-        {mobileInspectorOpen && inspector}
-      </dialog>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={!selected.length || !allControllersAvailable || preparing}
-          onClick={prepare}
-        >
-          {copy.prepare}
-        </button>
-        <button type="button" disabled={!canConfirm} onClick={confirm}>
-          {copy.confirm}
-        </button>
-      </div>
-    </section>
+    <AggregatePublicationPreviewView
+      locale={locale}
+      mode={mode}
+      counts={counts}
+      positions={positionViews}
+      included={included}
+      selectedPositionId={selectedPositionID}
+      canPrepare={selected.length > 0 && allControllersAvailable}
+      canConfirm={canConfirm}
+      preparing={preparing}
+      inspector={inspector}
+      onModeChange={(nextMode) => {
+        setMode(nextMode);
+        setPreparedMode(null);
+      }}
+      onToggleInclude={(positionID) =>
+        setIncluded((current) => {
+          const next = new Set(current);
+          if (next.has(positionID)) next.delete(positionID);
+          else next.add(positionID);
+          return next;
+        })
+      }
+      onSelectPosition={setSelectedPositionID}
+      onPrepare={prepare}
+      onConfirm={confirm}
+    />
   );
 }

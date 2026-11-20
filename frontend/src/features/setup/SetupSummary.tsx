@@ -5,6 +5,7 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import { SetupSummaryView } from "./SetupSummaryView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -12,13 +13,11 @@ import {
   setupHttpError,
   setupMessages,
 } from "./setupMessages";
-import "./SetupSummary.css";
 
-function formatName(format: string, messages: (typeof setupMessages)["en"]) {
-  if (format === "source") return messages.sourceFormat;
-  if (format === "mka") return "MKA";
-  if (format === "m4a") return "M4A";
-  return messages.unselected;
+function knownFormat(format: string) {
+  return format === "source" || format === "mka" || format === "m4a"
+    ? format
+    : "unselected";
 }
 
 function formatExplanation(
@@ -31,17 +30,12 @@ function formatExplanation(
   return "";
 }
 
-function ToolStatus({
-  id,
-  installations,
-  loading,
-  messages,
-}: {
-  id: string;
-  installations: InstallationResponse[];
-  loading: boolean;
-  messages: (typeof setupMessages)["en"];
-}) {
+function toolStatus(
+  id: string,
+  installations: InstallationResponse[],
+  loading: boolean,
+  messages: (typeof setupMessages)["en"],
+) {
   const tool = installations.find((item) => item.id === id);
   const version = tool?.version;
   const ready =
@@ -49,21 +43,10 @@ function ToolStatus({
     tool.state === "ready" &&
     Boolean(tool.verified_at) &&
     Boolean(version);
-  if (loading) return <span>{messages.loading}</span>;
-  if (!tool) return <span>{messages.unknownToolState}</span>;
-  if (!ready)
-    return (
-      <span>
-        {messages.toolNotReady}
-        {tool.state})
-      </span>
-    );
-  return (
-    <span>
-      {messages.ready}
-      {version}
-    </span>
-  );
+  if (loading) return messages.loading;
+  if (!tool) return messages.unknownToolState;
+  if (!ready) return `${messages.toolNotReady}${tool.state})`;
+  return `${messages.ready}${version}`;
 }
 
 export function SetupSummary({ state }: { state: SetupStateBody }) {
@@ -101,149 +84,50 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
     };
   }, []);
 
-  const healthy = state.configuration_health.healthy;
+  const ffmpeg = installations.find((item) => item.id === ffmpegID);
+  const fpcalc = installations.find((item) => item.id === fpcalcID);
   return (
-    <div className="setup-summary-content">
-      <h3>
-        {healthy ? messages.setupReadyTitle : messages.setupNeedsAttention}
-      </h3>
-      {!healthy && (
-        <div role="alert">
-          <p>{messages.setupNotReadyIntro}</p>
-          {state.configuration_health.problems?.length ? (
-            <ul>
-              {state.configuration_health.problems.map((problem) => (
-                <li key={problem}>{problem}</li>
-              ))}
-            </ul>
-          ) : (
-            <p>{messages.serverNotReady}</p>
-          )}
-        </div>
-      )}
-      <section aria-labelledby="summary-publication">
-        <h4 id="summary-publication">{messages.publication}</h4>
-        <dl>
-          <div>
-            <dt>{messages.serverDirectory}</dt>
-            <dd>{state.settings.output_directory || messages.notSpecified}</dd>
-          </div>
-          <div>
-            <dt>{messages.format}</dt>
-            <dd>{formatName(state.settings.publication_format, messages)}</dd>
-          </div>
-          <div>
-            <dt>{messages.whatWillHappen}</dt>
-            <dd>
-              {formatExplanation(state.settings.publication_format, messages)}
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.sourceFilesAfterPublication}</dt>
-            <dd>
-              {state.settings.publication_remove_sources
-                ? messages.remove
-                : messages.keep}
-            </dd>
-          </div>
-        </dl>
-      </section>
-      <section aria-labelledby="summary-tools">
-        <h4 id="summary-tools">{messages.tools}</h4>
-        {inventoryError && (
-          <p role="status">
-            {messages.toolsInventoryUnavailable}
-            {setupFeedbackText(inventoryError, locale)}
-          </p>
-        )}
-        <dl>
-          <div>
-            <dt>{messages.ffmpeg}</dt>
-            <dd>
-              <ToolStatus
-                id={ffmpegID}
-                installations={installations}
-                loading={loading}
-                messages={messages}
-              />
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.fpcalc}</dt>
-            <dd>
-              <ToolStatus
-                id={fpcalcID}
-                installations={installations}
-                loading={loading}
-                messages={messages}
-              />
-            </dd>
-          </div>
-        </dl>
-      </section>
-      <section aria-labelledby="summary-metadata">
-        <h4 id="summary-metadata">{messages.metadataAndLyrics}</h4>
-        <dl>
-          <div>
-            <dt>MusicBrainz</dt>
-            <dd>
-              {state.settings.musicbrainz_verified_at
-                ? `${messages.connectionChecked}${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : messages.publicService}`
-                : messages.connectionNotChecked}
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.lrclibLyrics}</dt>
-            <dd>
-              {state.settings.lrclib_enabled
-                ? messages.enabledAvailableForSearch
-                : messages.disabled}
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.acoustid}</dt>
-            <dd>
-              {state.settings.has_acoustid_application_key
-                ? messages.keySet
-                : messages.keyNotSetOptional}
-            </dd>
-          </div>
-        </dl>
-      </section>
-      <details>
-        <summary>{messages.technicalDetails}</summary>
-        <dl>
-          <div>
-            <dt>{messages.platform}</dt>
-            <dd>
-              {state.platform.goos}/{state.platform.goarch}
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.toolsDirectorySummary}</dt>
-            <dd>{state.settings.tools_directory || messages.notSpecified}</dd>
-          </div>
-          <div>
-            <dt>{messages.lastMusicBrainzCheck}</dt>
-            <dd>{state.settings.musicbrainz_verified_at || messages.noData}</dd>
-          </div>
-          <div>
-            <dt>{messages.lastFfmpegCheck}</dt>
-            <dd>
-              {installations.find((item) => item.id === ffmpegID)
-                ?.verified_at || messages.noData}
-            </dd>
-          </div>
-          <div>
-            <dt>{messages.lastFpcalcCheck}</dt>
-            <dd>
-              {installations.find((item) => item.id === fpcalcID)
-                ?.verified_at || messages.noData}
-            </dd>
-          </div>
-        </dl>
-      </details>
-      <p>{messages.nextStep}</p>
-    </div>
+    <SetupSummaryView
+      locale={locale}
+      status={{
+        healthy: state.configuration_health.healthy,
+        problems: state.configuration_health.problems ?? [],
+      }}
+      values={{
+        publication: {
+          directory: state.settings.output_directory || messages.notSpecified,
+          format: knownFormat(state.settings.publication_format),
+          explanation: formatExplanation(
+            state.settings.publication_format,
+            messages,
+          ),
+          removeSources: state.settings.publication_remove_sources,
+        },
+        tools: {
+          ffmpeg: toolStatus(ffmpegID, installations, loading, messages),
+          fpcalc: toolStatus(fpcalcID, installations, loading, messages),
+          notice: inventoryError
+            ? `${messages.toolsInventoryUnavailable}${setupFeedbackText(inventoryError, locale)}`
+            : undefined,
+        },
+        metadata: {
+          musicbrainz: state.settings.musicbrainz_verified_at
+            ? `${messages.connectionChecked}${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : messages.publicService}`
+            : messages.connectionNotChecked,
+          lrclibEnabled: state.settings.lrclib_enabled,
+          hasAcoustIdKey: state.settings.has_acoustid_application_key,
+        },
+        technical: {
+          platform: `${state.platform.goos}/${state.platform.goarch}`,
+          toolsDirectory:
+            state.settings.tools_directory || messages.notSpecified,
+          musicbrainzCheckedAt:
+            state.settings.musicbrainz_verified_at || messages.noData,
+          ffmpegCheckedAt: ffmpeg?.verified_at || messages.noData,
+          fpcalcCheckedAt: fpcalc?.verified_at || messages.noData,
+        },
+        showNextStep: true,
+      }}
+    />
   );
 }

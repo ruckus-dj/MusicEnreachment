@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SortDescriptor } from "react-aria-components";
-import { recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../../components/DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import type {
@@ -8,6 +7,7 @@ import type {
 	OperationsDemoProvider,
 } from "../../fixtures/useOperationsDemoProvider";
 import { useI18n } from "../../i18n";
+import { recoveryFixture } from "../library/catalogData";
 import { OperationsList, type OperationsListRow } from "./OperationsList";
 import { operationMessages } from "./operationMessages";
 
@@ -228,6 +228,21 @@ export function OperationsScreen({
 			);
 		}
 
+		for (const job of provider.publicationJobs ?? []) {
+			addRow(
+				provider.publicationStates?.get(job.id) ?? "queued",
+				"publication",
+				{
+					id: job.id,
+					target: job.title,
+					targetHref: `#track/${job.positionId}`,
+					operation: copy.publishPositions,
+					error: `${copy.staleScope} ${copy.prepareAgain}`,
+				},
+				job.createdAt,
+			);
+		}
+
 		for (const fixture of queuedOperationFixtures) {
 			result.push({
 				status: "queued",
@@ -254,6 +269,8 @@ export function OperationsScreen({
 		deletions,
 		isTargetCurrent,
 		provider.deletionStates,
+		provider.publicationJobs,
+		provider.publicationStates,
 		provider.recovery,
 		provider.retryDeletion,
 		provider.retryRecovery,

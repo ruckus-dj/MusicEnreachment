@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { DeletionOperation } from "../components/DeletionRequest";
 import {
 	type OriginalTrack,
 	originalReleases,
 	recoveryFixture,
 } from "../features/library/catalogData";
-import type { DeletionOperation } from "../components/DeletionRequest";
 import type { OperationMessage } from "../features/operations/operationMessages";
 import type { ManagedPublicationDeletionResult } from "../features/publication/managedPublicationDeletionModel";
 
@@ -20,6 +20,17 @@ export interface DemoDeletionState {
 	/** Present only after the provider settles a removal without success. */
 	failure?: DemoDeletionFailure;
 }
+
+/** One publication queued by the demo catalog while its operation is outstanding. */
+export interface DemoPublicationJob {
+	id: string;
+	releaseId: string;
+	positionId: string;
+	title: string;
+	createdAt: number;
+}
+
+const emptyPublicationJobs: readonly DemoPublicationJob[] = [];
 
 export type RecoveredSnapshot = NonNullable<OriginalTrack["published"]>;
 
@@ -37,12 +48,19 @@ export interface OperationsDemoProviderOptions {
 	dismissDeletion?: (operation: DeletionOperation) => void;
 	recover: (snapshot: RecoveredSnapshot) => boolean | undefined;
 	initialState?: OperationsDemoInitialState;
+	/** Publication jobs owned by the demo catalog; their progress lives here. */
+	publicationJobs?: readonly DemoPublicationJob[];
+	/** Applies one job to the latest catalog; false means it no longer applies. */
+	settlePublication?: (job: DemoPublicationJob) => boolean;
 }
 
 export interface OperationsDemoProvider {
 	signals: DemoOperationStatus;
 	recovery: DemoOperationStatus;
 	deletionStates: ReadonlyMap<DeletionOperation, DemoDeletionState>;
+	/** Present after publication scheduling starts; tests may build providers without it. */
+	publicationStates?: ReadonlyMap<string, DemoOperationStatus>;
+	publicationJobs?: readonly DemoPublicationJob[];
 	notice: OperationMessage | "";
 	refresh: () => void;
 	isRefreshing: boolean;
@@ -67,7 +85,9 @@ function frozenRecoverySnapshot(): RecoveredSnapshot | null {
 /**
  * Demo operations lifecycle. It lives above the Operations screen so queued
  * removals keep settling while the operator is on another route; there is no
- * user-driven "complete removal" step. Simulated recovery happens on retry.
+ * user-driven "complete removal" step. Publication jobs admitted by the demo
+ * catalog settle one at a time against the latest catalog. Simulated recovery
+ * happens on retry.
  */
 export function useOperationsDemoProvider({
 	deletions,
@@ -75,6 +95,8 @@ export function useOperationsDemoProvider({
 	dismissDeletion: onDismissDeletion,
 	recover,
 	initialState,
+	publicationJobs = emptyPublicationJobs,
+	settlePublication,
 }: OperationsDemoProviderOptions): OperationsDemoProvider {
 	const [signals, setSignals] = useState<DemoOperationStatus>(
 		initialState?.signals ?? "failed",
@@ -84,6 +106,9 @@ export function useOperationsDemoProvider({
 	);
 	const [deletionStates, setDeletionStates] = useState<
 		Map<DeletionOperation, DemoDeletionState>
+	>(() => new Map());
+	const [publicationStates, setPublicationStates] = useState<
+		Map<string, DemoOperationStatus>
 	>(() => new Map());
 	const [notice, setNotice] = useState<OperationMessage | "">("");
 	const [isRefreshing, setRefreshing] = useState(false);
@@ -98,10 +123,14 @@ export function useOperationsDemoProvider({
 	const settleDeletionRef = useRef(settleDeletion);
 	const dismissDeletionRef = useRef(onDismissDeletion);
 	const recoverRef = useRef(recover);
+	const settlePublicationRef = useRef(settlePublication);
+	const publicationJobsRef = useRef(publicationJobs);
 	// Timer callbacks need the latest projection of the demo catalog state.
 	settleDeletionRef.current = settleDeletion;
 	dismissDeletionRef.current = onDismissDeletion;
 	recoverRef.current = recover;
+	settlePublicationRef.current = settlePublication;
+	publicationJobsRef.current = publicationJobs;
 
 	useEffect(() => {
 		setDeletionStates((previous) => {
@@ -121,6 +150,25 @@ export function useOperationsDemoProvider({
 			return changed ? next : previous;
 		});
 	}, [deletions]);
+
+	useEffect(() => {
+		setPublicationStates((previous) => {
+			const present = new Set(publicationJobs.map((job) => job.id));
+			let changed = false;
+			const next = new Map(previous);
+			for (const job of publicationJobs) {
+				if (next.has(job.id)) continue;
+				next.set(job.id, "queued");
+				changed = true;
+			}
+			for (const id of next.keys()) {
+				if (present.has(id)) continue;
+				next.delete(id);
+				changed = true;
+			}
+			return changed ? next : previous;
+		});
+	}, [publicationJobs]);
 
 	useEffect(() => {
 		if (signals !== "queued") return;
@@ -211,6 +259,50 @@ export function useOperationsDemoProvider({
 		return () => clearTimeout(timer);
 	}, [deletionStates]);
 
+	// One active publication at a time. Deriving it during render keeps an
+	// unrelated queued addition from restarting the running job's timer.
+	const activePublication =
+		[...publicationStates].find(([, status]) => status === "running") ??
+		[...publicationStates].find(([, status]) => status === "queued");
+	const activePublicationId = activePublication?.[0];
+	const activePublicationStatus = activePublication?.[1];
+
+	useEffect(() => {
+		// Publish one queued job at a time against the latest live catalog. A
+		// failed job stays visible without preventing later jobs from running.
+		if (
+			activePublicationId === undefined ||
+			activePublicationStatus === undefined
+		)
+			return;
+		let timer: ReturnType<typeof setTimeout>;
+		if (activePublicationStatus === "queued") {
+			timer = setTimeout(() => {
+				setPublicationStates((previous) =>
+					previous.get(activePublicationId) === "queued"
+						? new Map(previous).set(activePublicationId, "running")
+						: previous,
+				);
+			}, demoOperationStartDelayMs);
+		} else {
+			timer = setTimeout(() => {
+				const job = publicationJobsRef.current.find(
+					(candidate) => candidate.id === activePublicationId,
+				);
+				const accepted =
+					job !== undefined && settlePublicationRef.current?.(job) === true;
+				setPublicationStates((previous) => {
+					if (previous.get(activePublicationId) !== "running") return previous;
+					const next = new Map(previous);
+					if (job === undefined) next.delete(activePublicationId);
+					else next.set(activePublicationId, accepted ? "succeeded" : "failed");
+					return next;
+				});
+			}, demoOperationSettleDelayMs);
+		}
+		return () => clearTimeout(timer);
+	}, [activePublicationId, activePublicationStatus]);
+
 	const retrySignals = useCallback(() => {
 		setSignals((current) => (current === "failed" ? "queued" : current));
 	}, []);
@@ -255,6 +347,8 @@ export function useOperationsDemoProvider({
 		signals,
 		recovery,
 		deletionStates,
+		publicationStates,
+		publicationJobs,
 		notice,
 		refresh: () => setRefreshing(true),
 		isRefreshing,
@@ -262,6 +356,7 @@ export function useOperationsDemoProvider({
 			setSignals("succeeded");
 			setRecovery("succeeded");
 			setDeletionStates(new Map());
+			setPublicationStates(new Map());
 			setNotice("");
 			setRefreshing(false);
 		},

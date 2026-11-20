@@ -54,6 +54,12 @@ import {
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
 import { LibraryMissingEditionDemo } from "../features/library/LibraryMissingEditionDemo";
 import {
+	type LibrarySelectionPreviewPosition,
+	type LibrarySelectionPreviewState,
+	LibrarySelectionPreviewView,
+	maxLibraryPreviewPositions,
+} from "../features/library/LibrarySelectionPreviewView";
+import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "../features/library/libraryDeletionModel";
@@ -68,6 +74,12 @@ import { LocalReleaseEditor } from "../features/local-release/LocalReleaseEditor
 import { MatchingScreen } from "../features/matching/MatchingScreen";
 import { OperationsScreen } from "../features/operations/OperationsScreen";
 import { ContextPublicationPreview } from "../features/publication/ContextPublicationPreview";
+import {
+	type DemoPublicationCatalog,
+	type DemoPublicationRow,
+	planDemoPublication,
+	settleDemoPublication,
+} from "../features/publication/libraryPublicationDemo";
 import type { ManagedPathObservation } from "../features/publication/managedPublicationDeletionModel";
 import {
 	PublicationPreview,
@@ -83,6 +95,7 @@ import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "../features/publication/publicationOutput";
+import { defaultPublicationTemplate } from "../features/settings/publicationTemplateDemo";
 import {
 	initialDemoSettings,
 	SettingsScreen,
@@ -114,7 +127,10 @@ import {
 	newDemoLocalRecord,
 	selectDemoRelease,
 } from "../fixtures/localReleaseDemo";
-import { useOperationsDemoProvider } from "../fixtures/useOperationsDemoProvider";
+import {
+	type DemoPublicationJob,
+	useOperationsDemoProvider,
+} from "../fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "../fixtures/useSourceScanDemoProvider";
 import { useI18n } from "../i18n";
 
@@ -143,6 +159,7 @@ const routeId = (value: string) => {
 
 type View = "artists" | "albums" | "tracks";
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
+type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
 
 const recordingIdentity = (track: OriginalTrack) =>
 	track.localRecordingId
@@ -397,6 +414,13 @@ export function CatalogDemo({
 		if (href) window.location.hash = href.slice(1);
 	}, [route, releases, artists]);
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
+	const [selectionPreview, setSelectionPreview] = useState<{
+		positions: LibrarySelectionPreviewPosition[];
+		state: LibrarySelectionPreviewState;
+	} | null>(null);
+	useEffect(() => {
+		setSelectionPreview(null);
+	}, [route]);
 	const [preview, setPreview] = useState(false);
 	const [previewMode, setPreviewMode] =
 		useState<PublicationPreviewMode>("metadata");
@@ -409,6 +433,37 @@ export function CatalogDemo({
 		null,
 	);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
+	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
+	const publicationCatalog: DemoPublicationCatalog = {
+		releases,
+		files,
+		artists,
+		destination: publicationDestination,
+		hasCustomTemplate: Boolean(
+			settings.publicationTemplate &&
+				settings.publicationTemplate !== defaultPublicationTemplate,
+		),
+		inventoryVersion: incoming.inventoryVersion,
+	};
+	const queuePublications = (plans: readonly DemoPublicationRow[]) => {
+		const jobs = plans.flatMap((plan) => {
+			const release = releases.find(({ id }) => id === plan.release_id);
+			const track = release?.tracks.find(({ id }) => id === plan.position_id);
+			return track
+				? [
+						{
+							id: `publication-${crypto.randomUUID()}`,
+							releaseId: plan.release_id,
+							positionId: plan.position_id,
+							title: track.title,
+							createdAt: Date.now(),
+							plan,
+						},
+					]
+				: [];
+		});
+		setPublicationJobs((current) => [...current, ...jobs]);
+	};
 	const [residualDeletions, setResidualDeletions] = useState(
 		() => new Map<DeletionOperation, DeletionOperation>(),
 	);
@@ -418,6 +473,36 @@ export function CatalogDemo({
 	};
 	const operationsProvider = useOperationsDemoProvider({
 		deletions,
+		publicationJobs,
+		settlePublication: (job) => {
+			const queued = publicationJobs.find(({ id }) => id === job.id);
+			if (!queued) return false;
+			const result = settleDemoPublication(publicationCatalog, queued.plan);
+			if (!result) return false;
+			setReleases((current) =>
+				current.map((release) =>
+					release.id !== job.releaseId
+						? release
+						: {
+								...release,
+								tracks: release.tracks.map((track) =>
+									track.id !== job.positionId
+										? track
+										: {
+												...track,
+												published: result,
+												metadataBaseline: result.tags,
+												metadataBaselineExtras: {
+													coverHash: result.coverHash ?? null,
+													lyrics: result.lyrics ?? null,
+												},
+											},
+								),
+							},
+				),
+			);
+			return true;
+		},
 		settleDeletion: (operation) => completeDeletion(operation),
 		recover: (snapshot) => {
 			const currentOutput = settings.currentOutput ?? "/srv/music";
@@ -658,6 +743,29 @@ export function CatalogDemo({
 			return next;
 		});
 	};
+	const openSelectionPreview = (ids: string[]) => {
+		const selectedIds = new Set(ids);
+		const positions = releases.flatMap((release) =>
+			release.tracks
+				.filter((track) => selectedIds.has(track.id))
+				.map((track) => ({
+					release_id: release.id,
+					position_id: track.id,
+					title: track.title,
+					release_title: release.title,
+				})),
+		);
+		setSelectionPreview({
+			positions,
+			state:
+				positions.length > maxLibraryPreviewPositions
+					? { status: "limit" }
+					: {
+							status: "ready",
+							rows: planDemoPublication(publicationCatalog, positions),
+						},
+		});
+	};
 	const openPreview = (
 		ids: Iterable<string>,
 		mode: PublicationPreviewMode = "metadata",
@@ -711,6 +819,14 @@ export function CatalogDemo({
 		["albums", msg("allAlbums")],
 		["tracks", msg("allTracks")],
 	];
+	const selectionPreviewDialog = selectionPreview && (
+		<LibrarySelectionPreviewView
+			locale={locale}
+			positions={selectionPreview.positions}
+			state={selectionPreview.state}
+			onClose={() => setSelectionPreview(null)}
+		/>
+	);
 	if (preview || route === "publication-preview")
 		return (
 			<section className={screenLayout}>
@@ -830,17 +946,23 @@ export function CatalogDemo({
 							: undefined
 					}
 					initialReleaseId={releaseId}
+					publication={{
+						catalog: publicationCatalog,
+						pending: publicationJobs.filter((job) => {
+							const state = operationsProvider.publicationStates?.get(job.id);
+							return !state || state === "queued" || state === "running";
+						}),
+						onQueue: queuePublications,
+					}}
 				/>
 				<SelectionDock
 					selected={selected}
 					releases={releases}
 					onSelect={update}
-					onPreview={(ids) => {
-						setContextIds(null);
-						openPreview(ids);
-					}}
+					onPreview={openSelectionPreview}
 					onQueueDeletion={queueDeletion}
 				/>
+				{selectionPreviewDialog}
 			</section>
 		);
 	}
@@ -1150,6 +1272,7 @@ export function CatalogDemo({
 							resetSourceProcessingQueue(previous),
 						);
 						operationsProvider.reset();
+						setPublicationJobs([]);
 						setReleases((previous) =>
 							previous.map((release) => ({
 								...release,
@@ -1404,11 +1527,10 @@ export function CatalogDemo({
 				visiblePositionIds={visiblePositionIds}
 				releases={releases}
 				onSelect={update}
-				onPreview={(ids) => {
-					openPreview(ids);
-				}}
+				onPreview={openSelectionPreview}
 				onQueueDeletion={queueDeletion}
 			/>
+			{selectionPreviewDialog}
 		</section>
 	);
 }
