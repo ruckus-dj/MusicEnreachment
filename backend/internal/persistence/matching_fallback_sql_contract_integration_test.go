@@ -26,6 +26,15 @@ func TestFallbackAcceptedReceiptIsStableAcrossCacheRefreshSQLPostgreSQL(t *testi
 	t.Parallel()
 	f := seedFallbackSQLRun(t, true)
 	ctx := f.ctx
+	acquisition, exists, err := f.repository.GetMatchingAcquisition(ctx, f.runID)
+	if err != nil || !exists || len(acquisition.Intent.Targets) != 1 {
+		t.Fatalf("read automatic fallback admission: exists=%v err=%v", exists, err)
+	}
+	captures, threshold, err := persistence.DecodeMatchingLayoutTarget(acquisition.Intent.LayoutTarget,
+		acquisition.Intent.Targets[0].GroupID, persistence.MatchingLayoutPolicyVersion)
+	if err != nil || threshold != 0.70 || len(captures) != 1 || captures[0].WorkID != acquisition.Intent.CapturedMembers[0].WorkID {
+		t.Fatalf("admission did not freeze the layout source and threshold: captures=%d threshold=%g err=%v", len(captures), threshold, err)
+	}
 	cache := persistence.NewProviderCacheRepository(f.db)
 	operation, err := f.repository.GetOperation(ctx, f.requestID)
 	if err != nil || operation.RiverJobID == nil {

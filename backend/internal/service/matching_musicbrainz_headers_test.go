@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -103,6 +104,18 @@ func TestMatchingSearchScopeFromAcceptedFallbackKeepsFullReleaseUniverse(t *test
 	}
 	if len(scope.SearchReceiptDigest) != 64 {
 		t.Fatalf("search receipt digest = %q", scope.SearchReceiptDigest)
+	}
+	receipt := persistence.MatchingFallbackSearchReceipt{
+		RequestID: uuid.New(), PayloadDigestVersion: 2, Payload: payload,
+		PayloadSHA256: fmt.Sprintf("%x", sha256.Sum256(payload)),
+	}
+	if err := scope.ValidateFallbackSearch("provider_recording_search", receipt); err != nil {
+		t.Fatalf("validate shortlist against accepted receipt: %v", err)
+	}
+	incomplete := scope
+	incomplete.ReleaseIDs = incomplete.ReleaseIDs[:len(incomplete.RankedReleaseIDs)]
+	if err := incomplete.ValidateFallbackSearch("provider_recording_search", receipt); err == nil {
+		t.Fatal("truncating full accepted inventory to the shortlist validated")
 	}
 	repeated, err := MatchingSearchScopeFromAcceptedFallback("provider_recording_search", payload, captures)
 	if err != nil {

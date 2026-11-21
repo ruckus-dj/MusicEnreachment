@@ -106,21 +106,6 @@ func matchingMusicBrainzSearchHeaders(kind string, payload json.RawMessage) ([]M
 	return headers, nil
 }
 
-// MatchingSearchScope is the reusable Plan 14 adapter result for one accepted
-// fallback search. It keeps the complete accepted release identity set separate
-// from the ranked selection so a caller can hydrate or diagnose outside the top
-// shortlist without reconstructing the provider payload.
-type MatchingSearchScope struct {
-	// ReleaseIDs is every distinct canonical release identity accepted by the
-	// search, sorted. It is never truncated to the shortlist.
-	ReleaseIDs []string
-	// RankedReleaseIDs is the deterministic ranked shortlist, at most
-	// MatchingReleaseShortlistLimit entries.
-	RankedReleaseIDs []string
-	// SearchReceiptDigest is the SHA-256 of the canonical accepted payload.
-	SearchReceiptDigest string
-}
-
 // MatchingSearchScopeFromAcceptedFallback adapts one frozen accepted fallback
 // search payload to the whole-layout consumer without changing the legacy
 // acquisition path. It validates the payload through both the accepted manifest
@@ -129,32 +114,32 @@ type MatchingSearchScope struct {
 // group captures. The returned slices are independent of the inputs.
 func MatchingSearchScopeFromAcceptedFallback(
 	kind string, payload json.RawMessage, captures []persistence.IncomingGroupingCapture,
-) (MatchingSearchScope, error) {
+) (persistence.MatchingAcceptedShortlist, error) {
 	manifestIDs, err := fallbackSearchReleaseKeys(kind, payload)
 	if err != nil {
-		return MatchingSearchScope{}, fmt.Errorf("validate accepted fallback search manifest: %w", err)
+		return persistence.MatchingAcceptedShortlist{}, fmt.Errorf("validate accepted fallback search manifest: %w", err)
 	}
 	headers, err := matchingMusicBrainzSearchHeaders(kind, payload)
 	if err != nil {
-		return MatchingSearchScope{}, fmt.Errorf("project accepted fallback search headers: %w", err)
+		return persistence.MatchingAcceptedShortlist{}, fmt.Errorf("project accepted fallback search headers: %w", err)
 	}
 	if err := validateMatchingSearchHeaderKeys(manifestIDs, headers); err != nil {
-		return MatchingSearchScope{}, err
+		return persistence.MatchingAcceptedShortlist{}, err
 	}
 	members, err := MatchingLayoutRetrievalMembers(captures)
 	if err != nil {
-		return MatchingSearchScope{}, fmt.Errorf("project matching layout retrieval members: %w", err)
+		return persistence.MatchingAcceptedShortlist{}, fmt.Errorf("project matching layout retrieval members: %w", err)
 	}
 	ranked, err := RankMatchingReleaseShortlist(members, headers)
 	if err != nil {
-		return MatchingSearchScope{}, fmt.Errorf("rank accepted fallback search shortlist: %w", err)
+		return persistence.MatchingAcceptedShortlist{}, fmt.Errorf("rank accepted fallback search shortlist: %w", err)
 	}
 	canonical, err := canonicalFallbackJSON(payload)
 	if err != nil {
-		return MatchingSearchScope{}, fmt.Errorf("canonicalize accepted fallback search: %w", err)
+		return persistence.MatchingAcceptedShortlist{}, fmt.Errorf("canonicalize accepted fallback search: %w", err)
 	}
 	sum := sha256.Sum256(canonical)
-	return MatchingSearchScope{
+	return persistence.MatchingAcceptedShortlist{
 		ReleaseIDs:          manifestIDs,
 		RankedReleaseIDs:    ranked,
 		SearchReceiptDigest: hex.EncodeToString(sum[:]),

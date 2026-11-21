@@ -93,6 +93,13 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return err
 		}
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("automatic fallback matching admission: lock layout settings: %w", err)
+		}
+		pairThreshold, err := matchingLayoutTargetPairThreshold(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("automatic fallback matching admission: read layout settings: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
 			return err
 		}
@@ -109,6 +116,9 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			return fmt.Errorf("automatic fallback matching reconciliation delivery fence is stale")
 		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?),hashtext(?))`, "automatic-artist-admission", admission.GroupID.String()); err != nil {
+			return err
+		}
+		if err := lockMatchingLayoutTargetRoots(ctx, tx, admission.GroupID); err != nil {
 			return err
 		}
 		var grouping struct {
@@ -189,10 +199,25 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			return err
 		}
 		targetDigest := hex.EncodeToString(targetHash[:])
+		layoutEvidence, _, err := buildMatchingLayoutTargetEvidence(capture, grouping.Revision, pairThreshold, MatchingLayoutPolicyVersion)
+		if err != nil {
+			return fmt.Errorf("automatic fallback matching admission: freeze layout target: %w", err)
+		}
+		layoutTarget, err := json.Marshal(layoutEvidence)
+		if err != nil {
+			return fmt.Errorf("automatic fallback matching admission: encode layout target: %w", err)
+		}
+		canonicalLayoutTarget, err := canonicalMatchingJSON(layoutTarget)
+		if err != nil {
+			return fmt.Errorf("automatic fallback matching admission: canonicalize layout target: %w", err)
+		}
+		layoutDigest := sha256.Sum256(canonicalLayoutTarget)
+		layoutTargetSHA256 := hex.EncodeToString(layoutDigest[:])
 		semantic, err := json.Marshal(struct {
 			Version           int             `json:"version"`
 			Target            string          `json:"target_capture_digest"`
 			Metadata          string          `json:"metadata_capture_digest"`
+			LayoutTarget      string          `json:"layout_target_sha256"`
 			Plan              json.RawMessage `json:"fallback_query_plan"`
 			Policy            string          `json:"policy_version"`
 			Source            uuid.UUID       `json:"provider_source_id"`
@@ -200,7 +225,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			Endpoint          string          `json:"provider_endpoint"`
 			Configuration     string          `json:"provider_configuration_identity"`
 			RequestGeneration int64           `json:"request_generation,omitempty"`
-		}{3, targetDigest, metadataDigest, planBytes, admission.PolicyVersion, admission.Source.ID, admission.Source.ProviderID, admission.Source.Endpoint, admission.Source.ConfigurationIdentity, admission.RequestGeneration})
+		}{3, targetDigest, metadataDigest, layoutTargetSHA256, planBytes, admission.PolicyVersion, admission.Source.ID, admission.Source.ProviderID, admission.Source.Endpoint, admission.Source.ConfigurationIdentity, admission.RequestGeneration})
 		if err != nil {
 			return err
 		}
@@ -229,15 +254,16 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			provider.ID = uuid.New()
 		}
 		planDocument, err := json.Marshal(struct {
-			SchemaVersion  int                            `json:"schema_version"`
-			Intent         string                         `json:"intent"`
-			Mode           string                         `json:"mode"`
-			Target         string                         `json:"target_capture_digest"`
-			Metadata       string                         `json:"metadata_capture_digest"`
-			Policy         string                         `json:"policy_version"`
-			Fallback       json.RawMessage                `json:"fallback_query_plan"`
-			ProviderSource MatchingFallbackProviderSource `json:"fallback_provider_source"`
-		}{5, "automatic_fallback_acquisition", "automatic", targetDigest, metadataDigest, admission.PolicyVersion, planBytes, MatchingFallbackProviderSource{
+			SchemaVersion      int                            `json:"schema_version"`
+			Intent             string                         `json:"intent"`
+			Mode               string                         `json:"mode"`
+			Target             string                         `json:"target_capture_digest"`
+			Metadata           string                         `json:"metadata_capture_digest"`
+			LayoutTargetSHA256 string                         `json:"layout_target_sha256,omitempty"`
+			Policy             string                         `json:"policy_version"`
+			Fallback           json.RawMessage                `json:"fallback_query_plan"`
+			ProviderSource     MatchingFallbackProviderSource `json:"fallback_provider_source"`
+		}{5, "automatic_fallback_acquisition", "automatic", targetDigest, metadataDigest, layoutTargetSHA256, admission.PolicyVersion, planBytes, MatchingFallbackProviderSource{
 			ID: admission.Source.ID, ProviderID: admission.Source.ProviderID, Endpoint: admission.Source.Endpoint,
 			ConfigurationIdentity: admission.Source.ConfigurationIdentity,
 		}})
@@ -302,7 +328,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			}
 			providerInputs = append(providerInputs, MatchingAcquisitionProviderRequest{OperationID: provider.ID, Kind: provider.Kind, CacheKey: *provider.ProviderCacheKey, Input: append(json.RawMessage(nil), provider.InputSnapshot...)})
 		}
-		intent := MatchingAcquisitionIntent{SchemaVersion: 3, FenceVersion: 2, GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planHash[:]), CaptureDigest: metadataDigest, CapturedMembers: metadata, PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest, FallbackQueryPlan: planBytes,
+		intent := MatchingAcquisitionIntent{SchemaVersion: 3, FenceVersion: 2, GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planHash[:]), CaptureDigest: metadataDigest, CapturedMembers: metadata, PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest, LayoutTarget: canonicalLayoutTarget, FallbackQueryPlan: planBytes,
 			FallbackProviderSource: &MatchingFallbackProviderSource{ID: admission.Source.ID, ProviderID: admission.Source.ProviderID, Endpoint: admission.Source.Endpoint, ConfigurationIdentity: admission.Source.ConfigurationIdentity},
 			Targets:                []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, InitialProviderInputs: providerInputs}
 		intentBytes, err := canonicalMatchingAcquisitionIntentBytes(intent)

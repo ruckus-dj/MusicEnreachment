@@ -100,13 +100,8 @@ func lockAndCaptureMatchingLayoutTarget(ctx context.Context, tx bun.Tx, groupID 
 	if err != nil {
 		return evidence, nil, err
 	}
-	// Scan admission can mark a root unavailable without the source mutation
-	// gate. Lock only roots in this target before capturing their status.
-	var rootIDs []uuid.UUID
-	if err := tx.NewRaw(`SELECT id FROM source_root WHERE id IN (
-		SELECT source_root_id FROM incoming_group_member_location WHERE group_id=?
-	) ORDER BY id FOR SHARE`, groupID).Scan(ctx, &rootIDs); err != nil {
-		return evidence, nil, fmt.Errorf("lock matching layout target: lock source roots: %w", err)
+	if err := lockMatchingLayoutTargetRoots(ctx, tx, groupID); err != nil {
+		return evidence, nil, err
 	}
 	var grouping struct {
 		Revision     int64 `bun:"revision"`
@@ -137,19 +132,34 @@ func lockAndCaptureMatchingLayoutTarget(ctx context.Context, tx bun.Tx, groupID 
 	if err != nil {
 		return evidence, nil, err
 	}
+	return buildMatchingLayoutTargetEvidence(target, grouping.Revision, pairThreshold, policyVersion)
+}
+
+// Scan admission can mark a root unavailable without the source mutation
+// gate. Lock only roots in this target before capturing their status.
+func lockMatchingLayoutTargetRoots(ctx context.Context, tx bun.Tx, groupID uuid.UUID) error {
+	var rootIDs []uuid.UUID
+	if err := tx.NewRaw(`SELECT id FROM source_root WHERE id IN (
+		SELECT source_root_id FROM incoming_group_member_location WHERE group_id=?
+	) ORDER BY id FOR SHARE`, groupID).Scan(ctx, &rootIDs); err != nil {
+		return fmt.Errorf("lock matching layout target: lock source roots: %w", err)
+	}
+	return nil
+}
+
+func buildMatchingLayoutTargetEvidence(target automaticArtistTargetCapture, groupingRevision int64, pairThreshold, policyVersion string) (matchingLayoutTargetEvidence, []IncomingGroupingCapture, error) {
 	readyCaptures, err := matchingLayoutTargetReadyCaptures(target)
 	if err != nil {
-		return evidence, nil, err
+		return matchingLayoutTargetEvidence{}, nil, err
 	}
-	evidence = matchingLayoutTargetEvidence{
+	return matchingLayoutTargetEvidence{
 		SchemaVersion:    matchingLayoutTargetEvidenceVersion,
 		Target:           target,
 		Captures:         matchingLayoutTargetTagEncodings(target),
-		GroupingRevision: grouping.Revision,
+		GroupingRevision: groupingRevision,
 		PairThreshold:    pairThreshold,
 		PolicyVersion:    policyVersion,
-	}
-	return evidence, readyCaptures, nil
+	}, readyCaptures, nil
 }
 
 // RecheckMatchingLayoutTargetTx verifies the frozen evidence using the current

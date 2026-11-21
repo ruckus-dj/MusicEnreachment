@@ -25,7 +25,7 @@ type MatchingExperimentReleaseHeader = MatchingReleaseHeader
 // MatchingReleaseShortlistLimit is the approved maximum number of release
 // headers a pure shortlist may select. It bounds selection only; it never
 // truncates a diagnostic ranking.
-const MatchingReleaseShortlistLimit = 10
+const MatchingReleaseShortlistLimit = persistence.MatchingReleaseShortlistLimit
 
 // MatchingExperimentTextEvidence reports how much full-release text evidence
 // was available for one header. It is a diagnostic, not a score modifier.

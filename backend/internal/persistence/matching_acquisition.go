@@ -413,6 +413,7 @@ type MatchingAcquisitionIntent struct {
 	CapturedMembers            []MatchingAcquisitionCapturedMember  `json:"captured_members"`
 	PolicyVersion              string                               `json:"policy_version"`
 	TargetCaptureDigest        string                               `json:"target_capture_digest,omitempty"`
+	LayoutTarget               json.RawMessage                      `json:"layout_target,omitempty"`
 	QueryDescriptor            json.RawMessage                      `json:"query_descriptor,omitempty"`
 	ArtistQueryPlanVersion     int                                  `json:"artist_query_plan_version,omitempty"`
 	FallbackQueryPlan          json.RawMessage                      `json:"fallback_query_plan,omitempty"`
@@ -777,6 +778,7 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 			Mode                   string                          `json:"mode"`
 			TargetCaptureDigest    string                          `json:"target_capture_digest"`
 			MetadataDigest         string                          `json:"metadata_capture_digest"`
+			LayoutTargetSHA256     string                          `json:"layout_target_sha256,omitempty"`
 			PolicyVersion          string                          `json:"policy_version"`
 			FallbackQueryPlan      json.RawMessage                 `json:"fallback_query_plan"`
 			FallbackProviderSource *MatchingFallbackProviderSource `json:"fallback_provider_source,omitempty"`
@@ -786,6 +788,43 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 			intent.TargetCaptureDigest == "" || intent.TargetCaptureDigest != plan.TargetCaptureDigest ||
 			intent.CaptureDigest != plan.MetadataDigest || intent.PolicyVersion != plan.PolicyVersion || len(intent.FallbackQueryPlan) == 0 || len(plan.FallbackQueryPlan) == 0 {
 			return fmt.Errorf("saved intent scope differs from immutable matching plan")
+		}
+		if (len(intent.LayoutTarget) != 0) != (plan.LayoutTargetSHA256 != "") {
+			return fmt.Errorf("saved layout target binding is incomplete")
+		}
+		if len(intent.LayoutTarget) != 0 {
+			// The layout target digest is part of the canonical plan, whose digest
+			// is already bound to the intent. Checking the raw capture against that
+			// field keeps the optional preparatory plumbing tamper-evident.
+			canonicalLayoutTarget, err := canonicalMatchingJSON(intent.LayoutTarget)
+			if err != nil {
+				return fmt.Errorf("saved layout target is invalid")
+			}
+			layoutDigest := sha256.Sum256(canonicalLayoutTarget)
+			if plan.LayoutTargetSHA256 != fmt.Sprintf("%x", layoutDigest[:]) {
+				return fmt.Errorf("saved layout target differs from immutable plan")
+			}
+			if len(intent.Targets) != 1 {
+				return fmt.Errorf("saved layout target scope is invalid")
+			}
+			var evidence matchingLayoutTargetEvidence
+			if json.Unmarshal(canonicalLayoutTarget, &evidence) != nil ||
+				evidence.SchemaVersion != matchingLayoutTargetEvidenceVersion ||
+				evidence.Target.SchemaVersion != 2 ||
+				evidence.Target.GroupID != intent.Targets[0].GroupID ||
+				evidence.Target.GroupRevision != intent.Targets[0].Revision ||
+				evidence.GroupingRevision != intent.GroupingEpoch ||
+				evidence.PolicyVersion != MatchingLayoutPolicyVersion {
+				return fmt.Errorf("saved layout target differs from its group snapshot")
+			}
+			targetBytes, err := json.Marshal(evidence.Target)
+			if err != nil {
+				return fmt.Errorf("saved layout target is invalid")
+			}
+			_, targetHash, err := automaticArtistTargetCaptureDigest(targetBytes)
+			if err != nil || fmt.Sprintf("%x", targetHash[:]) != plan.TargetCaptureDigest {
+				return fmt.Errorf("saved layout target differs from immutable target capture")
+			}
 		}
 		intentPlan, intentPlanErr := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan)
 		planPlan, planPlanErr := policy.CanonicalFallbackQueryPlan(plan.FallbackQueryPlan)
@@ -828,6 +867,13 @@ func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) (
 			return nil, err
 		}
 		intent.FallbackQueryPlan = canonicalPlan
+	}
+	if len(intent.LayoutTarget) != 0 {
+		canonicalLayoutTarget, err := canonicalMatchingJSON(intent.LayoutTarget)
+		if err != nil {
+			return nil, err
+		}
+		intent.LayoutTarget = canonicalLayoutTarget
 	}
 	intent.CapturedMembers = append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...)
 	for index := range intent.CapturedMembers {
