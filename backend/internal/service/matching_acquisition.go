@@ -418,8 +418,20 @@ func fallbackProviderKind(stage string) (string, string, bool) {
 // fallbackSearchReleaseIDs validates the MusicBrainz search envelope and returns
 // every distinct release identity, not merely the number of recording hits.
 func fallbackSearchManifest(kind string, payload json.RawMessage) ([]string, json.RawMessage, error) {
+	ids, err := fallbackSearchReleaseKeys(kind, payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest, err := json.Marshal(map[string]any{"kind": kind, "accepted_hits": json.RawMessage(payload), "release_ids": ids})
+	if err != nil {
+		return nil, nil, err
+	}
+	return ids, manifest, nil
+}
+
+func fallbackSearchReleaseKeys(kind string, payload json.RawMessage) ([]string, error) {
 	if len(payload) == 0 {
-		return nil, nil, fmt.Errorf("payload is missing")
+		return nil, fmt.Errorf("payload is missing")
 	}
 	var envelope struct {
 		Count      *int `json:"count"`
@@ -435,7 +447,7 @@ func fallbackSearchManifest(kind string, payload json.RawMessage) ([]string, jso
 		} `json:"releases"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Count == nil || envelope.Offset == nil || *envelope.Count < 0 || *envelope.Offset != 0 {
-		return nil, nil, fmt.Errorf("search envelope is malformed")
+		return nil, fmt.Errorf("search envelope is malformed")
 	}
 	ids := make(map[string]struct{})
 	add := func(value string) error {
@@ -449,43 +461,39 @@ func fallbackSearchManifest(kind string, payload json.RawMessage) ([]string, jso
 	switch kind {
 	case "provider_release_search":
 		if envelope.Releases == nil || len(*envelope.Releases) > 10 || *envelope.Count < len(*envelope.Releases) {
-			return nil, nil, fmt.Errorf("release search result list is invalid")
+			return nil, fmt.Errorf("release search result list is invalid")
 		}
 		for _, hit := range *envelope.Releases {
 			if err := add(hit.ID); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 	case "provider_recording_search":
 		if envelope.Recordings == nil || len(*envelope.Recordings) > 10 || *envelope.Count < len(*envelope.Recordings) {
-			return nil, nil, fmt.Errorf("recording search result list is invalid")
+			return nil, fmt.Errorf("recording search result list is invalid")
 		}
 		for _, hit := range *envelope.Recordings {
 			if _, err := canonicalMBID(hit.ID); err != nil {
-				return nil, nil, fmt.Errorf("recording result identity is invalid")
+				return nil, fmt.Errorf("recording result identity is invalid")
 			}
 			if hit.Releases == nil {
-				return nil, nil, fmt.Errorf("recording release list is missing")
+				return nil, fmt.Errorf("recording release list is missing")
 			}
 			for _, release := range *hit.Releases {
 				if err := add(release.ID); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 		}
 	default:
-		return nil, nil, fmt.Errorf("unsupported search operation")
+		return nil, fmt.Errorf("unsupported search operation")
 	}
 	result := make([]string, 0, len(ids))
 	for id := range ids {
 		result = append(result, id)
 	}
 	sort.Strings(result)
-	manifest, err := json.Marshal(map[string]any{"kind": kind, "accepted_hits": json.RawMessage(payload), "release_ids": result})
-	if err != nil {
-		return nil, nil, err
-	}
-	return result, manifest, nil
+	return result, nil
 }
 
 func (acquisition *MatchingAcquisitionService) sealReleaseHydration(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {

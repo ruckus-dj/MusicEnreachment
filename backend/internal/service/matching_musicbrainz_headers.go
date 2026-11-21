@@ -1,9 +1,13 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
 // musicBrainzMatchingReleaseHeader is the release entity shared by artist
@@ -100,4 +104,79 @@ func matchingMusicBrainzSearchHeaders(kind string, payload json.RawMessage) ([]M
 		}
 	}
 	return headers, nil
+}
+
+// MatchingSearchScope is the reusable Plan 14 adapter result for one accepted
+// fallback search. It keeps the complete accepted release identity set separate
+// from the ranked selection so a caller can hydrate or diagnose outside the top
+// shortlist without reconstructing the provider payload.
+type MatchingSearchScope struct {
+	// ReleaseIDs is every distinct canonical release identity accepted by the
+	// search, sorted. It is never truncated to the shortlist.
+	ReleaseIDs []string
+	// RankedReleaseIDs is the deterministic ranked shortlist, at most
+	// MatchingReleaseShortlistLimit entries.
+	RankedReleaseIDs []string
+	// SearchReceiptDigest is the SHA-256 of the canonical accepted payload.
+	SearchReceiptDigest string
+}
+
+// MatchingSearchScopeFromAcceptedFallback adapts one frozen accepted fallback
+// search payload to the whole-layout consumer without changing the legacy
+// acquisition path. It validates the payload through both the accepted manifest
+// and the release header projection, requires them to describe exactly the same
+// release identities, and then ranks the complete header set against the frozen
+// group captures. The returned slices are independent of the inputs.
+func MatchingSearchScopeFromAcceptedFallback(
+	kind string, payload json.RawMessage, captures []persistence.IncomingGroupingCapture,
+) (MatchingSearchScope, error) {
+	manifestIDs, err := fallbackSearchReleaseKeys(kind, payload)
+	if err != nil {
+		return MatchingSearchScope{}, fmt.Errorf("validate accepted fallback search manifest: %w", err)
+	}
+	headers, err := matchingMusicBrainzSearchHeaders(kind, payload)
+	if err != nil {
+		return MatchingSearchScope{}, fmt.Errorf("project accepted fallback search headers: %w", err)
+	}
+	if err := validateMatchingSearchHeaderKeys(manifestIDs, headers); err != nil {
+		return MatchingSearchScope{}, err
+	}
+	members, err := MatchingLayoutRetrievalMembers(captures)
+	if err != nil {
+		return MatchingSearchScope{}, fmt.Errorf("project matching layout retrieval members: %w", err)
+	}
+	ranked, err := RankMatchingReleaseShortlist(members, headers)
+	if err != nil {
+		return MatchingSearchScope{}, fmt.Errorf("rank accepted fallback search shortlist: %w", err)
+	}
+	canonical, err := canonicalFallbackJSON(payload)
+	if err != nil {
+		return MatchingSearchScope{}, fmt.Errorf("canonicalize accepted fallback search: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+	return MatchingSearchScope{
+		ReleaseIDs:          manifestIDs,
+		RankedReleaseIDs:    ranked,
+		SearchReceiptDigest: hex.EncodeToString(sum[:]),
+	}, nil
+}
+
+// validateMatchingSearchHeaderKeys requires the release header projection to
+// cover exactly the manifest's accepted release identities. Neither side may
+// silently drop a nested recording release or invent an extra release.
+func validateMatchingSearchHeaderKeys(manifestIDs []string, headers []MatchingReleaseHeader) error {
+	accepted := make(map[string]struct{}, len(manifestIDs))
+	for _, id := range manifestIDs {
+		accepted[id] = struct{}{}
+	}
+	if len(accepted) != len(manifestIDs) || len(accepted) != len(headers) {
+		return fmt.Errorf("accepted fallback search headers do not match its release identities")
+	}
+	for _, header := range headers {
+		if _, ok := accepted[header.ID]; !ok {
+			return fmt.Errorf("accepted fallback search headers do not match its release identities")
+		}
+		delete(accepted, header.ID)
+	}
+	return nil
 }

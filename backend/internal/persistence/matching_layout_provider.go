@@ -93,6 +93,12 @@ func ValidateMatchingProviderLayoutEvidenceTx(ctx context.Context, tx bun.Tx, ev
 		source.Endpoint != evidence.Endpoint || source.ConfigurationIdentity != evidence.ConfigurationIdentity {
 		return ErrIncomingMatchConflict
 	}
+	return validateMatchingProviderLayoutSnapshotTx(ctx, tx, evidence, cacheKeys)
+}
+
+// validateMatchingProviderLayoutSnapshotTx compares evidence while the caller
+// holds the provider configuration and source row locks.
+func validateMatchingProviderLayoutSnapshotTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence, cacheKeys []string) error {
 	snapshot, err := readMusicBrainzMatchingSnapshot(ctx, tx, evidence.Endpoint, evidence.ConfigurationIdentity, evidence.ReleaseKeys, cacheKeys, false)
 	if err != nil {
 		return fmt.Errorf("validate matching provider layout evidence: %w", err)

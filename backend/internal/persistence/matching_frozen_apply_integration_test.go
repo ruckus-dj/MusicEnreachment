@@ -66,31 +66,29 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 			t.Fatalf("start refresh lookup: %v", err)
 		}
 
-		// Plan 14 layout evidence must accept the published projection, tolerate
-		// an unconsumed refresh reservation, and reject a changed accepted one.
-		accepted, err := cache.GetMusicBrainzMatchingSnapshot(ctx, fixture.Source.Endpoint, fixture.Source.ConfigurationIdentity,
-			[]string{fixture.InputSnapshot.Selected.ProviderKey}, []string{fixture.InputSnapshot.Selected.Lookup.CacheKey})
-		if err != nil {
-			t.Fatalf("read accepted provider snapshot before refresh: %v", err)
+		// Use the evidence accepted by the run, never a fresher baseline from
+		// the live cache. The first stage's accepted empty result still matters.
+		seal, found, err := fixture.Repository.GetMatchingFallbackAuthoritySeal(ctx, fixture.ParentOperationID, fixture.InputSnapshot.Authority.WaitRevision)
+		if err != nil || !found || len(seal.ProofHistory) != 2 {
+			t.Fatalf("read frozen provider history: seal=%+v found=%v err=%v", seal.ProofHistory, found, err)
 		}
-		if len(accepted.Releases) != 1 || !accepted.Releases[0].Complete {
-			t.Fatalf("accepted provider snapshot before refresh=%+v; want one complete release", accepted.Releases)
+		history := make([]persistence.MatchingFallbackCalculationContext, len(seal.ProofHistory))
+		for i, proof := range seal.ProofHistory {
+			receipt, err := fixture.Repository.GetMatchingFallbackCalculationReceipt(ctx, fixture.ParentOperationID, proof.AcquisitionRevision)
+			if err != nil || receipt == nil || receipt.InputDigest != proof.InputDigest {
+				t.Fatalf("read stage %d calculation receipt: %v", i, err)
+			}
+			if err := json.Unmarshal(receipt.Context, &history[i]); err != nil {
+				t.Fatalf("decode stage %d proof: %v", i, err)
+			}
 		}
-		evidence := persistence.MatchingProviderLayoutEvidence{
-			SchemaVersion:              persistence.MatchingProviderLayoutEvidenceVersion,
-			ProviderSourceID:           accepted.Source.ID,
-			ProviderID:                 accepted.Source.ProviderID,
-			Namespace:                  accepted.Source.Namespace,
-			Endpoint:                   accepted.Source.Endpoint,
-			ConfigurationIdentity:      accepted.Source.ConfigurationIdentity,
-			ReleaseKeys:                []string{accepted.Releases[0].ProviderKey},
-			HydrationKeys:              []string{fixture.InputSnapshot.Selected.Lookup.CacheKey},
-			AcceptedProjectionRevision: accepted.AcceptedProjectionRevision,
+		if len(history[0].LookupReceipts) != 0 || len(history[1].LookupReceipts) != 1 {
+			t.Fatal("expected an accepted empty search followed by one accepted lookup")
 		}
 		validateProviderEvidence := func(want error) {
 			t.Helper()
 			validateErr := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-				return persistence.ValidateMatchingProviderLayoutEvidenceTx(ctx, tx, evidence)
+				return persistence.ValidateMatchingFallbackProviderLayoutHistoryTx(ctx, tx, fixture.ParentOperationID, history)
 			})
 			if want == nil {
 				if validateErr != nil {
@@ -103,6 +101,24 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 			}
 		}
 		validateProviderEvidence(nil)
+		rollback := errors.New("restore earlier search")
+		if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			result, err := tx.NewRaw(`UPDATE provider_response_cache SET revision='fixture-changed-accepted-search'
+				WHERE provider_source_id=? AND cache_key=? AND payload IS NOT NULL`, fixture.Source.ID, history[0].SearchCacheKey).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+				return fmt.Errorf("replace earlier accepted search revision: rows=%d err=%v", rows, err)
+			}
+			err = persistence.ValidateMatchingFallbackProviderLayoutHistoryTx(ctx, tx, fixture.ParentOperationID, history)
+			if !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+				return fmt.Errorf("changed earlier search returned %v, want matching conflict", err)
+			}
+			return rollback
+		}); !errors.Is(err, rollback) {
+			t.Fatal(err)
+		}
 
 		frozen := fixture.InputSnapshot.Selected.Projection
 		if len(frozen.Tracks) != 2 {
