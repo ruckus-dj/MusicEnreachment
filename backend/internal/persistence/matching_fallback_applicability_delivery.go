@@ -28,14 +28,14 @@ func (repository *SetupManagerRepository) AdvanceFallbackApplicabilityForDeliver
 	}
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		return repository.advanceFallbackApplicabilityForDeliveryTx(ctx, tx, client, runID, attempt, riverJobID, claim, expectedRevision, preparedNextSearch, &changed)
+		return repository.advanceFallbackApplicabilityForDeliveryTx(ctx, tx, client, runID, attempt, riverJobID, claim, expectedRevision, preparedNextSearch, nil, &changed)
 	})
 	return changed, err
 }
 
 func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliveryTx(
 	ctx context.Context, tx bun.Tx, client RiverInserter, runID uuid.UUID, attempt int, riverJobID int64,
-	claim MatchingDeliveryClaim, expectedRevision int64, preparedNextSearch *MatchingProviderRequest, changed *bool,
+	claim MatchingDeliveryClaim, expectedRevision int64, preparedNextSearch *MatchingProviderRequest, preparedReview []MatchingProviderRequest, changed *bool,
 ) error {
 	// Keep lock ordering aligned with other matching-delivery writers.
 	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
@@ -109,7 +109,8 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 		Scan(ctx, &current.Revision, &current.Phase, &current.State, &current.Epoch, &current.ActiveEpoch, &current.ActiveJob, &current.ActiveAttempt, &current.CurrentJob); err != nil {
 		return fmt.Errorf("advance fallback applicability: lock delivery owner: %w", err)
 	}
-	if current.Revision != expectedRevision || current.Phase != MatchingAcquisitionFallbackApplicability || current.State != "running" ||
+	if current.Revision != expectedRevision ||
+		(current.Phase != MatchingAcquisitionFallbackApplicability && current.Phase != MatchingAcquisitionFallbackHydration) || current.State != "running" ||
 		current.Epoch != claim.ExecutionEpoch || current.ActiveEpoch == nil || *current.ActiveEpoch != claim.ExecutionEpoch ||
 		current.ActiveJob == nil || *current.ActiveJob != riverJobID || current.ActiveAttempt == nil || *current.ActiveAttempt != claim.RiverAttempt ||
 		current.CurrentJob == nil || *current.CurrentJob != riverJobID {
@@ -124,86 +125,76 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 	if !registered {
 		return nil
 	}
-	var saved struct {
-		Stage         int             `bun:"stage_index"`
-		Digest        string          `bun:"input_digest"`
-		Context       json.RawMessage `bun:"context"`
-		Edges         json.RawMessage `bun:"edge_calculations"`
-		Schema        int             `bun:"schema_version"`
-		Calculator    int             `bun:"calculator_version"`
-		DigestVersion int             `bun:"digest_version"`
+	calculationRevision := expectedRevision
+	reviewHydrated := current.Phase == MatchingAcquisitionFallbackHydration
+	if reviewHydrated {
+		var reference *int64
+		if err := tx.NewRaw(`SELECT (input->>'calculation_revision')::bigint FROM matching_acquisition_phase WHERE run_id=? AND revision=? AND phase=?`,
+			runID, current.Revision, current.Phase).Scan(ctx, &reference); err != nil {
+			return err
+		}
+		if reference == nil || *reference != expectedRevision-1 || preparedNextSearch != nil || len(preparedReview) != 0 {
+			return fmt.Errorf("advance fallback applicability: review hydration has invalid calculation authority")
+		}
+		calculationRevision = *reference
 	}
-	if err := tx.NewRaw(`SELECT stage_index,encode(input_digest,'hex'),context,edge_calculations,schema_version,calculator_version,digest_version
-			FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=? FOR SHARE`, runID, expectedRevision).
-		Scan(ctx, &saved.Stage, &saved.Digest, &saved.Context, &saved.Edges, &saved.Schema, &saved.Calculator, &saved.DigestVersion); err != nil {
+	receipt, err := getMatchingFallbackCalculationReceipt(ctx, tx, runID, calculationRevision)
+	if err != nil {
 		return fmt.Errorf("advance fallback applicability: load saved calculation: %w", err)
 	}
-	if saved.Schema != matchingFallbackCalculationSchemaVersion || saved.Calculator != matchingFallbackCalculationCalculatorVersion || saved.DigestVersion != matchingFallbackCalculationDigestVersion {
+	if receipt == nil {
+		return fmt.Errorf("advance fallback applicability: saved calculation receipt is missing")
+	}
+	if receipt.SchemaVersion != matchingFallbackCalculationSchemaVersion || receipt.CalculatorVersion != matchingFallbackCalculationCalculatorVersion || receipt.DigestVersion != matchingFallbackCalculationDigestVersion {
 		return fmt.Errorf("advance fallback applicability: saved calculation version is unsupported")
 	}
+	if err := validateMatchingFallbackCalculationDecisionBinding(receipt); err != nil {
+		return fmt.Errorf("advance fallback applicability: saved layout decision is invalid: %w", err)
+	}
 	var snapshot MatchingFallbackCalculationContext
-	if json.Unmarshal(saved.Context, &snapshot) != nil || snapshot.RunID != runID || snapshot.AcquisitionRevision != expectedRevision || snapshot.StageIndex != saved.Stage {
+	if json.Unmarshal(receipt.Context, &snapshot) != nil || snapshot.RunID != runID || snapshot.AcquisitionRevision != calculationRevision || snapshot.StageIndex != receipt.StageIndex {
 		return fmt.Errorf("advance fallback applicability: saved calculation context is invalid")
 	}
-	persisted, exists, err := loadMatchingFallbackCalculationContext(ctx, tx, runID, expectedRevision)
-	if err != nil {
-		return fmt.Errorf("advance fallback applicability: reconstruct saved authority: %w", err)
-	}
-	if !exists {
-		return nil
-	}
-	canonicalSaved, err := canonicalMatchingFallbackCalculationContextBytes(snapshot)
-	if err != nil {
-		return fmt.Errorf("advance fallback applicability: canonicalize saved context: %w", err)
-	}
-	canonicalPersisted, err := canonicalMatchingFallbackCalculationContextBytes(persisted)
-	if err != nil {
-		return fmt.Errorf("advance fallback applicability: canonicalize persisted context: %w", err)
-	}
-	actualDigest, digestErr := MatchingFallbackCalculationInputDigest(snapshot)
-	if digestErr != nil || actualDigest != saved.Digest || !equalDigest(canonicalSaved, canonicalPersisted) {
-		return fmt.Errorf("advance fallback applicability: saved context binding is invalid")
-	}
-	if err := ValidateMatchingFallbackCalculationEdges(snapshot, saved.Edges); err != nil {
-		return fmt.Errorf("advance fallback applicability: validate saved edges: %w", err)
-	}
-	var edges []struct {
-		Confidence float64 `json:"confidence"`
-	}
-	if json.Unmarshal(saved.Edges, &edges) != nil {
-		return fmt.Errorf("advance fallback applicability: saved edges are invalid")
-	}
-	qualified := false
-	for _, edge := range edges {
-		if edge.Confidence >= 0.70 {
-			qualified = true
-			break
+	if !reviewHydrated {
+		persisted, exists, err := loadMatchingFallbackCalculationContext(ctx, tx, runID, expectedRevision)
+		if err != nil || !exists {
+			return err
 		}
+		digest, err := MatchingFallbackCalculationInputDigest(persisted)
+		if err != nil || digest != receipt.InputDigest {
+			return fmt.Errorf("advance fallback applicability: saved context binding is invalid")
+		}
+	} else if receipt.LayoutDecision.Status != MatchingLayoutDecisionNone {
+		return fmt.Errorf("advance fallback applicability: review hydration requires a proved negative")
 	}
 	var intent MatchingAcquisitionIntent
 	var intentBytes []byte
 	if err := tx.NewRaw(`SELECT intent FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &intentBytes); err != nil || json.Unmarshal(intentBytes, &intent) != nil {
 		return fmt.Errorf("advance fallback applicability: saved acquisition intent is invalid")
 	}
+	stageIndex := receipt.StageIndex
+	var plan policy.TypedFallbackQueryPlan
+	if receipt.LayoutDecision.Status != MatchingLayoutDecisionSelected {
+		if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || stageIndex < 0 || stageIndex >= len(plan.Stages) {
+			return fmt.Errorf("advance fallback applicability: immutable fallback stage is unsupported")
+		}
+	}
 	nextPhase, runState, operationStage, input, output := "", "", "", json.RawMessage(nil), json.RawMessage(nil)
 	var children []MatchingProviderRequest
-	if qualified {
-		if preparedNextSearch != nil {
+	switch receipt.LayoutDecision.Status {
+	case MatchingLayoutDecisionSelected:
+		if preparedNextSearch != nil || len(preparedReview) != 0 {
 			return fmt.Errorf("advance fallback applicability: qualified result cannot admit another search")
 		}
 		nextPhase, runState, operationStage = "pending_seal", "waiting_policy", "pending_seal"
-		input, _ = json.Marshal(map[string]any{"calculation_revision": expectedRevision, "stage_index": saved.Stage})
+		input, _ = json.Marshal(map[string]any{"calculation_revision": expectedRevision, "stage_index": stageIndex, "decision_digest": receipt.DecisionDigest})
 		output, _ = json.Marshal(map[string]any{"disposition": "waiting_policy", "reason": "qualified_candidate"})
-	} else {
-		var plan policy.TypedFallbackQueryPlan
-		if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || saved.Stage < 0 || saved.Stage >= len(plan.Stages) {
-			return fmt.Errorf("advance fallback applicability: immutable fallback stage is unsupported")
-		}
-		if saved.Stage+1 < len(plan.Stages) {
-			if preparedNextSearch == nil || preparedNextSearch.Operation == nil || preparedNextSearch.Operation.ProviderExplicitRefresh {
+	case MatchingLayoutDecisionNone:
+		if stageIndex+1 < len(plan.Stages) {
+			if preparedNextSearch == nil || preparedNextSearch.Operation == nil || preparedNextSearch.Operation.ProviderExplicitRefresh || len(preparedReview) != 0 || reviewHydrated {
 				return fmt.Errorf("advance fallback applicability: exact prepared next search is required")
 			}
-			stageDescriptor := plan.Stages[saved.Stage+1]
+			stageDescriptor := plan.Stages[stageIndex+1]
 			kind, prefix, ok := policy.ProviderKindForFallbackStage(stageDescriptor.Kind)
 			op := preparedNextSearch.Operation
 			var request struct {
@@ -216,25 +207,87 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 				op.ProviderSourceID == nil || *op.ProviderSourceID != snapshot.RunSourceID || op.ProviderConfigurationIdentity == nil || *op.ProviderConfigurationIdentity != snapshot.RunConfiguration || op.ProviderCacheKey == nil || json.Unmarshal(op.InputSnapshot, &request) != nil ||
 				request.Schema != 1 || request.Query != stageDescriptor.Query || request.Offset != 0 || request.Limit != 10 || stageDescriptor.Offset != 0 || stageDescriptor.Limit != 10 ||
 				*op.ProviderCacheKey != fmt.Sprintf("%s:0:10:%s", prefix, stageDescriptor.Query) ||
-				!fallbackStageMatchesRequest(intent, "search", op.Kind, op.InputSnapshot, saved.Stage+1) {
+				!fallbackStageMatchesRequest(intent, "search", op.Kind, op.InputSnapshot, stageIndex+1) {
 				return fmt.Errorf("advance fallback applicability: prepared search differs from immutable next stage")
 			}
 			children = []MatchingProviderRequest{*preparedNextSearch}
 			nextPhase, runState, operationStage = MatchingAcquisitionFallbackSearch, "waiting_provider", "waiting_provider"
-			input, _ = json.Marshal(map[string]any{"stage_index": saved.Stage + 1, "previous_calculation_revision": expectedRevision})
+			input, _ = json.Marshal(map[string]any{
+				"stage_index": stageIndex + 1, "previous_calculation_revision": expectedRevision,
+				"previous_input_digest": receipt.InputDigest, "previous_decision_digest": receipt.DecisionDigest,
+			})
 			output, _ = json.Marshal(map[string]any{"request_id": op.ID, "cache_key": *op.ProviderCacheKey})
 		} else {
 			if preparedNextSearch != nil {
 				return fmt.Errorf("advance fallback applicability: exhausted plan cannot admit another search")
 			}
-			history, err := validateFallbackApplicabilityZeroHistory(ctx, tx, runID, saved.Stage)
+			history, err := validateFallbackApplicabilityLayoutHistory(ctx, tx, runID, stageIndex, MatchingLayoutDecisionNone)
 			if err != nil {
 				return fmt.Errorf("advance fallback applicability: validate exhausted-stage history: %w", err)
 			}
+			reviewKeys := snapshot.AcceptedShortlist.ReviewOnlyReleaseIDs()
+			if !reviewHydrated && len(reviewKeys) != 0 {
+				if len(preparedReview) != len(reviewKeys) {
+					return fmt.Errorf("advance fallback applicability: missing review-only lookup work")
+				}
+				nextPhase, runState, operationStage = MatchingAcquisitionFallbackHydration, "waiting_provider", "waiting_provider"
+				input, _ = json.Marshal(map[string]any{
+					"calculation_revision": calculationRevision, "stage_index": stageIndex,
+					"decision_digest": receipt.DecisionDigest, "release_ids": reviewKeys,
+				})
+				lookups := make([]map[string]any, 0, len(reviewKeys))
+				for index, child := range preparedReview {
+					if child.Operation == nil || child.Operation.ProviderCacheKey == nil {
+						return fmt.Errorf("advance fallback applicability: review-only lookup is incomplete")
+					}
+					lookups = append(lookups, map[string]any{"release_id": reviewKeys[index], "request_id": child.Operation.ID, "cache_key": *child.Operation.ProviderCacheKey})
+				}
+				output, _ = json.Marshal(map[string]any{"stage_index": stageIndex, "lookups": lookups})
+				lookupPhase := MatchingAcquisitionPhase{Input: input, Output: output}
+				source := matchingAcquisitionSourceFence{SourceID: snapshot.RunSourceID, Identity: snapshot.RunConfiguration, ProviderID: snapshot.RunProviderID, Endpoint: snapshot.RunEndpoint}
+				if err := validateFallbackHydrationChildren(preparedReview, source, intent, lookupPhase); err != nil {
+					return err
+				}
+				for _, child := range preparedReview {
+					op := child.Operation
+					if err := repository.createOperationAndEnqueueTx(ctx, tx, op, client, child.Args, nil); err != nil {
+						return err
+					}
+					if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id,request_id,cache_key) VALUES (?,?,?)`, runID, op.ID, *op.ProviderCacheKey).Exec(ctx); err != nil {
+						return err
+					}
+					if err := registerFallbackRequest(ctx, tx, runID, stageIndex, "lookup", snapshot.RunSourceID, snapshot.RunConfiguration, op); err != nil {
+						return err
+					}
+				}
+				break
+			}
+			binding := map[string]any{"calculation_revision": calculationRevision, "stage_index": stageIndex, "decision_digest": receipt.DecisionDigest}
+			if reviewHydrated {
+				if _, _, err := loadFallbackReviewHydration(ctx, tx, snapshot, receipt.DecisionDigest, expectedRevision); err != nil {
+					return err
+				}
+				binding["review_hydration_revision"] = expectedRevision
+			} else if len(preparedReview) != 0 {
+				return fmt.Errorf("advance fallback applicability: off-scope review-only lookups")
+			}
 			nextPhase, runState, operationStage = "fallback_review_wait", "waiting_policy", "review_pending"
-			input, _ = json.Marshal(map[string]any{"calculation_revision": expectedRevision, "stage_index": saved.Stage})
+			input, _ = json.Marshal(binding)
 			output, _ = json.Marshal(map[string]any{"disposition": "waiting_policy", "reason": "review_required", "calculation_receipts": history})
 		}
+	case MatchingLayoutDecisionIndeterminate:
+		if preparedNextSearch != nil || len(preparedReview) != 0 {
+			return fmt.Errorf("advance fallback applicability: indeterminate layout cannot admit another search")
+		}
+		history, err := validateFallbackApplicabilityLayoutHistory(ctx, tx, runID, stageIndex, MatchingLayoutDecisionIndeterminate)
+		if err != nil {
+			return fmt.Errorf("advance fallback applicability: validate indeterminate-stage history: %w", err)
+		}
+		nextPhase, runState, operationStage = "fallback_review_wait", "waiting_policy", "review_pending"
+		input, _ = json.Marshal(map[string]any{"calculation_revision": expectedRevision, "stage_index": stageIndex, "decision_digest": receipt.DecisionDigest})
+		output, _ = json.Marshal(map[string]any{"disposition": "waiting_policy", "reason": "layout_indeterminate", "calculation_receipts": history})
+	default:
+		return fmt.Errorf("advance fallback applicability: receipt layout status is unsupported")
 	}
 	if len(children) == 1 {
 		child := children[0].Operation
@@ -247,12 +300,12 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 		if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id,request_id,cache_key) VALUES (?,?,?)`, runID, child.ID, *child.ProviderCacheKey).Exec(ctx); err != nil {
 			return fmt.Errorf("advance fallback applicability: register next-stage dependency: %w", err)
 		}
-		if err := registerFallbackRequest(ctx, tx, runID, saved.Stage+1, "search", snapshot.RunSourceID, snapshot.RunConfiguration, child); err != nil {
+		if err := registerFallbackRequest(ctx, tx, runID, stageIndex+1, "search", snapshot.RunSourceID, snapshot.RunConfiguration, child); err != nil {
 			return fmt.Errorf("advance fallback applicability: register next-stage intent: %w", err)
 		}
 	}
 	phase := MatchingAcquisitionPhase{Revision: expectedRevision + 1, Phase: nextPhase, Input: input, Output: output, ResponseProvenance: json.RawMessage("[]")}
-	cursorResult, err := tx.NewRaw(`UPDATE matching_acquisition SET current_phase=?,revision=? WHERE run_id=? AND revision=? AND current_phase=?`, phase.Phase, phase.Revision, runID, expectedRevision, MatchingAcquisitionFallbackApplicability).Exec(ctx)
+	cursorResult, err := tx.NewRaw(`UPDATE matching_acquisition SET current_phase=?,revision=? WHERE run_id=? AND revision=? AND current_phase=?`, phase.Phase, phase.Revision, runID, expectedRevision, current.Phase).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("advance fallback applicability: update cursor: %w", err)
 	}
@@ -291,7 +344,7 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 // for their registered provider child.
 func (repository *SetupManagerRepository) AdvanceFallbackApplicabilityAndContinueForDelivery(
 	ctx context.Context, client RiverInserter, runID uuid.UUID, attempt int, riverJobID int64,
-	claim MatchingDeliveryClaim, expectedRevision int64, preparedNextSearch *MatchingProviderRequest,
+	claim MatchingDeliveryClaim, expectedRevision int64, preparedNextSearch *MatchingProviderRequest, preparedReview []MatchingProviderRequest,
 ) (bool, error) {
 	if client == nil || runID == uuid.Nil || attempt < 1 || riverJobID < 1 || claim.ExecutionEpoch < 1 ||
 		claim.RiverAttempt < 1 || expectedRevision < 1 {
@@ -299,7 +352,7 @@ func (repository *SetupManagerRepository) AdvanceFallbackApplicabilityAndContinu
 	}
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := repository.advanceFallbackApplicabilityForDeliveryTx(ctx, tx, client, runID, attempt, riverJobID, claim, expectedRevision, preparedNextSearch, &changed); err != nil {
+		if err := repository.advanceFallbackApplicabilityForDeliveryTx(ctx, tx, client, runID, attempt, riverJobID, claim, expectedRevision, preparedNextSearch, preparedReview, &changed); err != nil {
 			return err
 		}
 		if !changed {
@@ -562,59 +615,49 @@ func validateFallbackSearchRiverArgs(args river.JobArgs, operationID uuid.UUID) 
 }
 
 type fallbackApplicabilityHistoryReceipt struct {
-	StageIndex  int    `json:"stage_index"`
-	Revision    int64  `json:"revision"`
-	InputDigest string `json:"input_digest"`
+	StageIndex     int    `json:"stage_index"`
+	Revision       int64  `json:"revision"`
+	InputDigest    string `json:"input_digest"`
+	DecisionDigest string `json:"decision_digest"`
 }
 
-// validateFallbackApplicabilityZeroHistory proves that every executed stage has
-// an immutable, complete, zero-confidence receipt before review is selected.
-func validateFallbackApplicabilityZeroHistory(ctx context.Context, tx bun.Tx, runID uuid.UUID, lastStage int) ([]fallbackApplicabilityHistoryReceipt, error) {
+// validateFallbackApplicabilityLayoutHistory proves that the receipts up to the
+// terminal stage form a contiguous, revision-ordered prefix. Every predecessor
+// must be a write-once proved-none layout, while the terminal receipt must carry
+// the status that caused this wait. Each reference binds the decision digest.
+func validateFallbackApplicabilityLayoutHistory(ctx context.Context, tx bun.Tx, runID uuid.UUID, lastStage int, terminal MatchingLayoutDecisionStatus) ([]fallbackApplicabilityHistoryReceipt, error) {
 	history := make([]fallbackApplicabilityHistoryReceipt, 0, lastStage+1)
+	var previousRevision int64
 	for stage := 0; stage <= lastStage; stage++ {
-		var saved struct {
-			Revision      int64           `bun:"acquisition_revision"`
-			Stage         int             `bun:"stage_index"`
-			Digest        string          `bun:"input_digest"`
-			Context       json.RawMessage `bun:"context"`
-			Edges         json.RawMessage `bun:"edge_calculations"`
-			Schema        int             `bun:"schema_version"`
-			Calculator    int             `bun:"calculator_version"`
-			DigestVersion int             `bun:"digest_version"`
-		}
-		if err := tx.NewRaw(`SELECT acquisition_revision,stage_index,encode(input_digest,'hex'),context,edge_calculations,
-			schema_version,calculator_version,digest_version FROM matching_fallback_calculation_receipt
-			WHERE run_id=? AND stage_index=?`, runID, stage).Scan(ctx, &saved.Revision, &saved.Stage, &saved.Digest,
-			&saved.Context, &saved.Edges, &saved.Schema, &saved.Calculator, &saved.DigestVersion); err != nil {
+		var revision int64
+		if err := tx.NewRaw(`SELECT acquisition_revision FROM matching_fallback_calculation_receipt WHERE run_id=? AND stage_index=?`, runID, stage).Scan(ctx, &revision); err != nil {
 			return nil, fmt.Errorf("stage %d receipt is missing: %w", stage, err)
 		}
-		var snapshot MatchingFallbackCalculationContext
-		if saved.Stage != stage || json.Unmarshal(saved.Context, &snapshot) != nil || snapshot.RunID != runID ||
-			snapshot.AcquisitionRevision != saved.Revision || snapshot.StageIndex != stage {
+		if revision <= previousRevision {
+			return nil, fmt.Errorf("stage %d receipt is not part of a contiguous prefix", stage)
+		}
+		receipt, err := getMatchingFallbackCalculationReceipt(ctx, tx, runID, revision)
+		if err != nil {
+			return nil, fmt.Errorf("stage %d receipt is invalid: %w", stage, err)
+		}
+		if receipt == nil || receipt.StageIndex != stage {
 			return nil, fmt.Errorf("stage %d receipt identity is invalid", stage)
 		}
-		if saved.Schema != matchingFallbackCalculationSchemaVersion || saved.Calculator != matchingFallbackCalculationCalculatorVersion || saved.DigestVersion != matchingFallbackCalculationDigestVersion {
-			return nil, fmt.Errorf("stage %d receipt version is unsupported", stage)
+		if err := validateMatchingFallbackCalculationDecisionBinding(receipt); err != nil {
+			return nil, fmt.Errorf("stage %d receipt layout decision is invalid: %w", stage, err)
 		}
-		digest, _ := MatchingFallbackCalculationInputDigest(snapshot)
-		if digest == "" || digest != saved.Digest {
-			return nil, fmt.Errorf("stage %d receipt context digest is invalid", stage)
+		want := MatchingLayoutDecisionNone
+		if stage == lastStage {
+			want = terminal
 		}
-		if err := ValidateMatchingFallbackCalculationEdges(snapshot, saved.Edges); err != nil {
-			return nil, fmt.Errorf("stage %d receipt edges are invalid: %w", stage, err)
+		if receipt.LayoutDecision.Status != want {
+			return nil, fmt.Errorf("stage %d receipt layout status is %s, want %s", stage, receipt.LayoutDecision.Status, want)
 		}
-		var edges []struct {
-			Confidence float64 `json:"confidence"`
-		}
-		if json.Unmarshal(saved.Edges, &edges) != nil {
-			return nil, fmt.Errorf("stage %d receipt edge list is invalid", stage)
-		}
-		for _, edge := range edges {
-			if edge.Confidence >= 0.70 {
-				return nil, fmt.Errorf("stage %d contains a qualifying edge", stage)
-			}
-		}
-		history = append(history, fallbackApplicabilityHistoryReceipt{StageIndex: stage, Revision: saved.Revision, InputDigest: saved.Digest})
+		history = append(history, fallbackApplicabilityHistoryReceipt{
+			StageIndex: stage, Revision: receipt.AcquisitionRevision,
+			InputDigest: receipt.InputDigest, DecisionDigest: receipt.DecisionDigest,
+		})
+		previousRevision = revision
 	}
 	return history, nil
 }

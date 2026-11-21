@@ -263,6 +263,10 @@ in frontend/.
   similarly named link tables. Exercise new context readers through PostgreSQL
   with both missing and real bindings; pure projection fixtures cannot detect
   a nonexistent FK column in a reader used by every publication preview.
+- Matching layout fixtures must resolve expected track UUIDs from the accepted
+  provider projection, not the MusicBrainz transport track MBIDs. For sealed
+  evaluation delivery, claim `matching_run.current_river_job_id`; older
+  unconsumed delivery rows can still exist and cannot publish the seal.
 - Apply the artwork size limit to new source ingestion, not generic CURRENT
   inspection. Legacy embedded artwork must remain observable for preservation
   and optional-failure restoration even when it exceeds the new input limit.

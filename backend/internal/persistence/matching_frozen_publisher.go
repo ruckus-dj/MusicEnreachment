@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -17,10 +16,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// PublishFrozenMatchingEvaluationForDelivery publishes only immutable review
-// outcomes. Unique outcomes are deliberately rejected until frozen apply
-// materialization is implemented; callers cannot route them through the legacy
-// mutable-cache publisher.
+// PublishFrozenMatchingEvaluationForDelivery publishes the sealed layout and
+// enqueues apply only for its exact selected assignments.
 func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDelivery(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -33,13 +30,6 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 	if repository == nil || runID == uuid.Nil || expectedOperationAttempt < 1 || riverJobID < 1 || claim.ExecutionEpoch < 1 || claim.RiverAttempt < 1 || expectedEvaluationCAS == nil {
 		return false, fmt.Errorf("publish frozen matching evaluation: delivery and evaluation CAS are required")
 	}
-	unique := publication.Evaluation.Outcome == "unique" && publication.Evaluation.Decision == "apply"
-	if (publication.Evaluation.Outcome == "unique" || publication.Evaluation.Decision == "apply") && !unique {
-		return false, fmt.Errorf("publish frozen matching evaluation: unique outcome and apply decision must agree")
-	}
-	if !unique && publication.Evaluation.Outcome != "review" && publication.Evaluation.Decision != "review" {
-		return false, fmt.Errorf("publish frozen matching evaluation: only review outcomes are supported")
-	}
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
@@ -48,6 +38,9 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("publish frozen matching evaluation: lock source mutations: %w", err)
 		}
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
 			return fmt.Errorf("publish frozen matching evaluation: lock MusicBrainz configuration: %w", err)
 		}
@@ -55,27 +48,27 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
 			return fmt.Errorf("publish frozen matching evaluation: read current MusicBrainz configuration: %w", err)
 		}
-		if currentIdentity != publication.Authority.SourceConfiguration {
-			return ErrIncomingMatchConflict
-		}
 		seal, calculation, err := validateFrozenMatchingPublicationAuthority(ctx, tx, runID, publication)
 		if err != nil {
 			return err
 		}
-		if err := validateMatchingRunFenceCurrentTarget(ctx, tx, runID); err != nil {
+		expected, err := BuildFrozenMatchingLayoutEvaluation(seal.LayoutDecision, publication.Inventory.Releases)
+		if err != nil {
 			return err
 		}
-		var source struct {
-			ProviderID    uuid.UUID `bun:"provider_id"`
-			Endpoint      string    `bun:"endpoint"`
-			Configuration string    `bun:"configuration_identity"`
+		want, wantErr := json.Marshal(expected)
+		got, gotErr := json.Marshal(publication.Evaluation)
+		if wantErr != nil || gotErr != nil || !matchingJSONEqual(want, got) {
+			return fmt.Errorf("publish frozen matching evaluation: caller differs from sealed layout decision")
 		}
-		if err := tx.NewRaw(`SELECT provider_id,endpoint,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, seal.SourceID).Scan(ctx, &source); err != nil || source.ProviderID != seal.ProviderID || source.Endpoint != seal.Endpoint || source.Configuration != seal.SourceConfiguration {
-			return fmt.Errorf("publish frozen matching evaluation: current provider source authority changed")
-		}
-		groupAuthority, err := lockIncomingGroupMatchingAuthority(ctx, tx, publication.Authority.GroupID)
-		if err != nil || groupAuthority != seal.GroupAuthority {
-			return fmt.Errorf("publish frozen matching evaluation: current group authority changed")
+		unique := seal.LayoutDecision != nil && seal.LayoutDecision.Status == MatchingLayoutDecisionSelected
+		becameStale := currentIdentity != seal.SourceConfiguration
+		if !becameStale {
+			err := recheckFrozenFallbackEvaluation(ctx, tx, seal)
+			if err != nil && !errors.Is(err, ErrIncomingMatchConflict) {
+				return err
+			}
+			becameStale = err != nil
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, runID)
 		if err != nil {
@@ -102,7 +95,9 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 			return fmt.Errorf("publish frozen matching evaluation: matching execution is no longer current")
 		}
 		var registered bool
-		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL)`, runID, riverJobID, expectedOperationAttempt).Scan(ctx, &registered); err != nil || !registered {
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery d JOIN river_job j ON j.id=d.river_job_id
+			WHERE d.run_id=? AND d.river_job_id=? AND d.operation_attempt=? AND d.consumed_at IS NULL
+			AND j.state='running' AND j.attempt=?)`, runID, riverJobID, expectedOperationAttempt, claim.RiverAttempt).Scan(ctx, &registered); err != nil || !registered {
 			return fmt.Errorf("publish frozen matching evaluation: delivery is not registered or was consumed")
 		}
 		var pending int
@@ -115,6 +110,16 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 		}
 		if _, exists := expectedEvaluationCAS[groupID]; !exists {
 			return fmt.Errorf("publish frozen matching evaluation: evaluation CAS group differs from frozen target")
+		}
+		if becameStale {
+			if err := requestFrozenMatchingRefresh(ctx, tx, groupID); err != nil {
+				return err
+			}
+			if err := settleFrozenEvaluationDelivery(ctx, tx, operation, claim, "stale"); err != nil {
+				return err
+			}
+			changed = true
+			return nil
 		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
 			return fmt.Errorf("publish frozen matching evaluation: lock evaluation CAS: %w", err)
@@ -152,33 +157,75 @@ func (repository *SetupManagerRepository) PublishFrozenMatchingEvaluationForDeli
 				return err
 			}
 		}
-		now := time.Now().UTC()
-		operation.State, operation.Stage = "succeeded", "succeeded"
-		operation.SafeError = nil
-		operation.FinishedAt = &now
-		operation.ProviderDeliveryClaimedAt = nil
-		operation.UpdatedAt = now
-		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "provider_delivery_claimed_at", "updated_at").WherePK().Exec(ctx); err != nil {
-			return fmt.Errorf("publish frozen matching evaluation: complete operation: %w", err)
-		}
-		result, err := tx.NewRaw(`UPDATE matching_run SET state='succeeded',active_river_job_id=NULL,active_river_attempt=NULL,active_execution_epoch=NULL,updated_at=? WHERE id=? AND execution_epoch=?`, now, runID, claim.ExecutionEpoch).Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("publish frozen matching evaluation: complete run: %w", err)
-		}
-		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-			return fmt.Errorf("publish frozen matching evaluation: run completion was not applied")
-		}
-		result, err = tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL`, now, runID, riverJobID, expectedOperationAttempt).Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("publish frozen matching evaluation: consume delivery: %w", err)
-		}
-		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-			return fmt.Errorf("publish frozen matching evaluation: delivery consumption was not applied")
+		if err := settleFrozenEvaluationDelivery(ctx, tx, operation, claim, "succeeded"); err != nil {
+			return err
 		}
 		changed = true
 		return nil
 	})
 	return changed, err
+}
+
+func recheckFrozenFallbackEvaluation(ctx context.Context, tx bun.Tx, seal MatchingFallbackSealAuthority) error {
+	if err := recheckFrozenFallbackProviderHistory(ctx, tx, seal); err != nil {
+		return err
+	}
+	// No-query seals have no accepted history to lock their provider source.
+	if seal.Disposition == "no_query" {
+		var id uuid.UUID
+		err := tx.NewRaw(`SELECT id FROM provider_source WHERE id=? AND provider_id=? AND endpoint=? AND configuration_identity=? FOR SHARE`,
+			seal.SourceID, seal.ProviderID, seal.Endpoint, seal.SourceConfiguration).Scan(ctx, &id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := RecheckMatchingLayoutTargetTx(ctx, tx, seal.Target.GroupID, MatchingLayoutPolicyVersion, seal.Intent.LayoutTarget); err != nil {
+		return err
+	}
+	return validateMatchingRunFenceCurrentTarget(ctx, tx, seal.RunID)
+}
+
+func requestFrozenMatchingRefresh(ctx context.Context, tx bun.Tx, groupID uuid.UUID) error {
+	var automatic bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM incoming_group g
+		LEFT JOIN incoming_group_matching_authority a ON a.group_id=g.id
+		WHERE g.id=? AND COALESCE(a.mode,'automatic')='automatic')`, groupID).Scan(ctx, &automatic); err != nil {
+		return err
+	}
+	if !automatic {
+		return nil
+	}
+	return RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{groupID})
+}
+
+func settleFrozenEvaluationDelivery(ctx context.Context, tx bun.Tx, operation *Operation, claim MatchingDeliveryClaim, stage string) error {
+	now := time.Now().UTC()
+	operation.State, operation.Stage = "succeeded", stage
+	operation.SafeError, operation.ProviderDeliveryClaimedAt = nil, nil
+	operation.FinishedAt, operation.UpdatedAt = &now, now
+	if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "provider_delivery_claimed_at", "updated_at").WherePK().Exec(ctx); err != nil {
+		return fmt.Errorf("publish frozen matching evaluation: complete operation: %w", err)
+	}
+	result, err := tx.NewRaw(`UPDATE matching_run SET state='succeeded',active_river_job_id=NULL,active_river_attempt=NULL,active_execution_epoch=NULL,updated_at=? WHERE id=? AND execution_epoch=?`,
+		now, operation.ID, claim.ExecutionEpoch).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("publish frozen matching evaluation: complete run: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return fmt.Errorf("publish frozen matching evaluation: run completion was not applied")
+	}
+	result, err = tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL`,
+		now, operation.ID, *operation.RiverJobID, operation.Attempt).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("publish frozen matching evaluation: consume delivery: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return fmt.Errorf("publish frozen matching evaluation: delivery consumption was not applied")
+	}
+	return nil
 }
 
 func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB, runID uuid.UUID, publication FrozenMatchingPublication) (MatchingFallbackSealAuthority, MatchingFallbackCalculationContext, error) {
@@ -225,7 +272,7 @@ func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB,
 		return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: caller authority differs from persisted seal")
 	}
 	if derived.SelectedCalculation == nil || len(derived.FullEvaluationContext) == 0 {
-		if derived.SelectedCalculation != nil || len(derived.FullEvaluationContext) != 0 || len(publication.Edges) != 0 || len(publication.Inventory.Releases) != 0 ||
+		if derived.SelectedCalculation != nil || len(derived.FullEvaluationContext) != 0 || len(publication.Inventory.Releases) != 0 ||
 			publication.Evaluation.SelectedRelease != "" || len(publication.Evaluation.Assignments) != 0 {
 			return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: sealed calculation context is unavailable")
 		}
@@ -237,15 +284,9 @@ func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB,
 		!matchingJSONEqual(calculation.Context, derived.FullEvaluationContext) {
 		return seal, snapshot, fmt.Errorf("publish frozen matching evaluation: sealed calculation context is unavailable")
 	}
-	if len(calculation.Edges) == 0 || ValidateMatchingFallbackCalculationEdges(snapshot, calculation.Edges) != nil {
-		return seal, snapshot, fmt.Errorf("publish frozen matching evaluation: persisted calculation edge universe is invalid")
-	}
-	if !frozenInventoryMatchesAcceptedProjections(publication.Inventory.Releases, snapshot.LookupReceipts) {
+	acceptedForReview := append(append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...), derived.ReviewLookupReceipts...)
+	if !frozenInventoryMatchesAcceptedProjections(publication.Inventory.Releases, acceptedForReview) {
 		return seal, snapshot, fmt.Errorf("publish frozen matching evaluation: review inventory differs from accepted release projections")
-	}
-	callerEdges, err := frozenPublicationCalculationEdges(publication.Edges, publication.Inventory.Members)
-	if err != nil || ValidateMatchingFallbackCalculationEdges(snapshot, callerEdges) != nil {
-		return seal, snapshot, fmt.Errorf("publish frozen matching evaluation: caller edges do not match the persisted calculation universe")
 	}
 	return derived, snapshot, nil
 }
@@ -384,53 +425,6 @@ func (repository *SetupManagerRepository) enqueueFrozenMatchingApplyTx(
 	return nil
 }
 
-func frozenPublicationCalculationEdges(edges []FrozenMatchingScoredEdge, members []FrozenMatchingReviewMember) (json.RawMessage, error) {
-	type edge struct {
-		MemberID            uuid.UUID `json:"member_id"`
-		WorkID              uuid.UUID `json:"work_id"`
-		MetadataSHA         string    `json:"metadata_sha256"`
-		ReleaseID           string    `json:"release_id"`
-		RecordingID         string    `json:"recording_id"`
-		ProviderTrackID     uuid.UUID `json:"provider_track_id"`
-		Medium              int       `json:"medium"`
-		Position            int       `json:"position"`
-		Profile             string    `json:"profile"`
-		Confidence          float64   `json:"confidence"`
-		LookupRequestID     uuid.UUID `json:"lookup_request_id"`
-		LookupPayloadSHA    string    `json:"lookup_payload_sha256"`
-		LookupProjectionSHA string    `json:"lookup_projection_sha256"`
-	}
-	result := make([]edge, 0, len(edges))
-	workByMember := make(map[uuid.UUID]uuid.UUID, len(members))
-	for _, member := range members {
-		workByMember[member.FileMemberID] = member.WorkID
-	}
-	for _, item := range edges {
-		var score struct {
-			Profile    string  `json:"profile"`
-			Confidence float64 `json:"confidence"`
-		}
-		if json.Unmarshal(item.AssignmentScore, &score) != nil || math.IsNaN(score.Confidence) || math.IsInf(score.Confidence, 0) || score.Confidence < 0 || score.Confidence > 1 {
-			return nil, fmt.Errorf("frozen edge score is invalid")
-		}
-		workID, ok := workByMember[item.FileMemberID]
-		if !ok || !json.Valid(item.ReleaseScore) {
-			return nil, fmt.Errorf("frozen edge member or release score is invalid")
-		}
-		var releaseScore struct {
-			Confidence float64 `json:"confidence"`
-		}
-		if json.Unmarshal(item.ReleaseScore, &releaseScore) != nil || math.IsNaN(releaseScore.Confidence) || math.IsInf(releaseScore.Confidence, 0) || releaseScore.Confidence < 0 || releaseScore.Confidence > 1 {
-			return nil, fmt.Errorf("frozen release score is invalid")
-		}
-		result = append(result, edge{MemberID: item.FileMemberID, WorkID: workID, MetadataSHA: item.MetadataInputSHA, ReleaseID: item.ReleaseID, RecordingID: item.RecordingID,
-			ProviderTrackID: item.ProviderTrackID, Medium: item.Medium, Position: item.Position, Profile: score.Profile, Confidence: score.Confidence,
-			LookupRequestID: item.LookupRequestID, LookupPayloadSHA: item.LookupPayloadSHA, LookupProjectionSHA: item.LookupProjectionSHA})
-	}
-	encoded, err := json.Marshal(result)
-	return encoded, err
-}
-
 func persistFrozenReviewEvaluation(ctx context.Context, tx bun.Tx, publication FrozenMatchingPublication, seal MatchingFallbackSealAuthority, decision persistedMatchingDecision) (string, error) {
 	groupID := publication.Authority.GroupID
 	if groupID != seal.Target.GroupID || publication.Inventory.GroupID != groupID || publication.Inventory.GroupRevision != seal.Target.GroupRevision || len(publication.Inventory.Members) == 0 {
@@ -491,69 +485,6 @@ func persistFrozenReviewEvaluation(ctx context.Context, tx bun.Tx, publication F
 	}
 	if len(memberByID) != len(seal.Intent.CapturedMembers) {
 		return "", fmt.Errorf("publish frozen matching evaluation: review members differ from sealed intent")
-	}
-	trackByID := make(map[uuid.UUID]MatchingReleaseTrack)
-	releaseByKey := make(map[string]MatchingRelease)
-	for _, release := range publication.Inventory.Releases {
-		releaseByKey[release.ProviderKey] = release
-		for _, track := range release.Tracks {
-			trackByID[track.ID] = track
-		}
-	}
-	byCandidate := map[string][]FrozenMatchingScoredEdge{}
-	for _, edge := range publication.Edges {
-		_, ok := memberByID[edge.FileMemberID]
-		release, releaseOK := releaseByKey[edge.ReleaseID]
-		track, trackOK := trackByID[edge.ProviderTrackID]
-		var score struct {
-			Confidence float64 `json:"confidence"`
-		}
-		if !ok || !releaseOK || !trackOK || track.Position < 1 || track.Medium < 1 || track.Position-1 != edge.Position || track.Medium-1 != edge.Medium || !json.Valid(edge.AssignmentScore) || json.Unmarshal(edge.AssignmentScore, &score) != nil || math.IsNaN(score.Confidence) || math.IsInf(score.Confidence, 0) || score.Confidence < 0 || score.Confidence > 1 {
-			return "", fmt.Errorf("publish frozen matching evaluation: review edge identity or score is invalid")
-		}
-		key := edge.FileMemberID.String() + "/" + release.ID.String()
-		byCandidate[key] = append(byCandidate[key], edge)
-	}
-	for _, edges := range byCandidate {
-		e := edges[0]
-		release := releaseByKey[e.ReleaseID]
-		var score struct {
-			Confidence float64 `json:"confidence"`
-		}
-		for _, edge := range edges {
-			var releaseScore struct {
-				Confidence float64 `json:"confidence"`
-			}
-			if json.Unmarshal(edge.ReleaseScore, &releaseScore) != nil || math.IsNaN(releaseScore.Confidence) || math.IsInf(releaseScore.Confidence, 0) || releaseScore.Confidence < 0 || releaseScore.Confidence > 1 {
-				return "", fmt.Errorf("publish frozen matching evaluation: review release score is invalid")
-			}
-			if releaseScore.Confidence > score.Confidence {
-				score.Confidence = releaseScore.Confidence
-			}
-		}
-		edgeEvidence := make([]map[string]any, 0, len(edges))
-		for _, edge := range edges {
-			var score struct {
-				Profile    string          `json:"profile"`
-				Confidence float64         `json:"confidence"`
-				Factors    json.RawMessage `json:"factors"`
-			}
-			if json.Unmarshal(edge.AssignmentScore, &score) != nil || score.Profile == "" {
-				return "", fmt.Errorf("publish frozen matching evaluation: review edge score is invalid")
-			}
-			edgeEvidence = append(edgeEvidence, map[string]any{"schema_version": 1, "medium": edge.Medium + 1, "position": edge.Position + 1,
-				"assignment_profile": map[string]any{"profile": score.Profile, "confidence": score.Confidence, "factors": score.Factors}})
-		}
-		candidateEvidence, _ := json.Marshal(map[string]any{"edge_evidence": edgeEvidence, "outcome": publication.Evaluation.Outcome, "decision": publication.Evaluation.Decision})
-		if _, err := tx.NewRaw(`INSERT INTO incoming_match_candidate(group_id,file_member_id,provider_id,provider_source_id,release_id,score,evidence) VALUES(?,?,?,?,?,?,?::jsonb)`, groupID, e.FileMemberID, seal.ProviderID, seal.SourceID, release.ID, score.Confidence, string(candidateEvidence)).Exec(ctx); err != nil {
-			return "", fmt.Errorf("publish frozen matching evaluation: insert review candidate: %w", err)
-		}
-		for _, edge := range edges {
-			track := trackByID[edge.ProviderTrackID]
-			if _, err := tx.NewRaw(`INSERT INTO incoming_match_candidate_track(group_id,file_member_id,provider_source_id,provider_id,release_id,track_id,medium,position) VALUES(?,?,?,?,?,?,?,?)`, groupID, e.FileMemberID, seal.SourceID, seal.ProviderID, release.ID, track.ID, track.Medium, track.Position).Exec(ctx); err != nil {
-				return "", fmt.Errorf("publish frozen matching evaluation: insert review layout: %w", err)
-			}
-		}
 	}
 	return evaluationRevision, nil
 }

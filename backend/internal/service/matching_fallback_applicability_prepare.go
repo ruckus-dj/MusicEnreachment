@@ -12,14 +12,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
-type matchingFallbackCalculationContextReader interface {
-	LoadMatchingFallbackCalculationContext(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackCalculationContext, bool, error)
-}
-
-type matchingFallbackCalculationReceiptWriter interface {
-	RecordMatchingFallbackCalculationForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackCalculationReceipt) (bool, error)
-}
-
 type matchingFallbackSealReader interface {
 	GetMatchingFallbackAuthoritySeal(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackSealAuthority, bool, error)
 }
@@ -48,8 +40,6 @@ type FrozenFallbackEvaluationAuthority struct {
 	RunEndpoint           string
 	RunConfiguration      string
 	CalculationStageIndex int
-	CalculationLookups    []persistence.MatchingFallbackCalculationLookupAuthority
-	CalculationReceipts   []persistence.MatchingFallbackLookupReceipt
 }
 
 // MatchingFrozenGroupInventory is the complete frozen grouping inventory used by
@@ -67,9 +57,8 @@ type MatchingFrozenGroupInventory struct {
 type PreparedFrozenFallbackEvaluation struct {
 	Authority       FrozenFallbackEvaluationAuthority
 	Calculation     *persistence.MatchingFallbackSealCalculationReference
-	Result          MatchingFallbackApplicabilityResult
-	KernelResult    MatchingGroupEvaluationDecisionResult
-	ReviewInventory []MatchingFallbackCandidate
+	LayoutDecision  *persistence.MatchingLayoutDecision
+	Releases        []persistence.MatchingRelease
 	FrozenInventory MatchingFrozenGroupInventory
 }
 
@@ -101,12 +90,15 @@ func PrepareFrozenFallbackEvaluation(
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: seal digest is invalid")
 	}
 	seal.Digest = sealDigest
-	if seal.SelectedCalculation == nil || len(seal.FullEvaluationContext) == 0 {
-		prepared, err := prepareSealedReviewOnly(ctx, seal)
-		if err != nil {
-			return PreparedFrozenFallbackEvaluation{}, false, err
+	prepared, err := prepareSealedReviewOnly(ctx, seal)
+	if err != nil {
+		return PreparedFrozenFallbackEvaluation{}, false, err
+	}
+	prepared.Authority = frozenFallbackAuthorityView(seal)
+	if seal.SelectedCalculation == nil {
+		if seal.Disposition != "no_query" || seal.LayoutDecision != nil || len(seal.FullEvaluationContext) != 0 {
+			return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: no-query seal contains a decision")
 		}
-		prepared.Authority = frozenFallbackAuthorityView(seal)
 		return prepared, true, nil
 	}
 	ref := seal.SelectedCalculation
@@ -121,30 +113,48 @@ func PrepareFrozenFallbackEvaluation(
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: selected context identity does not match seal")
 	}
 	var digest string
-	if ref.SchemaVersion != 3 || ref.CalculatorVersion != 3 || ref.DigestVersion != 3 {
+	if ref.SchemaVersion != 4 || ref.CalculatorVersion != 4 || ref.DigestVersion != 4 {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported selected calculation version tuple")
 	}
 	digest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
 	if err != nil || digest != ref.InputDigest {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: selected context digest is invalid")
 	}
-	if snapshot.SearchReceipt.PayloadDigestVersion != 2 {
-		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported search receipt version")
+	if seal.LayoutDecision == nil {
+		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: seal has no layout decision")
 	}
-	input := fallbackApplicabilityInputFromContext(snapshot)
-	result, err := CalculateFallbackApplicability(input)
+	decisionDigest, err := seal.LayoutDecision.Digest()
+	if err != nil || decisionDigest != ref.DecisionDigest {
+		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: sealed decision digest is invalid")
+	}
+	evidence, err := persistence.DecodeFallbackLayoutStageEvidence(snapshot, snapshot.AcceptedShortlist)
 	if err != nil {
 		return PreparedFrozenFallbackEvaluation{}, false, err
 	}
-	kernelResult, frozenInventory, err := evaluateFrozenFallbackInventory(ctx, snapshot.Target, snapshot.Intent.CapturedMembers, result)
-	if err != nil {
+	if err := evidence.ValidateDecision(*seal.LayoutDecision); err != nil {
 		return PreparedFrozenFallbackEvaluation{}, false, err
 	}
-	return PreparedFrozenFallbackEvaluation{
-		Authority:   frozenFallbackAuthorityView(seal),
-		Calculation: ref, Result: result, KernelResult: kernelResult,
-		ReviewInventory: append([]MatchingFallbackCandidate(nil), result.AllCandidates...), FrozenInventory: frozenInventory,
-	}, true, nil
+	prepared.Calculation, prepared.LayoutDecision, prepared.Releases = ref, seal.LayoutDecision, evidence.Releases
+	if len(seal.ReviewLookupReceipts) != 0 {
+		scope := persistence.MatchingFallbackProviderSource{
+			ID: snapshot.RunSourceID, ProviderID: snapshot.RunProviderID, Endpoint: snapshot.RunEndpoint, ConfigurationIdentity: snapshot.RunConfiguration,
+		}
+		if seal.Disposition != "review_exhausted" || len(seal.ReviewLookups) != len(seal.ReviewLookupReceipts) {
+			return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: review-only lookup scope is invalid")
+		}
+		for i, receipt := range seal.ReviewLookupReceipts {
+			lookup := seal.ReviewLookups[i]
+			if receipt.RequestID != lookup.RequestID {
+				return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: review-only lookup was substituted")
+			}
+			release, _, err := persistence.DecodeFallbackLayoutLookup(receipt, scope, lookup.ReleaseID)
+			if err != nil {
+				return PreparedFrozenFallbackEvaluation{}, false, err
+			}
+			prepared.Releases = append(prepared.Releases, release)
+		}
+	}
+	return prepared, true, nil
 }
 
 func frozenFallbackAuthorityView(seal persistence.MatchingFallbackSealAuthority) FrozenFallbackEvaluationAuthority {
@@ -167,14 +177,15 @@ func frozenFallbackAuthorityView(seal persistence.MatchingFallbackSealAuthority)
 			authority.RunEndpoint = context.RunEndpoint
 			authority.RunConfiguration = context.RunConfiguration
 			authority.CalculationStageIndex = context.StageIndex
-			authority.CalculationLookups = append([]persistence.MatchingFallbackCalculationLookupAuthority(nil), context.Lookups...)
-			authority.CalculationReceipts = append([]persistence.MatchingFallbackLookupReceipt(nil), context.LookupReceipts...)
 		}
 	}
 	return authority
 }
 
 func prepareSealedReviewOnly(ctx context.Context, seal persistence.MatchingFallbackSealAuthority) (PreparedFrozenFallbackEvaluation, error) {
+	if err := ctx.Err(); err != nil {
+		return PreparedFrozenFallbackEvaluation{}, err
+	}
 	var frozen fallbackCapture
 	if len(seal.Target.Capture) == 0 || decodeFallbackStrict(seal.Target.Capture, &frozen) != nil || frozen.SchemaVersion != 2 ||
 		frozen.GroupID != seal.Target.GroupID || frozen.GroupRevision != seal.Target.GroupRevision {
@@ -192,11 +203,7 @@ func prepareSealedReviewOnly(ctx context.Context, seal persistence.MatchingFallb
 	if err != nil {
 		return PreparedFrozenFallbackEvaluation{}, err
 	}
-	decision, err := EvaluateMatchingGroupFromInputs(ctx, MatchingGroupEvaluationInput{Members: inventory.MemberFences, Files: inventory.Files})
-	if err != nil {
-		return PreparedFrozenFallbackEvaluation{}, err
-	}
-	return PreparedFrozenFallbackEvaluation{KernelResult: decision, ReviewInventory: []MatchingFallbackCandidate{}, FrozenInventory: inventory}, nil
+	return PreparedFrozenFallbackEvaluation{FrozenInventory: inventory}, nil
 }
 
 func evaluateFrozenFallbackInventory(ctx context.Context, target persistence.MatchingRunFenceSnapshot, captured []persistence.MatchingAcquisitionCapturedMember, result MatchingFallbackApplicabilityResult) (MatchingGroupEvaluationDecisionResult, MatchingFrozenGroupInventory, error) {
@@ -264,125 +271,4 @@ func frozenReviewInventory(frozen fallbackCapture, captured []persistence.Matchi
 		return MatchingFrozenGroupInventory{}, fmt.Errorf("frozen fallback evaluation: captured metadata does not exactly cover target")
 	}
 	return inventory, nil
-}
-
-// PrepareFallbackApplicability loads one immutable persistence snapshot and
-// passes an explicit service-owned conversion to the pure calculator.
-func PrepareFallbackApplicability(
-	ctx context.Context,
-	reader matchingFallbackCalculationContextReader,
-	runID uuid.UUID,
-	expectedRevision int64,
-) (MatchingFallbackApplicabilityResult, bool, error) {
-	if reader == nil {
-		return MatchingFallbackApplicabilityResult{}, false, fmt.Errorf("fallback applicability: context reader is unavailable")
-	}
-	snapshot, exists, err := reader.LoadMatchingFallbackCalculationContext(ctx, runID, expectedRevision)
-	if err != nil || !exists {
-		return MatchingFallbackApplicabilityResult{}, exists, err
-	}
-	input := fallbackApplicabilityInputFromContext(snapshot)
-	result, err := CalculateFallbackApplicability(input)
-	return result, true, err
-}
-
-// PrepareFallbackApplicabilityReceipt calculates and records stage-scoped evidence
-// from the same validated persisted context. It intentionally leaves delivery
-// consumption and acquisition advancement to their existing owners.
-func PrepareFallbackApplicabilityReceipt(
-	ctx context.Context,
-	reader matchingFallbackCalculationContextReader,
-	writer matchingFallbackCalculationReceiptWriter,
-	runID uuid.UUID,
-	attempt int,
-	riverJobID int64,
-	claim persistence.MatchingDeliveryClaim,
-	expectedRevision int64,
-) (MatchingFallbackApplicabilityResult, bool, error) {
-	if reader == nil || writer == nil {
-		return MatchingFallbackApplicabilityResult{}, false, fmt.Errorf("fallback applicability: receipt persistence is unavailable")
-	}
-	snapshot, exists, err := reader.LoadMatchingFallbackCalculationContext(ctx, runID, expectedRevision)
-	if err != nil || !exists {
-		return MatchingFallbackApplicabilityResult{}, exists, err
-	}
-	result, err := CalculateFallbackApplicability(fallbackApplicabilityInputFromContext(snapshot))
-	if err != nil {
-		return MatchingFallbackApplicabilityResult{}, true, err
-	}
-	digest, err := persistence.MatchingFallbackCalculationInputDigest(snapshot)
-	if err != nil {
-		return MatchingFallbackApplicabilityResult{}, true, err
-	}
-	contextJSON, err := json.Marshal(snapshot)
-	if err != nil {
-		return MatchingFallbackApplicabilityResult{}, true, fmt.Errorf("fallback applicability: serialize receipt context: %w", err)
-	}
-	edges := make([]matchingFallbackReceiptEdge, len(result.AllCandidates))
-	for index, candidate := range result.AllCandidates {
-		requestID := uuid.Nil
-		for _, lookup := range snapshot.Lookups {
-			if lookup.ReleaseID == candidate.ReleaseID {
-				requestID = lookup.RequestID
-				break
-			}
-		}
-		if requestID == uuid.Nil {
-			return MatchingFallbackApplicabilityResult{}, true, fmt.Errorf("fallback applicability: candidate lacks registered lookup authority")
-		}
-		edges[index] = matchingFallbackReceiptEdge{MemberID: candidate.MemberID, WorkID: candidate.FrozenWorkID,
-			MetadataSHA: candidate.MetadataInputSHA, ReleaseID: candidate.ReleaseID, RecordingID: candidate.RecordingID,
-			ProviderTrackID: candidate.ProviderTrackUUID, Medium: candidate.Medium, Position: candidate.Position,
-			Profile: string(candidate.Score.Profile), Confidence: candidate.Score.Confidence, LookupRequestID: requestID,
-			LookupPayloadSHA: candidate.LookupPayloadSHA, LookupProjectionSHA: candidate.LookupProjectionSHA}
-	}
-	edgesJSON, err := json.Marshal(edges)
-	if err != nil {
-		return MatchingFallbackApplicabilityResult{}, true, fmt.Errorf("fallback applicability: serialize receipt edges: %w", err)
-	}
-	recorded, err := writer.RecordMatchingFallbackCalculationForDelivery(ctx, runID, attempt, riverJobID, claim, expectedRevision,
-		persistence.MatchingFallbackCalculationReceipt{RunID: runID, AcquisitionRevision: expectedRevision,
-			StageIndex: snapshot.StageIndex, InputDigest: digest, Context: contextJSON, Edges: edgesJSON})
-	return result, recorded, err
-}
-
-type matchingFallbackReceiptEdge struct {
-	MemberID            uuid.UUID `json:"member_id"`
-	WorkID              uuid.UUID `json:"work_id"`
-	MetadataSHA         string    `json:"metadata_sha256"`
-	ReleaseID           string    `json:"release_id"`
-	RecordingID         string    `json:"recording_id"`
-	ProviderTrackID     uuid.UUID `json:"provider_track_id"`
-	Medium              int       `json:"medium"`
-	Position            int       `json:"position"`
-	Profile             string    `json:"profile"`
-	Confidence          float64   `json:"confidence"`
-	LookupRequestID     uuid.UUID `json:"lookup_request_id"`
-	LookupPayloadSHA    string    `json:"lookup_payload_sha256"`
-	LookupProjectionSHA string    `json:"lookup_projection_sha256"`
-}
-
-func fallbackApplicabilityInputFromContext(snapshot persistence.MatchingFallbackCalculationContext) MatchingFallbackApplicabilityInput {
-	lookups := make([]MatchingFallbackLookupAuthority, len(snapshot.Lookups))
-	for index, lookup := range snapshot.Lookups {
-		lookups[index] = MatchingFallbackLookupAuthority{
-			RequestID: lookup.RequestID, ReleaseID: lookup.ReleaseID, Kind: lookup.Kind,
-			ProviderSourceID: lookup.ProviderSourceID, ProviderID: lookup.ProviderID,
-			Endpoint: lookup.Endpoint, Configuration: lookup.Configuration,
-			CacheKey: lookup.CacheKey, Input: append([]byte(nil), lookup.Input...),
-		}
-	}
-	return MatchingFallbackApplicabilityInput{
-		RunID: snapshot.RunID, AcquisitionRevision: snapshot.AcquisitionRevision, StageIndex: snapshot.StageIndex,
-		Intent: snapshot.Intent, Target: snapshot.Target,
-		PhaseInput: append([]byte(nil), snapshot.PhaseInput...), PhaseOutput: append([]byte(nil), snapshot.PhaseOutput...),
-		PhaseProvenance: append([]byte(nil), snapshot.PhaseProvenance...), SearchReceipt: snapshot.SearchReceipt,
-		LookupReceipts: snapshot.LookupReceipts,
-		Authority: MatchingFallbackAuthority{
-			RunSourceID: snapshot.RunSourceID, RunProviderID: snapshot.RunProviderID,
-			RunEndpoint: snapshot.RunEndpoint, RunConfiguration: snapshot.RunConfiguration,
-			SearchKind: snapshot.SearchKind, SearchCacheKey: snapshot.SearchCacheKey,
-			SearchInput: append([]byte(nil), snapshot.SearchInput...), Lookups: lookups,
-		},
-	}
 }

@@ -14,6 +14,40 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// recheckFrozenFallbackProviderHistory validates the immutable proof prefix
+// named by the seal against the current provider scope. The caller must not
+// already hold only a shared lock on the provider source row.
+func recheckFrozenFallbackProviderHistory(ctx context.Context, tx bun.Tx, seal MatchingFallbackSealAuthority) error {
+	if seal.Disposition == "no_query" && len(seal.ProofHistory) == 0 {
+		return nil
+	}
+	history := make([]MatchingFallbackCalculationContext, 0, len(seal.ProofHistory))
+	for _, proof := range seal.ProofHistory {
+		receipt, err := getMatchingFallbackCalculationReceipt(ctx, tx, seal.RunID, proof.AcquisitionRevision)
+		if err != nil {
+			return err
+		}
+		if receipt == nil || proof.StageIndex != receipt.StageIndex || proof.InputDigest != receipt.InputDigest ||
+			proof.DecisionDigest != receipt.DecisionDigest || proof.SchemaVersion != receipt.SchemaVersion ||
+			proof.CalculatorVersion != receipt.CalculatorVersion || proof.DigestVersion != receipt.DigestVersion {
+			return errors.New("fallback layout proof differs from its saved calculation")
+		}
+		var stage MatchingFallbackCalculationContext
+		if err := json.Unmarshal(receipt.Context, &stage); err != nil {
+			return fmt.Errorf("decode fallback layout proof context: %w", err)
+		}
+		history = append(history, stage)
+	}
+	if len(seal.ReviewLookups) != 0 {
+		// These receipts are additional freshness inputs for terminal review,
+		// never inputs to the decision or its calculation digest.
+		last := &history[len(history)-1]
+		last.Lookups = append(last.Lookups, seal.ReviewLookups...)
+		last.LookupReceipts = append(last.LookupReceipts, seal.ReviewLookupReceipts...)
+	}
+	return ValidateMatchingFallbackProviderLayoutHistoryTx(ctx, tx, seal.RunID, history)
+}
+
 // ValidateMatchingFallbackProviderLayoutHistoryTx checks the accepted
 // MusicBrainz evidence for each contiguous stage from the start of a run.
 // The caller supplies the immutable contexts referenced by its decision seal

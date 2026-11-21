@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 )
@@ -23,11 +24,12 @@ func (repository *SetupManagerRepository) CompleteFallbackHydrationForDelivery(
 		return false, fmt.Errorf("complete fallback hydration: registered phase changed")
 	}
 	var input struct {
-		StageIndex              int             `json:"stage_index"`
-		SearchRequestID         uuid.UUID       `json:"search_request_id"`
-		OriginHydrationRevision int64           `json:"origin_hydration_revision"`
-		ReleaseIDs              []string        `json:"release_ids"`
-		SearchManifest          json.RawMessage `json:"search_manifest"`
+		StageIndex              int                       `json:"stage_index"`
+		SearchRequestID         uuid.UUID                 `json:"search_request_id"`
+		OriginHydrationRevision int64                     `json:"origin_hydration_revision"`
+		ReleaseIDs              []string                  `json:"release_ids"`
+		AcceptedShortlist       MatchingAcceptedShortlist `json:"accepted_shortlist"`
+		SearchManifest          json.RawMessage           `json:"search_manifest"`
 	}
 	var output struct {
 		Lookups []struct {
@@ -52,6 +54,18 @@ func (repository *SetupManagerRepository) CompleteFallbackHydrationForDelivery(
 	registration, err := loadFallbackRequestRegistration(ctx, repository.db, runID, input.StageIndex, "search", input.SearchRequestID)
 	if err != nil || registration.RequestID != input.SearchRequestID {
 		return false, fmt.Errorf("complete fallback hydration: registered search request is unavailable")
+	}
+	searchReceipt, err := getMatchingFallbackSearchReceipt(ctx, repository.db, runID, input.SearchRequestID)
+	if err != nil || searchReceipt == nil || searchReceipt.StageIndex != input.StageIndex ||
+		searchReceipt.PayloadSHA256 != searchProvenance[0].PayloadSHA {
+		return false, fmt.Errorf("complete fallback hydration: accepted search receipt is unavailable")
+	}
+	shortlistKeys := make([]string, 0, len(input.AcceptedShortlist.RankedReleaseIDs))
+	shortlistKeys = append(shortlistKeys, input.AcceptedShortlist.RankedReleaseIDs...)
+	sort.Strings(shortlistKeys)
+	if input.AcceptedShortlist.ValidateFallbackSearch(registration.Kind, *searchReceipt) != nil ||
+		!equalStringSlices(shortlistKeys, input.ReleaseIDs) {
+		return false, fmt.Errorf("complete fallback hydration: accepted shortlist differs from registered search")
 	}
 	receipts := make([]map[string]any, 0, len(output.Lookups))
 	for index, lookup := range output.Lookups {

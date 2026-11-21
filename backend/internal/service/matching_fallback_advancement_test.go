@@ -19,7 +19,7 @@ func (repository *fallbackAdvancementRepository) GetMatchingFallbackCalculationR
 	return repository.receipt, nil
 }
 
-func (repository *fallbackAdvancementRepository) AdvanceFallbackApplicabilityAndContinueForDelivery(_ context.Context, _ persistence.RiverInserter, _ uuid.UUID, _ int, _ int64, _ persistence.MatchingDeliveryClaim, _ int64, next *persistence.MatchingProviderRequest) (bool, error) {
+func (repository *fallbackAdvancementRepository) AdvanceFallbackApplicabilityAndContinueForDelivery(_ context.Context, _ persistence.RiverInserter, _ uuid.UUID, _ int, _ int64, _ persistence.MatchingDeliveryClaim, _ int64, next *persistence.MatchingProviderRequest, _ []persistence.MatchingProviderRequest) (bool, error) {
 	repository.next = next
 	return true, nil
 }
@@ -46,19 +46,20 @@ func (provider *fallbackAdvancementProvider) PrepareOperation(_ context.Context,
 func TestMatchingAcquisitionReplaysCalculationReceiptToAdvanceFallbackPlan(t *testing.T) {
 	for _, test := range []struct {
 		name        string
-		edges       string
+		status      persistence.MatchingLayoutDecisionStatus
 		wantNext    bool
 		wantPrepare int
 	}{
-		{name: "zero advances to exact next query", edges: `[]`, wantNext: true, wantPrepare: 1},
-		{name: "qualified parks for seal", edges: `[ {"confidence":0.7} ]`, wantPrepare: 0},
+		{name: "proved none advances to exact next query", status: persistence.MatchingLayoutDecisionNone, wantNext: true, wantPrepare: 1},
+		{name: "selected parks for seal", status: persistence.MatchingLayoutDecisionSelected},
+		{name: "indeterminate does not advance", status: persistence.MatchingLayoutDecisionIndeterminate},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runID := uuid.New()
 			intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 3, FallbackQueryPlan: json.RawMessage(`{"schema_version":1,"stages":[{"kind":"album_track","query":"release AND recording","offset":0,"limit":10},{"kind":"track","query":"recording","offset":0,"limit":10}]}`)}
 			repository := &fallbackAdvancementRepository{
 				matchingAcquisitionRepositoryFixture: &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Revision: 12, Phase: persistence.MatchingAcquisitionFallbackApplicability}},
-				receipt:                              &persistence.MatchingFallbackCalculationReceipt{RunID: runID, AcquisitionRevision: 12, StageIndex: 0, Edges: json.RawMessage(test.edges)},
+				receipt:                              &persistence.MatchingFallbackCalculationReceipt{RunID: runID, AcquisitionRevision: 12, StageIndex: 0, LayoutDecision: persistence.MatchingLayoutDecision{Status: test.status}},
 			}
 			provider := &fallbackAdvancementProvider{}
 			acquisition := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})

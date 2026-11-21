@@ -212,6 +212,9 @@ func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Con
 		}
 		currentProviderConfiguration := true
 		if version.SchemaVersion == 2 {
+			if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
 				return fmt.Errorf("apply matching operation: lock MusicBrainz configuration: %w", err)
 			}
@@ -1268,24 +1271,56 @@ func (repository *SetupManagerRepository) applyFrozenMatchingOperationTx(
 	if err != nil {
 		return false, fmt.Errorf("apply matching operation: validate historical calculation: %w", err)
 	}
-	var header struct {
-		Evidence     json.RawMessage `bun:"evaluation_evidence"`
-		Revision     string          `bun:"evaluation_revision"`
-		FenceVersion int             `bun:"fence_version"`
-		TargetRunID  *uuid.UUID      `bun:"target_run_id"`
+	stale := func(reason string) (bool, error) {
+		if err := requestFrozenMatchingRefresh(ctx, tx, request.GroupID); err != nil {
+			return false, err
+		}
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", reason)
 	}
-	if err := tx.NewRaw(`SELECT evaluation_evidence,evaluation_revision,fence_version,target_run_id FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, request.GroupID).Scan(ctx, &header); err != nil {
+	if err := recheckFrozenFallbackProviderHistory(ctx, tx, seal); err != nil {
+		if errors.Is(err, ErrIncomingMatchConflict) {
+			return stale("The matching decision is stale because accepted provider evidence changed.")
+		}
+		return false, err
+	}
+	if _, err := RecheckMatchingLayoutTargetTx(ctx, tx, request.GroupID, MatchingLayoutPolicyVersion, seal.Intent.LayoutTarget); err != nil {
+		if errors.Is(err, ErrIncomingMatchConflict) {
+			return stale("The matching decision is stale because the source group or matching settings changed.")
+		}
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+request.GroupID.String()); err != nil {
+		return false, err
+	}
+	var header struct {
+		Evidence         json.RawMessage `bun:"evaluation_evidence"`
+		Revision         string          `bun:"evaluation_revision"`
+		FenceVersion     int             `bun:"fence_version"`
+		TargetRunID      *uuid.UUID      `bun:"target_run_id"`
+		AuthorityVersion *int            `bun:"frozen_authority_version"`
+		FrozenRunID      *uuid.UUID      `bun:"frozen_run_id"`
+		WaitRevision     *int64          `bun:"frozen_wait_revision"`
+		SealDigest       []byte          `bun:"frozen_seal_digest"`
+	}
+	if err := tx.NewRaw(`SELECT evaluation_evidence,evaluation_revision,fence_version,target_run_id,
+		frozen_authority_version,frozen_run_id,frozen_wait_revision,frozen_seal_digest
+		FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, request.GroupID).Scan(ctx, &header); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
 		}
 		return false, fmt.Errorf("apply matching operation: read persisted evaluation: %w", err)
 	}
+	if header.Revision != request.EvaluationRevision || (header.FenceVersion != 2 || header.TargetRunID == nil || *header.TargetRunID != request.ParentRunID) {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
+	}
+	if header.AuthorityVersion == nil || *header.AuthorityVersion != request.AuthorityVersion ||
+		header.FrozenRunID == nil || *header.FrozenRunID != request.ParentRunID ||
+		header.WaitRevision == nil || *header.WaitRevision != request.WaitRevision || !equalDigest(header.SealDigest, request.SealDigest) {
+		return false, fmt.Errorf("apply matching operation: evaluation seal binding is corrupted")
+	}
 	decision, err := decodePersistedMatchingDecision(header.Evidence)
 	if err != nil {
 		return false, fmt.Errorf("apply matching operation: persisted decision is invalid: %w", err)
-	}
-	if header.Revision != request.EvaluationRevision || (header.FenceVersion != 2 || header.TargetRunID == nil || *header.TargetRunID != request.ParentRunID) {
-		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
 	}
 	if err := ValidateMatchingApplyInputSnapshotV2(snapshot, seal, calculation, request.EvaluationRevision, decision); err != nil {
 		return false, fmt.Errorf("apply matching operation: schema-2 snapshot authority is corrupted: %w", err)
@@ -1379,7 +1414,7 @@ func matchingApplyHistoricalCalculationContext(
 	}
 	if receipt.AcquisitionRevision != ref.AcquisitionRevision || receipt.StageIndex != ref.StageIndex ||
 		receipt.SchemaVersion != ref.SchemaVersion || receipt.CalculatorVersion != ref.CalculatorVersion ||
-		receipt.DigestVersion != ref.DigestVersion || receipt.InputDigest != ref.InputDigest ||
+		receipt.DigestVersion != ref.DigestVersion || receipt.InputDigest != ref.InputDigest || receipt.DecisionDigest != ref.DecisionDigest ||
 		!matchingJSONEqual(receipt.Context, seal.FullEvaluationContext) {
 		return MatchingFallbackCalculationContext{}, fmt.Errorf("immutable calculation receipt differs from original seal")
 	}
@@ -1448,7 +1483,7 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 	if !strings.EqualFold(releaseKey, frozen.Release.ProviderKey) {
 		return ErrIncomingMatchConflict
 	}
-	policy := snapshot.Authority.PolicyVersion
+	policy := MatchingLayoutPolicyVersion
 	tracks := make(map[uuid.UUID]FrozenRecordingTrack, len(frozen.Tracks))
 	for _, track := range frozen.Tracks {
 		if track.ProviderTrackID == uuid.Nil || track.ProviderReleaseID != frozen.Release.ID || tracks[track.ProviderTrackID].ProviderTrackID != uuid.Nil {

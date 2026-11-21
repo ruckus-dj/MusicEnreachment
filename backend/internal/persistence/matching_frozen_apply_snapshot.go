@@ -37,6 +37,7 @@ type MatchingApplySnapshotAuthorityV2 struct {
 	ExecutionEpoch      int64     `json:"execution_epoch"`
 	WaitRevision        int64     `json:"wait_revision"`
 	SealDigest          string    `json:"seal_digest"`
+	DecisionDigest      string    `json:"decision_digest"`
 	TargetFenceVersion  int       `json:"target_fence_version"`
 	TargetCaptureDigest string    `json:"target_capture_digest"`
 	PolicyVersion       string    `json:"policy_version"`
@@ -99,6 +100,10 @@ func BuildMatchingApplyInputSnapshotV2(
 	if len(seal.FullEvaluationContext) == 0 || !matchingJSONEqual(seal.FullEvaluationContext, mustJSON(context)) {
 		return result, "", fmt.Errorf("build matching apply snapshot: calculation context differs from seal")
 	}
+	decisionDigest, err := validateSealedApplyDecision(seal, decision)
+	if err != nil {
+		return result, "", err
+	}
 	if !matchingApplySnapshotCaptureCovers(seal.Target.Capture, seal.CapturedMetadata) {
 		return result, "", fmt.Errorf("build matching apply snapshot: original target capture does not cover captured members")
 	}
@@ -157,7 +162,7 @@ func BuildMatchingApplyInputSnapshotV2(
 		SchemaVersion: 2,
 		Authority: MatchingApplySnapshotAuthorityV2{ParentRunID: seal.RunID, GroupID: seal.Target.GroupID, SealDisposition: seal.Disposition,
 			EvaluationRevision: evaluationRevision, ExecutionEpoch: context.SearchReceipt.ExecutionEpoch,
-			WaitRevision: seal.WaitRevision, SealDigest: seal.Digest, TargetFenceVersion: seal.Target.Version,
+			WaitRevision: seal.WaitRevision, SealDigest: seal.Digest, DecisionDigest: decisionDigest, TargetFenceVersion: seal.Target.Version,
 			TargetCaptureDigest: seal.Target.CaptureDigest, PolicyVersion: seal.Intent.PolicyVersion, AuthorityVersion: 3},
 		Source: MatchingApplySnapshotSourceV2{ID: seal.SourceID, ProviderID: seal.ProviderID, Endpoint: seal.Endpoint,
 			ConfigurationIdentity: seal.SourceConfiguration, RunConfiguration: seal.RunProviderConfiguration},
@@ -184,11 +189,12 @@ func BuildMatchingApplyInputSnapshotV2(
 // ValidateMatchingApplyInputSnapshotV2 binds parsed snapshot content back to
 // original authority; its content digest is not itself an authorization token.
 func ValidateMatchingApplyInputSnapshotV2(snapshot MatchingApplyInputSnapshotV2, seal MatchingFallbackSealAuthority, context MatchingFallbackCalculationContext, evaluationRevision string, decision persistedMatchingDecision) error {
-	if decision.SelectedRelease == nil {
-		return fmt.Errorf("validate matching apply snapshot: selected decision release is missing")
+	decisionDigest, err := validateSealedApplyDecision(seal, decision)
+	if err != nil {
+		return err
 	}
 	if snapshot.SchemaVersion != 2 || seal.Disposition != "qualified" || snapshot.Authority.ParentRunID != seal.RunID || snapshot.Authority.GroupID != seal.Target.GroupID || snapshot.Authority.SealDisposition != seal.Disposition ||
-		snapshot.Authority.WaitRevision != seal.WaitRevision || snapshot.Authority.SealDigest != seal.Digest ||
+		snapshot.Authority.WaitRevision != seal.WaitRevision || snapshot.Authority.SealDigest != seal.Digest || snapshot.Authority.DecisionDigest != decisionDigest ||
 		snapshot.Authority.TargetFenceVersion != 2 || snapshot.Authority.TargetCaptureDigest != seal.Target.CaptureDigest ||
 		snapshot.Authority.PolicyVersion != seal.Intent.PolicyVersion || snapshot.Authority.AuthorityVersion != 3 ||
 		snapshot.Source.ID != seal.SourceID || snapshot.Source.ProviderID != seal.ProviderID || snapshot.Source.Endpoint != seal.Endpoint ||
@@ -263,6 +269,31 @@ func ValidateMatchingApplyInputSnapshotV2(snapshot MatchingApplyInputSnapshotV2,
 		return fmt.Errorf("validate matching apply snapshot: materialized projection differs from accepted receipt")
 	}
 	return nil
+}
+
+func validateSealedApplyDecision(seal MatchingFallbackSealAuthority, decision persistedMatchingDecision) (string, error) {
+	selected := seal.LayoutDecision
+	if seal.SelectedCalculation == nil || selected == nil || selected.Status != MatchingLayoutDecisionSelected ||
+		selected.ProviderReleaseID == nil || decision.SelectedRelease == nil ||
+		*selected.ProviderReleaseID != decision.SelectedRelease.ProviderReleaseID || len(selected.Assignments) != len(decision.Assignments) {
+		return "", fmt.Errorf("matching apply decision does not match sealed release or member coverage")
+	}
+	digest, err := selected.Digest()
+	if err != nil || digest != seal.SelectedCalculation.DecisionDigest {
+		return "", fmt.Errorf("matching apply decision digest does not match seal")
+	}
+	tracks := make(map[uuid.UUID]uuid.UUID, len(selected.Assignments))
+	for _, assignment := range selected.Assignments {
+		tracks[assignment.FileMemberID] = assignment.ProviderTrackID
+	}
+	for _, assignment := range decision.Assignments {
+		track, ok := tracks[assignment.FileMemberID]
+		if !ok || assignment.ProviderTrackID != track {
+			return "", fmt.Errorf("matching apply track differs from sealed assignment")
+		}
+		delete(tracks, assignment.FileMemberID)
+	}
+	return digest, nil
 }
 
 // matchingApplySnapshotSelectedOrdinal derives the immutable position of the

@@ -184,7 +184,7 @@ func (repository *SetupManagerRepository) continueMatchingFallbackSealTx(
 	if err != nil {
 		return err
 	}
-	if !found || (authority.Disposition != "no_query" && authority.Disposition != "qualified" && authority.Disposition != "review_exhausted") {
+	if !found || (authority.Disposition != "no_query" && authority.Disposition != "qualified" && authority.Disposition != "review_exhausted" && authority.Disposition != "review_indeterminate") {
 		return fmt.Errorf("continue fallback seal: durable wait is not an eligible fallback result")
 	}
 	wantPhase, wantStage := "fallback_review_wait", "review_pending"

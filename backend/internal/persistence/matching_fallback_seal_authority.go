@@ -25,30 +25,60 @@ type MatchingFallbackSealCalculationReference struct {
 	CalculatorVersion   int    `json:"calculator_version"`
 	DigestVersion       int    `json:"digest_version"`
 	InputDigest         string `json:"input_digest"`
+	DecisionDigest      string `json:"decision_digest"`
 }
 
 // MatchingFallbackSealAuthority is a read-only, persistence-derived authority
 // envelope. Its evaluation context is the exact accepted calculation context,
 // not a caller-supplied projection or a fresh read of provider/source state.
 type MatchingFallbackSealAuthority struct {
-	SchemaVersion            int                                        `json:"schema_version"`
-	Disposition              string                                     `json:"disposition"`
-	RunID                    uuid.UUID                                  `json:"run_id"`
-	WaitRevision             int64                                      `json:"wait_revision"`
-	Intent                   MatchingAcquisitionIntent                  `json:"intent"`
-	Target                   MatchingRunFenceSnapshot                   `json:"target"`
-	CapturedMetadata         []MatchingAcquisitionCapturedMember        `json:"captured_metadata"`
-	SourceID                 uuid.UUID                                  `json:"source_id"`
-	ProviderID               uuid.UUID                                  `json:"provider_id"`
-	Endpoint                 string                                     `json:"endpoint"`
-	SourceConfiguration      string                                     `json:"source_configuration"`
-	RunProviderConfiguration string                                     `json:"run_provider_configuration"`
-	GroupAuthority           IncomingGroupMatchingAuthority             `json:"group_authority"`
-	Plan                     json.RawMessage                            `json:"plan"`
-	SelectedCalculation      *MatchingFallbackSealCalculationReference  `json:"selected_calculation,omitempty"`
-	ProofHistory             []MatchingFallbackSealCalculationReference `json:"proof_history"`
-	FullEvaluationContext    json.RawMessage                            `json:"full_evaluation_context,omitempty"`
-	Digest                   string                                     `json:"digest"`
+	SchemaVersion            int                                          `json:"schema_version"`
+	Disposition              string                                       `json:"disposition"`
+	RunID                    uuid.UUID                                    `json:"run_id"`
+	WaitRevision             int64                                        `json:"wait_revision"`
+	Intent                   MatchingAcquisitionIntent                    `json:"intent"`
+	Target                   MatchingRunFenceSnapshot                     `json:"target"`
+	CapturedMetadata         []MatchingAcquisitionCapturedMember          `json:"captured_metadata"`
+	SourceID                 uuid.UUID                                    `json:"source_id"`
+	ProviderID               uuid.UUID                                    `json:"provider_id"`
+	Endpoint                 string                                       `json:"endpoint"`
+	SourceConfiguration      string                                       `json:"source_configuration"`
+	RunProviderConfiguration string                                       `json:"run_provider_configuration"`
+	GroupAuthority           IncomingGroupMatchingAuthority               `json:"group_authority"`
+	Plan                     json.RawMessage                              `json:"plan"`
+	SelectedCalculation      *MatchingFallbackSealCalculationReference    `json:"selected_calculation,omitempty"`
+	LayoutDecision           *MatchingLayoutDecision                      `json:"layout_decision,omitempty"`
+	ProofHistory             []MatchingFallbackSealCalculationReference   `json:"proof_history"`
+	FullEvaluationContext    json.RawMessage                              `json:"full_evaluation_context,omitempty"`
+	ReviewLookups            []MatchingFallbackCalculationLookupAuthority `json:"review_lookups,omitempty"`
+	ReviewLookupReceipts     []MatchingFallbackLookupReceipt              `json:"review_lookup_receipts,omitempty"`
+	Digest                   string                                       `json:"digest"`
+}
+
+// validateMatchingFallbackCalculationDecisionBinding requires the write-once
+// decision digest to match the stored layout decision, so no consumer can
+// reinterpret a receipt under a different decision identity.
+func validateMatchingFallbackCalculationDecisionBinding(receipt *MatchingFallbackCalculationReceipt) error {
+	if receipt == nil {
+		return fmt.Errorf("calculation receipt is missing")
+	}
+	digest, err := receipt.LayoutDecision.Digest()
+	if err != nil {
+		return fmt.Errorf("layout decision is invalid: %w", err)
+	}
+	if receipt.DecisionDigest == "" || receipt.DecisionDigest != digest {
+		return fmt.Errorf("layout decision digest is not bound")
+	}
+	return nil
+}
+
+func matchingFallbackSealCalculationReference(receipt *MatchingFallbackCalculationReceipt) MatchingFallbackSealCalculationReference {
+	return MatchingFallbackSealCalculationReference{
+		AcquisitionRevision: receipt.AcquisitionRevision, StageIndex: receipt.StageIndex,
+		SchemaVersion: receipt.SchemaVersion, CalculatorVersion: receipt.CalculatorVersion,
+		DigestVersion: receipt.DigestVersion, InputDigest: receipt.InputDigest,
+		DecisionDigest: receipt.DecisionDigest,
+	}
 }
 
 // BuildMatchingFallbackSealAuthority derives the authority for the current
@@ -101,6 +131,8 @@ func buildMatchingFallbackSealAuthority(
 		CalculationRevision int64  `json:"calculation_revision"`
 		StageIndex          int    `json:"stage_index"`
 		Disposition         string `json:"disposition"`
+		DecisionDigest      string `json:"decision_digest"`
+		ReviewHydration     int64  `json:"review_hydration_revision"`
 	}
 	if err := json.Unmarshal([]byte(input), &wait); err != nil {
 		return result, false, fmt.Errorf("build fallback seal authority: wait input is invalid: %w", err)
@@ -115,6 +147,9 @@ func buildMatchingFallbackSealAuthority(
 
 	var sealed MatchingFallbackCalculationContext
 	var sealedContext json.RawMessage
+	var selectedDecision MatchingLayoutDecision
+	var selectedDecisionDigest string
+	var selectedStatus MatchingLayoutDecisionStatus
 	var found bool
 	if wait.CalculationRevision > 0 {
 		receipt, err := getMatchingFallbackCalculationReceipt(ctx, database, runID, wait.CalculationRevision)
@@ -124,6 +159,9 @@ func buildMatchingFallbackSealAuthority(
 		if receipt == nil || receipt.StageIndex != wait.StageIndex {
 			return result, false, fmt.Errorf("build fallback seal authority: wait calculation reference is missing or inconsistent")
 		}
+		if err := validateMatchingFallbackCalculationDecisionBinding(receipt); err != nil {
+			return result, false, fmt.Errorf("build fallback seal authority: selected layout decision is invalid: %w", err)
+		}
 		if err := json.Unmarshal(receipt.Context, &sealed); err != nil {
 			return result, false, fmt.Errorf("build fallback seal authority: decode selected calculation context: %w", err)
 		}
@@ -132,14 +170,21 @@ func buildMatchingFallbackSealAuthority(
 		}
 		sealedContext = append(json.RawMessage(nil), receipt.Context...)
 		found = true
-		result.SelectedCalculation = &MatchingFallbackSealCalculationReference{
-			AcquisitionRevision: receipt.AcquisitionRevision, StageIndex: receipt.StageIndex,
-			SchemaVersion: receipt.SchemaVersion, CalculatorVersion: receipt.CalculatorVersion,
-			DigestVersion: receipt.DigestVersion, InputDigest: receipt.InputDigest,
-		}
+		selectedDecision = receipt.LayoutDecision.clone()
+		selectedDecisionDigest = receipt.DecisionDigest
+		selectedStatus = receipt.LayoutDecision.Status
+		reference := matchingFallbackSealCalculationReference(receipt)
+		result.SelectedCalculation = &reference
 	}
 	if wait.CalculationRevision < 0 || wait.CalculationRevision >= revision {
 		return result, false, fmt.Errorf("build fallback seal authority: wait calculation revision is invalid")
+	}
+	if found {
+		if wait.DecisionDigest == "" || wait.DecisionDigest != selectedDecisionDigest {
+			return result, false, fmt.Errorf("build fallback seal authority: wait decision digest is not bound to the selected calculation")
+		}
+	} else if wait.DecisionDigest != "" {
+		return result, false, fmt.Errorf("build fallback seal authority: no-query wait must not bind a decision digest")
 	}
 
 	if !found {
@@ -197,37 +242,30 @@ func buildMatchingFallbackSealAuthority(
 		}
 		result.Disposition = "no_query"
 	} else {
-		edges := make([]struct {
-			Confidence float64 `json:"confidence"`
-		}, 0)
-		var rawEdges string
-		if err := database.NewRaw(`SELECT edge_calculations::text FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, runID, wait.CalculationRevision).Scan(ctx, &rawEdges); err != nil {
-			return result, false, fmt.Errorf("build fallback seal authority: read selected edges: %w", err)
-		}
-		if err := json.Unmarshal([]byte(rawEdges), &edges); err != nil {
-			return result, false, fmt.Errorf("build fallback seal authority: selected edges are invalid: %w", err)
-		}
-		qualified := false
-		for _, edge := range edges {
-			if edge.Confidence >= 0.70 {
-				qualified = true
-			}
-		}
-		if qualified {
+		switch selectedStatus {
+		case MatchingLayoutDecisionSelected:
 			if phase != "pending_seal" || waitOutput.Reason != "qualified_candidate" {
-				return result, false, fmt.Errorf("build fallback seal authority: qualified calculation does not match wait reason")
+				return result, false, fmt.Errorf("build fallback seal authority: selected calculation does not match wait reason")
 			}
 			result.Disposition = "qualified"
-		} else {
+		case MatchingLayoutDecisionNone:
 			if phase != "fallback_review_wait" || waitOutput.Reason != "review_required" {
 				return result, false, fmt.Errorf("build fallback seal authority: exhausted calculation does not match wait reason")
 			}
 			result.Disposition = "review_exhausted"
+		case MatchingLayoutDecisionIndeterminate:
+			if phase != "fallback_review_wait" || waitOutput.Reason != "layout_indeterminate" {
+				return result, false, fmt.Errorf("build fallback seal authority: indeterminate calculation does not match wait reason")
+			}
+			result.Disposition = "review_indeterminate"
+		default:
+			return result, false, fmt.Errorf("build fallback seal authority: selected layout status is unsupported")
 		}
 	}
 
-	// History is ordered by the immutable calculation revision. Each reference
-	// is revalidated by the receipt getter, preserving its stored format tuple.
+	// Proof history is the contiguous, revision-ordered prefix that ends at the
+	// selected calculation. Every predecessor must be a write-once proved-none
+	// layout, and every reference binds the decision digest that authorized it.
 	var revisions []int64
 	if err := database.NewRaw(`SELECT acquisition_revision FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision<? ORDER BY acquisition_revision`, runID, revision).Scan(ctx, &revisions); err != nil {
 		return result, false, fmt.Errorf("build fallback seal authority: list calculation history: %w", err)
@@ -236,10 +274,13 @@ func buildMatchingFallbackSealAuthority(
 	if !found && len(revisions) != 0 {
 		return result, false, fmt.Errorf("build fallback seal authority: no-query wait has calculation history")
 	}
+	if found && len(revisions) == 0 {
+		return result, false, fmt.Errorf("build fallback seal authority: selected wait has no calculation history")
+	}
 	if found && result.Disposition == "review_exhausted" && len(typedPlan.Stages) != len(revisions) {
 		return result, false, fmt.Errorf("build fallback seal authority: exhausted wait does not cover the finite plan")
 	}
-	for _, receiptRevision := range revisions {
+	for index, receiptRevision := range revisions {
 		receipt, err := getMatchingFallbackCalculationReceipt(ctx, database, runID, receiptRevision)
 		if err != nil || receipt == nil {
 			if err == nil {
@@ -247,45 +288,44 @@ func buildMatchingFallbackSealAuthority(
 			}
 			return result, false, fmt.Errorf("build fallback seal authority: validate proof history: %w", err)
 		}
-		result.ProofHistory = append(result.ProofHistory, MatchingFallbackSealCalculationReference{
-			AcquisitionRevision: receipt.AcquisitionRevision, StageIndex: receipt.StageIndex,
-			SchemaVersion: receipt.SchemaVersion, CalculatorVersion: receipt.CalculatorVersion,
-			DigestVersion: receipt.DigestVersion, InputDigest: receipt.InputDigest,
-		})
-		if result.Disposition == "review_exhausted" && receipt.StageIndex != len(result.ProofHistory)-1 {
-			return result, false, fmt.Errorf("build fallback seal authority: exhausted proof history has a stage gap")
+		if err := validateMatchingFallbackCalculationDecisionBinding(receipt); err != nil {
+			return result, false, fmt.Errorf("build fallback seal authority: proof history layout decision is invalid: %w", err)
 		}
-		if result.Disposition == "review_exhausted" {
-			var historyEdges []struct {
-				Confidence float64 `json:"confidence"`
-			}
-			if err := json.Unmarshal(receipt.Edges, &historyEdges); err != nil {
-				return result, false, fmt.Errorf("build fallback seal authority: exhausted proof edges are invalid: %w", err)
-			}
-			for _, edge := range historyEdges {
-				if edge.Confidence >= 0.70 {
-					return result, false, fmt.Errorf("build fallback seal authority: exhausted history contains a qualifying edge")
-				}
-			}
+		if receipt.StageIndex != index {
+			return result, false, fmt.Errorf("build fallback seal authority: proof history has a stage gap")
 		}
+		want := MatchingLayoutDecisionNone
+		if index == len(revisions)-1 {
+			want = selectedStatus
+		}
+		if receipt.LayoutDecision.Status != want {
+			return result, false, fmt.Errorf("build fallback seal authority: proof history contains an unexpected layout status")
+		}
+		result.ProofHistory = append(result.ProofHistory, matchingFallbackSealCalculationReference(receipt))
 	}
-	// An exhausted wait must select the final ordered receipt: every stage of the
-	// saved finite plan, exactly, with the last stage's full accepted context.
-	// Reject a duplicate or older selection before the evaluation context is
-	// chosen so an earlier stage layout cannot be substituted.
-	if result.Disposition == "review_exhausted" {
-		if len(typedPlan.Stages) == 0 || len(result.ProofHistory) != len(typedPlan.Stages) {
-			return result, false, fmt.Errorf("build fallback seal authority: exhausted wait does not cover the finite plan")
-		}
+	// The selected reference must be exactly the final ordered receipt, so an
+	// earlier stage layout cannot be substituted for the terminal one.
+	if found {
 		selected, final := result.SelectedCalculation, result.ProofHistory[len(result.ProofHistory)-1]
-		if selected == nil || selected.AcquisitionRevision != final.AcquisitionRevision ||
-			selected.StageIndex != final.StageIndex || selected.StageIndex != len(typedPlan.Stages)-1 ||
-			selected.SchemaVersion != final.SchemaVersion || selected.CalculatorVersion != final.CalculatorVersion ||
-			selected.DigestVersion != final.DigestVersion || selected.InputDigest != final.InputDigest {
+		if selected == nil || *selected != final {
+			return result, false, fmt.Errorf("build fallback seal authority: selected calculation is not the terminal proof")
+		}
+		if result.Disposition == "review_exhausted" && selected.StageIndex != len(typedPlan.Stages)-1 {
 			return result, false, fmt.Errorf("build fallback seal authority: exhausted wait selected an earlier calculation")
 		}
 	}
 
+	if result.Disposition == "review_exhausted" && len(sealed.AcceptedShortlist.ReviewOnlyReleaseIDs()) > 0 {
+		if wait.ReviewHydration != revision-1 || wait.ReviewHydration != wait.CalculationRevision+1 {
+			return result, false, fmt.Errorf("build fallback seal authority: exhausted review hydration is missing")
+		}
+		result.ReviewLookups, result.ReviewLookupReceipts, err = loadFallbackReviewHydration(ctx, database, sealed, wait.DecisionDigest, wait.ReviewHydration)
+		if err != nil {
+			return result, false, err
+		}
+	} else if wait.ReviewHydration != 0 {
+		return result, false, fmt.Errorf("build fallback seal authority: unexpected review-only hydration")
+	}
 	result.SchemaVersion = matchingFallbackSealAuthoritySchemaVersion
 	result.RunID, result.WaitRevision = runID, revision
 	result.Intent = sealed.Intent
@@ -300,6 +340,7 @@ func buildMatchingFallbackSealAuthority(
 			return result, false, fmt.Errorf("build fallback seal authority: canonicalize full evaluation context: %w", err)
 		}
 		result.FullEvaluationContext = contextBytes
+		result.LayoutDecision = &selectedDecision
 	}
 	if result.Target.GroupID != uuid.Nil {
 		var authorityRevision int64

@@ -32,6 +32,7 @@ func TestBuildMatchingApplyInputSnapshotV2UsesSelectedAcceptedProjection(t *test
 			seal.FullEvaluationContext = testJSON(context)
 			decision.SelectedRelease.ProviderReleaseID = tc.release.ID
 			decision.SelectedRelease.ProviderReleaseKey = tc.key
+			sealApplyFixtureDecision(&seal, decision)
 			snapshot, digest, err := BuildMatchingApplyInputSnapshotV2(seal, context, "eval-rev", decision)
 			if err != nil {
 				t.Fatal(err)
@@ -92,6 +93,9 @@ func TestMatchingApplyInputSnapshotV2RejectsTamperedAuthorityBindings(t *testing
 		mutate func(*MatchingApplyInputSnapshotV2)
 	}{
 		{"execution_epoch", func(mutated *MatchingApplyInputSnapshotV2) { mutated.Authority.ExecutionEpoch++ }},
+		{"decision_digest", func(mutated *MatchingApplyInputSnapshotV2) {
+			mutated.Authority.DecisionDigest = strings.Repeat("0", 64)
+		}},
 		{"original_ordinal", func(mutated *MatchingApplyInputSnapshotV2) { mutated.Selected.OriginalOrdinal++ }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -308,7 +312,25 @@ func matchingApplySnapshotFixture() (MatchingFallbackSealAuthority, MatchingFall
 			Position        int       `json:"position"`
 		}{{FileMemberID: memberA, ProviderTrackID: trackA, Medium: 1, Position: 1}, {FileMemberID: memberB, ProviderTrackID: trackA, Medium: 1, Position: 1}}}
 	decision.SelectedRelease.ProviderReleaseID = releaseA.ID
+	sealApplyFixtureDecision(&seal, decision)
 	return seal, ctx, decision, releaseA, releaseB
+}
+
+func sealApplyFixtureDecision(seal *MatchingFallbackSealAuthority, decision persistedMatchingDecision) {
+	release := decision.SelectedRelease.ProviderReleaseID
+	layout := &MatchingLayoutDecision{
+		SchemaVersion: MatchingLayoutDecisionSchemaVersion, PolicyVersion: MatchingLayoutPolicyVersion, PairThreshold: "0.7",
+		Status: MatchingLayoutDecisionSelected, ProviderReleaseID: &release,
+	}
+	for _, a := range decision.Assignments {
+		layout.Assignments = append(layout.Assignments, MatchingLayoutDecisionAssignment{FileMemberID: a.FileMemberID, ProviderTrackID: a.ProviderTrackID})
+	}
+	digest, err := layout.Digest()
+	if err != nil {
+		panic(err)
+	}
+	seal.LayoutDecision = layout
+	seal.SelectedCalculation = &MatchingFallbackSealCalculationReference{DecisionDigest: digest}
 }
 
 func testJSON(value any) []byte { encoded, _ := json.Marshal(value); return encoded }

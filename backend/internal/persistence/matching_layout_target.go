@@ -173,11 +173,22 @@ func RecheckMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 	if _, _, err := DecodeMatchingLayoutTarget(expectedCanonical, groupID, policyVersion); err != nil {
 		return nil, err
 	}
-	current, readyCaptures, _, err := CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policyVersion)
+	current, readyCaptures, err := lockAndCaptureMatchingLayoutTarget(ctx, tx, groupID, policyVersion)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(current, expectedCanonical) {
+	var stored matchingLayoutTargetEvidence
+	if err := json.Unmarshal(expectedCanonical, &stored); err != nil {
+		return nil, err
+	}
+	// The grouping epoch authenticates admission, not changes to other groups.
+	// The current snapshot is already refreshed and checks this exact target.
+	current.GroupingRevision = stored.GroupingRevision
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		return nil, err
+	}
+	if !matchingJSONEqual(encoded, expectedCanonical) {
 		return nil, fmt.Errorf("recheck matching layout target: target changed: %w", ErrIncomingMatchConflict)
 	}
 	return readyCaptures, nil

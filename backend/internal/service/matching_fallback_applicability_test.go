@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,14 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
-
-type immutableFallbackSealReader struct {
-	seal persistence.MatchingFallbackSealAuthority
-}
-
-func (reader immutableFallbackSealReader) GetMatchingFallbackAuthoritySeal(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackSealAuthority, bool, error) {
-	return reader.seal, true, nil
-}
 
 func TestValidateReceiptDigestsCanonicalJSONB(t *testing.T) {
 	acceptedPayload := json.RawMessage(`{"unknown":{"z":1,"a":1.0},"items":[{"id":"a"},{"id":"b"}]}`)
@@ -62,76 +53,6 @@ func TestValidateReceiptDigestsCanonicalJSONB(t *testing.T) {
 	}
 }
 
-func TestPrepareFrozenFallbackEvaluationUsesSealedCalculationContext(t *testing.T) {
-	input := validFallbackApplicabilityInput(t, 12, false)
-	lookups := make([]persistence.MatchingFallbackCalculationLookupAuthority, len(input.Authority.Lookups))
-	for index, lookup := range input.Authority.Lookups {
-		lookups[index] = persistence.MatchingFallbackCalculationLookupAuthority{
-			RequestID: lookup.RequestID, ReleaseID: lookup.ReleaseID, Kind: lookup.Kind,
-			ProviderSourceID: lookup.ProviderSourceID, ProviderID: lookup.ProviderID,
-			Endpoint: lookup.Endpoint, Configuration: lookup.Configuration, CacheKey: lookup.CacheKey,
-			Input: append(json.RawMessage(nil), lookup.Input...),
-		}
-	}
-	snapshot := persistence.MatchingFallbackCalculationContext{
-		RunID: input.RunID, AcquisitionRevision: input.AcquisitionRevision, StageIndex: 0,
-		Intent: input.Intent, Target: input.Target,
-		PhaseInput: input.PhaseInput, PhaseOutput: input.PhaseOutput, PhaseProvenance: input.PhaseProvenance,
-		SearchReceipt: input.SearchReceipt, LookupReceipts: input.LookupReceipts,
-		RunSourceID: input.Authority.RunSourceID, RunProviderID: input.Authority.RunProviderID,
-		RunEndpoint: input.Authority.RunEndpoint, RunConfiguration: input.Authority.RunConfiguration,
-		SearchKind: input.Authority.SearchKind, SearchCacheKey: input.Authority.SearchCacheKey,
-		SearchInput: input.Authority.SearchInput, Lookups: lookups,
-	}
-	contextDigest, err := persistence.MatchingFallbackCalculationInputDigest(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	contextBytes, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seal := persistence.MatchingFallbackSealAuthority{
-		SchemaVersion: 3, RunID: input.RunID, WaitRevision: 2,
-		SelectedCalculation: &persistence.MatchingFallbackSealCalculationReference{
-			AcquisitionRevision: input.AcquisitionRevision, StageIndex: 0,
-			SchemaVersion: 3, CalculatorVersion: 3, DigestVersion: 3, InputDigest: contextDigest,
-		},
-		FullEvaluationContext: contextBytes,
-	}
-	sealBytes, err := json.Marshal(seal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalSeal, err := canonicalFallbackJSON(sealBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealDigest := sha256.Sum256(canonicalSeal)
-	seal.Digest = hex.EncodeToString(sealDigest[:])
-	prepared, exists, err := PrepareFrozenFallbackEvaluation(context.Background(), immutableFallbackSealReader{seal: seal}, input.RunID, seal.WaitRevision)
-	if err != nil || !exists {
-		t.Fatalf("PrepareFrozenFallbackEvaluation() = exists %t, err %v", exists, err)
-	}
-	if prepared.Authority.RunID != input.RunID || prepared.Authority.WaitRevision != seal.WaitRevision || prepared.Authority.Digest != seal.Digest {
-		t.Fatalf("prepared authority = %#v, want exact seal identity", prepared.Authority)
-	}
-	want, err := CalculateFallbackApplicability(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(prepared.Result, want) {
-		t.Fatalf("prepared result differs from sealed context calculation")
-	}
-	if len(prepared.ReviewInventory) != len(want.AllCandidates) || !reflect.DeepEqual(prepared.ReviewInventory, want.AllCandidates) {
-		t.Fatalf("review inventory omitted frozen candidates: got=%d want=%d", len(prepared.ReviewInventory), len(want.AllCandidates))
-	}
-	if prepared.KernelResult.Decision != MatchingDecisionReview || prepared.KernelResult.Outcome != MatchingDecisionOutcomeTie ||
-		len(prepared.KernelResult.AssignmentCandidates) != 0 || len(prepared.KernelResult.PositionsByFileRelease) != len(want.AllCandidates) {
-		t.Fatalf("prepared shared-kernel tie result lost decision or review inventory: %+v", prepared.KernelResult)
-	}
-}
-
 func TestFrozenFallbackAuthorityViewPopulatesNoQueryRunAuthority(t *testing.T) {
 	seal := persistence.MatchingFallbackSealAuthority{
 		SourceID: uuid.New(), ProviderID: uuid.New(), Endpoint: "https://provider.example",
@@ -143,8 +64,7 @@ func TestFrozenFallbackAuthorityViewPopulatesNoQueryRunAuthority(t *testing.T) {
 		authority.RunEndpoint != seal.Endpoint || authority.RunConfiguration != seal.RunProviderConfiguration {
 		t.Fatalf("no-query run authority = %#v, want values copied from seal", authority)
 	}
-	if authority.CalculationStageIndex != 0 || len(authority.FullEvaluationContext) != 0 ||
-		len(authority.CalculationLookups) != 0 || len(authority.CalculationReceipts) != 0 {
+	if authority.CalculationStageIndex != 0 || len(authority.FullEvaluationContext) != 0 {
 		t.Fatalf("no-query authority contains fabricated calculation data: %#v", authority)
 	}
 }

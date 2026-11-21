@@ -21,6 +21,18 @@ type MatchingAcceptedShortlist struct {
 	SearchReceiptDigest string   `json:"search_receipt_sha256"`
 }
 
+// ReviewOnlyReleaseIDs returns accepted editions excluded from the ranked
+// shortlist, in canonical search-universe order.
+func (shortlist MatchingAcceptedShortlist) ReviewOnlyReleaseIDs() []string {
+	extra := make([]string, 0)
+	for _, key := range shortlist.ReleaseIDs {
+		if !slices.Contains(shortlist.RankedReleaseIDs, key) {
+			extra = append(extra, key)
+		}
+	}
+	return extra
+}
+
 // ValidateFallbackSearch checks the shortlist against a registered search
 // receipt. It verifies exact coverage and scope, not the service's text rank.
 func (shortlist MatchingAcceptedShortlist) ValidateFallbackSearch(kind string, receipt MatchingFallbackSearchReceipt) error {

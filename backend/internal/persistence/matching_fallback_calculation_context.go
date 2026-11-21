@@ -40,15 +40,18 @@ type MatchingFallbackCalculationContext struct {
 	PhaseOutput         json.RawMessage
 	PhaseProvenance     json.RawMessage
 	SearchReceipt       MatchingFallbackSearchReceipt
-	LookupReceipts      []MatchingFallbackLookupReceipt
-	RunSourceID         uuid.UUID
-	RunProviderID       uuid.UUID
-	RunEndpoint         string
-	RunConfiguration    string
-	SearchKind          string
-	SearchCacheKey      string
-	SearchInput         json.RawMessage
-	Lookups             []MatchingFallbackCalculationLookupAuthority
+	// AcceptedShortlist retains the full accepted search universe and the
+	// ranked hydration subset bound to SearchReceipt.
+	AcceptedShortlist MatchingAcceptedShortlist
+	LookupReceipts    []MatchingFallbackLookupReceipt
+	RunSourceID       uuid.UUID
+	RunProviderID     uuid.UUID
+	RunEndpoint       string
+	RunConfiguration  string
+	SearchKind        string
+	SearchCacheKey    string
+	SearchInput       json.RawMessage
+	Lookups           []MatchingFallbackCalculationLookupAuthority
 }
 
 // MatchingFallbackCalculationInputDigest hashes the complete persistence-owned
@@ -344,8 +347,9 @@ func loadMatchingFallbackCalculationContext(
 		return result, false, fmt.Errorf("load fallback calculation context: read registered hydration manifest: %w", err)
 	}
 	var hydrationInput struct {
-		ReleaseIDs     []string        `json:"release_ids"`
-		SearchManifest json.RawMessage `json:"search_manifest"`
+		ReleaseIDs        []string                  `json:"release_ids"`
+		AcceptedShortlist MatchingAcceptedShortlist `json:"accepted_shortlist"`
+		SearchManifest    json.RawMessage           `json:"search_manifest"`
 	}
 	var hydrationOutput struct {
 		Lookups []struct {
@@ -357,6 +361,13 @@ func loadMatchingFallbackCalculationContext(
 	if json.Unmarshal(hydration.Input, &hydrationInput) != nil || json.Unmarshal(hydration.Output, &hydrationOutput) != nil ||
 		len(hydrationInput.ReleaseIDs) != len(hydrationOutput.Lookups) {
 		return result, false, fmt.Errorf("load fallback calculation context: registered hydration manifest is invalid")
+	}
+	shortlistKeys := make([]string, 0, len(hydrationInput.AcceptedShortlist.RankedReleaseIDs))
+	shortlistKeys = append(shortlistKeys, hydrationInput.AcceptedShortlist.RankedReleaseIDs...)
+	sort.Strings(shortlistKeys)
+	if hydrationInput.AcceptedShortlist.ValidateFallbackSearch(searchOperation.Kind, *searchReceipt) != nil ||
+		!equalStringSlices(shortlistKeys, hydrationInput.ReleaseIDs) {
+		return result, false, fmt.Errorf("load fallback calculation context: accepted shortlist differs from registered search")
 	}
 	if hydration.Phase == MatchingAcquisitionFallbackHydration && hydration.Revision >= revision {
 		return result, false, fmt.Errorf("load fallback calculation context: applicability phase is detached from its registered hydration")
@@ -406,7 +417,8 @@ func loadMatchingFallbackCalculationContext(
 	}
 	result = MatchingFallbackCalculationContext{RunID: runID, AcquisitionRevision: revision, StageIndex: phaseIn.StageIndex, Intent: intent, Target: targetFence,
 		PhaseInput: append(json.RawMessage(nil), hydration.Input...), PhaseOutput: append(json.RawMessage(nil), hydration.Output...),
-		PhaseProvenance: append(json.RawMessage(nil), phase.ResponseProvenance...), SearchReceipt: *searchReceipt, LookupReceipts: receipts,
+		PhaseProvenance: append(json.RawMessage(nil), phase.ResponseProvenance...), SearchReceipt: *searchReceipt,
+		AcceptedShortlist: hydrationInput.AcceptedShortlist, LookupReceipts: receipts,
 		RunSourceID: run.SourceID, RunProviderID: run.ProviderID, RunEndpoint: run.Endpoint, RunConfiguration: run.Configuration,
 		SearchKind: searchOperation.Kind, SearchCacheKey: searchOperation.CacheKey, SearchInput: append(json.RawMessage(nil), searchOperation.Input...), Lookups: lookups}
 	return result, true, nil

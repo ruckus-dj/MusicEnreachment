@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"encoding/json"
+	"errors"
+	"sort"
 
 	"github.com/google/uuid"
 )
@@ -12,7 +14,6 @@ import (
 type FrozenMatchingPublication struct {
 	Authority  FrozenMatchingAuthorityIdentity `json:"authority"`
 	Evaluation FrozenMatchingEvaluation        `json:"evaluation"`
-	Edges      []FrozenMatchingScoredEdge      `json:"edges"`
 	Inventory  FrozenMatchingReviewInventory   `json:"inventory"`
 }
 
@@ -57,27 +58,55 @@ type FrozenMatchingAssignment struct {
 	Position        int       `json:"position"`
 }
 
-// FrozenMatchingScoredEdge retains both scoring profiles and their exact inputs
-// for every file/release-track edge, including below-threshold edges.
-type FrozenMatchingScoredEdge struct {
-	FileMemberID         uuid.UUID       `json:"file_member_id"`
-	ReleaseID            string          `json:"release_id"`
-	ProviderReleaseID    uuid.UUID       `json:"provider_release_id"`
-	RecordingID          string          `json:"recording_id"`
-	ProviderTrackID      uuid.UUID       `json:"provider_track_id"`
-	Medium               int             `json:"medium"`
-	Position             int             `json:"position"`
-	RecordingLookupKey   string          `json:"recording_lookup_key"`
-	LookupRequestID      uuid.UUID       `json:"lookup_request_id"`
-	LookupStageIndex     int             `json:"lookup_stage_index"`
-	LookupRequestInput   json.RawMessage `json:"lookup_request_input"`
-	LookupPayloadSHA     string          `json:"lookup_payload_sha256"`
-	LookupProjectionSHA  string          `json:"lookup_projection_sha256"`
-	MetadataInputSHA     string          `json:"metadata_input_sha256"`
-	ReleaseScore         json.RawMessage `json:"release_score"`
-	ReleaseScoreInput    json.RawMessage `json:"release_score_input"`
-	AssignmentScore      json.RawMessage `json:"assignment_score"`
-	AssignmentScoreInput json.RawMessage `json:"assignment_score_input"`
+// BuildFrozenMatchingLayoutEvaluation projects a sealed result onto a
+// one-based review inventory. Coordinates are display data, not identity.
+func BuildFrozenMatchingLayoutEvaluation(decision *MatchingLayoutDecision, releases []MatchingRelease) (FrozenMatchingEvaluation, error) {
+	result := FrozenMatchingEvaluation{Outcome: "review", Decision: "review", Assignments: []FrozenMatchingAssignment{}}
+	if decision == nil {
+		result.Reason = "no provider query was available"
+		return result, nil
+	}
+	if err := decision.validate(); err != nil {
+		return FrozenMatchingEvaluation{}, err
+	}
+	result.Reason = decision.Reason
+	if decision.Status != MatchingLayoutDecisionSelected {
+		return result, nil
+	}
+	var selected *MatchingRelease
+	for i := range releases {
+		if releases[i].ID != *decision.ProviderReleaseID {
+			continue
+		}
+		if selected != nil {
+			return FrozenMatchingEvaluation{}, errors.New("sealed layout release is duplicated in the review inventory")
+		}
+		selected = &releases[i]
+	}
+	if selected == nil || selected.ProviderKey == "" || !selected.Complete {
+		return FrozenMatchingEvaluation{}, errors.New("sealed layout release is absent or incomplete in the review inventory")
+	}
+	tracks := make(map[uuid.UUID]MatchingReleaseTrack, len(selected.Tracks))
+	for _, track := range selected.Tracks {
+		if track.ID == uuid.Nil || track.Medium < 1 || track.Position < 1 || tracks[track.ID].ID != uuid.Nil {
+			return FrozenMatchingEvaluation{}, errors.New("sealed layout release has an invalid track identity or coordinate")
+		}
+		tracks[track.ID] = track
+	}
+	result.Outcome, result.Decision, result.SelectedRelease = "unique", "apply", selected.ProviderKey
+	for _, assignment := range decision.Assignments {
+		track, ok := tracks[assignment.ProviderTrackID]
+		if !ok {
+			return FrozenMatchingEvaluation{}, errors.New("sealed layout assignment is outside the selected release")
+		}
+		result.Assignments = append(result.Assignments, FrozenMatchingAssignment{
+			FileMemberID: assignment.FileMemberID, ProviderTrackID: track.ID, Medium: track.Medium, Position: track.Position,
+		})
+	}
+	sort.Slice(result.Assignments, func(i, j int) bool {
+		return result.Assignments[i].FileMemberID.String() < result.Assignments[j].FileMemberID.String()
+	})
+	return result, nil
 }
 
 // FrozenMatchingReviewInventory preserves the full captured target and provider

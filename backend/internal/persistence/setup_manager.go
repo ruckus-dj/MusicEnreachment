@@ -1428,6 +1428,9 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("requeue matching apply: lock source mutations: %w", err)
 		}
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
 			return fmt.Errorf("requeue matching apply: lock MusicBrainz configuration: %w", err)
 		}
@@ -1544,6 +1547,29 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 			if currentConfiguration != snapshotV2.Source.RunConfiguration {
 				return nil
 			}
+			seal, found, err := buildMatchingFallbackSealAuthority(ctx, tx, intent.ParentRunID, request.WaitRevision, true)
+			if err != nil {
+				return err
+			}
+			if !found || seal.Digest != snapshotV2.Authority.SealDigest {
+				return fmt.Errorf("requeue matching apply: historical seal differs from immutable snapshot")
+			}
+			calculation, err := matchingApplyHistoricalCalculationContext(ctx, tx, seal, intent.ParentRunID, request.WaitRevision)
+			if err != nil {
+				return err
+			}
+			if err := recheckFrozenFallbackProviderHistory(ctx, tx, seal); err != nil {
+				if errors.Is(err, ErrIncomingMatchConflict) {
+					return nil
+				}
+				return err
+			}
+			if _, err := RecheckMatchingLayoutTargetTx(ctx, tx, intent.GroupID, MatchingLayoutPolicyVersion, seal.Intent.LayoutTarget); err != nil {
+				if errors.Is(err, ErrIncomingMatchConflict) || errors.Is(err, ErrMatchingTargetNeedsRefresh) {
+					return nil
+				}
+				return err
+			}
 			var currentSource struct {
 				ProviderID            uuid.UUID `bun:"provider_id"`
 				Endpoint              string    `bun:"endpoint"`
@@ -1623,28 +1649,8 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 			if err != nil {
 				return fmt.Errorf("requeue matching apply: current published decision is invalid: %w", err)
 			}
-			expectedDecision := persistedMatchingDecision{Version: 1, GroupID: snapshotV2.Authority.GroupID,
-				PolicyVersion: snapshotV2.Authority.PolicyVersion, Outcome: "unique",
-				SelectedRelease: &struct {
-					ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
-					ProviderReleaseKey string    `json:"provider_release_key"`
-				}{ProviderReleaseID: snapshotV2.Selected.ProviderReleaseID, ProviderReleaseKey: snapshotV2.Selected.ProviderKey},
-				Assignments: make([]struct {
-					FileMemberID    uuid.UUID `json:"file_member_id"`
-					ProviderTrackID uuid.UUID `json:"provider_track_id"`
-					Medium          int       `json:"medium"`
-					Position        int       `json:"position"`
-				}, 0, len(snapshotV2.Assignments))}
-			for _, assignment := range snapshotV2.Assignments {
-				expectedDecision.Assignments = append(expectedDecision.Assignments, struct {
-					FileMemberID    uuid.UUID `json:"file_member_id"`
-					ProviderTrackID uuid.UUID `json:"provider_track_id"`
-					Medium          int       `json:"medium"`
-					Position        int       `json:"position"`
-				}{assignment.FileMemberID, assignment.ProviderTrackID, assignment.Medium + 1, assignment.Position + 1})
-			}
-			if !matchingJSONEqual(mustJSON(decision), mustJSON(expectedDecision)) {
-				return nil // Current publication no longer authorizes this frozen decision.
+			if err := ValidateMatchingApplyInputSnapshotV2(snapshotV2, seal, calculation, intent.EvaluationRevision, decision); err != nil {
+				return fmt.Errorf("requeue matching apply: published decision differs from sealed snapshot: %w", err)
 			}
 		}
 		inserted, err := client.InsertTx(ctx, tx.Tx, args, options)

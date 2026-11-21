@@ -34,6 +34,10 @@ type uniquePublicationApplyFixture struct {
 	InputSnapshot     persistence.MatchingApplyInputSnapshotV2
 }
 
+func TestExhaustedFallbackHydratesAcceptedEditionsOutsideScoringShortlist(t *testing.T) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, true, nil)
+}
+
 func testAutomaticFallbackFiniteFlowWithPublicationCallback(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, publishReview bool, afterPublication func(uniquePublicationApplyFixture), publishUnique ...bool) {
 	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, historicalStageLookup, emptyPlan, exhaustPlan, publishReview, afterPublication, nil, publishUnique...)
 }
@@ -330,6 +334,9 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 		t.Fatalf("decode stage-one operation input: %v", err)
 	}
 	stageOnePayload := json.RawMessage(fmt.Sprintf(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"releases":[{"id":%q,"title":"Captured Album"}]}`, releaseID))
+	if publishReview {
+		stageOnePayload = json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"releases":[]}`)
+	}
 	stageOneKey := *stageOneOperation.ProviderCacheKey
 	stageOneTicket, err := cache.BeginRefresh(ctx, source.ID, stageOneKey, config.Identity)
 	if err != nil {
@@ -350,6 +357,117 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 	}
 	wakeID, claim = claimWake()
 	advance(wakeID, claim)
+
+	if publishReview {
+		next := func() {
+			t.Helper()
+			wake, delivery := claimWake()
+			advance(wake, delivery)
+		}
+		runAccepted := func(requestID uuid.UUID, payload json.RawMessage, graph persistence.ProviderGraph) {
+			t.Helper()
+			request, err := fixture.repository.GetOperation(ctx, requestID)
+			if err != nil || request.RiverJobID == nil || request.ProviderCacheKey == nil {
+				t.Fatalf("read review test dependency: %v", err)
+			}
+			ticket, err := cache.BeginRefresh(ctx, source.ID, *request.ProviderCacheKey, config.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: payload, Graph: graph}); err != nil {
+				t.Fatal(err)
+			}
+			jobID := *request.RiverJobID
+			if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, jobID).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: jobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: requestID}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		readPhase := func(want string) persistence.MatchingAcquisitionSnapshot {
+			t.Helper()
+			snapshot, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+			if err != nil || !exists || snapshot.Phase != want {
+				t.Fatalf("fallback phase = %q, want %q: %v", snapshot.Phase, want, err)
+			}
+			return snapshot
+		}
+		next() // Stage one proved none; admit the last recording search.
+		lastSearch := readPhase(persistence.MatchingAcquisitionFallbackSearch)
+		if err := json.Unmarshal(lastSearch.Output, &output); err != nil {
+			t.Fatal(err)
+		}
+		var hits []map[string]string
+		for n := 1; n <= 11; n++ {
+			hits = append(hits, map[string]string{"id": fmt.Sprintf("c0000000-0000-4000-8000-%012d", n), "title": "Unrelated Album"})
+		}
+		hitsJSON, err := json.Marshal(hits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runAccepted(output.RequestID, json.RawMessage(fmt.Sprintf(`{"count":1,"offset":0,"recordings":[{"id":%q,"title":"Unrelated Song","releases":%s}]}`, recordingID, hitsJSON)), persistence.ProviderGraph{})
+		next() // Admit top-ten scoring lookups only.
+		runLookups := func(expected int) {
+			t.Helper()
+			snapshot := readPhase(persistence.MatchingAcquisitionFallbackHydration)
+			var manifest struct {
+				Lookups []struct {
+					RequestID uuid.UUID `json:"request_id"`
+					ReleaseID string    `json:"release_id"`
+				} `json:"lookups"`
+			}
+			if err := json.Unmarshal(snapshot.Output, &manifest); err != nil || len(manifest.Lookups) != expected {
+				t.Fatalf("hydration coverage=%d, want %d: %v", len(manifest.Lookups), expected, err)
+			}
+			for _, lookup := range manifest.Lookups {
+				payload := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Unrelated Album","media":[{"position":1,"tracks":[{"id":%q,"number":"1","recording":{"id":%q,"title":"Unrelated Song"}}]}]}`, lookup.ReleaseID, uuid.New(), recordingID))
+				graph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: payload}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				runAccepted(lookup.RequestID, payload, graph)
+			}
+		}
+		runLookups(10)
+		next() // Finish scoring hydration.
+		score := readPhase(persistence.MatchingAcquisitionFallbackApplicability)
+		next() // Persist none, then admit only the remaining lookup.
+		calculation, err := fixture.repository.GetMatchingFallbackCalculationReceipt(ctx, parentID, score.Revision)
+		if err != nil || calculation == nil || calculation.LayoutDecision.Status != persistence.MatchingLayoutDecisionNone {
+			t.Fatalf("extra lookup did not follow a proved none: %v", err)
+		}
+		runLookups(1)
+		next()
+		final := readPhase(persistence.MatchingAcquisitionFallbackEvaluationSealed)
+		prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, parentID, final.Revision-1)
+		if err != nil || !exists || prepared.Authority.Disposition != "review_exhausted" || len(prepared.Releases) != 11 ||
+			prepared.LayoutDecision == nil || prepared.LayoutDecision.Status != persistence.MatchingLayoutDecisionNone {
+			t.Fatalf("exhausted review has %d releases, want all 11 last-stage releases: %v", len(prepared.Releases), err)
+		}
+		var wake int64
+		if err := fixture.db.NewRaw(`SELECT current_river_job_id FROM matching_run WHERE id=?`, parentID).Scan(ctx, &wake); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, wake).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := matchingWorker.Work(ctx, &river.Job[service.MatchingEvaluationOperationArgs]{
+			JobRow: &rivertype.JobRow{ID: wake, Attempt: 1},
+			Args:   service.MatchingEvaluationOperationArgs{OperationID: parentID},
+		}); err != nil {
+			t.Fatalf("publish exhausted review: %v", err)
+		}
+		var published, applies int
+		if err := fixture.db.NewRaw(`SELECT
+			(SELECT jsonb_array_length(evaluation_evidence->'review_proposal'->'releases') FROM incoming_match_evaluation WHERE group_id=?),
+			(SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?)`, groups[0].ID, parentID).Scan(ctx, &published, &applies); err != nil ||
+			published != 11 || applies != 0 {
+			operation, _ := fixture.repository.GetOperation(ctx, parentID)
+			t.Fatalf("full review publication: releases=%d apply requests=%d stage=%s err=%v", published, applies, operation.Stage, err)
+		}
+		return
+	}
 
 	hydration, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
 	if err != nil || !exists || hydration.Phase != persistence.MatchingAcquisitionFallbackHydration {
@@ -443,75 +561,67 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 	if currentWaitRevision, found, err := fixture.repository.GetCurrentMatchingFallbackEvaluationWaitRevision(ctx, parentID); err != nil || !found || currentWaitRevision != waitRevision {
 		t.Fatalf("current sealed wait revision=%d found=%v, want %d: %v", currentWaitRevision, found, waitRevision, err)
 	}
-	var receipt struct {
-		SchemaVersion     int             `json:"schema_version"`
-		CalculatorVersion int             `json:"calculator_version"`
-		DigestVersion     int             `json:"digest_version"`
-		StageIndex        int             `json:"stage_index"`
-		InputDigest       string          `json:"input_digest"`
-		Edges             json.RawMessage `json:"edge_calculations"`
+	selectedReceipt, err := fixture.repository.GetMatchingFallbackCalculationReceipt(ctx, parentID, applicability.Revision)
+	if err != nil || selectedReceipt == nil {
+		t.Fatalf("read persisted stage-one layout decision: receipt=%+v err=%v", selectedReceipt, err)
 	}
-	if err := fixture.db.NewRaw(`SELECT schema_version,calculator_version,digest_version,stage_index,encode(input_digest,'hex'),edge_calculations
-		FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, parentID, applicability.Revision).
-		Scan(ctx, &receipt.SchemaVersion, &receipt.CalculatorVersion, &receipt.DigestVersion, &receipt.StageIndex, &receipt.InputDigest, &receipt.Edges); err != nil {
-		t.Fatalf("read persisted stage-one calculation receipt: %v", err)
+	if selectedReceipt.SchemaVersion != 4 || selectedReceipt.CalculatorVersion != 4 || selectedReceipt.DigestVersion != 4 ||
+		selectedReceipt.StageIndex != 1 || selectedReceipt.InputDigest == "" {
+		t.Fatalf("persisted calculation did not use the layout decision receipt: receipt=%+v", selectedReceipt)
 	}
-	var edges []struct {
-		MemberID        uuid.UUID `json:"member_id"`
-		WorkID          uuid.UUID `json:"work_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		RecordingID     string    `json:"recording_id"`
-		LookupRequestID uuid.UUID `json:"lookup_request_id"`
-		Confidence      float64   `json:"confidence"`
+	if selectedReceipt.LayoutDecision.Status != persistence.MatchingLayoutDecisionSelected ||
+		selectedReceipt.LayoutDecision.ProviderReleaseID == nil ||
+		len(selectedReceipt.LayoutDecision.Assignments) != len(final.Intent.CapturedMembers) {
+		t.Fatalf("persisted stage-one decision is not a complete selected layout: decision=%+v", selectedReceipt.LayoutDecision)
 	}
-	if receipt.SchemaVersion != 3 || receipt.CalculatorVersion != 3 || receipt.DigestVersion != 3 || receipt.StageIndex != 1 || receipt.InputDigest == "" ||
-		json.Unmarshal(receipt.Edges, &edges) != nil || len(edges) == 0 {
-		t.Fatalf("persisted calculation did not prove genuine qualified stage-one edge: receipt=%+v edges=%+v", receipt, edges)
+	decisionDigest, err := selectedReceipt.LayoutDecision.Digest()
+	if err != nil || decisionDigest != selectedReceipt.DecisionDigest {
+		t.Fatalf("persisted decision digest=%q calculated=%q err=%v", selectedReceipt.DecisionDigest, decisionDigest, err)
 	}
-	memberRecording := make(map[uuid.UUID]string, len(final.Intent.CapturedMembers))
+	accepted, err := cache.GetMusicBrainzMatchingSnapshot(ctx, source.Endpoint, config.Identity, []string{releaseID}, []string{lookup.CacheKey})
+	if err != nil || len(accepted.Releases) != 1 || accepted.Releases[0].ID != *selectedReceipt.LayoutDecision.ProviderReleaseID {
+		t.Fatalf("selected layout does not identify the accepted provider release: %v", err)
+	}
+	trackByRecording := make(map[string]uuid.UUID, len(accepted.Releases[0].Tracks))
+	for _, track := range accepted.Releases[0].Tracks {
+		trackByRecording[track.RecordingProviderKey] = track.ID
+	}
+	expectedTrackByMember := make(map[uuid.UUID]uuid.UUID, len(final.Intent.CapturedMembers))
 	for _, member := range final.Intent.CapturedMembers {
 		var tags map[string][]string
 		if err := json.Unmarshal(member.Tags, &tags); err != nil || len(tags["TITLE"]) != 1 {
-			t.Fatalf("decode distinct captured source title for qualified-edge verification: member=%+v tags=%v err=%v", member, tags, err)
+			t.Fatalf("decode captured source title for layout decision verification: member=%+v tags=%v err=%v", member, tags, err)
 		}
-		if uniquePublication {
-			switch tags["TITLE"][0] {
-			case "Track Override Alpha":
-				memberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fb"
-			case "Track Override Beta":
-				memberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fd"
-			default:
-				t.Fatalf("unexpected captured source title in unique qualified-edge verification: %q", tags["TITLE"][0])
-			}
-		} else {
-			memberRecording[member.MemberID] = ""
+		switch tags["TITLE"][0] {
+		case "Track Override Alpha":
+			expectedTrackByMember[member.MemberID] = trackByRecording["90000000-0000-4000-8000-0000000000fb"]
+		case "Track Override Beta":
+			expectedTrackByMember[member.MemberID] = trackByRecording["90000000-0000-4000-8000-0000000000fd"]
+		case "Receipt Track":
+			expectedTrackByMember[member.MemberID] = trackByRecording[recordingID]
+		default:
+			t.Fatalf("unexpected captured source title in layout decision verification: %q", tags["TITLE"][0])
 		}
 	}
-	tracks := make(map[string]uuid.UUID)
-	qualifiedPerMember := make(map[uuid.UUID]float64, len(memberRecording))
-	seenPairs := make(map[string]bool, len(edges))
-	for _, edge := range edges {
-		_, memberExists := memberRecording[edge.MemberID]
-		identity := edge.MemberID.String() + "/" + edge.ProviderTrackID.String()
-		if !memberExists || edge.WorkID == uuid.Nil || edge.ProviderTrackID == uuid.Nil || edge.RecordingID == "" || edge.LookupRequestID != lookup.RequestID || seenPairs[identity] {
-			t.Fatalf("persisted Cartesian edge set is incomplete or out of scope: edge=%+v edges=%+v", edge, edges)
-		}
-		seenPairs[identity] = true
-		if previous, exists := tracks[edge.RecordingID]; exists && previous != edge.ProviderTrackID {
-			t.Fatalf("one accepted recording has multiple provider-track identities: recording=%s tracks=%v", edge.RecordingID, tracks)
-		}
-		tracks[edge.RecordingID] = edge.ProviderTrackID
-		if edge.Confidence >= qualifiedPerMember[edge.MemberID] {
-			qualifiedPerMember[edge.MemberID] = edge.Confidence
+	for _, assignment := range selectedReceipt.LayoutDecision.Assignments {
+		if assignment.ProviderTrackID != expectedTrackByMember[assignment.FileMemberID] {
+			t.Fatalf("decision assigned wrong provider track: member=%s got=%s want=%s", assignment.FileMemberID, assignment.ProviderTrackID, expectedTrackByMember[assignment.FileMemberID])
 		}
 	}
-	if len(edges) != len(memberRecording)*len(tracks) || len(qualifiedPerMember) != len(memberRecording) {
-		t.Fatalf("stage-one receipt omitted accepted member/track Cartesian edges: edges=%d members=%d tracks=%d qualified=%v", len(edges), len(memberRecording), len(tracks), qualifiedPerMember)
+	var priorRevision int64
+	if err := fixture.db.NewRaw(`SELECT acquisition_revision FROM matching_fallback_calculation_receipt
+		WHERE run_id=? AND stage_index=0 ORDER BY acquisition_revision LIMIT 1`, parentID).Scan(ctx, &priorRevision); err != nil {
+		t.Fatalf("read preceding proved-none revision: %v", err)
 	}
-	for memberID, confidence := range qualifiedPerMember {
-		if confidence < 0.70 {
-			t.Fatalf("captured file's best valid release-profile edge did not qualify: member=%s confidence=%.3f", memberID, confidence)
-		}
+	priorReceipt, err := fixture.repository.GetMatchingFallbackCalculationReceipt(ctx, parentID, priorRevision)
+	if err != nil || priorReceipt == nil || priorReceipt.StageIndex != 0 ||
+		priorReceipt.LayoutDecision.Status != persistence.MatchingLayoutDecisionNone ||
+		priorReceipt.LayoutDecision.ProviderReleaseID != nil || len(priorReceipt.LayoutDecision.Assignments) != 0 {
+		t.Fatalf("preceding stage did not retain a proved none decision: receipt=%+v err=%v", priorReceipt, err)
+	}
+	priorDigest, err := priorReceipt.LayoutDecision.Digest()
+	if err != nil || priorDigest != priorReceipt.DecisionDigest {
+		t.Fatalf("preceding proved-none digest=%q calculated=%q err=%v", priorReceipt.DecisionDigest, priorDigest, err)
 	}
 	if uniquePublication {
 		seal, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
@@ -557,82 +667,34 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 			t.Fatalf("parsed provider release tracks do not prove the fixed recording/track coordinate universe: tracks=%+v", actualProviderSnapshot.Releases[0].Tracks)
 		}
 		preparedUnique, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, parentID, waitRevision)
-		if err != nil || !exists || preparedUnique.Calculation == nil || len(preparedUnique.Result.AllCandidates) != 4 {
-			t.Fatalf("prepare pure frozen applicability result for full Cartesian proof: prepared=%+v exists=%v err=%v", preparedUnique, exists, err)
+		if err != nil || !exists || preparedUnique.Calculation == nil || preparedUnique.LayoutDecision == nil ||
+			preparedUnique.LayoutDecision.Status != persistence.MatchingLayoutDecisionSelected ||
+			len(preparedUnique.LayoutDecision.Assignments) != 2 || len(preparedUnique.Releases) != 1 {
+			t.Fatalf("prepare frozen selected layout: prepared=%+v exists=%v err=%v", preparedUnique, exists, err)
 		}
-		knownMemberRecording := make(map[uuid.UUID]string, 2)
-		for _, member := range final.Intent.CapturedMembers {
-			var tags map[string][]string
-			if err := json.Unmarshal(member.Tags, &tags); err != nil || len(tags["TITLE"]) != 1 {
-				t.Fatalf("decode sealed source title for complete universe assertion: member=%+v tags=%v err=%v", member, tags, err)
-			}
-			switch tags["TITLE"][0] {
-			case "Track Override Alpha":
-				knownMemberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fb"
-			case "Track Override Beta":
-				knownMemberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fd"
-			default:
-				t.Fatalf("unexpected sealed source title in full universe proof: %q", tags["TITLE"][0])
-			}
+		if seal.LayoutDecision.Status != persistence.MatchingLayoutDecisionSelected ||
+			seal.SelectedCalculation == nil || seal.SelectedCalculation.DecisionDigest == "" {
+			t.Fatalf("seal did not retain the selected layout decision: seal=%+v", seal)
 		}
-		if len(knownMemberRecording) != 2 {
-			t.Fatalf("fixed provider universe does not have two known sealed members: %v", knownMemberRecording)
+		sealDigest, err := seal.LayoutDecision.Digest()
+		if err != nil || sealDigest != seal.SelectedCalculation.DecisionDigest {
+			t.Fatalf("seal decision digest=%q calculated=%q err=%v", seal.SelectedCalculation.DecisionDigest, sealDigest, err)
 		}
-		seenCompletePairs := make(map[string]bool, 4)
-		crossBelowThreshold := make(map[uuid.UUID]bool, 2)
-		releaseProfileMaximum := make(map[uuid.UUID]float64, 2)
-		for _, candidate := range preparedUnique.Result.AllCandidates {
-			intendedRecording, memberExists := knownMemberRecording[candidate.MemberID]
-			track, trackExists := providerTracksByRecording[strings.ToLower(candidate.RecordingID)]
-			pair := candidate.MemberID.String() + "/" + candidate.ProviderTrackUUID.String()
-			if !memberExists || !trackExists || candidate.ProviderTrackUUID != track.ID || seenCompletePairs[pair] {
-				t.Fatalf("pure applicability candidate is outside or duplicates the accepted complete member/track universe: candidate=%+v", candidate)
-			}
-			seenCompletePairs[pair] = true
-			if candidate.Score.Profile != service.RecordingReleaseMatchingProfile {
-				t.Fatalf("applicability Cartesian candidate did not use recording-release profile: candidate=%+v", candidate)
-			}
-			if !strings.EqualFold(candidate.RecordingID, intendedRecording) && candidate.Score.Confidence < 0.70 {
-				crossBelowThreshold[candidate.MemberID] = true
-			}
-			if strings.EqualFold(candidate.RecordingID, intendedRecording) && candidate.Score.Confidence > releaseProfileMaximum[candidate.MemberID] {
-				releaseProfileMaximum[candidate.MemberID] = candidate.Score.Confidence
+		for _, assignment := range preparedUnique.LayoutDecision.Assignments {
+			if assignment.ProviderTrackID != expectedTrackByMember[assignment.FileMemberID] {
+				t.Fatalf("frozen decision assigned wrong provider track: member=%s got=%s want=%s", assignment.FileMemberID, assignment.ProviderTrackID, expectedTrackByMember[assignment.FileMemberID])
 			}
 		}
-		if len(seenCompletePairs) != 4 || len(crossBelowThreshold) != 2 || len(releaseProfileMaximum) != 2 {
-			t.Fatalf("pure applicability result omitted the four complete distinct pairs or retained cross/release-profile evidence: pairs=%v cross=%v maxima=%v", seenCompletePairs, crossBelowThreshold, releaseProfileMaximum)
+		evidence, err := persistence.DecodeFallbackLayoutStageEvidence(actualContext, actualContext.AcceptedShortlist)
+		if err != nil || evidence.ValidateDecision(*preparedUnique.LayoutDecision) != nil {
+			t.Fatalf("persisted decision does not validate against full sealed layout evidence: evidence=%+v err=%v", evidence, err)
 		}
-		releaseSelectionMaximum := make(map[uuid.UUID]float64, 2)
-		for _, releaseCandidate := range preparedUnique.KernelResult.ReleaseSelection.Candidates {
-			for _, file := range releaseCandidate.Files {
-				fileID, parseErr := uuid.Parse(file.FileID)
-				_, known := knownMemberRecording[fileID]
-				if parseErr != nil || !known || !file.Present {
-					continue
-				}
-				if file.Confidence > releaseSelectionMaximum[fileID] {
-					releaseSelectionMaximum[fileID] = file.Confidence
-				}
-			}
+		releaseTrackIDs := make(map[uuid.UUID]bool, len(preparedUnique.Releases[0].Tracks))
+		for _, track := range preparedUnique.Releases[0].Tracks {
+			releaseTrackIDs[track.ID] = true
 		}
-		for memberID, confidence := range releaseProfileMaximum {
-			if confidence < 0.70 {
-				t.Fatalf("pure release-profile result has no qualifying intended edge: member=%s confidence=%.3f", memberID, confidence)
-			}
-			if releaseSelectionMaximum[memberID] < 0.70 {
-				t.Fatalf("pure kernel release-selection profile has no qualifying per-file score: member=%s confidence=%.3f", memberID, releaseSelectionMaximum[memberID])
-			}
-		}
-		for memberID, expectedRecording := range memberRecording {
-			var diagonalQualified bool
-			for _, edge := range edges {
-				if edge.MemberID == memberID && edge.RecordingID == expectedRecording && edge.Confidence >= 0.70 {
-					diagonalQualified = true
-				}
-			}
-			if !diagonalQualified {
-				t.Fatalf("captured file's intended accepted recording edge did not qualify: member=%s recording=%s edges=%+v", memberID, expectedRecording, edges)
-			}
+		if len(releaseTrackIDs) != 2 || !releaseTrackIDs[alphaTrack.ID] || !releaseTrackIDs[betaTrack.ID] {
+			t.Fatalf("frozen release did not expose the accepted two exact provider tracks: release=%+v alpha=%s beta=%s", preparedUnique.Releases[0], alphaTrack.ID, betaTrack.ID)
 		}
 	}
 	unchangedStageZero, err := fixture.repository.GetMatchingFallbackSearchReceipt(ctx, parentID, stageZeroID)
@@ -686,25 +748,42 @@ func assertFallbackUniquePublication(t *testing.T, ctx context.Context, fixture 
 		t.Fatalf("claim unique continuation wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
 	}
 	prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, runID, waitRevision)
-	if err != nil || !exists || prepared.Calculation == nil {
-		t.Fatalf("prepare unique publication from sealed evidence: exists=%v calculation=%+v err=%v", exists, prepared.Calculation, err)
+	if err != nil || !exists || prepared.Calculation == nil || prepared.LayoutDecision == nil ||
+		prepared.LayoutDecision.Status != persistence.MatchingLayoutDecisionSelected ||
+		len(prepared.LayoutDecision.Assignments) != 2 || len(prepared.Releases) != 1 {
+		t.Fatalf("prepare unique publication from sealed evidence: exists=%v prepared=%+v err=%v", exists, prepared, err)
+	}
+	seal, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, runID, waitRevision)
+	if err != nil || !found || seal.SelectedCalculation == nil || seal.LayoutDecision.Status != persistence.MatchingLayoutDecisionSelected {
+		t.Fatalf("read selected layout seal: seal=%+v found=%v err=%v", seal, found, err)
+	}
+	sealDigest, err := seal.LayoutDecision.Digest()
+	if err != nil || sealDigest != seal.SelectedCalculation.DecisionDigest {
+		t.Fatalf("seal decision digest=%q calculated=%q err=%v", seal.SelectedCalculation.DecisionDigest, sealDigest, err)
 	}
 	publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
 	if err != nil || publication.Evaluation.Outcome != "unique" || publication.Evaluation.Decision != "apply" ||
-		len(publication.Evaluation.Assignments) != 2 || len(publication.Inventory.Members) != 2 || len(publication.Inventory.Releases) != 1 {
-		t.Fatalf("frozen kernel did not derive a unique two-member assignment: evaluation=%+v kernel=%+v members=%d releases=%d err=%v", publication.Evaluation, prepared.KernelResult, len(publication.Inventory.Members), len(publication.Inventory.Releases), err)
+		len(publication.Evaluation.Assignments) != 2 || len(publication.Inventory.Members) != 2 ||
+		len(publication.Inventory.Releases) != 1 || len(prepared.Releases) != 1 {
+		t.Fatalf("frozen layout did not derive a unique two-member assignment: evaluation=%+v releases=%d members=%d err=%v", publication.Evaluation, len(publication.Inventory.Releases), len(publication.Inventory.Members), err)
+	}
+	decisionTracks := make(map[uuid.UUID]uuid.UUID, len(prepared.LayoutDecision.Assignments))
+	for _, assignment := range prepared.LayoutDecision.Assignments {
+		decisionTracks[assignment.FileMemberID] = assignment.ProviderTrackID
 	}
 	assignments := make(map[uuid.UUID]uuid.UUID, len(publication.Evaluation.Assignments))
 	tracks := make(map[uuid.UUID]bool, len(publication.Evaluation.Assignments))
 	for _, assignment := range publication.Evaluation.Assignments {
-		if assignment.FileMemberID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || tracks[assignment.ProviderTrackID] {
-			t.Fatalf("kernel assignment is incomplete or reuses a provider variant: %+v", publication.Evaluation.Assignments)
+		if assignment.FileMemberID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil ||
+			decisionTracks[assignment.FileMemberID] != assignment.ProviderTrackID || tracks[assignment.ProviderTrackID] {
+			t.Fatalf("serialized assignment differs from the sealed layout decision: assignment=%+v decision=%v", assignment, prepared.LayoutDecision.Assignments)
 		}
 		assignments[assignment.FileMemberID] = assignment.ProviderTrackID
 		tracks[assignment.ProviderTrackID] = true
 	}
-	if len(assignments) != 2 || len(tracks) != 2 {
-		t.Fatalf("kernel assignments do not uniquely cover both captured members: assignments=%v tracks=%v", assignments, tracks)
+	if len(assignments) != 2 || len(tracks) != 2 || len(decisionTracks) != 2 || seal.LayoutDecision.ProviderReleaseID == nil ||
+		prepared.LayoutDecision.ProviderReleaseID == nil || *seal.LayoutDecision.ProviderReleaseID != *prepared.LayoutDecision.ProviderReleaseID {
+		t.Fatalf("sealed layout does not uniquely cover both members and release: assignments=%v trackCount=%d decision=%+v seal=%+v", assignments, len(tracks), prepared.LayoutDecision, seal.LayoutDecision)
 	}
 
 	groupID := publication.Inventory.GroupID
@@ -733,16 +812,17 @@ func assertFallbackUniquePublication(t *testing.T, ctx context.Context, fixture 
 		}
 		noApplyRows(label)
 	}
-	duplicateFolderPosition := publication
-	duplicateFolderPosition.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments...)
-	duplicateFolderPosition.Evaluation.Assignments[1].ProviderTrackID = duplicateFolderPosition.Evaluation.Assignments[0].ProviderTrackID
-	duplicateFolderPosition.Evaluation.Assignments[1].Medium = duplicateFolderPosition.Evaluation.Assignments[0].Medium
-	duplicateFolderPosition.Evaluation.Assignments[1].Position = duplicateFolderPosition.Evaluation.Assignments[0].Position
+	substituted := publication
+	substituted.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments...)
+	a, b := &substituted.Evaluation.Assignments[0], &substituted.Evaluation.Assignments[1]
+	a.ProviderTrackID, b.ProviderTrackID = b.ProviderTrackID, a.ProviderTrackID
+	a.Medium, b.Medium = b.Medium, a.Medium
+	a.Position, b.Position = b.Position, a.Position
 	var evaluationBefore string
 	if err := fixture.db.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, groupID).Scan(ctx, &evaluationBefore); err != nil {
 		t.Fatalf("read evaluation revision before folder-position rejection: %v", err)
 	}
-	reject("same provider position in one captured folder", duplicateFolderPosition, map[uuid.UUID]*string{groupID: nil}, "same source folder")
+	reject("substituted valid positions", substituted, map[uuid.UUID]*string{groupID: nil}, "differs from sealed layout decision")
 	var evaluationAfter string
 	var deliveryConsumed bool
 	if err := fixture.db.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, groupID).Scan(ctx, &evaluationAfter); err != nil {
@@ -752,19 +832,12 @@ func assertFallbackUniquePublication(t *testing.T, ctx context.Context, fixture 
 		t.Fatalf("read delivery after folder-position rejection: %v", err)
 	}
 	if evaluationBefore != evaluationAfter || deliveryConsumed {
-		t.Fatalf("folder-position rejection changed evaluation or consumed delivery: before=%+v after=%+v consumed=%v", evaluationBefore, evaluationAfter, deliveryConsumed)
+		t.Fatalf("layout rejection changed evaluation or consumed delivery: before=%+v after=%+v consumed=%v", evaluationBefore, evaluationAfter, deliveryConsumed)
 	}
 
 	wrongDecision := publication
 	wrongDecision.Evaluation.Decision = "review"
-	reject("wrong unique decision", wrongDecision, map[uuid.UUID]*string{groupID: nil}, "unique outcome and apply decision must agree")
-	foreignMember := publication
-	foreignMember.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments...)
-	foreignMember.Evaluation.Assignments[0].FileMemberID = uuid.New()
-	reject("foreign assignment member", foreignMember, map[uuid.UUID]*string{groupID: nil}, "assignment")
-	partial := publication
-	partial.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments[:1]...)
-	reject("partial assignment", partial, map[uuid.UUID]*string{groupID: nil}, "decision does not cover original group")
+	reject("wrong unique decision", wrongDecision, map[uuid.UUID]*string{groupID: nil}, "differs from sealed layout decision")
 	wrongSeal := publication
 	wrongSeal.Authority.SealDigest = strings.Repeat("0", len(wrongSeal.Authority.SealDigest))
 	reject("wrong seal digest", wrongSeal, map[uuid.UUID]*string{groupID: nil}, "persisted seal digest")

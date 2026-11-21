@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -17,80 +15,24 @@ func CalculateFallbackLayoutDecision(ctx context.Context, snapshot persistence.M
 	if err := ctx.Err(); err != nil {
 		return persistence.MatchingLayoutDecision{}, err
 	}
-	scope := persistence.MatchingFallbackProviderSource{
-		ID: snapshot.RunSourceID, ProviderID: snapshot.RunProviderID,
-		Endpoint: snapshot.RunEndpoint, ConfigurationIdentity: snapshot.RunConfiguration,
-	}
-	search := snapshot.SearchReceipt
-	if snapshot.RunID == uuid.Nil || snapshot.AcquisitionRevision < 1 || snapshot.StageIndex < 0 ||
-		snapshot.Intent.FallbackProviderSource == nil || *snapshot.Intent.FallbackProviderSource != scope ||
-		scope.ID == uuid.Nil || scope.ProviderID == uuid.Nil || scope.Endpoint == "" || scope.ConfigurationIdentity == "" ||
-		len(snapshot.Intent.Targets) != 1 || snapshot.Intent.Targets[0].GroupID != snapshot.Target.GroupID ||
-		snapshot.Intent.Targets[0].Revision != snapshot.Target.GroupRevision ||
-		snapshot.Intent.TargetCaptureDigest == "" || snapshot.Intent.TargetCaptureDigest != snapshot.Target.CaptureDigest ||
-		search.RunID != snapshot.RunID || search.StageIndex != snapshot.StageIndex ||
-		search.ProviderSourceID != scope.ID || search.ConfigurationIdentity != scope.ConfigurationIdentity ||
-		search.CacheKey == "" || search.CacheKey != snapshot.SearchCacheKey ||
-		!fallbackJSONEqual(search.RequestInput, snapshot.SearchInput) {
-		return persistence.MatchingLayoutDecision{}, errors.New("fallback layout stage authority is invalid")
-	}
-	if err := shortlist.ValidateFallbackSearch(snapshot.SearchKind, search); err != nil {
-		return persistence.MatchingLayoutDecision{}, err
-	}
-	captures, threshold, err := persistence.DecodeMatchingLayoutTarget(snapshot.Intent.LayoutTarget, snapshot.Target.GroupID, MatchingLayoutPolicyVersion)
+	evidence, err := persistence.DecodeFallbackLayoutStageEvidence(snapshot, shortlist)
 	if err != nil {
 		return persistence.MatchingLayoutDecision{}, err
 	}
-	releases, err := fallbackLayoutAcceptedReleases(snapshot, scope, shortlist.RankedReleaseIDs)
-	if err != nil {
-		return persistence.MatchingLayoutDecision{}, err
-	}
-	stage, err := calculateMatchingLayoutStage(ctx, captures, shortlist.RankedReleaseIDs, releases, threshold, func() ([]MatchingInput, error) {
-		return scoreFallbackLayoutReleases(ctx, captures, snapshot.SearchKind, search, releases)
+	stage, err := calculateMatchingLayoutStage(ctx, evidence.Captures, shortlist.RankedReleaseIDs, evidence.Releases, evidence.PairThreshold, func() ([]MatchingInput, error) {
+		return scoreFallbackLayoutReleases(ctx, evidence.Captures, snapshot.SearchKind, snapshot.SearchReceipt, evidence.Releases)
 	})
 	if err != nil {
 		return persistence.MatchingLayoutDecision{}, err
 	}
-	return stage.DurableDecision()
-}
-
-func fallbackLayoutAcceptedReleases(snapshot persistence.MatchingFallbackCalculationContext, scope persistence.MatchingFallbackProviderSource, shortlist []string) ([]persistence.MatchingRelease, error) {
-	requests := make(map[uuid.UUID]persistence.MatchingFallbackCalculationLookupAuthority, len(shortlist))
-	expected := make(map[string]bool, len(shortlist))
-	for _, release := range shortlist {
-		expected[release] = true
+	decision, err := stage.DurableDecision()
+	if err != nil {
+		return persistence.MatchingLayoutDecision{}, err
 	}
-	for _, lookup := range snapshot.Lookups {
-		if !expected[lookup.ReleaseID] || lookup.RequestID == uuid.Nil || requests[lookup.RequestID].RequestID != uuid.Nil ||
-			lookup.Kind != "provider_release_lookup" || lookup.StageIndex != snapshot.StageIndex ||
-			lookup.CacheKey != "release-lookup:"+lookup.ReleaseID ||
-			lookup.ProviderSourceID != scope.ID || lookup.ProviderID != scope.ProviderID ||
-			lookup.Endpoint != scope.Endpoint || lookup.Configuration != scope.ConfigurationIdentity {
-			return nil, errors.New("fallback layout stage has an off-scope or repeated lookup")
-		}
-		requests[lookup.RequestID] = lookup
-		delete(expected, lookup.ReleaseID)
+	if err := evidence.ValidateDecision(decision); err != nil {
+		return persistence.MatchingLayoutDecision{}, err
 	}
-	if len(expected) != 0 {
-		return nil, errors.New("fallback layout stage lookup registrations do not cover shortlist")
-	}
-	releases := make([]persistence.MatchingRelease, 0, len(snapshot.LookupReceipts))
-	for _, receipt := range snapshot.LookupReceipts {
-		lookup, registered := requests[receipt.RequestID]
-		if !registered || receipt.RunID != snapshot.RunID || receipt.StageIndex != snapshot.StageIndex ||
-			receipt.CacheKey != lookup.CacheKey || !fallbackJSONEqual(lookup.Input, receipt.RequestInput) {
-			return nil, errors.New("fallback layout stage receipt is outside registered shortlist")
-		}
-		release, _, err := persistence.DecodeFallbackLayoutLookup(receipt, scope, lookup.ReleaseID)
-		if err != nil {
-			return nil, fmt.Errorf("decode fallback layout lookup: %w", err)
-		}
-		releases = append(releases, release)
-		delete(requests, receipt.RequestID)
-	}
-	// Missing receipts leave the projection incomplete; the layout stage
-	// reports indeterminate rather than treating these as negative evidence.
-	return releases, nil
+	return decision, nil
 }
 
 func scoreFallbackLayoutReleases(ctx context.Context, captures []persistence.IncomingGroupingCapture, searchKind string, search persistence.MatchingFallbackSearchReceipt, releases []persistence.MatchingRelease) ([]MatchingInput, error) {

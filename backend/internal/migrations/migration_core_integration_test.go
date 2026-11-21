@@ -31,6 +31,7 @@ var baselineMigrationNames = []string{
 	"20261112000001",
 	"20261121000001",
 	"20261121000002",
+	"20261122000001",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -89,7 +90,7 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	// that already has the preceding schema and data.
 	prior := migrate.NewMigrations()
 	sorted := collection.Sorted()
-	for _, migration := range sorted[:len(sorted)-1] {
+	for _, migration := range sorted[:len(sorted)-2] {
 		prior.Add(migration)
 	}
 	priorMigrator := migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
@@ -97,11 +98,14 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply prior migrations: %v", err)
 	}
-	assertMigrationGroup(t, group, currentMigrationNames[:len(currentMigrationNames)-1], "reapplied")
+	assertMigrationGroup(t, group, currentMigrationNames[:len(currentMigrationNames)-2], "reapplied")
 	if _, err := db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES('rollback-guard','preserve')`); err != nil {
 		t.Fatal(err)
 	}
-	group, err = migrator.Migrate(ctx)
+	// Keep the recheck rollback test on the migration that owns its data.
+	prior.Add(sorted[len(sorted)-2])
+	priorMigrator = migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
+	group, err = priorMigrator.Migrate(ctx)
 	if err != nil {
 		t.Fatalf("apply last additive migration: %v", err)
 	}

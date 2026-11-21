@@ -40,9 +40,10 @@ type MatchingFallbackSearchProof struct {
 func (repository *SetupManagerRepository) AdvanceFallbackSearchForDelivery(
 	ctx context.Context, client RiverInserter, runID uuid.UUID, attempt int, riverJobID int64,
 	claim MatchingDeliveryClaim, expectedRevision int64, proof MatchingFallbackSearchProof,
-	children []MatchingProviderRequest, manifest json.RawMessage,
+	acceptedShortlist MatchingAcceptedShortlist, children []MatchingProviderRequest, manifest json.RawMessage,
 ) (bool, error) {
-	if proof.StageIndex < 0 || proof.RequestID == uuid.Nil || len(proof.PayloadSHA256) != sha256.Size*2 {
+	if proof.StageIndex < 0 || proof.RequestID == uuid.Nil || len(proof.PayloadSHA256) != sha256.Size*2 ||
+		acceptedShortlist.SearchReceiptDigest != proof.PayloadSHA256 {
 		return false, fmt.Errorf("advance fallback search: invalid accepted-search proof")
 	}
 	snapshot, exists, err := repository.GetMatchingAcquisition(ctx, runID)
@@ -82,7 +83,7 @@ func (repository *SetupManagerRepository) AdvanceFallbackSearchForDelivery(
 	if len(ids) == 0 {
 		originHydrationRevision = 0
 	}
-	input, _ := json.Marshal(map[string]any{"stage_index": proof.StageIndex, "search_request_id": proof.RequestID, "origin_hydration_revision": originHydrationRevision, "release_ids": ids, "search_manifest": manifest})
+	input, _ := json.Marshal(map[string]any{"stage_index": proof.StageIndex, "search_request_id": proof.RequestID, "origin_hydration_revision": originHydrationRevision, "release_ids": ids, "accepted_shortlist": acceptedShortlist, "search_manifest": manifest})
 	output, _ := json.Marshal(map[string]any{"stage_index": proof.StageIndex, "search_request_id": proof.RequestID, "origin_hydration_revision": originHydrationRevision, "lookups": lookups})
 	provenance, _ := json.Marshal([]matchingAcquisitionResponseProvenance{{RequestID: proof.RequestID, CacheKey: registration.CacheKey, PayloadSHA: proof.PayloadSHA256}})
 	nextPhase := MatchingAcquisitionFallbackHydration
@@ -1190,8 +1191,11 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 		}
 		if fallbackProof != nil {
 			var currentInput, currentOutput struct {
-				StageIndex int       `json:"stage_index"`
-				RequestID  uuid.UUID `json:"request_id"`
+				StageIndex       int       `json:"stage_index"`
+				RequestID        uuid.UUID `json:"request_id"`
+				PreviousRevision int64     `json:"previous_calculation_revision"`
+				PreviousInput    string    `json:"previous_input_digest"`
+				PreviousDecision string    `json:"previous_decision_digest"`
 			}
 			if len(previous.Input) > 0 && json.Unmarshal(previous.Input, &currentInput) != nil || json.Unmarshal(previous.Output, &currentOutput) != nil {
 				return fmt.Errorf("advance matching acquisition: current fallback search identity is invalid")
@@ -1203,6 +1207,13 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 			requestID := currentOutput.RequestID
 			if stageIndex == 0 {
 				requestID = intent.InitialProviderInputs[0].OperationID
+			} else {
+				prior, err := getMatchingFallbackCalculationReceipt(ctx, tx, operationID, currentInput.PreviousRevision)
+				if err != nil || prior == nil || currentInput.PreviousRevision != previous.Revision-1 ||
+					prior.StageIndex != stageIndex-1 || prior.LayoutDecision.Status != MatchingLayoutDecisionNone ||
+					prior.InputDigest != currentInput.PreviousInput || prior.DecisionDigest != currentInput.PreviousDecision {
+					return fmt.Errorf("advance matching acquisition: fallback search lacks its prior proved negative")
+				}
 			}
 			if acquisition.Version != matchingAutomaticFallbackAcquisitionIntentVersion || acquisition.Phase != MatchingAcquisitionFallbackSearch ||
 				fallbackProof.StageIndex != stageIndex || requestID == uuid.Nil || provenance[0].RequestID != requestID ||
@@ -1224,11 +1235,20 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 			}
 			derived, deriveErr := fallbackReceiptReleaseIDs(registration.Kind, receipt.Payload)
 			var requested struct {
-				ReleaseIDs []string        `json:"release_ids"`
-				Manifest   json.RawMessage `json:"search_manifest"`
+				ReleaseIDs        []string                  `json:"release_ids"`
+				AcceptedShortlist MatchingAcceptedShortlist `json:"accepted_shortlist"`
+				Manifest          json.RawMessage           `json:"search_manifest"`
 			}
-			if deriveErr != nil || json.Unmarshal(phase.Input, &requested) != nil || !equalStringSlices(derived, requested.ReleaseIDs) {
+			if deriveErr != nil || json.Unmarshal(phase.Input, &requested) != nil {
 				return fmt.Errorf("advance matching acquisition: lookup set differs from accepted fallback response")
+			}
+			shortlistKeys := make([]string, 0, len(requested.AcceptedShortlist.RankedReleaseIDs))
+			shortlistKeys = append(shortlistKeys, requested.AcceptedShortlist.RankedReleaseIDs...)
+			sort.Strings(shortlistKeys)
+			if !equalStringSlices(derived, requested.AcceptedShortlist.ReleaseIDs) ||
+				requested.AcceptedShortlist.ValidateFallbackSearch(registration.Kind, *receipt) != nil ||
+				!equalStringSlices(shortlistKeys, requested.ReleaseIDs) || len(children) != len(requested.ReleaseIDs) {
+				return fmt.Errorf("advance matching acquisition: lookup set differs from accepted fallback shortlist")
 			}
 			var manifest struct {
 				Kind         string          `json:"kind"`

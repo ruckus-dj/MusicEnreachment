@@ -496,7 +496,8 @@ func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualT
 		return result, state, ErrIncomingMatchConflict
 	}
 	var projection *ProviderMatchingSnapshot
-	for _, lookup := range contextSnapshot.LookupReceipts {
+	lookups := append(append([]MatchingFallbackLookupReceipt(nil), contextSnapshot.LookupReceipts...), seal.ReviewLookupReceipts...)
+	for _, lookup := range lookups {
 		var candidate ProviderMatchingSnapshot
 		if json.Unmarshal(lookup.AcceptedProjection, &candidate) != nil || len(candidate.Releases) != 1 {
 			continue

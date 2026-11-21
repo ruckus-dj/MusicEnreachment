@@ -71,7 +71,7 @@ type matchingFallbackSearchReceiptReader interface {
 }
 
 type matchingFallbackSearchAdvancer interface {
-	AdvanceFallbackSearchForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackSearchProof, []persistence.MatchingProviderRequest, json.RawMessage) (bool, error)
+	AdvanceFallbackSearchForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackSearchProof, persistence.MatchingAcceptedShortlist, []persistence.MatchingProviderRequest, json.RawMessage) (bool, error)
 }
 
 type matchingFallbackCalculationReceiptReader interface {
@@ -80,11 +80,11 @@ type matchingFallbackCalculationReceiptReader interface {
 
 type matchingFallbackCalculationPreparer interface {
 	LoadMatchingFallbackCalculationContext(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackCalculationContext, bool, error)
-	RecordMatchingFallbackCalculationForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackCalculationReceipt) (bool, error)
+	RecordMatchingFallbackCalculationForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, string, persistence.MatchingLayoutDecision) (bool, error)
 }
 
 type matchingFallbackApplicabilityAdvancer interface {
-	AdvanceFallbackApplicabilityAndContinueForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, *persistence.MatchingProviderRequest) (bool, error)
+	AdvanceFallbackApplicabilityAndContinueForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, *persistence.MatchingProviderRequest, []persistence.MatchingProviderRequest) (bool, error)
 }
 
 type matchingFallbackHydrationCompleter interface {
@@ -231,6 +231,20 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 		return acquisition.advanceFallbackSearch(ctx, snapshot, runID, attempt, riverJobID, claim)
 	}
 	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == persistence.MatchingAcquisitionFallbackHydration {
+		var hydration struct {
+			CalculationRevision int64 `json:"calculation_revision"`
+		}
+		if err := json.Unmarshal(snapshot.Input, &hydration); err != nil {
+			return false, true, fmt.Errorf("decode fallback hydration target: %w", err)
+		}
+		if hydration.CalculationRevision != 0 {
+			advancer, ok := acquisition.repository.(matchingFallbackApplicabilityAdvancer)
+			if !ok {
+				return false, true, fmt.Errorf("fallback review hydration persistence is unavailable")
+			}
+			changed, err := advancer.AdvanceFallbackApplicabilityAndContinueForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, nil, nil)
+			return changed, true, err
+		}
 		completer, ok := acquisition.repository.(matchingFallbackHydrationCompleter)
 		if !ok {
 			return false, true, fmt.Errorf("fallback hydration persistence is unavailable")
@@ -305,12 +319,28 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackSearch(ctx context
 	if !valid {
 		return false, true, fmt.Errorf("saved fallback query plan kind is invalid")
 	}
-	ids, manifest, err := fallbackSearchManifest(kind, receipt.Payload)
+	_, manifest, err := fallbackSearchManifest(kind, receipt.Payload)
 	if err != nil {
 		return false, true, fmt.Errorf("accepted fallback search response is invalid: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
 	}
-	children := make([]persistence.MatchingProviderRequest, 0, len(ids))
-	for _, id := range ids {
+	if len(snapshot.Intent.Targets) != 1 || len(snapshot.Intent.LayoutTarget) == 0 {
+		return false, true, fmt.Errorf("saved fallback layout target is unavailable")
+	}
+	captures, _, err := persistence.DecodeMatchingLayoutTarget(snapshot.Intent.LayoutTarget, snapshot.Intent.Targets[0].GroupID, MatchingLayoutPolicyVersion)
+	if err != nil {
+		return false, true, fmt.Errorf("saved fallback layout target is invalid: %w", err)
+	}
+	shortlist, err := MatchingSearchScopeFromAcceptedFallback(kind, receipt.Payload, captures)
+	if err != nil {
+		return false, true, fmt.Errorf("accepted fallback search response is invalid: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
+	}
+	// The complete accepted universe stays in the manifest for later evidence.
+	// Only the ranked shortlist is hydrated, in canonical key order.
+	shortlistKeys := make([]string, 0, len(shortlist.RankedReleaseIDs))
+	shortlistKeys = append(shortlistKeys, shortlist.RankedReleaseIDs...)
+	sort.Strings(shortlistKeys)
+	children := make([]persistence.MatchingProviderRequest, 0, len(shortlistKeys))
+	for _, id := range shortlistKeys {
 		child, err := acquisition.providers.PrepareOperation(ctx, "release_lookup", id, 0, 0, false)
 		if err != nil {
 			return false, true, err
@@ -325,7 +355,7 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackSearch(ctx context
 		return false, true, fmt.Errorf("fallback search delivery persistence is unavailable")
 	}
 	changed, err := advancer.AdvanceFallbackSearchForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision,
-		persistence.MatchingFallbackSearchProof{StageIndex: stageIndex, RequestID: receipt.RequestID, PayloadSHA256: receipt.PayloadSHA256}, children, manifest)
+		persistence.MatchingFallbackSearchProof{StageIndex: stageIndex, RequestID: receipt.RequestID, PayloadSHA256: receipt.PayloadSHA256}, shortlist, children, manifest)
 	return changed, true, err
 }
 
@@ -343,7 +373,19 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackApplicability(ctx 
 		if !ok {
 			return false, true, fmt.Errorf("fallback calculation persistence is unavailable")
 		}
-		_, recorded, err := PrepareFallbackApplicabilityReceipt(ctx, preparer, preparer, runID, attempt, riverJobID, claim, snapshot.Revision)
+		stage, exists, err := preparer.LoadMatchingFallbackCalculationContext(ctx, runID, snapshot.Revision)
+		if err != nil || !exists {
+			return false, true, err
+		}
+		decision, err := CalculateFallbackLayoutDecision(ctx, stage, stage.AcceptedShortlist)
+		if err != nil {
+			return false, true, err
+		}
+		digest, err := persistence.MatchingFallbackCalculationInputDigest(stage)
+		if err != nil {
+			return false, true, err
+		}
+		recorded, err := preparer.RecordMatchingFallbackCalculationForDelivery(ctx, runID, attempt, riverJobID, claim, snapshot.Revision, digest, decision)
 		if err != nil || !recorded {
 			return false, true, err
 		}
@@ -355,21 +397,9 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackApplicability(ctx 
 	if receipt == nil || receipt.RunID != runID || receipt.AcquisitionRevision != snapshot.Revision {
 		return false, true, fmt.Errorf("saved fallback calculation receipt is unavailable or mismatched")
 	}
-	var edges []struct {
-		Confidence float64 `json:"confidence"`
-	}
-	if err := json.Unmarshal(receipt.Edges, &edges); err != nil {
-		return false, true, fmt.Errorf("saved fallback calculation edges are invalid: %w", err)
-	}
-	qualified := false
-	for _, edge := range edges {
-		if edge.Confidence >= 0.70 {
-			qualified = true
-			break
-		}
-	}
 	var prepared *persistence.MatchingProviderRequest
-	if !qualified {
+	var review []persistence.MatchingProviderRequest
+	if receipt.LayoutDecision.Status == persistence.MatchingLayoutDecisionNone {
 		var plan struct {
 			Stages []struct {
 				Kind, Query   string
@@ -394,13 +424,25 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackApplicability(ctx 
 			}
 			request := persistence.MatchingProviderRequest{Operation: operation, Args: ProviderFetchOperationArgs{OperationID: operation.ID}}
 			prepared = &request
+		} else {
+			var stage persistence.MatchingFallbackCalculationContext
+			if err := json.Unmarshal(receipt.Context, &stage); err != nil {
+				return false, true, fmt.Errorf("decode exhausted layout evidence: %w", err)
+			}
+			for _, key := range stage.AcceptedShortlist.ReviewOnlyReleaseIDs() {
+				operation, err := acquisition.providers.PrepareOperation(ctx, "release_lookup", key, 0, 0, false)
+				if err != nil {
+					return false, true, err
+				}
+				review = append(review, persistence.MatchingProviderRequest{Operation: operation, Args: ProviderFetchOperationArgs{OperationID: operation.ID}})
+			}
 		}
 	}
 	advancer, ok := acquisition.repository.(matchingFallbackApplicabilityAdvancer)
 	if !ok {
 		return false, true, fmt.Errorf("fallback applicability delivery persistence is unavailable")
 	}
-	changed, err := advancer.AdvanceFallbackApplicabilityAndContinueForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, prepared)
+	changed, err := advancer.AdvanceFallbackApplicabilityAndContinueForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, prepared, review)
 	return changed, true, err
 }
 
