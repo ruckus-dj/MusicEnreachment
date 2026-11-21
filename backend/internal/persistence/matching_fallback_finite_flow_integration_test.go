@@ -466,6 +466,22 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 			operation, _ := fixture.repository.GetOperation(ctx, parentID)
 			t.Fatalf("full review publication: releases=%d apply requests=%d stage=%s err=%v", published, applies, operation.Stage, err)
 		}
+		// The test invokes workers directly. Finalize their deliveries as River
+		// would; a queued older wake must not masquerade as an idle review.
+		if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='completed',finalized_at=now()
+			WHERE finalized_at IS NULL AND id IN (SELECT river_job_id FROM matching_delivery WHERE run_id=?)`, parentID).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var requested int64
+		if err := fixture.db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groups[0].ID).Scan(ctx, &requested); err != nil {
+			t.Fatal(err)
+		}
+		if requested > 0 {
+			if err := persistence.NewSourceInventoryRepository(fixture.db).AcknowledgeCurrentRequest(ctx, groups[0].ID, requested); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertPublishedFallbackReviewRefresh(t, ctx, fixture.db, fixture.repository, groups[0].ID, parentID)
 		return
 	}
 
@@ -731,6 +747,34 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 		// The publication branch is exercised by the continuation test helper below;
 		// don't let the legacy review-only helper silently stand in for a unique proof.
 		assertFallbackUniquePublication(t, ctx, fixture, inserter, parentID, waitRevision, afterPublication)
+	}
+}
+
+func assertPublishedFallbackReviewRefresh(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, groupID, runID uuid.UUID) {
+	t.Helper()
+	candidates, err := repository.ListFrozenMatchingReviewRefreshCandidates(ctx, uuid.Nil, 10)
+	if err != nil || len(candidates) != 1 || candidates[0].GroupID != groupID || candidates[0].RunID != runID {
+		t.Fatalf("list current review to refresh: %v, err=%v", candidates, err)
+	}
+	var before, after, reconciled int64
+	if err := db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(ctx, &before); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := repository.RefreshFrozenMatchingReview(ctx, candidates[0]); changed || err != nil {
+		t.Fatalf("unchanged review refresh: changed=%t err=%v", changed, err)
+	}
+	if err := persistence.NewSettingsRepository(db).Set(ctx, settings.MatchingPairThresholdKey, "0.80"); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := repository.RefreshFrozenMatchingReview(ctx, candidates[0]); !changed || err != nil {
+		t.Fatalf("threshold drift refresh: changed=%t err=%v", changed, err)
+	}
+	if changed, err := repository.RefreshFrozenMatchingReview(ctx, candidates[0]); changed || err != nil {
+		t.Fatalf("repeat review refresh: changed=%t err=%v", changed, err)
+	}
+	if err := db.NewRaw(`SELECT requested_generation,reconciled_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).
+		Scan(ctx, &after, &reconciled); err != nil || after != before+1 || reconciled != before {
+		t.Fatalf("review refresh generations: before=%d requested=%d reconciled=%d err=%v", before, after, reconciled, err)
 	}
 }
 

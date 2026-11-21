@@ -122,7 +122,7 @@ func TestProviderFetchWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if requests.Load() <= beforeRefreshRequests {
 		t.Fatal("explicit refresh failed without an HTTP request")
 	}
-	if failed.State != "failed" || failed.Stage != "provider_fetch_failed" || failed.SafeError == nil {
+	if failed.State != "failed" || failed.Stage != persistence.MusicBrainzUnavailableStage || failed.SafeError == nil {
 		t.Fatalf("refresh failure operation: %#v", failed)
 	}
 	after, err := cache.GetCurrentCachedResponse(ctx, *first.ProviderSourceID, *first.ProviderCacheKey, *first.ProviderConfigurationIdentity)

@@ -70,6 +70,10 @@ const operationStageLabels: Record<string, LocalizedText> = {
     en: "Request failed",
     ru: "Не удалось выполнить запрос",
   },
+  provider_temporarily_unavailable: {
+    en: "MusicBrainz temporarily unavailable",
+    ru: "MusicBrainz временно недоступен",
+  },
   waiting_provider: {
     en: "Waiting for catalog responses",
     ru: "Ожидание ответов каталога",

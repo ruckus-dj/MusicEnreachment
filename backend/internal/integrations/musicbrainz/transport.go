@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -25,6 +27,25 @@ type responseCollector struct {
 	mu           sync.Mutex
 	responses    [][]byte
 	contentTypes []string
+	unavailable  bool
+}
+
+func (c *responseCollector) observeAvailability(status int, err error) {
+	var networkError net.Error
+	unavailable := status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.As(err, &networkError) && networkError.Timeout()
+	c.mu.Lock()
+	c.unavailable = unavailable
+	c.mu.Unlock()
+}
+
+func (c *responseCollector) wasUnavailable() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unavailable
 }
 
 func (c *responseCollector) add(body []byte, contentType string) {
@@ -282,6 +303,13 @@ func (t *governedTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 	roundTrip := func() (*http.Response, error) {
 		response, roundTripErr := base.RoundTrip(req)
+		if collector, ok := req.Context().Value(requestCollectorKey{}).(*responseCollector); ok {
+			status := 0
+			if response != nil {
+				status = response.StatusCode
+			}
+			collector.observeAvailability(status, roundTripErr)
+		}
 		if roundTripErr != nil {
 			return nil, roundTripErr
 		}
@@ -306,6 +334,7 @@ func (t *governedTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, ResponseBodyLimit+1))
 		closeErr := resp.Body.Close()
 		if readErr != nil {
+			collector.observeAvailability(resp.StatusCode, readErr)
 			return nil, fmt.Errorf("read musicbrainz response: %w", readErr)
 		}
 		collector.add(body, resp.Header.Get("Content-Type"))

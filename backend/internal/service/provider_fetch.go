@@ -376,8 +376,12 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 	return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_response_saved")
 }
 
-func (service *ProviderFetchService) failProviderOperation(ctx context.Context, operations *Operations, operation *persistence.Operation, epoch int64, _ error) error {
-	if err := operations.FailForProviderDelivery(ctx, operation, epoch, "provider_fetch_failed", "MusicBrainz request failed; cached data was retained."); err != nil {
+func (service *ProviderFetchService) failProviderOperation(ctx context.Context, operations *Operations, operation *persistence.Operation, epoch int64, cause error) error {
+	stage := "provider_fetch_failed"
+	if errors.Is(cause, musicbrainz.ErrTemporarilyUnavailable) && ctx.Err() == nil {
+		stage = persistence.MusicBrainzUnavailableStage
+	}
+	if err := operations.FailForProviderDelivery(ctx, operation, epoch, stage, "MusicBrainz request failed; cached data was retained."); err != nil {
 		return err
 	}
 	// The safe user-facing failure is persisted; do not make River retry a settled operation.

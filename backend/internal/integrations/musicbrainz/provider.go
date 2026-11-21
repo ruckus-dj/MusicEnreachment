@@ -137,8 +137,10 @@ func NewProvider(options ProviderOptions) (*Provider, error) {
 	return &Provider{client: client, httpClient: httpClient, base: base, gate: gate}, nil
 }
 
+var errMusicBrainzRequestDeadline = errors.New("musicbrainz request deadline")
+
 func (p *Provider) callContext(ctx context.Context) (context.Context, context.CancelFunc, *responseCollector) {
-	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, RequestTimeout, errMusicBrainzRequestDeadline)
 	collector := &responseCollector{}
 	return context.WithValue(ctx, requestCollectorKey{}, collector), cancel, collector
 }
@@ -547,7 +549,16 @@ func cloneRaw(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
 }
 
+// ErrTemporarilyUnavailable indicates that a dispatched request could not reach
+// a working MusicBrainz server. Malformed responses and request errors are not outages.
+var ErrTemporarilyUnavailable = errors.New("musicbrainz is temporarily unavailable")
+
 func safeProviderError(ctx context.Context, _ error) error {
+	dispatchedFailure := ctx.Err() == nil || errors.Is(context.Cause(ctx), errMusicBrainzRequestDeadline)
+	if collector, ok := ctx.Value(requestCollectorKey{}).(*responseCollector); ok &&
+		dispatchedFailure && collector.wasUnavailable() {
+		return ErrTemporarilyUnavailable
+	}
 	if ctx.Err() != nil {
 		return errors.New("musicbrainz request timed out")
 	}

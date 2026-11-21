@@ -32,6 +32,15 @@ type artistMatchingReviewRefreshStore interface {
 	PublishArtistMatchingReviewRefresh(context.Context, persistence.ArtistMatchingReviewRefreshCandidate, persistence.IncomingMatchEvaluation) (bool, error)
 }
 
+// frozenMatchingReviewRefreshStore is the separate persistence boundary for
+// published frozen artistless reviews. It only requests a re-evaluation when
+// the sealed provider history or threshold drifted; it never scores, calls a
+// provider, or replaces the published review in this tick.
+type frozenMatchingReviewRefreshStore interface {
+	ListFrozenMatchingReviewRefreshCandidates(context.Context, uuid.UUID, int) ([]persistence.FrozenMatchingReviewRefreshCandidate, error)
+	RefreshFrozenMatchingReview(context.Context, persistence.FrozenMatchingReviewRefreshCandidate) (bool, error)
+}
+
 // ArtistMatchingReviewRefreshDetector re-evaluates saved artist matching
 // reviews after their accepted provider projection or cache dependencies
 // change. It reads only committed provider caches, never performs provider
@@ -43,23 +52,29 @@ type artistMatchingReviewRefreshStore interface {
 // after a completed pass. Failing rows advance the cursor too, so one broken
 // review cannot starve the rest of the library.
 type ArtistMatchingReviewRefreshDetector struct {
-	mu         sync.Mutex
-	candidates artistMatchingReviewRefreshStore
-	runs       matchingRunFenceReader
-	evaluator  *MatchingEvaluationService
-	cursor     uuid.UUID
-	pageSize   int
-	maxPages   int
+	mu           sync.Mutex
+	candidates   artistMatchingReviewRefreshStore
+	frozen       frozenMatchingReviewRefreshStore
+	runs         matchingRunFenceReader
+	evaluator    *MatchingEvaluationService
+	cursor       uuid.UUID
+	frozenCursor uuid.UUID
+	pageSize     int
+	maxPages     int
 }
 
 func NewArtistMatchingReviewRefreshDetector(candidates artistMatchingReviewRefreshStore, evaluator *MatchingEvaluationService, runs matchingRunFenceReader) *ArtistMatchingReviewRefreshDetector {
-	return &ArtistMatchingReviewRefreshDetector{
+	detector := &ArtistMatchingReviewRefreshDetector{
 		candidates: candidates,
 		evaluator:  evaluator,
 		runs:       runs,
 		pageSize:   artistMatchingReviewRefreshPageSize,
 		maxPages:   artistMatchingReviewRefreshPagesPerRun,
 	}
+	if frozen, ok := candidates.(frozenMatchingReviewRefreshStore); ok {
+		detector.frozen = frozen
+	}
+	return detector
 }
 
 // Refresh advances the detector cursor through bounded candidate pages. Errors
@@ -119,7 +134,55 @@ scan:
 		// original cursor are examined on the next tick.
 		detector.cursor = uuid.Nil
 	}
+	if detector.frozen != nil {
+		problems = append(problems, detector.refreshFrozenCandidates(ctx, pageSize, maxPages)...)
+	}
 	return errors.Join(problems...)
+}
+
+// refreshFrozenCandidates advances its own keyset cursor through bounded pages
+// of published frozen artistless reviews. It shares the tick's page budget and
+// leaves the legacy artist-review cursor and behavior untouched.
+func (detector *ArtistMatchingReviewRefreshDetector) refreshFrozenCandidates(ctx context.Context, pageSize, maxPages int) []error {
+	var problems []error
+	cursor, reachedEnd := detector.frozenCursor, false
+scan:
+	for page := 0; page < maxPages; page++ {
+		candidates, err := detector.frozen.ListFrozenMatchingReviewRefreshCandidates(ctx, cursor, pageSize)
+		if err != nil {
+			problems = append(problems, fmt.Errorf("list frozen matching review refresh candidates after %s: %w", cursor, err))
+			break
+		}
+		if len(candidates) == 0 {
+			reachedEnd = true
+			break
+		}
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				problems = append(problems, err)
+				break scan
+			}
+			if candidate.GroupID == uuid.Nil {
+				problems = append(problems, fmt.Errorf("frozen matching review refresh candidate identity is invalid"))
+				continue
+			}
+			if _, err := detector.frozen.RefreshFrozenMatchingReview(ctx, candidate); err != nil {
+				if !isBenignArtistMatchingReviewRefreshError(err) {
+					problems = append(problems, fmt.Errorf("refresh frozen matching review for group %s: %w", candidate.GroupID, err))
+				}
+			}
+			cursor = candidate.GroupID
+			detector.frozenCursor = cursor
+		}
+		if len(candidates) < pageSize {
+			reachedEnd = true
+			break
+		}
+	}
+	if reachedEnd {
+		detector.frozenCursor = uuid.Nil
+	}
+	return problems
 }
 
 func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx context.Context, candidate persistence.ArtistMatchingReviewRefreshCandidate) error {

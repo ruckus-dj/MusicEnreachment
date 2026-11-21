@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,36 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 )
+
+func TestArtistSearchDistinguishesOutageFromInvalidResponse(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		status      int
+		unavailable bool
+	}{
+		{"unavailable", http.StatusServiceUnavailable, true},
+		{"bad request", http.StatusBadRequest, false},
+		{"invalid payload", http.StatusOK, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"invalid":true}`))
+			}))
+			defer server.Close()
+			provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = provider.SearchArtists(t.Context(), "test", 0, 1)
+			if err == nil || errors.Is(err, musicbrainz.ErrTemporarilyUnavailable) != test.unavailable {
+				t.Fatalf("outage classification: got %v, want outage=%t", err, test.unavailable)
+			}
+		})
+	}
+}
 
 func TestSearchReleasesPreservesRawUnknownFieldsAndScorePresence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

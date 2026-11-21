@@ -2,10 +2,13 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -31,6 +34,307 @@ func ApplyAutomaticLocalFallbackTx(ctx context.Context, tx bun.Tx, operationID u
 		return uuid.Nil, uuid.Nil, err
 	}
 	return localReleaseID, recheckID, nil
+}
+
+// AutomaticLocalFallbackCommit is one calculated complete Local layout and the
+// exact outage/generation evidence observed before calculation. LayoutTarget is
+// the frozen target used by the calculator; this transaction rechecks it against
+// current sources, threshold, corrections and catalog evidence instead of
+// trusting the caller's captures.
+type AutomaticLocalFallbackCommit struct {
+	GroupID                   uuid.UUID
+	OutageRunID               uuid.UUID
+	ObservedRequestGeneration int64
+	ProviderReleaseID         uuid.UUID
+	Assignments               []MatchingLocalAssignment
+	LayoutTarget              json.RawMessage
+	HeaderDigest              string
+	ReleaseIDs                []uuid.UUID
+	LayoutDigest              string
+}
+
+// AutomaticLocalFallbackResult distinguishes a first application from an exact
+// replay of the same committed apply operation.
+type AutomaticLocalFallbackResult struct {
+	Applied        bool
+	Replayed       bool
+	LocalReleaseID uuid.UUID
+	RecheckID      uuid.UUID
+}
+
+// ApplyAutomaticLocalFallback commits one complete automatic Local layout under
+// output, source and catalog fences. It rechecks the frozen layout target, requires the exact
+// pending generation to still belong to the classified MusicBrainz outage, and
+// only then materializes assignments and the durable source veto. The observed
+// generation and the source veto are committed atomically.
+//
+// A repeat delivery is accepted only when it exactly replays the same committed
+// operation (same group, outage run, observed generation, provider release,
+// assignments and layout target). Any other existing recheck for the group, any
+// stale evidence, and any already-acknowledged non-replay generation return
+// ErrIncomingMatchConflict without acknowledging anything.
+//
+// Assignments are per ready member, not per capture. A member backed by several
+// captures still produces one preview source with all media variants, while
+// createMatchingLocalRecheckTx expands every current capture into its own
+// immutable source witness.
+func (repository *IncomingMatchCandidateRepository) ApplyAutomaticLocalFallback(
+	ctx context.Context, commit AutomaticLocalFallbackCommit,
+) (AutomaticLocalFallbackResult, error) {
+	if repository == nil || repository.db == nil {
+		return AutomaticLocalFallbackResult{}, errors.New("automatic Local fallback commit is unavailable")
+	}
+	if err := commit.validate(); err != nil {
+		return AutomaticLocalFallbackResult{}, err
+	}
+	var result AutomaticLocalFallbackResult
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: lock output admission gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: lock source mutation gate: %w", err)
+		}
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: lock settings gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: lock MusicBrainz configuration: %w", err)
+		}
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT source.id FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id
+			WHERE run.id=? AND source.configuration_identity=run.provider_configuration_identity
+			FOR UPDATE OF source`, commit.OutageRunID).Scan(ctx, &sourceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("apply automatic Local fallback: lock outage provider source: %w", err)
+		}
+		generation, err := lockAutomaticLocalFallbackGeneration(ctx, tx, commit.GroupID, commit.ObservedRequestGeneration)
+		if err != nil {
+			return err
+		}
+		if generation.CurrentRunID == nil || *generation.CurrentRunID != commit.OutageRunID {
+			return fmt.Errorf("apply automatic Local fallback: current run is not the observed outage: %w", ErrIncomingMatchConflict)
+		}
+		outageRunID, err := currentMatchingMusicBrainzOutage(ctx, tx, commit.GroupID)
+		if err != nil {
+			return err
+		}
+		if outageRunID == uuid.Nil || outageRunID != commit.OutageRunID {
+			return fmt.Errorf("apply automatic Local fallback: MusicBrainz outage evidence changed: %w", ErrIncomingMatchConflict)
+		}
+		captures, err := RecheckMatchingLayoutTargetTx(ctx, tx, commit.GroupID, MatchingLayoutPolicyVersion, commit.LayoutTarget)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: recheck layout target: %w", err)
+		}
+		groupRevision, authorityRevision, err := automaticLocalFallbackTargetRevisions(commit.LayoutTarget)
+		if err != nil {
+			return err
+		}
+		intent, err := canonicalMatchingLocalIntent(MatchingLocalIntent{
+			ProviderReleaseID:         commit.ProviderReleaseID,
+			ExpectedGroupRevision:     groupRevision,
+			ExpectedAuthorityRevision: authorityRevision,
+			Assignments:               append([]MatchingLocalAssignment(nil), commit.Assignments...),
+		})
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: intent is invalid: %w", err)
+		}
+		decisionDigest, err := automaticLocalFallbackDecisionDigest(commit.LayoutTarget, intent.ProviderReleaseID, intent.Assignments)
+		if err != nil {
+			return err
+		}
+		replay, replayReleaseID, replayRecheckID, err := matchingLocalFallbackExactReplay(ctx, tx, commit, decisionDigest)
+		if err != nil {
+			return err
+		}
+		if replay {
+			if generation.ReconciledGeneration < commit.ObservedRequestGeneration {
+				if err := NewSourceInventoryRepository(repository.db).AcknowledgeCurrentRequestWith(ctx, tx, commit.GroupID, commit.ObservedRequestGeneration); err != nil {
+					return fmt.Errorf("apply automatic Local fallback: acknowledge exact replay: %w", err)
+				}
+			}
+			result = AutomaticLocalFallbackResult{Replayed: true, LocalReleaseID: replayReleaseID, RecheckID: replayRecheckID}
+			return nil
+		}
+		if generation.ReconciledGeneration >= commit.ObservedRequestGeneration {
+			return fmt.Errorf("apply automatic Local fallback: generation was already acknowledged: %w", ErrIncomingMatchConflict)
+		}
+		if err := ValidateMatchingLocalLayoutEvidenceTx(ctx, tx, commit.HeaderDigest, commit.ReleaseIDs, commit.LayoutDigest); err != nil {
+			return err
+		}
+		preview, err := previewMatchingLocalTx(ctx, tx, commit.GroupID, intent, false)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: validate layout preview: %w", err)
+		}
+		if preview.GroupRevision != groupRevision || preview.AuthorityRevision != authorityRevision ||
+			preview.ProviderReleaseID != commit.ProviderReleaseID || preview.PreviewDigest == "" ||
+			len(preview.OmittedFileMemberIDs) != 0 || len(preview.Sources) != len(preview.Assignments) {
+			return fmt.Errorf("apply automatic Local fallback: preview evidence changed: %w", ErrIncomingMatchConflict)
+		}
+		operationID := uuid.New()
+		snapshot, err := json.Marshal(automaticLocalFallbackOperationSnapshot{
+			SchemaVersion:             1,
+			GroupID:                   commit.GroupID,
+			OutageRunID:               commit.OutageRunID,
+			ObservedRequestGeneration: commit.ObservedRequestGeneration,
+			ProviderReleaseID:         commit.ProviderReleaseID,
+			DecisionDigest:            decisionDigest,
+			PolicyVersion:             MatchingLayoutPolicyVersion,
+		})
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: encode operation snapshot: %w", err)
+		}
+		snapshot, err = canonicalMatchingJSON(snapshot)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: canonicalize operation snapshot: %w", err)
+		}
+		if _, err := tx.NewRaw(`INSERT INTO operation (id,kind,state,stage,input_snapshot,finished_at) VALUES (?, 'matching_evaluation_v1','succeeded','local_fallback_applied',?::jsonb,now())`, operationID, string(snapshot)).Exec(ctx); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: create apply operation: %w", err)
+		}
+		localReleaseID, recheckID, err := ApplyAutomaticLocalFallbackTx(ctx, tx, operationID, preview, captures)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: materialize layout and source veto: %w", err)
+		}
+		if err := NewSourceInventoryRepository(repository.db).AcknowledgeCurrentRequestWith(ctx, tx, commit.GroupID, commit.ObservedRequestGeneration); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: acknowledge observed request: %w", err)
+		}
+		result = AutomaticLocalFallbackResult{Applied: true, LocalReleaseID: localReleaseID, RecheckID: recheckID}
+		return nil
+	})
+	if err != nil {
+		return AutomaticLocalFallbackResult{}, err
+	}
+	return result, nil
+}
+
+func (commit AutomaticLocalFallbackCommit) validate() error {
+	if commit.GroupID == uuid.Nil || commit.OutageRunID == uuid.Nil || commit.ObservedRequestGeneration < 1 ||
+		commit.ProviderReleaseID == uuid.Nil || len(commit.Assignments) == 0 || len(commit.LayoutTarget) == 0 ||
+		commit.HeaderDigest == "" || !slices.Contains(commit.ReleaseIDs, commit.ProviderReleaseID) || commit.LayoutDigest == "" {
+		return errors.New("automatic Local fallback commit is incomplete")
+	}
+	return nil
+}
+
+type automaticLocalFallbackGeneration struct {
+	RequestedGeneration  int64      `bun:"requested_generation"`
+	ReconciledGeneration int64      `bun:"reconciled_generation"`
+	CurrentRunID         *uuid.UUID `bun:"current_run_id"`
+}
+
+// lockAutomaticLocalFallbackGeneration requires the exact observed request to
+// still be current. A concurrent later request is not silently absorbed.
+func lockAutomaticLocalFallbackGeneration(ctx context.Context, tx bun.Tx, groupID uuid.UUID, observedGeneration int64) (automaticLocalFallbackGeneration, error) {
+	var generation automaticLocalFallbackGeneration
+	if err := tx.NewRaw(`SELECT requested_generation,reconciled_generation,current_run_id
+		FROM incoming_matching_generation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &generation); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return generation, fmt.Errorf("apply automatic Local fallback: request generation is missing: %w", ErrIncomingMatchConflict)
+		}
+		return generation, fmt.Errorf("apply automatic Local fallback: read request generation: %w", err)
+	}
+	if generation.RequestedGeneration != observedGeneration || generation.ReconciledGeneration > generation.RequestedGeneration {
+		return generation, fmt.Errorf("apply automatic Local fallback: observed request generation changed: %w", ErrIncomingMatchConflict)
+	}
+	return generation, nil
+}
+
+type automaticLocalFallbackOperationSnapshot struct {
+	SchemaVersion             int       `json:"schema_version"`
+	GroupID                   uuid.UUID `json:"group_id"`
+	OutageRunID               uuid.UUID `json:"outage_run_id"`
+	ObservedRequestGeneration int64     `json:"observed_request_generation"`
+	ProviderReleaseID         uuid.UUID `json:"provider_release_id"`
+	DecisionDigest            string    `json:"decision_digest"`
+	PolicyVersion             string    `json:"policy_version"`
+}
+
+// matchingLocalFallbackExactReplay accepts only the same committed operation.
+// An old recheck for the same group never authorizes a new acknowledgement.
+func matchingLocalFallbackExactReplay(
+	ctx context.Context, tx bun.Tx, commit AutomaticLocalFallbackCommit, decisionDigest string,
+) (bool, uuid.UUID, uuid.UUID, error) {
+	var rows []struct {
+		RecheckID          uuid.UUID `bun:"recheck_id"`
+		LocalReleaseIDText string    `bun:"local_release_id"`
+		Snapshot           []byte    `bun:"input_snapshot"`
+	}
+	if err := tx.NewRaw(`SELECT recheck.id AS recheck_id,
+			COALESCE(recheck.incumbent_snapshot->>'local_release_id','') AS local_release_id,
+			operation.input_snapshot
+		FROM matching_local_recheck recheck
+		JOIN operation operation ON operation.id=recheck.local_apply_operation_id
+		WHERE recheck.state IN ('waiting','publishing')
+		AND operation.input_snapshot->>'group_id'=?`, commit.GroupID.String()).Scan(ctx, &rows); err != nil {
+		return false, uuid.Nil, uuid.Nil, fmt.Errorf("apply automatic Local fallback: read existing rechecks: %w", err)
+	}
+	found := false
+	var localReleaseID, recheckID uuid.UUID
+	for _, row := range rows {
+		var stored automaticLocalFallbackOperationSnapshot
+		if err := json.Unmarshal(row.Snapshot, &stored); err != nil ||
+			stored.SchemaVersion != 1 || stored.GroupID != commit.GroupID ||
+			stored.OutageRunID != commit.OutageRunID ||
+			stored.ObservedRequestGeneration != commit.ObservedRequestGeneration ||
+			stored.ProviderReleaseID != commit.ProviderReleaseID ||
+			stored.DecisionDigest != decisionDigest ||
+			stored.PolicyVersion != MatchingLayoutPolicyVersion || found {
+			return false, uuid.Nil, uuid.Nil, fmt.Errorf("apply automatic Local fallback: existing recheck is not an exact replay: %w", ErrIncomingMatchConflict)
+		}
+		parsedReleaseID, err := uuid.Parse(row.LocalReleaseIDText)
+		if err != nil || parsedReleaseID == uuid.Nil {
+			return false, uuid.Nil, uuid.Nil, fmt.Errorf("apply automatic Local fallback: existing recheck release identity is invalid: %w", ErrIncomingMatchConflict)
+		}
+		found = true
+		localReleaseID, recheckID = parsedReleaseID, row.RecheckID
+	}
+	return found, localReleaseID, recheckID, nil
+}
+
+func automaticLocalFallbackTargetRevisions(layoutTarget json.RawMessage) (string, int64, error) {
+	canonical, err := canonicalMatchingJSON(layoutTarget)
+	if err != nil {
+		return "", 0, fmt.Errorf("apply automatic Local fallback: canonicalize layout target: %w", err)
+	}
+	var evidence matchingLayoutTargetEvidence
+	if err := json.Unmarshal(canonical, &evidence); err != nil ||
+		evidence.SchemaVersion != matchingLayoutTargetEvidenceVersion ||
+		evidence.Target.GroupRevision == "" || evidence.Target.AuthorityRevision < 0 {
+		return "", 0, fmt.Errorf("apply automatic Local fallback: layout target is invalid: %w", ErrIncomingMatchConflict)
+	}
+	return evidence.Target.GroupRevision, evidence.Target.AuthorityRevision, nil
+}
+
+func automaticLocalFallbackDecisionDigest(layoutTarget json.RawMessage, providerReleaseID uuid.UUID, assignments []MatchingLocalAssignment) (string, error) {
+	canonicalTarget, err := canonicalMatchingJSON(layoutTarget)
+	if err != nil {
+		return "", fmt.Errorf("apply automatic Local fallback: canonicalize layout target: %w", err)
+	}
+	encodedAssignments, err := json.Marshal(assignments)
+	if err != nil {
+		return "", fmt.Errorf("apply automatic Local fallback: encode assignments: %w", err)
+	}
+	canonicalAssignments, err := canonicalMatchingJSON(encodedAssignments)
+	if err != nil {
+		return "", fmt.Errorf("apply automatic Local fallback: canonicalize assignments: %w", err)
+	}
+	payload, err := json.Marshal(struct {
+		LayoutTarget      json.RawMessage `json:"layout_target"`
+		ProviderReleaseID uuid.UUID       `json:"provider_release_id"`
+		Assignments       json.RawMessage `json:"assignments"`
+		PolicyVersion     string          `json:"policy_version"`
+	}{canonicalTarget, providerReleaseID, canonicalAssignments, MatchingLayoutPolicyVersion})
+	if err != nil {
+		return "", fmt.Errorf("apply automatic Local fallback: encode decision identity: %w", err)
+	}
+	canonical, err := canonicalMatchingJSON(payload)
+	if err != nil {
+		return "", fmt.Errorf("apply automatic Local fallback: canonicalize decision identity: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 type matchingLocalRecheckAdmission struct {
