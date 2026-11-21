@@ -229,6 +229,20 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 	if err := operations.RunningForProviderDelivery(ctx, operation, epoch, "fetching_provider"); err != nil {
 		return err
 	}
+	artistResponseKind := operation.Kind == "provider_artist_search" ||
+		operation.Kind == "provider_artist_release_browse" || operation.Kind == "provider_release_lookup"
+	artistDelivery := persistence.ProviderDeliveryFence{
+		OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+	}
+	if artistResponseKind {
+		replayed, err := service.cache.ReplayMatchingArtistResponse(ctx, artistDelivery)
+		if err != nil {
+			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
+		if replayed {
+			return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_result_reused")
+		}
+	}
 	if operation.Kind == "provider_release_search" || operation.Kind == "provider_recording_search" {
 		receipt, err := service.cache.ReplayAutomaticFallbackSearchReceipt(ctx, persistence.ProviderDeliveryFence{
 			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
@@ -267,6 +281,15 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 		return service.failProviderOperation(ctx, operations, operation, epoch, err)
 	}
 	if response != nil && len(response.Payload) != 0 && !operation.ProviderExplicitRefresh {
+		if artistResponseKind {
+			captured, err := service.cache.CaptureMatchingArtistResponseReuse(ctx, artistDelivery, response)
+			if err != nil {
+				return service.failProviderOperation(ctx, operations, operation, epoch, err)
+			}
+			if captured {
+				return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_cache_reused")
+			}
+		}
 		if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_recording_search" || operation.Kind == "provider_artist_release_browse" {
 			if err := service.cache.CaptureManualPickerSearchReuse(ctx, persistence.ProviderDeliveryFence{
 				OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,

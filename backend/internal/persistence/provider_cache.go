@@ -635,6 +635,10 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 			return fmt.Errorf("apply successful provider response: save graph: %w", err)
 		}
 		if response.Delivery != nil {
+			if err := captureMatchingArtistResponse(ctx, tx, *response.Delivery, source, ticket.CacheKey,
+				response.Payload, nullablePointer(response.Revision)); err != nil {
+				return fmt.Errorf("apply successful provider response: capture accepted artist response: %w", err)
+			}
 			if err := repository.captureAutomaticFallbackLookupReceipt(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
 				return fmt.Errorf("apply successful provider response: capture automatic fallback lookup receipt: %w", err)
 			}

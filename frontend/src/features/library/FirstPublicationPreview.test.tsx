@@ -452,8 +452,9 @@ it("retains the disabled fence after an uncertain admission when metadata refres
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  await screen.findByRole("button", { name: "Опубликовать" });
-  fireEvent.click(screen.getByRole("button", { name: "Опубликовать" }));
+  const confirm = await screen.findByRole("button", { name: "Опубликовать" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
   await screen.findByRole("alert");
   expect(screen.getByRole("button", { name: "Опубликовать" })).toBeDisabled();
 

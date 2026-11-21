@@ -15,6 +15,29 @@ import (
 	"time"
 )
 
+func TestArtistMatchingKeepsAcceptedResponseAfterCacheReplacement(t *testing.T) {
+	t.Parallel()
+	accepted := json.RawMessage(`{"count":0,"offset":0,"created":"2025-01-01T00:00:00Z","artists":[]}`)
+	run := prepareAutomaticArtistReviewDelivery(t, accepted)
+	snapshot, found, err := run.repository.GetMatchingAcquisition(run.ctx, run.admission.OriginalRunID)
+	if err != nil || !found || len(snapshot.Intent.InitialProviderInputs) != 1 {
+		t.Fatalf("read accepted artist run: found=%t err=%v", found, err)
+	}
+	request := snapshot.Intent.InitialProviderInputs[0]
+	if _, err := run.db.NewRaw(`UPDATE provider_response_cache SET payload=?::jsonb,revision='artist-search-r2'
+		WHERE provider_source_id=? AND cache_key=?`, `{"count":1}`, run.source.source, request.CacheKey).Exec(run.ctx); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := run.repository.GetMatchingArtistResponse(run.ctx, run.admission.OriginalRunID, request.OperationID)
+	if err != nil || receipt == nil || !sameJSON(receipt.Payload, accepted) {
+		t.Fatalf("cache replacement changed accepted artist response: receipt=%+v err=%v", receipt, err)
+	}
+	if _, err := run.db.NewRaw(`UPDATE matching_provider_dependency SET accepted_artist_response=NULL
+		WHERE parent_run_id=? AND request_id=?`, run.admission.OriginalRunID, request.OperationID).Exec(run.ctx); err == nil {
+		t.Fatal("accepted artist response was mutable")
+	}
+}
+
 // This provider exposes only a previously accepted cache response. In
 // particular, acquisition never makes a provider request while advancing.
 type artistReviewCachedProvider struct {
@@ -189,6 +212,12 @@ func prepareAutomaticArtistReviewDelivery(t *testing.T, payload json.RawMessage)
 		return nil
 	}); err != nil || !changed {
 		t.Fatalf("settle accepted provider delivery and wake matching: changed=%v err=%v", changed, err)
+	}
+	accepted, err := repository.GetMatchingArtistResponse(ctx, admission.OriginalRunID, providerOperation.ID)
+	if err != nil || accepted == nil || accepted.Kind != "provider_artist_search" ||
+		accepted.CacheKey != cacheKey || !sameJSON(accepted.Payload, payload) ||
+		accepted.Revision == nil || *accepted.Revision != "artist-search-r1" {
+		t.Fatalf("read accepted artist response: receipt=%+v err=%v", accepted, err)
 	}
 	jobID := *admission.Operation.RiverJobID
 	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, jobID).Exec(ctx); err != nil {

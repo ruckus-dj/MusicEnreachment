@@ -73,6 +73,8 @@ one editor must not cancel sibling drafts through a window-level listener.
 Invalidate publication previews immediately after a successful metadata mutation,
 not after a fallible detail reread. Refresh tokens must preserve pending or
 uncertain admission fences; never key-remount a publication controller to refresh it.
+Confirm-button tests must wait for the preview's asynchronously enabled state
+before clicking; the button can already be rendered while confirmation is disabled.
 
 **Local-time assertions**: UI timestamps use the browser's time zone. Test the
 original `<time datetime>` instant and derive expected display text with the
