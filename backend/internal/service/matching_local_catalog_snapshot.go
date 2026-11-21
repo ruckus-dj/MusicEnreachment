@@ -62,7 +62,7 @@ type MatchingLocalSelectionLayouts struct {
 }
 
 // MatchingLocalCatalogSnapshotService maps the read-only Local persistence
-// adapter onto matching retrieval types. It never selects, activates, or writes.
+// adapter onto matching retrieval types. It never applies a layout or writes.
 type MatchingLocalCatalogSnapshotService struct {
 	repository MatchingLocalSelectionRepository
 }

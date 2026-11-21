@@ -91,70 +91,9 @@ func (repository *MatchingLocalCatalogRepository) ListMatchingLocalSelectionHead
 	}
 	var result MatchingLocalSelectionCatalog
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
-		rows := make([]matchingLocalSelectionHeaderRow, 0)
-		if err := tx.NewRaw(`SELECT r.id, r.provider_id, r.provider_key, r.title, r.metadata::text AS metadata,
-			(SELECT count(*) FROM provider_release_track t
-				WHERE t.provider_id=r.provider_id AND t.release_id=r.id AND t.present) AS position_count
-			FROM provider_release r
-			WHERE r.provider_id=?
-			ORDER BY r.id`, localProviderID).Scan(ctx, &rows); err != nil {
-			return fmt.Errorf("list matching local selection headers: %w", err)
-		}
-		credits := make([]matchingLocalSelectionCreditRow, 0)
-		if len(rows) != 0 {
-			if err := tx.NewRaw(`SELECT c.release_id, c.position, a.provider_key AS artist_key,
-				COALESCE(NULLIF(c.credit_name,''), NULLIF(a.name,''), '') AS name,
-				c.name_join_phrase
-				FROM provider_release_artist_credit c
-				JOIN provider_artist a ON a.id=c.artist_id
-				WHERE c.provider_id=? AND c.present
-				ORDER BY c.release_id, c.position`, localProviderID).Scan(ctx, &credits); err != nil {
-				return fmt.Errorf("list matching local selection credits: %w", err)
-			}
-		}
-		creditsByRelease := make(map[uuid.UUID][]MatchingReleaseCredit, len(rows))
-		for _, row := range credits {
-			creditsByRelease[row.ReleaseID] = append(creditsByRelease[row.ReleaseID], MatchingReleaseCredit{
-				Position:          row.Position,
-				ArtistProviderKey: row.ArtistKey,
-				Name:              row.Name,
-				NameJoinPhrase:    row.NameJoinPhrase,
-			})
-		}
-		headers := make([]MatchingLocalSelectionHeader, 0, len(rows))
-		for _, row := range rows {
-			if row.ProviderKey == "" {
-				return fmt.Errorf("list matching local selection headers: release %s has no provider key", row.ID)
-			}
-			releaseDate, catalogNumbers, disambiguation, err := matchingLocalSelectionEdition(row.Metadata)
-			if err != nil {
-				return fmt.Errorf("list matching local selection headers: %w", err)
-			}
-			headerCredits := creditsByRelease[row.ID]
-			if headerCredits == nil {
-				headerCredits = []MatchingReleaseCredit{}
-			}
-			headers = append(headers, MatchingLocalSelectionHeader{
-				ProviderID:     row.ProviderID,
-				ReleaseID:      row.ID,
-				ProviderKey:    row.ProviderKey,
-				Title:          row.Title,
-				Credits:        headerCredits,
-				ReleaseDate:    releaseDate,
-				Disambiguation: disambiguation,
-				CatalogNumbers: catalogNumbers,
-				PositionCount:  row.PositionCount,
-			})
-		}
-		sort.Slice(headers, func(i, j int) bool {
-			return headers[i].ReleaseID.String() < headers[j].ReleaseID.String()
-		})
-		digest, err := matchingLocalSelectionDigest(headers)
-		if err != nil {
-			return fmt.Errorf("digest matching local selection headers: %w", err)
-		}
-		result = MatchingLocalSelectionCatalog{Headers: headers, Digest: digest}
-		return nil
+		var err error
+		result, err = readMatchingLocalSelectionHeadersTx(ctx, tx)
+		return err
 	})
 	if err != nil {
 		return MatchingLocalSelectionCatalog{}, err
@@ -175,69 +114,253 @@ func (repository *MatchingLocalCatalogRepository) HydrateMatchingLocalSelection(
 	}
 	var result MatchingLocalSelectionSnapshot
 	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
-		keys := make([]matchingLocalSelectionKeyRow, 0, len(ids))
-		if err := tx.NewRaw(`SELECT id, provider_key FROM provider_release WHERE provider_id=? AND id IN (?)`,
-			localProviderID, bun.List(ids)).Scan(ctx, &keys); err != nil {
-			return fmt.Errorf("hydrate matching local selection: read release keys: %w", err)
-		}
-		releaseKeys := make(map[uuid.UUID]string, len(keys))
-		for _, row := range keys {
-			releaseKeys[row.ID] = row.ProviderKey
-		}
-		localReleases := make([]MatchingLocalRelease, 0, len(ids))
-		for _, id := range ids {
-			local, err := loadMatchingProviderRelease(ctx, tx, id, false)
-			if err != nil {
-				return fmt.Errorf("hydrate matching local selection: %w", err)
-			}
-			if local == nil {
-				return fmt.Errorf("hydrate matching local selection: release %s is unavailable", id)
-			}
-			if releaseKeys[id] == "" {
-				return fmt.Errorf("hydrate matching local selection: release %s has no provider key", id)
-			}
-			localReleases = append(localReleases, *local)
-		}
-		artistIDs := make([]uuid.UUID, 0)
-		recordingIDs := make([]uuid.UUID, 0)
-		for _, release := range localReleases {
-			for _, credit := range release.Artists {
-				artistIDs = append(artistIDs, credit.ProviderArtistID)
-			}
-			for _, track := range release.Tracks {
-				recordingIDs = append(recordingIDs, track.RecordingID)
-			}
-		}
-		artistKeys, err := matchingLocalSelectionKeys(ctx, tx, "artist", `SELECT id, provider_key FROM provider_artist WHERE id IN (?)`, artistIDs)
-		if err != nil {
-			return fmt.Errorf("hydrate matching local selection: %w", err)
-		}
-		recordingKeys, err := matchingLocalSelectionKeys(ctx, tx, "recording", `SELECT id, provider_key FROM provider_recording WHERE id IN (?)`, recordingIDs)
-		if err != nil {
-			return fmt.Errorf("hydrate matching local selection: %w", err)
-		}
-		releases := make([]MatchingRelease, 0, len(localReleases))
-		for _, local := range localReleases {
-			release, err := matchingLocalSelectionLayout(local, releaseKeys[local.ID], artistKeys, recordingKeys)
-			if err != nil {
-				return fmt.Errorf("hydrate matching local selection: %w", err)
-			}
-			releases = append(releases, release)
-		}
-		sort.Slice(releases, func(i, j int) bool {
-			return releases[i].ProviderKey < releases[j].ProviderKey
-		})
-		digest, err := matchingLocalSelectionDigest(releases)
-		if err != nil {
-			return fmt.Errorf("digest matching local selection layouts: %w", err)
-		}
-		result = MatchingLocalSelectionSnapshot{Releases: releases, Digest: digest}
-		return nil
+		var err error
+		result, err = readMatchingLocalSelectionSnapshotTx(ctx, tx, ids)
+		return err
 	})
 	if err != nil {
 		return MatchingLocalSelectionSnapshot{}, err
 	}
 	return result, nil
+}
+
+func readMatchingLocalSelectionHeadersTx(ctx context.Context, tx bun.Tx) (MatchingLocalSelectionCatalog, error) {
+	rows := make([]matchingLocalSelectionHeaderRow, 0)
+	if err := tx.NewRaw(`SELECT r.id, r.provider_id, r.provider_key, r.title, r.metadata::text AS metadata,
+		(SELECT count(*) FROM provider_release_track t
+			WHERE t.provider_id=r.provider_id AND t.release_id=r.id AND t.present) AS position_count
+		FROM provider_release r
+		WHERE r.provider_id=?
+		ORDER BY r.id`, localProviderID).Scan(ctx, &rows); err != nil {
+		return MatchingLocalSelectionCatalog{}, fmt.Errorf("list matching local selection headers: %w", err)
+	}
+	credits := make([]matchingLocalSelectionCreditRow, 0)
+	if len(rows) != 0 {
+		if err := tx.NewRaw(`SELECT c.release_id, c.position, a.provider_key AS artist_key,
+			COALESCE(NULLIF(c.credit_name,''), NULLIF(a.name,''), '') AS name,
+			c.name_join_phrase
+			FROM provider_release_artist_credit c
+			JOIN provider_artist a ON a.id=c.artist_id
+			WHERE c.provider_id=? AND c.present
+			ORDER BY c.release_id, c.position`, localProviderID).Scan(ctx, &credits); err != nil {
+			return MatchingLocalSelectionCatalog{}, fmt.Errorf("list matching local selection credits: %w", err)
+		}
+	}
+	creditsByRelease := make(map[uuid.UUID][]MatchingReleaseCredit, len(rows))
+	for _, row := range credits {
+		creditsByRelease[row.ReleaseID] = append(creditsByRelease[row.ReleaseID], MatchingReleaseCredit{
+			Position:          row.Position,
+			ArtistProviderKey: row.ArtistKey,
+			Name:              row.Name,
+			NameJoinPhrase:    row.NameJoinPhrase,
+		})
+	}
+	headers := make([]MatchingLocalSelectionHeader, 0, len(rows))
+	for _, row := range rows {
+		if row.ProviderKey == "" {
+			return MatchingLocalSelectionCatalog{}, fmt.Errorf("list matching local selection headers: release %s has no provider key", row.ID)
+		}
+		releaseDate, catalogNumbers, disambiguation, err := matchingLocalSelectionEdition(row.Metadata)
+		if err != nil {
+			return MatchingLocalSelectionCatalog{}, fmt.Errorf("list matching local selection headers: %w", err)
+		}
+		headerCredits := creditsByRelease[row.ID]
+		if headerCredits == nil {
+			headerCredits = []MatchingReleaseCredit{}
+		}
+		headers = append(headers, MatchingLocalSelectionHeader{
+			ProviderID:     row.ProviderID,
+			ReleaseID:      row.ID,
+			ProviderKey:    row.ProviderKey,
+			Title:          row.Title,
+			Credits:        headerCredits,
+			ReleaseDate:    releaseDate,
+			Disambiguation: disambiguation,
+			CatalogNumbers: catalogNumbers,
+			PositionCount:  row.PositionCount,
+		})
+	}
+	sort.Slice(headers, func(i, j int) bool {
+		return headers[i].ReleaseID.String() < headers[j].ReleaseID.String()
+	})
+	digest, err := matchingLocalSelectionDigest(headers)
+	if err != nil {
+		return MatchingLocalSelectionCatalog{}, fmt.Errorf("digest matching local selection headers: %w", err)
+	}
+	return MatchingLocalSelectionCatalog{Headers: headers, Digest: digest}, nil
+}
+
+func readMatchingLocalSelectionSnapshotTx(ctx context.Context, tx bun.Tx, ids []uuid.UUID) (MatchingLocalSelectionSnapshot, error) {
+	keys := make([]matchingLocalSelectionKeyRow, 0, len(ids))
+	if err := tx.NewRaw(`SELECT id, provider_key FROM provider_release WHERE provider_id=? AND id IN (?)`,
+		localProviderID, bun.List(ids)).Scan(ctx, &keys); err != nil {
+		return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: read release keys: %w", err)
+	}
+	releaseKeys := make(map[uuid.UUID]string, len(keys))
+	for _, row := range keys {
+		releaseKeys[row.ID] = row.ProviderKey
+	}
+	localReleases := make([]MatchingLocalRelease, 0, len(ids))
+	for _, id := range ids {
+		local, err := loadMatchingProviderRelease(ctx, tx, id, false)
+		if err != nil {
+			return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: %w", err)
+		}
+		if local == nil {
+			return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: release %s is unavailable", id)
+		}
+		if releaseKeys[id] == "" {
+			return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: release %s has no provider key", id)
+		}
+		localReleases = append(localReleases, *local)
+	}
+	artistIDs := make([]uuid.UUID, 0)
+	recordingIDs := make([]uuid.UUID, 0)
+	for _, release := range localReleases {
+		for _, credit := range release.Artists {
+			artistIDs = append(artistIDs, credit.ProviderArtistID)
+		}
+		for _, track := range release.Tracks {
+			recordingIDs = append(recordingIDs, track.RecordingID)
+		}
+	}
+	artistKeys, err := matchingLocalSelectionKeys(ctx, tx, "artist", `SELECT id, provider_key FROM provider_artist WHERE id IN (?)`, artistIDs)
+	if err != nil {
+		return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: %w", err)
+	}
+	recordingKeys, err := matchingLocalSelectionKeys(ctx, tx, "recording", `SELECT id, provider_key FROM provider_recording WHERE id IN (?)`, recordingIDs)
+	if err != nil {
+		return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: %w", err)
+	}
+	releases := make([]MatchingRelease, 0, len(localReleases))
+	for _, local := range localReleases {
+		release, err := matchingLocalSelectionLayout(local, releaseKeys[local.ID], artistKeys, recordingKeys)
+		if err != nil {
+			return MatchingLocalSelectionSnapshot{}, fmt.Errorf("hydrate matching local selection: %w", err)
+		}
+		releases = append(releases, release)
+	}
+	sort.Slice(releases, func(i, j int) bool {
+		return releases[i].ProviderKey < releases[j].ProviderKey
+	})
+	// The normalized scorer view reduces recording credits to display text.
+	// Bind the underlying identities as well: changing to a different artist
+	// with the same name changes materialization even if the score is identical.
+	digest, err := matchingLocalSelectionDigest(struct {
+		Layouts []MatchingRelease
+		Graph   []MatchingLocalRelease
+	}{releases, localReleases})
+	if err != nil {
+		return MatchingLocalSelectionSnapshot{}, fmt.Errorf("digest matching local selection layouts: %w", err)
+	}
+	return MatchingLocalSelectionSnapshot{Releases: releases, Digest: digest}, nil
+}
+
+// ValidateMatchingLocalLayoutEvidenceTx re-reads the complete Local header set
+// and the explicitly shortlisted release layouts inside the caller's apply
+// transaction. Header evidence covers every Local release, including a release
+// that appeared after the decision (a phantom candidate). Layout evidence
+// covers only the requested shortlist. Either digest changing means the frozen
+// decision is stale and ErrIncomingMatchConflict is returned.
+//
+// The caller must use READ COMMITTED and take its output/source gates and any
+// necessary provider_source row locks before calling. Never acquire those row
+// locks after taking the catalog fence: refresh owns them before graph writes.
+// Contention acquiring the catalog fence is a transaction error, not stale
+// evidence; retry the whole transaction. No pooled reads or network I/O belong
+// under the fence.
+//
+// An empty releaseIDs selection is the stage caller's proved negative for an
+// empty Local catalog: expectedLayoutDigest must be empty, no hydration is
+// performed, and the locked header read must still be empty.
+func ValidateMatchingLocalLayoutEvidenceTx(ctx context.Context, tx bun.Tx, expectedHeaderDigest string, releaseIDs []uuid.UUID, expectedLayoutDigest string) error {
+	if err := requireMatchingLayoutEvidenceReadCommitted(ctx, tx); err != nil {
+		return err
+	}
+	if expectedHeaderDigest == "" {
+		return errors.New("matching local header evidence digest is required")
+	}
+	emptySelection := len(releaseIDs) == 0
+	if emptySelection {
+		if expectedLayoutDigest != "" {
+			return errors.New("matching local layout evidence digest requires selected releases")
+		}
+	} else if expectedLayoutDigest == "" {
+		return errors.New("matching local layout evidence digest is required")
+	}
+	var ids []uuid.UUID
+	if !emptySelection {
+		var err error
+		ids, err = matchingLocalSelectionIDs(releaseIDs)
+		if err != nil {
+			return err
+		}
+	}
+	if err := lockMatchingLocalCatalogEvidenceTx(ctx, tx); err != nil {
+		return err
+	}
+	catalog, err := readMatchingLocalSelectionHeadersTx(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("validate matching local layout evidence: %w", err)
+	}
+	if catalog.Digest != expectedHeaderDigest {
+		return fmt.Errorf("validate matching local layout evidence: local header evidence changed: %w", ErrIncomingMatchConflict)
+	}
+	if emptySelection {
+		if len(catalog.Headers) != 0 {
+			return fmt.Errorf("validate matching local layout evidence: local catalog is not empty: %w", ErrIncomingMatchConflict)
+		}
+		return nil
+	}
+	snapshot, err := readMatchingLocalSelectionSnapshotTx(ctx, tx, ids)
+	if err != nil {
+		return fmt.Errorf("validate matching local layout evidence: %w", err)
+	}
+	if snapshot.Digest != expectedLayoutDigest {
+		return fmt.Errorf("validate matching local layout evidence: shortlisted layout evidence changed: %w", ErrIncomingMatchConflict)
+	}
+	return nil
+}
+
+// lockMatchingLocalCatalogEvidenceTx freezes every relation that the Local
+// header and layout digests read for the rest of the caller's transaction.
+// Local catalog writers take no advisory gate, so SHARE table locks are the
+// writer-compatible fence: they conflict with the ROW EXCLUSIVE locks taken by
+// LocalProviderRepository.Save and by an accepted provider refresh. Holding them
+// before the reads makes phantom inserts and concurrent updates either visible
+// as a digest change or blocked until this transaction ends.
+//
+// provider_source_entity is locked first because an accepted provider refresh
+// writes source evidence before the shared provider graph; the remaining order
+// follows the same writer path (artist, release, recording) and then the Local
+// release graph order (release credit before track). The credit-before-track
+// order follows LocalProviderRepository.Save, the direct Local writer; a
+// normalized MusicBrainz refresh inserts only the shared track identity. The
+// legacy global track/credit path is not used by normalized provider responses.
+// Cross-provider recordings and artists referenced by a Local layout are covered
+// by provider_recording, provider_artist, and provider_source_entity, so a
+// MusicBrainz refresh cannot change a shortlisted Local layout between
+// validation and application.
+//
+// Do not lock provider_source here: refresh holds that row FOR UPDATE before
+// touching projections, matching the publication provider readers.
+func lockMatchingLocalCatalogEvidenceTx(ctx context.Context, tx bun.Tx) error {
+	// Keep this order explicit. A writer that already holds ROW EXCLUSIVE on one
+	// relation and later needs another must never find this transaction holding
+	// the later lock while waiting for the earlier one.
+	for _, relation := range []string{
+		"provider_source_entity",
+		"provider_artist",
+		"provider_release",
+		"provider_recording",
+		"provider_release_artist_credit",
+		"provider_release_track",
+	} {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE "+relation+" IN SHARE MODE NOWAIT"); err != nil {
+			return fmt.Errorf("lock matching local catalog evidence: guard %s: %w", relation, err)
+		}
+	}
+	return nil
 }
 
 func matchingLocalSelectionIDs(values []uuid.UUID) ([]uuid.UUID, error) {

@@ -154,6 +154,7 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 	_, outputChange := values["output_directory"]
 	_, caseChange := values["output_case_sensitive"]
 	_, unicodeChange := values["output_unicode_normalization"]
+	_, matchingThresholdChange := values[appsettings.MatchingPairThresholdKey]
 	runtimeChange := toolsChange || outputChange || caseChange || unicodeChange
 	expectedTools, expectedOutput := "", ""
 	expectedToolsCanonical, expectedOutputCanonical := "", ""
@@ -189,7 +190,7 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 		if toolsChange {
 			packages = []string{"ffmpeg", "fpcalc"}
 		}
-		if runtimeChange {
+		if runtimeChange || matchingThresholdChange {
 			if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 				return fmt.Errorf("lock tools move gate: %w", err)
 			}

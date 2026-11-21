@@ -741,21 +741,9 @@ func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.C
 		return false, true, fmt.Errorf("accepted matching catalog must have one completion phase")
 	}
 	type catalogPage struct {
-		Count    *int `json:"release-count"`
-		Offset   *int `json:"release-offset"`
-		Releases *[]struct {
-			ID             string `json:"id"`
-			Title          string `json:"title"`
-			Disambiguation string `json:"disambiguation"`
-			Date           string `json:"date"`
-			ArtistCredit   []struct {
-				Name       string `json:"name"`
-				JoinPhrase string `json:"joinphrase"`
-			} `json:"artist-credit"`
-			LabelInfo []struct {
-				CatalogNumber string `json:"catalog-number"`
-			} `json:"label-info"`
-		} `json:"releases"`
+		Count    *int                                `json:"release-count"`
+		Offset   *int                                `json:"release-offset"`
+		Releases *[]musicBrainzMatchingReleaseHeader `json:"releases"`
 	}
 	type verifiedCatalogPage struct {
 		offset  int
@@ -817,16 +805,15 @@ func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.C
 			if _, duplicate := candidatesByID[id]; duplicate {
 				return false, true, fmt.Errorf("accepted matching catalog contains duplicate release ids")
 			}
-			var credit strings.Builder
-			for _, item := range release.ArtistCredit {
-				credit.WriteString(item.Name)
-				credit.WriteString(item.JoinPhrase)
+			header, err := release.shortlistHeader()
+			if err != nil {
+				return false, true, err
 			}
-			catalogNumbers := make([]string, 0, len(release.LabelInfo))
-			for _, label := range release.LabelInfo {
-				catalogNumbers = append(catalogNumbers, label.CatalogNumber)
-			}
-			candidatesByID[id] = MatchingRetrievalCandidate{ID: id, Title: release.Title, Disambiguation: release.Disambiguation, Date: release.Date, ArtistCredit: credit.String(), CatalogNumbers: catalogNumbers}
+			candidate := header.MatchingRetrievalCandidate
+			// Keep the existing caption-only browse rank until the whole-layout
+			// acquisition and apply switch can land together.
+			candidate.ArtistCredits = nil
+			candidatesByID[id] = candidate
 		}
 	}
 	// The cache-key reader is sorted; the payload pages still must cover every

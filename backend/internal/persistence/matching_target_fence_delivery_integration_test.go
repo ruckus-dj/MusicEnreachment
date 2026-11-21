@@ -4,14 +4,18 @@ package persistence_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"testing"
+
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	appsettings "github.com/ruckus/MusicEnreachment/backend/internal/settings"
+	"github.com/ruckus/MusicEnreachment/backend/internal/tagencoding"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"testing"
 )
 
 func TestMatchingTargetFenceDeliveryRejectsChangedCapturedSourcePostgreSQL(t *testing.T) {
@@ -25,6 +29,10 @@ func TestMatchingTargetFenceDeliveryRejectsChangedCapturedSourcePostgreSQL(t *te
 	if err := fixture.db.NewRaw(`SELECT group_id FROM matching_run_target WHERE run_id=?`, fixture.runID).Scan(fixture.ctx, &groupID); err != nil {
 		t.Fatalf("read target group: %v", err)
 	}
+	// Freeze and recheck the layout target before the readiness mutation: a
+	// threshold or tag-encoding-only change must each break the captured digest,
+	// and restoring the value must restore the exact baseline.
+	assertMatchingLayoutTargetEvidenceFences(t, fixture, groupID)
 	result, err := fixture.db.NewRaw(`UPDATE incoming_group_member SET ready=NOT ready
 		WHERE group_id=? AND variant_id=(SELECT variant_id FROM incoming_group_member WHERE group_id=? ORDER BY variant_id LIMIT 1)`, groupID, groupID).Exec(fixture.ctx)
 	if err != nil {
@@ -132,4 +140,60 @@ func equalJSONForTest(t *testing.T, left, right any) bool {
 		t.Fatalf("marshal right JSON value: %v", err)
 	}
 	return string(leftBytes) == string(rightBytes)
+}
+
+func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTargetFenceFixture, groupID uuid.UUID) {
+	t.Helper()
+	ctx := fixture.ctx
+	tx, err := fixture.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const policy = service.MatchingLayoutPolicyVersion
+	baseline, captures, threshold, err := persistence.CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policy)
+	if err != nil || len(captures) == 0 || captures[0].CaptureAnalysisID == nil || threshold != 0.70 {
+		t.Fatalf("capture layout target baseline: captures=%d threshold=%v err=%v", len(captures), threshold, err)
+	}
+	checkBaseline := func() {
+		t.Helper()
+		ready, err := persistence.RecheckMatchingLayoutTargetTx(ctx, tx, groupID, policy, baseline)
+		if err != nil || len(ready) != len(captures) {
+			t.Fatalf("baseline layout recheck: captures=%d err=%v", len(ready), err)
+		}
+	}
+	checkChange := func(label, query string, args ...any) {
+		t.Helper()
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT layout_evidence_test`); err != nil {
+			t.Fatal(err)
+		}
+		result, err := tx.NewRaw(query, args...).Exec(ctx)
+		if err != nil {
+			t.Fatalf("change %s: %v", label, err)
+		}
+		if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+			t.Fatalf("change %s: rows=%d err=%v", label, changed, err)
+		}
+		if _, err := persistence.RecheckMatchingLayoutTargetTx(ctx, tx, groupID, policy, baseline); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+			t.Fatalf("%s-only change was not rejected: %v", label, err)
+		}
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT layout_evidence_test`); err != nil {
+			t.Fatal(err)
+		}
+		checkBaseline()
+	}
+	checkBaseline()
+	checkChange("threshold", `INSERT INTO app_setting(setting_name,setting_value) VALUES(?,?)
+		ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, appsettings.MatchingPairThresholdKey, "0.80")
+	revision, err := json.Marshal(tagencoding.Report{
+		Version:      tagencoding.ReportVersion,
+		Automatic:    tagencoding.Overlay{Version: tagencoding.OverlayVersion, Entries: []tagencoding.Entry{}},
+		Candidates:   []tagencoding.Candidate{},
+		UserRevision: uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("encode tag encoding revision: %v", err)
+	}
+	checkChange("tag encoding", `UPDATE media_metadata_result SET tag_encoding=?::jsonb WHERE id=?`, string(revision), *captures[0].CaptureAnalysisID)
 }
