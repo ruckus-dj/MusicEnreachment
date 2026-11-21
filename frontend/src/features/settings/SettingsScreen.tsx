@@ -55,11 +55,13 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
+import { SettingsConflictDialog } from "./SettingsConflictDialog";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import {
   type SettingsGeneralFailureModel,
   SettingsGeneralSection,
 } from "./SettingsGeneralSection";
+import { SettingsLeaveDialog } from "./SettingsLeaveDialog";
 import {
   type ManagedPackageCardModel,
   type ManagedPackageCatalog,
@@ -586,7 +588,6 @@ export function SettingsScreen() {
   const alert = useRef<HTMLParagraphElement>(null);
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
-  const conflictDialogRef = useRef<HTMLDialogElement>(null);
   const navigationDialogRef = useRef<HTMLDialogElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
   const automaticCatalogRequested = useRef(false);
@@ -1051,12 +1052,6 @@ export function SettingsScreen() {
   useLayoutEffect(() => {
     if (moveDialog) showSettingsDialog(moveDialogRef.current);
   }, [moveDialog]);
-  useLayoutEffect(() => {
-    if (conflictConfirmation) showSettingsDialog(conflictDialogRef.current);
-  }, [conflictConfirmation]);
-  useLayoutEffect(() => {
-    if (navigationAttempt) showSettingsDialog(navigationDialogRef.current);
-  }, [navigationAttempt]);
   useLayoutEffect(() => {
     if (navigationAttempt || !navigationFocusRestorePending.current) return;
     navigationFocusRestorePending.current = false;
@@ -3381,95 +3376,58 @@ export function SettingsScreen() {
         );
       })}
       {navigationAttempt && (
-        <dialog
-          ref={navigationDialogRef}
-          aria-modal="true"
-          aria-labelledby="settings-navigation-title"
-          aria-describedby="settings-navigation-description"
-          className="settings-dialog"
-          onCancel={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            resolveNavigation(navigationAttempt, "stay");
+        <SettingsLeaveDialog
+          dialogRef={navigationDialogRef}
+          title={t("unsavedSettings")}
+          description={t("navigationPrompt")}
+          error={
+            navigationError ? feedbackText(navigationError, locale) : undefined
+          }
+          actions={{
+            stay: {
+              label: t("stay"),
+              onPress: () => resolveNavigation(navigationAttempt, "stay"),
+            },
+            keepDraft: {
+              label: t("leaveKeepDraft"),
+              onPress: () => keepDraftAndLeave(navigationAttempt),
+            },
+            discardDraft: {
+              label: t("discardDraftLeave"),
+              onPress: () => discardDraftAndLeave(navigationAttempt),
+            },
+            save: {
+              label: t("saveLeave"),
+              onPress: () => void saveDraftAndLeave(navigationAttempt),
+            },
           }}
-          onKeyDown={(event) => {
-            if (
-              event.target instanceof Element &&
-              event.target.closest("dialog") !== event.currentTarget
-            )
-              return;
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              resolveNavigation(navigationAttempt, "stay");
-              return;
-            }
-            onDialogKeyDown(event, () =>
-              resolveNavigation(navigationAttempt, "stay"),
-            );
-          }}
-        >
-          <h2 id="settings-navigation-title">{t("unsavedSettings")}</h2>
-          <p id="settings-navigation-description">{t("navigationPrompt")}</p>
-          {navigationError && (
-            <p role="alert">{feedbackText(navigationError, locale)}</p>
-          )}
-          <AppButton
-            onPress={() => resolveNavigation(navigationAttempt, "stay")}
-          >
-            {t("stay")}
-          </AppButton>
-          <AppButton onPress={() => keepDraftAndLeave(navigationAttempt)}>
-            {t("leaveKeepDraft")}
-          </AppButton>
-          <AppButton onPress={() => discardDraftAndLeave(navigationAttempt)}>
-            {t("discardDraftLeave")}
-          </AppButton>
-          <AppButton
-            data-settings-navigation-save
-            onPress={() => void saveDraftAndLeave(navigationAttempt)}
-          >
-            {t("saveLeave")}
-          </AppButton>
-        </dialog>
+        />
       )}
       {conflictConfirmation && (
-        <dialog
-          ref={conflictDialogRef}
-          aria-labelledby="conflict-confirm-title"
-          aria-describedby="conflict-confirm-description"
-          className="settings-dialog"
-          onClose={() => setConflictConfirmation(undefined)}
-          onCancel={(event) => {
-            event.preventDefault();
-            setConflictConfirmation(undefined);
+        <SettingsConflictDialog
+          title={t("replaceSavedTitle")}
+          message={t("replaceSavedDescription", {
+            label: conflictLabel(conflictConfirmation.group, locale),
+            value: displaySettingValue(conflictConfirmation.currentValue),
+          })}
+          onDismiss={() => setConflictConfirmation(undefined)}
+          actions={{
+            confirm: {
+              label: t("replaceSaved"),
+              onPress: () => {
+                authorizedConflictExpected.current[conflictConfirmation.group] =
+                  conflictConfirmation.currentValue;
+                const confirm = conflictConfirmation.onConfirm;
+                setConflictConfirmation(undefined);
+                confirm();
+              },
+            },
+            cancel: {
+              label: t("cancel"),
+              onPress: () => setConflictConfirmation(undefined),
+            },
           }}
-          onKeyDown={(event) =>
-            onDialogKeyDown(event, () => setConflictConfirmation(undefined))
-          }
-        >
-          <h2 id="conflict-confirm-title">{t("replaceSavedTitle")}</h2>
-          <p id="conflict-confirm-description">
-            {t("replaceSavedDescription", {
-              label: conflictLabel(conflictConfirmation.group, locale),
-              value: displaySettingValue(conflictConfirmation.currentValue),
-            })}
-          </p>
-          <AppButton
-            onPress={() => {
-              authorizedConflictExpected.current[conflictConfirmation.group] =
-                conflictConfirmation.currentValue;
-              const confirm = conflictConfirmation.onConfirm;
-              setConflictConfirmation(undefined);
-              confirm();
-            }}
-          >
-            {t("replaceSaved")}
-          </AppButton>
-          <AppButton onPress={() => setConflictConfirmation(undefined)}>
-            {t("cancel")}
-          </AppButton>
-        </dialog>
+        />
       )}
       {outputDialog && (
         <SettingsOutputResetDialog

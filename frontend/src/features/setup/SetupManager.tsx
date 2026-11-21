@@ -18,7 +18,7 @@ import type {
 import { AppButton } from "../../components/AppButton";
 import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
-import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
+import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
@@ -213,27 +213,24 @@ export function SetupManager({
         />
       )}
       {step === 1 && (
-        <div className="grid gap-3">
-          <SetupDirectoryFieldsView
-            fields={[
-              {
-                kind: "tools",
-                value: toolsDirectory,
-                onSelect: setToolsDirectory,
-              },
-              {
-                kind: "output",
-                value: outputDirectory,
-                onSelect: setOutputDirectory,
-              },
-            ]}
-            locale={locale}
-            browse={browseServerDirectory}
-            disabled={pending}
-            aria-describedby="setup-directory-help"
-          />
-          <p id="setup-directory-help">{messages.directoryHelp}</p>
-        </div>
+        <SetupDirectoryStepBody
+          kind="server"
+          fields={[
+            {
+              kind: "tools",
+              value: toolsDirectory,
+              onSelect: setToolsDirectory,
+            },
+            {
+              kind: "output",
+              value: outputDirectory,
+              onSelect: setOutputDirectory,
+            },
+          ]}
+          locale={locale}
+          browse={browseServerDirectory}
+          disabled={pending}
+        />
       )}
       {step === 2 && (
         <SetupTools

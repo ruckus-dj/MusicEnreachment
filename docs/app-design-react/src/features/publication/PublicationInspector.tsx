@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { Button, Checkbox, Dialog, Heading, Modal } from "../../components/ui";
 import type { Locale } from "../../i18n/types";
-import type { MetadataChangeGroup } from "./publicationMetadataDiff";
+import {
+	type PublicationPreviewDetailsState,
+	PublicationPreviewDetailsView,
+} from "../library/PublicationPreviewDetailsView";
 import {
 	publicationFieldLabel,
 	publicationGroupLabel,
 	publicationMessage,
 } from "./publicationMessages";
+import type { MetadataChangeGroup } from "./publicationMetadataDiff";
 
 export type PublicationInspection = {
 	id: string;
@@ -19,6 +23,7 @@ export type PublicationInspection = {
 	outputPath?: string;
 	container?: string;
 	groups: MetadataChangeGroup[];
+	details?: PublicationPreviewDetailsState;
 	included?: boolean;
 	includeDisabled?: boolean;
 	onInclude?: (included: boolean) => void;
@@ -256,7 +261,15 @@ function InspectorBody({
 				</dl>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto pr-1">
-				<ChangeRows groups={item.groups} locale={locale} />
+				{item.details ? (
+					<PublicationPreviewDetailsView
+						locale={locale}
+						state={item.details}
+						sourceGroupName={item.id}
+					/>
+				) : (
+					<ChangeRows groups={item.groups} locale={locale} />
+				)}
 			</div>
 		</>
 	);

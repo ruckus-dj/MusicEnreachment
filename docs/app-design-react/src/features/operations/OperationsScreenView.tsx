@@ -1,0 +1,227 @@
+import type { Ref } from "react";
+import type { SortDescriptor } from "react-aria-components";
+import {
+  OperationsList,
+  type OperationsListFilterOption,
+  type OperationsListRow,
+  type OperationsListSortColumn,
+  type OperationsListStatus,
+} from "./OperationsList";
+import type { OperationsScreenCopy } from "./operationsScreenCopy";
+
+/**
+ * Portable operations screen composition.
+ *
+ * The list, details dialog and row actions already come from the shared
+ * `OperationsList`. This module adds the remaining screen-level presentation
+ * both hosts render identically: status/kind filter options, sortable headers
+ * and the pagination range label.
+ *
+ * Hosts keep their own typed adapters. The application keeps server scope
+ * (`status`, `kind`, `q`, `sort`, `direction`, `locale`, `offset`) and server
+ * rows/total; the demo keeps its in-memory rows, local filtering and demo
+ * settlement. Neither adapter passes JSX into this component.
+ */
+
+export const operationsStatusFilters = [
+  "attention",
+  "all",
+  "failed",
+  "running",
+  "queued",
+] as const;
+
+export const operationsKindFilters = [
+  "publication",
+  "analysis",
+  "removal",
+  "matching",
+] as const;
+
+const sortColumns: readonly OperationsListSortColumn[] = [
+  "target",
+  "operation",
+  "state",
+  "created",
+];
+
+export type OperationsStatusFilter = (typeof operationsStatusFilters)[number];
+export type OperationsKindFilter = (typeof operationsKindFilters)[number];
+export type OperationsKindSelection = OperationsKindFilter | "all";
+export type OperationsSortColumn = OperationsListSortColumn;
+export type OperationsSortDirection = "asc" | "desc";
+
+export function isOperationsStatusFilter(
+  value: string,
+): value is OperationsStatusFilter {
+  return operationsStatusFilters.some((candidate) => candidate === value);
+}
+
+export function isOperationsKindFilter(
+  value: string,
+): value is OperationsKindFilter {
+  return operationsKindFilters.some((candidate) => candidate === value);
+}
+
+export function isOperationsKindSelection(
+  value: string,
+): value is OperationsKindSelection {
+  return value === "all" || isOperationsKindFilter(value);
+}
+
+export function isOperationsSortColumn(
+  value: string,
+): value is OperationsSortColumn {
+  return sortColumns.some((candidate) => candidate === value);
+}
+
+export function isOperationsSortDirection(
+  value: string,
+): value is OperationsSortDirection {
+  return value === "asc" || value === "desc";
+}
+
+export interface OperationsScreenFilters {
+  query: string;
+  onQueryChange: (query: string) => void;
+  status: OperationsStatusFilter;
+  onStatusChange: (status: OperationsStatusFilter) => void;
+  kind: OperationsKindSelection;
+  onKindChange: (kind: OperationsKindSelection) => void;
+}
+
+export interface OperationsScreenPagination {
+  /** First row number on the page, one-based. */
+  from: number;
+  /** Last row number on the page, one-based and inclusive. */
+  to: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+}
+
+export interface OperationsScreenViewProps {
+  copy: OperationsScreenCopy;
+  locale: "en" | "ru";
+  rows: OperationsListRow[];
+  status?: OperationsListStatus;
+  /** Safe failure text for the error state. */
+  error?: string;
+  /** Feedback for the latest completed action. */
+  notice?: string;
+  /** Feedback for a failed action. */
+  actionError?: string;
+  headingRef?: Ref<HTMLHeadingElement>;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  filters: OperationsScreenFilters;
+  sortColumn: OperationsSortColumn;
+  sortDirection: OperationsSortDirection;
+  onSortChange: (
+    column: OperationsSortColumn,
+    direction: OperationsSortDirection,
+  ) => void;
+  pagination?: OperationsScreenPagination;
+}
+
+function paginationLabel(
+  copy: OperationsScreenCopy,
+  locale: "en" | "ru",
+  pagination: OperationsScreenPagination,
+) {
+  const format = new Intl.NumberFormat(locale);
+  return copy.paginationRange
+    .replace("{from}", format.format(pagination.from))
+    .replace("{to}", format.format(pagination.to))
+    .replace("{total}", format.format(pagination.total));
+}
+
+export function OperationsScreenView({
+  copy,
+  locale,
+  rows,
+  status,
+  error,
+  notice,
+  actionError,
+  headingRef,
+  onRefresh,
+  isRefreshing,
+  filters,
+  sortColumn,
+  sortDirection,
+  onSortChange,
+  pagination,
+}: OperationsScreenViewProps) {
+  const statusOptions: OperationsListFilterOption[] =
+    operationsStatusFilters.map((value) => ({
+      value,
+      label:
+        value === "attention"
+          ? copy.attention
+          : value === "all"
+            ? copy.allStatuses
+            : copy[value],
+    }));
+  const kindOptions: OperationsListFilterOption[] = [
+    { value: "all", label: copy.allKinds },
+    ...operationsKindFilters.map((value) => ({
+      value,
+      label:
+        value === "publication"
+          ? copy.kindPublication
+          : value === "analysis"
+            ? copy.kindAnalysis
+            : value === "removal"
+              ? copy.kindRemoval
+              : copy.kindMatching,
+    })),
+  ];
+  const sortDescriptor: SortDescriptor = {
+    column: sortColumn,
+    direction: sortDirection === "asc" ? "ascending" : "descending",
+  };
+
+  return (
+    <OperationsList
+      copy={copy}
+      rows={rows}
+      status={status}
+      error={error}
+      notice={notice}
+      actionError={actionError}
+      headingRef={headingRef}
+      onRefresh={onRefresh}
+      isRefreshing={isRefreshing}
+      sortDescriptor={sortDescriptor}
+      onSortChange={({ column, direction }) => {
+        if (typeof column !== "string" || !isOperationsSortColumn(column))
+          return;
+        onSortChange(column, direction === "ascending" ? "asc" : "desc");
+      }}
+      filters={{
+        query: filters.query,
+        onQueryChange: filters.onQueryChange,
+        status: filters.status,
+        statusOptions,
+        onStatusChange: (value) => {
+          if (isOperationsStatusFilter(value)) filters.onStatusChange(value);
+        },
+        kind: filters.kind,
+        kindOptions,
+        onKindChange: (value) => {
+          if (isOperationsKindSelection(value)) filters.onKindChange(value);
+        },
+      }}
+      pagination={
+        pagination && pagination.total > 0 && pagination.from > 0
+          ? {
+              label: paginationLabel(copy, locale, pagination),
+              onPrevious: pagination.onPrevious,
+              onNext: pagination.onNext,
+            }
+          : undefined
+      }
+    />
+  );
+}

@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { SourceFiles } from "../library/catalogData";
+import { useSourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import type { SourceFiles } from "../library/catalogData";
 import {
 	initialSourceRoots,
 	type SourceRoot,
 	SourcesScreen,
 } from "./SourcesScreen";
-import { useSourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
 import {
 	initialSourceProcessingState,
 	type SourceProcessingState,
@@ -219,6 +219,9 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	]);
 	expect(processing.copies).toEqual([]);
 	expect(
-		screen.getByText("/mnt/music/01 - First Light.flac"),
+		within(screen.getByRole("table", { name: "Inventory files" })).getByRole(
+			"rowheader",
+			{ name: "/mnt/music/01 - First Light.flac" },
+		),
 	).toBeInTheDocument();
 });

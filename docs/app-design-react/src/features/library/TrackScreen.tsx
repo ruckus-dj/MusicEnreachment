@@ -5,8 +5,6 @@ import {
 	Disclosure,
 	DisclosurePanel,
 	Heading,
-	Radio,
-	RadioGroup,
 } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import { TrackMetadataEditors } from "../../metadata/TrackMetadataEditors";
@@ -24,13 +22,17 @@ import {
 	originalFiles,
 	originalProviders,
 	type SourceFiles,
+	trackNumberLabel,
 } from "./catalogData";
 import { catalogueStyles } from "./catalogueStyles";
+import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
+import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
 import {
 	PublicationAudioMeasurementsView,
 	publicationAudioMeasurementTags,
 } from "./PublicationAudioMeasurementsView";
 import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
+import { TagSnapshotView } from "./TagSnapshotView";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
 import { formatTrackMessage, trackMessage } from "./trackMessages";
@@ -148,64 +150,31 @@ export function TrackScreen({
 				/>
 			)}
 			<div className={catalogueStyles.objectColumns}>
-				<section className={catalogueStyles.panel}>
-					<h2>{trackMessage(locale, "audioSources")}</h2>
-					<p className="mb-2 text-xs text-[var(--muted)]">
-						{trackMessage(locale, "publicationSourceHelp")}
-					</p>
-					{sourceIds.length ? (
-						<RadioGroup
-							aria-label={trackMessage(locale, "publicationSource")}
-							value={track.sourceId ?? ""}
-							onChange={onSource}
-						>
-							{sourceIds.map((id) => {
-								const source = files[id];
-								if (!source) return null;
-								const selectedForPublication = track.sourceId === id;
-								return (
-									<div
-										key={id}
-										className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-[var(--line)] py-2 last:border-0"
-									>
-										<Radio value={id} className={catalogueStyles.source}>
-											<span
-												aria-hidden="true"
-												className={catalogueStyles.radioDot}
-											/>
-											<span className="min-w-0">
-												<strong className="block truncate">
-													{source.name}
-												</strong>
-												<span className={catalogueStyles.secondaryInline}>
-													{source.codec} · {duration(source.duration)} ·{" "}
-													{source.available
-														? trackMessage(locale, "available")
-														: trackMessage(locale, "unavailable")}
-												</span>
-												<span className="block text-[11px] text-[var(--muted)]">
-													{selectedForPublication
-														? trackMessage(locale, "selectedForPublication")
-														: trackMessage(locale, "chooseForPublication")}
-												</span>
-											</span>
-										</Radio>
-										<Button
-											aria-pressed={inspectedFileId === id}
-											onPress={() => inspectSource(id)}
-										>
-											{inspectedFileId === id
-												? trackMessage(locale, "inspectingTags")
-												: trackMessage(locale, "inspectTags")}
-										</Button>
-									</div>
-								);
-							})}
-						</RadioGroup>
-					) : (
-						<p>{trackMessage(locale, "noLinkedSources")}</p>
-					)}
-				</section>
+				<LibraryPositionSourcesView
+					locale={locale}
+					position={trackNumberLabel(release, track)}
+					sources={sourceIds.flatMap((id) => {
+						const source = files[id];
+						if (!source) return [];
+						const availability = trackMessage(
+							locale,
+							source.available ? "available" : "unavailable",
+						);
+						return [
+							{
+								id,
+								label: source.name,
+								summary: `${source.codec} · ${duration(source.duration)} · ${availability}`,
+								selected: track.sourceId === id,
+							},
+						];
+					})}
+					choice={{ value: track.sourceId ?? "", onChange: onSource }}
+					inspection={{
+						value: inspectedFileId ?? undefined,
+						onChange: inspectSource,
+					}}
+				/>
 				<section className={catalogueStyles.panel}>
 					<h2>{trackMessage(locale, "publication")}</h2>
 					<p aria-label={trackMessage(locale, "metadataState")}>
@@ -258,15 +227,25 @@ export function TrackScreen({
 					)}
 					<details className={catalogueStyles.trackDetails}>
 						<summary>{trackMessage(locale, "technicalDetails")}</summary>
+						<LibraryPositionIdentityView
+							locale={locale}
+							position={trackNumberLabel(release, track)}
+							title={track.title}
+							durationMs={
+								track.duration == null
+									? null
+									: Math.round(track.duration * 1000)
+							}
+							recordingTitle={
+								track.recordingTitle ||
+								providerTrack?.title ||
+								trackMessage(
+									locale,
+									track.recordingId ? "linkedRecording" : "unlinkedRecording",
+								)
+							}
+						/>
 						<dl className={catalogueStyles.facts}>
-							<dt>{trackMessage(locale, "composition")}</dt>
-							<dd>
-								{track.recordingTitle ||
-									providerTrack?.title ||
-									(track.recordingId
-										? trackMessage(locale, "linkedRecording")
-										: trackMessage(locale, "unlinkedRecording"))}
-							</dd>
 							<dt>{trackMessage(locale, "fileState")}</dt>
 							<dd>
 								{outputStatus ??
@@ -327,17 +306,14 @@ export function TrackScreen({
 											},
 										}}
 									/>
-									<dl className={catalogueStyles.facts}>
-										<dt>{trackMessage(locale, "tagSnapshot")}</dt>
-										<dd>
-											{Object.entries(track.published.tags)
-												.filter(
-													([key]) => !publicationAudioMeasurementTags.has(key),
-												)
-												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
-												.join("; ")}
-										</dd>
-									</dl>
+									<TagSnapshotView
+										title={trackMessage(locale, "tagSnapshot")}
+										rows={Object.entries(track.published.tags)
+											.filter(
+												([key]) => !publicationAudioMeasurementTags.has(key),
+											)
+											.map(([key, values]) => ({ key, values }))}
+									/>
 									{publishedTags && (
 										<PublicationAudioMeasurementsView
 											locale={locale}

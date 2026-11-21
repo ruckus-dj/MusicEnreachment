@@ -131,7 +131,7 @@ export interface PublicationPreviewDetailsViewProps {
   /** Unique radio-group name owned by the host. */
   sourceGroupName: string;
   onSourceChoice?: (choice: PublicationPreviewSourceChoice | null) => void;
-  onRefresh: () => void;
+  onRefresh?: () => void;
 }
 
 type Inspection = PublicationPreviewInspection;
@@ -700,7 +700,7 @@ export function PublicationPreviewDetailsView({
       )}
       {admittedOperationID && <p role="status">{copy.queued}.</p>}
       {admissionUncertain && <p role="status">{copy.unknownStart}</p>}
-      {(error || admittedOperationID || admissionUncertain) && (
+      {onRefresh && (error || admittedOperationID || admissionUncertain) && (
         <button type="button" onClick={onRefresh}>
           {copy.refreshPublication}
         </button>

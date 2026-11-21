@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SortDescriptor } from "react-aria-components";
 import type { DeletionOperation } from "../../components/DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import type {
@@ -8,33 +7,35 @@ import type {
 } from "../../fixtures/useOperationsDemoProvider";
 import { useI18n } from "../../i18n";
 import { recoveryFixture } from "../library/catalogData";
-import { OperationsList, type OperationsListRow } from "./OperationsList";
+import type { OperationsListRow } from "./OperationsList";
+import {
+	type OperationsKindFilter,
+	type OperationsKindSelection,
+	OperationsScreenView,
+	type OperationsSortColumn,
+	type OperationsSortDirection,
+	type OperationsStatusFilter,
+} from "./OperationsScreenView";
 import { operationMessages } from "./operationMessages";
 
 const pageSize = 50;
 const latestQueueSample = queuedOperationFixtures[0]?.createdAt ?? 0;
 
-type OperationStatusFilter =
-	| "attention"
-	| "all"
-	| "failed"
-	| "running"
-	| "queued";
-
 type VisibleOperationStatus = Exclude<DemoOperationStatus, "succeeded">;
-
-type OperationKind = "publication" | "analysis" | "removal" | "matching";
 
 interface ScreenRow {
 	list: OperationsListRow;
 	status: VisibleOperationStatus;
-	kind: OperationKind;
+	kind: OperationsKindFilter;
 	createdAt: number;
 }
 
-const defaultSort: SortDescriptor = {
+const defaultSort: {
+	column: OperationsSortColumn;
+	direction: OperationsSortDirection;
+} = {
 	column: "created",
-	direction: "descending",
+	direction: "desc",
 };
 const statusOrder: Record<VisibleOperationStatus, number> = {
 	failed: 0,
@@ -42,34 +43,11 @@ const statusOrder: Record<VisibleOperationStatus, number> = {
 	queued: 2,
 };
 
-const statusFilters: OperationStatusFilter[] = [
-	"attention",
-	"all",
-	"failed",
-	"running",
-	"queued",
-];
-
-const kindFilters: OperationKind[] = [
-	"publication",
-	"analysis",
-	"removal",
-	"matching",
-];
-
-function matchesStatus(row: ScreenRow, filter: OperationStatusFilter) {
+function matchesStatus(row: ScreenRow, filter: OperationsStatusFilter) {
 	if (filter === "all") return true;
 	if (filter === "attention")
 		return row.status === "failed" || row.status === "running";
 	return row.status === filter;
-}
-
-function isStatusFilter(value: string): value is OperationStatusFilter {
-	return statusFilters.some((candidate) => candidate === value);
-}
-
-function isKindFilter(value: string): value is OperationKind {
-	return kindFilters.some((candidate) => candidate === value);
 }
 
 export function OperationsScreen({
@@ -84,8 +62,8 @@ export function OperationsScreen({
 	const { locale } = useI18n();
 	const copy = operationMessages[locale];
 	const [query, setQuery] = useState("");
-	const [status, setStatus] = useState<OperationStatusFilter>("attention");
-	const [kind, setKind] = useState<OperationKind | "all">("all");
+	const [status, setStatus] = useState<OperationsStatusFilter>("attention");
+	const [kind, setKind] = useState<OperationsKindSelection>("all");
 	const [page, setPage] = useState(0);
 	const [sort, setSort] = useState(defaultSort);
 	const [demoStartedAt] = useState(() =>
@@ -118,7 +96,7 @@ export function OperationsScreen({
 
 		function addRow(
 			rowStatus: DemoOperationStatus,
-			rowKind: OperationKind,
+			rowKind: OperationsKindFilter,
 			row: Omit<OperationsListRow, "state" | "stateTone">,
 			createdAt = demoStartedAt,
 		) {
@@ -278,38 +256,6 @@ export function OperationsScreen({
 		provider.signals,
 	]);
 
-	const statusOptions = useMemo(
-		() =>
-			statusFilters.map((value) => ({
-				value,
-				label:
-					value === "attention"
-						? copy.attention
-						: value === "all"
-							? copy.allStatuses
-							: copy[value],
-			})),
-		[copy],
-	);
-
-	const kindOptions = useMemo(
-		() => [
-			{ value: "all", label: copy.allKinds },
-			...kindFilters.map((value) => ({
-				value,
-				label:
-					value === "publication"
-						? copy.kindPublication
-						: value === "analysis"
-							? copy.kindAnalysis
-							: value === "removal"
-								? copy.kindRemoval
-								: copy.kindMatching,
-			})),
-		],
-		[copy],
-	);
-
 	const normalizedQuery = query.trim().toLocaleLowerCase(locale);
 	const filteredRows = useMemo(
 		() =>
@@ -333,10 +279,9 @@ export function OperationsScreen({
 		if (pageIndex !== page) setPage(pageIndex);
 	}, [page, pageIndex]);
 
-	const numberFormat = useMemo(() => new Intl.NumberFormat(locale), [locale]);
 	const start = pageIndex * pageSize;
 	const sortedRows = useMemo(() => {
-		const direction = sort.direction === "ascending" ? 1 : -1;
+		const direction = sort.direction === "asc" ? 1 : -1;
 		return [...filteredRows].sort((left, right) => {
 			switch (sort.column) {
 				case "target":
@@ -358,29 +303,38 @@ export function OperationsScreen({
 	}, [collator, filteredRows, sort]);
 	const pageRows = sortedRows.slice(start, start + pageSize);
 
+	const pagination =
+		filteredRows.length > 0
+			? {
+					from: start + 1,
+					to: Math.min(start + pageSize, filteredRows.length),
+					total: filteredRows.length,
+					onPrevious: pageIndex > 0 ? () => setPage(pageIndex - 1) : undefined,
+					onNext:
+						pageIndex < pageCount - 1
+							? () => setPage(pageIndex + 1)
+							: undefined,
+				}
+			: undefined;
+
 	const changeQuery = (value: string) => {
 		setQuery(value);
 		setPage(0);
 	};
-	const changeStatus = (value: string) => {
-		if (isStatusFilter(value)) setStatus(value);
+	const changeStatus = (value: OperationsStatusFilter) => {
+		setStatus(value);
 		setPage(0);
 	};
-	const changeKind = (value: string) => {
-		if (isKindFilter(value)) setKind(value);
-		else if (value === "all") setKind("all");
+	const changeKind = (value: OperationsKindSelection) => {
+		setKind(value);
 		setPage(0);
 	};
 
 	return (
-		<OperationsList
+		<OperationsScreenView
 			copy={copy}
+			locale={locale}
 			rows={pageRows.map((row) => row.list)}
-			sortDescriptor={sort}
-			onSortChange={(value) => {
-				setSort(value);
-				setPage(0);
-			}}
 			notice={provider.notice ? copy[provider.notice] : undefined}
 			onRefresh={provider.refresh}
 			isRefreshing={provider.isRefreshing}
@@ -388,33 +342,17 @@ export function OperationsScreen({
 				query,
 				onQueryChange: changeQuery,
 				status,
-				statusOptions,
 				onStatusChange: changeStatus,
 				kind,
-				kindOptions,
 				onKindChange: changeKind,
 			}}
-			pagination={
-				filteredRows.length > 0
-					? {
-							label: copy.paginationRange
-								.replace("{from}", numberFormat.format(start + 1))
-								.replace(
-									"{to}",
-									numberFormat.format(
-										Math.min(start + pageSize, filteredRows.length),
-									),
-								)
-								.replace("{total}", numberFormat.format(filteredRows.length)),
-							onPrevious:
-								pageIndex > 0 ? () => setPage(pageIndex - 1) : undefined,
-							onNext:
-								pageIndex < pageCount - 1
-									? () => setPage(pageIndex + 1)
-									: undefined,
-						}
-					: undefined
-			}
+			sortColumn={sort.column}
+			sortDirection={sort.direction}
+			onSortChange={(column, direction) => {
+				setSort({ column, direction });
+				setPage(0);
+			}}
+			pagination={pagination}
 		/>
 	);
 }

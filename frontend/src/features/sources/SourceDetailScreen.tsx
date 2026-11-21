@@ -17,6 +17,7 @@ import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { useI18n } from "../../i18n/I18nProvider";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
 import { SourceLocations } from "./SourceLocations";
+import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceScanControl } from "./SourceScanControl";
 import { type SourceMessage, sourceMessage } from "./sourceMessages";
 import { useSourceScans } from "./sourceScans";
@@ -225,10 +226,12 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       aria-labelledby="source-title"
       className="sources-screen mx-auto max-w-5xl py-3"
     >
-      <h1 ref={heading} tabIndex={-1} id="source-title">
-        {root ? root.display_name : t("sourceTitle")}
-      </h1>
-      <AppButton onPress={backToList}>{t("backToSources")}</AppButton>
+      <SourceRootHeadingView
+        title={root ? root.display_name : t("sourceTitle")}
+        headingRef={heading}
+        headingId="source-title"
+        back={{ label: t("backToSources"), onPress: backToList }}
+      />
       {busy && root && <p role="status">{t("requestRunning")}</p>}
       {!root && !error && <p role="status">{t("loadingLocations")}</p>}
       {error && (

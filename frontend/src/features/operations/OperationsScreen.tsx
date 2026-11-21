@@ -1,6 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SortDescriptor } from "react-aria-components";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   dismissOperation,
@@ -18,18 +17,19 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { Locale } from "../../i18n/locale";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
-import {
-  OperationsList,
-  type OperationsListAction,
-  type OperationsListRow,
-  type OperationsListStatus,
+import type {
+  OperationsListAction,
+  OperationsListRow,
+  OperationsListStatus,
 } from "./OperationsList";
+import { OperationsScreenView } from "./OperationsScreenView";
 import {
   operationKindLabel,
   operationStageLabel,
   operationStateLabel,
   operationTargetLabel,
 } from "./operationPresentation";
+import { operationsScreenCopy } from "./operationsScreenCopy";
 
 const PAGE_SIZE = 50;
 const MAX_PAGE_OFFSET = 1_000_000;
@@ -74,106 +74,18 @@ const GENERIC_RETRY_KINDS = new Set([
 
 const messages = {
   en: {
-    title: "Current operations",
-    description:
-      "Work in progress and errors that need attention. History is not retained.",
-    refresh: "Refresh",
-    refreshing: "Refreshing…",
-    loading: "Loading operations…",
-    loadError: "Could not load operations.",
-    retryLoad: "Retry loading",
-    emptyTitle: "No current operations",
-    emptyDescription:
-      "Work in progress and failed operations will appear here.",
-    target: "Target",
-    operation: "Operation",
-    stateStage: "Status / stage",
-    progress: "Progress",
-    created: "Created",
-    error: "Error",
-    actions: "Actions",
-    footnote:
-      "Queued, running, and failed operations are shown. Completed operations are hidden.",
-    search: "Search operations",
-    statusFilter: "Status",
-    kindFilter: "Kind",
-    details: "Details",
-    close: "Close",
-    previous: "Previous",
-    next: "Next",
-    allStatuses: "All",
-    attention: "Needs attention",
-    failed: "Failed",
-    running: "Running",
-    queued: "Queued",
-    allKinds: "All kinds",
-    kindPublication: "Publication",
-    kindAnalysis: "Analysis",
-    kindRemoval: "Removal",
-    kindMatching: "Matching",
-    paginationRange: "{from}–{to} of {total}",
-    retrying: "Retrying…",
-    retry: "Retry",
-    dismissing: "Dismissing…",
-    dismiss: "Dismiss",
-    dismissed: "Operation dismissed.",
-    retryError: "Could not retry operation.",
+    ...operationsScreenCopy.en,
     retryHttpError: (status: number) =>
       `Could not retry operation (HTTP ${status}).`,
-    dismissError: "Could not dismiss operation.",
     dismissHttpError: (status: number) =>
       `Could not dismiss operation (HTTP ${status}).`,
     loadHttpError: (status: number) =>
       `Could not load operations (HTTP ${status}).`,
   },
   ru: {
-    title: "Текущие операции",
-    description:
-      "Работа в процессе и ошибки, требующие внимания. История не сохраняется.",
-    refresh: "Обновить",
-    refreshing: "Обновление…",
-    loading: "Загрузка операций…",
-    loadError: "Не удалось загрузить операции.",
-    retryLoad: "Повторить загрузку",
-    emptyTitle: "Нет текущих операций",
-    emptyDescription:
-      "Здесь появятся операции в процессе и неудачные операции.",
-    target: "Объект",
-    operation: "Операция",
-    stateStage: "Статус / этап",
-    progress: "Прогресс",
-    created: "Создано",
-    error: "Ошибка",
-    actions: "Действия",
-    footnote:
-      "Показаны операции в очереди, выполняемые и неудачные. Завершённые операции скрыты.",
-    search: "Поиск операций",
-    statusFilter: "Статус",
-    kindFilter: "Тип",
-    details: "Подробности",
-    close: "Закрыть",
-    previous: "Назад",
-    next: "Вперёд",
-    allStatuses: "Все",
-    attention: "Требует внимания",
-    failed: "Ошибка",
-    running: "Выполняется",
-    queued: "В очереди",
-    allKinds: "Все типы",
-    kindPublication: "Публикация",
-    kindAnalysis: "Анализ",
-    kindRemoval: "Удаление",
-    kindMatching: "Сопоставление",
-    paginationRange: "{from}–{to} из {total}",
-    retrying: "Повтор…",
-    retry: "Повторить",
-    dismissing: "Скрытие…",
-    dismiss: "Скрыть",
-    dismissed: "Операция скрыта.",
-    retryError: "Не удалось повторить операцию.",
+    ...operationsScreenCopy.ru,
     retryHttpError: (status: number) =>
       `Не удалось повторить операцию (HTTP ${status}).`,
-    dismissError: "Не удалось скрыть операцию.",
     dismissHttpError: (status: number) =>
       `Не удалось скрыть операцию (HTTP ${status}).`,
     loadHttpError: (status: number) =>
@@ -655,30 +567,6 @@ export function OperationsScreen() {
     }
   }
 
-  const statusOptions = statusFilters.map((value) => ({
-    value,
-    label:
-      value === "attention"
-        ? copy.attention
-        : value === "all"
-          ? copy.allStatuses
-          : copy[value],
-  }));
-  const kindOptions = [
-    { value: "all", label: copy.allKinds },
-    ...kindFilters.map((value) => ({
-      value,
-      label:
-        value === "publication"
-          ? copy.kindPublication
-          : value === "analysis"
-            ? copy.kindAnalysis
-            : value === "removal"
-              ? copy.kindRemoval
-              : copy.kindMatching,
-    })),
-  ];
-  const numberFormat = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const rows = operations.map((operation) =>
     operationRow(
       operation,
@@ -694,16 +582,9 @@ export function OperationsScreen() {
   const pagination =
     rows.length > 0 && total > 0
       ? {
-          label: copy.paginationRange
-            .replace(
-              "{from}",
-              numberFormat.format(Math.min(route.offset + 1, total)),
-            )
-            .replace(
-              "{to}",
-              numberFormat.format(Math.min(route.offset + PAGE_SIZE, total)),
-            )
-            .replace("{total}", numberFormat.format(total)),
+          from: Math.min(route.offset + 1, total),
+          to: Math.min(route.offset + PAGE_SIZE, total),
+          total,
           onPrevious:
             route.offset > 0
               ? () =>
@@ -718,11 +599,6 @@ export function OperationsScreen() {
         }
       : undefined;
 
-  const sortDescriptor: SortDescriptor = {
-    column: route.sort,
-    direction: route.direction === "asc" ? "ascending" : "descending",
-  };
-
   async function refresh() {
     if (manualRefreshGuard.current) return;
     manualRefreshGuard.current = true;
@@ -736,23 +612,20 @@ export function OperationsScreen() {
   }
 
   return (
-    <OperationsList
+    <OperationsScreenView
       copy={copy}
+      locale={locale}
       rows={rows}
       status={listStatus}
       error={loadError}
       notice={notice ? copy[notice] : undefined}
       actionError={actionErrorText(actionError, copy)}
       headingRef={heading}
-      sortDescriptor={sortDescriptor}
-      onSortChange={({ column, direction }) => {
-        if (typeof column !== "string" || !isSortColumn(column)) return;
-        updateRoute({
-          sort: column,
-          direction: direction === "ascending" ? "asc" : "desc",
-          offset: 0,
-        });
-      }}
+      sortColumn={route.sort}
+      sortDirection={route.direction}
+      onSortChange={(sort, direction) =>
+        updateRoute({ sort, direction, offset: 0 })
+      }
       onRefresh={() => {
         void refresh();
       }}
@@ -764,15 +637,11 @@ export function OperationsScreen() {
           if (route.offset !== 0) updateRoute({ offset: 0 });
         },
         status: route.status,
-        statusOptions,
         onStatusChange: (value) => {
-          if (!isStatusFilter(value)) return;
           updateRoute({ status: value, offset: 0 });
         },
         kind: route.kind,
-        kindOptions,
         onKindChange: (value) => {
-          if (value !== "all" && !isKindFilter(value)) return;
           updateRoute({ kind: value, offset: 0 });
         },
       }}

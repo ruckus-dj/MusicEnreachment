@@ -21,7 +21,7 @@ import {
 	type ManagedToolPackage,
 } from "../settings/ToolLifecycleDemo";
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
-import { SetupDirectoryFieldsView } from "./SetupDirectoryFields";
+import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
 import { SetupSummaryView } from "./SetupSummaryView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
@@ -240,22 +240,20 @@ export function SetupScreen({
 				nextDisabled={!canProceed || platformMismatch}
 			>
 				{step === 0 && (
-					<>
-						<SetupDirectoryFieldsView
-							fields={[
-								{
-									kind: "tools",
-									value: settings.toolsPath,
-									onSelect: (path) => choosePath("tools", path),
-								},
-							]}
-							locale={locale}
-							browse={browseDemoDirectory}
-							resolveInitialPath={demoDirectoryStart}
-							description={copy.absolutePathHelp}
-						/>
-						{settings.pathChecked && <p role="status">{copy.pathReady}</p>}
-					</>
+					<SetupDirectoryStepBody
+						kind="tools"
+						selected={settings.pathChecked}
+						fields={[
+							{
+								kind: "tools",
+								value: settings.toolsPath,
+								onSelect: (path) => choosePath("tools", path),
+							},
+						]}
+						locale={locale}
+						browse={browseDemoDirectory}
+						resolveInitialPath={demoDirectoryStart}
+					/>
 				)}
 				{step === 1 && (
 					<>
@@ -321,22 +319,19 @@ export function SetupScreen({
 				)}
 				{step === 2 && (
 					<>
-						<section className="grid gap-2">
-							<h3 className="m-0 font-semibold">{copy.publication}</h3>
-							<p>{copy.outputDescription}</p>
-							<SetupDirectoryFieldsView
-								fields={[
-									{
-										kind: "output",
-										value: outputPath,
-										onSelect: (path) => choosePath("output", path),
-									},
-								]}
-								locale={locale}
-								browse={browseDemoDirectory}
-								resolveInitialPath={demoDirectoryStart}
-							/>
-						</section>
+						<SetupDirectoryStepBody
+							kind="output"
+							fields={[
+								{
+									kind: "output",
+									value: outputPath,
+									onSelect: (path) => choosePath("output", path),
+								},
+							]}
+							locale={locale}
+							browse={browseDemoDirectory}
+							resolveInitialPath={demoDirectoryStart}
+						/>
 						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
 							<SetupMusicBrainzFields
 								locale={locale}

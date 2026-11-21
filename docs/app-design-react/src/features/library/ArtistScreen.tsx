@@ -42,6 +42,7 @@ import {
 } from "./catalogData";
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
+import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import type { TagScope } from "./TagsComparison";
 import { trackMessage } from "./trackMessages";
@@ -280,89 +281,50 @@ export function ArtistScreen({
 			<nav className={catalogueStyles.heroBack} aria-label={m("navigation")}>
 				<a href="#library">{m("backToLibrary")}</a>
 			</nav>
-			<header
-				className={`${catalogueStyles.objectHeader} ${catalogueStyles.hero}`}
+			<LibraryArtistHeadingView
+				locale={locale}
+				name={artist.name}
+				disambiguation={artist.disambiguation}
+				genres={
+					artist.genres?.some((genre) => genre.name)
+						? artist.genres.flatMap((genre) => (genre.name ? [genre.name] : []))
+						: artist.genreOverride?.state !== "explicit_empty" && artist.genre
+							? [artist.genre]
+							: []
+				}
+				palette={artist.color}
+				count={{
+					releases: artistReleases.length + unrepresentedMissingGroups.length,
+					positions: tracks.length,
+					published: counts((track) => Boolean(track.published)),
+					missing: filteredMissingGroups.length,
+				}}
+				selection={{
+					total: ids.length,
+					selected: selectedCount,
+					onChange: onSelect && ((value) => onSelect(ids, value)),
+				}}
+			/>
+			<div
+				className={`${catalogueStyles.actions} ${catalogueStyles.artistDanger}`}
 			>
-				<div
-					className={catalogueStyles.heroArt}
-					data-palette={artist.color || "clay"}
-				>
-					<span aria-hidden="true">
-						{artist.name.trim().slice(0, 1).toLocaleUpperCase()}
-					</span>
-					<i aria-hidden="true" />
-					<div className={catalogueStyles.cardSelection}>
-						<Checkbox
-							aria-label={m("selectAllArtistPositions", {
-								artist: artist.name,
-							})}
-							className={catalogueStyles.cardCheckbox}
-							isSelected={ids.length > 0 && selectedCount === ids.length}
-							isIndeterminate={selectedCount > 0 && selectedCount < ids.length}
-							isDisabled={!ids.length || !onSelect}
-							onChange={(value) => onSelect?.(ids, value)}
-						>
-							<span
-								className={catalogueStyles.cardCheckboxBox}
-								aria-hidden="true"
-							>
-								{ids.length > 0 && selectedCount === ids.length
-									? "✓"
-									: selectedCount > 0
-										? "−"
-										: ""}
-							</span>
-							<span className="sr-only">
-								{m("selectAllArtistPositionsShort")}
-							</span>
-						</Checkbox>
-					</div>
-				</div>
-				<div className={catalogueStyles.heroBody}>
-					<div className={catalogueStyles.heroHeading}>
-						<p className={catalogueStyles.heroKicker}>{m("artistProfile")}</p>
-						<h1>{artist.name}</h1>
-						<p className={catalogueStyles.heroGenre}>
-							{artist.genres
-								?.map((genre) => genre.name)
-								.filter(Boolean)
-								.join(", ") ||
-								(artist.genreOverride?.state !== "explicit_empty" &&
-									artist.genre) ||
-								m("performer")}
-						</p>
-					</div>
-					<div className={catalogueStyles.heroFoot}>
-						<p className={catalogueStyles.heroStats}>
-							{artistReleases.length + unrepresentedMissingGroups.length}{" "}
-							{m("releasesCount")} · {tracks.length} {m("positionsCount")} ·{" "}
-							{counts((track) => Boolean(track.published))}{" "}
-							{m("publishedCount")} · {filteredMissingGroups.length}{" "}
-							{m("missingReleaseCount")}
-						</p>
-						<div
-							className={`${catalogueStyles.actions} ${catalogueStyles.artistDanger}`}
-						>
-							{onQueueDeletion ? (
-								<ArtistDeletionRequest
-									artistId={artist.id}
-									artists={artists}
-									releases={releases}
-									onQueue={onQueueDeletion}
-								/>
-							) : (
-								<Button
-									className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
-									isDisabled={!onDeleteArtist}
-									onPress={() => onDeleteArtist?.(artist.id)}
-								>
-									{m("deleteArtist")}
-								</Button>
-							)}
-						</div>
-					</div>
-				</div>
-			</header>
+				{onQueueDeletion ? (
+					<ArtistDeletionRequest
+						artistId={artist.id}
+						artists={artists}
+						releases={releases}
+						onQueue={onQueueDeletion}
+					/>
+				) : (
+					<Button
+						className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
+						isDisabled={!onDeleteArtist}
+						onPress={() => onDeleteArtist?.(artist.id)}
+					>
+						{m("deleteArtist")}
+					</Button>
+				)}
+			</div>
 			<div
 				ref={initialTags?.scope === "artist" ? initialTagsTarget : undefined}
 				tabIndex={initialTags?.scope === "artist" ? -1 : undefined}

@@ -31,6 +31,11 @@ import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
 import { MetadataCardActions } from "./MetadataCardActions";
 import {
+  type MetadataFieldDescriptor,
+  MetadataFieldGroup,
+  MetadataFieldsGrid,
+} from "./MetadataFieldPresentation";
+import {
   createMetadataDraftRowKey,
   type MetadataMovementDraft,
   type MetadataWorkDraft,
@@ -1028,13 +1033,23 @@ function LibraryScopedMetadataEditorSession({
         ? ["title", "content_advisory", "isrc"]
         : ["track_number", "disc_number"];
   const basicFieldKeySet = new Set(basicFieldKeys);
-  const renderField = ({ key, kind }: ReleaseField) => {
-    if (key === "genre") return null;
+  const scalarFieldKinds = new Set<ReleaseField["kind"]>([
+    "text",
+    "date",
+    "list",
+    "boolean",
+    "integer",
+    "number",
+    "advisory",
+  ]);
+  const isScalarField = ({ kind }: ReleaseField) => scalarFieldKinds.has(kind);
+  const fieldDescriptor = ({
+    key,
+    kind,
+  }: ReleaseField): MetadataFieldDescriptor | undefined => {
+    if (!scalarFieldKinds.has(kind)) return undefined;
     const field = editing ? draft[key] : saved[key];
-    const label = text.labels[key];
-    const rendered = Array.isArray(field.value)
-      ? field.value.join("\n")
-      : String(field.value);
+    const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
     const providerIdentifier =
       scope === "release" &&
       metadata &&
@@ -1049,6 +1064,94 @@ function LibraryScopedMetadataEditorSession({
       metadata && Object.hasOwn(metadata.envelope.desired, key);
     const inheritedKey =
       key === "key" && field.state === "absent" ? effectiveKey : undefined;
+    const notices: string[] = [];
+    if (inheritedKey?.scope === "recording") {
+      notices.push(text.inheritedFromRecording);
+    }
+    if (
+      field.state === "absent" &&
+      !hasDesiredIdentifier &&
+      providerIdentifier
+    ) {
+      notices.push(text.providerBaseline);
+    }
+    const display =
+      inheritedKey?.field.state === "value"
+        ? String(inheritedKey.field.value)
+        : inheritedKey?.field.state === "explicit_empty"
+          ? text.explicitEmpty
+          : field.state === "absent" &&
+              !hasDesiredIdentifier &&
+              providerIdentifier
+            ? providerIdentifier
+            : displayValue(field.state, field.value, text);
+    const value =
+      kind === "list"
+        ? (field.value as string[])
+        : kind === "boolean"
+          ? String(field.value)
+          : String(field.value);
+    const choices =
+      kind === "boolean"
+        ? [
+            { value: "true", label: `${text.value}: true` },
+            { value: "false", label: `${text.value}: false` },
+          ]
+        : kind === "advisory"
+          ? [
+              { value: "explicit", label: text.explicit },
+              { value: "clean", label: text.clean },
+            ]
+          : undefined;
+    return {
+      key,
+      label,
+      kind:
+        kind === "advisory" ? kind : (kind as MetadataFieldDescriptor["kind"]),
+      value,
+      editing,
+      disabled: saving,
+      displayValue: display,
+      state: field.state,
+      mode: {
+        label: text.mode,
+        absent: text.absent,
+        value: text.value,
+        explicitEmpty: text.explicitEmpty,
+      },
+      choices,
+      hint:
+        editing && field.state === "value"
+          ? kind === "date"
+            ? text.dateHint
+            : kind === "list"
+              ? text.listHint
+              : undefined
+          : undefined,
+      inputMode:
+        kind === "integer"
+          ? "numeric"
+          : kind === "number"
+            ? "decimal"
+            : kind === "date"
+              ? "text"
+              : undefined,
+      dataKeys: [key],
+      notices,
+      listMode: kind === "list" ? "lines" : undefined,
+      onChange: (next) => {
+        const value =
+          kind === "boolean" ? next === "true" : (next as MetadataValue);
+        updateField(key, { state: "value", value });
+      },
+      onStateChange: (state) => updateField(key, { state, value: field.value }),
+    };
+  };
+  const renderStructuredField = ({ key, kind }: ReleaseField) => {
+    if (kind !== "contributors" && kind !== "works" && kind !== "movement")
+      return null;
+    const field = editing ? draft[key] : saved[key];
+    const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
     return (
       <div
         key={key}
@@ -1396,7 +1499,7 @@ function LibraryScopedMetadataEditorSession({
                 updateField(key, { state: "value", value })
               }
             />
-          ) : kind === "movement" ? (
+          ) : (
             <StructuredMetadataField
               kind="movement"
               label={label}
@@ -1426,131 +1529,6 @@ function LibraryScopedMetadataEditorSession({
                 updateField(key, { state: "value", value })
               }
             />
-          ) : editing ? (
-            <div className="grid min-w-0 gap-1.5">
-              <label className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                <span>{text.mode}</span>
-                <select
-                  aria-label={`${label} — ${text.mode}`}
-                  className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                  value={field.state}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateField(key, {
-                      state: event.currentTarget.value as FieldState,
-                      value: field.value,
-                    })
-                  }
-                >
-                  <option value="absent">{text.absent}</option>
-                  <option value="value">{text.value}</option>
-                  <option value="explicit_empty">{text.explicitEmpty}</option>
-                </select>
-              </label>
-              {field.state === "value" ? (
-                kind === "list" ? (
-                  <textarea
-                    aria-label={label}
-                    className="min-h-20 w-full resize-y rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] p-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                    value={rendered}
-                    disabled={saving}
-                    onChange={(event) =>
-                      updateField(key, {
-                        state: "value",
-                        value: event.currentTarget.value.split("\n"),
-                      })
-                    }
-                  />
-                ) : kind === "boolean" || kind === "advisory" ? (
-                  <select
-                    aria-label={label}
-                    className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                    value={String(field.value)}
-                    disabled={saving}
-                    onChange={(event) =>
-                      updateField(key, {
-                        state: "value",
-                        value:
-                          kind === "boolean"
-                            ? event.currentTarget.value === "true"
-                            : event.currentTarget.value,
-                      })
-                    }
-                  >
-                    {kind === "boolean" ? (
-                      <>
-                        <option value="true">{text.value}: true</option>
-                        <option value="false">{text.value}: false</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="explicit">{text.explicit}</option>
-                        <option value="clean">{text.clean}</option>
-                      </>
-                    )}
-                  </select>
-                ) : (
-                  <input
-                    aria-label={label}
-                    className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                    type="text"
-                    inputMode={
-                      kind === "integer"
-                        ? "numeric"
-                        : kind === "number"
-                          ? "decimal"
-                          : kind === "date"
-                            ? "text"
-                            : undefined
-                    }
-                    value={rendered}
-                    disabled={saving}
-                    onChange={(event) =>
-                      updateField(key, {
-                        state: "value",
-                        value: event.currentTarget.value,
-                      })
-                    }
-                  />
-                )
-              ) : null}
-              {kind === "date" && field.state === "value" ? (
-                <span className="text-xs text-[var(--muted)]">
-                  {text.dateHint}
-                </span>
-              ) : null}
-              {kind === "list" && field.state === "value" ? (
-                <span className="text-xs text-[var(--muted)]">
-                  {text.listHint}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              <span className="block whitespace-pre-wrap break-words">
-                {inheritedKey?.field.state === "value"
-                  ? String(inheritedKey.field.value)
-                  : inheritedKey?.field.state === "explicit_empty"
-                    ? text.explicitEmpty
-                    : field.state === "absent" &&
-                        !hasDesiredIdentifier &&
-                        providerIdentifier
-                      ? providerIdentifier
-                      : displayValue(field.state, field.value, text)}
-              </span>
-              {inheritedKey?.scope === "recording" ? (
-                <span className="mt-1 block text-xs text-[var(--muted)]">
-                  {text.inheritedFromRecording}
-                </span>
-              ) : null}
-              {field.state === "absent" &&
-              !hasDesiredIdentifier &&
-              providerIdentifier ? (
-                <span className="mt-1 block text-xs text-[var(--muted)]">
-                  {text.providerBaseline}
-                </span>
-              ) : null}
-            </>
           )}
         </dd>
       </div>
@@ -1560,6 +1538,18 @@ function LibraryScopedMetadataEditorSession({
   const genres = scope === "release" ? (editing ? draft : saved).genre : null;
   const genreValue = genres?.value as GenreReference[] | undefined;
   const genreFields = fields.filter(({ key }) => key !== "genre");
+  const scalarDescriptors = (items: ReleaseField[]) =>
+    items.flatMap((field) => {
+      const descriptor = fieldDescriptor(field);
+      return descriptor ? [descriptor] : [];
+    });
+  const groupNames = [
+    ...new Set(
+      genreFields
+        .filter(({ key }) => !basicFieldKeySet.has(key))
+        .map(({ group }) => group),
+    ),
+  ];
   return (
     <section
       aria-label={title}
@@ -1674,35 +1664,49 @@ function LibraryScopedMetadataEditorSession({
             </section>
           </section>
         )}
-        <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {genreFields
-            .filter(({ key }) => basicFieldKeySet.has(key))
-            .map(renderField)}
-        </dl>
-        {[
-          ...new Set(
-            genreFields
-              .filter(({ key }) => !basicFieldKeySet.has(key))
-              .map(({ group }) => group),
-          ),
-        ].map((group) => (
-          <details
-            key={group}
-            className="min-w-0 rounded border border-[var(--line)]"
-          >
-            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-              {text.groups[group as keyof typeof text.groups]}
-            </summary>
-            <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 p-2 sm:grid-cols-2 lg:grid-cols-3">
-              {genreFields
-                .filter(
-                  (field) =>
-                    field.group === group && !basicFieldKeySet.has(field.key),
-                )
-                .map(renderField)}
-            </dl>
-          </details>
-        ))}
+        <MetadataFieldsGrid
+          columns={3}
+          fields={scalarDescriptors(
+            genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
+          )}
+        />
+        {groupNames.map((group) => {
+          const groupFields = genreFields.filter(
+            (field) =>
+              field.group === group && !basicFieldKeySet.has(field.key),
+          );
+          const label = text.groups[group as keyof typeof text.groups];
+          const structuredFields = groupFields.filter(
+            (field) => !isScalarField(field),
+          );
+          const descriptors = scalarDescriptors(groupFields);
+          if (!structuredFields.length) {
+            return (
+              <MetadataFieldGroup
+                key={group}
+                label={label}
+                fields={descriptors}
+                columns={3}
+              />
+            );
+          }
+          return (
+            <details
+              key={group}
+              className="min-w-0 rounded border border-[var(--line)]"
+            >
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                {label}
+              </summary>
+              <div className="grid min-w-0 gap-2 p-2">
+                <MetadataFieldsGrid columns={3} fields={descriptors} />
+                <dl className="m-0 grid min-w-0 grid-cols-1 gap-2">
+                  {structuredFields.map(renderStructuredField)}
+                </dl>
+              </div>
+            </details>
+          );
+        })}
         <details className="min-w-0 rounded border border-[var(--line)]">
           <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
             {text.groups.artistCredits}

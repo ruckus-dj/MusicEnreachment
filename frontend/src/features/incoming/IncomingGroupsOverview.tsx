@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   confirmIncomingGroups,
   getGetIncomingGroupMatchingQueryKey,
@@ -18,7 +18,10 @@ import {
   incomingSourceFileName,
   readIncomingSourceTrackOrder,
 } from "./apiMatchingSources";
-import { IncomingFileActions } from "./IncomingFileActions";
+import {
+  IncomingGroupsOverviewView,
+  type IncomingGroupViewRow,
+} from "./IncomingGroupsOverviewView";
 import {
   type IncomingGroupName,
   incomingGroupNameText,
@@ -32,8 +35,6 @@ import {
 import { incomingMessages } from "./incomingMessages";
 import { incomingOverviewOrder } from "./incomingOverviewOrder";
 
-const fileDragType = "application/x-melotrove-group-member";
-const cell = "border-b p-2 align-top wrap-anywhere";
 const overviewCopy = {
   en: {
     expand: (name: string) => `Files in ${name}`,
@@ -104,13 +105,11 @@ export function IncomingGroupsOverview({
   const ui = overviewCopy[locale];
   const queryClient = useQueryClient();
   const busy = useRef(false);
-  const dragging = useRef<{ groupId: string; memberId: string } | null>(null);
   const groupDisclosureRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingGroupFocus = useRef<{
     groupId: string;
     preventScroll: boolean;
   } | null>(null);
-  const [dropTarget, setDropTarget] = useState("");
   const [feedback, setFeedback] = useState<
     "moving" | "moved" | "split" | "stale" | "failed"
   >();
@@ -348,301 +347,113 @@ export function IncomingGroupsOverview({
     }
   }
 
+  const rows = groups.map((group): IncomingGroupViewRow => {
+    const opened = expandedGroupIds.includes(group.id);
+    const groupName = label(group.id);
+    const unready = new Set(group.unready_members ?? []);
+    const members = new Set([...(group.members ?? []), ...unready]);
+    const readyCount = members.size - unready.size;
+    /*
+     * Sort only this visual copy: the member set, stable row keys, move
+     * targets and the drag payload keep the server's original composition
+     * and ordering of actions unchanged.
+     */
+    const orderedMembers = opened
+      ? [...members]
+          .map((id) => {
+            const file = files.get(id);
+            return {
+              id,
+              ...readIncomingSourceTrackOrder(file?.tags),
+              name:
+                incomingSourceFileName(file?.locations?.[0]?.relative_path) ??
+                "",
+            };
+          })
+          .sort((left, right) =>
+            compareSourceFiles(left, right, "track", collator),
+          )
+      : [];
+    const paths = new Set(
+      [...members].flatMap((id) =>
+        (files.get(id)?.locations ?? []).map(
+          (location) => `${location.root_id}:${location.relative_path}`,
+        ),
+      ),
+    );
+    const destinations =
+      opened && groups.length > 1
+        ? groups
+            .filter((other) => other.id !== group.id)
+            .map((other) => ({
+              id: other.id,
+              name: label(other.id),
+              paths: folderPaths.get(other.id) ?? [],
+            }))
+        : [];
+    return {
+      id: group.id,
+      name: groupName,
+      secondary: group.manual ? copy.manualGrouping : copy.automaticGrouping,
+      members: members.size,
+      paths: paths.size,
+      ready: readyCount,
+      matchingHref: incomingGroupMatchingHref(group.id),
+      opened,
+      files: orderedMembers.map(({ id, trackNumber }) => {
+        const file = files.get(id);
+        return {
+          id,
+          trackNumber:
+            trackNumber ?? (tag(file, "TRACKNUMBER", "TRACK") || undefined),
+          title: tag(file, "TITLE") || ui.noTitle,
+          path: file?.locations?.[0]?.relative_path,
+          artist: tag(file, "ARTIST", "ALBUMARTIST") || copy.noValue,
+          album: tag(file, "ALBUM") || copy.noValue,
+          canMove: !unready.has(id) && groups.length > 1,
+          canCreateGroup: !unready.has(id) && readyCount > 1,
+        };
+      }),
+      destinations,
+    };
+  });
+
   return (
     <section aria-labelledby="incoming-overview-title">
       <h2 id="incoming-overview-title">{copy.overviewTitle}</h2>
       <p className="min-h-5 text-sm" role="status">
         {feedback && ui[feedback]}
       </p>
-      <div className="mt-2 min-w-0 overflow-x-auto">
-        <table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-sm">
-          <caption className="sr-only">{copy.overviewCaption}</caption>
-          <colgroup>
-            <col className="w-[36%]" />
-            <col className="w-[28%]" />
-            <col className="w-[14%]" />
-            <col className="w-[22%]" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th scope="col" className={cell}>
-                {copy.group}
-              </th>
-              <th scope="col" className={cell}>
-                {copy.uniqueFilesPaths}
-              </th>
-              <th scope="col" className={cell}>
-                {copy.readyTotal}
-              </th>
-              <th scope="col" className={cell}>
-                {copy.evaluationState}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((group) => {
-              const opened = expandedGroupIds.includes(group.id);
-              const groupName = label(group.id);
-              const unready = new Set(group.unready_members ?? []);
-              const members = new Set([...(group.members ?? []), ...unready]);
-              const readyCount = members.size - unready.size;
-              /*
-               * Sort only this visual copy: the member set, stable row keys,
-               * move targets and the drag payload keep the server's original
-               * composition and ordering of actions unchanged.
-               */
-              const orderedMembers = opened
-                ? [...members]
-                    .map((id) => {
-                      const file = files.get(id);
-                      return {
-                        id,
-                        ...readIncomingSourceTrackOrder(file?.tags),
-                        name:
-                          incomingSourceFileName(
-                            file?.locations?.[0]?.relative_path,
-                          ) ?? "",
-                      };
-                    })
-                    .sort((left, right) =>
-                      compareSourceFiles(left, right, "track", collator),
-                    )
-                : [];
-              const paths = new Set(
-                [...members].flatMap((id) =>
-                  (files.get(id)?.locations ?? []).map(
-                    (location) =>
-                      `${location.root_id}:${location.relative_path}`,
-                  ),
-                ),
-              );
-              const destinations =
-                opened && groups.length > 1
-                  ? groups
-                      .filter((other) => other.id !== group.id)
-                      .map((other) => ({
-                        id: other.id,
-                        name: label(other.id),
-                        paths: folderPaths.get(other.id) ?? [],
-                      }))
-                  : [];
-              const detailsId = `incoming-files-${group.id}`;
-              return (
-                <Fragment key={group.id}>
-                  <tr
-                    className={`cursor-pointer ${dropTarget === group.id || opened ? "bg-[var(--accent-soft)]" : "hover:bg-[var(--raised)]"}`}
-                    data-incoming-group={group.id}
-                    onClick={(event) => {
-                      if (
-                        !(event.target instanceof Element) ||
-                        event.target.closest("button,a")
-                      )
-                        return;
-                      toggle(group.id);
-                    }}
-                    onDragOver={(event) => {
-                      if (
-                        busy.current ||
-                        !dragging.current ||
-                        dragging.current.groupId === group.id
-                      )
-                        return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      setDropTarget(group.id);
-                    }}
-                    onDragLeave={(event) => {
-                      if (
-                        event.relatedTarget instanceof Node &&
-                        event.currentTarget.contains(event.relatedTarget)
-                      )
-                        return;
-                      setDropTarget((current) =>
-                        current === group.id ? "" : current,
-                      );
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const source = dragging.current;
-                      const transfer = event.dataTransfer.getData(fileDragType);
-                      dragging.current = null;
-                      setDropTarget("");
-                      if (source && transfer === source.memberId) {
-                        void move(
-                          source.groupId,
-                          source.memberId,
-                          group.id,
-                          false,
-                        );
-                      }
-                    }}
-                  >
-                    <td className={cell}>
-                      <button
-                        type="button"
-                        aria-expanded={opened}
-                        aria-controls={opened ? detailsId : undefined}
-                        aria-label={ui.expand(groupName)}
-                        className="font-semibold text-left wrap-anywhere"
-                        ref={(node) => {
-                          if (node)
-                            groupDisclosureRefs.current.set(group.id, node);
-                          else groupDisclosureRefs.current.delete(group.id);
-                        }}
-                        onClick={() => toggle(group.id)}
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          className={`mr-1 inline size-4 ${opened ? "rotate-90" : ""}`}
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          aria-hidden="true"
-                        >
-                          <path d="m6 4 4 4-4 4" />
-                        </svg>
-                        {groupName}
-                      </button>
-                      <p className="text-xs text-[var(--muted)]">
-                        {group.manual
-                          ? copy.manualGrouping
-                          : copy.automaticGrouping}
-                      </p>
-                    </td>
-                    <td className={cell}>
-                      {members.size} / {paths.size}
-                    </td>
-                    <td className={cell}>
-                      {readyCount} / {members.size}
-                    </td>
-                    <td className={cell}>
-                      <a
-                        className="text-[var(--accent)] underline"
-                        href={incomingGroupMatchingHref(group.id)}
-                      >
-                        {copy.openGroup(groupName)}
-                      </a>
-                    </td>
-                  </tr>
-                  {opened && (
-                    <tr id={detailsId}>
-                      <td colSpan={4} className="border-b p-2">
-                        <table
-                          className="w-full table-fixed text-left text-sm"
-                          aria-label={ui.expand(groupName)}
-                        >
-                          <thead>
-                            <tr className="bg-[var(--raised)]">
-                              <th scope="col" className="w-[8%] p-2">
-                                {ui.number}
-                              </th>
-                              <th scope="col" className="w-[29%] p-2">
-                                {ui.title}
-                              </th>
-                              <th scope="col" className="w-[19%] p-2">
-                                {ui.artist}
-                              </th>
-                              <th scope="col" className="w-[20%] p-2">
-                                {ui.album}
-                              </th>
-                              <th scope="col" className="w-[24%] p-2">
-                                {ui.actions}
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {orderedMembers.map(({ id, trackNumber }) => {
-                              const file = files.get(id);
-                              const title = tag(file, "TITLE") || ui.noTitle;
-                              const path = file?.locations?.[0]?.relative_path;
-                              const canMove =
-                                !unready.has(id) && groups.length > 1;
-                              const canCreateGroup =
-                                !unready.has(id) && readyCount > 1;
-                              return (
-                                <tr
-                                  key={id}
-                                  data-incoming-member={id}
-                                  draggable={canMove}
-                                  className={canMove ? "cursor-grab" : ""}
-                                  onDragStart={(event) => {
-                                    if (!canMove || busy.current) {
-                                      event.preventDefault();
-                                      return;
-                                    }
-                                    dragging.current = {
-                                      groupId: group.id,
-                                      memberId: id,
-                                    };
-                                    event.dataTransfer.setData(
-                                      fileDragType,
-                                      id,
-                                    );
-                                    event.dataTransfer.effectAllowed = "move";
-                                  }}
-                                  onDragEnd={() => {
-                                    dragging.current = null;
-                                    setDropTarget("");
-                                  }}
-                                >
-                                  <td className={cell}>
-                                    {trackNumber ??
-                                      (tag(file, "TRACKNUMBER", "TRACK") ||
-                                        copy.noValue)}
-                                  </td>
-                                  <td className={cell}>
-                                    <strong>{title}</strong>
-                                    {path && (
-                                      <p className="text-xs text-[var(--muted)]">
-                                        {path}
-                                      </p>
-                                    )}
-                                  </td>
-                                  <td className={cell}>
-                                    {tag(file, "ARTIST", "ALBUMARTIST") ||
-                                      copy.noValue}
-                                  </td>
-                                  <td className={cell}>
-                                    {tag(file, "ALBUM") || copy.noValue}
-                                  </td>
-                                  <td className={cell}>
-                                    {(canMove || canCreateGroup) && (
-                                      <IncomingFileActions
-                                        fileId={id}
-                                        fileTitle={title}
-                                        destinations={
-                                          canMove ? destinations : []
-                                        }
-                                        canCreateGroup={canCreateGroup}
-                                        isDisabled={feedback === "moving"}
-                                        onMove={(fileId, targetId) =>
-                                          void move(
-                                            group.id,
-                                            fileId,
-                                            targetId,
-                                            true,
-                                          )
-                                        }
-                                        onCreateGroup={(fileId) =>
-                                          void split(group.id, fileId)
-                                        }
-                                      />
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <IncomingGroupsOverviewView
+        className="mt-2"
+        labels={{
+          caption: copy.overviewCaption,
+          group: copy.group,
+          filesPaths: copy.uniqueFilesPaths,
+          ready: copy.readyTotal,
+          status: copy.evaluationState,
+          number: ui.number,
+          title: ui.title,
+          artist: ui.artist,
+          album: ui.album,
+          actions: ui.actions,
+          noTitle: ui.noTitle,
+          noValue: copy.noValue,
+          expand: ui.expand,
+          openGroup: copy.openGroup,
+        }}
+        rows={rows}
+        onToggle={toggle}
+        onMove={(groupId, memberId, targetGroupId, focus) =>
+          void move(groupId, memberId, targetGroupId, focus)
+        }
+        onSplit={(groupId, memberId) => void split(groupId, memberId)}
+        disclosureRef={(groupId, node) => {
+          if (node) groupDisclosureRefs.current.set(groupId, node);
+          else groupDisclosureRefs.current.delete(groupId);
+        }}
+        disabled={feedback === "moving"}
+      />
     </section>
   );
 }

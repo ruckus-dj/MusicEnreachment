@@ -5,16 +5,11 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { sourceMessage } from "../sources/sourceMessages";
 import { statusLabel } from "../sources/sourcesApi";
+import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
+import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
 
 function positionNumber(track: LibraryReleaseTrackResponse) {
   return track.displayed_number.trim() || String(track.position);
-}
-
-function formatDuration(duration: number | null, locale: "en" | "ru") {
-  if (duration === null)
-    return locale === "ru" ? "Не указана" : "Not specified";
-  const seconds = Math.floor(duration / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}${duration % 1000 ? `.${String(duration % 1000).padStart(3, "0")}` : ""}`;
 }
 
 export function ReleaseCreditList({
@@ -197,46 +192,14 @@ export function PositionIdentity({
   track: LibraryReleaseTrackResponse;
 }) {
   const { locale } = useI18n();
-  const copy =
-    locale === "ru"
-      ? {
-          position: "Позиция",
-          title: "Название позиции",
-          duration: "Длительность",
-          composition: "Композиция",
-          unspecified: "Не указано",
-          facts: "Сведения о позиции",
-        }
-      : {
-          position: "Position",
-          title: "Position title",
-          duration: "Duration",
-          composition: "Recording",
-          unspecified: "Not specified",
-          facts: "Position details",
-        };
   return (
-    <dl
-      className="library-release-position-facts"
-      aria-label={`${copy.facts} ${positionNumber(track)}`}
-    >
-      <div>
-        <dt>{copy.position}</dt>
-        <dd>{positionNumber(track)}</dd>
-      </div>
-      <div>
-        <dt>{copy.title}</dt>
-        <dd>{track.title || copy.unspecified}</dd>
-      </div>
-      <div>
-        <dt>{copy.duration}</dt>
-        <dd>{formatDuration(track.duration_ms, locale)}</dd>
-      </div>
-      <div>
-        <dt>{copy.composition}</dt>
-        <dd>{track.recording_title || copy.unspecified}</dd>
-      </div>
-    </dl>
+    <LibraryPositionIdentityView
+      locale={locale}
+      position={positionNumber(track)}
+      title={track.title}
+      durationMs={track.duration_ms}
+      recordingTitle={track.recording_title}
+    />
   );
 }
 
@@ -275,18 +238,6 @@ export function PositionSources({
   const copy =
     locale === "ru"
       ? {
-          section: "Источники аудио позиции",
-          heading: "Источники аудио",
-          details: "Сведения об источниках аудио",
-          variant: "Вариант",
-          decision: "Решение",
-          compatibility: "Совместимость",
-          policy: "Политика",
-          locations: "Расположения",
-          selected: "Выбран",
-          alternative: "Альтернатива",
-          compatible: "Совместим",
-          incompatible: "Несовместим",
           unspecified: "Не указано",
           root: "корень",
           enabled: "включён",
@@ -295,22 +246,8 @@ export function PositionSources({
           modified: "изменение",
           size: "размер",
           bytes: "байт",
-          noLocations: "Расположения источника не указаны.",
-          noSources: "Для этой позиции нет сохранённых сведений об источниках.",
         }
       : {
-          section: "Audio sources for position",
-          heading: "Audio sources",
-          details: "Audio source details",
-          variant: "Variant",
-          decision: "Decision",
-          compatibility: "Compatibility",
-          policy: "Policy",
-          locations: "Locations",
-          selected: "Selected",
-          alternative: "Alternative",
-          compatible: "Compatible",
-          incompatible: "Incompatible",
           unspecified: "Not specified",
           root: "root",
           enabled: "enabled",
@@ -319,81 +256,32 @@ export function PositionSources({
           modified: "modified",
           size: "size",
           bytes: "bytes",
-          noLocations: "No source locations are specified.",
-          noSources: "No saved source details are available for this position.",
         };
-  const sources = track.sources ?? [];
   return (
-    <section
-      aria-label={`${copy.section} ${positionNumber(track)}`}
-      className="library-release-sources"
-    >
-      <h3>{copy.heading}</h3>
-      {sources.length ? (
-        <section
-          className="library-release-table-scroll"
-          aria-label={copy.details}
-        >
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">{copy.variant}</th>
-                <th scope="col">{copy.decision}</th>
-                <th scope="col">{copy.compatibility}</th>
-                <th scope="col">{copy.policy}</th>
-                <th scope="col">{copy.locations}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sources.map((source, index) => (
-                <tr key={source.media_variant_id}>
-                  <th scope="row">{index + 1}</th>
-                  <td>
-                    {source.selected ? copy.selected : copy.alternative} ·{" "}
-                    {source.decision_method || copy.unspecified}
-                  </td>
-                  <td>
-                    {source.compatible ? copy.compatible : copy.incompatible}
-                  </td>
-                  <td>{source.policy_version || copy.unspecified}</td>
-                  <td>
-                    {source.locations?.length ? (
-                      <ul className="library-release-location-list">
-                        {source.locations.map((location) => (
-                          <li key={location.location_id}>
-                            <a
-                              href={`#/sources/${encodeURIComponent(location.root_id)}`}
-                            >
-                              {location.relative_path}
-                            </a>
-                            <span>
-                              {" "}
-                              · {copy.root}{" "}
-                              {rootStatusLabel(location.root_status, locale)}
-                              {location.root_enabled
-                                ? ` (${copy.enabled})`
-                                : ` (${copy.disabled})`}{" "}
-                              · {copy.probe}{" "}
-                              {probeStatusLabel(location.probe_status, locale)}{" "}
-                              · {copy.modified}{" "}
-                              {location.mtime || copy.unspecified} · {copy.size}{" "}
-                              {location.size_bytes} {copy.bytes}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <span>{copy.noLocations}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ) : (
-        <p>{copy.noSources}</p>
-      )}
-    </section>
+    <LibraryPositionSourcesView
+      locale={locale}
+      position={positionNumber(track)}
+      sources={(track.sources ?? []).map((source, index) => ({
+        id: source.media_variant_id,
+        label: String(index + 1),
+        selected: source.selected,
+        authority: {
+          decision: source.decision_method,
+          compatible: source.compatible,
+          policy: source.policy_version ?? "",
+          locations: (source.locations ?? []).map((location) => ({
+            id: location.location_id,
+            path: location.relative_path,
+            href: `#/sources/${encodeURIComponent(location.root_id)}`,
+            details: [
+              `${copy.root} ${rootStatusLabel(location.root_status, locale)} (${location.root_enabled ? copy.enabled : copy.disabled})`,
+              `${copy.probe} ${probeStatusLabel(location.probe_status, locale)}`,
+              `${copy.modified} ${location.mtime || copy.unspecified}`,
+              `${copy.size} ${location.size_bytes} ${copy.bytes}`,
+            ].join(" · "),
+          })),
+        },
+      }))}
+    />
   );
 }

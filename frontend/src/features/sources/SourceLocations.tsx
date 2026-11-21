@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-aria-components";
 import { listSourceLocations } from "../../api/generated/client";
 import type {
   SourceLocationResponse,
@@ -7,6 +6,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { SourceInventoryView } from "./SourceInventoryView";
 import { numberFormat, sourceMessage } from "./sourceMessages";
 import {
   fileCount,
@@ -206,70 +206,33 @@ export function SourceLocations({
           )}
           {locations.length > 0 && (
             <>
-              <div className="sources-table-wrap">
-                <table className="sources-table">
-                  <caption className="sources-visually-hidden">
-                    {t("filesCaption")}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("pathColumn")}</th>
-                      <th scope="col">{t("size")}</th>
-                      <th scope="col">{t("modified")}</th>
-                      <th scope="col">{t("audioCheck")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {locations.map((location) => (
-                      <tr key={location.id}>
-                        <th scope="row" data-label={t("pathColumn")}>
-                          <Link
-                            href={`#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`}
-                          >
-                            <code>{location.relative_path}</code>
-                          </Link>
-                        </th>
-                        <td data-label={t("size")}>
-                          {sizeLabel(location.size_bytes, locale)}
-                        </td>
-                        <td data-label={t("modified")}>
-                          {new Intl.DateTimeFormat(
-                            locale === "ru" ? "ru-RU" : "en-US",
-                            { dateStyle: "short", timeStyle: "short" },
-                          ).format(new Date(location.mtime))}
-                        </td>
-                        <td data-label={t("audioCheck")}>
-                          <span>
-                            <span
-                              className="sources-chip"
-                              data-status={location.probe_status}
-                            >
-                              {t(probeStatusMessage(location.probe_status))}
-                            </span>
-                            {location.probe_status === "no_audio" && (
-                              <span className="sources-note">
-                                {t("noAudioReason")}
-                              </span>
-                            )}
-                            {location.probe_status === "probe_error" && (
-                              <>
-                                {location.safe_error && (
-                                  <span className="sources-note">
-                                    {location.safe_error}
-                                  </span>
-                                )}
-                                <span className="sources-note">
-                                  {t("probeRetryNote")}
-                                </span>
-                              </>
-                            )}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <SourceInventoryView
+                locale={locale}
+                caption={t("filesCaption")}
+                rows={locations.map((location) => ({
+                  id: location.id,
+                  path: location.relative_path,
+                  href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
+                  size: sizeLabel(location.size_bytes, locale),
+                  modified: new Intl.DateTimeFormat(locale, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  }).format(new Date(location.mtime)),
+                  status: t(probeStatusMessage(location.probe_status)),
+                  statusCode: location.probe_status,
+                  notes:
+                    location.probe_status === "no_audio"
+                      ? [t("noAudioReason")]
+                      : location.probe_status === "probe_error"
+                        ? [
+                            ...(location.safe_error
+                              ? [location.safe_error]
+                              : []),
+                            t("probeRetryNote"),
+                          ]
+                        : undefined,
+                }))}
+              />
               <p className="sources-note">
                 {t("shownCount", {
                   count: fileCount(locations.length, locale),

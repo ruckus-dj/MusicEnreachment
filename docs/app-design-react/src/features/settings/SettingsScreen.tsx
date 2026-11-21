@@ -17,8 +17,10 @@ import {
 	defaultPublicationTemplate,
 	validDemoPublicationTemplate,
 } from "./publicationTemplateDemo";
+import { SettingsConflictDialog } from "./SettingsConflictDialog";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import { SettingsLeaveDialog } from "./SettingsLeaveDialog";
 import {
 	type ManagedPackageCardModel,
 	type ManagedPackageInstallation,
@@ -218,7 +220,6 @@ export function SettingsScreen({
 		path: string;
 		expected: string;
 	} | null>(null);
-	const [confirmingFromLeave, setConfirmingFromLeave] = useState(false);
 	const [outputFeedback, setOutputFeedback] = useState<
 		OutputResetFeedback | undefined
 	>();
@@ -883,13 +884,11 @@ export function SettingsScreen({
 
 	const closeOutputReset = () => {
 		setConfirming(null);
-		setConfirmingFromLeave(false);
 		setOutputFeedback(undefined);
 	};
-	const openOutputReset = (fromLeave = false, approval?: FolderReplacement) => {
+	const openOutputReset = (approval?: FolderReplacement) => {
 		if (confirmFolderConflict("outputDirectory", approval)) return;
 		setOutputFeedback(undefined);
-		setConfirmingFromLeave(fromLeave);
 		setConfirming({ path: candidate, expected: currentOutput });
 	};
 	const confirmOutputReset = () => {
@@ -1253,67 +1252,57 @@ export function SettingsScreen({
 				</SettingsTabPanel>
 			</SettingsTabs>
 			{leavePrompt && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => !open && setLeavePrompt(false)}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">{copy.leaveSettingsTitle}</Heading>
-						<p>{copy.leaveSettingsText}</p>
-						{(notice === "invalidTemplate" ||
-							notice === "invalidPath" ||
-							notice === "busy" ||
-							notice === "pathOverlap") && <p role="alert">{copy[notice]}</p>}
-						{draftStorageWarning && (
-							<p role="status">{copy.draftStorageWarning}</p>
-						)}
-						<Button onPress={() => setLeavePrompt(false)}>{copy.stay}</Button>
-						<Button onPress={() => leaveWithDraft(false)}>
-							{copy.leaveKeepDraft}
-						</Button>
-						<Button onPress={() => leaveWithDraft(true)}>
-							{copy.leaveDiscard}
-						</Button>
-						{!draftConflicts.length && (
-							<Button
-								onPress={() => {
-									if (outputDirty) {
-										openOutputReset(true);
-										return;
-									}
-									if (commitDraft()) leaveWithDraft(false);
-								}}
-							>
-								{copy.leaveSave}
-							</Button>
-						)}
-						{confirmingFromLeave && outputResetDialog}
-					</Dialog>
-				</Modal>
+				<SettingsLeaveDialog
+					title={copy.leaveSettingsTitle}
+					description={copy.leaveSettingsText}
+					dismissOnBackdrop
+					error={
+						notice === "invalidTemplate" ||
+						notice === "invalidPath" ||
+						notice === "busy" ||
+						notice === "pathOverlap"
+							? copy[notice]
+							: undefined
+					}
+					status={draftStorageWarning ? copy.draftStorageWarning : undefined}
+					actions={{
+						stay: { label: copy.stay, onPress: () => setLeavePrompt(false) },
+						keepDraft: {
+							label: copy.leaveKeepDraft,
+							onPress: () => leaveWithDraft(false),
+						},
+						discardDraft: {
+							label: copy.leaveDiscard,
+							onPress: () => leaveWithDraft(true),
+						},
+						save: {
+							label: copy.leaveSave,
+							isHidden: draftConflicts.length > 0,
+							onPress: () => {
+								if (outputDirty) {
+									openOutputReset();
+									return;
+								}
+								if (commitDraft()) leaveWithDraft(false);
+							},
+						},
+					}}
+				/>
 			)}
 			{(replacementPrompt || folderReplacement) && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => {
-						if (open) return;
+				<SettingsConflictDialog
+					title={copy.replaceSettingsTitle}
+					message={copy.replaceSettingsText}
+					details={folderReplacement}
+					dismissOnBackdrop
+					onDismiss={() => {
 						setReplacementPrompt(false);
 						setFolderReplacement(undefined);
 					}}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">{copy.replaceSettingsTitle}</Heading>
-						<p>{copy.replaceSettingsText}</p>
-						{folderReplacement && (
-							<p className="wrap-anywhere">
-								<code>{folderReplacement.saved}</code>
-								{" → "}
-								<code>{folderReplacement.draft}</code>
-							</p>
-						)}
-						<Button
-							onPress={() => {
+					actions={{
+						confirm: {
+							label: copy.confirmReplace,
+							onPress: () => {
 								setReplacementPrompt(false);
 								setFolderReplacement(undefined);
 								if (folderReplacement) {
@@ -1321,7 +1310,7 @@ export function SettingsScreen({
 										commitTemplate(folderReplacement);
 									else if (folderReplacement.field === "workDirectory")
 										commitWorkDirectory(folderReplacement);
-									else openOutputReset(false, folderReplacement);
+									else openOutputReset(folderReplacement);
 								} else if (pendingReplacement.current === "concurrency") {
 									const baseline = {
 										...draftState.baseline,
@@ -1336,20 +1325,17 @@ export function SettingsScreen({
 									setConflictAcknowledged(false);
 									setNotice("saved");
 								} else commitProviders(true);
-							}}
-						>
-							{copy.confirmReplace}
-						</Button>
-						<Button
-							onPress={() => {
+							},
+						},
+						cancel: {
+							label: copy.cancel,
+							onPress: () => {
 								setReplacementPrompt(false);
 								setFolderReplacement(undefined);
-							}}
-						>
-							{copy.cancel}
-						</Button>
-					</Dialog>
-				</Modal>
+							},
+						},
+					}}
+				/>
 			)}
 			{picker === "tools" && (
 				<DirectoryPicker
@@ -1363,7 +1349,7 @@ export function SettingsScreen({
 					}}
 				/>
 			)}
-			{!confirmingFromLeave && outputResetDialog}
+			{outputResetDialog}
 			{installPlan && (
 				<SettingsToolInstallDialog
 					locale={locale}

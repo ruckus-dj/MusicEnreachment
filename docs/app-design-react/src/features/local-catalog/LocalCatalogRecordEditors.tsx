@@ -1,17 +1,7 @@
 import { useState } from "react";
 import { Button } from "react-aria-components";
-import type { LocalProviderRecord } from "./localProviderModel";
+import { Checkbox } from "../../components/ui";
 import { GenrePicker, type GenreReference } from "../../metadata/GenrePicker";
-import {
-	Checkbox,
-	Label,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	Select,
-	SelectValue,
-	Button as UiButton,
-} from "../../components/ui";
 import {
 	formatLocalDuration,
 	parseLocalDuration,
@@ -19,7 +9,6 @@ import {
 import {
 	actions,
 	errorClass,
-	Field,
 	muted,
 	panel,
 	primary,
@@ -33,6 +22,8 @@ import type {
 	LocalArtistFormDraft,
 	LocalRecordingFormDraft,
 } from "./localCatalogModel";
+import type { LocalProviderRecord } from "./localProviderModel";
+import { OwnCatalogRecordFieldsView } from "./OwnCatalogRecordFieldsView";
 
 type GenreOption = { id: string; name: string };
 
@@ -96,30 +87,32 @@ export function LocalCatalogArtistForm({
 	);
 	return (
 		<section className={`${panel} grid gap-3`}>
-			<p className={muted}>{m("formRequiredNotice")}</p>
-			<div className="grid gap-2 sm:grid-cols-2">
-				<Field
-					label={`${m("name")} · ${m("required")}`}
-					value={name}
-					onChange={setName}
-					required
-				/>
-				<Field
-					label={`${m("sortName")} · ${m("optional")}`}
-					value={sortName}
-					onChange={setSortName}
-				/>
-				<Field
-					label={`${m("disambiguation")} · ${m("optional")}`}
-					value={disambiguation}
-					onChange={setDisambiguation}
-				/>
-				<Field
-					label={`${m("tagsCommaSeparated")} · ${m("optional")}`}
-					value={tags}
-					onChange={setTags}
-				/>
-			</div>
+			<OwnCatalogRecordFieldsView
+				notice={m("formRequiredNotice")}
+				fields={[
+					{
+						label: `${m("name")} · ${m("required")}`,
+						value: name,
+						onChange: setName,
+						required: true,
+					},
+					{
+						label: `${m("sortName")} · ${m("optional")}`,
+						value: sortName,
+						onChange: setSortName,
+					},
+					{
+						label: `${m("disambiguation")} · ${m("optional")}`,
+						value: disambiguation,
+						onChange: setDisambiguation,
+					},
+					{
+						label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+						value: tags,
+						onChange: setTags,
+					},
+				]}
+			/>
 			<ArtistGenres
 				genres={genres}
 				onGenres={setGenres}
@@ -208,60 +201,52 @@ export function LocalCatalogRecordingForm({
 	}
 	return (
 		<section className={`${panel} grid gap-3`}>
-			<p className={muted}>{m("formRequiredNotice")}</p>
-			<div className="grid gap-2 sm:grid-cols-2">
-				<Field
-					label={`${m("titleField")} · ${m("required")}`}
-					value={title}
-					onChange={setTitle}
-					required
-				/>
-				<Field
-					label={`${m("durationField")} · ${m("optional")}`}
-					value={duration}
-					onChange={(value) => {
-						setDuration(value);
-						setBadDuration(false);
-					}}
-					placeholder="3:24"
-				/>
-				<Field
-					label={`${m("disambiguation")} · ${m("optional")}`}
-					value={disambiguation}
-					onChange={setDisambiguation}
-				/>
-				<Field
-					label={`${m("isrcCommaSeparated")} · ${m("optional")}`}
-					value={isrcs}
-					onChange={setIsrcs}
-				/>
-				<Field
-					label={`${m("tagsCommaSeparated")} · ${m("optional")}`}
-					value={tags}
-					onChange={setTags}
-				/>
-				<div className="grid gap-1 text-xs font-medium">
-					<Select
-						selectedKey={explicit}
-						onSelectionChange={(key) => setExplicit(String(key ?? ""))}
-					>
-						<Label>
-							{m("explicit")} · {m("optional")}
-						</Label>
-						<UiButton>
-							<SelectValue />
-						</UiButton>
-						<Popover>
-							<ListBox>
-								<ListBoxItem id="">{m("unspecified")}</ListBoxItem>
-								<ListBoxItem id="true">{m("yes")}</ListBoxItem>
-								<ListBoxItem id="false">{m("no")}</ListBoxItem>
-							</ListBox>
-						</Popover>
-					</Select>
-				</div>
-			</div>
-			<p className={muted}>{m("durationHelp")}</p>
+			<OwnCatalogRecordFieldsView
+				notice={m("formRequiredNotice")}
+				help={m("durationHelp")}
+				fields={[
+					{
+						label: `${m("titleField")} · ${m("required")}`,
+						value: title,
+						onChange: setTitle,
+						required: true,
+					},
+					{
+						label: `${m("durationField")} · ${m("optional")}`,
+						value: duration,
+						onChange: (value) => {
+							setDuration(value);
+							setBadDuration(false);
+						},
+						placeholder: "3:24",
+					},
+					{
+						label: `${m("disambiguation")} · ${m("optional")}`,
+						value: disambiguation,
+						onChange: setDisambiguation,
+					},
+					{
+						label: `${m("isrcCommaSeparated")} · ${m("optional")}`,
+						value: isrcs,
+						onChange: setIsrcs,
+					},
+					{
+						label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+						value: tags,
+						onChange: setTags,
+					},
+				]}
+				choice={{
+					label: `${m("explicit")} · ${m("optional")}`,
+					value: explicit,
+					onChange: setExplicit,
+					options: [
+						{ id: "", label: m("unspecified") },
+						{ id: "true", label: m("yes") },
+						{ id: "false", label: m("no") },
+					],
+				}}
+			/>
 			{badDuration && (
 				<p className={errorClass} role="alert">
 					{m("badDuration")}

@@ -1,31 +1,6 @@
 import { useState } from "react";
-import type { SourceFiles } from "../library/catalogData";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
-import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
-import {
-	SourceRootList,
-	type SourceRootListRow,
-} from "./SourceRootList";
-import { SourceScanPanel } from "./SourceScanPanel";
-import type { SourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import { type Locale, useI18n } from "../../i18n";
-import { retainedCopyLabel } from "./retainedCopyPath";
-import { rootLocations } from "./sourceInventory";
-import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
-import {
-	blockStagedSourceQueue,
-	canRemoveSourceRoot,
-	eligibleSourceCopies,
-	processSourceQueue,
-	type RetainedSourceCopy,
-	removeEligibleCopy,
-	removeRootProcessingState,
-	retryCancelledSourceFile,
-	retrySourceStep,
-	type SourceProcessingState,
-	type SourceProcessingStep,
-} from "./sourceProcessingModel";
 import {
 	Button,
 	Dialog,
@@ -42,6 +17,30 @@ import {
 	SelectValue,
 	TextField,
 } from "../../components/ui";
+import type { SourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
+import { type Locale, useI18n } from "../../i18n";
+import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
+import type { SourceFiles } from "../library/catalogData";
+import { retainedCopyLabel } from "./retainedCopyPath";
+import { SourceInventoryView } from "./SourceInventoryView";
+import { SourceRootHeadingView } from "./SourceRootHeadingView";
+import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import { SourceScanPanel } from "./SourceScanPanel";
+import { rootLocations } from "./sourceInventory";
+import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
+import {
+	blockStagedSourceQueue,
+	canRemoveSourceRoot,
+	eligibleSourceCopies,
+	processSourceQueue,
+	type RetainedSourceCopy,
+	removeEligibleCopy,
+	removeRootProcessingState,
+	retryCancelledSourceFile,
+	retrySourceStep,
+	type SourceProcessingState,
+	type SourceProcessingStep,
+} from "./sourceProcessingModel";
 
 type Mode = "in_place" | "staged";
 export interface SourceRoot {
@@ -149,6 +148,9 @@ export function SourcesScreen({
 		? roots.find((item) => item.id === selectedRootId)
 		: undefined;
 	const demoScanState = root ? scans.states[root.id] : undefined;
+	const inventoryLocations = root?.lastSuccessfulScanAt
+		? rootLocations(files, root.id)
+		: [];
 	const rootFiles = root
 		? processing.files.filter((file) => file.rootId === root.id)
 		: [];
@@ -246,22 +248,16 @@ export function SourcesScreen({
 			{selectedRootId ? (
 				root ? (
 					<>
-						<header
-							className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
-						>
-							<div className="min-w-0">
-								<a href="#sources">{m("backToSources")}</a>
-								<h1 className={styles.pageTitle}>{root.name}</h1>
-								<p className={styles.pageDescription}>
-									<code className="[overflow-wrap:anywhere]">{root.path}</code>
-								</p>
-							</div>
-							<div className={styles.objectActions}>
-								{root.available === true && (
-									<a href="#review">{m("reviewGroups")}</a>
-								)}
-							</div>
-						</header>
+						<SourceRootHeadingView
+							title={root.name}
+							path={root.path}
+							back={{ href: "#sources", label: m("backToSources") }}
+							incoming={
+								root.available === true
+									? { href: "#review", label: m("reviewGroups") }
+									: undefined
+							}
+						/>
 						{noticeNode}
 						<SourceScanPanel
 							locale={locale}
@@ -274,6 +270,43 @@ export function SourcesScreen({
 							onRetry={() => startScan(root)}
 							startDisabled={root.available === false}
 						/>
+						{inventoryLocations.length > 0 && (
+							<SourceInventoryView
+								locale={locale}
+								rows={inventoryLocations.map((location) => {
+									const observed = rootFiles.find(
+										(item) => item.id === `${root.id}:${location.id}`,
+									);
+									const step = observed?.steps.find(
+										(item) => item.id === "audio_inspection",
+									);
+									const modified = location.mtime
+										? new Date(location.mtime)
+										: null;
+									return {
+										id: location.id,
+										path: location.path,
+										size:
+											location.size === undefined
+												? "—"
+												: new Intl.NumberFormat(locale, {
+														style: "unit",
+														unit: "byte",
+													}).format(location.size),
+										modified:
+											modified && Number.isFinite(modified.getTime())
+												? new Intl.DateTimeFormat(locale, {
+														dateStyle: "short",
+														timeStyle: "short",
+													}).format(modified)
+												: undefined,
+										status: step ? audioStepLabel(step) : m("audioNotChecked"),
+										statusCode:
+											step?.status === "failed" ? "probe_error" : undefined,
+									};
+								})}
+							/>
+						)}
 						<section className={styles.panel}>
 							<h2>{m("sourceSummary")}</h2>
 							<dl className="m-0 grid grid-cols-[minmax(130px,.3fr)_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs max-[600px]:grid-cols-1">

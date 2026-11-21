@@ -8,6 +8,7 @@ import {
 } from "../../api/generated/client";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
+import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
@@ -27,8 +28,6 @@ const artistScreenCopy = {
     artistLoadFailed: (status: number) =>
       `Could not load artist (HTTP ${status}).`,
     retry: "Retry",
-    artistReleaseSummary:
-      "Includes known cached groups; the discography may be incomplete.",
     loadingReleases: "Loading releases…",
     releaseLoadFailed: (status: number) =>
       `Could not load releases (HTTP ${status}).`,
@@ -62,8 +61,6 @@ const artistScreenCopy = {
     artistLoadFailed: (status: number) =>
       `Не удалось загрузить артиста (HTTP ${status}).`,
     retry: "Повторить",
-    artistReleaseSummary:
-      "Включая известные группы из кэша; дискография может быть неполной.",
     loadingReleases: "Загрузка релизов…",
     releaseLoadFailed: (status: number) =>
       `Не удалось загрузить релизы (HTTP ${status}).`,
@@ -209,38 +206,24 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         </section>
       ) : artist ? (
         <>
-          <header className="catalog-header">
-            <div>
-              <h1 id="artist-title">{artist.name}</h1>
-              {artist.disambiguation && (
-                <p className="catalog-muted">{artist.disambiguation}</p>
-              )}
-              <p className="catalog-muted">
-                {countLabel(artist.release_count, locale, {
-                  en: ["release", "releases"],
-                  ru: ["релиз", "релиза", "релизов"],
-                })}{" "}
-                ·{" "}
-                {countLabel(artist.position_count, locale, {
-                  en: ["position", "positions"],
-                  ru: ["позиция", "позиции", "позиций"],
-                })}{" "}
-                · {copy.withAudio}: {artist.available_position_count} ·{" "}
-                {artist.published_position_count} {copy.published}
-              </p>
-              <p className="catalog-muted">{copy.artistReleaseSummary}</p>
-              <LibraryDeletionControl
-                target={{ type: "artist", artistId }}
-                releaseTitle={artist.name}
-                onSnapshot={handleArtistDeletionSnapshot}
-              />
-            </div>
-            <div className="catalog-genre-list">
-              {artist.genres.map((genre: string) => (
-                <span key={genre}>{genre}</span>
-              ))}
-            </div>
-          </header>
+          <LibraryArtistHeadingView
+            locale={locale}
+            name={artist.name}
+            disambiguation={artist.disambiguation}
+            genres={artist.genres}
+            count={{
+              releases: artist.release_count,
+              positions: artist.position_count,
+              published: artist.published_position_count,
+              available: artist.available_position_count,
+            }}
+            includesCachedGroups
+          />
+          <LibraryDeletionControl
+            target={{ type: "artist", artistId }}
+            releaseTitle={artist.name}
+            onSnapshot={handleArtistDeletionSnapshot}
+          />
           <LibraryArtistMetadataCard
             key={artistId}
             artistId={artistId}

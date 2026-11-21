@@ -1,6 +1,7 @@
 import { Button, Disclosure, DisclosurePanel } from "react-aria-components";
 import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import { TagSnapshotView } from "../library/TagSnapshotView";
 import { numberFormat, sourceMessage } from "./sourceMessages";
 
 function measured(
@@ -151,26 +152,15 @@ export function SourceTechnicalResult({
           <p className="sources-note">{t("noAudioStreams")}</p>
         )}
       </section>
-      <section className="sources-panel" aria-labelledby="tags-title">
-        <h2 id="tags-title">{t("sourceTags")}</h2>
-        <dl className="sources-summary">
-          {Object.entries(result.tags).map(([key, values]) => (
-            <div key={key}>
-              <dt>
-                <code>{key}</code>
-              </dt>
-              <dd>
-                {values?.length
-                  ? values.map((value) => <p key={value}>{value}</p>)
-                  : unknown}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {!Object.keys(result.tags).length && (
-          <p className="sources-note">{t("noSourceTags")}</p>
-        )}
-      </section>
+      <TagSnapshotView
+        title={t("sourceTags")}
+        rows={Object.entries(result.tags).map(([key, values]) => ({
+          key,
+          values: values ?? [],
+        }))}
+        empty={t("noSourceTags")}
+        unknown={unknown}
+      />
       <Disclosure className="sources-panel sources-raw">
         <Button slot="trigger">{t("rawFfprobe")}</Button>
         <DisclosurePanel>

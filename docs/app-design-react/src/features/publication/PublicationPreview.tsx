@@ -1,33 +1,34 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
-import { PublicationFlow } from "./PublicationFlow";
-import { publicationArtistNotices } from "./publicationArtistNotices";
-import { upgradeAudioOnly } from "../library/trackActionModel";
 import {
+	type CatalogArtist,
 	catalogData,
 	effectivePublicationTags,
+	metadataChanged,
+	type OriginalRelease,
+	originalArtistName,
 	originalFiles,
 	originalReleases,
-	originalArtistName,
-	metadataChanged,
 	publicationMetadataIssueMessages,
-	type OriginalRelease,
 	type SourceFiles,
-	type CatalogArtist,
 } from "../library/catalogData";
+import { upgradeAudioOnly } from "../library/trackActionModel";
+import { individualPublicationDetails } from "./individualPublicationDetails";
+import { PublicationFlow } from "./PublicationFlow";
+import type { PublicationInspection } from "./PublicationInspector";
 import {
 	isMetadataPreviewFresh,
 	type MetadataPreviewToken,
 } from "./previewModel";
-import {
-	metadataSnapshotDiff,
-	publicationMetadataDiff,
-} from "./publicationMetadataDiff";
-import type { PublicationInspection } from "./PublicationInspector";
+import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
 	formatPublicationMessage,
 	publicationMessage,
 } from "./publicationMessages";
+import {
+	metadataSnapshotDiff,
+	publicationMetadataDiff,
+} from "./publicationMetadataDiff";
 
 import {
 	choosePublicationOutput,
@@ -205,6 +206,29 @@ export function PublicationPreview({
 				outputPath:
 					output?.path ?? publicationMessage(locale, "pathUnavailable"),
 				container: output?.container ?? publicationMessage(locale, "noFormat"),
+				details: individualPublicationDetails({
+					current: track.published,
+					tags:
+						mode === "audioUpgrade" && track.published
+							? (upgradeAudioOnly(track, files).published?.tags ??
+								track.published.tags)
+							: effectivePublicationTags(
+									release,
+									track,
+									availableArtists,
+									files,
+								),
+					path: output?.path,
+					source: file ? { codec: file.codec, path: file.path } : undefined,
+					coverHash:
+						mode === "audioUpgrade"
+							? (track.published?.coverHash ?? null)
+							: (track.coverHash ?? null),
+					lyrics:
+						mode === "audioUpgrade"
+							? (track.published?.lyrics ?? null)
+							: (track.lyrics ?? null),
+				}),
 				groups: track.published
 					? mode === "audioUpgrade"
 						? metadataSnapshotDiff(

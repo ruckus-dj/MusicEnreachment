@@ -1,12 +1,7 @@
 import { useState } from "react";
+import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import type { UiNotice } from "../../infrastructure/uiNotice";
-import { Button } from "../../components/ui";
-import {
-	publicationMetadataIssueMessages,
-	type CatalogArtist,
-	type OriginalRelease,
-} from "../library/catalogData";
 import {
 	applyPlan,
 	type IncomingFiles,
@@ -17,19 +12,25 @@ import {
 	sourceIds,
 	usableFile,
 } from "../incoming/incomingModel";
-import { metadataSnapshotDiff } from "./publicationMetadataDiff";
+import {
+	type CatalogArtist,
+	type OriginalRelease,
+	originalArtistName,
+	publicationMetadataIssueMessages,
+} from "../library/catalogData";
+import { individualPublicationDetails } from "./individualPublicationDetails";
+import { PublicationFlow } from "./PublicationFlow";
 import type { PublicationInspection } from "./PublicationInspector";
+import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
 	formatPublicationMessage,
 	publicationMessage,
 } from "./publicationMessages";
+import { metadataSnapshotDiff } from "./publicationMetadataDiff";
 import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
 } from "./publicationOutput";
-import { originalArtistName } from "../library/catalogData";
-import { publicationArtistNotices } from "./publicationArtistNotices";
-import { PublicationFlow } from "./PublicationFlow";
 
 const actionMessage = {
 	Создать: "create",
@@ -272,6 +273,22 @@ export function ContextPublicationPreview({
 				}),
 				onInclude: (included) =>
 					updateIncluded(String(row.targetTrack.id), included),
+				details: individualPublicationDetails({
+					current: row.previous ?? null,
+					tags: row.nextTags,
+					path: output
+						? rebuildSource
+							? output.path
+							: (row.previous?.path ?? output.path)
+						: undefined,
+					renderedPath: output?.path,
+					source: row.file
+						? { codec: row.file.codec, path: row.file.path }
+						: undefined,
+					coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
+					lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
+					downgrade: Boolean(row.downgrade && row.assignment?.included),
+				}),
 				groups: metadataSnapshotDiff(
 					row.previous?.tags ?? {},
 					row.nextTags,

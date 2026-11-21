@@ -51,19 +51,22 @@ source channel, а fixture макета такого происхождения 
 | Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
 | --- | --- | --- |
 | Оболочка, язык и тема | `routes/ShellView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Те же пути |
-| Источники и операции | `features/sources/SourceRootList.tsx`, `features/sources/SourceScanPanel.tsx`, `features/operations/OperationsList.tsx` | Те же пути |
-| Перенос файла | `components/AppButton.tsx`, `features/incoming/IncomingFileActions.tsx` | Те же пути |
+| Источники: список, заголовок корня, сканирование и таблица инвентаря | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
+| Операции: список, фильтры, поиск, сводка, пагинация и раскрытие строк | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts` | Те же пути |
+| Входящие: обзор групп и действия с файлами | `features/incoming/IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx`, `components/AppButton.tsx` | Те же пути |
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
 | Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
-| Собственный каталог | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx` | `features/own-catalog/` |
+| Собственный каталог: списки, карточки записей и поля форм артиста и композиции | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/` |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки и поля переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
+| Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
 | Первый запуск: каркас мастера, поля папок, карточки инструментов и выбор версий, MusicBrainz и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupMusicBrainzFields.tsx`, `SetupSummaryView.tsx` | Те же пути |
 | Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, вкладки, поиск, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogControls.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
-| Публикация: сводка по выбору, подготовка и инспектор релиза, сведения и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
+| Медиатека: заголовок артиста, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
+| Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 
 Это не утверждение, что экраны целиком используют одинаковый код. В частности,
 выборки каталога, управление операциями и получение жанров остаются в отдельных
@@ -74,15 +77,20 @@ source channel, а fixture макета такого происхождения 
 пути; макет показывает имена
 проверяемых программ, не имитируя серверные пути. Форма токена общая: макет
 имитирует сохранение и проверку без запросов в GitHub, а приложение выполняет
-их на сервере. Не переносились остальные диалоги настроек.
-В первом запуске совпадают каркас и отдельные поля, но не порядок
-шагов и не полные тела шагов. Список альбомов использует общие строки и раскрытие
+их на сервере. Запись, проверка конфликтов и управление переходами остаются
+в адаптерах. В первом запуске шаги папок используют общее представление,
+но приложение выбирает обе папки на одном шаге, а макет выбирает каталог
+публикации на отдельном шаге. Список альбомов использует общие строки и раскрытие
 позиций либо кэшированных изданий MusicBrainz; выборка и подсчёты остаются у провайдеров.
 Карточка артиста использует общий редактор; каталог жанров и запись остаются
 за провайдерами. В карточке релиза одно сохранение применяется к метаданным
-и жанрам. Действия редактирования, сохранения и отмены общие; поля формы релиза,
-записи и позиции, отдельные сценарии публикации из входящих и карточки трека
-пока не перенесены дословно.
+и жанрам. Общие поля работают с черновиками обоих приложений; представление
+структурированных метаданных не входит в эту пару. Инспектор показывает
+только доказательства, доступные соответствующему адаптеру: макет не выдаёт
+снимок fixture за серверную проверку источника, пути или возможности публикации.
+Постраничная загрузка инвентаря и отдельный файловый инспектор относятся к
+приложению; демонстрационные действия с копиями и выбор источника в карточке
+позиции не заменяют их.
 
 ## Проверка
 

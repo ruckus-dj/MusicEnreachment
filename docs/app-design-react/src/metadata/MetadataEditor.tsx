@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Heading, Modal } from "../components/ui";
 import { MetadataCardActions } from "../features/library/MetadataCardActions";
+import {
+	type MetadataFieldDescriptor,
+	MetadataFieldGroup,
+	MetadataFieldsGrid,
+} from "../features/library/MetadataFieldPresentation";
 import { useI18n } from "../i18n";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
@@ -128,171 +133,6 @@ function writeRoleContributors(
 
 function marker(keys: string[]) {
 	return { "data-metadata-keys": keys.join(",") };
-}
-
-function SimpleField({
-	field,
-	locale,
-	m,
-	value,
-	readOnly,
-	onChange,
-}: {
-	field: MetadataField;
-	locale: "en" | "ru";
-	m: (key: MetadataMessageKey) => string;
-	value: string[];
-	readOnly: boolean;
-	onChange: (value: string[]) => void;
-}) {
-	const label = metadataFieldLabel(field.key, locale);
-	const scalar = [
-		"text",
-		"date",
-		"integer",
-		"number",
-		"boolean",
-		"advisory",
-		"lyrics",
-	].includes(field.kind);
-	const type =
-		field.kind === "date"
-			? "text"
-			: field.kind === "integer" || field.kind === "number"
-				? "number"
-				: "text";
-	const values = value.length ? value : [""];
-	return (
-		<div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-			<span>{label}</span>
-			{scalar ? (
-				<>
-					{field.kind === "boolean" || field.kind === "advisory" ? (
-						<select
-							{...marker([field.key])}
-							aria-label={label}
-							disabled={readOnly}
-							className={inputClass}
-							value={value[0] ?? ""}
-							onChange={(event) =>
-								onChange(event.target.value ? [event.target.value] : [])
-							}
-						>
-							<option value="">{m("state.unspecified")}</option>
-							{(field.kind === "boolean"
-								? [
-										["1", m("value.yes")],
-										["0", m("value.no")],
-									]
-								: [
-										["0", m("value.unrated")],
-										["2", m("value.clean")],
-										["1", m("value.explicit")],
-										["4", m("value.explicitLegacy")],
-									]
-							).map(([v, label]) => (
-								<option key={v} value={v}>
-									{label}
-								</option>
-							))}
-						</select>
-					) : field.kind === "lyrics" ? (
-						<textarea
-							{...marker([field.key])}
-							aria-label={label}
-							readOnly={readOnly}
-							className={`${inputClass} h-24 resize-y py-1`}
-							value={value[0] ?? ""}
-							onChange={(event) =>
-								onChange(event.target.value ? [event.target.value] : [])
-							}
-						/>
-					) : (
-						<input
-							{...marker([field.key])}
-							aria-label={label}
-							readOnly={readOnly}
-							className={inputClass}
-							type={type}
-							inputMode={field.kind === "date" ? "text" : undefined}
-							placeholder={field.kind === "date" ? "YYYY[-MM[-DD]]" : undefined}
-							min={field.kind === "integer" ? "0" : undefined}
-							step={
-								field.kind === "integer"
-									? "1"
-									: field.kind === "number"
-										? "any"
-										: undefined
-							}
-							value={value[0] ?? ""}
-							onChange={(event) =>
-								onChange(event.target.value ? [event.target.value] : [])
-							}
-						/>
-					)}
-					{field.kind === "date" && <span>{m("hint.datePrecision")}</span>}
-				</>
-			) : (
-				<>
-					{values.map((item, index) => (
-						<div key={`${field.key}-${index}`} className="relative min-w-0">
-							<input
-								{...marker([field.key])}
-								aria-label={`${label}${values.length > 1 ? ` ${index + 1}` : ""}`}
-								readOnly={readOnly}
-								className={`${inputClass} pointer-coarse:h-10 ${readOnly ? "" : "pr-28 pointer-coarse:pr-44"}`}
-								value={item}
-								onChange={(event) =>
-									onChange(
-										values.map((entry, row) =>
-											row === index ? event.target.value : entry,
-										),
-									)
-								}
-							/>
-							<div
-								aria-hidden={readOnly}
-								className={`absolute right-1 top-0 flex h-8 items-center gap-0.5 pointer-coarse:h-10 pointer-coarse:[&_button]:min-w-10 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 ${readOnly ? "invisible" : ""}`}
-							>
-								<Button
-									aria-label={`${m("action.moveUp")}: ${label} ${index + 1}`}
-									isDisabled={readOnly || index === 0}
-									onPress={() => onChange(move(values, index, -1))}
-								>
-									↑
-								</Button>
-								<Button
-									aria-label={`${m("action.moveDown")}: ${label} ${index + 1}`}
-									isDisabled={readOnly || index === values.length - 1}
-									onPress={() => onChange(move(values, index, 1))}
-								>
-									↓
-								</Button>
-								<Button
-									aria-label={`${m("action.remove")}: ${label} ${index + 1}`}
-									isDisabled={readOnly}
-									onPress={() =>
-										onChange(values.filter((_, row) => row !== index))
-									}
-								>
-									×
-								</Button>
-								{index === values.length - 1 && (
-									<Button
-										aria-label={`${m("action.addValue")}: ${label}`}
-										isDisabled={readOnly}
-										onPress={() => onChange([...values, ""])}
-									>
-										+
-									</Button>
-								)}
-							</div>
-						</div>
-					))}
-				</>
-			)}
-		</div>
-	);
 }
 
 function ProviderGenreBaselineRow({
@@ -431,6 +271,69 @@ export function MetadataEditor({
 	const current = controlled || !editing ? values : draft;
 	const controlledValues = useRef(values);
 	controlledValues.current = values;
+	const simpleFieldDescriptor = (
+		field: MetadataField,
+		readOnly: boolean,
+	): MetadataFieldDescriptor => {
+		const fieldRows = rows(current, field.key);
+		const list = field.kind === "list" || field.kind === "identity";
+		const label = metadataFieldLabel(field.key, locale);
+		const kind: MetadataFieldDescriptor["kind"] =
+			field.kind === "lyrics"
+				? "lyrics"
+				: field.kind === "integer" ||
+						field.kind === "number" ||
+						field.kind === "boolean" ||
+						field.kind === "advisory" ||
+						field.kind === "date"
+					? field.kind
+					: list
+						? "list"
+						: "text";
+		return {
+			key: field.key,
+			label,
+			kind,
+			value: list ? fieldRows : (fieldRows[0] ?? ""),
+			editing: !readOnly,
+			presentation: "control",
+			dataKeys: [field.key],
+			emptyChoiceLabel:
+				field.kind === "boolean" || field.kind === "advisory"
+					? m("state.unspecified")
+					: undefined,
+			choices:
+				field.kind === "boolean"
+					? [
+							{ value: "1", label: m("value.yes") },
+							{ value: "0", label: m("value.no") },
+						]
+					: field.kind === "advisory"
+						? [
+								{ value: "0", label: m("value.unrated") },
+								{ value: "2", label: m("value.clean") },
+								{ value: "1", label: m("value.explicit") },
+								{ value: "4", label: m("value.explicitLegacy") },
+							]
+						: undefined,
+			hint: field.kind === "date" ? m("hint.datePrecision") : undefined,
+			placeholder: field.kind === "date" ? "YYYY[-MM[-DD]]" : undefined,
+			nativeType:
+				field.kind === "integer" || field.kind === "number" ? "number" : "text",
+			inputMode: field.kind === "date" ? "text" : undefined,
+			listMode: list ? "rows" : undefined,
+			listActions: list
+				? {
+						add: `${m("action.addValue")}: ${label}`,
+						moveUp: (index) => `${m("action.moveUp")}: ${label} ${index}`,
+						moveDown: (index) => `${m("action.moveDown")}: ${label} ${index}`,
+						remove: (index) => `${m("action.remove")}: ${label} ${index}`,
+					}
+				: undefined,
+			onChange: (next) =>
+				setValue(field.key, Array.isArray(next) ? next : next ? [next] : []),
+		};
+	};
 	const setValue = (key: string, next: string[]) => {
 		if (!next.some(Boolean)) next = [];
 		if (controlled) {
@@ -766,21 +669,17 @@ export function MetadataEditor({
 				genres !== undefined) && (
 				<section className="grid min-w-0 gap-2">
 					<h3 className="m-0 text-sm font-semibold">{m("group.basic")}</h3>
-					<div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-						{basicFields.map((field) => (
-							<SimpleField
-								key={field.key}
-								field={field}
-								locale={locale}
-								m={m}
-								value={rows(current, field.key)}
-								readOnly={
+					<div className="grid min-w-0 gap-2">
+						<MetadataFieldsGrid
+							columns={3}
+							fields={basicFields.map((field) =>
+								simpleFieldDescriptor(
+									field,
 									!editing ||
-									(field.kind === "identity" && field.key !== "asin")
-								}
-								onChange={(next) => setValue(field.key, next)}
-							/>
-						))}
+										(field.kind === "identity" && field.key !== "asin"),
+								),
+							)}
+						/>
 						{editableFields
 							.filter((field) => field.kind === "genres")
 							.map((field) => (
@@ -1362,165 +1261,73 @@ export function MetadataEditor({
 								<h3 className="m-0 text-sm font-semibold">
 									{groupHeading("movement")}
 								</h3>
-								<div className="grid gap-2 sm:grid-cols-3">
-									{fields
+								<MetadataFieldsGrid
+									columns={3}
+									fields={fields
 										.filter((field) => field.group === "movement")
-										.map((field) => (
-											<SimpleField
-												key={field.key}
-												field={field}
-												locale={locale}
-												m={m}
-												value={rows(current, field.key)}
-												readOnly={!editing}
-												onChange={(next) => setValue(field.key, next)}
-											/>
-										))}
-								</div>
+										.map((field) => simpleFieldDescriptor(field, !editing))}
+								/>
 							</section>
 						)}
 					</details>
 				)}
 				{otherSections.map(([group, sectionFields]) => (
-					<details key={group} className="min-w-0">
-						<summary className={disclosureSummaryClass}>
-							{groupHeading(group)} ·{" "}
-							{metadataSummary(sectionFields, current, locale)}
-						</summary>
-						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
-							<h3 className="m-0 text-sm font-semibold">
-								{groupHeading(group)}
-							</h3>
-							<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-								{sectionFields
-									.filter(
-										(field) =>
-											!basicKeys.has(field.key) &&
-											field.kind !== "lyrics" &&
-											!consumed.has(field.key) &&
-											!(
-												field.kind === "identity" &&
-												(field.key === "musicbrainz_artistid" ||
-													field.key === "musicbrainz_albumartistid")
-											),
-									)
-									.map((field) =>
-										field.kind === "genres" ? (
-											<div key={field.key} {...marker([field.key])}>
-												<GenrePicker
-													label={metadataFieldLabel(field.key, locale)}
-													readOnly={!editing}
-													loaded={genresLoaded}
-													onLoad={onLoadGenres}
-													value={genresValue}
-													onChange={(next) => {
-														if (controlled) {
-															onDraftChange?.(
-																{
-																	...values,
-																	genre: next.map((item) => item.name),
-																},
-																{ genres: next },
-															);
-															return;
-														}
-														setDraftGenres(next);
-														setDirtyGenres(true);
-														setValue(
-															"genre",
-															next.map((item) => item.name),
-														);
-													}}
-												/>
-											</div>
-										) : (
-											<SimpleField
-												key={field.key}
-												field={field}
-												locale={locale}
-												m={m}
-												value={rows(current, field.key)}
-												readOnly={
-													!editing ||
-													(field.kind === "identity" && field.key !== "asin")
-												}
-												onChange={(next) => setValue(field.key, next)}
-											/>
-										),
-									)}
-							</div>
-						</section>
-					</details>
+					<MetadataFieldGroup
+						key={group}
+						label={groupHeading(group)}
+						summary={metadataSummary(sectionFields, current, locale)}
+						columns={4}
+						heading
+						fields={sectionFields
+							.filter(
+								(field) =>
+									field.key !== "musicbrainz_artistid" &&
+									field.key !== "musicbrainz_albumartistid",
+							)
+							.map((field) =>
+								simpleFieldDescriptor(
+									field,
+									!editing ||
+										(field.kind === "identity" && field.key !== "asin"),
+								),
+							)}
+					/>
 				))}
 				{fields
 					.filter((field) => field.kind === "lyrics")
 					.map((field) => (
-						<details key={field.key} className="min-w-0">
-							<summary className={disclosureSummaryClass}>
-								{m("group.lyrics")} ·{" "}
-								{rows(current, field.key).some(Boolean)
+						<MetadataFieldGroup
+							key={field.key}
+							label={m("group.lyrics")}
+							summary={
+								rows(current, field.key).some(Boolean)
 									? m("state.filled")
-									: m("state.empty")}
-							</summary>
-							<section className="grid gap-2 p-2" {...marker([field.key])}>
-								<SimpleField
-									field={field}
-									locale={locale}
-									m={m}
-									value={rows(current, field.key)}
-									readOnly={!editing}
-									onChange={(next) => setValue(field.key, next)}
-								/>
-							</section>
-						</details>
+									: m("state.empty")
+							}
+							columns={1}
+							fields={[simpleFieldDescriptor(field, !editing)]}
+						/>
 					))}
 				{extraFields.length > 0 && (
-					<details className="min-w-0">
-						<summary className={disclosureSummaryClass}>
-							{m("group.extraTags")} ·{" "}
-							{extraFields.filter((field) => field.value).length}{" "}
-							{m("state.filled")}
-						</summary>
-						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
-							<h3 className="m-0 text-sm font-semibold">
-								{m("group.extraDetails")}
-							</h3>
-							<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-								{extraFields.map((field) => (
-									<label
-										key={field.key}
-										className="grid min-w-0 gap-1 text-xs text-[var(--muted)]"
-									>
-										<span>
-											{metadataExtraFieldLabel(field.key, field.label, locale)}
-										</span>
-										<input
-											aria-label={metadataExtraFieldLabel(
-												field.key,
-												field.label,
-												locale,
-											)}
-											className={inputClass}
-											readOnly={!editing}
-											value={
-												editing ? (draftExtras[field.key] ?? "") : field.value
-											}
-											onChange={(event) => {
-												setDraftExtras((state) => ({
-													...state,
-													[field.key]: event.target.value,
-												}));
-												setDirtyExtras((state) =>
-													new Set(state).add(field.key),
-												);
-												setError(undefined);
-											}}
-										/>
-									</label>
-								))}
-							</div>
-						</section>
-					</details>
+					<MetadataFieldGroup
+						label={m("group.extraTags")}
+						summary={`${extraFields.filter((field) => field.value).length} ${m("state.filled")}`}
+						columns={4}
+						fields={extraFields.map((field) => ({
+							key: field.key,
+							label: metadataExtraFieldLabel(field.key, field.label, locale),
+							kind: "text",
+							presentation: "control",
+							value: editing ? (draftExtras[field.key] ?? "") : field.value,
+							editing,
+							onChange: (next) => {
+								if (typeof next !== "string") return;
+								setDraftExtras((state) => ({ ...state, [field.key]: next }));
+								setDirtyExtras((state) => new Set(state).add(field.key));
+								setError(undefined);
+							},
+						}))}
+					/>
 				)}
 			</div>
 			{displayedError && (

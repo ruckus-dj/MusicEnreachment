@@ -66,3 +66,52 @@ export function SetupDirectoryFieldsView({
     </div>
   );
 }
+
+const bodyCopy = {
+  en: {
+    server:
+      "These paths belong to the server, not this computer. The output directory must be empty.",
+    tools: "Choose an absolute server directory. It is checked when selected.",
+    output: "Choose the directory for new publications.",
+    publication: "Publication",
+    selected: "Directory selected",
+  },
+  ru: {
+    server:
+      "Пути относятся к серверу, а не к этому компьютеру. Каталог публикации должен быть пустым.",
+    tools: "Выберите абсолютный каталог на сервере. Он проверяется при выборе.",
+    output: "Выберите каталог для новых публикаций.",
+    publication: "Публикация",
+    selected: "Каталог выбран",
+  },
+} as const;
+
+export function SetupDirectoryStepBody({
+  kind,
+  selected,
+  ...fields
+}: Omit<SetupDirectoryFieldsViewProps, "description" | "aria-describedby"> & {
+  kind: "server" | "tools" | "output";
+  selected?: boolean;
+}) {
+  const text = bodyCopy[fields.locale];
+  return (
+    <section className="grid min-w-0 gap-3">
+      {kind === "output" && (
+        <>
+          <h3 className="m-0 font-semibold">{text.publication}</h3>
+          <p className="m-0">{text.output}</p>
+        </>
+      )}
+      <SetupDirectoryFieldsView
+        {...fields}
+        description={kind === "tools" ? text.tools : undefined}
+        aria-describedby={
+          kind === "server" ? "setup-directory-help" : undefined
+        }
+      />
+      {kind === "server" && <p id="setup-directory-help">{text.server}</p>}
+      {kind === "tools" && selected && <p role="status">{text.selected}</p>}
+    </section>
+  );
+}

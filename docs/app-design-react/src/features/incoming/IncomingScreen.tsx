@@ -1,6 +1,21 @@
-import { Fragment, useEffect, useRef, useState } from "react";
-import type { CatalogArtist } from "../library/catalogData";
+import { useEffect, useRef, useState } from "react";
+import { Button, PageHeader, Panel } from "../../components/ui";
 import { useI18n } from "../../i18n";
+import { formatUiNotice } from "../../infrastructure/uiNotice";
+import type { CatalogArtist } from "../library/catalogData";
+import {
+	compareSourceFiles,
+	readSourceTrackOrder,
+} from "../matching/sourceFileOrder";
+import {
+	IncomingGroupsOverviewView,
+	type IncomingGroupViewRow,
+} from "./IncomingGroupsOverviewView";
+import {
+	type IncomingMessage,
+	incomingGroupsCount,
+	incomingMessage,
+} from "./incomingMessages";
 import {
 	artistName,
 	createIncomingState,
@@ -13,18 +28,6 @@ import {
 	runAutomaticMatching,
 	usableFile,
 } from "./incomingModel";
-import {
-	compareSourceFiles,
-	readSourceTrackOrder,
-} from "../matching/sourceFileOrder";
-import { Button, Link, PageHeader, Panel } from "../../components/ui";
-import { formatUiNotice } from "../../infrastructure/uiNotice";
-import { IncomingFileActions } from "./IncomingFileActions";
-import {
-	type IncomingMessage,
-	incomingGroupsCount,
-	incomingMessage,
-} from "./incomingMessages";
 import { incomingOverviewRows } from "./incomingOverview";
 import { canSplitGroup, splitFileIntoNewGroup } from "./incomingSplitModel";
 
@@ -77,8 +80,6 @@ export function IncomingScreen({
 	);
 	const state = givenState ?? localState;
 	const [hash, setHash] = useState(() => window.location.hash);
-	const drag = useRef<{ groupId: string; fileId: string } | null>(null);
-	const [dropTarget, setDropTarget] = useState("");
 	const groupDisclosureRefs = useRef(new Map<string, HTMLButtonElement>());
 	const pendingGroupFocus = useRef<{
 		groupId: string;
@@ -193,6 +194,74 @@ export function IncomingScreen({
 		locale,
 		roots.map((root) => root.path),
 	);
+	const overviewLabels = {
+		caption: msg("overviewCaption"),
+		group: msg("group"),
+		filesPaths: msg("uniqueFilesPaths"),
+		ready: msg("readyTotal"),
+		status: msg("evaluationState"),
+		empty: msg("noGroups"),
+		number: msg("columnNumber"),
+		title: msg("columnTitle"),
+		artist: msg("columnArtist"),
+		album: msg("columnAlbum"),
+		actions: msg("columnActions"),
+		noTitle: msg("missingFileTitle"),
+		noValue: msg("noValue"),
+		expand: (name: string) => msg("filesIn", { name }),
+		openGroup: (name: string) => msg("openGroup", { name }),
+	};
+	const viewRows = rows.map(
+		({
+			group,
+			name,
+			memberCount,
+			pathCount,
+			readyCount,
+			paths,
+		}): IncomingGroupViewRow => {
+			const opened = expanded.includes(group.id);
+			const splitEnabled = canSplitGroup(group, files);
+			const moveDestinations = rows
+				.filter((destinationRow) => destinationRow.group.id !== group.id)
+				.map((destinationRow) => ({
+					id: destinationRow.group.id,
+					name: destinationRow.name,
+					paths: destinationRow.folderPaths,
+				}));
+			const fileRows = opened
+				? sortedMembers(group.fileIds).map(({ id, trackNumber }) => {
+						const file = files[id];
+						const tag = (key: string) => file?.tags?.[key]?.join(" · ");
+						return {
+							id,
+							trackNumber: trackNumber ?? tag("TRACKNUMBER"),
+							title: tag("TITLE") || msg("missingFileTitle"),
+							path: file?.path,
+							artist: tag("ARTIST") || tag("ALBUMARTIST") || msg("noValue"),
+							album: tag("ALBUM") || msg("noValue"),
+							canMove: moveDestinations.length > 0,
+							canCreateGroup: splitEnabled && usableFile(file),
+						};
+					})
+				: [];
+			return {
+				id: group.id,
+				name,
+				secondary:
+					artistName(group.artistId, artists) || msg("artistNotSpecified"),
+				status: renderReason(group.reason),
+				members: memberCount,
+				paths: pathCount,
+				ready: readyCount,
+				matchingHref: `#match/${group.id}`,
+				opened,
+				files: fileRows,
+				pathEvidence: paths,
+				destinations: moveDestinations,
+			};
+		},
+	);
 	const runAuto = () => {
 		const nextReleases = structuredClone(releases);
 		const count = runAutomaticMatching(
@@ -305,244 +374,20 @@ export function IncomingScreen({
 						</span>
 					</div>
 				</header>
-				<div className="min-w-0 overflow-x-auto">
-					<table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0">
-						<caption className="sr-only">{msg("overviewCaption")}</caption>
-						<colgroup>
-							<col className="w-[36%]" />
-							<col className="w-[28%]" />
-							<col className="w-[14%]" />
-							<col className="w-[22%]" />
-						</colgroup>
-						<thead>
-							<tr>
-								<th
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
-									scope="col"
-								>
-									{msg("group")}
-								</th>
-								<th
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
-									scope="col"
-								>
-									{msg("uniqueFilesPaths")}
-								</th>
-								<th
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
-									scope="col"
-								>
-									{msg("readyTotal")}
-								</th>
-								<th
-									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 align-top text-[10px] font-semibold wrap-anywhere"
-									scope="col"
-								>
-									{msg("evaluationState")}
-								</th>
-							</tr>
-						</thead>
-						<tbody>
-							{rows.length === 0 && (
-								<tr>
-									<td
-										className="p-6 text-center text-[var(--muted)]"
-										colSpan={4}
-									>
-										{msg("noGroups")}
-									</td>
-								</tr>
-							)}
-							{rows.map(
-								({
-									group,
-									name,
-									memberCount,
-									pathCount,
-									paths,
-									readyCount,
-								}) => {
-									const splitEnabled = canSplitGroup(group, files);
-									const moveDestinations = rows
-										.filter(
-											(destinationRow) => destinationRow.group.id !== group.id,
-										)
-										.map((destinationRow) => ({
-											id: destinationRow.group.id,
-											name: destinationRow.name,
-											paths: destinationRow.folderPaths,
-										}));
-									return (
-										<Fragment key={group.id}>
-											<tr
-												className={`cursor-pointer ${dropTarget === group.id || expanded.includes(group.id) ? "bg-[var(--accent-soft)]" : ""}`}
-												onClick={(event) => {
-													if (
-														event.target instanceof Element &&
-														!event.target.closest("a,button")
-													)
-														toggleGroup(group.id);
-												}}
-												onDragOver={(event) => {
-													if (
-														!drag.current ||
-														drag.current.groupId === group.id
-													)
-														return;
-													event.preventDefault();
-													event.dataTransfer.dropEffect = "move";
-													setDropTarget(group.id);
-												}}
-												onDragLeave={(event) => {
-													if (
-														event.relatedTarget instanceof Node &&
-														event.currentTarget.contains(event.relatedTarget)
-													)
-														return;
-													setDropTarget((current) =>
-														current === group.id ? "" : current,
-													);
-												}}
-												onDrop={(event) => {
-													event.preventDefault();
-													const source = drag.current;
-													drag.current = null;
-													setDropTarget("");
-													if (
-														source &&
-														event.dataTransfer.getData(
-															"application/x-melotrove-group-member",
-														) === source.fileId
-													)
-														moveFile(source.groupId, source.fileId, group.id);
-												}}
-											>
-												<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
-													<button
-														type="button"
-														className="text-left font-semibold wrap-anywhere"
-														aria-expanded={expanded.includes(group.id)}
-														onClick={() => toggleGroup(group.id)}
-														ref={(node) => {
-															if (node)
-																groupDisclosureRefs.current.set(group.id, node);
-															else groupDisclosureRefs.current.delete(group.id);
-														}}
-													>
-														{name}
-													</button>
-													<p className="m-0 mt-0.5 text-[11px] text-[var(--muted)] wrap-anywhere">
-														{artistName(group.artistId, artists) ||
-															msg("artistNotSpecified")}
-													</p>
-												</td>
-												<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
-													<span className="block whitespace-nowrap">
-														{memberCount} / {pathCount}
-													</span>
-												</td>
-												<td className="border-b border-[var(--line)] px-2 py-1.5 align-top">
-													<span className="whitespace-nowrap">
-														{readyCount} / {memberCount}
-													</span>
-												</td>
-												<td className="border-b border-[var(--line)] px-2 py-1.5 align-top text-[11px] wrap-anywhere">
-													<Link
-														className="block font-semibold"
-														href={`#match/${group.id}`}
-													>
-														{msg("openGroup", { name })}
-													</Link>
-													{renderReason(group.reason)}
-												</td>
-											</tr>
-											{expanded.includes(group.id) && (
-												<tr>
-													<td
-														colSpan={4}
-														className="border-b border-[var(--line)] px-2 py-1.5"
-													>
-														<ul className="m-0 list-none p-0 max-sm:sticky max-sm:left-0 max-sm:w-[calc(100vw-3rem)] max-sm:min-w-0">
-															{sortedMembers(group.fileIds).map((row) => {
-																const { id, trackNumber } = row;
-																const file = files[id];
-																const tag = (key: string) =>
-																	file?.tags?.[key]?.join(" · ");
-																const title =
-																	tag("TITLE") || msg("missingFileTitle");
-																const canCreateGroup =
-																	splitEnabled && usableFile(file);
-																return (
-																	<li
-																		key={id}
-																		draggable
-																		className="grid cursor-grab grid-cols-[8%_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[var(--line)] p-2 wrap-anywhere"
-																		onDragStart={(event) => {
-																			drag.current = {
-																				groupId: group.id,
-																				fileId: id,
-																			};
-																			event.dataTransfer.setData(
-																				"application/x-melotrove-group-member",
-																				id,
-																			);
-																			event.dataTransfer.effectAllowed = "move";
-																		}}
-																		onDragEnd={() => {
-																			drag.current = null;
-																			setDropTarget("");
-																		}}
-																	>
-																		<span>
-																			{trackNumber ??
-																				(tag("TRACKNUMBER") || "—")}
-																		</span>
-																		<strong>{title}</strong>
-																		<span>
-																			{tag("ARTIST") ||
-																				tag("ALBUMARTIST") ||
-																				"—"}
-																		</span>
-																		<span>{tag("ALBUM") || "—"}</span>
-																		<div className="flex justify-end">
-																			<IncomingFileActions
-																				fileId={id}
-																				fileTitle={title}
-																				destinations={moveDestinations}
-																				canCreateGroup={canCreateGroup}
-																				onMove={(fileId, destinationId) =>
-																					commitMove(
-																						group.id,
-																						fileId,
-																						destinationId,
-																					)
-																				}
-																				onCreateGroup={(fileId) =>
-																					commitSplit(group.id, fileId)
-																				}
-																			/>
-																		</div>
-																	</li>
-																);
-															})}
-														</ul>
-														<ul className="m-0 list-none p-2 text-[11px] text-[var(--muted)]">
-															{paths.map((path) => (
-																<li className="wrap-anywhere" key={path.key}>
-																	{path.label}
-																</li>
-															))}
-														</ul>
-													</td>
-												</tr>
-											)}
-										</Fragment>
-									);
-								},
-							)}
-						</tbody>
-					</table>
-				</div>
+				<IncomingGroupsOverviewView
+					labels={overviewLabels}
+					rows={viewRows}
+					onToggle={toggleGroup}
+					onMove={(groupId, memberId, targetGroupId, focus) => {
+						if (focus) commitMove(groupId, memberId, targetGroupId);
+						else moveFile(groupId, memberId, targetGroupId);
+					}}
+					onSplit={(groupId, memberId) => commitSplit(groupId, memberId)}
+					disclosureRef={(groupId, node) => {
+						if (node) groupDisclosureRefs.current.set(groupId, node);
+						else groupDisclosureRefs.current.delete(groupId);
+					}}
+				/>
 			</Panel>
 		</section>
 	);

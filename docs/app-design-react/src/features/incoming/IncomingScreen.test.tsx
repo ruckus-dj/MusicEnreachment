@@ -1,17 +1,17 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { IncomingScreen } from "./IncomingScreen";
 import { I18nProvider } from "../../i18n";
 import { MatchingScreen } from "../matching/MatchingScreen";
+import { initialSourceRoots } from "../sources/SourcesScreen";
+import { IncomingScreen } from "./IncomingScreen";
 import {
 	createIncomingState,
-	incomingFixtures,
 	type IncomingFiles,
 	type IncomingState,
+	incomingFixtures,
 	makeGroupPlan,
 } from "./incomingModel";
-import { initialSourceRoots } from "../sources/SourcesScreen";
 import { splitFileIntoNewGroup } from "./incomingSplitModel";
 
 function renderOverview(state = createIncomingState()) {
@@ -64,7 +64,7 @@ it("renders one four-column overview with source paths and link navigation", () 
 		within(row).getByText("Неполный релиз; одна спорная композиция"),
 	).toBeInTheDocument();
 	expect(
-		within(row).getByRole("button", { name: "Northern lines" }),
+		within(row).getByRole("button", { name: "Файлы группы «Northern lines»" }),
 	).toHaveAttribute("aria-expanded", "false");
 });
 
@@ -72,7 +72,7 @@ it("restores the expanded group from a shared link", () => {
 	window.history.replaceState(null, "", "#review?group=north");
 	renderOverview();
 	expect(
-		screen.getByRole("button", { name: "Northern lines" }),
+		screen.getByRole("button", { name: "Файлы группы «Northern lines»" }),
 	).toHaveAttribute("aria-expanded", "true");
 	expect(screen.getByText("First Light")).toBeInTheDocument();
 	expect(
@@ -98,13 +98,15 @@ it("orders expanded source files by tag position rather than filename", () => {
 	);
 
 	const groupRow = screen
-		.getByRole("button", { name: "Small Hours" })
+		.getByRole("button", { name: "Файлы группы «Small Hours»" })
 		.closest("tr");
 	const details = groupRow?.nextElementSibling;
 	if (!(details instanceof HTMLElement))
 		throw new Error("Missing expanded hours details");
-	const members = within(details).getAllByRole("list")[0];
-	const items = within(members).getAllByRole("listitem");
+	const members = within(details).getByRole("table", {
+		name: "Файлы группы «Small Hours»",
+	});
+	const items = within(members).getAllByRole("row").slice(1);
 
 	expect(items.map((item) => item.firstElementChild?.textContent)).toEqual([
 		"2",
@@ -224,7 +226,7 @@ it("splits one exact file only on a menu action, preserving unrelated drafts", a
 	const trigger = screen.getByRole("button", {
 		name: "Действия с файлом: First Light",
 	});
-	const row = trigger.closest("li");
+	const row = trigger.closest("tr");
 	if (!row) throw new Error("Missing file row");
 	expect(within(row).getAllByRole("button")).toEqual([trigger]);
 	expect(within(row).queryByRole("combobox")).toBeNull();

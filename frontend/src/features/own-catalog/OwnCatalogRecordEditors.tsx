@@ -17,13 +17,12 @@ import { localReleaseMessages } from "../local-release/localReleaseMessages";
 import {
   actions,
   errorClass,
-  Field,
-  muted,
   panel,
   primary,
   secondary,
 } from "../local-release/localReleaseUi";
 import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
+import { OwnCatalogRecordFieldsView } from "./OwnCatalogRecordFieldsView";
 import {
   type OwnCatalogMessage,
   ownCatalogMessage,
@@ -83,28 +82,30 @@ export function OwnCatalogArtistForm({
 
   return (
     <section className={`${panel} grid gap-3`}>
-      <p className={muted}>{m("formRequiredNotice")}</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Field
-          label={`${m("name")} · ${m("required")}`}
-          value={name}
-          onChange={setName}
-          required
-          disabled={saving}
-        />
-        <Field
-          label={`${m("sortName")} · ${m("optional")}`}
-          value={sortName}
-          onChange={setSortName}
-          disabled={saving}
-        />
-        <Field
-          label={`${m("tagsCommaSeparated")} · ${m("optional")}`}
-          value={tags}
-          onChange={setTags}
-          disabled={saving}
-        />
-      </div>
+      <OwnCatalogRecordFieldsView
+        notice={m("formRequiredNotice")}
+        fields={[
+          {
+            label: `${m("name")} · ${m("required")}`,
+            value: name,
+            onChange: setName,
+            required: true,
+            disabled: saving,
+          },
+          {
+            label: `${m("sortName")} · ${m("optional")}`,
+            value: sortName,
+            onChange: setSortName,
+            disabled: saving,
+          },
+          {
+            label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+            value: tags,
+            onChange: setTags,
+            disabled: saving,
+          },
+        ]}
+      />
       <ProviderCatalogGenreField
         locale={locale}
         owner="artist"
@@ -192,33 +193,35 @@ export function OwnCatalogRecordingForm({
 
   return (
     <section className={`${panel} grid gap-3`}>
-      <p className={muted}>{m("formRequiredNotice")}</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Field
-          label={`${m("titleField")} · ${m("required")}`}
-          value={title}
-          onChange={setTitle}
-          required
-          disabled={saving}
-        />
-        <Field
-          label={`${m("durationField")} · ${m("optional")}`}
-          value={duration}
-          onChange={(value) => {
-            setDuration(value);
-            setBadDuration(false);
-          }}
-          placeholder="3:24"
-          disabled={saving}
-        />
-        <Field
-          label={`${m("tagsCommaSeparated")} · ${m("optional")}`}
-          value={tags}
-          onChange={setTags}
-          disabled={saving}
-        />
-      </div>
-      <p className={muted}>{m("durationHelp")}</p>
+      <OwnCatalogRecordFieldsView
+        notice={m("formRequiredNotice")}
+        help={m("durationHelp")}
+        fields={[
+          {
+            label: `${m("titleField")} · ${m("required")}`,
+            value: title,
+            onChange: setTitle,
+            required: true,
+            disabled: saving,
+          },
+          {
+            label: `${m("durationField")} · ${m("optional")}`,
+            value: duration,
+            onChange: (value) => {
+              setDuration(value);
+              setBadDuration(false);
+            },
+            placeholder: "3:24",
+            disabled: saving,
+          },
+          {
+            label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+            value: tags,
+            onChange: setTags,
+            disabled: saving,
+          },
+        ]}
+      />
       {badDuration && (
         <p className={errorClass} role="alert">
           {m("badDuration")}
