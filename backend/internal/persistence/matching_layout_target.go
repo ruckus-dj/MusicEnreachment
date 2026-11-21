@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +66,7 @@ func CaptureMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	threshold, err := strconv.ParseFloat(evidence.PairThreshold, 64)
+	threshold, err := parseMatchingLayoutPairThreshold(evidence.PairThreshold)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("decode captured matching pair threshold: %w", err)
 	}
@@ -161,19 +160,8 @@ func RecheckMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 	if err != nil {
 		return nil, fmt.Errorf("recheck matching layout target: canonicalize evidence: %w", err)
 	}
-	var stored matchingLayoutTargetEvidence
-	if err := json.Unmarshal(expectedCanonical, &stored); err != nil ||
-		stored.SchemaVersion != matchingLayoutTargetEvidenceVersion ||
-		stored.Target.SchemaVersion != 2 ||
-		stored.Target.GroupID == uuid.Nil ||
-		stored.Target.GroupRevision == "" ||
-		stored.Target.AuthorityRevision < 0 ||
-		stored.GroupingRevision < 0 ||
-		strings.TrimSpace(stored.PolicyVersion) == "" {
-		return nil, fmt.Errorf("recheck matching layout target: evidence is invalid")
-	}
-	if stored.Target.GroupID != groupID || stored.PolicyVersion != policyVersion {
-		return nil, fmt.Errorf("recheck matching layout target: group or policy changed: %w", ErrIncomingMatchConflict)
+	if _, _, err := DecodeMatchingLayoutTarget(expectedCanonical, groupID, policyVersion); err != nil {
+		return nil, err
 	}
 	current, readyCaptures, _, err := CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policyVersion)
 	if err != nil {
@@ -185,21 +173,77 @@ func RecheckMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 	return readyCaptures, nil
 }
 
+// DecodeMatchingLayoutTarget reconstructs saved calculator inputs, including
+// the separately encoded tag corrections. It does not establish write authority.
+func DecodeMatchingLayoutTarget(expected json.RawMessage, groupID uuid.UUID, policyVersion string) ([]IncomingGroupingCapture, float64, error) {
+	var stored matchingLayoutTargetEvidence
+	if err := json.Unmarshal(expected, &stored); err != nil ||
+		stored.SchemaVersion != matchingLayoutTargetEvidenceVersion || stored.Target.SchemaVersion != 2 ||
+		stored.Target.GroupID == uuid.Nil || stored.Target.GroupRevision == "" ||
+		stored.Target.AuthorityRevision < 0 || stored.GroupingRevision < 0 || strings.TrimSpace(stored.PolicyVersion) == "" {
+		return nil, 0, errors.New("matching layout target evidence is invalid")
+	}
+	if stored.Target.GroupID != groupID || stored.PolicyVersion != policyVersion {
+		return nil, 0, fmt.Errorf("matching layout target group or policy changed: %w", ErrIncomingMatchConflict)
+	}
+	threshold, err := parseMatchingLayoutPairThreshold(stored.PairThreshold)
+	canonicalThreshold, canonicalErr := CanonicalMatchingLayoutThreshold(threshold)
+	if err != nil || canonicalErr != nil || canonicalThreshold != stored.PairThreshold {
+		return nil, 0, errors.New("matching layout target threshold is invalid")
+	}
+	encodings := make(map[uuid.UUID]json.RawMessage, len(stored.Captures))
+	for _, encoding := range stored.Captures {
+		if _, exists := encodings[encoding.LocationID]; exists || encoding.LocationID == uuid.Nil || len(encoding.TagEncoding) == 0 {
+			return nil, 0, errors.New("matching layout target tag evidence is incomplete or duplicated")
+		}
+		encodings[encoding.LocationID] = encoding.TagEncoding
+	}
+	for _, member := range stored.Target.Members {
+		for i := range member.Captures {
+			source := &member.Captures[i]
+			encoded, ok := encodings[source.LocationID]
+			if !ok {
+				return nil, 0, errors.New("matching layout target capture has no tag evidence")
+			}
+			if !bytes.Equal(encoded, []byte("null")) {
+				source.TagEncoding = encoded
+			}
+			delete(encodings, source.LocationID)
+		}
+	}
+	if len(encodings) != 0 {
+		return nil, 0, errors.New("matching layout target tag evidence is outside the capture")
+	}
+	captures, err := matchingLayoutTargetReadyCaptures(stored.Target)
+	return captures, threshold, err
+}
+
 func matchingLayoutTargetPairThreshold(ctx context.Context, tx bun.Tx) (string, error) {
 	threshold := *appsettings.DefaultRuntimeSettingsExpected().MatchingPairThreshold
 	var stored string
 	err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name=? FOR SHARE`, appsettings.MatchingPairThresholdKey).
 		Scan(ctx, &stored)
 	if err == nil {
-		parsed, parseErr := strconv.ParseFloat(strings.TrimSpace(stored), 64)
-		if parseErr != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > 1 {
-			return "", fmt.Errorf("lock matching layout target: pair threshold is invalid")
+		parsed, parseErr := parseMatchingLayoutPairThreshold(strings.TrimSpace(stored))
+		if parseErr != nil {
+			return "", parseErr
 		}
 		threshold = parsed
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("lock matching layout target: read pair threshold: %w", err)
 	}
-	return strconv.FormatFloat(threshold, 'f', -1, 64), nil
+	return CanonicalMatchingLayoutThreshold(threshold)
+}
+
+func parseMatchingLayoutPairThreshold(value string) (float64, error) {
+	threshold, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, errors.New("matching layout pair threshold is invalid")
+	}
+	if _, err := CanonicalMatchingLayoutThreshold(threshold); err != nil {
+		return 0, err
+	}
+	return threshold, nil
 }
 
 func matchingLayoutTargetReadyCaptures(target automaticArtistTargetCapture) ([]IncomingGroupingCapture, error) {

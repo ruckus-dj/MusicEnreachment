@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
+	"github.com/uptrace/bun"
 )
 
 func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(t *testing.T) {
@@ -64,6 +66,44 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 			t.Fatalf("start refresh lookup: %v", err)
 		}
 
+		// Plan 14 layout evidence must accept the published projection, tolerate
+		// an unconsumed refresh reservation, and reject a changed accepted one.
+		accepted, err := cache.GetMusicBrainzMatchingSnapshot(ctx, fixture.Source.Endpoint, fixture.Source.ConfigurationIdentity,
+			[]string{fixture.InputSnapshot.Selected.ProviderKey}, []string{fixture.InputSnapshot.Selected.Lookup.CacheKey})
+		if err != nil {
+			t.Fatalf("read accepted provider snapshot before refresh: %v", err)
+		}
+		if len(accepted.Releases) != 1 || !accepted.Releases[0].Complete {
+			t.Fatalf("accepted provider snapshot before refresh=%+v; want one complete release", accepted.Releases)
+		}
+		evidence := persistence.MatchingProviderLayoutEvidence{
+			SchemaVersion:              persistence.MatchingProviderLayoutEvidenceVersion,
+			ProviderSourceID:           accepted.Source.ID,
+			ProviderID:                 accepted.Source.ProviderID,
+			Namespace:                  accepted.Source.Namespace,
+			Endpoint:                   accepted.Source.Endpoint,
+			ConfigurationIdentity:      accepted.Source.ConfigurationIdentity,
+			ReleaseKeys:                []string{accepted.Releases[0].ProviderKey},
+			HydrationKeys:              []string{fixture.InputSnapshot.Selected.Lookup.CacheKey},
+			AcceptedProjectionRevision: accepted.AcceptedProjectionRevision,
+		}
+		validateProviderEvidence := func(want error) {
+			t.Helper()
+			validateErr := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+				return persistence.ValidateMatchingProviderLayoutEvidenceTx(ctx, tx, evidence)
+			})
+			if want == nil {
+				if validateErr != nil {
+					t.Fatalf("validate accepted provider layout evidence: %v", validateErr)
+				}
+				return
+			}
+			if !errors.Is(validateErr, want) {
+				t.Fatalf("validate changed provider layout evidence = %v, want %v", validateErr, want)
+			}
+		}
+		validateProviderEvidence(nil)
+
 		frozen := fixture.InputSnapshot.Selected.Projection
 		if len(frozen.Tracks) != 2 {
 			t.Fatalf("published snapshot tracks=%d, want 2", len(frozen.Tracks))
@@ -81,12 +121,16 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		if err != nil {
 			t.Fatalf("reserve B lookup response: %v", err)
 		}
+		// A new generation is a reservation only; it must not invalidate the
+		// previously accepted projection revision.
+		validateProviderEvidence(nil)
 		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
 			Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: payload, Graph: graph,
 			Delivery: &persistence.ProviderDeliveryFence{OperationID: request.ID, Attempt: request.Attempt, RiverJobID: *request.RiverJobID, ExecutionEpoch: epoch},
 		}); err != nil {
 			t.Fatalf("accept refreshed B lookup response: %v", err)
 		}
+		validateProviderEvidence(persistence.ErrIncomingMatchConflict)
 		current, err := cache.GetMusicBrainzMatchingSnapshot(ctx, fixture.Source.Endpoint, fixture.Source.ConfigurationIdentity,
 			[]string{fixture.InputSnapshot.Selected.ProviderKey}, []string{fixture.InputSnapshot.Selected.Lookup.CacheKey})
 		if err != nil || len(current.Releases) != 1 || current.Releases[0].Name != "Provider Album B" {

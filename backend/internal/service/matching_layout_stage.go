@@ -27,9 +27,25 @@ type MatchingLayoutStage struct {
 	ScoredPairs       int                        `json:"-"`
 }
 
-type MatchingLayoutAssignment struct {
-	FileMemberID    uuid.UUID `json:"file_member_id"`
-	ProviderTrackID uuid.UUID `json:"provider_track_id"`
+type MatchingLayoutAssignment = persistence.MatchingLayoutDecisionAssignment
+
+// DurableDecision projects the calculation into the write-once result consumed
+// by continuation and apply. Diagnostic scores and coordinate strings are not
+// part of that result. Its caller binds the independently authorized evidence.
+func (stage MatchingLayoutStage) DurableDecision() (persistence.MatchingLayoutDecision, error) {
+	threshold, err := persistence.CanonicalMatchingLayoutThreshold(stage.PairThreshold)
+	if err != nil {
+		return persistence.MatchingLayoutDecision{}, err
+	}
+	return persistence.MatchingLayoutDecision{
+		SchemaVersion:     persistence.MatchingLayoutDecisionSchemaVersion,
+		PolicyVersion:     stage.PolicyVersion,
+		PairThreshold:     threshold,
+		Status:            persistence.MatchingLayoutDecisionStatus(stage.Decision.Status),
+		ProviderReleaseID: cloneUUID(stage.ProviderReleaseID),
+		Assignments:       append([]MatchingLayoutAssignment(nil), stage.Assignments...),
+		Reason:            stage.Decision.Reason,
+	}, nil
 }
 
 // MatchingLayoutRetrievalMembers projects saved corrections for ranking only.
@@ -94,6 +110,7 @@ func CalculateMatchingLayoutStage(
 	}
 	byKey := make(map[string]persistence.MatchingRelease, len(shortlist))
 	releaseIDs := make(map[uuid.UUID]bool, len(shortlist))
+	incomplete := false
 	for _, release := range snapshot.Releases {
 		if !expected[release.ProviderKey] || byKey[release.ProviderKey].ID != uuid.Nil ||
 			release.ID == uuid.Nil || releaseIDs[release.ID] {
@@ -101,11 +118,12 @@ func CalculateMatchingLayoutStage(
 		}
 		byKey[release.ProviderKey] = release
 		releaseIDs[release.ID] = true
+		incomplete = incomplete || !release.Complete
 	}
-	if len(byKey) != len(expected) {
+	if len(byKey) != len(expected) || incomplete {
 		result.Decision = MatchingLayoutSelection{
 			Status: MatchingLayoutSelectionIndeterminate,
-			Reason: "a shortlisted edition has no hydrated tracklist",
+			Reason: "a shortlisted edition has no complete hydrated tracklist",
 		}
 		return result, nil
 	}

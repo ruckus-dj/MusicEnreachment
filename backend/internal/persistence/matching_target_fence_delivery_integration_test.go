@@ -163,7 +163,7 @@ func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTar
 			t.Fatalf("baseline layout recheck: captures=%d err=%v", len(ready), err)
 		}
 	}
-	checkChange := func(label, query string, args ...any) {
+	checkChange := func(label string, inspect func(), query string, args ...any) {
 		t.Helper()
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT layout_evidence_test`); err != nil {
 			t.Fatal(err)
@@ -178,22 +178,39 @@ func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTar
 		if _, err := persistence.RecheckMatchingLayoutTargetTx(ctx, tx, groupID, policy, baseline); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
 			t.Fatalf("%s-only change was not rejected: %v", label, err)
 		}
+		if inspect != nil {
+			inspect()
+		}
 		if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT layout_evidence_test`); err != nil {
 			t.Fatal(err)
 		}
 		checkBaseline()
 	}
 	checkBaseline()
-	checkChange("threshold", `INSERT INTO app_setting(setting_name,setting_value) VALUES(?,?)
+	checkChange("threshold", nil, `INSERT INTO app_setting(setting_name,setting_value) VALUES(?,?)
 		ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, appsettings.MatchingPairThresholdKey, "0.80")
+	correctionID := uuid.NewString()
 	revision, err := json.Marshal(tagencoding.Report{
 		Version:      tagencoding.ReportVersion,
 		Automatic:    tagencoding.Overlay{Version: tagencoding.OverlayVersion, Entries: []tagencoding.Entry{}},
 		Candidates:   []tagencoding.Candidate{},
-		UserRevision: uuid.NewString(),
+		UserRevision: correctionID,
 	})
 	if err != nil {
 		t.Fatalf("encode tag encoding revision: %v", err)
 	}
-	checkChange("tag encoding", `UPDATE media_metadata_result SET tag_encoding=?::jsonb WHERE id=?`, string(revision), *captures[0].CaptureAnalysisID)
+	checkChange("tag encoding", func() {
+		frozen, _, _, err := persistence.CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, _, err := persistence.DecodeMatchingLayoutTarget(frozen, groupID, policy)
+		if err != nil || len(decoded) != len(captures) {
+			t.Fatalf("decode layout evidence: members=%d err=%v", len(decoded), err)
+		}
+		var saved tagencoding.Report
+		if json.Unmarshal(decoded[0].TagEncoding, &saved) != nil || saved.UserRevision != correctionID {
+			t.Fatalf("reloaded layout evidence did not carry the saved correction revision: %q", decoded[0].TagEncoding)
+		}
+	}, `UPDATE media_metadata_result SET tag_encoding=?::jsonb WHERE id=?`, string(revision), *captures[0].CaptureAnalysisID)
 }

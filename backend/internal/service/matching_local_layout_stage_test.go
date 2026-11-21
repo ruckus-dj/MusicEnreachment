@@ -119,6 +119,19 @@ func TestMatchingLocalCatalogSnapshotServiceCalculateLayoutHydratesOnlyShortlist
 	if !maps.Equal(gotTracks, expectedTracks) {
 		t.Fatalf("selected provider track IDs = %v, want %v", gotTracks, expectedTracks)
 	}
+	sealed, err := stage.Stage.DurableDecision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := []uuid.UUID{firstFile, secondFile}
+	projection := []persistence.MatchingRelease{layouts[rankedReleaseIDs[0]]}
+	if err := sealed.Validate(MatchingLayoutPolicyVersion, 0.99, ready, projection); err != nil {
+		t.Fatalf("validate exact selected layout: %v", err)
+	}
+	sealed.Assignments = sealed.Assignments[:1]
+	if err := sealed.Validate(MatchingLayoutPolicyVersion, 0.99, ready, projection); err == nil {
+		t.Fatal("durable decision accepted a partial layout")
+	}
 
 	t.Run("empty catalogue hydrates nothing", func(t *testing.T) {
 		empty := &matchingLocalLayoutStageRepository{
