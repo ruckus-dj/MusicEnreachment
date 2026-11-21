@@ -85,6 +85,45 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		if len(history[0].LookupReceipts) != 0 || len(history[1].LookupReceipts) != 1 {
 			t.Fatal("expected an accepted empty search followed by one accepted lookup")
 		}
+		captures, _, err := persistence.DecodeMatchingLayoutTarget(history[0].Intent.LayoutTarget, seal.Target.GroupID, persistence.MatchingLayoutPolicyVersion)
+		if err != nil {
+			t.Fatalf("decode saved layout inputs: %v", err)
+		}
+		for i, stage := range history {
+			shortlist, err := service.MatchingSearchScopeFromAcceptedFallback(stage.SearchKind, stage.SearchReceipt.Payload, captures)
+			if err != nil {
+				t.Fatalf("shortlist accepted stage %d: %v", i, err)
+			}
+			decision, err := service.CalculateFallbackLayoutDecision(ctx, stage, shortlist)
+			if err != nil {
+				t.Fatalf("calculate accepted stage %d: %v", i, err)
+			}
+			if i == 0 {
+				if decision.Status != persistence.MatchingLayoutDecisionNone {
+					t.Fatalf("accepted empty stage = %s, want proved none", decision.Status)
+				}
+				continue
+			}
+			if decision.Status != persistence.MatchingLayoutDecisionSelected || decision.ProviderReleaseID == nil ||
+				*decision.ProviderReleaseID != fixture.InputSnapshot.Selected.ProviderReleaseID ||
+				len(decision.Assignments) != len(fixture.InputSnapshot.Assignments) {
+				t.Fatalf("whole-layout result from immutable receipts: %+v", decision)
+			}
+			wanted := make(map[uuid.UUID]uuid.UUID, len(fixture.InputSnapshot.Assignments))
+			for _, assignment := range fixture.InputSnapshot.Assignments {
+				wanted[assignment.FileMemberID] = assignment.ProviderTrackID
+			}
+			for _, assignment := range decision.Assignments {
+				if wanted[assignment.FileMemberID] != assignment.ProviderTrackID {
+					t.Fatalf("selected wrong track for member %s: %s", assignment.FileMemberID, assignment.ProviderTrackID)
+				}
+			}
+			stage.LookupReceipts = nil
+			decision, err = service.CalculateFallbackLayoutDecision(ctx, stage, shortlist)
+			if err != nil || decision.Status != persistence.MatchingLayoutDecisionIndeterminate {
+				t.Fatalf("stage with a missing lookup = %s, %v; want indeterminate", decision.Status, err)
+			}
+		}
 		validateProviderEvidence := func(want error) {
 			t.Helper()
 			validateErr := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

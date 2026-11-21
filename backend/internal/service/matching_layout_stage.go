@@ -90,6 +90,19 @@ func CalculateMatchingLayoutStage(
 	acoustIDScores map[MatchingAcoustIDKey]float64,
 	threshold float64,
 ) (MatchingLayoutStage, error) {
+	return calculateMatchingLayoutStage(ctx, captures, shortlist, snapshot.Releases, threshold, func() ([]MatchingInput, error) {
+		return BuildLayoutMatchingInputs(captures, snapshot, searchKeys, acoustIDScores)
+	})
+}
+
+func calculateMatchingLayoutStage(
+	ctx context.Context,
+	captures []persistence.IncomingGroupingCapture,
+	shortlist []string,
+	releases []persistence.MatchingRelease,
+	threshold float64,
+	score func() ([]MatchingInput, error),
+) (MatchingLayoutStage, error) {
 	if err := ctx.Err(); err != nil {
 		return MatchingLayoutStage{}, err
 	}
@@ -111,7 +124,7 @@ func CalculateMatchingLayoutStage(
 	byKey := make(map[string]persistence.MatchingRelease, len(shortlist))
 	releaseIDs := make(map[uuid.UUID]bool, len(shortlist))
 	incomplete := false
-	for _, release := range snapshot.Releases {
+	for _, release := range releases {
 		if !expected[release.ProviderKey] || byKey[release.ProviderKey].ID != uuid.Nil ||
 			release.ID == uuid.Nil || releaseIDs[release.ID] {
 			return MatchingLayoutStage{}, fmt.Errorf("unexpected or duplicate hydrated matching edition %q", release.ProviderKey)
@@ -131,13 +144,13 @@ func CalculateMatchingLayoutStage(
 	for _, file := range view.Files {
 		members = append(members, persistence.IncomingMatchMemberFence{FileMemberID: file.VariantID})
 	}
-	edges, err := BuildLayoutMatchingInputs(captures, snapshot, searchKeys, acoustIDScores)
+	edges, err := score()
 	if err != nil {
 		return MatchingLayoutStage{}, err
 	}
 	result.ScoredPairs = len(edges)
 	result.Decision, err = SelectMatchingLayout(ctx, MatchingGroupEvaluationInput{
-		Members: members, Files: view.Files, Inputs: edges, ReleaseLayouts: snapshot.Releases,
+		Members: members, Files: view.Files, Inputs: edges, ReleaseLayouts: releases,
 		ConflictingFingerprints: conflicts,
 	}, threshold)
 	if err != nil {
