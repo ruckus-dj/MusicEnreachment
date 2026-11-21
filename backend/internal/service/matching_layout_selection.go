@@ -37,6 +37,11 @@ type MatchingLayoutSelection struct {
 	Choices   map[string]string             `json:"choices,omitempty"`
 	Score     float64                       `json:"score"`
 	Reason    string                        `json:"reason,omitempty"`
+
+	// exactScore is the unrounded pair sum already proved by the solver. It is
+	// retained only for same-package policy comparisons and is never persisted,
+	// serialized, or treated as a standalone confidence.
+	exactScore *big.Rat
 }
 
 type matchingLayoutSelectionScale struct {
@@ -172,10 +177,11 @@ func SelectMatchingLayout(
 	}
 	score, _ := best.score.Float64()
 	return MatchingLayoutSelection{
-		Status:    MatchingLayoutSelectionSelected,
-		ReleaseID: best.releaseID,
-		Choices:   best.choices,
-		Score:     score,
+		Status:     MatchingLayoutSelectionSelected,
+		ReleaseID:  best.releaseID,
+		Choices:    best.choices,
+		Score:      score,
+		exactScore: new(big.Rat).Set(best.score),
 	}, nil
 }
 
