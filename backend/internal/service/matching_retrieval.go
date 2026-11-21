@@ -28,6 +28,17 @@ type matchingRetrievalRank struct {
 	ReleaseID    string
 	Score        *big.Rat
 	ExactMatches int
+
+	// The remaining fields are retrieval-time diagnostics. They do not change
+	// the runtime shortlist ordering.
+	Files             int
+	ArtistComparisons int
+	AlbumComparisons  int
+}
+
+type matchingRetrievalSourceFile struct {
+	id     uuid.UUID
+	fields map[string][]string
 }
 
 // MatchingArtistFit averages one full-value comparison per captured file.
@@ -48,18 +59,41 @@ func MatchingArtistFit(captured []persistence.MatchingAcquisitionCapturedMember,
 	return matchingfit.Fit(tags, artistCredit)
 }
 
-// rankMatchingCatalog is a pure, reproducible candidate ranking policy. Each
+// RankMatchingCatalog is a pure, reproducible candidate ranking policy. Each
 // source file contributes the mean of its available full-artist and
 // album/title text comparisons. Exact DATE/catalog matches only break text ties.
 func RankMatchingCatalog(captured []persistence.MatchingAcquisitionCapturedMember, candidates []MatchingRetrievalCandidate) ([]string, error) {
 	if len(captured) == 0 || len(candidates) == 0 {
 		return nil, fmt.Errorf("matching retrieval requires captured members and catalog candidates")
 	}
-	type sourceFile struct {
-		id     uuid.UUID
-		fields map[string][]string
+	files, err := matchingRetrievalSourceFiles(captured)
+	if err != nil {
+		return nil, err
 	}
-	files := make([]sourceFile, 0, len(captured))
+	candidates = append([]MatchingRetrievalCandidate(nil), candidates...)
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	ranks := make([]matchingRetrievalRank, 0, len(candidates))
+	for _, candidate := range candidates {
+		rank, rankErr := matchingRetrievalRankFor(files, candidate)
+		if rankErr != nil {
+			return nil, rankErr
+		}
+		ranks = append(ranks, rank)
+	}
+	sort.Slice(ranks, func(i, j int) bool { return compareMatchingRetrievalRank(ranks[i], ranks[j]) < 0 })
+	limit := min(10, len(ranks))
+	selected := make([]string, limit)
+	for i := range selected {
+		selected[i] = ranks[i].ReleaseID
+	}
+	sort.Strings(selected) // persistence's immutable shortlist is canonical.
+	return selected, nil
+}
+
+// matchingRetrievalSourceFiles decodes the frozen capture once so every
+// candidate is compared against identical source evidence.
+func matchingRetrievalSourceFiles(captured []persistence.MatchingAcquisitionCapturedMember) ([]matchingRetrievalSourceFile, error) {
+	files := make([]matchingRetrievalSourceFile, 0, len(captured))
 	seenFiles := make(map[uuid.UUID]struct{}, len(captured))
 	for _, member := range captured {
 		if member.MemberID == uuid.Nil || len(member.Tags) == 0 {
@@ -95,93 +129,114 @@ func RankMatchingCatalog(captured []persistence.MatchingAcquisitionCapturedMembe
 		for _, key := range keys {
 			fields["catalog_number"] = append(fields["catalog_number"], tags[key]...)
 		}
-		files = append(files, sourceFile{id: member.MemberID, fields: fields})
+		files = append(files, matchingRetrievalSourceFile{id: member.MemberID, fields: fields})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].id.String() < files[j].id.String() })
-	candidates = append([]MatchingRetrievalCandidate(nil), candidates...)
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
-	ranks := make([]matchingRetrievalRank, 0, len(candidates))
-	for _, candidate := range candidates {
-		id, err := canonicalMBID(candidate.ID)
+	return files, nil
+}
+
+// matchingRetrievalRankFor evaluates one candidate against the complete group
+// evidence. It is shared by the runtime shortlist and the pure experiment.
+func matchingRetrievalRankFor(files []matchingRetrievalSourceFile, candidate MatchingRetrievalCandidate) (matchingRetrievalRank, error) {
+	id, err := canonicalMBID(candidate.ID)
+	if err != nil {
+		return matchingRetrievalRank{}, fmt.Errorf("matching retrieval candidate id is invalid")
+	}
+	rank := matchingRetrievalRank{
+		ReleaseID: id, Score: new(big.Rat),
+	}
+	artistValues := candidate.ArtistCredits
+	if len(artistValues) == 0 && strings.TrimSpace(candidate.ArtistCredit) != "" {
+		artistValues = []string{candidate.ArtistCredit}
+	}
+	for _, file := range files {
+		var textTotal big.Rat
+		textCount := 0
+		artistFactor, err := matchingTextFactor(MatchingReleaseArtist, MatchingTextPair{Source: file.fields["album_artist"], Candidate: artistValues})
 		if err != nil {
-			return nil, fmt.Errorf("matching retrieval candidate id is invalid")
+			return matchingRetrievalRank{}, err
 		}
-		score := new(big.Rat)
-		exactMatches := 0
-		for _, file := range files {
-			var textTotal big.Rat
-			textCount := 0
-			artistValues := candidate.ArtistCredits
-			if len(artistValues) == 0 && strings.TrimSpace(candidate.ArtistCredit) != "" {
-				artistValues = []string{candidate.ArtistCredit}
+		if artistFactor.State == MatchingFactorAvailable {
+			textTotal.Add(&textTotal, new(big.Rat).SetFloat64(artistFactor.Value))
+			textCount++
+			rank.ArtistComparisons++
+		}
+		albumFactor, err := matchingTextFactor(MatchingReleaseTitle, MatchingTextPair{Source: file.fields["album"], Candidate: []string{candidate.Title}})
+		if err != nil {
+			return matchingRetrievalRank{}, err
+		}
+		if strings.TrimSpace(candidate.Disambiguation) != "" {
+			qualifiedFactor, factorErr := matchingTextFactor(MatchingReleaseTitle, MatchingTextPair{
+				Source: file.fields["album"], Candidate: []string{candidate.Title + " " + candidate.Disambiguation},
+			})
+			if factorErr != nil {
+				return matchingRetrievalRank{}, factorErr
 			}
-			artistFactor, err := matchingTextFactor(MatchingReleaseArtist, MatchingTextPair{Source: file.fields["album_artist"], Candidate: artistValues})
-			if err != nil {
-				return nil, err
+			if qualifiedFactor.State == MatchingFactorAvailable && (albumFactor.State != MatchingFactorAvailable || qualifiedFactor.Value > albumFactor.Value) {
+				albumFactor = qualifiedFactor
 			}
-			if artistFactor.State == MatchingFactorAvailable {
-				textTotal.Add(&textTotal, new(big.Rat).SetFloat64(artistFactor.Value))
-				textCount++
-			}
-			albumFactor, err := matchingTextFactor(MatchingReleaseTitle, MatchingTextPair{Source: file.fields["album"], Candidate: []string{candidate.Title}})
-			if err != nil {
-				return nil, err
-			}
-			if strings.TrimSpace(candidate.Disambiguation) != "" {
-				qualifiedFactor, factorErr := matchingTextFactor(MatchingReleaseTitle, MatchingTextPair{
-					Source: file.fields["album"], Candidate: []string{candidate.Title + " " + candidate.Disambiguation},
-				})
-				if factorErr != nil {
-					return nil, factorErr
-				}
-				if qualifiedFactor.State == MatchingFactorAvailable && (albumFactor.State != MatchingFactorAvailable || qualifiedFactor.Value > albumFactor.Value) {
-					albumFactor = qualifiedFactor
-				}
-			}
-			if albumFactor.State == MatchingFactorAvailable {
-				textTotal.Add(&textTotal, new(big.Rat).SetFloat64(albumFactor.Value))
-				textCount++
-			}
-			if textCount > 0 {
-				score.Add(score, new(big.Rat).Quo(&textTotal, big.NewRat(int64(textCount), 1)))
-			}
-			// Date comparison is deliberately exact against the complete saved
-			// string: a year is not inferred from a full release date.
-			for _, date := range file.fields["date"] {
-				if date != "" && candidate.Date != "" {
-					if date == candidate.Date {
-						exactMatches++
-						break
-					}
-				}
-			}
-			// A catalog match is one point per file, independent of how many
-			// identifiers that file happens to contain.
-			for _, catalogNumber := range file.fields["catalog_number"] {
-				if catalogNumber != "" && containsExactString(candidate.CatalogNumbers, catalogNumber) {
-					exactMatches++
+		}
+		if albumFactor.State == MatchingFactorAvailable {
+			textTotal.Add(&textTotal, new(big.Rat).SetFloat64(albumFactor.Value))
+			textCount++
+			rank.AlbumComparisons++
+		}
+		if textCount > 0 {
+			rank.Files++
+			rank.Score.Add(rank.Score, new(big.Rat).Quo(&textTotal, big.NewRat(int64(textCount), 1)))
+		}
+		// Date comparison is deliberately exact against the complete saved
+		// string: a year is not inferred from a full release date.
+		for _, date := range file.fields["date"] {
+			if date != "" && candidate.Date != "" {
+				if date == candidate.Date {
+					rank.ExactMatches++
 					break
 				}
 			}
 		}
-		ranks = append(ranks, matchingRetrievalRank{ReleaseID: id, Score: score, ExactMatches: exactMatches})
-	}
-	sort.Slice(ranks, func(i, j int) bool {
-		if comparison := ranks[i].Score.Cmp(ranks[j].Score); comparison != 0 {
-			return comparison > 0
+		// A catalog match is one point per file, independent of how many
+		// identifiers that file happens to contain.
+		for _, catalogNumber := range file.fields["catalog_number"] {
+			if catalogNumber != "" && containsExactString(candidate.CatalogNumbers, catalogNumber) {
+				rank.ExactMatches++
+				break
+			}
 		}
-		if ranks[i].ExactMatches != ranks[j].ExactMatches {
-			return ranks[i].ExactMatches > ranks[j].ExactMatches
-		}
-		return ranks[i].ReleaseID < ranks[j].ReleaseID
-	})
-	limit := min(10, len(ranks))
-	selected := make([]string, limit)
-	for i := range selected {
-		selected[i] = ranks[i].ReleaseID
 	}
-	sort.Strings(selected) // persistence's immutable shortlist is canonical.
-	return selected, nil
+	return rank, nil
+}
+
+// compareMatchingRetrievalTextEvidence orders by full-release text score and
+// then by exact DATE/catalog evidence. Both are descending.
+func compareMatchingRetrievalTextEvidence(left, right matchingRetrievalRank) int {
+	if comparison := left.Score.Cmp(right.Score); comparison != 0 {
+		return -comparison
+	}
+	switch {
+	case left.ExactMatches > right.ExactMatches:
+		return -1
+	case left.ExactMatches < right.ExactMatches:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// compareMatchingRetrievalRank is the runtime shortlist order. The release ID
+// resolves the final tie for a reproducible shortlist only.
+func compareMatchingRetrievalRank(left, right matchingRetrievalRank) int {
+	if comparison := compareMatchingRetrievalTextEvidence(left, right); comparison != 0 {
+		return comparison
+	}
+	switch {
+	case left.ReleaseID < right.ReleaseID:
+		return -1
+	case left.ReleaseID > right.ReleaseID:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func containsExactString(values []string, target string) bool {

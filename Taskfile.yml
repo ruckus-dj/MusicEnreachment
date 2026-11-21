@@ -74,6 +74,12 @@ tasks:
     cmds:
       - go run ./cmd/openapi -output ../frontend/openapi.json
 
+  matching:experiment:
+    desc: Replay read-only matching experiments from a frozen JSON fixture
+    dir: backend
+    cmds:
+      - go run ./cmd/matching-experiment {{.CLI_ARGS}}
+
   build:
     desc: Build frontend and embedded Go application into build/
     deps: [frontend:stage]
