@@ -32,6 +32,28 @@ type MatchingLocalSelectionCatalog struct {
 	Digest   string
 }
 
+// ShortlistHeader projects one Local release onto the shared pure shortlist
+// header shape. Local always knows its position count, so the shared optional
+// count is present rather than unknown.
+func (release MatchingLocalSelectionRelease) ShortlistHeader() MatchingReleaseHeader {
+	count := release.PositionCount
+	return MatchingReleaseHeader{
+		MatchingRetrievalCandidate: release.MatchingRetrievalCandidate,
+		PositionCount:              &count,
+	}
+}
+
+// ShortlistHeaders returns the Local candidate set in the shared public header
+// shape accepted by RankMatchingReleaseShortlist. It performs no additional
+// reads: the evidence is already in the loaded header snapshot.
+func (catalog MatchingLocalSelectionCatalog) ShortlistHeaders() []MatchingReleaseHeader {
+	headers := make([]MatchingReleaseHeader, 0, len(catalog.Releases))
+	for _, release := range catalog.Releases {
+		headers = append(headers, release.ShortlistHeader())
+	}
+	return headers
+}
+
 // MatchingLocalSelectionLayouts contains normalized full layouts for only the
 // explicitly selected releases, plus their stable evidence digest.
 type MatchingLocalSelectionLayouts struct {
@@ -101,6 +123,7 @@ func matchingLocalSelectionRelease(header persistence.MatchingLocalSelectionHead
 		MatchingRetrievalCandidate: MatchingRetrievalCandidate{
 			ID:             header.ProviderKey,
 			Title:          header.Title,
+			Disambiguation: header.Disambiguation,
 			Date:           header.ReleaseDate,
 			ArtistCredit:   caption.String(),
 			ArtistCredits:  credits,

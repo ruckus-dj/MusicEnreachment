@@ -4,6 +4,7 @@ package persistence_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -12,7 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/tagencoding"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
@@ -105,5 +108,94 @@ func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
 	unchanged, err := groups.Snapshot(ctx)
 	if err != nil || len(unchanged.Groups) != 1 || unchanged.Groups[0].Revision != group.Revision {
 		t.Fatalf("encoding repair changed grouping: %+v, %v", unchanged, err)
+	}
+	t.Run("losing digestless capture retains its correction", func(t *testing.T) {
+		assertLosingDigestlessMetadataCarriesUserRevision(t, db)
+	})
+}
+
+func assertLosingDigestlessMetadataCarriesUserRevision(t *testing.T, db *bun.DB) {
+	t.Helper()
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(db)
+	client := openScanEnqueueRiver(t, db)
+	digest := make([]byte, 32)
+	digest[0] = 0xb2
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
+	location := insertAnalysisLocation(t, ctx, db, root.ID, "track.flac", 4096, probeMtime())
+	establishInventory(t, ctx, db, root)
+	work := normalizedWork(t, ctx, repository, root, location, true,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"},
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepMetadata, State: "pending"},
+	)
+	fixture := newAnalysisStepFixture(t, ctx, db, repository, client, root, location, work, persistence.SourceAnalysisModeBatch, nil, nil, false, nil)
+	metadataAttempt := fixture.claim(persistence.SourceStepMetadata)
+	stamp := time.Now().UTC().Truncate(time.Microsecond)
+	observed := json.RawMessage(`{"ARTIST":["Same Artist"]}`)
+	result, err := repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{
+		WorkID: work.ID, OperationID: fixture.operation.ID, OperationAttempt: fixture.operation.Attempt,
+		JobID: *fixture.operation.RiverJobID, StepAttempt: metadataAttempt,
+		ObservedTags: observed, Provenance: json.RawMessage(`{"reader":"digestless"}`), ObservedAt: stamp,
+	})
+	if err != nil {
+		t.Fatalf("apply digestless metadata: %v", err)
+	}
+	revision, err := json.Marshal(tagencoding.Report{
+		Version:      tagencoding.ReportVersion,
+		Automatic:    tagencoding.Overlay{Version: tagencoding.OverlayVersion, Entries: []tagencoding.Entry{}},
+		Candidates:   []tagencoding.Candidate{},
+		UserRevision: uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("encode explicit tag report: %v", err)
+	}
+	if _, err := db.NewRaw(`UPDATE media_metadata_result SET tag_encoding=?::jsonb WHERE id=?`, string(revision), result.ID).Exec(ctx); err != nil {
+		t.Fatalf("store digestless user revision: %v", err)
+	}
+
+	cover := []byte{0x89, 0x50, 0x4e, 0x47}
+	coverDigest := sha256.Sum256(cover)
+	coverMIME := "image/png"
+	coverSize := int64(len(cover))
+	canonicalID := uuid.New()
+	canonical := &persistence.SourceMetadataResult{
+		ID: canonicalID, SourceSHA256: digest, ObservedTags: observed,
+		Provenance:    json.RawMessage(`{"reader":"canonical"}`),
+		CoverObserved: true, CoverData: cover, CoverMIME: &coverMIME,
+		CoverSHA256: coverDigest[:], CoverSizeBytes: &coverSize,
+		Properties: json.RawMessage(`{}`), ObservedAt: stamp.Add(time.Second),
+		WinningResultID: canonicalID, AppliedOperationID: uuid.New(),
+	}
+	if _, err := db.NewInsert().Model(canonical).Exec(ctx); err != nil {
+		t.Fatalf("insert winning canonical metadata: %v", err)
+	}
+
+	shaAttempt := fixture.claim(persistence.SourceStepSHA256)
+	if _, err := repository.ApplySourceSHA256(ctx, persistence.SourceSHA256Apply{
+		WorkID: work.ID, OperationID: fixture.operation.ID, OperationAttempt: fixture.operation.Attempt,
+		JobID: *fixture.operation.RiverJobID, StepAttempt: shaAttempt, SHA256: digest, CalculatedAt: stamp, Algorithm: "SHA-256",
+	}); err != nil {
+		t.Fatalf("apply SHA-256 for losing digestless metadata: %v", err)
+	}
+	var promoted persistence.SourceMetadataResult
+	if err := db.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, canonicalID).Scan(ctx, &promoted); err != nil {
+		t.Fatalf("read winning canonical metadata: %v", err)
+	}
+	if !sameJSON(promoted.TagEncoding, revision) {
+		t.Fatalf("winning canonical tag encoding = %s; want carried %s", promoted.TagEncoding, revision)
+	}
+	if !sameJSON(promoted.ObservedTags, observed) {
+		t.Fatalf("winning canonical observed tags = %s; want %s", promoted.ObservedTags, observed)
+	}
+	if !promoted.CoverObserved || !sameJSON(promoted.Properties, json.RawMessage(`{}`)) || promoted.CoverSizeBytes == nil || *promoted.CoverSizeBytes != coverSize {
+		t.Fatalf("winning canonical facts = %+v; want preserved cover observation", promoted)
+	}
+	var selectedID uuid.UUID
+	if err := db.NewRaw(`SELECT success_metadata_result_id FROM source_analysis_step WHERE work_id=? AND step='metadata'`, work.ID).Scan(ctx, &selectedID); err != nil || selectedID != canonicalID {
+		t.Fatalf("selected metadata = %s, %v; want %s", selectedID, err, canonicalID)
+	}
+	var losingCount int
+	if err := db.NewRaw(`SELECT count(*) FROM media_metadata_result WHERE id=?`, result.ID).Scan(ctx, &losingCount); err != nil || losingCount != 0 {
+		t.Fatalf("losing digestless row count = %d, %v; want removed", losingCount, err)
 	}
 }

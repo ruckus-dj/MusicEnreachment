@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,15 +21,21 @@ func evaluate(ctx context.Context, input fixture, opts options) (report, error) 
 	if opts.stage == "policy" {
 		return evaluateApprovedLayoutPolicy(ctx, input, opts)
 	}
+	captured, err := readyMembers(input.Captures)
+	if err != nil {
+		return report{}, err
+	}
+	return evaluateWithMembers(ctx, input, opts, captured)
+}
+
+func evaluateWithMembers(
+	ctx context.Context, input fixture, opts options, captured []persistence.MatchingAcquisitionCapturedMember,
+) (report, error) {
 	result := report{
 		Name: input.Name, Provenance: input.Provenance, Policy: service.MatchingPolicyVersion,
 		ExpectedID: input.ExpectedReleaseID, BaselineSource: input.BaselineSource,
 		BaselineIDs: input.BaselineIDs, Observed: input.BaselineObserved, ShortlistLimit: opts.limit,
 		Timings: make(map[string]float64),
-	}
-	captured, err := readyMembers(input.Captures)
-	if err != nil {
-		return report{}, err
 	}
 	result.ReadyFiles = len(captured)
 	if opts.stage == "baseline" || opts.stage == "all" {
@@ -40,11 +47,12 @@ func evaluate(ctx context.Context, input fixture, opts options) (report, error) 
 		}
 	}
 	start := time.Now()
-	result.Ranking, err = service.RankMatchingExperimentCatalog(captured, input.Headers, opts.limit)
-	result.Timings["rank_headers"] = milliseconds(start)
+	ranking, err := service.RankMatchingExperimentCatalog(captured, input.Headers, opts.limit)
 	if err != nil {
 		return report{}, fmt.Errorf("rank candidate headers: %w", err)
 	}
+	result.Ranking = ranking
+	result.Timings["rank_headers"] = milliseconds(start)
 	var ids []string
 	result.ExpectedStatus = "not_in_captured_catalog"
 	if input.ExpectedReleaseID == "" {
@@ -315,10 +323,9 @@ func preparedLayoutInputs(
 }
 
 type layoutPolicyReport struct {
-	Threshold        float64                         `json:"pair_threshold"`
-	RestoredValues   int                             `json:"restored_values"`
-	NoOriginalChange bool                            `json:"does_not_write_original_tags"`
-	Decision         service.MatchingLayoutSelection `json:"decision"`
+	service.MatchingLayoutStage
+	RestoredValues   int  `json:"restored_values"`
+	NoOriginalChange bool `json:"does_not_write_original_tags"`
 }
 
 // evaluateApprovedLayoutPolicy exercises newly approved policy against
@@ -327,27 +334,44 @@ func evaluateApprovedLayoutPolicy(ctx context.Context, input fixture, opts optio
 	input.Captures = slices.Clone(input.Captures)
 	var restored int
 	for i := range input.Captures {
-		var tags map[string][]string
-		if err := json.Unmarshal(input.Captures[i].Tags, &tags); err != nil {
-			return report{}, fmt.Errorf("decode source tags: %w", err)
+		capture := &input.Captures[i]
+		if capture.CaptureAnalysisID == nil {
+			return report{}, fmt.Errorf("expected saved metadata for member %s", capture.VariantID)
 		}
-		overlay := tagencoding.Analyze(tags).Automatic
-		if len(overlay.Entries) == 0 {
+		// Version-1 fixtures without this field predate persisted corrections.
+		// A supplied map is authoritative, including no report or an undo.
+		if input.SavedTagEncoding != nil {
+			capture.TagEncoding = input.SavedTagEncoding[*capture.CaptureAnalysisID]
+			if bytes.Equal(capture.TagEncoding, []byte("null")) {
+				capture.TagEncoding = nil
+			}
 			continue
 		}
-		effective, err := overlay.Apply(tags)
-		if err != nil {
-			return report{}, fmt.Errorf("apply in-memory encoding overlay: %w", err)
+		if len(capture.TagEncoding) != 0 {
+			continue
 		}
-		input.Captures[i].Tags, err = json.Marshal(effective)
-		if err != nil {
-			return report{}, fmt.Errorf("encode scoring tags: %w", err)
+		var tags map[string][]string
+		if err := json.Unmarshal(capture.Tags, &tags); err != nil {
+			return report{}, fmt.Errorf("decode source tags: %w", err)
 		}
-		restored += len(overlay.Entries)
+		encoding := tagencoding.Analyze(tags)
+		if len(encoding.Automatic.Entries) == 0 {
+			continue
+		}
+		raw, err := json.Marshal(encoding)
+		if err != nil {
+			return report{}, fmt.Errorf("encode in-memory tag corrections: %w", err)
+		}
+		capture.TagEncoding = raw
+		restored += len(encoding.Automatic.Entries)
+	}
+	members, err := service.MatchingLayoutRetrievalMembers(input.Captures)
+	if err != nil {
+		return report{}, err
 	}
 	shortlistOpts := opts
 	shortlistOpts.stage = "shortlist"
-	result, err := evaluate(ctx, input, shortlistOpts)
+	result, err := evaluateWithMembers(ctx, input, shortlistOpts, members)
 	if err != nil {
 		return report{}, err
 	}
@@ -362,29 +386,15 @@ func evaluateApprovedLayoutPolicy(ctx context.Context, input fixture, opts optio
 		return report{}, err
 	}
 	result.NotHydrated = missing
-	policy := layoutPolicyReport{Threshold: opts.threshold, RestoredValues: restored, NoOriginalChange: true}
-	if len(missing) > 0 {
-		policy.Decision = service.MatchingLayoutSelection{
-			Status: service.MatchingLayoutSelectionIndeterminate,
-			Reason: "shortlisted edition tracklists are not present in this replay",
-		}
-	} else {
-		snapshot := persistence.ProviderMatchingSnapshot{Releases: layouts, SearchScores: input.SearchScores}
-		edges, err := service.BuildLayoutMatchingInputs(input.Captures, snapshot, input.SearchKeys, nil)
-		if err != nil {
-			return report{}, fmt.Errorf("score approved-policy pairs: %w", err)
-		}
-		result.ScoredPairs = len(edges)
-		prepared, err := preparedLayoutInputs(input.Captures, layouts, edges)
-		if err != nil {
-			return report{}, err
-		}
-		policy.Decision, err = service.SelectMatchingLayout(ctx, prepared, opts.threshold)
-		if err != nil {
-			return report{}, fmt.Errorf("select approved layout: %w", err)
-		}
+	snapshot := persistence.ProviderMatchingSnapshot{Releases: layouts, SearchScores: input.SearchScores}
+	stage, err := service.CalculateMatchingLayoutStage(ctx, input.Captures, ids, snapshot, input.SearchKeys, nil, opts.threshold)
+	if err != nil {
+		return report{}, fmt.Errorf("calculate approved layout stage: %w", err)
 	}
-	result.LayoutPolicy = &policy
+	result.ScoredPairs = stage.ScoredPairs
+	result.LayoutPolicy = &layoutPolicyReport{
+		MatchingLayoutStage: stage, RestoredValues: restored, NoOriginalChange: true,
+	}
 	return result, nil
 }
 

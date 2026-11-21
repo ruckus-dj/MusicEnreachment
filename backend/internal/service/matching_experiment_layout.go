@@ -319,7 +319,7 @@ func matchingBuildLayouts(
 		qualifying := candidate.AssignmentScore.Confidence >= threshold
 		edge := matchingExperimentEdge{
 			position:          position,
-			candidateID:       fmt.Sprintf("%s/%d/%d", candidate.ReleaseID, candidate.Medium, candidate.Track),
+			candidateID:       matchingLayoutChoiceID(candidate.ReleaseID, candidate.Medium, candidate.Track),
 			qualifying:        qualifying,
 			releaseConfidence: candidate.ReleaseScore.Confidence,
 		}

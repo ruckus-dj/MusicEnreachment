@@ -30,6 +30,7 @@ type MatchingLocalSelectionHeader struct {
 	Title          string                  `json:"title"`
 	Credits        []MatchingReleaseCredit `json:"credits"`
 	ReleaseDate    string                  `json:"release_date,omitempty"`
+	Disambiguation string                  `json:"disambiguation,omitempty"`
 	CatalogNumbers []string                `json:"catalog_numbers"`
 	PositionCount  int                     `json:"position_count"`
 }
@@ -125,7 +126,7 @@ func (repository *MatchingLocalCatalogRepository) ListMatchingLocalSelectionHead
 			if row.ProviderKey == "" {
 				return fmt.Errorf("list matching local selection headers: release %s has no provider key", row.ID)
 			}
-			releaseDate, catalogNumbers, err := matchingLocalSelectionEdition(row.Metadata)
+			releaseDate, catalogNumbers, disambiguation, err := matchingLocalSelectionEdition(row.Metadata)
 			if err != nil {
 				return fmt.Errorf("list matching local selection headers: %w", err)
 			}
@@ -140,6 +141,7 @@ func (repository *MatchingLocalCatalogRepository) ListMatchingLocalSelectionHead
 				Title:          row.Title,
 				Credits:        headerCredits,
 				ReleaseDate:    releaseDate,
+				Disambiguation: disambiguation,
 				CatalogNumbers: catalogNumbers,
 				PositionCount:  row.PositionCount,
 			})
@@ -361,24 +363,22 @@ func matchingLocalSelectionLayout(local MatchingLocalRelease, providerKey string
 	return release, nil
 }
 
-func matchingLocalSelectionEdition(raw string) (string, []string, error) {
+func matchingLocalSelectionEdition(raw string) (string, []string, string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return "", []string{}, nil
+		return "", []string{}, "", nil
 	}
 	var metadata struct {
-		Edition struct {
-			ReleaseDate   string `json:"release_date"`
-			CatalogNumber string `json:"catalog_number"`
-		} `json:"edition"`
+		Edition LocalProviderEdition `json:"edition"`
 	}
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
-		return "", nil, fmt.Errorf("decode local release metadata: %w", err)
+		return "", nil, "", fmt.Errorf("decode local release metadata: %w", err)
 	}
+	edition := metadata.Edition
 	catalogNumbers := []string{}
-	if catalogNumber := strings.TrimSpace(metadata.Edition.CatalogNumber); catalogNumber != "" {
+	if catalogNumber := strings.TrimSpace(edition.CatalogNumber); catalogNumber != "" {
 		catalogNumbers = append(catalogNumbers, catalogNumber)
 	}
-	return strings.TrimSpace(metadata.Edition.ReleaseDate), catalogNumbers, nil
+	return strings.TrimSpace(edition.ReleaseDate), catalogNumbers, strings.TrimSpace(edition.Disambiguation), nil
 }
 
 func matchingLocalSelectionDigest(value any) (string, error) {

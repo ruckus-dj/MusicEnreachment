@@ -50,7 +50,8 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 		return &candidate, nil
 	}
 
-	if candidate.ID != canonical.ID && metadataCandidateWins(candidate, *canonical) {
+	candidateWins := candidate.ID != canonical.ID && metadataCandidateWins(candidate, *canonical)
+	if candidateWins {
 		// A new observation of the same original text must not recreate a
 		// correction the user explicitly declined. Do not transfer any decision
 		// when the underlying evidence differs.
@@ -68,6 +69,21 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 		}
 	}
 	if candidateExists && candidate.ID != canonical.ID {
+		// Arbitration discards the losing capture, but a digestless capture can
+		// hold the only explicit tag correction for identical raw tags. Carry
+		// that report before references move and the row is deleted. An explicit
+		// report already on the canonical observation wins; reports are never
+		// merged, and observed metadata is not mixed.
+		if !candidateWins && len(candidateDigest) == 0 {
+			if _, err := tx.NewRaw(`UPDATE media_metadata_result dst SET tag_encoding=src.tag_encoding
+				FROM media_metadata_result src WHERE dst.id=? AND src.id=?
+					AND dst.observed_tags=src.observed_tags
+					AND NOT COALESCE(jsonb_exists(dst.tag_encoding, 'user_revision'), false)
+					AND jsonb_exists(src.tag_encoding, 'user_revision')`,
+				canonical.ID, candidate.ID).Exec(ctx); err != nil {
+				return nil, fmt.Errorf("upsert canonical source metadata: carry losing tag correction: %w", err)
+			}
+		}
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET success_metadata_result_id=? WHERE success_metadata_result_id=?`, canonical.ID, candidate.ID).Exec(ctx); err != nil {
 			return nil, fmt.Errorf("upsert canonical source metadata: move selected references: %w", err)
 		}

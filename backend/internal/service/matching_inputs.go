@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/tagencoding"
 )
 
 // MatchingSearchKeys identify the exact cached search responses associated with
@@ -109,7 +111,14 @@ func buildMatchingInputs(
 		if err != nil {
 			return nil, err
 		}
-		fields := matchingSourceFields(file.Tags)
+		tags := file.Tags
+		if options.layoutPolicy {
+			tags, err = matchingLayoutTags(tags, capture.TagEncoding)
+			if err != nil {
+				return nil, err
+			}
+		}
+		fields := matchingSourceFields(tags)
 		technical, err := ParseSourceTechnicalAnalysis(capture.ProbeResult)
 		if err != nil && !isEmptyProbe(capture.ProbeResult) {
 			return nil, fmt.Errorf("parse saved source technical analysis: %w", err)
@@ -221,6 +230,29 @@ func matchingCompleteTotal(complete bool, total int) *int {
 		return nil
 	}
 	return intPointer(total)
+}
+
+// matchingLayoutTags uses only the saved overlay. Unlike the display path,
+// automatic calculation must not silently drop a mismatched or invalid report.
+func matchingLayoutTags(tags map[string][]string, saved json.RawMessage) (map[string][]string, error) {
+	if len(saved) == 0 {
+		return tags, nil
+	}
+	var report tagencoding.Report
+	if err := json.Unmarshal(saved, &report); err != nil {
+		return nil, fmt.Errorf("decode saved matching tag corrections: %w", err)
+	}
+	if report.Version != tagencoding.ReportVersion {
+		return nil, fmt.Errorf("unsupported matching tag correction version %d", report.Version)
+	}
+	if len(report.Automatic.Entries) == 0 {
+		return tags, nil
+	}
+	effective, err := report.Automatic.Apply(tags)
+	if err != nil {
+		return nil, fmt.Errorf("apply saved matching tag corrections: %w", err)
+	}
+	return effective, nil
 }
 
 func cloneFloat(value *float64) *float64 {

@@ -31,6 +31,7 @@ type fixture struct {
 	Headers           []service.MatchingExperimentReleaseHeader             `json:"headers"`
 	Layouts           map[string]json.RawMessage                            `json:"layouts"`
 	MemoryTags        map[uuid.UUID]map[string][]string                     `json:"memory_tags"`
+	SavedTagEncoding  map[uuid.UUID]json.RawMessage                         `json:"saved_tag_encoding,omitempty"`
 	SearchKeys        map[uuid.UUID]service.MatchingSearchKeys              `json:"search_keys"`
 	SearchScores      map[string]map[string]persistence.MatchingSearchScore `json:"search_scores"`
 }
@@ -106,7 +107,7 @@ func run(ctx context.Context, opts options, out io.Writer) error {
 	if opts.limit < 1 || opts.limit > 100 {
 		return errors.New("experimental shortlist limit must be between 1 and 100")
 	}
-	if opts.stage == "policy" && opts.limit > 10 {
+	if opts.stage == "policy" && opts.limit > service.MatchingReleaseShortlistLimit {
 		return errors.New("approved-policy shortlist limit must be at most 10")
 	}
 	start := time.Now()

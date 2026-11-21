@@ -93,6 +93,30 @@ func TestDetect(t *testing.T) {
 			wantReplace: "Cafй ЧчЧчЧ",
 		},
 		{
+			name:        "isolated Latin-1 symbol requires confirmation",
+			value:       "Ìàíèÿ × 2",
+			wantStatus:  tagencoding.StatusCandidate,
+			wantReplace: "Мания Ч 2",
+		},
+		{
+			name:        "compact multiplication notation requires confirmation",
+			value:       "Ìàíèÿ×2",
+			wantStatus:  tagencoding.StatusCandidate,
+			wantReplace: "МанияЧ2",
+		},
+		{
+			name:        "symbol inside a Cyrillic run is still a recognized name",
+			value:       "×àðäûø",
+			wantStatus:  tagencoding.StatusAutomatic,
+			wantReplace: "Чардыш",
+		},
+		{
+			name:        "changed non-Cyrillic glyph requires confirmation",
+			value:       "Ìàíèÿ¹",
+			wantStatus:  tagencoding.StatusCandidate,
+			wantReplace: "Мания№",
+		},
+		{
 			name:        "UTF-8 mojibake outside Latin-1",
 			value:       "ÐŸÑƒÐ½Ðº",
 			wantStatus:  tagencoding.StatusUnchanged,
@@ -199,6 +223,16 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 	want := map[string][]string{"TITLE": {"Мир"}}
 	if !reflect.DeepEqual(repaired, want) {
 		t.Fatalf("confirmed tags = %#v, want %#v", repaired, want)
+	}
+
+	report = tagencoding.Analyze(map[string][]string{
+		"ALBUM":  {"Punk-O-Ìàíèÿ 2"},
+		"ARTIST": {"Ãðóïïà"},
+		"TITLE":  {"Ìèð", "Ìàíèÿ × 2"},
+	})
+	if len(report.Automatic.Entries) != 3 || report.Automatic.Entries[2].Replacement != "Мир" ||
+		len(report.Candidates) != 1 || report.Candidates[0].Original != "Ìàíèÿ × 2" {
+		t.Fatalf("capture evidence must resolve the short word but not the ambiguous symbol: %+v", report)
 	}
 }
 

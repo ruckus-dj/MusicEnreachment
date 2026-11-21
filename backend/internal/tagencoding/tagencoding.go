@@ -34,7 +34,7 @@ const (
 	// OverlayVersion is the wire version of Overlay.
 	OverlayVersion = 1
 	// DetectorVersion identifies the detection rules that produced a value.
-	DetectorVersion = 1
+	DetectorVersion = 2
 	// TransformLatin1Windows1251 identifies a repair of Windows-1251 bytes
 	// that were decoded as ISO-8859-1.
 	TransformLatin1Windows1251 = "latin1_windows_1251"
@@ -153,7 +153,9 @@ type GroupReport struct {
 // Detect inspects one saved tag value. It recognizes only text composed of
 // ASCII and Latin-1 high bytes whose reverse Windows-1251 decoding has a
 // sufficiently long contiguous Cyrillic run. Valid Unicode and ordinary Latin-1
-// accents are returned unchanged.
+// accents are returned unchanged. A repair that would also change an isolated
+// Latin-1 symbol or a non-Cyrillic glyph is ambiguous collateral damage, so
+// such a value is reported as a candidate instead of being applied automatically.
 func Detect(value string) Detection {
 	unchanged := Detection{Status: StatusUnchanged, Original: value, Replacement: value}
 	if value == "" || !utf8.ValidString(value) {
@@ -240,7 +242,7 @@ func Detect(value string) Detection {
 	var status Status
 	var decision Decision
 	switch {
-	case strongWord && !hasMixedLatinWord(value):
+	case strongWord && !hasMixedLatinWord(value) && !hasAmbiguousCollateral(value):
 		status, decision = StatusAutomatic, DecisionAutomatic
 	case longestRun >= candidateRun && highBytes >= candidateRun,
 		longestRun >= 2 && cyrillicRunes >= strongRun:
@@ -275,6 +277,47 @@ func hasMixedLatinWord(value string) bool {
 		ascii = ascii || r < utf8.RuneSelf
 		high = high || r >= utf8.RuneSelf
 		if ascii && high {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAmbiguousCollateral reports whether the repair would change a character
+// that is not part of a credible Cyrillic run. A Latin-1 symbol such as an
+// isolated multiplication sign ("Ìàíèÿ × 2") becomes a Cyrillic letter, and a
+// changed non-Cyrillic glyph is outside the intended transform; either change
+// must be confirmed explicitly. Symbols adjacent to decoded Cyrillic letters
+// ("×àðäûø") remain ordinary mojibake of that name.
+func hasAmbiguousCollateral(value string) bool {
+	originals := []rune(value)
+	decoded := make([]rune, len(originals))
+	cyrillic := make([]bool, len(originals))
+	for index, original := range originals {
+		if original < 0xA0 {
+			decoded[index] = original
+			continue
+		}
+		decoded[index] = charmap.Windows1251.DecodeByte(byte(original))
+		cyrillic[index] = unicode.Is(unicode.Cyrillic, decoded[index])
+	}
+	for index, original := range originals {
+		if original < 0xA0 || decoded[index] == original {
+			continue
+		}
+		if !cyrillic[index] {
+			return true
+		}
+		if unicode.IsLetter(original) {
+			continue
+		}
+		if original == '×' && ((index > 0 && unicode.IsDigit(originals[index-1])) ||
+			(index+1 < len(originals) && unicode.IsDigit(originals[index+1]))) {
+			return true
+		}
+		joined := index > 0 && cyrillic[index-1] ||
+			index+1 < len(originals) && cyrillic[index+1]
+		if !joined {
 			return true
 		}
 	}
@@ -344,7 +387,7 @@ func Analyze(tags map[string][]string) Report {
 }
 
 func captureSupportsShortCyrillic(candidate Candidate) bool {
-	if hasMixedLatinWord(candidate.Original) {
+	if hasMixedLatinWord(candidate.Original) || hasAmbiguousCollateral(candidate.Original) {
 		return false
 	}
 	hasCyrillicVowel := false

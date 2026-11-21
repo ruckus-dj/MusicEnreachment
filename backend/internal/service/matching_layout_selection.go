@@ -81,7 +81,7 @@ func SelectMatchingLayout(
 	if !validMatchingConfidence(threshold) {
 		return MatchingLayoutSelection{}, fmt.Errorf("matching layout selection threshold must be between 0 and 1")
 	}
-	if len(input.ReleaseLayouts) > 10 {
+	if len(input.ReleaseLayouts) > MatchingReleaseShortlistLimit {
 		return MatchingLayoutSelection{}, fmt.Errorf("matching layout selection requires at most ten shortlisted editions")
 	}
 	for _, member := range input.Members {

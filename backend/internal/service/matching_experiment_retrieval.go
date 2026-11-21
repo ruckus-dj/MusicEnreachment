@@ -7,15 +7,25 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
-// MatchingExperimentReleaseHeader is one release header used by the pure T02
-// retrieval experiment. It deliberately contains no tracklist or assignment
-// evidence: the experiment compares headers against frozen group metadata only.
-type MatchingExperimentReleaseHeader struct {
+// MatchingReleaseHeader is the complete public release-header evidence shared
+// by the pure T02 experiment and the Plan 14 shortlist. It deliberately
+// contains no tracklist or assignment evidence: callers compare headers
+// against frozen group metadata only.
+type MatchingReleaseHeader struct {
 	MatchingRetrievalCandidate
 	// PositionCount is the known number of release positions. Nil means the
 	// provider did not expose a count; it is never treated as zero.
 	PositionCount *int
 }
+
+// MatchingExperimentReleaseHeader keeps the frozen experiment, fixture, and
+// report name for the shared header shape. It is not a distinct type.
+type MatchingExperimentReleaseHeader = MatchingReleaseHeader
+
+// MatchingReleaseShortlistLimit is the approved maximum number of release
+// headers a pure shortlist may select. It bounds selection only; it never
+// truncates a diagnostic ranking.
+const MatchingReleaseShortlistLimit = 10
 
 // MatchingExperimentTextEvidence reports how much full-release text evidence
 // was available for one header. It is a diagnostic, not a score modifier.
@@ -57,13 +67,47 @@ type MatchingExperimentReleaseRank struct {
 	CountDelta *int
 }
 
-type matchingExperimentEntry struct {
+type matchingReleaseHeaderEntry struct {
 	evidence      matchingRetrievalRank
 	positionCount *int
 	countDelta    *int
 	countKnown    bool
 	countDistance int
 	baselineRank  int
+}
+
+// RankMatchingReleaseShortlist is the pure Plan 14 release-selection step. It
+// evaluates complete public headers against frozen group evidence and returns
+// at most MatchingReleaseShortlistLimit canonical provider release IDs, best
+// first. Ordering is the experiment-proven exact comparator: full-release text
+// score, exact DATE/catalog evidence, a known position count as the last
+// evidence before the stable release ID, and finally the canonical release ID.
+//
+// A known count ranks an exact agreement first, keeps an unknown count neutral,
+// and orders other known counts by absolute distance from the captured file
+// count. Counts never reject a header. The function performs no provider,
+// network, database, or filesystem I/O and never assigns files to positions.
+// Duplicate canonical release IDs are rejected rather than collapsed.
+func RankMatchingReleaseShortlist(captured []persistence.MatchingAcquisitionCapturedMember, headers []MatchingReleaseHeader) ([]string, error) {
+	if len(captured) == 0 {
+		return nil, fmt.Errorf("matching release shortlist requires captured members")
+	}
+	if len(headers) == 0 {
+		return []string{}, nil
+	}
+	entries, err := matchingReleaseHeaderEntries(captured, headers)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return compareMatchingReleaseHeaderRank(entries[i], entries[j]) < 0
+	})
+	limit := min(MatchingReleaseShortlistLimit, len(entries))
+	selected := make([]string, limit)
+	for index := range selected {
+		selected[index] = entries[index].evidence.ReleaseID
+	}
+	return selected, nil
 }
 
 // RankMatchingExperimentCatalog returns the complete reproducible T02 ranking.
@@ -88,57 +132,20 @@ func RankMatchingExperimentCatalog(captured []persistence.MatchingAcquisitionCap
 	if len(candidates) == 0 {
 		return []MatchingExperimentReleaseRank{}, nil
 	}
-	files, err := matchingRetrievalSourceFiles(captured)
+	entries, err := matchingReleaseHeaderEntries(captured, candidates)
 	if err != nil {
 		return nil, err
 	}
-	candidates = append([]MatchingExperimentReleaseHeader(nil), candidates...)
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
-	entries := make([]*matchingExperimentEntry, 0, len(candidates))
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.PositionCount != nil && *candidate.PositionCount < 0 {
-			return nil, fmt.Errorf("matching experiment candidate %q has a negative position count", candidate.ID)
-		}
-		evidence, rankErr := matchingRetrievalRankFor(files, candidate.MatchingRetrievalCandidate)
-		if rankErr != nil {
-			return nil, rankErr
-		}
-		if _, duplicate := seen[evidence.ReleaseID]; duplicate {
-			return nil, fmt.Errorf("matching experiment repeats candidate %q", evidence.ReleaseID)
-		}
-		seen[evidence.ReleaseID] = struct{}{}
-		entry := &matchingExperimentEntry{evidence: evidence}
-		if candidate.PositionCount != nil {
-			delta := *candidate.PositionCount - len(captured)
-			distance := delta
-			if distance < 0 {
-				distance = -distance
-			}
-			entry.positionCount = intPointer(*candidate.PositionCount)
-			entry.countDelta = intPointer(delta)
-			entry.countKnown = true
-			entry.countDistance = distance
-		}
-		entries = append(entries, entry)
-	}
-	baseline := append([]*matchingExperimentEntry(nil), entries...)
+	baseline := append([]*matchingReleaseHeaderEntry(nil), entries...)
 	sort.Slice(baseline, func(i, j int) bool {
 		return compareMatchingRetrievalRank(baseline[i].evidence, baseline[j].evidence) < 0
 	})
 	for index, entry := range baseline {
 		entry.baselineRank = index + 1
 	}
-	ordered := append([]*matchingExperimentEntry(nil), entries...)
+	ordered := append([]*matchingReleaseHeaderEntry(nil), entries...)
 	sort.Slice(ordered, func(i, j int) bool {
-		left, right := ordered[i], ordered[j]
-		if comparison := compareMatchingRetrievalTextEvidence(left.evidence, right.evidence); comparison != 0 {
-			return comparison < 0
-		}
-		if comparison := compareMatchingExperimentCount(left, right); comparison != 0 {
-			return comparison < 0
-		}
-		return left.evidence.ReleaseID < right.evidence.ReleaseID
+		return compareMatchingReleaseHeaderRank(ordered[i], ordered[j]) < 0
 	})
 	results := make([]MatchingExperimentReleaseRank, len(ordered))
 	for index, entry := range ordered {
@@ -163,11 +170,73 @@ func RankMatchingExperimentCatalog(captured []persistence.MatchingAcquisitionCap
 	return results, nil
 }
 
-// compareMatchingExperimentCount orders a remaining text/exact tie. Exact known
-// agreement comes first, an unknown count is neutral next, and known non-exact
-// counts follow by absolute delta. Equal distances stay tied for the display ID
-// order.
-func compareMatchingExperimentCount(left, right *matchingExperimentEntry) int {
+// matchingReleaseHeaderEntries decodes the frozen group evidence once and
+// evaluates every header through the shared ranking inputs. Headers are
+// processed in raw ID order so duplicate detection and error reporting are
+// deterministic; canonical duplicate identities are still rejected.
+func matchingReleaseHeaderEntries(captured []persistence.MatchingAcquisitionCapturedMember, headers []MatchingReleaseHeader) ([]*matchingReleaseHeaderEntry, error) {
+	files, err := matchingRetrievalSourceFiles(captured)
+	if err != nil {
+		return nil, err
+	}
+	headers = append([]MatchingReleaseHeader(nil), headers...)
+	sort.Slice(headers, func(i, j int) bool { return headers[i].ID < headers[j].ID })
+	entries := make([]*matchingReleaseHeaderEntry, 0, len(headers))
+	seen := make(map[string]struct{}, len(headers))
+	for _, header := range headers {
+		if header.PositionCount != nil && *header.PositionCount < 0 {
+			return nil, fmt.Errorf("matching release header %q has a negative position count", header.ID)
+		}
+		evidence, rankErr := matchingRetrievalRankFor(files, header.MatchingRetrievalCandidate)
+		if rankErr != nil {
+			return nil, rankErr
+		}
+		if _, duplicate := seen[evidence.ReleaseID]; duplicate {
+			return nil, fmt.Errorf("matching release headers repeat candidate %q", evidence.ReleaseID)
+		}
+		seen[evidence.ReleaseID] = struct{}{}
+		entry := &matchingReleaseHeaderEntry{evidence: evidence}
+		if header.PositionCount != nil {
+			delta := *header.PositionCount - len(captured)
+			distance := delta
+			if distance < 0 {
+				distance = -distance
+			}
+			entry.positionCount = intPointer(*header.PositionCount)
+			entry.countDelta = intPointer(delta)
+			entry.countKnown = true
+			entry.countDistance = distance
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// compareMatchingReleaseHeaderRank orders the shared pure shortlist: text
+// evidence first, the known count as the last evidence before the stable
+// canonical release ID.
+func compareMatchingReleaseHeaderRank(left, right *matchingReleaseHeaderEntry) int {
+	if comparison := compareMatchingRetrievalTextEvidence(left.evidence, right.evidence); comparison != 0 {
+		return comparison
+	}
+	if comparison := compareMatchingReleaseHeaderCount(left, right); comparison != 0 {
+		return comparison
+	}
+	switch {
+	case left.evidence.ReleaseID < right.evidence.ReleaseID:
+		return -1
+	case left.evidence.ReleaseID > right.evidence.ReleaseID:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// compareMatchingReleaseHeaderCount orders a remaining text/exact tie. Exact
+// known agreement comes first, an unknown count is neutral next, and known
+// non-exact counts follow by absolute delta. Equal distances stay tied for the
+// stable release ID order.
+func compareMatchingReleaseHeaderCount(left, right *matchingReleaseHeaderEntry) int {
 	leftExact := left.countKnown && left.countDistance == 0
 	rightExact := right.countKnown && right.countDistance == 0
 	if leftExact != rightExact {
