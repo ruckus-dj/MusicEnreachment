@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -129,15 +130,27 @@ func validateFallbackLayoutStageLookupsTx(ctx context.Context, tx bun.Tx, source
 		if !exists || receipt.RunID != stage.RunID || receipt.StageIndex != stage.StageIndex || receipt.CacheKey != lookup.CacheKey {
 			return errors.New("matching fallback layout history has an unexpected lookup receipt")
 		}
-		_, proof, err := DecodeFallbackLayoutLookup(receipt, scope, lookup.ReleaseID)
+		frozen, proof, err := decodeFallbackLayoutLookup(receipt, scope, lookup.ReleaseID)
 		if err != nil {
 			return err
 		}
 		if proof.Namespace != source.Namespace {
 			return ErrIncomingMatchConflict
 		}
-		if err := validateMatchingProviderLayoutSnapshotTx(ctx, tx, proof, proof.HydrationKeys); err != nil {
-			return fmt.Errorf("validate fallback layout history: accepted lookup: %w", err)
+		current, err := readMusicBrainzMatchingSnapshot(ctx, tx, scope.Endpoint, scope.ConfigurationIdentity, proof.ReleaseKeys, proof.HydrationKeys, false)
+		if err != nil {
+			return fmt.Errorf("validate fallback layout history: read current projection: %w", err)
+		}
+		response := current.Responses[receipt.CacheKey]
+		if current.Source.ID != proof.ProviderSourceID || current.Source.Namespace != proof.Namespace ||
+			response == nil || !equalOptionalString(response.Revision, receipt.CacheRevision) ||
+			!matchingJSONEqual(response.Payload, receipt.Payload) {
+			return fmt.Errorf("validate fallback layout history: accepted lookup response changed: %w", ErrIncomingMatchConflict)
+		}
+		if current.AcceptedProjectionRevision != proof.AcceptedProjectionRevision {
+			if err := compareFallbackLayoutProjections(frozen, current); err != nil {
+				return err
+			}
 		}
 		delete(requests, receipt.RequestID)
 	}
@@ -145,4 +158,73 @@ func validateFallbackLayoutStageLookupsTx(ctx context.Context, tx bun.Tx, source
 		return errors.New("matching fallback layout history is missing accepted lookup receipts")
 	}
 	return nil
+}
+
+// A sibling lookup can reaccept an identical shared recording or artist and
+// advance its observation order. The immutable receipt retains that exact
+// provenance; freshness here compares normalized data and field authority, not
+// order or the raw transport fragment that happened to supply those values.
+func compareFallbackLayoutProjections(frozen, current ProviderMatchingSnapshot) error {
+	expected, err := fallbackLayoutProjectionValues(frozen)
+	if err != nil {
+		return fmt.Errorf("validate fallback layout history: normalize saved projection: %w", err)
+	}
+	actual, err := fallbackLayoutProjectionValues(current)
+	if err != nil {
+		return fmt.Errorf("validate fallback layout history: normalize current projection: %w", err)
+	}
+	if !bytes.Equal(expected, actual) {
+		return fmt.Errorf("validate fallback layout history: accepted lookup projection changed: %w", ErrIncomingMatchConflict)
+	}
+	return nil
+}
+
+func fallbackLayoutProjectionValues(snapshot ProviderMatchingSnapshot) ([]byte, error) {
+	// Snapshots passed here are private to validation; the receipt bytes and
+	// their exact projection digest are never rewritten.
+	for i := range snapshot.Releases {
+		release := &snapshot.Releases[i]
+		release.FetchOrder = 0
+		release.RawSource = nil
+		omitFallbackLayoutFieldFetchOrder(release.FieldEvidence)
+		for j := range release.Credits {
+			release.Credits[j].FetchOrder = 0
+		}
+		for j := range release.Tracks {
+			release.Tracks[j].FetchOrder = 0
+		}
+	}
+	for i := range snapshot.ProjectionEntities {
+		entity := &snapshot.ProjectionEntities[i]
+		entity.FetchOrder = 0
+		entity.RawSource = nil
+		if len(entity.FieldEvidence) == 0 {
+			continue
+		}
+		var fields map[string]ProviderFieldEvidence
+		if err := json.Unmarshal(entity.FieldEvidence, &fields); err != nil {
+			return nil, err
+		}
+		omitFallbackLayoutFieldFetchOrder(fields)
+		normalized, err := json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		entity.FieldEvidence = normalized
+	}
+	encoded, err := json.Marshal(struct {
+		Releases []MatchingRelease
+		Entities []MatchingProjectionEntity
+	}{snapshot.Releases, snapshot.ProjectionEntities})
+	if err != nil {
+		return nil, err
+	}
+	return canonicalMatchingJSON(encoded)
+}
+
+func omitFallbackLayoutFieldFetchOrder(fields map[string]ProviderFieldEvidence) {
+	for name, evidence := range fields {
+		evidence.FetchOrder = 0
+		fields[name] = evidence
+	}
 }

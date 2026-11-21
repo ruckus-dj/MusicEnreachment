@@ -124,6 +124,55 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		if len(frozen.Tracks) != 2 {
 			t.Fatalf("published snapshot tracks=%d, want 2", len(frozen.Tracks))
 		}
+		lookup := history[1].LookupReceipts[0]
+		var acceptedSnapshot persistence.ProviderMatchingSnapshot
+		if err := json.Unmarshal(lookup.AcceptedProjection, &acceptedSnapshot); err != nil {
+			t.Fatal(err)
+		}
+		// Accept a second edition with different release/track IDs but the
+		// same recordings and credits. It reobserves the shared graph.
+		var sibling struct {
+			ArtistCredit json.RawMessage `json:"artist-credit"`
+			ID           string          `json:"id"`
+			Title        string          `json:"title"`
+			Media        []struct {
+				Position int                          `json:"position"`
+				Tracks   []map[string]json.RawMessage `json:"tracks"`
+			} `json:"media"`
+		}
+		if err := json.Unmarshal(lookup.Payload, &sibling); err != nil {
+			t.Fatal(err)
+		}
+		sibling.ID = uuid.NewString()
+		for _, medium := range sibling.Media {
+			for _, track := range medium.Tracks {
+				track["id"] = json.RawMessage(fmt.Sprintf("%q", uuid.NewString()))
+			}
+		}
+		siblingPayload, err := json.Marshal(sibling)
+		if err != nil {
+			t.Fatal(err)
+		}
+		siblingGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: siblingPayload}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		siblingTicket, err := cache.BeginRefresh(ctx, fixture.Source.ID, "release-lookup:"+sibling.ID, configuration.Identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+			Ticket: siblingTicket, FetchedAt: time.Now().UTC(), Payload: siblingPayload, Graph: siblingGraph,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		afterSibling, err := cache.GetMusicBrainzMatchingSnapshot(ctx, fixture.Source.Endpoint, fixture.Source.ConfigurationIdentity,
+			[]string{fixture.InputSnapshot.Selected.ProviderKey}, []string{lookup.CacheKey})
+		if err != nil || afterSibling.AcceptedProjectionRevision == acceptedSnapshot.AcceptedProjectionRevision {
+			t.Fatalf("shared lookup did not move projection provenance: %v", err)
+		}
+		validateProviderEvidence(nil)
+
 		artistID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 		payload := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Provider Album B","artist-credit":[{"name":"Artist B","artist":{"id":%q,"name":"Artist B"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"title":"Track Override B","recording":{"id":%q,"title":"Recording Title B","artist-credit":[{"name":"Artist B","artist":{"id":%q,"name":"Artist B"}}]}},{"id":%q,"number":"2","length":180000,"title":"Second Track B","recording":{"id":%q,"title":"Second Recording B","artist-credit":[{"name":"Artist B","artist":{"id":%q,"name":"Artist B"}}]}}]}]}`,
 			fixture.InputSnapshot.Selected.ProviderKey, artistID,
