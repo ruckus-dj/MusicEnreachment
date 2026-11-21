@@ -349,6 +349,9 @@ func (repository *SourceInventoryRepository) DeleteSourceRootWithCleanup(ctx con
 		if held {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
+		if err := retireMatchingLocalRechecksForRemovedRoot(ctx, tx, id); err != nil {
+			return fmt.Errorf("delete source root: %w", err)
+		}
 		var works []uuid.UUID
 		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? ORDER BY id FOR UPDATE`, id).Scan(ctx, &works); err != nil {
 			return fmt.Errorf("delete source root: lock root analysis work: %w", err)

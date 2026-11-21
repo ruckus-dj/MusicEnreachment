@@ -25,6 +25,7 @@ type PublicationSourceCleanupCandidate struct {
 	Borrowers         []PublicationSourceCleanupBorrower
 	Held              bool
 	Blockers          []string
+	unlinkTarget      string
 }
 
 // PublicationSourceCleanupBorrower describes each release position currently
@@ -180,6 +181,24 @@ func readPublicationSourceCleanupAssessmentTx(ctx context.Context, tx bun.IDB, p
 				candidate.Held = held
 				if held {
 					candidate.Blockers = append(candidate.Blockers, "source is protected by a publication hold")
+				}
+				if candidate.SourceLocationID != uuid.Nil {
+					if row.WorkConfiguredPath != nil && row.WorkRelativePath != nil {
+						// Even when the native path is invalid, the exact
+						// identity check remains meaningful for assessment.
+						target, targetErr := matchingLocalRecheckUnlinkTarget(*row.WorkConfiguredPath, *row.WorkRelativePath)
+						if targetErr == nil {
+							candidate.unlinkTarget = target
+						}
+					}
+					protected, err := matchingLocalRecheckProtectsSource(ctx, tx, candidate.WorkID, candidate.SourceLocationID, candidate.unlinkTarget)
+					if err != nil {
+						return fmt.Errorf("assess publication source cleanup: %w", err)
+					}
+					if protected {
+						candidate.Held = true
+						candidate.Blockers = append(candidate.Blockers, "source is protected while matching is rechecked")
+					}
 				}
 			}
 		}

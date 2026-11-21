@@ -381,18 +381,64 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 }
 
 func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview MatchingLocalPreview, intent MatchingLocalIntent) (uuid.UUID, error) {
+	return materializeMatchingLocalRelease(ctx, tx, preview, intent, materializationAuthority{method: "manual"}, nil)
+}
+
+// matchingLocalMaterializedSource identifies the exact association and its
+// library position. Only an inserted association belongs to the new apply.
+type matchingLocalMaterializedSource struct {
+	FileMemberID    uuid.UUID
+	MediaVariantID  uuid.UUID
+	ProviderTrackID uuid.UUID
+	LocalTrackID    uuid.UUID
+	ReleaseTrackID  uuid.UUID
+	TrackSourceID   uuid.UUID
+	Inserted        bool
+}
+
+func materializeAutomaticMatchingLocalTx(ctx context.Context, tx bun.Tx, preview MatchingLocalPreview) (uuid.UUID, []matchingLocalMaterializedSource, error) {
+	if len(preview.Sources) == 0 || len(preview.Sources) != len(preview.Assignments) || len(preview.OmittedFileMemberIDs) != 0 {
+		return uuid.Nil, nil, ErrIncomingMatchConflict
+	}
+	members := make(map[uuid.UUID]bool, len(preview.Sources))
+	for _, source := range preview.Sources {
+		if source.FileMemberID == uuid.Nil || len(source.MediaIDs) == 0 || members[source.FileMemberID] {
+			return uuid.Nil, nil, ErrIncomingMatchConflict
+		}
+		members[source.FileMemberID] = true
+	}
+	for _, assignment := range preview.Assignments {
+		if !members[assignment.FileMemberID] || assignment.ProviderTrackID == uuid.Nil {
+			return uuid.Nil, nil, ErrIncomingMatchConflict
+		}
+		delete(members, assignment.FileMemberID)
+	}
+	policyVersion := MatchingLayoutPolicyVersion
+	authority := materializationAuthority{method: "automatic", policyVersion: &policyVersion, reuseManualLocalCatalog: true}
+	intent := MatchingLocalIntent{ProviderReleaseID: preview.ProviderReleaseID, Assignments: preview.Assignments}
+	var sources []matchingLocalMaterializedSource
+	release, err := materializeMatchingLocalRelease(ctx, tx, preview, intent, authority, &sources)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	return release, sources, nil
+}
+
+func materializeMatchingLocalRelease(ctx context.Context, tx bun.Tx, preview MatchingLocalPreview, intent MatchingLocalIntent, authority materializationAuthority, materialized *[]matchingLocalMaterializedSource) (uuid.UUID, error) {
 	if preview.LocalCatalog == nil || preview.LocalCatalog.ID != intent.ProviderReleaseID || preview.ProviderReleaseID != intent.ProviderReleaseID {
 		return uuid.Nil, ErrIncomingMatchConflict
 	}
-	release, _, err := ensureLocalRelease(ctx, tx, localProviderID, intent.ProviderReleaseID, preview.ReleaseTitle, materializationAuthority{method: "manual"})
+	release, releaseCreated, err := ensureLocalRelease(ctx, tx, localProviderID, intent.ProviderReleaseID, preview.ReleaseTitle, authority)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, release).Scan(ctx, &release); err != nil {
 		return uuid.Nil, err
 	}
-	if err := materializeMatchingLocalProviderCredits(ctx, tx, release, "release_artist", preview.LocalCatalog.Artists); err != nil {
-		return uuid.Nil, err
+	if releaseCreated || authority.method == "manual" {
+		if err := materializeMatchingLocalProviderCredits(ctx, tx, release, "release_artist", preview.LocalCatalog.Artists, authority); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	tracks := make(map[uuid.UUID]MatchingLocalTrack, len(preview.Tracks))
 	for _, track := range preview.Tracks {
@@ -408,7 +454,7 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 		if err := tx.NewRaw(`SELECT provider_id,title FROM provider_recording WHERE id=? FOR UPDATE`, track.RecordingID).Scan(ctx, &recordingProviderID, &recordingTitle); err != nil || recordingProviderID != track.RecordingProviderID {
 			return uuid.Nil, ErrIncomingMatchConflict
 		}
-		localRecordingID, recordingCreated, err := ensureMatchingLocalRecording(ctx, tx, recordingProviderID, track.RecordingID, recordingTitle, track.RecordingDurationMS)
+		localRecordingID, recordingCreated, err := ensureMatchingLocalRecording(ctx, tx, recordingProviderID, track.RecordingID, recordingTitle, track.RecordingDurationMS, authority)
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -416,7 +462,7 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 			return uuid.Nil, err
 		}
 		if recordingCreated {
-			if err := materializeMatchingLocalProviderCredits(ctx, tx, localRecordingID, "recording_artist", track.RecordingCredits); err != nil {
+			if err := materializeMatchingLocalProviderCredits(ctx, tx, localRecordingID, "recording_artist", track.RecordingCredits, authority); err != nil {
 				return uuid.Nil, err
 			}
 		}
@@ -424,12 +470,12 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 		if effectiveDuration == nil {
 			effectiveDuration = track.RecordingDurationMS
 		}
-		localTrackID, trackCreated, err := ensureLocalTrackForRecording(ctx, tx, localProviderID, track.ProviderTrackID, localRecordingID, release, track.Medium-1, track.Position-1, track.Title, effectiveDuration, materializationAuthority{method: "manual"})
+		localTrackID, trackCreated, err := ensureLocalTrackForRecording(ctx, tx, localProviderID, track.ProviderTrackID, localRecordingID, release, track.Medium-1, track.Position-1, track.Title, effectiveDuration, authority)
 		if err != nil {
 			return uuid.Nil, err
 		}
 		if trackCreated {
-			if err := materializeMatchingLocalProviderCredits(ctx, tx, localTrackID, "track_artist", track.RecordingCredits); err != nil {
+			if err := materializeMatchingLocalProviderCredits(ctx, tx, localTrackID, "track_artist", track.RecordingCredits, authority); err != nil {
 				return uuid.Nil, err
 			}
 			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, artistCreditOriginRecordingFallback); err != nil {
@@ -441,7 +487,14 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 			return uuid.Nil, ErrIncomingMatchConflict
 		}
 		for _, variantID := range variants {
-			if err := attachTrackSource(ctx, tx, localTrackID, variantID, materializationAuthority{method: "manual"}, previewSourceMetadataResultID(preview.Sources, assignment.FileMemberID, variantID)); err != nil {
+			metadataID := previewSourceMetadataResultID(preview.Sources, assignment.FileMemberID, variantID)
+			if materialized != nil {
+				source, err := attachLayoutLocalSource(ctx, tx, release, localTrackID, localRecordingID, track, assignment, variantID, metadataID, authority)
+				if err != nil {
+					return uuid.Nil, err
+				}
+				*materialized = append(*materialized, source)
+			} else if err := attachTrackSource(ctx, tx, localTrackID, variantID, authority, metadataID); err != nil {
 				return uuid.Nil, err
 			}
 		}
@@ -449,12 +502,44 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 	return release, nil
 }
 
-func ensureMatchingLocalRecording(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, title string, durationMS *int64) (uuid.UUID, bool, error) {
+func attachLayoutLocalSource(ctx context.Context, tx bun.Tx, release, localTrack, localRecording uuid.UUID, track MatchingLocalTrack, assignment MatchingLocalAssignment, variant uuid.UUID, metadataID *uuid.UUID, authority materializationAuthority) (matchingLocalMaterializedSource, error) {
+	source := matchingLocalMaterializedSource{
+		FileMemberID: assignment.FileMemberID, ProviderTrackID: assignment.ProviderTrackID,
+		LocalTrackID: localTrack, MediaVariantID: variant,
+	}
+	if err := tx.NewRaw(`SELECT id FROM release_track
+		WHERE release_id=? AND track_id=? AND recording_id=? AND medium=? AND position=? FOR UPDATE`,
+		release, localTrack, localRecording, track.Medium-1, track.Position-1).Scan(ctx, &source.ReleaseTrackID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return source, ErrIncomingMatchConflict
+		}
+		return source, fmt.Errorf("read local layout position: %w", err)
+	}
+	err := tx.NewRaw(`SELECT id FROM track_source WHERE track_id=? AND media_variant_id=? FOR UPDATE`, localTrack, variant).Scan(ctx, &source.TrackSourceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return source, fmt.Errorf("read existing local layout association: %w", err)
+	}
+	source.Inserted = errors.Is(err, sql.ErrNoRows)
+	if !source.Inserted {
+		metadataID = nil // A reused association keeps its own metadata evidence.
+	}
+	if err := attachTrackSource(ctx, tx, localTrack, variant, authority, metadataID); err != nil {
+		return source, err
+	}
+	if source.Inserted {
+		if err := tx.NewRaw(`SELECT id FROM track_source WHERE track_id=? AND media_variant_id=?`, localTrack, variant).Scan(ctx, &source.TrackSourceID); err != nil {
+			return source, fmt.Errorf("read new local layout association: %w", err)
+		}
+	}
+	return source, nil
+}
+
+func ensureMatchingLocalRecording(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, title string, durationMS *int64, authority materializationAuthority) (uuid.UUID, bool, error) {
 	var localID uuid.UUID
 	var method string
 	err := tx.NewRaw(`SELECT local_recording_id,method FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=? FOR UPDATE`, providerID, providerRecordingID).Scan(ctx, &localID, &method)
 	if err == nil {
-		if method == "automatic" {
+		if method == "automatic" && authority.method == "manual" {
 			_, err = tx.NewRaw(`UPDATE provider_local_recording SET method='manual',policy_version=NULL WHERE provider_id=? AND provider_recording_id=?`, providerID, providerRecordingID).Exec(ctx)
 		}
 		return localID, false, err
@@ -470,13 +555,13 @@ func ensureMatchingLocalRecording(ctx context.Context, tx bun.Tx, providerID, pr
 	} else if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title,metadata) VALUES(?,?,jsonb_build_object('duration_ms',?))`, localID, title, *durationMS).Exec(ctx); err != nil {
 		return uuid.Nil, false, err
 	}
-	if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method) VALUES(?,?,?,'manual')`, providerID, providerRecordingID, localID).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES(?,?,?,?,?)`, providerID, providerRecordingID, localID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 		return uuid.Nil, false, err
 	}
 	return localID, true, nil
 }
 
-func materializeMatchingLocalProviderCredits(ctx context.Context, tx bun.Tx, parentID uuid.UUID, relation string, credits []MatchingLocalArtist) error {
+func materializeMatchingLocalProviderCredits(ctx context.Context, tx bun.Tx, parentID uuid.UUID, relation string, credits []MatchingLocalArtist, authority materializationAuthority) error {
 	parentColumn := map[string]string{"release_artist": "release_id", "recording_artist": "recording_id", "track_artist": "track_id"}[relation]
 	if parentColumn == "" {
 		return errors.New("invalid local provider credit relation")
@@ -491,12 +576,12 @@ func materializeMatchingLocalProviderCredits(ctx context.Context, tx bun.Tx, par
 			if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name) VALUES(?,?)`, artistID, credit.ArtistName).Exec(ctx); err != nil {
 				return err
 			}
-			if _, err := tx.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method) VALUES(?,?,?,'manual')`, credit.ProviderID, credit.ProviderArtistID, artistID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method,policy_version) VALUES(?,?,?,?,?)`, credit.ProviderID, credit.ProviderArtistID, artistID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 				return err
 			}
 		} else if err != nil {
 			return err
-		} else if method == "automatic" {
+		} else if method == "automatic" && authority.method == "manual" {
 			if _, err := tx.NewRaw(`UPDATE provider_local_artist SET method='manual',policy_version=NULL WHERE provider_id=? AND provider_artist_id=?`, credit.ProviderID, credit.ProviderArtistID).Exec(ctx); err != nil {
 				return err
 			}

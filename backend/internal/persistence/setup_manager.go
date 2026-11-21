@@ -1716,6 +1716,7 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 		Where("NOT EXISTS (SELECT 1 FROM manual_matching_receipt WHERE retired_by_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_reconciliation_event WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_cleanup_request WHERE originating_operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM matching_local_recheck WHERE local_apply_operation_id = operation.id)").
 		Where("kind <> 'delete_library_v1' OR (state = 'succeeded' AND jsonb_array_length(input_snapshot->'residual_publication_ids') = 0)").
 		Exec(ctx)
 	if err != nil {
@@ -1746,6 +1747,7 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_cleanup_request WHERE originating_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_run WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_apply_request WHERE apply_operation_id = operation.id OR parent_run_id IN (SELECT id FROM matching_run WHERE operation_id = operation.id))").
+		Where("NOT EXISTS (SELECT 1 FROM matching_local_recheck WHERE local_apply_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_provider_dependency WHERE request_id = operation.id)").
 		Exec(ctx)
 	if err != nil {

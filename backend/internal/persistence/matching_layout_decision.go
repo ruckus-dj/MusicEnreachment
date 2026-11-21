@@ -19,6 +19,10 @@ import (
 // different version.
 const MatchingLayoutDecisionSchemaVersion = 1
 
+// MatchingLayoutPolicyVersion identifies whole-layout selection, distinct from
+// the underlying text scorer's version.
+const MatchingLayoutPolicyVersion = "matching-layout-v1"
+
 // MatchingLayoutDecisionStatus is the explicit result of whole-layout selection.
 // It mirrors the service status without importing the service package.
 type MatchingLayoutDecisionStatus string

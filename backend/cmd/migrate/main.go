@@ -42,7 +42,7 @@ func run(ctx context.Context, rollback bool, databaseURL string) error {
 	if err := migrator.Init(ctx); err != nil {
 		return err
 	}
-	group, err := migrator.Rollback(ctx)
+	group, err := migrations.RollbackLastGroup(ctx, db)
 	if err != nil {
 		return err
 	}

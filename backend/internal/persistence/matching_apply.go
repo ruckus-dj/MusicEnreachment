@@ -666,6 +666,14 @@ func ensureAutomaticLocalRelease(ctx context.Context, tx bun.Tx, providerID, pro
 type materializationAuthority struct {
 	method        string
 	policyVersion *string
+	// Only Local catalog materialization may reuse manual bindings without
+	// taking ownership. This does not relax the track_source authority check.
+	reuseManualLocalCatalog bool
+}
+
+func (authority materializationAuthority) canReuseLocalCatalogBinding(providerID uuid.UUID, existingMethod string) bool {
+	return authority.reuseManualLocalCatalog && authority.method == "automatic" &&
+		providerID == localProviderID && existingMethod == "manual"
 }
 
 func ensureLocalRelease(ctx context.Context, tx bun.Tx, providerID, providerReleaseID uuid.UUID, title string, authority materializationAuthority) (uuid.UUID, bool, error) {
@@ -677,7 +685,7 @@ func ensureLocalRelease(ctx context.Context, tx bun.Tx, providerID, providerRele
 			if _, err := tx.NewRaw(`UPDATE provider_local_release SET method='manual', policy_version=NULL WHERE provider_id=? AND provider_release_id=?`, providerID, providerReleaseID).Exec(ctx); err != nil {
 				return uuid.Nil, false, fmt.Errorf("apply matching evaluation: promote local release mapping: %w", err)
 			}
-		} else if method != authority.method {
+		} else if method != authority.method && !authority.canReuseLocalCatalogBinding(providerID, method) {
 			return uuid.Nil, false, ErrMatchingManualProtection
 		}
 		return localID, false, nil
@@ -767,7 +775,7 @@ func ensureLocalTrackForRecording(ctx context.Context, tx bun.Tx, providerID, pr
 			if _, err := tx.NewRaw(`UPDATE provider_local_track SET method='manual',policy_version=NULL WHERE provider_id=? AND provider_track_id=?`, providerID, providerTrackID).Exec(ctx); err != nil {
 				return uuid.Nil, false, fmt.Errorf("apply matching evaluation: promote local track mapping: %w", err)
 			}
-		} else if method != authority.method {
+		} else if method != authority.method && !authority.canReuseLocalCatalogBinding(providerID, method) {
 			return uuid.Nil, false, ErrMatchingManualProtection
 		}
 		return localID, false, nil

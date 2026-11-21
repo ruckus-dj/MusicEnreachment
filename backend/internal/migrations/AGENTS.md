@@ -38,7 +38,10 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - Migration version = timestamp (YYYYMMDDHHMMSS)
 - Applied migrations tracked in bun_migrations table
 - WithMarkAppliedOnSuccess(true) marks migration complete only after successful application
-- Bun applies pending files as one migration group, but each `.tx` file has its own transaction
+- Bun applies pending files as one migration group, but each `.tx` file has its own transaction.
+  The rollback CLI uses `RollbackLastGroup` to run every down file and history update
+  in one transaction; using Bun's `Rollback` directly can leave a partial rollback
+  when a later refusal guard fails.
 - River owns its separate schema and migration history; application SQL must not recreate or drop them
 - Baseline rollback is atomic and refuses populated application/recovery state;
   keep all refusal guards ahead of destructive rollback statements.

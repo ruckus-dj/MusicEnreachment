@@ -30,6 +30,7 @@ var baselineMigrationNames = []string{
 	"20261111000001",
 	"20261112000001",
 	"20261121000001",
+	"20261121000002",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -70,7 +71,7 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 		t.Fatalf("reapplying current schema = %#v, %v; want an empty migration group", group, err)
 	}
 
-	rolledBack, err := migrator.Rollback(ctx)
+	rolledBack, err := migrations.RollbackLastGroup(ctx, db)
 	if err != nil {
 		t.Fatalf("rollback clean migration group: %v", err)
 	}
@@ -84,12 +85,55 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	if err := db.NewRaw(`SELECT state FROM river_job WHERE id=1`).Scan(ctx, &riverState); err != nil || riverState != "available" {
 		t.Fatalf("River data after clean rollback = %q, %v; want unchanged", riverState, err)
 	}
+	// Reapply with the recheck migration in a separate group, as on a stand
+	// that already has the preceding schema and data.
+	prior := migrate.NewMigrations()
+	sorted := collection.Sorted()
+	for _, migration := range sorted[:len(sorted)-1] {
+		prior.Add(migration)
+	}
+	priorMigrator := migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
+	group, err = priorMigrator.Migrate(ctx)
+	if err != nil {
+		t.Fatalf("reapply prior migrations: %v", err)
+	}
+	assertMigrationGroup(t, group, currentMigrationNames[:len(currentMigrationNames)-1], "reapplied")
+	if _, err := db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES('rollback-guard','preserve')`); err != nil {
+		t.Fatal(err)
+	}
 	group, err = migrator.Migrate(ctx)
 	if err != nil {
-		t.Fatalf("reapply current migration group: %v", err)
+		t.Fatalf("apply last additive migration: %v", err)
 	}
-	assertMigrationGroup(t, group, currentMigrationNames, "reapplied")
+	lastMigration := []string{"20261121000002"}
+	assertMigrationGroup(t, group, lastMigration, "applied")
 	assertCurrentSchema(t, db)
+	operationID, recheckID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'matching_apply_v1','succeeded','succeeded','{}',now())`, operationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO matching_local_recheck(id,local_apply_operation_id,state,next_recheck_at,incumbent_snapshot)
+		VALUES (?,?,'waiting',now(),'{"version":1}')`, recheckID, operationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil || !strings.Contains(err.Error(), "durable recheck owners remain") {
+		t.Fatalf("rollback with a retained recheck owner: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM matching_local_recheck WHERE id=?`, recheckID); err != nil {
+		t.Fatal(err)
+	}
+	group, err = migrations.RollbackLastGroup(ctx, db)
+	if err != nil {
+		t.Fatalf("roll back last additive migration: %v", err)
+	}
+	assertMigrationGroup(t, group, lastMigration, "rolled back")
+	if relationName(t, db, "matching_local_recheck") != nil || relationName(t, db, "matching_local_recheck_source") != nil {
+		t.Fatal("recheck tables survived successful additive rollback")
+	}
+	var setting string
+	if err := db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='rollback-guard'`).Scan(ctx, &setting); err != nil || setting != "preserve" {
+		t.Fatalf("additive rollback touched earlier application data: %q, %v", setting, err)
+	}
 }
 
 func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
@@ -128,7 +172,7 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	if err := db.NewRaw(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public'`).Scan(ctx, &schemaTablesBefore); err != nil {
 		t.Fatalf("count application tables before unsafe rollback: %v", err)
 	}
-	if _, err := migrator.Rollback(ctx); err == nil {
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
 		t.Fatal("rollback with live application data succeeded")
 	}
 	var setting string
@@ -151,7 +195,10 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read migration status after unsafe rollback: %v", err)
 	}
-	if fmt.Sprint(statusAfter) != fmt.Sprint(statusBefore) {
+	if !slices.EqualFunc(statusAfter, statusBefore, func(after, before migrate.Migration) bool {
+		return after.Name == before.Name && after.ID == before.ID &&
+			after.GroupID == before.GroupID && after.MigratedAt.Equal(before.MigratedAt)
+	}) {
 		t.Fatalf("migration status changed after refused rollback: before=%#v after=%#v", statusBefore, statusAfter)
 	}
 	var schemaTablesAfter int
@@ -329,7 +376,7 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 			if _, err := db.ExecContext(ctx, update); err != nil {
 				t.Fatalf("seed finished catalog evidence: %v", err)
 			}
-			if _, err := migrator.Rollback(ctx); err == nil {
+			if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
 				t.Fatal("rollback discarded finished genre catalog evidence")
 			}
 			for _, table := range []string{"release_medium", "track_publication"} {
@@ -343,8 +390,8 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 				t.Fatalf("pre-source-republish migrations retained after baseline rollback refusal = %d, %v; want %d", applied, err, len(preSourceRepublishResultMigrationNames))
 			}
 			var newMigrationApplied bool
-			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM bun_migrations WHERE name='20261108000001')`).Scan(ctx, &newMigrationApplied); err != nil || newMigrationApplied {
-				t.Fatalf("new optional-result migration remains applied after its successful rollback = %t, %v", newMigrationApplied, err)
+			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM bun_migrations WHERE name='20261108000001')`).Scan(ctx, &newMigrationApplied); err != nil || !newMigrationApplied {
+				t.Fatalf("new optional-result migration remains applied after refused group rollback = %t, %v", newMigrationApplied, err)
 			}
 			var retained bool
 			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM genre_catalog WHERE refresh_request->>'status'='finished')`).Scan(ctx, &retained); err != nil || !retained {

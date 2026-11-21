@@ -354,6 +354,15 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		if held {
 			return false, nil
 		}
+		if phase != publicationSourceCleanupExplicitRetryAcknowledgementPhase {
+			protected, err := matchingLocalRecheckProtectsSource(ctx, tx, candidate.WorkID, candidate.SourceLocationID, candidate.unlinkTarget)
+			if err != nil {
+				return false, fmt.Errorf("validate publication source cleanup inputs: %w", err)
+			}
+			if protected {
+				return false, nil
+			}
+		}
 		activeConsumer, err := cleanupSourceConsumerExists(ctx, tx, candidate.WorkID)
 		if err != nil {
 			return false, fmt.Errorf("validate publication source cleanup inputs: read active source consumers: %w", err)

@@ -13,7 +13,7 @@ import (
 
 // MatchingLayoutPolicyVersion identifies the two-stage selection rule, distinct
 // from the underlying text scorer version.
-const MatchingLayoutPolicyVersion = "matching-layout-v1"
+const MatchingLayoutPolicyVersion = persistence.MatchingLayoutPolicyVersion
 
 // MatchingLayoutStage is the result of one shortlist stage. A selected stage
 // carries the exact saved provider positions, not instructions to rescore.

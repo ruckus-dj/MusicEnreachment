@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -41,7 +43,11 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.db.NewRaw(`UPDATE source_root SET status=?`, SourceRootStatusAvailable).Exec(ctx); err != nil {
+	rootPath := t.TempDir()
+	if _, err := f.db.NewRaw(`UPDATE source_root SET status=?,configured_path=?,inventory_path=?`, SourceRootStatusAvailable, rootPath, rootPath).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE source_analysis_work SET configured_path=?,inventory_path=?`, rootPath, rootPath).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-validation-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
@@ -287,6 +293,43 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 	if !validate() {
 		t.Fatal("rolled-back evidence mutations changed the valid baseline")
 	}
+	// A Local recheck protects the exact work/location tuple while the automatic
+	// assignment is rechecked. It must veto execution and block a distinct
+	// current borrower even though that borrower's own publication is valid.
+	recheckID := insertMatchingLocalRecheckSourceProtection(t, ctx, f.db, admitted.OperationID, false)
+	if validate() {
+		t.Fatal("claimed cleanup delivery validated under a Local recheck source veto")
+	}
+	borrowerPositionID, borrowerGeneration := uuid.New(), uuid.New()
+	if _, err := f.db.NewRaw(`INSERT INTO release_track(id,release_id,track_id,position)
+		SELECT ?,release_id,track_id,(SELECT COALESCE(max(position),-1)+1 FROM release_track WHERE release_id=rt.release_id)
+		FROM release_track rt WHERE rt.id=?`, borrowerPositionID, request.PositionID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at)
+		VALUES (?,?,?,'borrower.flac','{}','{}','{}','{}',1,now())`, borrowerPositionID, f.guard.Epoch, borrowerGeneration).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := repo.ReadPublicationSourceCleanupAssessment(ctx, borrowerPositionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assessment.Candidates) != 1 || !assessment.Candidates[0].Held || !slices.Contains(assessment.Candidates[0].Blockers, "source is protected while matching is rechecked") {
+		t.Fatalf("borrower eligibility did not observe the Local recheck veto: %+v", assessment)
+	}
+	if got, err := repo.AdmitPublicationSourceCleanup(ctx, PublicationSourceCleanupAdmission{PositionID: borrowerPositionID, ExpectedEpoch: f.guard.Epoch, ExpectedGeneration: borrowerGeneration}, new(publicationSourceCleanupTestInserter)); err != nil || got.OperationID != uuid.Nil || !slices.Contains(got.Blockers, "source is protected while matching is rechecked") {
+		t.Fatalf("borrower admission under Local recheck veto = %+v, %v", got, err)
+	}
+	if _, err := f.db.NewRaw(`DELETE FROM track_publication WHERE position_id=?`, borrowerPositionID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`DELETE FROM release_track WHERE id=?`, borrowerPositionID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deleteMatchingLocalRecheckSourceProtection(t, ctx, f.db, recheckID)
+	if !validate() {
+		t.Fatal("removing the Local recheck veto did not restore the valid baseline")
+	}
 	// A stale worker attempt and a stale retained claim must each block without
 	// modifying the remaining execution state.
 	if _, err := f.db.NewRaw(`UPDATE river_job SET attempt=2 WHERE id=?`, jobID).Exec(ctx); err != nil {
@@ -316,6 +359,17 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 	if validate() {
 		t.Fatal("disabled permission validated")
 	}
+	if _, err := f.db.NewRaw(`UPDATE app_setting SET setting_value='true' WHERE setting_name='publication_remove_sources'`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := repo.StartPublicationSourceCleanupExecution(ctx, guard); err != nil || !started {
+		t.Fatalf("start cleanup after restoring inputs = %v, %v", started, err)
+	}
+	var itemID uuid.UUID
+	if err := f.db.NewRaw(`SELECT id FROM source_cleanup_item WHERE operation_id=?`, admitted.OperationID).Scan(ctx, &itemID); err != nil {
+		t.Fatal(err)
+	}
+	assertMatchingLocalRecheckBlocksCleanupRemoval(t, ctx, f, repo, guard, admitted.OperationID, itemID)
 }
 
 func TestStartPublicationSourceCleanupExecutionConcurrentSingleWinnerPostgreSQL(t *testing.T) {
@@ -354,6 +408,88 @@ func TestStartPublicationSourceCleanupExecutionConcurrentSingleWinnerPostgreSQL(
 	}
 	if count != 1 {
 		t.Fatalf("concurrent successful starts=%d, want 1", count)
+	}
+}
+
+func assertMatchingLocalRecheckBlocksCleanupRemoval(t *testing.T, ctx context.Context, f publicationExecutionFixture, repo *SetupManagerRepository, guard PublicationSourceCleanupDeliveryGuard, operationID, itemID uuid.UUID) {
+	t.Helper()
+	// The recheck saw the same directory entry through the parent root, with
+	// different work and location IDs. The path veto must block the callback.
+	recheckID := insertMatchingLocalRecheckSourceProtection(t, ctx, f.db, operationID, true)
+	calls := 0
+	remove := func(context.Context, PublicationSourceCleanupRemovalRequest) error { calls++; return nil }
+	outcome, err := repo.RemovePublicationSourceCleanupItem(ctx, guard, itemID, remove)
+	if err != nil || outcome != PublicationSourceCleanupRemovalBlocked || calls != 0 {
+		t.Fatalf("Local recheck veto removal=%v,%v callbacks=%d", outcome, err, calls)
+	}
+	var started *time.Time
+	if err := f.db.NewRaw(`SELECT mutation_started_at FROM source_cleanup_item WHERE id=?`, itemID).Scan(ctx, &started); err != nil {
+		t.Fatal(err)
+	}
+	if started != nil {
+		t.Fatal("Local recheck veto started a filesystem mutation frontier")
+	}
+	deleteMatchingLocalRecheckSourceProtection(t, ctx, f.db, recheckID)
+	outcome, err = repo.RemovePublicationSourceCleanupItem(ctx, guard, itemID, remove)
+	if err != nil || outcome != PublicationSourceCleanupRemovalCompleted || calls != 1 {
+		t.Fatalf("removal after Local recheck veto removal=%v,%v callbacks=%d", outcome, err, calls)
+	}
+}
+
+func insertMatchingLocalRecheckSourceProtection(t *testing.T, ctx context.Context, db *bun.DB, cleanupOperationID uuid.UUID, overlappingRoot bool) uuid.UUID {
+	t.Helper()
+	recheckID, applyOperationID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'matching_apply_v1','succeeded','succeeded','{}'::jsonb,now())`, applyOperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO matching_local_recheck(id,local_apply_operation_id,state,next_recheck_at,incumbent_snapshot) VALUES (?,?,'waiting',now(),'{"version":1}'::jsonb)`, recheckID, applyOperationID); err != nil {
+		t.Fatal(err)
+	}
+	var work, location, root, variant uuid.UUID
+	var rootPath, relativePath string
+	if err := db.NewRaw(`SELECT o.work_id,o.source_location_id,o.source_root_id,l.media_variant_id,w.configured_path,w.relative_path
+		FROM source_cleanup_owner o JOIN source_location l ON l.id=o.source_location_id
+		JOIN source_analysis_work w ON w.id=o.work_id WHERE o.operation_id=? LIMIT 1`, cleanupOperationID).
+		Scan(ctx, &work, &location, &root, &variant, &rootPath, &relativePath); err != nil {
+		t.Fatal(err)
+	}
+	if overlappingRoot {
+		// The durable veto survives pruned inventory rows; use distinct IDs
+		// retained from the overlapping inventory, not the cleanup owner's IDs.
+		work, location, root, variant = uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		relativePath = filepath.ToSlash(filepath.Join(filepath.Base(rootPath), filepath.FromSlash(relativePath)))
+		rootPath = filepath.Dir(rootPath)
+		if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name) VALUES (?,?,'overlapping root')`, root, rootPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target, err := matchingLocalRecheckUnlinkTarget(rootPath, relativePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.ExecContext(ctx, `INSERT INTO matching_local_recheck_source(recheck_id,work_id,source_location_id,source_root_id,media_variant_id,unlink_target)
+		VALUES (?,?,?,?,?,?)`, recheckID, work, location, root, variant, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		t.Fatalf("Local recheck source protection rows=%d, %v", rows, err)
+	}
+	return recheckID
+}
+
+func deleteMatchingLocalRecheckSourceProtection(t *testing.T, ctx context.Context, db *bun.DB, recheckID uuid.UUID) {
+	t.Helper()
+	var applyOperationID uuid.UUID
+	if err := db.NewRaw(`SELECT local_apply_operation_id FROM matching_local_recheck WHERE id=?`, recheckID).Scan(ctx, &applyOperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`DELETE FROM matching_local_recheck WHERE id=?`, recheckID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`DELETE FROM operation WHERE id=?`, applyOperationID).Exec(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 
