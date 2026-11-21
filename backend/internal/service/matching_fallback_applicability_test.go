@@ -176,6 +176,30 @@ func TestAcceptedFallbackSearchScoresScopesRecordingScoresAndPreservesMissing(t 
 	if _, invented := byRecording["release-other"]; invented {
 		t.Fatal("nested release was incorrectly treated as a top-level scored candidate")
 	}
+	// Provider-accepted MBIDs may arrive uppercase while the hydrated
+	// projection uses canonical lowercase identity.
+	uuidPayload := json.RawMessage(`{"recordings":[{"id":"1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D","score":42,"releases":[{"id":"0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D"}]}]}`)
+	uuidScores, err := acceptedFallbackSearchScores("recording-search:key", "provider_recording_search", uuidPayload, []string{"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := uuidScores["recording-search:key"]["1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"]; !got.Present || got.Value != 42 {
+		t.Fatalf("uppercase accepted MBID score = %#v, want present 42 under canonical identity", got)
+	}
+	leaked, err := acceptedFallbackSearchScores("recording-search:key", "provider_recording_search", uuidPayload, []string{"2b3c4d5e-6f7a-4b8c-8d9e-0f1a2b3c4d5e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := leaked["recording-search:key"]["1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"]; present {
+		t.Fatalf("uppercase accepted MBID score leaked to a second edition: %#v", leaked["recording-search:key"])
+	}
+	releaseScores, err := acceptedFallbackSearchScores("release-search:key", "provider_release_search", json.RawMessage(`{"releases":[{"id":"0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D","score":77}]}`), []string{"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := releaseScores["release-search:key"]["0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"]; !got.Present || got.Value != 77 {
+		t.Fatalf("uppercase accepted release MBID score = %#v, want present 77 under canonical identity", got)
+	}
 }
 
 func TestAcceptedSearchReleaseUnionIncludesEveryHitWithoutTenItemCap(t *testing.T) {

@@ -632,6 +632,17 @@ func fallbackFrozenCaptures(fallback fallbackCapture, captured []persistence.Mat
 	return allCaptures, byMember, metadata, nil
 }
 
+// fallbackCanonicalMBID returns the canonical lowercase spelling of a release
+// or recording MBID so accepted hits match identity regardless of the provider's
+// letter case. Synthetic non-UUID keys pass through unchanged.
+func fallbackCanonicalMBID(id string) string {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return id
+	}
+	return parsed.String()
+}
+
 func acceptedFallbackSearchScores(queryKey, kind string, payload json.RawMessage, releaseIDs []string) (map[string]map[string]persistence.MatchingSearchScore, error) {
 	var envelope struct {
 		Releases []struct {
@@ -648,6 +659,10 @@ func acceptedFallbackSearchScores(queryKey, kind string, payload json.RawMessage
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return nil, fmt.Errorf("fallback applicability: malformed search response")
+	}
+	allowed := make(map[string]bool, len(releaseIDs))
+	for _, id := range releaseIDs {
+		allowed[fallbackCanonicalMBID(id)] = true
 	}
 	scores := make(map[string]map[string]persistence.MatchingSearchScore)
 	put := func(id string, raw json.RawMessage) error {
@@ -668,23 +683,16 @@ func acceptedFallbackSearchScores(queryKey, kind string, payload json.RawMessage
 		return nil
 	}
 	if kind == "provider_release_search" {
-		allowed := make(map[string]bool, len(releaseIDs))
-		for _, id := range releaseIDs {
-			allowed[id] = true
-		}
 		for _, hit := range envelope.Releases {
-			if !allowed[hit.ID] {
+			id := fallbackCanonicalMBID(hit.ID)
+			if !allowed[id] {
 				continue
 			}
-			if err := put(hit.ID, hit.Score); err != nil {
+			if err := put(id, hit.Score); err != nil {
 				return nil, err
 			}
 		}
 	} else {
-		allowed := make(map[string]bool, len(releaseIDs))
-		for _, id := range releaseIDs {
-			allowed[id] = true
-		}
 		for _, hit := range envelope.Recordings {
 			recording := persistence.MatchingSearchScore{}
 			if len(hit.Score) != 0 && string(hit.Score) != "null" {
@@ -693,12 +701,13 @@ func acceptedFallbackSearchScores(queryKey, kind string, payload json.RawMessage
 				}
 				recording.Present = true
 			}
+			recordingID := fallbackCanonicalMBID(hit.ID)
 			for _, release := range hit.Releases {
-				if allowed[release.ID] {
+				if allowed[fallbackCanonicalMBID(release.ID)] {
 					if scores[queryKey] == nil {
 						scores[queryKey] = make(map[string]persistence.MatchingSearchScore)
 					}
-					scores[queryKey][hit.ID] = recording
+					scores[queryKey][recordingID] = recording
 				}
 			}
 		}
