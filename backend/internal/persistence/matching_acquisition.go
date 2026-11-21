@@ -757,6 +757,7 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 			Intent                 string          `json:"intent"`
 			Mode                   string          `json:"mode"`
 			TargetCaptureDigest    string          `json:"target_capture_digest"`
+			LayoutTargetSHA256     string          `json:"layout_target_sha256,omitempty"`
 			PolicyVersion          string          `json:"policy_version"`
 			ArtistQueryPlanVersion int             `json:"artist_query_plan_version"`
 			QueryDescriptor        json.RawMessage `json:"query_descriptor"`
@@ -772,6 +773,9 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 		planQuery, planQueryErr := canonicalMatchingJSON(plan.QueryDescriptor)
 		if intentQueryErr != nil || planQueryErr != nil || !equalDigest(intentQuery, planQuery) {
 			return fmt.Errorf("saved intent query differs from immutable matching plan")
+		}
+		if err := validateMatchingAcquisitionLayoutTarget(intent, plan.LayoutTargetSHA256, plan.TargetCaptureDigest); err != nil {
+			return err
 		}
 	case 5:
 		var plan struct {
@@ -790,42 +794,8 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 			intent.CaptureDigest != plan.MetadataDigest || intent.PolicyVersion != plan.PolicyVersion || len(intent.FallbackQueryPlan) == 0 || len(plan.FallbackQueryPlan) == 0 {
 			return fmt.Errorf("saved intent scope differs from immutable matching plan")
 		}
-		if (len(intent.LayoutTarget) != 0) != (plan.LayoutTargetSHA256 != "") {
-			return fmt.Errorf("saved layout target binding is incomplete")
-		}
-		if len(intent.LayoutTarget) != 0 {
-			// The layout target digest is part of the canonical plan, whose digest
-			// is already bound to the intent. Checking the raw capture against that
-			// field keeps the optional preparatory plumbing tamper-evident.
-			canonicalLayoutTarget, err := canonicalMatchingJSON(intent.LayoutTarget)
-			if err != nil {
-				return fmt.Errorf("saved layout target is invalid")
-			}
-			layoutDigest := sha256.Sum256(canonicalLayoutTarget)
-			if plan.LayoutTargetSHA256 != fmt.Sprintf("%x", layoutDigest[:]) {
-				return fmt.Errorf("saved layout target differs from immutable plan")
-			}
-			if len(intent.Targets) != 1 {
-				return fmt.Errorf("saved layout target scope is invalid")
-			}
-			var evidence matchingLayoutTargetEvidence
-			if json.Unmarshal(canonicalLayoutTarget, &evidence) != nil ||
-				evidence.SchemaVersion != matchingLayoutTargetEvidenceVersion ||
-				evidence.Target.SchemaVersion != 2 ||
-				evidence.Target.GroupID != intent.Targets[0].GroupID ||
-				evidence.Target.GroupRevision != intent.Targets[0].Revision ||
-				evidence.GroupingRevision != intent.GroupingEpoch ||
-				evidence.PolicyVersion != MatchingLayoutPolicyVersion {
-				return fmt.Errorf("saved layout target differs from its group snapshot")
-			}
-			targetBytes, err := json.Marshal(evidence.Target)
-			if err != nil {
-				return fmt.Errorf("saved layout target is invalid")
-			}
-			_, targetHash, err := automaticArtistTargetCaptureDigest(targetBytes)
-			if err != nil || fmt.Sprintf("%x", targetHash[:]) != plan.TargetCaptureDigest {
-				return fmt.Errorf("saved layout target differs from immutable target capture")
-			}
+		if err := validateMatchingAcquisitionLayoutTarget(intent, plan.LayoutTargetSHA256, plan.TargetCaptureDigest); err != nil {
+			return err
 		}
 		intentPlan, intentPlanErr := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan)
 		planPlan, planPlanErr := policy.CanonicalFallbackQueryPlan(plan.FallbackQueryPlan)
@@ -844,6 +814,51 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 		}
 	default:
 		return fmt.Errorf("immutable matching plan version is unsupported")
+	}
+	return nil
+}
+
+// validateMatchingAcquisitionLayoutTarget verifies the optional frozen layout
+// target against the immutable plan fields that bind it. Artist and fallback
+// admissions share this evidence shape and both require symmetric presence.
+func validateMatchingAcquisitionLayoutTarget(intent MatchingAcquisitionIntent, layoutTargetSHA256, targetCaptureDigest string) error {
+	if (len(intent.LayoutTarget) != 0) != (layoutTargetSHA256 != "") {
+		return fmt.Errorf("saved layout target binding is incomplete")
+	}
+	if len(intent.LayoutTarget) == 0 {
+		return nil
+	}
+	// The layout target digest is part of the canonical plan, whose digest is
+	// already bound to the intent. Checking the raw capture against that field
+	// keeps the optional preparatory plumbing tamper-evident.
+	canonicalLayoutTarget, err := canonicalMatchingJSON(intent.LayoutTarget)
+	if err != nil {
+		return fmt.Errorf("saved layout target is invalid")
+	}
+	layoutDigest := sha256.Sum256(canonicalLayoutTarget)
+	if layoutTargetSHA256 != fmt.Sprintf("%x", layoutDigest[:]) {
+		return fmt.Errorf("saved layout target differs from immutable plan")
+	}
+	if len(intent.Targets) != 1 {
+		return fmt.Errorf("saved layout target scope is invalid")
+	}
+	var evidence matchingLayoutTargetEvidence
+	if json.Unmarshal(canonicalLayoutTarget, &evidence) != nil ||
+		evidence.SchemaVersion != matchingLayoutTargetEvidenceVersion ||
+		evidence.Target.SchemaVersion != 2 ||
+		evidence.Target.GroupID != intent.Targets[0].GroupID ||
+		evidence.Target.GroupRevision != intent.Targets[0].Revision ||
+		evidence.GroupingRevision != intent.GroupingEpoch ||
+		evidence.PolicyVersion != MatchingLayoutPolicyVersion {
+		return fmt.Errorf("saved layout target differs from its group snapshot")
+	}
+	targetBytes, err := json.Marshal(evidence.Target)
+	if err != nil {
+		return fmt.Errorf("saved layout target is invalid")
+	}
+	_, targetHash, err := automaticArtistTargetCaptureDigest(targetBytes)
+	if err != nil || fmt.Sprintf("%x", targetHash[:]) != targetCaptureDigest {
+		return fmt.Errorf("saved layout target differs from immutable target capture")
 	}
 	return nil
 }

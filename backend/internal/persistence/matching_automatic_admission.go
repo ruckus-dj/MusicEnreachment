@@ -107,6 +107,13 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("automatic artist matching admission: lock source mutation gate: %w", err)
 		}
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("automatic artist matching admission: lock layout settings: %w", err)
+		}
+		pairThreshold, err := matchingLayoutTargetPairThreshold(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("automatic artist matching admission: read layout settings: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
 			return err
 		}
@@ -120,6 +127,9 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 			return fmt.Errorf("automatic artist matching admission: lock evaluation revision: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?),hashtext(?))`, "automatic-artist-admission", admission.GroupID.String()); err != nil {
+			return err
+		}
+		if err := lockMatchingLayoutTargetRoots(ctx, tx, admission.GroupID); err != nil {
 			return err
 		}
 		var grouping struct {
@@ -187,19 +197,38 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err != nil {
 			return err
 		}
+		targetDigest := hex.EncodeToString(captureDigest[:])
+		layoutEvidence, _, err := buildMatchingLayoutTargetEvidence(capture, grouping.Revision, pairThreshold, MatchingLayoutPolicyVersion)
+		if err != nil {
+			return fmt.Errorf("automatic artist matching admission: freeze layout target: %w", err)
+		}
+		layoutTarget, err := json.Marshal(layoutEvidence)
+		if err != nil {
+			return fmt.Errorf("automatic artist matching admission: encode layout target: %w", err)
+		}
+		canonicalLayoutTarget, err := canonicalMatchingJSON(layoutTarget)
+		if err != nil {
+			return fmt.Errorf("automatic artist matching admission: canonicalize layout target: %w", err)
+		}
+		layoutDigest := sha256.Sum256(canonicalLayoutTarget)
+		layoutTargetSHA256 := hex.EncodeToString(layoutDigest[:])
 		semantic := struct {
-			Version           int             `json:"version"`
-			Capture           json.RawMessage `json:"target_capture"`
-			CaptureDigest     string          `json:"target_capture_digest"`
-			Policy            string          `json:"policy_version"`
-			QueryVersion      int             `json:"artist_query_plan_version"`
-			Query             json.RawMessage `json:"query_descriptor"`
-			SourceID          uuid.UUID       `json:"provider_source_id"`
-			ProviderID        uuid.UUID       `json:"provider_id"`
-			Endpoint          string          `json:"provider_endpoint"`
-			Configuration     string          `json:"provider_configuration_identity"`
-			RequestGeneration int64           `json:"request_generation,omitempty"`
-		}{2, captureBytes, hex.EncodeToString(captureDigest[:]), admission.PolicyVersion, admission.ArtistQueryPlanVersion, descriptor,
+			Version           int                           `json:"version"`
+			Capture           json.RawMessage               `json:"target_capture"`
+			CaptureDigest     string                        `json:"target_capture_digest"`
+			LayoutPolicy      string                        `json:"layout_policy"`
+			PairThreshold     string                        `json:"pair_threshold"`
+			Corrections       []matchingLayoutTargetCapture `json:"tag_encoding"`
+			Policy            string                        `json:"policy_version"`
+			QueryVersion      int                           `json:"artist_query_plan_version"`
+			Query             json.RawMessage               `json:"query_descriptor"`
+			SourceID          uuid.UUID                     `json:"provider_source_id"`
+			ProviderID        uuid.UUID                     `json:"provider_id"`
+			Endpoint          string                        `json:"provider_endpoint"`
+			Configuration     string                        `json:"provider_configuration_identity"`
+			RequestGeneration int64                         `json:"request_generation,omitempty"`
+		}{2, captureBytes, targetDigest, layoutEvidence.PolicyVersion, layoutEvidence.PairThreshold, layoutEvidence.Captures,
+			admission.PolicyVersion, admission.ArtistQueryPlanVersion, descriptor,
 			*admission.Provider.Operation.ProviderSourceID, *admission.Provider.Operation.ProviderID, admission.Provider.Operation.ProviderEndpoint,
 			*admission.Provider.Operation.ProviderConfigurationIdentity, admission.RequestGeneration}
 		semanticBytes, err := json.Marshal(semantic)
@@ -237,10 +266,11 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 			Intent                 string          `json:"intent"`
 			Mode                   string          `json:"mode"`
 			TargetCaptureDigest    string          `json:"target_capture_digest"`
+			LayoutTargetSHA256     string          `json:"layout_target_sha256,omitempty"`
 			PolicyVersion          string          `json:"policy_version"`
 			ArtistQueryPlanVersion int             `json:"artist_query_plan_version"`
 			QueryDescriptor        json.RawMessage `json:"query_descriptor"`
-		}{4, "automatic_artist_acquisition", "automatic", hex.EncodeToString(captureDigest[:]), admission.PolicyVersion, admission.ArtistQueryPlanVersion, descriptor}
+		}{4, "automatic_artist_acquisition", "automatic", targetDigest, layoutTargetSHA256, admission.PolicyVersion, admission.ArtistQueryPlanVersion, descriptor}
 		planBytes, err := json.Marshal(plan)
 		if err != nil {
 			return err
@@ -294,7 +324,8 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 			SchemaVersion: matchingAutomaticAcquisitionIntentVersion, FenceVersion: 2,
 			GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planDigest[:]),
 			CaptureDigest: metadataDigest, CapturedMembers: metadataCapture,
-			PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: hex.EncodeToString(captureDigest[:]),
+			PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest,
+			LayoutTarget:               canonicalLayoutTarget,
 			EvaluationRevisionCaptured: true, ExpectedEvaluationRevision: expectedEvaluationRevision,
 			QueryDescriptor: descriptor, ArtistQueryPlanVersion: admission.ArtistQueryPlanVersion,
 			Targets: []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}},

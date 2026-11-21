@@ -29,10 +29,14 @@ func TestMatchingTargetFenceDeliveryRejectsChangedCapturedSourcePostgreSQL(t *te
 	if err := fixture.db.NewRaw(`SELECT group_id FROM matching_run_target WHERE run_id=?`, fixture.runID).Scan(fixture.ctx, &groupID); err != nil {
 		t.Fatalf("read target group: %v", err)
 	}
+	admitted, exists, err := fixture.repository.GetMatchingAcquisition(fixture.ctx, fixture.runID)
+	if err != nil || !exists {
+		t.Fatalf("read artist layout admission: exists=%v err=%v", exists, err)
+	}
 	// Freeze and recheck the layout target before the readiness mutation: a
 	// threshold or tag-encoding-only change must each break the captured digest,
 	// and restoring the value must restore the exact baseline.
-	assertMatchingLayoutTargetEvidenceFences(t, fixture, groupID)
+	assertMatchingLayoutTargetEvidenceFences(t, fixture, groupID, admitted.Intent.LayoutTarget)
 	result, err := fixture.db.NewRaw(`UPDATE incoming_group_member SET ready=NOT ready
 		WHERE group_id=? AND variant_id=(SELECT variant_id FROM incoming_group_member WHERE group_id=? ORDER BY variant_id LIMIT 1)`, groupID, groupID).Exec(fixture.ctx)
 	if err != nil {
@@ -142,7 +146,7 @@ func equalJSONForTest(t *testing.T, left, right any) bool {
 	return string(leftBytes) == string(rightBytes)
 }
 
-func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTargetFenceFixture, groupID uuid.UUID) {
+func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTargetFenceFixture, groupID uuid.UUID, baseline json.RawMessage) {
 	t.Helper()
 	ctx := fixture.ctx
 	tx, err := fixture.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -152,7 +156,7 @@ func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTar
 	defer func() { _ = tx.Rollback() }()
 
 	const policy = service.MatchingLayoutPolicyVersion
-	baseline, captures, threshold, err := persistence.CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policy)
+	captures, threshold, err := persistence.DecodeMatchingLayoutTarget(baseline, groupID, policy)
 	if err != nil || len(captures) == 0 || captures[0].CaptureAnalysisID == nil || threshold != 0.70 {
 		t.Fatalf("capture layout target baseline: captures=%d threshold=%v err=%v", len(captures), threshold, err)
 	}
