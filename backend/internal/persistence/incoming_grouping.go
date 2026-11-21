@@ -46,21 +46,25 @@ type IncomingGroupingMemberLocation struct {
 // technical payloads are retained for later consumers; grouping itself uses only
 // captured tags and current inventory identity.
 type IncomingGroupingCapture struct {
-	WorkID                        uuid.UUID
-	VariantID                     uuid.UUID
-	MediaVariantID                *uuid.UUID
-	CaptureAnalysisID             *uuid.UUID
-	RootID                        uuid.UUID
-	RootEnabled                   bool
-	RootStatus                    string
-	RootStale                     bool
-	LocationID                    uuid.UUID
-	ConfiguredPath                string
-	InventoryPath                 string
-	RelativePath                  string
-	SizeBytes                     int64
-	Mtime                         time.Time
-	Tags                          json.RawMessage
+	WorkID            uuid.UUID
+	VariantID         uuid.UUID
+	MediaVariantID    *uuid.UUID
+	CaptureAnalysisID *uuid.UUID
+	RootID            uuid.UUID
+	RootEnabled       bool
+	RootStatus        string
+	RootStale         bool
+	LocationID        uuid.UUID
+	ConfiguredPath    string
+	InventoryPath     string
+	RelativePath      string
+	SizeBytes         int64
+	Mtime             time.Time
+	Tags              json.RawMessage
+	// TagEncoding is the saved full tagencoding.Report for the selected metadata
+	// result. It is view-only: the field is excluded from JSON so the canonical
+	// capture bytes and existing matching target digests are unchanged.
+	TagEncoding                   json.RawMessage `bun:"tag_encoding,type:jsonb,nullzero" json:"-"`
 	ProbeResult                   json.RawMessage
 	ProbeWinner                   *uuid.UUID
 	ProbeVersion                  *string
@@ -218,7 +222,8 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 			(root.inventory_path IS NOT NULL AND root.inventory_path<>root.configured_path) AS root_stale,
 			location.id AS location_id, root.configured_path, root.inventory_path,
 			location.relative_path, location.size_bytes, location.mtime,
-			metadata_result.observed_tags AS tags, metadata_result.winning_result_id AS metadata_winner,
+			metadata_result.observed_tags AS tags, metadata_result.tag_encoding AS tag_encoding,
+			metadata_result.winning_result_id AS metadata_winner,
 			metadata_result.observed_at AS metadata_observed_at, metadata_result.provenance AS metadata_provenance,
 			COALESCE(probe_variant.ffprobe_json, '{}'::jsonb) AS probe_result,
 			probe_variant.id AS probe_winner, probe_variant.ffprobe_version AS probe_version,

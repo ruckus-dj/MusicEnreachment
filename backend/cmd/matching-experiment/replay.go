@@ -13,9 +13,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/tagencoding"
 )
 
 func evaluate(ctx context.Context, input fixture, opts options) (report, error) {
+	if opts.stage == "policy" {
+		return evaluateApprovedLayoutPolicy(ctx, input, opts)
+	}
 	result := report{
 		Name: input.Name, Provenance: input.Provenance, Policy: service.MatchingPolicyVersion,
 		ExpectedID: input.ExpectedReleaseID, BaselineSource: input.BaselineSource,
@@ -280,9 +284,17 @@ func scoreLayouts(input fixture, layouts []persistence.MatchingRelease) (service
 	if err != nil {
 		return service.MatchingGroupEvaluationInput{}, fmt.Errorf("score frozen file/position pairs: %w", err)
 	}
+	return preparedLayoutInputs(input.Captures, layouts, edges)
+}
+
+func preparedLayoutInputs(
+	captures []persistence.IncomingGroupingCapture,
+	layouts []persistence.MatchingRelease,
+	edges []service.MatchingInput,
+) (service.MatchingGroupEvaluationInput, error) {
 	result := service.MatchingGroupEvaluationInput{ReleaseLayouts: layouts, Inputs: edges}
 	rows := make(map[uuid.UUID]int)
-	for _, capture := range input.Captures {
+	for _, capture := range captures {
 		key := capture.VariantID
 		index, found := rows[key]
 		if !found {
@@ -299,6 +311,80 @@ func scoreLayouts(input fixture, layouts []persistence.MatchingRelease) (service
 			RootID: capture.RootID, RelativePath: capture.RelativePath,
 		})
 	}
+	return result, nil
+}
+
+type layoutPolicyReport struct {
+	Threshold        float64                         `json:"pair_threshold"`
+	RestoredValues   int                             `json:"restored_values"`
+	NoOriginalChange bool                            `json:"does_not_write_original_tags"`
+	Decision         service.MatchingLayoutSelection `json:"decision"`
+}
+
+// evaluateApprovedLayoutPolicy exercises newly approved policy against
+// captured data without changing either the historical replay or the runtime.
+func evaluateApprovedLayoutPolicy(ctx context.Context, input fixture, opts options) (report, error) {
+	input.Captures = slices.Clone(input.Captures)
+	var restored int
+	for i := range input.Captures {
+		var tags map[string][]string
+		if err := json.Unmarshal(input.Captures[i].Tags, &tags); err != nil {
+			return report{}, fmt.Errorf("decode source tags: %w", err)
+		}
+		overlay := tagencoding.Analyze(tags).Automatic
+		if len(overlay.Entries) == 0 {
+			continue
+		}
+		effective, err := overlay.Apply(tags)
+		if err != nil {
+			return report{}, fmt.Errorf("apply in-memory encoding overlay: %w", err)
+		}
+		input.Captures[i].Tags, err = json.Marshal(effective)
+		if err != nil {
+			return report{}, fmt.Errorf("encode scoring tags: %w", err)
+		}
+		restored += len(overlay.Entries)
+	}
+	shortlistOpts := opts
+	shortlistOpts.stage = "shortlist"
+	result, err := evaluate(ctx, input, shortlistOpts)
+	if err != nil {
+		return report{}, err
+	}
+	var ids []string
+	for _, row := range result.Ranking {
+		if row.Shortlisted {
+			ids = append(ids, row.ReleaseID)
+		}
+	}
+	layouts, missing, err := readLayouts(input.Layouts, ids)
+	if err != nil {
+		return report{}, err
+	}
+	result.NotHydrated = missing
+	policy := layoutPolicyReport{Threshold: opts.threshold, RestoredValues: restored, NoOriginalChange: true}
+	if len(missing) > 0 {
+		policy.Decision = service.MatchingLayoutSelection{
+			Status: service.MatchingLayoutSelectionIndeterminate,
+			Reason: "shortlisted edition tracklists are not present in this replay",
+		}
+	} else {
+		snapshot := persistence.ProviderMatchingSnapshot{Releases: layouts, SearchScores: input.SearchScores}
+		edges, err := service.BuildLayoutMatchingInputs(input.Captures, snapshot, input.SearchKeys, nil)
+		if err != nil {
+			return report{}, fmt.Errorf("score approved-policy pairs: %w", err)
+		}
+		result.ScoredPairs = len(edges)
+		prepared, err := preparedLayoutInputs(input.Captures, layouts, edges)
+		if err != nil {
+			return report{}, err
+		}
+		policy.Decision, err = service.SelectMatchingLayout(ctx, prepared, opts.threshold)
+		if err != nil {
+			return report{}, fmt.Errorf("select approved layout: %w", err)
+		}
+	}
+	result.LayoutPolicy = &policy
 	return result, nil
 }
 

@@ -35,6 +35,7 @@ const (
 	MusicBrainzVerifiedAtKey         = "musicbrainz_verified_at"
 	LRCLIBEnabledKey                 = "lrclib_enabled"
 	SHA256EnabledKey                 = "sha256_enabled"
+	MatchingPairThresholdKey         = "matching_pair_threshold"
 	LogLevelKey                      = "log_level"
 	ActiveFFmpegInstallationKey      = "active_ffmpeg_installation_id"
 	ActiveFPCalcInstallationKey      = "active_fpcalc_installation_id"
@@ -126,6 +127,7 @@ type ConfigurationHealth struct {
 
 type RuntimeSettings struct {
 	SourceFileConcurrency             int
+	MatchingPairThreshold             float64
 	ToolsDirectory                    string
 	WorkDirectory                     string
 	OutputDirectory                   string
@@ -184,6 +186,7 @@ type RuntimeUpdate struct {
 	PublicationPathTemplate    *string
 	PublicationRemoveSources   *bool
 	SourceFileConcurrency      *int
+	MatchingPairThreshold      *float64
 	Expected                   *RuntimeSettingsExpected
 }
 
@@ -197,6 +200,7 @@ type RuntimeSettingsExpected struct {
 	PublicationPathTemplate  *string
 	PublicationRemoveSources *bool
 	SourceFileConcurrency    *int
+	MatchingPairThreshold    *float64
 }
 
 // DefaultRuntimeSettingsExpected returns the effective values used when a
@@ -207,10 +211,12 @@ func DefaultRuntimeSettingsExpected() RuntimeSettingsExpected {
 	template := defaultPublicationPathTemplate
 	removeSources := defaultPublicationRemoveSources
 	concurrency := defaultFileConcurrency
+	threshold := defaultMatchingPairThreshold
 	return RuntimeSettingsExpected{
 		ToolsDirectory: &tools, WorkDirectory: &work, OutputDirectory: &output,
 		PublicationFormat: &format, PublicationPathTemplate: &template,
 		PublicationRemoveSources: &removeSources, SourceFileConcurrency: &concurrency,
+		MatchingPairThreshold: &threshold,
 	}
 }
 
@@ -507,6 +513,7 @@ func validateRuntimeExpected(expected RuntimeSettingsExpected, values map[string
 		{PublicationPathTemplateKey, expected.PublicationPathTemplate != nil},
 		{PublicationRemoveSourcesKey, expected.PublicationRemoveSources != nil},
 		{SourceFileConcurrencyKey, expected.SourceFileConcurrency != nil},
+		{MatchingPairThresholdKey, expected.MatchingPairThreshold != nil},
 	}
 	for _, check := range checks {
 		if _, changed := values[check.name]; changed && !check.set {
@@ -562,6 +569,12 @@ func normalizeRuntimeExpected(expected RuntimeSettingsExpected) (RuntimeSettings
 	}
 	if expected.SourceFileConcurrency != nil {
 		_, err := serializeSetting(sourceFileConcurrencySetting, *expected.SourceFileConcurrency)
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+	}
+	if expected.MatchingPairThreshold != nil {
+		_, err := serializeSetting(matchingPairThresholdSetting, *expected.MatchingPairThreshold)
 		if err != nil {
 			return RuntimeSettingsExpected{}, err
 		}
@@ -709,6 +722,17 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 			return nil, fmt.Errorf("source file concurrency: %w", err)
 		}
 		values[SourceFileConcurrencyKey] = value
+	}
+	if update.MatchingPairThreshold != nil {
+		threshold := *update.MatchingPairThreshold
+		if threshold == 0 {
+			threshold = 0 // Normalize signed zero before storing the decimal.
+		}
+		value, err := serializeSetting(matchingPairThresholdSetting, threshold)
+		if err != nil {
+			return nil, fmt.Errorf("matching pair threshold: %w", err)
+		}
+		values[MatchingPairThresholdKey] = value
 	}
 	return values, nil
 }
@@ -946,6 +970,12 @@ func (r *Registry) GetSourceFileConcurrency(ctx context.Context) (int, error) {
 	return value, err
 }
 
+// GetMatchingPairThreshold returns the automatic file-to-position matching threshold.
+func (r *Registry) GetMatchingPairThreshold(ctx context.Context) (float64, error) {
+	value, _, err := readSetting(ctx, r.store, matchingPairThresholdSetting)
+	return value, err
+}
+
 // SetSourceFileConcurrency validates and stores the per-file processing limit.
 func (r *Registry) SetSourceFileConcurrency(ctx context.Context, concurrency int) error {
 	value, err := serializeSetting(sourceFileConcurrencySetting, concurrency)
@@ -1029,6 +1059,10 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	matchingPairThreshold, _, err := readSetting(ctx, r.store, matchingPairThresholdSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	hasAcoustIDKey, err := r.HasAcoustIDApplicationKey(ctx)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -1047,6 +1081,7 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	}
 	return RuntimeSettings{
 		SourceFileConcurrency:             fileConcurrency,
+		MatchingPairThreshold:             matchingPairThreshold,
 		ToolsDirectory:                    tools,
 		WorkDirectory:                     work,
 		OutputDirectory:                   output,

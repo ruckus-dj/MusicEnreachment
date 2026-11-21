@@ -69,6 +69,36 @@ func BuildMatchingInputs(
 	if len(recordingArtistsOptions) == 1 {
 		recordingArtists = recordingArtistsOptions[0]
 	}
+	return buildMatchingInputs(captures, snapshot, matchingScoringOptions{
+		searchKeys: searchKeys, acoustIDScores: acoustIDScores, recordingArtists: recordingArtists,
+	})
+}
+
+type matchingScoringOptions struct {
+	searchKeys       map[uuid.UUID]MatchingSearchKeys
+	acoustIDScores   map[MatchingAcoustIDKey]float64
+	recordingArtists map[string][]string
+	layoutPolicy     bool
+}
+
+// BuildLayoutMatchingInputs scores two-stage layout pairs from frozen inputs.
+// A compilation's group credit is not a comparison with a song's performer.
+func BuildLayoutMatchingInputs(
+	captures []persistence.IncomingGroupingCapture,
+	snapshot persistence.ProviderMatchingSnapshot,
+	searchKeys map[uuid.UUID]MatchingSearchKeys,
+	acoustIDScores map[MatchingAcoustIDKey]float64,
+) ([]MatchingInput, error) {
+	return buildMatchingInputs(captures, snapshot, matchingScoringOptions{
+		searchKeys: searchKeys, acoustIDScores: acoustIDScores, layoutPolicy: true,
+	})
+}
+
+func buildMatchingInputs(
+	captures []persistence.IncomingGroupingCapture,
+	snapshot persistence.ProviderMatchingSnapshot,
+	options matchingScoringOptions,
+) ([]MatchingInput, error) {
 	view, err := incomingFilesFromCaptures(captures)
 	if err != nil {
 		return nil, err
@@ -91,12 +121,14 @@ func BuildMatchingInputs(
 		}
 		releaseMBID, recordingMBID := matchingSourceMBIDs(fields["release_mbid"]), matchingSourceMBIDs(fields["recording_mbid"])
 		mbidDiagnostics := matchingMBIDDiagnostics(file.VariantID, fields)
-		keys := searchKeys[file.VariantID]
+		keys := options.searchKeys[file.VariantID]
 		for _, release := range snapshot.Releases {
 			candidateArtists := make([]string, 0, len(release.Credits))
 			for _, credit := range release.Credits {
 				candidateArtists = append(candidateArtists, credit.Name)
 			}
+			variousArtists := options.layoutPolicy && len(candidateArtists) == 1 &&
+				strings.EqualFold(strings.TrimSpace(candidateArtists[0]), "Various Artists")
 			tracksPerMedium := make(map[int]int)
 			mediumCount := make(map[int]struct{})
 			for _, candidateTrack := range release.Tracks {
@@ -127,13 +159,13 @@ func BuildMatchingInputs(
 				}
 				trackScore := matchingSnapshotSearchScore(snapshot, keys.Recording, track.RecordingProviderKey)
 				var acoustID *float64
-				if score, ok := acoustIDScores[MatchingAcoustIDKey{FileID: file.VariantID, RecordingID: track.RecordingProviderKey}]; ok {
+				if score, ok := options.acoustIDScores[MatchingAcoustIDKey{FileID: file.VariantID, RecordingID: track.RecordingProviderKey}]; ok {
 					value := score
 					acoustID = &value
 				}
 				recordingCreditNames := track.RecordingArtists
 				if recordingCreditNames == nil {
-					recordingCreditNames = recordingArtists[track.RecordingProviderKey]
+					recordingCreditNames = options.recordingArtists[track.RecordingProviderKey]
 				}
 				var recordingDuration *float64
 				if track.RecordingLengthMS != nil {
@@ -154,6 +186,11 @@ func BuildMatchingInputs(
 					CandidateTrack: intPointer(track.Position + 1), CandidateDisc: intPointer(track.Medium + 1),
 					CandidateTrackTotal: matchingCompleteTotal(release.Complete, tracksPerMedium[track.Medium]), CandidateDiscTotal: matchingCompleteTotal(release.Complete, len(mediumCount)),
 					Evidence: MatchingEvidence{ReleaseMBID: releaseMBID, RecordingMBID: recordingMBID, TrackMBID: track.RecordingProviderKey},
+				}
+				if variousArtists {
+					assignmentInput.ReleaseArtist = MatchingTextPair{
+						Provenance: "compilation credit is not compared with the source performer",
+					}
 				}
 				assignmentResult, err := ScoreAssignmentCandidate(assignmentInput)
 				if err != nil {

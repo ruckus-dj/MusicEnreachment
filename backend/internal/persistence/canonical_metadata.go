@@ -51,8 +51,19 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 	}
 
 	if candidate.ID != canonical.ID && metadataCandidateWins(candidate, *canonical) {
-		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,cover_observed=?,cover_error=?,cover_data=?,cover_mime=?,cover_sha256=?,cover_size_bytes=?,properties=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
-			candidate.ObservedTags, candidate.Provenance, candidate.CoverObserved, candidate.CoverError, nullableBytes(candidate.CoverData), candidate.CoverMIME, nullableBytes(candidate.CoverSHA256), candidate.CoverSizeBytes, nullableJSON(candidate.Properties), candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
+		// A new observation of the same original text must not recreate a
+		// correction the user explicitly declined. Do not transfer any decision
+		// when the underlying evidence differs.
+		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,
+			tag_encoding=CASE WHEN observed_tags=?::jsonb AND jsonb_exists(tag_encoding, 'user_revision')
+				AND NOT COALESCE(jsonb_exists(?::jsonb, 'user_revision'),false) THEN tag_encoding ELSE ?::jsonb END,
+			cover_observed=?,cover_error=?,cover_data=?,cover_mime=?,cover_sha256=?,cover_size_bytes=?,
+			properties=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
+			candidate.ObservedTags, candidate.Provenance, candidate.ObservedTags,
+			nullableJSON(candidate.TagEncoding), nullableJSON(candidate.TagEncoding),
+			candidate.CoverObserved, candidate.CoverError, nullableBytes(candidate.CoverData), candidate.CoverMIME,
+			nullableBytes(candidate.CoverSHA256), candidate.CoverSizeBytes, nullableJSON(candidate.Properties),
+			candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
 			return nil, fmt.Errorf("upsert canonical source metadata: update winning capture: %w", err)
 		}
 	}

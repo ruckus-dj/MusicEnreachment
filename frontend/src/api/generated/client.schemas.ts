@@ -379,6 +379,8 @@ export interface GenreReference {
   source_name: string;
 }
 
+export type IncomingFileResponseDisplayTags = {[key: string]: string[] | null};
+
 export type IncomingFileResponseTags = {[key: string]: string[] | null};
 
 export interface IncomingLocationResponse {
@@ -393,11 +395,18 @@ export interface IncomingLocationResponse {
   work_id: string;
 }
 
+export interface IncomingTagCorrectionResponse {
+  automatic: number;
+  candidates: number;
+}
+
 export interface IncomingFileResponse {
   capture_analysis_id: string;
   capture_identity: string;
+  display_tags?: IncomingFileResponseDisplayTags;
   /** @nullable */
   locations: IncomingLocationResponse[] | null;
+  tag_correction?: IncomingTagCorrectionResponse;
   tags: IncomingFileResponseTags;
   variant_id: string;
 }
@@ -468,6 +477,79 @@ export interface IncomingGroupsBody {
   /** @nullable */
   groups: IncomingGroupResponse[] | null;
   revision: string;
+}
+
+export interface IncomingTagEncodingEvidenceBody {
+  cyrillic_runes: number;
+  group_matches?: number;
+  high_bytes: number;
+  longest_run: number;
+  signature?: string;
+}
+
+export interface IncomingTagEncodingProvenanceBody {
+  decision: string;
+  detector_version: number;
+  evidence: IncomingTagEncodingEvidenceBody;
+  transform: string;
+}
+
+export interface IncomingTagEncodingEntryBody {
+  index: number;
+  key: string;
+  origin: string;
+  original: string;
+  provenance: IncomingTagEncodingProvenanceBody;
+  replacement: string;
+}
+
+export type IncomingTagEncodingMemberBodyTags = {[key: string]: string[] | null};
+
+export interface IncomingTagEncodingMemberBody {
+  /** @nullable */
+  automatic: IncomingTagEncodingEntryBody[] | null;
+  /** @nullable */
+  candidates: IncomingTagEncodingEntryBody[] | null;
+  metadata_result_id: string;
+  revision: string;
+  stored: boolean;
+  tags: IncomingTagEncodingMemberBodyTags;
+  user_revision?: string;
+  variant_id: string;
+}
+
+export interface IncomingTagEncodingBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  correction_revision: string;
+  digest: string;
+  generation: number;
+  group_id: string;
+  group_revision: string;
+  /** @nullable */
+  members: IncomingTagEncodingMemberBody[] | null;
+}
+
+export interface IncomingTagEncodingCorrectionBody {
+  /** @nullable */
+  candidate_indexes?: number[] | null;
+  metadata_result_id: string;
+  undo?: boolean;
+  variant_id: string;
+}
+
+export interface IncomingTagEncodingConfirmBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  correction_revision: string;
+  /** @minLength 1 */
+  digest: string;
+  generation: number;
+  /** @minLength 1 */
+  group_revision: string;
+  /** @nullable */
+  members: IncomingTagEncodingCorrectionBody[] | null;
 }
 
 export interface InitialLyricsResponse {
@@ -1894,6 +1976,7 @@ export interface RuntimeSettingsResponse {
   has_github_token: boolean;
   log_level: string;
   lrclib_enabled: boolean;
+  matching_pair_threshold: number;
   musicbrainz_base_url: string;
   musicbrainz_mode: string;
   musicbrainz_self_hosted_delay_seconds: number;
@@ -2357,6 +2440,11 @@ export const UpdateSettingsBodyPublicationFormat = {
 } as const;
 
 export interface UpdateSettingsExpectedBody {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  matching_pair_threshold?: number;
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: string;
@@ -2373,6 +2461,11 @@ export interface UpdateSettingsBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   expected?: UpdateSettingsExpectedBody;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  matching_pair_threshold?: number;
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: UpdateSettingsBodyPublicationFormat;

@@ -9,6 +9,35 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
+func TestBuildLayoutMatchingInputsSeparatesCompilationAndTrackCredits(t *testing.T) {
+	analysisID := uuid.New()
+	captures := []persistence.IncomingGroupingCapture{{
+		VariantID: uuid.New(), CaptureAnalysisID: &analysisID, Ready: true,
+		Tags: json.RawMessage(`{"ALBUM":["Compilation"],"ALBUMARTIST":["Performer"],"ARTIST":["Performer"],"TITLE":["Song"]}`),
+	}}
+	snapshot := persistence.ProviderMatchingSnapshot{Releases: []persistence.MatchingRelease{{
+		ProviderKey: "compilation", Name: "Compilation",
+		Credits: []persistence.MatchingReleaseCredit{{Name: "Various Artists"}},
+		Tracks: []persistence.MatchingReleaseTrack{{
+			RecordingTitle: "Song", RecordingArtists: []string{"Performer"},
+		}},
+	}}}
+	pairs, err := BuildLayoutMatchingInputs(captures, snapshot, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 1 {
+		t.Fatalf("expected one file to position pair, got %d", len(pairs))
+	}
+	pair := pairs[0]
+	releaseArtist := matchingFactor(pair.AssignmentScore.Factors, MatchingReleaseArtist)
+	trackArtist := matchingFactor(pair.AssignmentScore.Factors, MatchingRecordingArtist)
+	if releaseArtist.State != MatchingFactorMissing || trackArtist.State != MatchingFactorAvailable ||
+		trackArtist.Value != 1 || pair.AssignmentScore.Confidence < 0.70 {
+		t.Fatalf("unexpected compilation evidence: %+v / %+v", releaseArtist, trackArtist)
+	}
+}
+
 func TestBuildMatchingInputsMapsSavedEvidence(t *testing.T) {
 	fileID, analysisID := uuid.New(), uuid.New()
 	captures := []persistence.IncomingGroupingCapture{{

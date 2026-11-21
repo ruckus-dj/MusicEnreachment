@@ -5,6 +5,7 @@ export const settingsDraftFields = [
   "workDirectory",
   "publicationPathTemplate",
   "sourceFileConcurrency",
+  "matchingPairThreshold",
   "toolsDirectoryCandidate",
   "musicBrainzMode",
   "musicBrainzURL",

@@ -80,6 +80,7 @@ type SourceMetadataResult struct {
 	SourceSHA256       []byte          `bun:"source_sha256,nullzero"`
 	ObservedTags       json.RawMessage `bun:"observed_tags,type:jsonb"`
 	Provenance         json.RawMessage `bun:"provenance,type:jsonb"`
+	TagEncoding        json.RawMessage `bun:"tag_encoding,type:jsonb,nullzero"`
 	CoverObserved      bool            `bun:"cover_observed"`
 	CoverError         *string         `bun:"cover_error,nullzero"`
 	CoverData          []byte          `bun:"cover_data,nullzero"`

@@ -12,6 +12,8 @@ export type MatchingEvidenceInspectorProps = {
   candidate?: MatchingWorkspaceCandidate;
   position: MatchingWorkspacePosition;
   rawTags?: Record<string, string[] | null>;
+  /** Saved readable projection of rawTags; shown beside raw only when distinct. */
+  displayTags?: Record<string, string[] | null>;
   /** Explicit locale; the portable module never reads an app i18n provider. */
   locale: MatchingWorkspaceLocale;
 };
@@ -24,6 +26,28 @@ type AppliedFactor = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function sameTags(
+  left: Record<string, string[] | null>,
+  right: Record<string, string[] | null>,
+) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) => {
+      if (key !== rightKeys[index]) return false;
+      const leftValues = left[key] ?? [];
+      const rightValues = right[key] ?? [];
+      return (
+        leftValues.length === rightValues.length &&
+        leftValues.every(
+          (value, valueIndex) => value === rightValues[valueIndex],
+        )
+      );
+    })
+  );
 }
 
 function fieldLabel(key: string): string {
@@ -113,6 +137,7 @@ export function MatchingEvidenceInspector({
   candidate,
   position,
   rawTags,
+  displayTags,
   locale,
 }: MatchingEvidenceInspectorProps) {
   const copy = evidenceOverrideMessages[locale];
@@ -135,6 +160,10 @@ export function MatchingEvidenceInspector({
   const savedFactorCount = savedFactors(assignmentProfile).length;
   const skippedFactorCount = savedFactorCount - factors.length;
   const number = position.displayed_number || `${position.position + 1}`;
+  const readableTags =
+    rawTags && displayTags && !sameTags(rawTags, displayTags)
+      ? displayTags
+      : undefined;
 
   return (
     <section
@@ -183,9 +212,26 @@ export function MatchingEvidenceInspector({
           <summary className="cursor-pointer font-medium">
             {copy.rawTags}
           </summary>
-          <pre className="mt-2 overflow-x-auto overscroll-x-contain whitespace-pre-wrap rounded bg-[var(--surface)] p-2">
-            {JSON.stringify(rawTags, null, 2)}
-          </pre>
+          {readableTags ? (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="min-w-0">
+                <p className="font-medium">{copy.originalTags}</p>
+                <pre className="mt-1 overflow-x-auto overscroll-x-contain whitespace-pre-wrap rounded bg-[var(--surface)] p-2">
+                  {JSON.stringify(rawTags, null, 2)}
+                </pre>
+              </div>
+              <div className="min-w-0">
+                <p className="font-medium">{copy.readableTags}</p>
+                <pre className="mt-1 overflow-x-auto overscroll-x-contain whitespace-pre-wrap rounded bg-[var(--surface)] p-2">
+                  {JSON.stringify(readableTags, null, 2)}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <pre className="mt-2 overflow-x-auto overscroll-x-contain whitespace-pre-wrap rounded bg-[var(--surface)] p-2">
+              {JSON.stringify(rawTags, null, 2)}
+            </pre>
+          )}
         </details>
       ) : null}
       {edge ? (

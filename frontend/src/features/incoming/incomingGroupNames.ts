@@ -33,7 +33,9 @@ function groupEvidence(
   const folders = new Map<string, { label: string; members: number }>();
   const paths = [...members].flatMap((id) => {
     const file = files.get(id);
-    for (const [tag, values] of Object.entries(file?.tags ?? {})) {
+    for (const [tag, values] of Object.entries(
+      file?.display_tags ?? file?.tags ?? {},
+    )) {
       if (tag.trim().toUpperCase() !== "ALBUM") continue;
       for (const raw of values ?? []) {
         const title = raw.trim();

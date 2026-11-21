@@ -31,6 +31,7 @@ type Dependencies struct {
 	SourceArtifactCleanup  *service.SourceAnalysisArtifactCleanup
 	SourceCleanupRetries   *service.SourceCleanupRetries
 	IncomingGroups         *service.IncomingGroups
+	IncomingTagEncoding    IncomingTagEncodingRepository
 	MatchingReview         *service.MatchingReviewService
 	MatchingManual         *service.MatchingManualService
 	MatchingLocal          *service.MatchingLocalService

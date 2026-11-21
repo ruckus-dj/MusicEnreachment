@@ -2,6 +2,7 @@ import type { Locale } from "../../i18n/locale";
 
 const english = {
   conflictConcurrency: "analysis concurrency",
+  conflictMatchingThreshold: "matching threshold",
   conflictTemplate: "publication path template",
   conflictMusicBrainz: "MusicBrainz settings",
   conflictWorkDirectory: "work directory",
@@ -19,6 +20,9 @@ const english = {
   publicationFormatSaved: "Publication format saved.",
   concurrencyMustBePositive: "Concurrency must be a positive whole number.",
   concurrencySaved: "Concurrency saved.",
+  matchingThresholdMustBeInRange:
+    "Matching threshold must be a number from 0 to 1.",
+  matchingThresholdSaved: "Matching threshold saved.",
   templateRequired: "Enter a publication path template.",
   templateSaved: "Publication path template saved.",
   workDirectoryChanged: "Work directory changed.",
@@ -140,6 +144,7 @@ export type SettingsMessageKey = keyof typeof english;
 
 const russian: Record<SettingsMessageKey, string> = {
   conflictConcurrency: "параллельность анализа",
+  conflictMatchingThreshold: "порог сопоставления",
   conflictTemplate: "шаблон пути публикации",
   conflictMusicBrainz: "настройки MusicBrainz",
   conflictWorkDirectory: "рабочая папка",
@@ -157,6 +162,9 @@ const russian: Record<SettingsMessageKey, string> = {
   concurrencyMustBePositive:
     "Параллельность должна быть положительным целым числом.",
   concurrencySaved: "Параллельность анализа сохранена.",
+  matchingThresholdMustBeInRange:
+    "Порог сопоставления должен быть числом от 0 до 1.",
+  matchingThresholdSaved: "Порог сопоставления сохранён.",
   templateRequired: "Укажите шаблон пути публикации.",
   templateSaved: "Шаблон пути публикации сохранён.",
   workDirectoryChanged: "Рабочая папка изменена.",

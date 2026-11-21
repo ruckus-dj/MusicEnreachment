@@ -802,6 +802,10 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 			copied := append([]IncomingMatchAcoustIDSourceInputFence(nil), expected.SourceInputs...)
 			sort.Slice(copied, func(i, j int) bool { return copied[i].Capture.WorkID.String() < copied[j].Capture.WorkID.String() })
 			for index, capture := range current {
+				// The display-only overlay is intentionally outside this frozen
+				// AcoustID evidence envelope.
+				observed, frozen := capture, copied[index].Capture
+				observed.TagEncoding, frozen.TagEncoding = nil, nil
 				// CurrentCaptures joins only a work item whose root, location, and
 				// inventory facts still agree. Recheck the operator-visible root
 				// state as well: a disabled or stale root is not a current source.
@@ -809,7 +813,7 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 					capture.LocationID == uuid.Nil || capture.RootID == uuid.Nil ||
 					capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath ||
 					capture.RelativePath == "" || capture.SizeBytes < 0 ||
-					!reflect.DeepEqual(capture, copied[index].Capture) {
+					!reflect.DeepEqual(observed, frozen) {
 					return ErrIncomingMatchConflict
 				}
 				requestKey, keyErr := acoustIDRequestCacheKey(capture)

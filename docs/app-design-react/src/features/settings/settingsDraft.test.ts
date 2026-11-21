@@ -15,6 +15,7 @@ import {
 
 const baseline = {
 	concurrency: "4",
+	matchingPairThreshold: "0.70",
 	toolsPath: "/tools",
 	toolsPathCandidate: "",
 	publicationTemplate: "{ALBUM_NAME}",

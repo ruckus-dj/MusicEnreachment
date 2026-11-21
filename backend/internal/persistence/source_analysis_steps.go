@@ -584,6 +584,7 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 			coverSize = &size
 		}
 		result := &SourceMetadataResult{ID: resultID, SourceSHA256: digest, ObservedTags: apply.ObservedTags, Provenance: apply.Provenance,
+			TagEncoding:   detectSourceTagEncoding(apply.ObservedTags),
 			CoverObserved: apply.CoverObserved, CoverError: coverError, CoverData: append([]byte(nil), apply.CoverData...), CoverMIME: coverMIME, CoverSHA256: coverSHA256, CoverSizeBytes: coverSize,
 			Properties: apply.Properties, ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
 		previousID := locked.Step.SuccessMetadataResultID

@@ -42,6 +42,7 @@ import type { MatchingWorkspacePosition } from "../matchingWorkspace/types";
 import { apiMatchingSources } from "./apiMatchingSources";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
+import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
 import {
   incomingGroupNames,
   incomingGroupNameText,
@@ -949,6 +950,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     ? undefined
     : proposalFiles.get(inspectedFileMemberId);
   const inspectedFileTitle =
+    inspectedFile?.display_tags?.TITLE?.[0] ||
     inspectedSavedFacts?.raw_tags?.TITLE?.[0] ||
     inspectedFile?.tags?.TITLE?.[0] ||
     inspectedFile?.locations?.[0]?.relative_path.split(/[\\/]/).at(-1) ||
@@ -1127,6 +1129,14 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   ))}
                 </select>
               </label>
+            ) : null}
+
+            {group ? (
+              <IncomingTagEncodingReview
+                key={group.id}
+                groupId={group.id}
+                disabled={sameGroupInFlight}
+              />
             ) : null}
 
             {group && !releaseSelectionLocked && (
@@ -1604,6 +1614,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                           rawTags={
                             inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
                           }
+                          displayTags={inspectedFile?.display_tags}
                         />
                       ) : (
                         <p className="mt-2 text-sm text-[var(--muted)]">

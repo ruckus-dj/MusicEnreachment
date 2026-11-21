@@ -189,6 +189,7 @@ var (
 	defaultTrue                     = true
 	defaultFileConcurrency          = 4
 	defaultSelfHostedDelay          = 0.5
+	defaultMatchingPairThreshold    = 0.70
 	defaultPublicationPathTemplate  = `{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}`
 	defaultPublicationRemoveSources = false
 
@@ -244,6 +245,12 @@ var (
 		},
 		defaultVal: &defaultFileConcurrency, mutable: true,
 	}
+	matchingPairThresholdSetting = floatDefinition(MatchingPairThresholdKey, defaultMatchingPairThreshold, func(value float64) error {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
+			return fmt.Errorf("matching pair threshold must be between 0 and 1")
+		}
+		return nil
+	})
 	logSetting = settingDefinition[string]{
 		name: LogLevelKey, kind: "enum", parse: parseLevel,
 		serialize: func(value string) string { return value }, defaultVal: &defaultInfo, mutable: true,
@@ -277,5 +284,6 @@ var registeredSettings = []registeredSetting{
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
 	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting,
+	matchingPairThresholdSetting,
 	musicBrainzSelfHostedThrottleSetting, musicBrainzSelfHostedDelaySetting, setupCompletedSetting,
 }

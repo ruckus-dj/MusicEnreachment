@@ -7,6 +7,7 @@ type MatchingEvidenceInspectorProps = {
   candidate?: MatchingReviewCandidate;
   position: MatchingWorkspacePosition;
   rawTags?: Record<string, string[] | null>;
+  displayTags?: Record<string, string[] | null>;
 };
 
 /**
@@ -17,6 +18,7 @@ export function MatchingEvidenceInspector({
   candidate,
   position,
   rawTags,
+  displayTags,
 }: MatchingEvidenceInspectorProps) {
   const { locale } = useI18n();
   return (
@@ -24,6 +26,7 @@ export function MatchingEvidenceInspector({
       candidate={candidate}
       position={position}
       rawTags={rawTags}
+      displayTags={displayTags}
       locale={locale}
     />
   );

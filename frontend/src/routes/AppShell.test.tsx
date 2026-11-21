@@ -47,6 +47,7 @@ const state: SetupStateBody = {
     sha256_enabled: true,
     log_level: "info",
     source_file_concurrency: 4,
+    matching_pair_threshold: 0.7,
     has_acoustid_application_key: false,
     has_github_token: false,
   },

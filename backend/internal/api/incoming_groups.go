@@ -39,11 +39,21 @@ type incomingGroupingDiagnosticResponse struct {
 }
 
 type incomingFileResponse struct {
-	VariantID         uuid.UUID                  `json:"variant_id"`
-	CaptureAnalysisID uuid.UUID                  `json:"capture_analysis_id"`
-	CaptureIdentity   string                     `json:"capture_identity"`
-	Locations         []incomingLocationResponse `json:"locations"`
-	Tags              map[string][]string        `json:"tags"`
+	VariantID         uuid.UUID                      `json:"variant_id"`
+	CaptureAnalysisID uuid.UUID                      `json:"capture_analysis_id"`
+	CaptureIdentity   string                         `json:"capture_identity"`
+	Locations         []incomingLocationResponse     `json:"locations"`
+	Tags              map[string][]string            `json:"tags"`
+	DisplayTags       map[string][]string            `json:"display_tags,omitempty"`
+	TagCorrection     *incomingTagCorrectionResponse `json:"tag_correction,omitempty"`
+}
+
+// incomingTagCorrectionResponse is a compact, presentation-only summary of the
+// saved tag-encoding corrections for one file. Tags in the same response always
+// remain the untouched captured values.
+type incomingTagCorrectionResponse struct {
+	Automatic  int `json:"automatic"`
+	Candidates int `json:"candidates"`
 }
 
 type incomingLocationResponse struct {
@@ -205,7 +215,11 @@ func incomingGroupsResult(snapshot service.IncomingGroupingSnapshot) (*incomingG
 		for _, location := range file.Locations {
 			locations = append(locations, incomingLocationResponse{RootID: location.RootID, WorkID: location.WorkID, LocationID: location.LocationID, ConfiguredPath: location.ConfiguredPath, InventoryPath: location.InventoryPath, TechnicalIdentity: location.TechnicalIdentity, RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: location.Mtime})
 		}
-		body.Files = append(body.Files, incomingFileResponse{VariantID: file.VariantID, CaptureAnalysisID: file.CaptureAnalysisID, CaptureIdentity: file.CaptureIdentity, Locations: locations, Tags: file.Tags})
+		var correction *incomingTagCorrectionResponse
+		if file.TagCorrection != nil {
+			correction = &incomingTagCorrectionResponse{Automatic: file.TagCorrection.Automatic, Candidates: file.TagCorrection.Candidates}
+		}
+		body.Files = append(body.Files, incomingFileResponse{VariantID: file.VariantID, CaptureAnalysisID: file.CaptureAnalysisID, CaptureIdentity: file.CaptureIdentity, Locations: locations, Tags: file.Tags, DisplayTags: file.DisplayTags, TagCorrection: correction})
 	}
 	return &incomingGroupsOutput{Body: body}, nil
 }

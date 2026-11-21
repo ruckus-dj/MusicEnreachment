@@ -31,6 +31,7 @@ type PlatformResponse struct {
 
 type RuntimeSettingsResponse struct {
 	SourceFileConcurrency             int        `json:"source_file_concurrency"`
+	MatchingPairThreshold             float64    `json:"matching_pair_threshold"`
 	ToolsDirectory                    string     `json:"tools_directory"`
 	WorkDirectory                     string     `json:"work_directory"`
 	OutputDirectory                   string     `json:"output_directory"`
@@ -332,6 +333,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 			},
 			Settings: RuntimeSettingsResponse{
 				SourceFileConcurrency:             state.Runtime.SourceFileConcurrency,
+				MatchingPairThreshold:             state.Runtime.MatchingPairThreshold,
 				ToolsDirectory:                    state.Runtime.ToolsDirectory,
 				WorkDirectory:                     state.Runtime.WorkDirectory,
 				OutputDirectory:                   state.Runtime.OutputDirectory,

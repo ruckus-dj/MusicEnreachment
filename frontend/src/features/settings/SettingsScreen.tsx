@@ -120,6 +120,7 @@ type MovePlan = {
 type GeneralSettingKey = "publicationFormat" | "sha256" | "logLevel";
 type ConflictGroup =
   | "concurrency"
+  | "matchingThreshold"
   | "publicationTemplate"
   | "musicBrainz"
   | "workDirectory"
@@ -175,6 +176,7 @@ type SettingsSaveOutcome = {
     | "failed";
   group:
     | "concurrency"
+    | "matchingThreshold"
     | "publicationTemplate"
     | "workDirectory"
     | "musicBrainz"
@@ -203,6 +205,8 @@ function conflictLabel(group: ConflictGroup, locale: "en" | "ru"): string {
   switch (group) {
     case "concurrency":
       return settingsMessage(locale, "conflictConcurrency");
+    case "matchingThreshold":
+      return settingsMessage(locale, "conflictMatchingThreshold");
     case "publicationTemplate":
       return settingsMessage(locale, "conflictTemplate");
     case "musicBrainz":
@@ -424,6 +428,19 @@ function validMusicBrainzBaseURL(value: string) {
   }
 }
 
+function matchingThresholdNumber(value: string): number | undefined {
+  const normalized = value.trim().replace(",", ".");
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return undefined;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) return undefined;
+  return numeric;
+}
+
+function formatMatchingThreshold(value: number) {
+  const fixed = value.toFixed(2);
+  return Number(fixed) === value ? fixed : String(value);
+}
+
 function message(reason: unknown): SettingsFeedback {
   if (reason instanceof SettingsMessageError) return reason.descriptor;
   if (reason instanceof SettingsValidationError) return reason.feedback;
@@ -521,6 +538,10 @@ export function SettingsScreen() {
   const sourceFileConcurrency = useSectionDraft<string>(
     Object.is,
     restoredSettingsDraft?.sourceFileConcurrency,
+  );
+  const matchingThreshold = useSectionDraft<string>(
+    Object.is,
+    restoredSettingsDraft?.matchingPairThreshold,
   );
   const musicBrainz = useSectionDraft(
     sameMusicBrainz,
@@ -724,6 +745,9 @@ export function SettingsScreen() {
       publicationPathTemplate.sync(settings.publication_path_template);
       publicationRemoveSources.sync(settings.publication_remove_sources);
       sourceFileConcurrency.sync(String(settings.source_file_concurrency));
+      matchingThreshold.sync(
+        formatMatchingThreshold(settings.matching_pair_threshold),
+      );
       musicBrainz.sync({
         mode:
           settings.musicbrainz_mode === "self-hosted"
@@ -764,6 +788,7 @@ export function SettingsScreen() {
       publicationPathTemplate.sync,
       publicationRemoveSources.sync,
       sourceFileConcurrency.sync,
+      matchingThreshold.sync,
       musicBrainz.sync,
       lrclib.sync,
       sha256.sync,
@@ -779,6 +804,7 @@ export function SettingsScreen() {
       const workDraft = workDirectory.persisted();
       const templateDraft = publicationPathTemplate.persisted();
       const concurrencyDraft = sourceFileConcurrency.persisted();
+      const thresholdDraft = matchingThreshold.persisted();
       return {
         ...(outputDraft ? { outputDirectory: outputDraft } : {}),
         ...(workDraft ? { workDirectory: workDraft } : {}),
@@ -786,6 +812,7 @@ export function SettingsScreen() {
         ...(concurrencyDraft
           ? { sourceFileConcurrency: concurrencyDraft }
           : {}),
+        ...(thresholdDraft ? { matchingPairThreshold: thresholdDraft } : {}),
         toolsDirectoryCandidate: {
           value: moveDirectoryRef.current,
           baseline: moveDirectoryBaseline.current ?? "",
@@ -817,6 +844,7 @@ export function SettingsScreen() {
       workDirectory.persisted,
       publicationPathTemplate.persisted,
       sourceFileConcurrency.persisted,
+      matchingThreshold.persisted,
     ]);
 
   const hasUnsavedSettingsTextDrafts = useCallback(
@@ -1125,6 +1153,11 @@ export function SettingsScreen() {
       sourceFileConcurrency.baseline,
       sourceFileConcurrency.revision,
     );
+    const threshold = persistedTextDraft(
+      matchingThreshold.value,
+      matchingThreshold.baseline,
+      matchingThreshold.revision,
+    );
     const musicValue = musicBrainz.value;
     const musicBaseline = musicBrainz.baseline;
     return {
@@ -1132,6 +1165,7 @@ export function SettingsScreen() {
       ...(work ? { workDirectory: work } : {}),
       ...(template ? { publicationPathTemplate: template } : {}),
       ...(concurrency ? { sourceFileConcurrency: concurrency } : {}),
+      ...(threshold ? { matchingPairThreshold: threshold } : {}),
       toolsDirectoryCandidate: {
         value: moveDirectory,
         baseline:
@@ -1172,6 +1206,9 @@ export function SettingsScreen() {
     sourceFileConcurrency.value,
     sourceFileConcurrency.baseline,
     sourceFileConcurrency.revision,
+    matchingThreshold.value,
+    matchingThreshold.baseline,
+    matchingThreshold.revision,
     musicBrainz.value,
     musicBrainz.baseline,
     musicBrainz.revision,
@@ -1501,6 +1538,64 @@ export function SettingsScreen() {
     if (confirmationPending)
       return { status: "confirmation_pending", group: "concurrency" };
     return (await attempt) ?? { status: "failed", group: "concurrency" };
+  }
+
+  async function saveMatchingThreshold(): Promise<SettingsSaveOutcome> {
+    if (isEffectivelyBusy())
+      return { status: "failed", group: "matchingThreshold" };
+    const draft = matchingThreshold.capture();
+    const current = state?.settings.matching_pair_threshold;
+    if (draft.value === undefined || current === undefined)
+      return { status: "failed", group: "matchingThreshold" };
+    if (!matchingThreshold.dirty)
+      return { status: "saved", group: "matchingThreshold" };
+    const submitted = matchingThresholdNumber(draft.value);
+    if (submitted === undefined)
+      return {
+        status: "invalid",
+        group: "matchingThreshold",
+        message: settingsNotice("matchingThresholdMustBeInRange"),
+      };
+    let attempt: Promise<SettingsSaveOutcome> | undefined;
+    const confirmationPending = confirmConflictingSave(
+      "matchingThreshold",
+      current,
+      () => {
+        attempt = mutate(
+          (savedDraft) => {
+            const expectedSource = expectedForSave<unknown>(
+              "matchingThreshold",
+              savedDraft.baseline ?? formatMatchingThreshold(current),
+            );
+            const expected =
+              typeof expectedSource === "number"
+                ? expectedSource
+                : (matchingThresholdNumber(String(expectedSource)) ?? current);
+            return updateSettings({
+              matching_pair_threshold:
+                matchingThresholdNumber(savedDraft.value ?? "") ?? submitted,
+              expected: {
+                matching_pair_threshold: expected,
+              } satisfies UpdateSettingsExpectedBody,
+            });
+          },
+          204,
+          settingsNotice("matchingThresholdSaved"),
+          matchingThreshold.capture,
+          (fresh, revision) =>
+            matchingThreshold.acknowledge(
+              formatMatchingThreshold(fresh.settings.matching_pair_threshold),
+              revision,
+            ),
+          matchingThreshold.beginSave,
+          matchingThreshold.endSave,
+          draft,
+        ).then((result) => ({ ...result, group: "matchingThreshold" }));
+      },
+    );
+    if (confirmationPending)
+      return { status: "confirmation_pending", group: "matchingThreshold" };
+    return (await attempt) ?? { status: "failed", group: "matchingThreshold" };
   }
 
   async function savePublicationTemplate(): Promise<SettingsSaveOutcome> {
@@ -2399,6 +2494,7 @@ export function SettingsScreen() {
 
     const textSaves: Array<[boolean, () => Promise<SettingsSaveOutcome>]> = [
       [sourceFileConcurrency.dirty, saveConcurrency],
+      [matchingThreshold.dirty, saveMatchingThreshold],
       [publicationPathTemplate.dirty, savePublicationTemplate],
       [workDirectory.dirty, saveWorkDirectory],
     ];
@@ -2409,9 +2505,11 @@ export function SettingsScreen() {
       const currentDraft =
         outcome.group === "concurrency"
           ? sourceFileConcurrency.capture()
-          : outcome.group === "publicationTemplate"
-            ? publicationPathTemplate.capture()
-            : workDirectory.capture();
+          : outcome.group === "matchingThreshold"
+            ? matchingThreshold.capture()
+            : outcome.group === "publicationTemplate"
+              ? publicationPathTemplate.capture()
+              : workDirectory.capture();
       const draftStillDirty =
         currentDraft.value !== undefined &&
         currentDraft.baseline !== undefined &&
@@ -2841,6 +2939,7 @@ export function SettingsScreen() {
     state?.platform.supported && !state.platform.diagnostic,
   );
   const concurrencyDraft = sourceFileConcurrency.snapshot();
+  const thresholdDraft = matchingThreshold.snapshot();
   const templateDraft = publicationPathTemplate.snapshot();
   const workDraft = workDirectory.snapshot();
   const outputDraft = outputDirectory.snapshot();
@@ -2856,6 +2955,15 @@ export function SettingsScreen() {
         concurrencyDraft.baseline
     )
       values.concurrency = state.settings.source_file_concurrency;
+    if (
+      state &&
+      thresholdDraft.value !== undefined &&
+      thresholdDraft.baseline !== undefined &&
+      thresholdDraft.value !== thresholdDraft.baseline &&
+      formatMatchingThreshold(state.settings.matching_pair_threshold) !==
+        thresholdDraft.baseline
+    )
+      values.matchingThreshold = state.settings.matching_pair_threshold;
     if (
       state &&
       templateDraft.value !== undefined &&
@@ -2919,6 +3027,8 @@ export function SettingsScreen() {
     state,
     concurrencyDraft.value,
     concurrencyDraft.baseline,
+    thresholdDraft.value,
+    thresholdDraft.baseline,
     templateDraft.value,
     templateDraft.baseline,
     workDraft.value,
@@ -2957,6 +3067,15 @@ export function SettingsScreen() {
         sourceFileConcurrency.acknowledge(
           value,
           sourceFileConcurrency.capture().revision,
+        );
+        break;
+      }
+      case "matchingThreshold": {
+        const value = formatMatchingThreshold(current.matching_pair_threshold);
+        matchingThreshold.update(value);
+        matchingThreshold.acknowledge(
+          value,
+          matchingThreshold.capture().revision,
         );
         break;
       }
@@ -3085,6 +3204,26 @@ export function SettingsScreen() {
                       !sourceFileConcurrency.value,
                     onChange: sourceFileConcurrency.update,
                     onSave: saveConcurrency,
+                  },
+                  matchingThreshold: {
+                    value:
+                      matchingThreshold.value ??
+                      formatMatchingThreshold(
+                        state.settings.matching_pair_threshold,
+                      ),
+                    invalid:
+                      matchingThreshold.value !== undefined &&
+                      matchingThresholdNumber(matchingThreshold.value) ===
+                        undefined,
+                    dirty: matchingThreshold.dirty,
+                    saveDisabled:
+                      effectiveBusy ||
+                      (matchingThreshold.value !== undefined &&
+                        matchingThresholdNumber(matchingThreshold.value) ===
+                          undefined) ||
+                      !matchingThreshold.value,
+                    onChange: matchingThreshold.update,
+                    onSave: saveMatchingThreshold,
                   },
                   sha256: {
                     enabled: sha256.value ?? state.settings.sha256_enabled,

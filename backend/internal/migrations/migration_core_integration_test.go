@@ -29,6 +29,7 @@ var baselineMigrationNames = []string{
 	"20261109000001",
 	"20261111000001",
 	"20261112000001",
+	"20261121000001",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -396,6 +397,7 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic, publicationResumeMode, publicationResumeModeConstraint int
 	var deletionShape, deletionTargetShape, manualReceiptOriginalRelease, manualReceiptRetirementShape, artistCatalogVisibility, artistDeletionScopeShape int
 	var deletionOperationKind, deletionMutationTarget, deletionTargetIdentity, deletionUUIDArrayValidator, manualReceiptRetirementGuard, manualReceiptDeleteGuard, manualReceiptWriteOnce int
+	var tagEncodingColumns, tagEncodingConstraint int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -428,6 +430,8 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_retirement_guard' AND NOT tgisinternal`, &manualReceiptRetirementGuard, 1},
 		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_delete_write_once' AND NOT tgisinternal`, &manualReceiptDeleteGuard, 1},
 		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_write_once' AND NOT tgisinternal`, &manualReceiptWriteOnce, 0},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='media_metadata_result' AND column_name='tag_encoding' AND data_type='jsonb' AND is_nullable='YES'`, &tagEncodingColumns, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_tag_encoding_check' AND contype='c'`, &tagEncodingConstraint, 1},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

@@ -160,6 +160,24 @@ func checkRuntimeSettingsExpected(ctx context.Context, reader settingRowReader, 
 			return err
 		}
 	}
+	if expected.MatchingPairThreshold != nil {
+		threshold := *defaults.MatchingPairThreshold
+		var stored string
+		err := reader.QueryRowContext(ctx, "SELECT setting_value FROM app_setting WHERE setting_name=$1",
+			appsettings.MatchingPairThresholdKey).Scan(&stored)
+		if err == nil {
+			threshold, err = strconv.ParseFloat(stored, 64)
+			if err != nil {
+				return fmt.Errorf("parse saved matching pair threshold: %w", err)
+			}
+		} else if err != sql.ErrNoRows {
+			return fmt.Errorf("read saved matching pair threshold: %w", err)
+		}
+		if threshold != *expected.MatchingPairThreshold {
+			return fmt.Errorf("%w: %s changed since this draft was opened",
+				appsettings.ErrSettingsConflict, appsettings.MatchingPairThresholdKey)
+		}
+	}
 	return nil
 }
 

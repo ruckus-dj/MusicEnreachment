@@ -40,9 +40,9 @@ export function apiMatchingSources(
     const file = filesById.get(memberId);
     const path = file?.locations?.[0]?.relative_path;
     const savedTags = proposal.get(memberId)?.raw_tags;
-    const tags = savedTags ?? file?.tags;
-    const title = tags?.TITLE?.find(Boolean);
-    const artist = tags?.ARTIST?.find(Boolean);
+    const visibleTags = file?.display_tags ?? savedTags ?? file?.tags;
+    const title = visibleTags?.TITLE?.find(Boolean);
+    const artist = visibleTags?.ARTIST?.find(Boolean);
     const detail = [artist, title].filter(Boolean).join(" · ");
     /*
      * The saved capture is authoritative for both positions; a field it does

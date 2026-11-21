@@ -69,6 +69,7 @@ type report struct {
 	ReleaseFirst   *baselineDecision                           `json:"release_first_on_shortlist,omitempty"`
 	Compared       *service.MatchingExperimentLayoutComparison `json:"whole_layouts,omitempty"`
 	MemoryControl  *service.MatchingExperimentLayoutComparison `json:"corrected_tags_control,omitempty"`
+	LayoutPolicy   *layoutPolicyReport                         `json:"approved_policy_replay,omitempty"`
 	ScoredPairs    int                                         `json:"scored_pairs"`
 	ShortlistLimit int                                         `json:"shortlist_limit"`
 	CachedVerified bool                                        `json:"reused_scores_same_result"`
@@ -76,16 +77,18 @@ type report struct {
 }
 
 type options struct {
-	input string
-	stage string
-	limit int
+	input     string
+	stage     string
+	limit     int
+	threshold float64
 }
 
 func main() {
 	var opts options
 	flag.StringVar(&opts.input, "input", "", "path to a frozen JSON fixture")
-	flag.StringVar(&opts.stage, "stage", "all", "baseline, shortlist, or all")
+	flag.StringVar(&opts.stage, "stage", "all", "baseline, shortlist, all, or policy")
 	flag.IntVar(&opts.limit, "limit", 10, "experimental shortlist limit (not a runtime setting)")
+	flag.Float64Var(&opts.threshold, "threshold", 0.70, "pair threshold for the approved-policy replay")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -97,11 +100,14 @@ func main() {
 }
 
 func run(ctx context.Context, opts options, out io.Writer) error {
-	if opts.input == "" || (opts.stage != "baseline" && opts.stage != "shortlist" && opts.stage != "all") {
-		return errors.New("use -input fixture.json and -stage baseline, shortlist, or all")
+	if opts.input == "" || (opts.stage != "baseline" && opts.stage != "shortlist" && opts.stage != "all" && opts.stage != "policy") {
+		return errors.New("use -input fixture.json and -stage baseline, shortlist, all, or policy")
 	}
 	if opts.limit < 1 || opts.limit > 100 {
 		return errors.New("experimental shortlist limit must be between 1 and 100")
+	}
+	if opts.stage == "policy" && opts.limit > 10 {
+		return errors.New("approved-policy shortlist limit must be at most 10")
 	}
 	start := time.Now()
 	data, err := os.ReadFile(opts.input)

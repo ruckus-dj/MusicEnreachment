@@ -206,6 +206,7 @@ func Run(ctx context.Context, config Config) error {
 	setupManagerRepository.SetRiverInserter(riverSlot)
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
 	incomingGroups := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db))
+	incomingTagEncoding := persistence.NewIncomingTagEncodingRepository(db)
 	if err := incomingGroups.RefreshIfNeeded(ctx); err != nil {
 		return fmt.Errorf("recover incoming groups: %w", err)
 	}
@@ -524,7 +525,7 @@ func Run(ctx context.Context, config Config) error {
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
 		SourceArtifactCleanup: artifactCleanup, SourceCleanupRetries: sourceCleanupRetries,
-		IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
+		IncomingGroups: incomingGroups, IncomingTagEncoding: incomingTagEncoding, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
 		MatchingLocal:          matchingLocal,
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,

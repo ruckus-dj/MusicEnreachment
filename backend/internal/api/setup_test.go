@@ -150,6 +150,32 @@ func (store apiSettingsStore) InitializePlatform(_ context.Context, goos, goarch
 	return persistedOS, persistedArch, true, nil
 }
 
+// conditionalAPISettingsStore applies the saved-value comparison expected by
+// conditional runtime updates so API handlers can be exercised without PostgreSQL.
+type conditionalAPISettingsStore struct {
+	apiSettingsStore
+}
+
+func (store conditionalAPISettingsStore) UpdateRuntime(_ context.Context, _, _ string, values map[string]string) error {
+	for key, value := range values {
+		store.apiSettingsStore[key] = value
+	}
+	return nil
+}
+
+func (store conditionalAPISettingsStore) UpdateRuntimeIfCurrent(ctx context.Context, toolsRoot, outputRoot string, expected settings.RuntimeSettingsExpected, values map[string]string) error {
+	if expected.MatchingPairThreshold != nil {
+		actual, exists := store.apiSettingsStore[settings.MatchingPairThresholdKey]
+		if !exists {
+			actual = strconv.FormatFloat(*settings.DefaultRuntimeSettingsExpected().MatchingPairThreshold, 'f', -1, 64)
+		}
+		if actual != strconv.FormatFloat(*expected.MatchingPairThreshold, 'f', -1, 64) {
+			return settings.ErrSettingsConflict
+		}
+	}
+	return store.UpdateRuntime(ctx, toolsRoot, outputRoot, values)
+}
+
 func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)
@@ -408,7 +434,7 @@ func TestMusicBrainzSettingsUpdateIsPresenceAwareAndRejectsStaleProviderBaseline
 	}
 }
 
-func TestSetupRuntimeResponseIncludesDefaultSourceFileConcurrency(t *testing.T) {
+func TestSetupRuntimeResponseIncludesDefaultSourceConcurrencyAndMatchingThreshold(t *testing.T) {
 	store := apiSettingsStore{}
 	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
 	response := httptest.NewRecorder()
@@ -418,7 +444,8 @@ func TestSetupRuntimeResponseIncludesDefaultSourceFileConcurrency(t *testing.T) 
 	}
 	var body struct {
 		Settings struct {
-			SourceFileConcurrency int `json:"source_file_concurrency"`
+			SourceFileConcurrency int     `json:"source_file_concurrency"`
+			MatchingPairThreshold float64 `json:"matching_pair_threshold"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -426,6 +453,41 @@ func TestSetupRuntimeResponseIncludesDefaultSourceFileConcurrency(t *testing.T) 
 	}
 	if body.Settings.SourceFileConcurrency != 4 {
 		t.Fatalf("response concurrency = %d, want default 4: %s", body.Settings.SourceFileConcurrency, response.Body.String())
+	}
+	if body.Settings.MatchingPairThreshold != 0.70 {
+		t.Fatalf("response matching threshold = %v, want default 0.70: %s", body.Settings.MatchingPairThreshold, response.Body.String())
+	}
+}
+
+func TestUpdateSettingsMatchingPairThresholdRequiresAndChecksExpectedValue(t *testing.T) {
+	store := conditionalAPISettingsStore{apiSettingsStore{settings.SetupCompletedAtKey: "complete"}}
+	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	handler := api.HandlerWithSetup(setup)
+	put := func(body string) int {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPut, "/settings/runtime", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	if status := put(`{"matching_pair_threshold":0.8}`); status != http.StatusUnprocessableEntity {
+		t.Fatalf("threshold update without expected saved value status=%d, want %d", status, http.StatusUnprocessableEntity)
+	}
+	if _, exists := store.apiSettingsStore[settings.MatchingPairThresholdKey]; exists {
+		t.Fatalf("rejected threshold update persisted %q", store.apiSettingsStore[settings.MatchingPairThresholdKey])
+	}
+	if status := put(`{"matching_pair_threshold":0.8,"expected":{"matching_pair_threshold":0.7}}`); status != http.StatusNoContent {
+		t.Fatalf("threshold update status=%d, want %d", status, http.StatusNoContent)
+	}
+	if store.apiSettingsStore[settings.MatchingPairThresholdKey] != "0.8" {
+		t.Fatalf("saved threshold = %q, want 0.8", store.apiSettingsStore[settings.MatchingPairThresholdKey])
+	}
+	if status := put(`{"matching_pair_threshold":0.9,"expected":{"matching_pair_threshold":0.7}}`); status != http.StatusConflict {
+		t.Fatalf("stale threshold update status=%d, want %d", status, http.StatusConflict)
+	}
+	if store.apiSettingsStore[settings.MatchingPairThresholdKey] != "0.8" {
+		t.Fatalf("stale threshold update changed saved value to %q", store.apiSettingsStore[settings.MatchingPairThresholdKey])
 	}
 }
 

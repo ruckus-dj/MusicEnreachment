@@ -30,12 +30,24 @@ type IncomingLocation struct {
 
 // IncomingFile is the service-layer snapshot needed for pure grouping. Tags
 // are authoritative captured analysis results; grouping performs no source IO.
+// DisplayTags applies the saved automatic tag-encoding corrections and is
+// presentation-only: Tags, grouping, and revisions always use the raw values.
 type IncomingFile struct {
 	VariantID         uuid.UUID
 	CaptureAnalysisID uuid.UUID
 	CaptureIdentity   string
 	Locations         []IncomingLocation
 	Tags              map[string][]string
+	DisplayTags       map[string][]string
+	TagCorrection     *IncomingTagCorrection
+}
+
+// IncomingTagCorrection reports the saved tag-encoding corrections for one
+// selected capture. Automatic corrections are already reflected in
+// IncomingFile.DisplayTags; candidates still require explicit confirmation.
+type IncomingTagCorrection struct {
+	Automatic  int `json:"automatic"`
+	Candidates int `json:"candidates"`
 }
 
 type IncomingGroup struct {

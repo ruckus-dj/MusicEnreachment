@@ -43,6 +43,8 @@ import type {
   IncomingGroupReturnAutomaticResult,
   IncomingGroupingEditBody,
   IncomingGroupsBody,
+  IncomingTagEncodingBody,
+  IncomingTagEncodingConfirmBody,
   InstallPreflightBody,
   InstallPreflightInputBody,
   InstallationActionInputBody,
@@ -2102,6 +2104,248 @@ export const useReturnIncomingGroupMatchingToAutomatic = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getReturnIncomingGroupMatchingToAutomaticMutationOptions(options), queryClient);
+    }
+
+export type getIncomingGroupTagEncodingResponse200 = {
+  data: IncomingTagEncodingBody
+  status: 200
+}
+
+export type getIncomingGroupTagEncodingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getIncomingGroupTagEncodingResponseSuccess = (getIncomingGroupTagEncodingResponse200) & {
+  headers: Headers;
+};
+export type getIncomingGroupTagEncodingResponseError = (getIncomingGroupTagEncodingResponseDefault) & {
+  headers: Headers;
+};
+
+export type getIncomingGroupTagEncodingResponse = (getIncomingGroupTagEncodingResponseSuccess | getIncomingGroupTagEncodingResponseError)
+
+export const getGetIncomingGroupTagEncodingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/tag-encoding`
+}
+
+/**
+ * @summary Review saved tag encoding repairs for an incoming group
+ */
+export const getIncomingGroupTagEncoding = async (groupId: string, options?: RequestInit): Promise<getIncomingGroupTagEncodingResponse> => {
+
+  const res = await fetch(getGetIncomingGroupTagEncodingUrl(groupId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getIncomingGroupTagEncodingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getIncomingGroupTagEncodingResponse
+}
+
+
+
+
+
+export const getGetIncomingGroupTagEncodingQueryKey = (groupId: string,) => {
+    return [
+    `/api/incoming-groups/${groupId}/tag-encoding`
+    ] as const;
+    }
+
+
+export const getGetIncomingGroupTagEncodingQueryOptions = <TData = Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError = ErrorModel>(groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIncomingGroupTagEncodingQueryKey(groupId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>> = ({ signal }) => getIncomingGroupTagEncoding(groupId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIncomingGroupTagEncodingQueryResult = NonNullable<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>>
+export type GetIncomingGroupTagEncodingQueryError = ErrorModel
+
+
+export function useGetIncomingGroupTagEncoding<TData = Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError = ErrorModel>(
+ groupId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupTagEncoding<TData = Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupTagEncoding<TData = Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Review saved tag encoding repairs for an incoming group
+ */
+
+export function useGetIncomingGroupTagEncoding<TData = Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupTagEncoding>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIncomingGroupTagEncodingQueryOptions(groupId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type confirmIncomingGroupTagEncodingResponse200 = {
+  data: IncomingTagEncodingBody
+  status: 200
+}
+
+export type confirmIncomingGroupTagEncodingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmIncomingGroupTagEncodingResponseSuccess = (confirmIncomingGroupTagEncodingResponse200) & {
+  headers: Headers;
+};
+export type confirmIncomingGroupTagEncodingResponseError = (confirmIncomingGroupTagEncodingResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmIncomingGroupTagEncodingResponse = (confirmIncomingGroupTagEncodingResponseSuccess | confirmIncomingGroupTagEncodingResponseError)
+
+export const getConfirmIncomingGroupTagEncodingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/tag-encoding/confirm`
+}
+
+/**
+ * @summary Confirm saved tag encoding repairs for an incoming group
+ */
+export const confirmIncomingGroupTagEncoding = async (groupId: string,
+    incomingTagEncodingConfirmBody: NonReadonly<IncomingTagEncodingConfirmBody>, options?: RequestInit): Promise<confirmIncomingGroupTagEncodingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getConfirmIncomingGroupTagEncodingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(incomingTagEncodingConfirmBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmIncomingGroupTagEncodingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmIncomingGroupTagEncodingResponse
+}
+
+
+
+
+
+export const getConfirmIncomingGroupTagEncodingMutationKey = () => ['confirmIncomingGroupTagEncoding'] as const;
+
+export const getConfirmIncomingGroupTagEncodingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>, TError,ConfirmIncomingGroupTagEncodingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>, TError,ConfirmIncomingGroupTagEncodingMutationVariables, TContext> => {
+
+const mutationKey = getConfirmIncomingGroupTagEncodingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>, ConfirmIncomingGroupTagEncodingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  confirmIncomingGroupTagEncoding(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmIncomingGroupTagEncodingMutationResult = NonNullable<Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>>
+    export type ConfirmIncomingGroupTagEncodingMutationBody = NonReadonly<IncomingTagEncodingConfirmBody>
+    export type ConfirmIncomingGroupTagEncodingMutationError = ErrorModel
+    export type ConfirmIncomingGroupTagEncodingMutationVariables = {groupId: string;data: NonReadonly<IncomingTagEncodingConfirmBody>}
+
+    /**
+ * @summary Confirm saved tag encoding repairs for an incoming group
+ */
+export const useConfirmIncomingGroupTagEncoding = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>, TError,ConfirmIncomingGroupTagEncodingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmIncomingGroupTagEncoding>>,
+        TError,
+        ConfirmIncomingGroupTagEncodingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmIncomingGroupTagEncodingMutationOptions(options), queryClient);
     }
 
 export type searchLibraryArtistReferencesResponse200 = {

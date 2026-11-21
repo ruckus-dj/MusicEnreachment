@@ -32,6 +32,7 @@ func TestRegistryDefinesEveryTypedSetting(t *testing.T) {
 		ActiveFFmpegInstallationKey:      {"uuid", false, true},
 		ActiveFPCalcInstallationKey:      {"uuid", false, true},
 		SourceFileConcurrencyKey:         {"int", true, true},
+		MatchingPairThresholdKey:         {"float", true, true},
 		MusicBrainzSelfHostedThrottleKey: {"bool", false, true},
 		MusicBrainzSelfHostedDelayKey:    {"float", true, true},
 		SetupCompletedAtKey:              {"timestamp", false, false},

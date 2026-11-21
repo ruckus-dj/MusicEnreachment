@@ -81,6 +81,16 @@ function tag(file: IncomingFileResponse | undefined, ...keys: string[]) {
   return "";
 }
 
+function displayTag(file: IncomingFileResponse | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = (file?.display_tags?.[key] ?? file?.tags?.[key])
+      ?.filter(Boolean)
+      .join(" · ");
+    if (value) return value;
+  }
+  return "";
+}
+
 function groupContaining(
   snapshot: IncomingGroupsBody,
   memberIds: readonly string[],
@@ -406,10 +416,10 @@ export function IncomingGroupsOverview({
           id,
           trackNumber:
             trackNumber ?? (tag(file, "TRACKNUMBER", "TRACK") || undefined),
-          title: tag(file, "TITLE") || ui.noTitle,
+          title: displayTag(file, "TITLE") || ui.noTitle,
           path: file?.locations?.[0]?.relative_path,
-          artist: tag(file, "ARTIST", "ALBUMARTIST") || copy.noValue,
-          album: tag(file, "ALBUM") || copy.noValue,
+          artist: displayTag(file, "ARTIST", "ALBUMARTIST") || copy.noValue,
+          album: displayTag(file, "ALBUM") || copy.noValue,
           canMove: !unready.has(id) && groups.length > 1,
           canCreateGroup: !unready.has(id) && readyCount > 1,
         };

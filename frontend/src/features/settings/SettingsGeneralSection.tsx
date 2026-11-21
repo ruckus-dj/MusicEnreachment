@@ -28,6 +28,12 @@ const english = {
     "Enter a positive whole number that can be represented exactly in the browser.",
   concurrencyDirty: "Concurrency has an unsaved change.",
   saveConcurrency: "Save concurrency",
+  matchingThreshold: "Matching threshold",
+  matchingThresholdHelp:
+    "Each file → position pair in an automatic layout must reach at least this score. Enter a number from 0 to 1; the default is 0.70. Changing the threshold does not re-confirm saved links or start publication.",
+  matchingThresholdInvalid: "Enter a number from 0 to 1.",
+  matchingThresholdDirty: "Matching threshold has an unsaved change.",
+  saveMatchingThreshold: "Save matching threshold",
   calculateSha: "Calculate SHA-256",
   shaHelp:
     "This setting applies to future analyses. Changing it does not delete saved results or start a bulk recalculation.",
@@ -66,6 +72,12 @@ const russian: SettingsGeneralCopy = {
     "Введите положительное целое число, точно представимое в браузере.",
   concurrencyDirty: "Есть несохранённое изменение параллельности.",
   saveConcurrency: "Сохранить параллельность",
+  matchingThreshold: "Порог сопоставления",
+  matchingThresholdHelp:
+    "Каждая пара «файл → позиция» в автоматической раскладке должна набрать не меньше этого значения. Введите число от 0 до 1; значение по умолчанию — 0.70. Изменение порога не переподтверждает сохранённые связи и не запускает публикацию.",
+  matchingThresholdInvalid: "Введите число от 0 до 1.",
+  matchingThresholdDirty: "Есть несохранённое изменение порога сопоставления.",
+  saveMatchingThreshold: "Сохранить порог сопоставления",
   calculateSha: "Вычислять SHA-256",
   shaHelp:
     "Настройка применяется к последующим анализам. Её изменение не удаляет сохранённые результаты и не запускает массовый пересчёт.",
@@ -199,6 +211,15 @@ export interface SettingsGeneralConcurrencyModel {
   onSave: () => void;
 }
 
+export interface SettingsGeneralThresholdModel {
+  value: string;
+  invalid: boolean;
+  dirty: boolean;
+  saveDisabled: boolean;
+  onChange: (value: string) => void;
+  onSave: () => void;
+}
+
 export interface SettingsGeneralSha256Model {
   enabled: boolean;
   onChange: (enabled: boolean) => void;
@@ -219,6 +240,7 @@ export interface SettingsGeneralModel {
   locale: SettingsGeneralLocale;
   format: SettingsGeneralFormatModel;
   concurrency: SettingsGeneralConcurrencyModel;
+  matchingThreshold: SettingsGeneralThresholdModel;
   sha256: SettingsGeneralSha256Model;
   logLevel: SettingsGeneralLogLevelModel;
   cleanup: SettingsGeneralCleanupModel;
@@ -351,6 +373,54 @@ export function SettingsGeneralSection({
               onPress={model.concurrency.onSave}
             >
               {copy.saveConcurrency}
+            </AppButton>
+          </div>
+          <div className={sectionStyles.column}>
+            <TextField
+              value={model.matchingThreshold.value}
+              onChange={model.matchingThreshold.onChange}
+              className={sectionStyles.field}
+            >
+              <Label className={sectionStyles.label}>
+                {copy.matchingThreshold}
+              </Label>
+              <Input
+                id="settings-matching-threshold"
+                type="text"
+                inputMode="decimal"
+                aria-invalid={model.matchingThreshold.invalid}
+                aria-describedby={
+                  model.matchingThreshold.invalid
+                    ? "settings-matching-threshold-help settings-matching-threshold-error"
+                    : "settings-matching-threshold-help"
+                }
+                className={sectionStyles.input}
+              />
+            </TextField>
+            <p
+              id="settings-matching-threshold-help"
+              className={sectionStyles.help}
+            >
+              {copy.matchingThresholdHelp}
+            </p>
+            {model.matchingThreshold.invalid && (
+              <p
+                id="settings-matching-threshold-error"
+                className={sectionStyles.error}
+                role="alert"
+              >
+                {copy.matchingThresholdInvalid}
+              </p>
+            )}
+            {model.matchingThreshold.dirty && (
+              <p className="m-0">{copy.matchingThresholdDirty}</p>
+            )}
+            <AppButton
+              className="justify-self-start"
+              isDisabled={model.matchingThreshold.saveDisabled}
+              onPress={model.matchingThreshold.onSave}
+            >
+              {copy.saveMatchingThreshold}
             </AppButton>
           </div>
           <div className={sectionStyles.column}>

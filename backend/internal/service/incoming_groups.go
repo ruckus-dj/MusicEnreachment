@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/tagencoding"
 )
 
 var ErrIncomingGroupingInvalid = errors.New("incoming grouping correction is invalid")
@@ -327,8 +328,9 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 		if err != nil {
 			return incomingCaptureView{}, err
 		}
+		displayTags, correction := incomingTagDisplay(tags, capture.TagEncoding)
 		if file == nil {
-			file = &IncomingFile{VariantID: capture.VariantID, CaptureAnalysisID: *capture.CaptureAnalysisID, CaptureIdentity: identity, Tags: tags}
+			file = &IncomingFile{VariantID: capture.VariantID, CaptureAnalysisID: *capture.CaptureAnalysisID, CaptureIdentity: identity, Tags: tags, DisplayTags: displayTags, TagCorrection: correction}
 			filesByID[capture.VariantID] = file
 		} else if file.CaptureAnalysisID != *capture.CaptureAnalysisID || file.CaptureIdentity != identity {
 			return incomingCaptureView{}, fmt.Errorf("incoming variant has conflicting selected metadata captures")
@@ -346,6 +348,34 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].VariantID.String() < files[j].VariantID.String() })
 	return incomingCaptureView{Files: files, Locations: locations, Ready: ready}, nil
+}
+
+// incomingTagDisplay projects the saved automatic tag-encoding corrections onto
+// the raw captured tags for presentation. Tags are never modified, and the
+// projection does not participate in grouping or revisions. A missing report,
+// an unsupported schema, or one that no longer matches the captured values
+// falls back to the raw text rather than failing the read-only snapshot.
+func incomingTagDisplay(tags map[string][]string, encoded json.RawMessage) (map[string][]string, *IncomingTagCorrection) {
+	if len(tags) == 0 || len(encoded) == 0 || string(encoded) == "null" {
+		return nil, nil
+	}
+	var report tagencoding.Report
+	if err := json.Unmarshal(encoded, &report); err != nil || report.Version != tagencoding.ReportVersion {
+		return nil, nil
+	}
+	automatic, candidates := len(report.Automatic.Entries), len(report.Candidates)
+	if automatic == 0 && candidates == 0 {
+		return nil, nil
+	}
+	correction := &IncomingTagCorrection{Automatic: automatic, Candidates: candidates}
+	if automatic == 0 {
+		return nil, correction
+	}
+	display, err := report.Automatic.Apply(tags)
+	if err != nil {
+		return nil, nil
+	}
+	return display, correction
 }
 
 func incomingCaptureIdentity(capture persistence.IncomingGroupingCapture) (string, error) {

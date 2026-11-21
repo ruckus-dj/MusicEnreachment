@@ -24,6 +24,7 @@ export function getSettingsDraftStorage(): Storage | undefined {
 
 export type SettingsTextDraft = {
 	concurrency: string;
+	matchingPairThreshold: string;
 	toolsPath: string;
 	toolsPathCandidate: string;
 	publicationTemplate: string;
@@ -53,6 +54,7 @@ export function rebaseSettingsDraft(
 	const baseline = { ...snapshot.baseline };
 	const fields: SettingsDraftField[] = [
 		"concurrency",
+		"matchingPairThreshold",
 		"toolsPath",
 		"publicationTemplate",
 		"workDirectory",
@@ -79,6 +81,7 @@ export function mergeSettingsDraft(
 	current: SettingsTextDraft,
 	fields: SettingsDraftField[] = [
 		"concurrency",
+		"matchingPairThreshold",
 		"toolsPath",
 		"publicationTemplate",
 		"workDirectory",
@@ -128,6 +131,7 @@ export function readSettingsDraft(
 		if (!parsed.value || !parsed.baseline) return null;
 		const valid = (draft: Partial<SettingsTextDraft>) =>
 			typeof draft.concurrency === "string" &&
+			typeof draft.matchingPairThreshold === "string" &&
 			typeof draft.toolsPath === "string" &&
 			typeof draft.toolsPathCandidate === "string" &&
 			typeof draft.publicationTemplate === "string" &&

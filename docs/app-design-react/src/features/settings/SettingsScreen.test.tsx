@@ -430,6 +430,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		window.location.hash = "#settings";
 		const baseline = {
 			concurrency: "4",
+			matchingPairThreshold: "0.70",
 			toolsPath: initialDemoSettings.toolsPath,
 			toolsPathCandidate: "",
 			publicationTemplate: initialDemoSettings.publicationTemplate ?? "",

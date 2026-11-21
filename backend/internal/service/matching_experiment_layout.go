@@ -13,18 +13,8 @@ import (
 )
 
 const (
-	// matchingExperimentMaximumMembers keeps the exact scaled sum within int64:
-	// 256 * 2^53 is at most 2^61.
-	matchingExperimentMaximumMembers = 256
-	// matchingExperimentMaximumCliqueRows bounds the per-alternative uniqueness
-	// proof for a pairwise-conflicting component. Larger components still get an
-	// exact optimum, but their uniqueness is reported as indeterminate.
-	matchingExperimentMaximumCliqueRows = 48
-	// matchingExperimentSearchNodeLimit is a deterministic work bound, not a
-	// wall-clock timeout. Exhausting it is reported as indeterminate.
-	matchingExperimentSearchNodeLimit = 1_000_000
-	matchingExperimentScoreShift      = 53
-	matchingExperimentForbiddenCost   = -1
+	matchingExperimentMaximumMembers = matchingLayoutMaximumMembers
+	matchingExperimentScoreShift     = 53
 )
 
 // MatchingExperimentStructuralStatus separates a complete raw layout from an
@@ -106,27 +96,9 @@ type MatchingExperimentLayoutComparison struct {
 	Layouts []MatchingExperimentLayoutReport `json:"layouts"`
 }
 
-type matchingExperimentPosition struct {
-	medium   int
-	position int
-}
-
-type matchingExperimentEdge struct {
-	position          int
-	candidateID       string
-	score             uint64
-	qualifying        bool
-	releaseConfidence float64
-}
-
-type matchingExperimentRow struct {
-	id             string
-	locations      []string
-	edges          []matchingExperimentEdge
-	edgeByPosition map[int]matchingExperimentEdge
-	releasePresent bool
-	releaseBest    float64
-}
+type matchingExperimentPosition = matchingLayoutPosition
+type matchingExperimentEdge = matchingLayoutEdge
+type matchingExperimentRow = matchingLayoutRow
 
 type matchingExperimentLayout struct {
 	releaseID  string
@@ -146,7 +118,10 @@ type matchingExperimentComponentResult struct {
 	bestScore          uint64
 	withinTie          bool
 	uniquenessUnknown  bool
-	choices            map[string]int
+	// witness is a deterministic optimum even when withinTie is set. The
+	// experiment report only exposes choices for a unique optimum.
+	witness map[string]int
+	choices map[string]int
 }
 
 // CompareMatchingExperimentLayouts compares complete release layouts for the
@@ -210,6 +185,19 @@ func CompareMatchingExperimentLayouts(ctx context.Context, input MatchingGroupEv
 }
 
 func matchingExperimentBuildLayouts(input MatchingGroupEvaluationInput) ([]*matchingExperimentLayout, int, error) {
+	return matchingBuildLayouts(input, minimumReleaseCandidateConfidence, nil)
+}
+
+// matchingBuildLayouts validates and builds one layout per release. shifts
+// overrides the integer scale exponent per release; a nil map uses the
+// experiment's fixed 2^53 scale. An edge is eligible only when its assignment
+// confidence reaches threshold.
+func matchingBuildLayouts(
+	input MatchingGroupEvaluationInput, threshold float64, shifts map[string]int,
+) ([]*matchingExperimentLayout, int, error) {
+	if !validMatchingConfidence(threshold) {
+		return nil, 0, fmt.Errorf("matching layout threshold must be between 0 and 1")
+	}
 	if len(input.Members) == 0 {
 		return nil, 0, fmt.Errorf("matching experiment layout comparison has no members")
 	}
@@ -324,12 +312,19 @@ func matchingExperimentBuildLayouts(input MatchingGroupEvaluationInput) ([]*matc
 		seenEdges[identity] = true
 
 		row := release.rows[candidate.FileID]
+		shift := matchingExperimentScoreShift
+		if shifts != nil {
+			shift = shifts[candidate.ReleaseID]
+		}
+		qualifying := candidate.AssignmentScore.Confidence >= threshold
 		edge := matchingExperimentEdge{
 			position:          position,
 			candidateID:       fmt.Sprintf("%s/%d/%d", candidate.ReleaseID, candidate.Medium, candidate.Track),
-			score:             uint64(math.Ldexp(candidate.AssignmentScore.Confidence, matchingExperimentScoreShift)),
-			qualifying:        candidate.AssignmentScore.Confidence >= minimumReleaseCandidateConfidence,
+			qualifying:        qualifying,
 			releaseConfidence: candidate.ReleaseScore.Confidence,
+		}
+		if qualifying {
+			edge.score = uint64(math.Ldexp(candidate.AssignmentScore.Confidence, shift))
 		}
 		row.edges = append(row.edges, edge)
 		row.edgeByPosition[position] = edge
@@ -357,7 +352,7 @@ func matchingExperimentBuildLayouts(input MatchingGroupEvaluationInput) ([]*matc
 			sort.Slice(row.edges, func(i, j int) bool { return row.edges[i].position < row.edges[j].position })
 			layout.rows = append(layout.rows, row)
 		}
-		layout.components = matchingExperimentComponents(layout.rows)
+		layout.components = matchingLayoutComponents(layout.rows)
 		layouts = append(layouts, layout)
 	}
 	return layouts, len(input.Members), nil
@@ -383,50 +378,6 @@ func matchingExperimentCanonicalLocations(file IncomingFile) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
-}
-
-func matchingExperimentComponents(rows []*matchingExperimentRow) [][]int {
-	parent := make([]int, len(rows))
-	for i := range parent {
-		parent[i] = i
-	}
-	find := func(value int) int {
-		for parent[value] != value {
-			parent[value] = parent[parent[value]]
-			value = parent[value]
-		}
-		return value
-	}
-	union := func(left, right int) {
-		left, right = find(left), find(right)
-		if left != right {
-			parent[right] = left
-		}
-	}
-	firstByLocation := make(map[string]int)
-	for index, row := range rows {
-		for _, location := range row.locations {
-			if first, exists := firstByLocation[location]; exists {
-				union(first, index)
-			} else {
-				firstByLocation[location] = index
-			}
-		}
-	}
-	groups := make(map[int][]int)
-	for index := range rows {
-		root := find(index)
-		groups[root] = append(groups[root], index)
-	}
-	components := make([][]int, 0, len(groups))
-	for _, component := range groups {
-		sort.Ints(component)
-		components = append(components, component)
-	}
-	sort.Slice(components, func(i, j int) bool {
-		return rows[components[i][0]].id < rows[components[j][0]].id
-	})
-	return components
 }
 
 func (layout *matchingExperimentLayout) report(ctx context.Context) (MatchingExperimentLayoutReport, error) {
@@ -564,18 +515,18 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 	}
 	var result matchingExperimentComponentResult
 
-	if matchingExperimentGreedyWitness(rows, len(layout.positions), false) {
+	if matchingLayoutGreedyWitness(rows, len(layout.positions), false) {
 		// A complete Cartesian layout is normally witnessed here without
 		// entering either exact solver.
 		result.structuralFull = true
-	} else if matchingExperimentPairwiseConflicting(rows) {
-		_, _, full := matchingExperimentHungarianAssignment(ctx, rows, len(layout.positions), false, -1, -1)
+	} else if matchingLayoutPairwiseConflicting(rows) {
+		_, _, full := matchingLayoutHungarianAssignment(ctx, rows, len(layout.positions), false, -1, -1)
 		if err := ctx.Err(); err != nil {
 			return matchingExperimentComponentResult{}, err
 		}
 		result.structuralFull = full
 	} else {
-		found, indeterminate, reason, err := matchingExperimentAnyAssignment(ctx, rows, len(layout.positions), false)
+		found, indeterminate, reason, err := matchingLayoutAnyAssignment(ctx, rows, len(layout.positions), false)
 		if err != nil {
 			return matchingExperimentComponentResult{}, err
 		}
@@ -587,8 +538,8 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 		return result, nil
 	}
 
-	if matchingExperimentPairwiseConflicting(rows) {
-		choices, score, full := matchingExperimentHungarianAssignment(ctx, rows, len(layout.positions), true, -1, -1)
+	if matchingLayoutPairwiseConflicting(rows) {
+		choices, score, full := matchingLayoutHungarianAssignment(ctx, rows, len(layout.positions), true, -1, -1)
 		if err := ctx.Err(); err != nil {
 			return matchingExperimentComponentResult{}, err
 		}
@@ -597,7 +548,11 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 		}
 		result.scoreFull = true
 		result.bestScore = score
-		if len(rows) > matchingExperimentMaximumCliqueRows {
+		result.witness = make(map[string]int, len(rows))
+		for i, row := range rows {
+			result.witness[row.id] = choices[i]
+		}
+		if len(rows) > matchingLayoutMaximumCliqueRows {
 			result.uniquenessUnknown = true
 			return result, nil
 		}
@@ -605,7 +560,7 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 			if err := ctx.Err(); err != nil {
 				return matchingExperimentComponentResult{}, err
 			}
-			_, alternative, full := matchingExperimentHungarianAssignment(ctx, rows, len(layout.positions), true, row, position)
+			_, alternative, full := matchingLayoutHungarianAssignment(ctx, rows, len(layout.positions), true, row, position)
 			if err := ctx.Err(); err != nil {
 				return matchingExperimentComponentResult{}, err
 			}
@@ -615,15 +570,12 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 			}
 		}
 		if !result.withinTie {
-			result.choices = make(map[string]int, len(rows))
-			for i, row := range rows {
-				result.choices[row.id] = choices[i]
-			}
+			result.choices = result.witness
 		}
 		return result, nil
 	}
 
-	outcome, err := matchingExperimentBranchAndBound(ctx, rows, len(layout.positions))
+	outcome, err := matchingLayoutBranchAndBound(ctx, rows, len(layout.positions))
 	if err != nil {
 		return matchingExperimentComponentResult{}, err
 	}
@@ -638,558 +590,23 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 	result.scoreFull = true
 	result.bestScore = outcome.bestScore
 	result.withinTie = outcome.withinTie
+	if len(outcome.choices) != len(rows) {
+		return matchingExperimentComponentResult{}, fmt.Errorf("matching layout assignment witness has %d rows, want %d", len(outcome.choices), len(rows))
+	}
+	result.witness = make(map[string]int, len(rows))
+	for i, row := range rows {
+		result.witness[row.id] = outcome.choices[i]
+	}
 	if !result.withinTie {
-		result.choices = make(map[string]int, len(rows))
-		for i, row := range rows {
-			result.choices[row.id] = outcome.choices[i]
-		}
+		result.choices = result.witness
 	}
 	return result, nil
 }
 
-func matchingExperimentPairwiseConflicting(rows []*matchingExperimentRow) bool {
-	for left := 0; left < len(rows); left++ {
-		for right := left + 1; right < len(rows); right++ {
-			if !matchingExperimentShareLocation(rows[left], rows[right]) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func matchingExperimentShareLocation(left, right *matchingExperimentRow) bool {
-	for i, j := 0, 0; i < len(left.locations) && j < len(right.locations); {
-		switch {
-		case left.locations[i] < right.locations[j]:
-			i++
-		case left.locations[i] > right.locations[j]:
-			j++
-		default:
-			return true
-		}
-	}
-	return false
-}
-
-func matchingExperimentMaximumWeight(rows []*matchingExperimentRow, qualifying bool) uint64 {
-	var maximum uint64
-	for _, row := range rows {
-		for _, edge := range row.edges {
-			if qualifying && !edge.qualifying {
-				continue
-			}
-			weight := matchingExperimentEdgeWeight(edge, qualifying)
-			if weight > maximum {
-				maximum = weight
-			}
-		}
-	}
-	return maximum
-}
-
-func matchingExperimentEdgeWeight(edge matchingExperimentEdge, qualifying bool) uint64 {
-	if qualifying {
-		return edge.score
-	}
-	return 1
-}
-
-// Missing edges are forbidden, not expensive dummy edges: a higher-scoring
-// partial assignment must never displace a feasible full assignment.
+// matchingExperimentHungarianAssignment retains the experiment's local name
+// while the exact assignment solver is shared with production selection.
 func matchingExperimentHungarianAssignment(
 	ctx context.Context, rows []*matchingExperimentRow, positionCount int, qualifying bool, skipRow, skipPosition int,
 ) ([]int, uint64, bool) {
-	if positionCount < len(rows) || ctx.Err() != nil {
-		return nil, 0, false
-	}
-	maxWeight := matchingExperimentMaximumWeight(rows, qualifying)
-	cost := make([][]int64, len(rows))
-	for i, row := range rows {
-		cost[i] = make([]int64, positionCount)
-		for j := range cost[i] {
-			cost[i][j] = matchingExperimentForbiddenCost
-		}
-		for _, edge := range row.edges {
-			if (qualifying && !edge.qualifying) || (i == skipRow && edge.position == skipPosition) {
-				continue
-			}
-			cost[i][edge.position] = int64(maxWeight - matchingExperimentEdgeWeight(edge, qualifying))
-		}
-	}
-	assignment := matchingExperimentHungarian(ctx, cost)
-	if assignment == nil {
-		return nil, 0, false
-	}
-	var score uint64
-	for i, position := range assignment {
-		score += matchingExperimentEdgeWeight(rows[i].edgeByPosition[position], qualifying)
-	}
-	return assignment, score, true
-}
-
-// matchingExperimentHungarian is the standard rectangular Hungarian algorithm
-// for a minimum-cost assignment of every row to one distinct column. The input
-// must have at least as many columns as rows.
-func matchingExperimentHungarian(ctx context.Context, cost [][]int64) []int {
-	rows := len(cost)
-	if rows == 0 {
-		return []int{}
-	}
-	columns := len(cost[0])
-	if columns < rows {
-		return nil
-	}
-	const infinity = int64(1) << 62
-	potentialRow := make([]int64, rows+1)
-	potentialColumn := make([]int64, columns+1)
-	matchedRow := make([]int, columns+1)
-	previousColumn := make([]int, columns+1)
-	for row := 1; row <= rows; row++ {
-		if ctx.Err() != nil {
-			return nil
-		}
-		matchedRow[0] = row
-		column := 0
-		minValue := make([]int64, columns+1)
-		used := make([]bool, columns+1)
-		for j := 1; j <= columns; j++ {
-			minValue[j] = infinity
-		}
-		for {
-			used[column] = true
-			currentRow := matchedRow[column]
-			delta := infinity
-			nextColumn := 0
-			for j := 1; j <= columns; j++ {
-				if used[j] {
-					continue
-				}
-				candidateCost := cost[currentRow-1][j-1]
-				if candidateCost != matchingExperimentForbiddenCost {
-					current := candidateCost - potentialRow[currentRow] - potentialColumn[j]
-					if current < minValue[j] {
-						minValue[j] = current
-						previousColumn[j] = column
-					}
-				}
-				if minValue[j] < delta {
-					delta = minValue[j]
-					nextColumn = j
-				}
-			}
-			if nextColumn == 0 {
-				return nil
-			}
-			for j := 0; j <= columns; j++ {
-				if used[j] {
-					potentialRow[matchedRow[j]] += delta
-					potentialColumn[j] -= delta
-				} else if minValue[j] != infinity {
-					minValue[j] -= delta
-				}
-			}
-			column = nextColumn
-			if matchedRow[column] == 0 {
-				break
-			}
-		}
-		for {
-			nextColumn := previousColumn[column]
-			matchedRow[column] = matchedRow[nextColumn]
-			column = nextColumn
-			if column == 0 {
-				break
-			}
-		}
-	}
-	assignment := make([]int, rows)
-	for column := 1; column <= columns; column++ {
-		if matchedRow[column] != 0 {
-			assignment[matchedRow[column]-1] = column - 1
-		}
-	}
-	return assignment
-}
-
-type matchingExperimentConflictState struct {
-	rowLocations [][]int
-	words        int
-	used         []uint64
-}
-
-func matchingExperimentNewConflictState(rows []*matchingExperimentRow, positionCount int) *matchingExperimentConflictState {
-	indexByLocation := make(map[string]int)
-	rowLocations := make([][]int, len(rows))
-	for rowIndex, row := range rows {
-		for _, location := range row.locations {
-			index, exists := indexByLocation[location]
-			if !exists {
-				index = len(indexByLocation)
-				indexByLocation[location] = index
-			}
-			rowLocations[rowIndex] = append(rowLocations[rowIndex], index)
-		}
-	}
-	words := (positionCount + 63) / 64
-	return &matchingExperimentConflictState{
-		rowLocations: rowLocations,
-		words:        words,
-		used:         make([]uint64, len(indexByLocation)*words),
-	}
-}
-
-func (state *matchingExperimentConflictState) available(row, position int) bool {
-	if state.words == 0 {
-		return false
-	}
-	bit := uint64(1) << uint(position%64)
-	word := position / 64
-	for _, location := range state.rowLocations[row] {
-		if state.used[location*state.words+word]&bit != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func (state *matchingExperimentConflictState) occupy(row, position int) {
-	if state.words == 0 {
-		return
-	}
-	bit := uint64(1) << uint(position%64)
-	word := position / 64
-	for _, location := range state.rowLocations[row] {
-		state.used[location*state.words+word] |= bit
-	}
-}
-
-func (state *matchingExperimentConflictState) release(row, position int) {
-	if state.words == 0 {
-		return
-	}
-	bit := uint64(1) << uint(position%64)
-	word := position / 64
-	for _, location := range state.rowLocations[row] {
-		state.used[location*state.words+word] &^= bit
-	}
-}
-
-func matchingExperimentGreedyWitness(rows []*matchingExperimentRow, positionCount int, qualifying bool) bool {
-	state := matchingExperimentNewConflictState(rows, positionCount)
-	for rowIndex, row := range rows {
-		found := false
-		for _, edge := range row.edges {
-			if qualifying && !edge.qualifying {
-				continue
-			}
-			if !state.available(rowIndex, edge.position) {
-				continue
-			}
-			state.occupy(rowIndex, edge.position)
-			found = true
-			break
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-type matchingExperimentFeasibility struct {
-	rows          []*matchingExperimentRow
-	state         *matchingExperimentConflictState
-	qualifying    bool
-	assigned      []bool
-	nodes         int
-	ctx           context.Context
-	found         bool
-	indeterminate bool
-	reason        string
-	err           error
-}
-
-func matchingExperimentAnyAssignment(ctx context.Context, rows []*matchingExperimentRow, positionCount int, qualifying bool) (bool, bool, string, error) {
-	search := &matchingExperimentFeasibility{
-		rows:       rows,
-		state:      matchingExperimentNewConflictState(rows, positionCount),
-		qualifying: qualifying,
-		assigned:   make([]bool, len(rows)),
-		ctx:        ctx,
-	}
-	search.walk()
-	if search.err != nil {
-		return false, false, "", search.err
-	}
-	if search.indeterminate {
-		return false, true, search.reason, nil
-	}
-	return search.found, false, "", nil
-}
-
-func (search *matchingExperimentFeasibility) walk() {
-	if search.found || search.indeterminate || search.err != nil {
-		return
-	}
-	search.nodes++
-	if search.nodes > matchingExperimentSearchNodeLimit {
-		search.indeterminate = true
-		search.reason = "deterministic structural search limit reached"
-		return
-	}
-	if search.nodes&1023 == 0 {
-		if err := search.ctx.Err(); err != nil {
-			search.err = err
-			return
-		}
-	}
-	rowIndex := -1
-	bestCount := len(search.rows) + 1
-	for index, row := range search.rows {
-		if search.assigned[index] {
-			continue
-		}
-		count := 0
-		for _, edge := range row.edges {
-			if search.qualifying && !edge.qualifying {
-				continue
-			}
-			if search.state.available(index, edge.position) {
-				count++
-			}
-		}
-		if rowIndex == -1 || count < bestCount {
-			bestCount = count
-			rowIndex = index
-			if count == 0 {
-				break
-			}
-		}
-	}
-	if rowIndex == -1 {
-		search.found = true
-		return
-	}
-	if bestCount == 0 {
-		return
-	}
-	for _, edge := range search.rows[rowIndex].edges {
-		if search.qualifying && !edge.qualifying {
-			continue
-		}
-		if !search.state.available(rowIndex, edge.position) {
-			continue
-		}
-		search.assigned[rowIndex] = true
-		search.state.occupy(rowIndex, edge.position)
-		search.walk()
-		search.state.release(rowIndex, edge.position)
-		search.assigned[rowIndex] = false
-		if search.found || search.indeterminate || search.err != nil {
-			return
-		}
-	}
-}
-
-type matchingExperimentBranchOutcome struct {
-	found         bool
-	indeterminate bool
-	reason        string
-	bestScore     uint64
-	withinTie     bool
-	choices       []int
-}
-
-type matchingExperimentBranch struct {
-	rows          []*matchingExperimentRow
-	state         *matchingExperimentConflictState
-	positions     int
-	branch        [][]matchingExperimentEdge
-	assigned      []int
-	nodes         int
-	ctx           context.Context
-	bestSet       bool
-	bestScore     uint64
-	bestCount     int
-	bestChoices   []int
-	indeterminate bool
-	reason        string
-	err           error
-}
-
-func matchingExperimentBranchAndBound(ctx context.Context, rows []*matchingExperimentRow, positionCount int) (matchingExperimentBranchOutcome, error) {
-	branch := &matchingExperimentBranch{
-		rows:      rows,
-		state:     matchingExperimentNewConflictState(rows, positionCount),
-		positions: positionCount,
-		branch:    make([][]matchingExperimentEdge, len(rows)),
-		assigned:  make([]int, len(rows)),
-		ctx:       ctx,
-	}
-	for index := range branch.assigned {
-		branch.assigned[index] = -1
-	}
-	for index, row := range rows {
-		edges := make([]matchingExperimentEdge, 0, len(row.edges))
-		for _, edge := range row.edges {
-			if edge.qualifying {
-				edges = append(edges, edge)
-			}
-		}
-		sort.SliceStable(edges, func(i, j int) bool {
-			if edges[i].score != edges[j].score {
-				return edges[i].score > edges[j].score
-			}
-			return edges[i].position < edges[j].position
-		})
-		branch.branch[index] = edges
-	}
-	branch.seedGreedy()
-	branch.walk(0)
-	if branch.err != nil {
-		return matchingExperimentBranchOutcome{}, branch.err
-	}
-	if branch.indeterminate {
-		return matchingExperimentBranchOutcome{indeterminate: true, reason: branch.reason}, nil
-	}
-	if !branch.bestSet {
-		return matchingExperimentBranchOutcome{}, nil
-	}
-	withinTie := branch.bestCount >= 2
-	if withinTie {
-		return matchingExperimentBranchOutcome{found: true, bestScore: branch.bestScore, withinTie: true}, nil
-	}
-	return matchingExperimentBranchOutcome{
-		found: true, bestScore: branch.bestScore,
-		choices: append([]int(nil), branch.bestChoices...),
-	}, nil
-}
-
-func (branch *matchingExperimentBranch) seedGreedy() {
-	state := matchingExperimentNewConflictState(branch.rows, branch.positions)
-	choices := make([]int, len(branch.rows))
-	for index := range choices {
-		choices[index] = -1
-	}
-	var score uint64
-	for rowIndex := range branch.rows {
-		found := false
-		for _, edge := range branch.branch[rowIndex] {
-			if !state.available(rowIndex, edge.position) {
-				continue
-			}
-			state.occupy(rowIndex, edge.position)
-			choices[rowIndex] = edge.position
-			score += edge.score
-			found = true
-			break
-		}
-		if !found {
-			return
-		}
-	}
-	branch.seed(score, choices)
-}
-
-func (branch *matchingExperimentBranch) seed(score uint64, choices []int) {
-	branch.bestSet = true
-	branch.bestScore = score
-	branch.bestCount = 0
-	branch.bestChoices = append([]int(nil), choices...)
-}
-
-func (branch *matchingExperimentBranch) record(score uint64, choices []int) {
-	if !branch.bestSet || score > branch.bestScore {
-		branch.bestSet = true
-		branch.bestScore = score
-		branch.bestCount = 1
-		branch.bestChoices = append([]int(nil), choices...)
-		return
-	}
-	if score == branch.bestScore && branch.bestCount < 2 {
-		branch.bestCount++
-	}
-}
-
-func (branch *matchingExperimentBranch) walk(current uint64) {
-	if branch.indeterminate || branch.err != nil {
-		return
-	}
-	branch.nodes++
-	if branch.nodes > matchingExperimentSearchNodeLimit {
-		branch.indeterminate = true
-		branch.reason = "deterministic assignment search limit reached"
-		return
-	}
-	if branch.nodes&1023 == 0 {
-		if err := branch.ctx.Err(); err != nil {
-			branch.err = err
-			return
-		}
-	}
-	rowIndex, available, upper := branch.selectRow()
-	if available == 0 {
-		return
-	}
-	total := current + upper
-	if branch.bestSet {
-		if total < branch.bestScore {
-			return
-		}
-		if total == branch.bestScore && branch.bestCount >= 2 {
-			return
-		}
-	}
-	if rowIndex == -1 {
-		branch.record(current, branch.assigned)
-		return
-	}
-	for _, edge := range branch.branch[rowIndex] {
-		if !branch.state.available(rowIndex, edge.position) {
-			continue
-		}
-		branch.assigned[rowIndex] = edge.position
-		branch.state.occupy(rowIndex, edge.position)
-		branch.walk(current + edge.score)
-		branch.state.release(rowIndex, edge.position)
-		branch.assigned[rowIndex] = -1
-		if branch.indeterminate || branch.err != nil {
-			return
-		}
-		if branch.bestSet && branch.bestCount >= 2 && total == branch.bestScore {
-			return
-		}
-	}
-}
-
-func (branch *matchingExperimentBranch) selectRow() (int, int, uint64) {
-	rowIndex := -1
-	bestCount := len(branch.rows) + 1
-	var upper uint64
-	for index := range branch.rows {
-		if branch.assigned[index] >= 0 {
-			continue
-		}
-		count := 0
-		var maximum uint64
-		for _, edge := range branch.branch[index] {
-			if !branch.state.available(index, edge.position) {
-				continue
-			}
-			count++
-			if edge.score > maximum {
-				maximum = edge.score
-			}
-		}
-		if count == 0 {
-			return index, 0, 0
-		}
-		upper += maximum
-		if rowIndex == -1 || count < bestCount {
-			bestCount = count
-			rowIndex = index
-		}
-	}
-	return rowIndex, bestCount, upper
+	return matchingLayoutHungarianAssignment(ctx, rows, positionCount, qualifying, skipRow, skipPosition)
 }

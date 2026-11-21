@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -49,6 +50,11 @@ func validateRuntimeSettingValues(values map[string]string) error {
 			concurrency, err := strconv.Atoi(value)
 			if err != nil || concurrency < 1 {
 				return fmt.Errorf("source file concurrency must be a positive integer")
+			}
+		case "matching_pair_threshold":
+			threshold, err := strconv.ParseFloat(value, 64)
+			if err != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 1 {
+				return fmt.Errorf("matching pair threshold must be between 0 and 1")
 			}
 		default:
 			return fmt.Errorf("unsupported runtime setting %q", name)

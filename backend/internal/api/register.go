@@ -24,6 +24,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerSourceAnalysis(api, dependencies)
 	registerSourceArtifactCleanup(api, dependencies.SourceArtifactCleanup, dependencies.Operations, dependencies.Setup)
 	registerIncomingGroups(api, dependencies.IncomingGroups)
+	registerIncomingTagEncoding(api, dependencies.IncomingTagEncoding)
 	registerMatchingReview(api, dependencies.MatchingReview)
 	registerMatchingManual(api, dependencies.MatchingManual)
 	registerMatchingLocal(api, dependencies.MatchingLocal)

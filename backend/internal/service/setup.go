@@ -406,6 +406,7 @@ type RuntimeUpdateRequest struct {
 	PublicationPathTemplate  *string
 	PublicationRemoveSources *bool
 	SourceFileConcurrency    *int
+	MatchingPairThreshold    *float64
 	Expected                 *settings.RuntimeSettingsExpected
 }
 
@@ -450,6 +451,7 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUp
 	update.PublicationPathTemplate = request.PublicationPathTemplate
 	update.PublicationRemoveSources = request.PublicationRemoveSources
 	update.SourceFileConcurrency = request.SourceFileConcurrency
+	update.MatchingPairThreshold = request.MatchingPairThreshold
 	if toolsDirectory != nil {
 		if *toolsDirectory == "" {
 			return fmt.Errorf("tools directory is required")

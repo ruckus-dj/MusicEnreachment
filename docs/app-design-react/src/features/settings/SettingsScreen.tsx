@@ -91,6 +91,14 @@ const validProviderDelay = (value: string) => {
 	);
 };
 
+const matchingThresholdNumber = (value: string) => {
+	const normalized = value.trim().replace(",", ".");
+	if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return undefined;
+	const numeric = Number(normalized);
+	if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) return undefined;
+	return numeric;
+};
+
 export interface DemoSettings {
 	toolsPath: string;
 	workDirectory: string;
@@ -114,6 +122,7 @@ export interface DemoSettings {
 	lrclibEnabled?: boolean;
 	sha256Enabled?: boolean;
 	concurrency?: string;
+	matchingPairThreshold?: string;
 	logLevel?: "" | "debug" | "info" | "warn" | "error";
 	platformMismatch?: boolean;
 	installations?: DemoInstallation[];
@@ -147,6 +156,7 @@ export const initialDemoSettings: DemoSettings = {
 	lrclibEnabled: true,
 	sha256Enabled: true,
 	concurrency: "4",
+	matchingPairThreshold: "0.70",
 	logLevel: "info",
 	platformMismatch: false,
 	installations: initialDemoInstallations,
@@ -169,6 +179,7 @@ export type SettingsScreenProps = {
 function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
 	return {
 		concurrency: settings.concurrency ?? "4",
+		matchingPairThreshold: settings.matchingPairThreshold ?? "0.70",
 		toolsPath: settings.toolsPath,
 		toolsPathCandidate: "",
 		publicationTemplate:
@@ -246,7 +257,9 @@ export function SettingsScreen({
 	const [replacementPrompt, setReplacementPrompt] = useState(false);
 	const [leavePrompt, setLeavePrompt] = useState(false);
 	const pendingHash = useRef<string | null>(null);
-	const pendingReplacement = useRef<"concurrency" | "providers">("concurrency");
+	const pendingReplacement = useRef<
+		"concurrency" | "matchingThreshold" | "providers"
+	>("concurrency");
 	const allowNavigation = useRef(false);
 	const previousHash = useRef(
 		typeof window === "undefined" ? "" : window.location.hash,
@@ -400,6 +413,8 @@ export function SettingsScreen({
 		if (providerDirty && !value.musicBrainzMode)
 			errors.musicBrainzMode = copy.invalidProvider;
 		if (!validConcurrency(value.concurrency)) errors.concurrency = "invalid";
+		if (matchingThresholdNumber(value.matchingPairThreshold) === undefined)
+			errors.matchingPairThreshold = "invalid";
 		if (
 			providerDirty &&
 			value.musicBrainzMode === "self-hosted" &&
@@ -420,13 +435,15 @@ export function SettingsScreen({
 		setFieldErrors(errors);
 		if (Object.keys(errors).length) {
 			const first = errors.concurrency
-				? "concurrency"
-				: errors.musicBrainzMode
-					? "musicBrainzMode"
-					: errors.musicBrainzURL
-						? "musicBrainzURL"
-						: "musicBrainzDelay";
-			document.getElementById(`settings-${first}`)?.focus();
+				? "settings-concurrency"
+				: errors.matchingPairThreshold
+					? "settings-matching-threshold"
+					: errors.musicBrainzMode
+						? "settings-musicBrainzMode"
+						: errors.musicBrainzURL
+							? "settings-musicBrainzURL"
+							: "settings-musicBrainzDelay";
+			document.getElementById(first)?.focus();
 		}
 		return Object.keys(errors).length === 0;
 	};
@@ -436,8 +453,13 @@ export function SettingsScreen({
 		setNotice("");
 		const merged = mergeSettingsDraft(draftState, currentDraftValues);
 		if (!validateDraft(merged)) return false;
-		const { concurrency, musicBrainzMode, publicationTemplate, workDirectory } =
-			merged;
+		const {
+			concurrency,
+			matchingPairThreshold,
+			musicBrainzMode,
+			publicationTemplate,
+			workDirectory,
+		} = merged;
 		const musicBrainzURL = selfHostedDraft
 			? merged.musicBrainzURL
 			: currentDraftValues.musicBrainzURL;
@@ -468,6 +490,7 @@ export function SettingsScreen({
 		const baseline = {
 			...draftState.baseline,
 			concurrency,
+			matchingPairThreshold,
 			musicBrainzMode,
 			musicBrainzURL,
 			musicBrainzDelay,
@@ -477,6 +500,7 @@ export function SettingsScreen({
 		const value = {
 			...draftState.value,
 			concurrency,
+			matchingPairThreshold,
 			musicBrainzMode,
 			...(selfHostedDraft && { musicBrainzURL, musicBrainzDelay }),
 			publicationTemplate,
@@ -485,6 +509,7 @@ export function SettingsScreen({
 		onSettings({
 			...settings,
 			concurrency,
+			matchingPairThreshold,
 			musicBrainzMode,
 			musicBrainzURL,
 			musicBrainzDelay,
@@ -541,6 +566,48 @@ export function SettingsScreen({
 		});
 		setDraftState({ baseline, value });
 		setFieldErrors((current) => ({ ...current, concurrency: undefined }));
+		setConflictAcknowledged(false);
+		setNotice("saved");
+	};
+	const commitMatchingThreshold = () => {
+		if (
+			matchingThresholdNumber(draftState.value.matchingPairThreshold) ===
+			undefined
+		) {
+			setFieldErrors((current) => ({
+				...current,
+				matchingPairThreshold: "invalid",
+			}));
+			document.getElementById("settings-matching-threshold")?.focus();
+			return;
+		}
+		if (draftConflicts.includes("matchingPairThreshold")) {
+			if (!conflictAcknowledged) return;
+			pendingReplacement.current = "matchingThreshold";
+			setReplacementPrompt(true);
+			return;
+		}
+		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
+			"matchingPairThreshold",
+		]);
+		const baseline = {
+			...draftState.baseline,
+			matchingPairThreshold: merged.matchingPairThreshold,
+		};
+		const value = {
+			...draftState.value,
+			matchingPairThreshold: merged.matchingPairThreshold,
+		};
+		onSettings({
+			...settings,
+			matchingPairThreshold: merged.matchingPairThreshold,
+			runtimeSaved: true,
+		});
+		setDraftState({ baseline, value });
+		setFieldErrors((current) => ({
+			...current,
+			matchingPairThreshold: undefined,
+		}));
 		setConflictAcknowledged(false);
 		setNotice("saved");
 	};
@@ -1105,6 +1172,17 @@ export function SettingsScreen({
 								onChange: (concurrency) => updateDraft({ concurrency }),
 								onSave: commitConcurrency,
 							},
+							matchingThreshold: {
+								value: draftState.value.matchingPairThreshold,
+								invalid: Boolean(fieldErrors.matchingPairThreshold),
+								dirty: fieldDirty("matchingPairThreshold"),
+								saveDisabled:
+									draftConflicts.includes("matchingPairThreshold") &&
+									!conflictAcknowledged,
+								onChange: (matchingPairThreshold) =>
+									updateDraft({ matchingPairThreshold }),
+								onSave: commitMatchingThreshold,
+							},
 							sha256: {
 								enabled: settings.sha256Enabled ?? true,
 								onChange: (sha256Enabled) => update({ sha256Enabled }),
@@ -1320,6 +1398,21 @@ export function SettingsScreen({
 									onSettings({
 										...settings,
 										concurrency: draftState.value.concurrency,
+										runtimeSaved: true,
+									});
+									setConflictAcknowledged(false);
+									setNotice("saved");
+								} else if (pendingReplacement.current === "matchingThreshold") {
+									const matchingPairThreshold =
+										draftState.value.matchingPairThreshold;
+									const baseline = {
+										...draftState.baseline,
+										matchingPairThreshold,
+									};
+									setDraftState({ baseline, value: { ...draftState.value } });
+									onSettings({
+										...settings,
+										matchingPairThreshold,
 										runtimeSaved: true,
 									});
 									setConflictAcknowledged(false);
