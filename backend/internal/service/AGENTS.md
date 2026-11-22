@@ -100,6 +100,16 @@ ownership and absence of a false ACK rather than an invented state. Metadata-onl
 provider changes are no-op reconciliation, not accepted-graph parking or automatic
 CURRENT rewrites; AUDIO quality evaluation remains independent.
 
+For MusicBrainz matching, presence and zero-based track coordinates come from
+the accepted `provider_source_release_track` projection, not the provider-wide
+identity row. Convert to one-based coordinates only when building the persisted
+review/apply representation. For an unclaimed acquisition wake use the
+registered `matching_delivery`; `matching_run.current_river_job_id` becomes
+authoritative when the delivery is claimed or the evaluation seal is published.
+Same-position rewrites resolve FFmpeg from the tools root and active installation
+in the same publication-planning snapshot. A probe stub for an existing FLAC
+must account for its attached pictures as well as its audio stream.
+
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)
 - Passing full operation inputs in River job args (args = ID only, reload from snapshot)

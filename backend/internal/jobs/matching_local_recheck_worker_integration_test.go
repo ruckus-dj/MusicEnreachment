@@ -18,18 +18,32 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
-func TestLocalFallbackAndMusicBrainzRecoveryWithoutCurrentPostgreSQL(t *testing.T) {
-	t.Parallel()
+func TestLocalFallbackAndMusicBrainzRecoveryPostgreSQL(t *testing.T) {
+	for _, name := range []string{"without CURRENT", "same position", "different position"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			runLocalFallbackAndMusicBrainzRecovery(t, name)
+		})
+	}
+}
+
+func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
+	t.Helper()
 	fixture := newAnalysisDispatchFixtureWithMetadata(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
 	stopRiverClient(t, fixture.client)
+	if scenario == "different position" {
+		prepareMatchingMoveAdmissionFixture(t, ctx, fixture)
+	}
 	path := filepath.Join(fixture.source, "album", "track.flac")
 	before, err := os.ReadFile(path)
 	if err != nil {
@@ -87,10 +101,11 @@ func TestLocalFallbackAndMusicBrainzRecoveryWithoutCurrentPostgreSQL(t *testing.
 	providerFactory := service.NewProviderFactory(fixture.registry, nil, nil, server.Client(), nil)
 	fetch := service.NewProviderFetchService(fixture.registry, providerFactory, providerCache)
 	candidates := persistence.NewIncomingMatchCandidateRepository(db)
+	fallback := &captureLocalFallbackCommit{IncomingMatchCandidateRepository: candidates}
 	inserter := &incomingMatchingReconcileInserterSlot{}
 	operations := service.NewOperationsWithRiver(fixture.setup, inserter)
 	reconcile := service.NewIncomingMatchingReconciliation(groups, grouping, fetch, fixture.setup, inserter, fixture.inventory).
-		WithLocalFallback(candidates, service.NewMatchingLocalCatalogSnapshotService(persistence.NewMatchingLocalCatalogRepository(db)))
+		WithLocalFallback(fallback, service.NewMatchingLocalCatalogSnapshotService(persistence.NewMatchingLocalCatalogRepository(db)))
 	reconcileWorker := NewIncomingMatchingReconcileWorker(fixture.inventory, reconcile)
 	evaluator := service.NewMatchingEvaluationService(groups, grouping, providerCache, candidates, fixture.registry)
 	matchingWorker := NewMatchingEvaluationWorker(fixture.setup, evaluator, operations).
@@ -100,6 +115,7 @@ func TestLocalFallbackAndMusicBrainzRecoveryWithoutCurrentPostgreSQL(t *testing.
 		river.AddWorker(workers, reconcileWorker)
 		river.AddWorker(workers, matchingWorker)
 		river.AddWorker(workers, providerWorker)
+		river.AddWorker(workers, &PublicationWorker{})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -165,20 +181,63 @@ func TestLocalFallbackAndMusicBrainzRecoveryWithoutCurrentPostgreSQL(t *testing.
 		t.Fatalf("find terminal outage wake: %v", err)
 	}
 	deliverReconciliation(eventID)
-	var recheckID, associationID uuid.UUID
-	if err := db.NewRaw(`SELECT r.id,(r.incumbent_snapshot->'sources'->0->>'track_source_id')::uuid FROM matching_local_recheck r
+	var recheckID, associationID, position uuid.UUID
+	if err := db.NewRaw(`SELECT r.id,(r.incumbent_snapshot->'sources'->0->>'track_source_id')::uuid,
+		(r.incumbent_snapshot->'sources'->0->>'release_track_id')::uuid FROM matching_local_recheck r
 		JOIN matching_local_recheck_source s ON s.recheck_id=r.id WHERE s.work_id=? AND s.source_location_id=? AND r.state='waiting'`,
-		fixture.work.ID, fixture.track.ID).Scan(ctx, &recheckID, &associationID); err != nil {
+		fixture.work.ID, fixture.track.ID).Scan(ctx, &recheckID, &associationID, &position); err != nil {
 		t.Fatalf("read applied Local fallback and exact source veto: %v", err)
+	}
+	if scenario == "without CURRENT" {
+		replay, err := candidates.ApplyAutomaticLocalFallback(ctx, fallback.commit)
+		if err != nil || !replay.Replayed || replay.Applied || replay.RecheckID != recheckID {
+			t.Fatalf("exact outage replay did not reuse its committed result: %+v, %v", replay, err)
+		}
+		var associations int
+		if err := db.NewRaw(`SELECT count(*) FROM track_source
+			WHERE media_variant_id=(SELECT media_variant_id FROM track_source WHERE id=?)`, associationID).
+			Scan(ctx, &associations); err != nil || associations != 1 {
+			t.Fatalf("exact outage replay changed source associations: count=%d, err=%v", associations, err)
+		}
 	}
 	if _, err := db.NewRaw(`UPDATE matching_local_recheck SET next_recheck_at=now() WHERE id=?`, recheckID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	healthy.Store(true)
-	runner := service.NewMatchingLocalRecheckService(candidates, fetch)
+	coordinator := publication.NewCoordinator()
+	publications := service.NewLibraryPublications(fixture.setup, fixture.registry, client,
+		tools.Platform{GOOS: fixture.platform.Platform.GOOS, GOARCH: fixture.platform.Platform.GOARCH}).
+		WithPublicationCoordinator(coordinator).WithPublicationCommands(matchingRecheckHashCommands{})
+	var outputPath, outputHash string
+	if scenario != "without CURRENT" {
+		outputPath, outputHash = seedLocalRecheckCurrent(t, ctx, fixture, position)
+		switch scenario {
+		case "same position":
+			if _, err := fetch.LookupRelease(ctx, releaseMBID); err != nil {
+				t.Fatal(err)
+			}
+			bindRecheckPositionToMusicBrainz(t, ctx, db, position, releaseMBID)
+		case "different position":
+			grantMatchingMovePredecessorSource(t, ctx, fixture, associationID, position)
+		}
+	}
+	runner := service.NewMatchingLocalRecheckService(candidates, fetch).WithPublicationAdmission(publications, client)
 	worker := NewMatchingLocalRecheckWorker(runner)
 	if err := worker.Work(ctx, &river.Job[MatchingLocalRecheckArgs]{}); err != nil {
 		t.Fatal(err)
+	}
+	switch scenario {
+	case "same position":
+		verifyMatchingRecheckSamePositionPublication(t, ctx, fixture, coordinator, recheckID, associationID, position, outputPath, outputHash)
+	case "different position":
+		verifyMatchingMoveAdmission(t, ctx, fixture, recheckID, position, outputHash)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("Local outage/recovery modified the original file: %v", err)
+	}
+	if scenario != "without CURRENT" {
+		return
 	}
 	var result struct {
 		Local, MusicBrainz, Recheck, Veto, Attempt, Published bool
@@ -197,9 +256,5 @@ func TestLocalFallbackAndMusicBrainzRecoveryWithoutCurrentPostgreSQL(t *testing.
 	}
 	if result.Local || !result.MusicBrainz || result.Recheck || result.Veto || result.Attempt || result.Published {
 		t.Fatalf("strictly better MusicBrainz result did not transfer the assignment without publishing: %+v", result)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("Local outage/recovery modified the original file: %v", err)
 	}
 }

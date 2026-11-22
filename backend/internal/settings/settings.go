@@ -1122,6 +1122,10 @@ func (r *Registry) ReadPublicationPlanningSettings(ctx context.Context) (Runtime
 // ParsePublicationPlanningValues decodes the exact settings needed by a
 // publication planner from a previously captured settings snapshot.
 func ParsePublicationPlanningValues(values map[string]string) (RuntimeSettings, error) {
+	toolsRoot, err := parseSnapshotSetting(values, toolsRootSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	output, err := parseSnapshotSetting(values, outputRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -1159,7 +1163,7 @@ func ParsePublicationPlanningValues(values map[string]string) (RuntimeSettings, 
 		return RuntimeSettings{}, err
 	}
 	return RuntimeSettings{
-		OutputDirectory: output, PublicationFormat: format, PublicationPathTemplate: template,
+		ToolsDirectory: toolsRoot, OutputDirectory: output, PublicationFormat: format, PublicationPathTemplate: template,
 		OutputCaseSensitive: caseSensitive, OutputUnicodeNormalization: unicodeNormalization,
 		ActiveFFmpegInstallation: ffmpeg.String(), ActiveFPCalcInstallation: fpcalc.String(), LRCLIBEnabled: lrclib,
 	}, nil

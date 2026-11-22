@@ -32,10 +32,10 @@ func NewSettingsRepository(db *bun.DB) *SettingsRepository { return &SettingsRep
 // GetPublicationPlanningValues reads every setting used by first-publication
 // planning in one SQL statement, so the planner cannot mix revisions.
 func (r *SettingsRepository) GetPublicationPlanningValues(ctx context.Context) (map[string]string, error) {
-	values := make(map[string]string, 8)
+	values := make(map[string]string, 9)
 	var rows []AppSetting
 	if err := r.db.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.List([]string{
-		"output_directory", "output_case_sensitive", "output_unicode_normalization",
+		"tools_directory", "output_directory", "output_case_sensitive", "output_unicode_normalization",
 		"publication_format", "publication_path_template", "active_ffmpeg_installation_id", "active_fpcalc_installation_id",
 		"lrclib_enabled",
 	})).Scan(ctx); err != nil {

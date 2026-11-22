@@ -988,9 +988,11 @@ it("keeps overview positions linked and publication controllers registered witho
       .getAllByTestId("publication-preview")
       .map((preview) => preview.getAttribute("data-position-id")),
   ).toEqual([positionID, "position-2"]);
-  expect(
-    await screen.findByRole("button", { name: "Prepare preview" }),
-  ).toBeEnabled();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Prepare preview" }),
+    ).toBeEnabled(),
+  );
   expect(
     screen.queryByRole("region", { name: "Current publication" }),
   ).toBeNull();
@@ -998,11 +1000,12 @@ it("keeps overview positions linked and publication controllers registered witho
     screen.queryByRole("region", { name: "Audio sources for position 1" }),
   ).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Saved lyrics" })).toBeNull();
-  expect(reads.get(positionID)).toEqual({ metadata: 1, publication: 1 });
-  expect(reads.get("position-2")).toEqual({ metadata: 1, publication: 1 });
-
   const readFailure = await screen.findByRole("alert");
   expect(readFailure).toHaveTextContent("Failed to fetch");
+  await waitFor(() => {
+    expect(reads.get(positionID)).toEqual({ metadata: 1, publication: 1 });
+    expect(reads.get("position-2")).toEqual({ metadata: 1, publication: 1 });
+  });
   fireEvent.click(
     within(readFailure).getByRole("button", { name: "Refresh data" }),
   );

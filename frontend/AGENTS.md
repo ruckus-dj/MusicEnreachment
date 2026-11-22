@@ -139,6 +139,10 @@ async `act` body when that request is scheduled by a state update flushed by
 specific request/commit sequence rather than assuming every grouped await causes
 a deadlock.
 
+**Library publication overview tests**: The preview button mounts before its
+publication reads finish. Wait for it to become enabled, not merely present,
+and wait for all mocked reads before asserting per-position request counts.
+
 **Managed tool catalog failures**: Setup must retain a successfully loaded tool
 inventory even if catalog requests fail; ready-package restrictions and duplicate
 ready-package diagnostics do not depend on catalog availability.
