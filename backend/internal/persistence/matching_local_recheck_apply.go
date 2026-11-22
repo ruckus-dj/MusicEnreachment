@@ -244,7 +244,13 @@ func (repository *IncomingMatchCandidateRepository) ApplyMatchingLocalRecheck(
 			}
 		}
 		if len(prepared) > 0 || len(moves) > 0 {
-			return admitMatchingRecheckPublicationsTx(ctx, tx, manager, target.ID, target.Next, epoch, prepared, client)
+			if err := admitMatchingRecheckPublicationsTx(ctx, tx, manager, target.ID, target.Next, epoch, prepared, client); err != nil {
+				return err
+			}
+			return deleteLocalAutomaticAlbumGrantTx(ctx, tx, incumbent.LocalApplyOperationID)
+		}
+		if err := deleteLocalAutomaticAlbumGrantTx(ctx, tx, incumbent.LocalApplyOperationID); err != nil {
+			return err
 		}
 		removed, err := tx.NewRaw(`DELETE FROM matching_local_recheck WHERE id=? AND state='waiting'`, target.ID).Exec(ctx)
 		if err != nil {

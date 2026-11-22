@@ -15,6 +15,12 @@ import (
 // evidence or writing state. Admission owns the data and the frozen score.
 type PublicationMatchingScorer func(IncomingGroupingCapture, PublicationProviderTagContext) (*float64, error)
 
+// PublicationLayoutMatchingScorer evaluates one exact Local capture against a
+// single selected provider position. trackEvidence reports whether the score
+// carries the audio-to-track evidence required by automatic layout selection;
+// a nil score means the pair is not actionable.
+type PublicationLayoutMatchingScorer func(IncomingGroupingCapture, PublicationProviderTagContext) (*float64, bool, error)
+
 func (repository *SetupManagerRepository) SetPublicationMatchingScorer(scorer PublicationMatchingScorer) {
 	repository.publicationScorer = scorer
 }

@@ -269,7 +269,9 @@ func Run(ctx context.Context, config Config) error {
 	libraryPublications.WithPublicationCommands(publicationCommands)
 	libraryPublications.WithArtistDiscography(providerFetch)
 	setupManagerRepository.SetPublicationMatchingScorer(service.ScorePublicationMatchingCapture)
-	localRecheckRepository := persistence.NewIncomingMatchCandidateRepository(db)
+	localRecheckRepository := persistence.NewIncomingMatchCandidateRepository(db).
+		WithAutomaticAlbumPublication(riverSlot).
+		WithAutomaticAlbumPublicationScorer(service.ScorePublicationMatchingLayoutCapture)
 	localFallbackCatalog := service.NewMatchingLocalCatalogSnapshotService(persistence.NewMatchingLocalCatalogRepository(db))
 	incomingMatchingReconciliation.WithLocalFallback(localRecheckRepository, localFallbackCatalog)
 	localRecheck := service.NewMatchingLocalRecheckService(localRecheckRepository, providerFetch).WithPublicationAdmission(libraryPublications, riverSlot)

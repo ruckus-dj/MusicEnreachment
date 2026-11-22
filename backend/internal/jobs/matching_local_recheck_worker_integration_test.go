@@ -5,11 +5,14 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,6 +25,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 func TestLocalFallbackAndMusicBrainzRecoveryPostgreSQL(t *testing.T) {
@@ -41,8 +45,8 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
 	stopRiverClient(t, fixture.client)
-	if scenario == "different position" {
-		prepareMatchingMoveAdmissionFixture(t, ctx, fixture)
+	if scenario != "same position" {
+		prepareMatchingPublicationAdmissionFixture(t, ctx, fixture)
 	}
 	path := filepath.Join(fixture.source, "album", "track.flac")
 	before, err := os.ReadFile(path)
@@ -116,6 +120,7 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 		river.AddWorker(workers, matchingWorker)
 		river.AddWorker(workers, providerWorker)
 		river.AddWorker(workers, &PublicationWorker{})
+		river.AddWorker(workers, &PublicationAutoAlbumWorker{})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +129,9 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 	inserter.inserter = client
 	fetch.WithDurableOperations(fixture.setup, client)
 	fixture.setup.SetRiverInserter(client)
+	candidates.WithAutomaticAlbumPublication(client).
+		WithAutomaticAlbumPublicationScorer(service.ScorePublicationMatchingLayoutCapture)
+	fixture.setup.SetPublicationMatchingScorer(service.ScorePublicationMatchingCapture)
 	deliverReconciliation := func(eventID uuid.UUID) {
 		t.Helper()
 		if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, client); err != nil {
@@ -145,6 +153,13 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 	if err := db.NewRaw(`SELECT id FROM incoming_matching_reconcile_event WHERE reason='analysis_success' AND source_operation_id=?`,
 		analysis.ID).Scan(ctx, &eventID); err != nil {
 		t.Fatal(err)
+	}
+	if scenario == "without CURRENT" {
+		// The qualifying Local fallback must observe the setting before it
+		// commits its automatic album handoff.
+		if err := fixture.settings.Set(ctx, settings.PublicationAutoCompleteAlbumsKey, "true"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	deliverReconciliation(eventID)
 	var parentID, childID uuid.UUID
@@ -181,23 +196,90 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 		t.Fatalf("find terminal outage wake: %v", err)
 	}
 	deliverReconciliation(eventID)
-	var recheckID, associationID, position uuid.UUID
+	var recheckID, associationID, position, localApplyID, localReleaseID, providerTrackID uuid.UUID
 	if err := db.NewRaw(`SELECT r.id,(r.incumbent_snapshot->'sources'->0->>'track_source_id')::uuid,
-		(r.incumbent_snapshot->'sources'->0->>'release_track_id')::uuid FROM matching_local_recheck r
+		(r.incumbent_snapshot->'sources'->0->>'release_track_id')::uuid,r.local_apply_operation_id,
+		(r.incumbent_snapshot->>'local_release_id')::uuid,
+		(r.incumbent_snapshot->'sources'->0->>'provider_track_id')::uuid FROM matching_local_recheck r
 		JOIN matching_local_recheck_source s ON s.recheck_id=r.id WHERE s.work_id=? AND s.source_location_id=? AND r.state='waiting'`,
-		fixture.work.ID, fixture.track.ID).Scan(ctx, &recheckID, &associationID, &position); err != nil {
+		fixture.work.ID, fixture.track.ID).Scan(ctx, &recheckID, &associationID, &position, &localApplyID, &localReleaseID, &providerTrackID); err != nil {
 		t.Fatalf("read applied Local fallback and exact source veto: %v", err)
 	}
+	var automaticAlbumWakeID int64
 	if scenario == "without CURRENT" {
+		// The temporary Local assignment is the automatic-album owner.
+		album, err := fixture.setup.ReadPublicationAutoAlbum(ctx, localApplyID)
+		if err != nil || album == nil {
+			t.Fatalf("Local apply did not store a readable automatic album request: %+v, %v", album, err)
+		}
+		var epoch uuid.UUID
+		if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
+			t.Fatal(err)
+		}
+		if album.ApplyOperationID != localApplyID || album.ReleaseID != localReleaseID || album.OutputEpoch != epoch ||
+			len(album.Scope) != 1 || album.Scope[0].PositionID != position ||
+			album.Scope[0].ProviderTrackID != providerTrackID ||
+			!slices.Equal(album.Scope[0].WorkIDs, []uuid.UUID{fixture.work.ID}) {
+			t.Fatalf("Local automatic album request=%+v; want apply=%s release=%s epoch=%s position=%s provider_track=%s works=[%s]",
+				album, localApplyID, localReleaseID, epoch, position, providerTrackID, fixture.work.ID)
+		}
+		if _, err := db.NewRaw(`UPDATE publication_automatic_album SET local_layout=jsonb_set(local_layout,'{sources}','[null]'::jsonb)
+			WHERE apply_operation_id=?`, localApplyID).Exec(ctx); err == nil || !strings.Contains(err.Error(), "publication_automatic_album_local_layout_check") {
+			t.Fatalf("malformed Local album evidence was not rejected by its constraint: %v", err)
+		}
+		var albumRows, albumWakes int
+		if err := db.NewRaw(`SELECT count(*) FROM publication_automatic_album WHERE apply_operation_id=?`, localApplyID).
+			Scan(ctx, &albumRows); err != nil || albumRows != 1 {
+			t.Fatalf("Local automatic album rows=%d err=%v; want exactly one", albumRows, err)
+		}
+		if err := db.NewRaw(`SELECT count(*),COALESCE(min(id),0) FROM river_job
+			WHERE kind='publication_auto_album_v1' AND queue='matching' AND (args->>'apply_operation_id')::uuid=?`,
+			localApplyID).Scan(ctx, &albumWakes, &automaticAlbumWakeID); err != nil || albumWakes != 1 {
+			t.Fatalf("Local automatic album wakes=%d err=%v; want exactly one", albumWakes, err)
+		}
 		replay, err := candidates.ApplyAutomaticLocalFallback(ctx, fallback.commit)
 		if err != nil || !replay.Replayed || replay.Applied || replay.RecheckID != recheckID {
 			t.Fatalf("exact outage replay did not reuse its committed result: %+v, %v", replay, err)
+		}
+		replayedAlbum, err := fixture.setup.ReadPublicationAutoAlbum(ctx, localApplyID)
+		if err != nil || replayedAlbum == nil ||
+			replayedAlbum.ApplyOperationID != album.ApplyOperationID || replayedAlbum.ReleaseID != album.ReleaseID ||
+			replayedAlbum.OutputEpoch != album.OutputEpoch || len(replayedAlbum.Scope) != 1 ||
+			replayedAlbum.Scope[0].PositionID != album.Scope[0].PositionID ||
+			replayedAlbum.Scope[0].ProviderTrackID != album.Scope[0].ProviderTrackID ||
+			!slices.Equal(replayedAlbum.Scope[0].WorkIDs, album.Scope[0].WorkIDs) {
+			t.Fatalf("exact outage replay changed its automatic album request: %+v, %v", replayedAlbum, err)
+		}
+		var replayedAlbumRows, replayedAlbumWakes int
+		var replayedAlbumWakeID int64
+		if err := db.NewRaw(`SELECT count(*) FROM publication_automatic_album WHERE apply_operation_id=?`, localApplyID).
+			Scan(ctx, &replayedAlbumRows); err != nil || replayedAlbumRows != 1 {
+			t.Fatalf("exact outage replay regenerated automatic album rows: %d, %v", replayedAlbumRows, err)
+		}
+		if err := db.NewRaw(`SELECT count(*),COALESCE(min(id),0) FROM river_job
+			WHERE kind='publication_auto_album_v1' AND queue='matching' AND (args->>'apply_operation_id')::uuid=?`,
+			localApplyID).Scan(ctx, &replayedAlbumWakes, &replayedAlbumWakeID); err != nil ||
+			replayedAlbumWakes != 1 || replayedAlbumWakeID != automaticAlbumWakeID {
+			t.Fatalf("exact outage replay regenerated automatic album wakes: count=%d id=%d err=%v; want %d",
+				replayedAlbumWakes, replayedAlbumWakeID, err, automaticAlbumWakeID)
 		}
 		var associations int
 		if err := db.NewRaw(`SELECT count(*) FROM track_source
 			WHERE media_variant_id=(SELECT media_variant_id FROM track_source WHERE id=?)`, associationID).
 			Scan(ctx, &associations); err != nil || associations != 1 {
 			t.Fatalf("exact outage replay changed source associations: count=%d, err=%v", associations, err)
+		}
+		verifyLocalAlbumCanAdmitDuringOutage(t, ctx, fixture, fetch, client, automaticAlbumWakeID, *album, artistMBID)
+	} else {
+		// The same Local apply with the setting off must leave no grant.
+		album, err := fixture.setup.ReadPublicationAutoAlbum(ctx, localApplyID)
+		if err != nil || album != nil {
+			t.Fatalf("disabled automatic album setting produced a Local grant: %+v, %v", album, err)
+		}
+		var albumRows int
+		if err := db.NewRaw(`SELECT count(*) FROM publication_automatic_album WHERE apply_operation_id=?`, localApplyID).
+			Scan(ctx, &albumRows); err != nil || albumRows != 0 {
+			t.Fatalf("disabled automatic album setting stored rows=%d err=%v", albumRows, err)
 		}
 	}
 	if _, err := db.NewRaw(`UPDATE matching_local_recheck SET next_recheck_at=now() WHERE id=?`, recheckID).Exec(ctx); err != nil {
@@ -232,6 +314,19 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 	case "different position":
 		verifyMatchingMoveAdmission(t, ctx, fixture, recheckID, position, outputHash)
 	}
+	if scenario == "without CURRENT" {
+		// A winning MusicBrainz recheck must invalidate the Local automatic
+		// album grant. A retained Local assignment would legitimately keep it.
+		grant, err := fixture.setup.ReadPublicationAutoAlbum(ctx, localApplyID)
+		if err != nil || grant != nil {
+			t.Fatalf("winning MusicBrainz recheck retained the Local automatic album grant: %+v, %v", grant, err)
+		}
+		var albumRows int
+		if err := db.NewRaw(`SELECT count(*) FROM publication_automatic_album WHERE apply_operation_id=?`, localApplyID).
+			Scan(ctx, &albumRows); err != nil || albumRows != 0 {
+			t.Fatalf("winning MusicBrainz recheck retained automatic album rows=%d err=%v", albumRows, err)
+		}
+	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("Local outage/recovery modified the original file: %v", err)
@@ -257,4 +352,79 @@ func runLocalFallbackAndMusicBrainzRecovery(t *testing.T, scenario string) {
 	if result.Local || !result.MusicBrainz || result.Recheck || result.Veto || result.Attempt || result.Published {
 		t.Fatalf("strictly better MusicBrainz result did not transfer the assignment without publishing: %+v", result)
 	}
+}
+
+func verifyLocalAlbumCanAdmitDuringOutage(
+	t *testing.T, ctx context.Context, fixture analysisDispatchFixture, fetch *service.ProviderFetchService,
+	client persistence.RiverInserter, jobID int64, album persistence.PublicationAutoAlbumRequest, artistMBID string,
+) {
+	t.Helper()
+	injected := errors.New("roll back first publication after real River insert")
+	inserter := &abortLocalAlbumAdmission{RiverInserter: client, abort: injected}
+	publications := service.NewLibraryPublications(fixture.setup, fixture.registry, inserter,
+		tools.Platform{GOOS: fixture.platform.Platform.GOOS, GOARCH: fixture.platform.Platform.GOARCH}).
+		WithPublicationCommands(matchingRecheckHashCommands{}).
+		WithArtistDiscography(fetch)
+	worker := NewPublicationAutoAlbumWorker(fixture.setup, publications)
+	job := &river.Job[persistence.PublicationAutoAlbumArgs]{
+		JobRow: &rivertype.JobRow{ID: jobID, Attempt: 1}, Args: persistence.PublicationAutoAlbumArgs{ApplyOperationID: album.ApplyOperationID},
+	}
+	// Roll back after proving the real first admission reached enqueue. This
+	// preserves the no-CURRENT baseline needed by the MusicBrainz recheck below.
+	if err := worker.Work(ctx, job); !errors.Is(err, injected) || inserter.inserts != 1 {
+		preview, previewErr := publications.PreviewFirst(ctx, album.ReleaseID, album.Scope[0].PositionID)
+		t.Fatalf("Local album did not reach first publication admission during the outage: inserts=%d err=%v; preview=%+v err=%v",
+			inserter.inserts, err, preview, previewErr)
+	}
+
+	providerArtistID := uuid.New()
+	result, err := fixture.database.NewRaw(`WITH artist AS (
+		INSERT INTO provider_artist(id,provider_id,provider_key,name)
+		SELECT ?,id,?,'Fixture Artist' FROM provider WHERE code='musicbrainz' RETURNING id,provider_id
+	) INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method)
+	SELECT artist.provider_id,artist.id,credit.artist_id,'manual' FROM artist
+	JOIN release_artist credit ON credit.release_id=? AND credit.position=0`,
+		providerArtistID, artistMBID, album.ReleaseID).Exec(ctx)
+	if err != nil {
+		t.Fatalf("link the existing primary artist to MusicBrainz: %v", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("link the existing primary artist to MusicBrainz: rows=%d err=%v", rows, err)
+	}
+	var snooze *river.JobSnoozeError
+	if err := worker.Work(ctx, job); !errors.As(err, &snooze) || inserter.inserts != 1 {
+		t.Fatalf("linked artist without a complete discography did not wait: inserts=%d err=%v", inserter.inserts, err)
+	}
+	if durable, err := fixture.setup.ReadPublicationAutoAlbum(ctx, album.ApplyOperationID); err != nil || durable == nil {
+		t.Fatalf("discography wait lost the Local album request: request=%+v err=%v", durable, err)
+	}
+	if _, err := fixture.database.NewRaw(`DELETE FROM provider_local_artist WHERE provider_artist_id=?`, providerArtistID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.settings.Set(ctx, settings.MatchingPairThresholdKey, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publications.AdmitAutomaticAlbum(ctx, album); err != nil || inserter.inserts != 1 {
+		t.Fatalf("stale Local threshold reached publication enqueue: inserts=%d err=%v", inserter.inserts, err)
+	}
+	// Restore the prior absent override for the winning MusicBrainz recheck.
+	if _, err := fixture.database.NewRaw(`DELETE FROM app_setting WHERE setting_name=?`, settings.MatchingPairThresholdKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type abortLocalAlbumAdmission struct {
+	persistence.RiverInserter
+	abort   error
+	inserts int
+}
+
+func (inserter *abortLocalAlbumAdmission) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	result, err := inserter.RiverInserter.InsertTx(ctx, tx, args, opts)
+	if _, isPublication := args.(publication.TrackArgs); err != nil || !isPublication {
+		return result, err
+	}
+	inserter.inserts++
+	return result, inserter.abort
 }

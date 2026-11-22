@@ -160,10 +160,38 @@ type IncomingMatchReviewSnapshot struct {
 	CurrentLinkedManualMediaSourceIDs []uuid.UUID
 }
 
-type IncomingMatchCandidateRepository struct{ db *bun.DB }
+type IncomingMatchCandidateRepository struct {
+	db            *bun.DB
+	riverInserter RiverInserter
+	albumScorer   PublicationLayoutMatchingScorer
+}
 
 func NewIncomingMatchCandidateRepository(db *bun.DB) *IncomingMatchCandidateRepository {
 	return &IncomingMatchCandidateRepository{db: db}
+}
+
+// WithAutomaticAlbumPublication wires the same matching queue used by the
+// MusicBrainz automatic-album handoff into a fresh automatic Local fallback.
+// A missing inserter leaves Local fallback fully functional without requesting
+// album completion.
+func (repository *IncomingMatchCandidateRepository) WithAutomaticAlbumPublication(inserter RiverInserter) *IncomingMatchCandidateRepository {
+	if repository == nil {
+		return nil
+	}
+	repository.riverInserter = inserter
+	return repository
+}
+
+// WithAutomaticAlbumPublicationScorer binds the strict Local layout pair check
+// used while freezing an automatic album grant. It is deliberately separate
+// from WithAutomaticAlbumPublication so callers that only provide the queue
+// continue to compile and run.
+func (repository *IncomingMatchCandidateRepository) WithAutomaticAlbumPublicationScorer(scorer PublicationLayoutMatchingScorer) *IncomingMatchCandidateRepository {
+	if repository == nil {
+		return nil
+	}
+	repository.albumScorer = scorer
+	return repository
 }
 
 // Replace atomically publishes evaluated results after validating the current

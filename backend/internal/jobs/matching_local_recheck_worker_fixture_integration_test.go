@@ -174,7 +174,7 @@ func seedLocalRecheckCurrent(t *testing.T, ctx context.Context, fixture analysis
 	return native, digest
 }
 
-func prepareMatchingMoveAdmissionFixture(t *testing.T, ctx context.Context, fixture analysisDispatchFixture) {
+func prepareMatchingPublicationAdmissionFixture(t *testing.T, ctx context.Context, fixture analysisDispatchFixture) {
 	t.Helper()
 	result, err := fixture.database.NewRaw(`UPDATE media_variant SET ffprobe_json=?::jsonb
 		WHERE id=(SELECT success_probe_variant_id FROM source_analysis_step WHERE work_id=? AND step='probe')`,

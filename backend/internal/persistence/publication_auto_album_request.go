@@ -32,6 +32,10 @@ type PublicationAutoAlbumRequest struct {
 	OutputEpoch      uuid.UUID                      `bun:"output_epoch"`
 	ReleaseID        uuid.UUID                      `bun:"release_id"`
 	Scope            []PublicationAutoAlbumPosition `bun:"scope,type:jsonb"`
+	// LocalLayout is null for the MusicBrainz matching apply path. A non-null
+	// value binds this request to one succeeded matching_evaluation_v1
+	// local_fallback_applied operation and its exact Local source evidence.
+	LocalLayout json.RawMessage `bun:"local_layout"`
 }
 
 func (request PublicationAutoAlbumRequest) PositionWorkIDs(positionID uuid.UUID) []uuid.UUID {
@@ -164,6 +168,9 @@ func (repository *SetupManagerRepository) ReadPublicationAutoAlbum(ctx context.C
 }
 
 func readPublicationAutoAlbum(ctx context.Context, db bun.IDB, applyID uuid.UUID) (*PublicationAutoAlbumRequest, error) {
+	if local, err := readPublicationLocalAutoAlbum(ctx, db, applyID); err != nil || local != nil {
+		return local, err
+	}
 	var request PublicationAutoAlbumRequest
 	query := `SELECT album.apply_operation_id,album.output_epoch,album.release_id,album.scope
 		FROM publication_automatic_album album
@@ -176,7 +183,7 @@ func readPublicationAutoAlbum(ctx context.Context, db bun.IDB, applyID uuid.UUID
 		JOIN incoming_match_evaluation evaluation ON evaluation.group_id=target.group_id AND evaluation.evaluation_revision=apply.evaluation_revision
 		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id AND generation.current_run_id=target.run_id AND generation.high_water=target.target_generation
 		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=target.group_id
-		WHERE album.apply_operation_id=? AND COALESCE(authority.mode,'automatic')='automatic'
+		WHERE album.apply_operation_id=? AND album.local_layout IS NULL AND COALESCE(authority.mode,'automatic')='automatic'
 		AND COALESCE(authority.revision,0)=target.authority_revision
 		AND EXISTS (SELECT 1 FROM app_setting WHERE setting_name='publication_auto_complete_albums' AND setting_value='true')`
 	if _, locking := db.(bun.Tx); locking {
@@ -200,6 +207,9 @@ func validatePublicationAutoAlbum(ctx context.Context, tx bun.Tx, admission Publ
 	}
 	if current == nil || !reflect.DeepEqual(current, expected) {
 		return ErrPublicationAdmissionConflict
+	}
+	if expected.LocalLayout != nil {
+		return validatePublicationLocalAutoAlbum(ctx, tx, admission, expected)
 	}
 	var target struct {
 		SourceID uuid.UUID       `bun:"provider_source_id"`

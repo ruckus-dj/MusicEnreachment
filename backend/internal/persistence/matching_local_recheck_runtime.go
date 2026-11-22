@@ -92,6 +92,9 @@ func (repository *IncomingMatchCandidateRepository) RetireSupersededMatchingLoca
 		if !retired {
 			return nil
 		}
+		if err := deleteLocalAutomaticAlbumGrantTx(ctx, tx, incumbent.LocalApplyOperationID); err != nil {
+			return err
+		}
 		if _, err := tx.NewRaw(`DELETE FROM matching_local_recheck WHERE id=? AND state='waiting'`, id).Exec(ctx); err != nil {
 			return fmt.Errorf("retire superseded Local matching assignment: %w", err)
 		}

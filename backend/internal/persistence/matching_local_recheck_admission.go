@@ -46,21 +46,44 @@ func (repository *IncomingMatchCandidateRepository) CaptureMatchingLayoutTarget(
 // caller must hold the output, source, and catalog fences and roll back on any
 // error. Neither a preview nor this helper authorizes publication.
 func ApplyAutomaticLocalFallbackTx(ctx context.Context, tx bun.Tx, operationID uuid.UUID, preview MatchingLocalPreview, captures []IncomingGroupingCapture) (uuid.UUID, uuid.UUID, error) {
+	localReleaseID, recheckID, _, err := applyAutomaticLocalFallbackTx(ctx, tx, operationID, preview, captures)
+	return localReleaseID, recheckID, err
+}
+
+func applyAutomaticLocalFallbackTx(ctx context.Context, tx bun.Tx, operationID uuid.UUID, preview MatchingLocalPreview, captures []IncomingGroupingCapture) (uuid.UUID, uuid.UUID, matchingLocalRecheckSnapshot, error) {
 	if operationID == uuid.Nil || len(captures) == 0 {
-		return uuid.Nil, uuid.Nil, ErrIncomingMatchConflict
+		return uuid.Nil, uuid.Nil, matchingLocalRecheckSnapshot{}, ErrIncomingMatchConflict
 	}
 	localReleaseID, sources, err := materializeAutomaticMatchingLocalTx(ctx, tx, preview)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, matchingLocalRecheckSnapshot{}, err
 	}
 	recheckID, err := createMatchingLocalRecheckTx(ctx, tx, matchingLocalRecheckAdmission{
 		OperationID: operationID, ProviderReleaseID: preview.ProviderReleaseID, LocalReleaseID: localReleaseID,
 		Captures: captures, Sources: sources,
 	})
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, matchingLocalRecheckSnapshot{}, err
 	}
-	return localReleaseID, recheckID, nil
+	incumbent, err := readMatchingLocalRecheckIncumbentTx(ctx, tx, recheckID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, matchingLocalRecheckSnapshot{}, err
+	}
+	return localReleaseID, recheckID, incumbent, nil
+}
+
+func readMatchingLocalRecheckIncumbentTx(ctx context.Context, tx bun.Tx, recheckID uuid.UUID) (matchingLocalRecheckSnapshot, error) {
+	var incumbent matchingLocalRecheckSnapshot
+	var encoded string
+	if err := tx.NewRaw(`SELECT incumbent_snapshot::text FROM matching_local_recheck WHERE id=?`, recheckID).Scan(ctx, &encoded); err != nil {
+		return incumbent, fmt.Errorf("read Local recheck incumbent: %w", err)
+	}
+	if err := json.Unmarshal([]byte(encoded), &incumbent); err != nil || incumbent.Version != 1 ||
+		incumbent.LocalApplyOperationID == uuid.Nil || incumbent.ProviderReleaseID == uuid.Nil ||
+		incumbent.LocalReleaseID == uuid.Nil || len(incumbent.Sources) == 0 {
+		return incumbent, errors.New("invalid Local recheck incumbent")
+	}
+	return incumbent, nil
 }
 
 // AutomaticLocalFallbackCommit is one calculated complete Local layout and the
@@ -223,9 +246,12 @@ func (repository *IncomingMatchCandidateRepository) ApplyAutomaticLocalFallback(
 		if _, err := tx.NewRaw(`INSERT INTO operation (id,kind,state,stage,input_snapshot,finished_at) VALUES (?, 'matching_evaluation_v1','succeeded','local_fallback_applied',?::jsonb,now())`, operationID, string(snapshot)).Exec(ctx); err != nil {
 			return fmt.Errorf("apply automatic Local fallback: create apply operation: %w", err)
 		}
-		localReleaseID, recheckID, err := ApplyAutomaticLocalFallbackTx(ctx, tx, operationID, preview, captures)
+		localReleaseID, recheckID, incumbent, err := applyAutomaticLocalFallbackTx(ctx, tx, operationID, preview, captures)
 		if err != nil {
 			return fmt.Errorf("apply automatic Local fallback: materialize layout and source veto: %w", err)
+		}
+		if err := repository.requestLocalAutoAlbumPublication(ctx, tx, operationID, commit, generation, incumbent, decisionDigest); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: request automatic album publication: %w", err)
 		}
 		if err := NewSourceInventoryRepository(repository.db).AcknowledgeCurrentRequestWith(ctx, tx, commit.GroupID, commit.ObservedRequestGeneration); err != nil {
 			return fmt.Errorf("apply automatic Local fallback: acknowledge observed request: %w", err)
@@ -249,6 +275,7 @@ func (commit AutomaticLocalFallbackCommit) validate() error {
 }
 
 type automaticLocalFallbackGeneration struct {
+	HighWater            int64      `bun:"high_water"`
 	RequestedGeneration  int64      `bun:"requested_generation"`
 	ReconciledGeneration int64      `bun:"reconciled_generation"`
 	CurrentRunID         *uuid.UUID `bun:"current_run_id"`
@@ -258,7 +285,7 @@ type automaticLocalFallbackGeneration struct {
 // still be current. A concurrent later request is not silently absorbed.
 func lockAutomaticLocalFallbackGeneration(ctx context.Context, tx bun.Tx, groupID uuid.UUID, observedGeneration int64) (automaticLocalFallbackGeneration, error) {
 	var generation automaticLocalFallbackGeneration
-	if err := tx.NewRaw(`SELECT requested_generation,reconciled_generation,current_run_id
+	if err := tx.NewRaw(`SELECT high_water,requested_generation,reconciled_generation,current_run_id
 		FROM incoming_matching_generation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &generation); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return generation, fmt.Errorf("apply automatic Local fallback: request generation is missing: %w", ErrIncomingMatchConflict)

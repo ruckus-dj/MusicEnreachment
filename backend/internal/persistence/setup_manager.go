@@ -1755,6 +1755,7 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 		Where("NOT EXISTS (SELECT 1 FROM matching_run WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_apply_request WHERE apply_operation_id = operation.id OR parent_run_id IN (SELECT id FROM matching_run WHERE operation_id = operation.id))").
 		Where("NOT EXISTS (SELECT 1 FROM matching_local_recheck WHERE local_apply_operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM publication_automatic_album WHERE apply_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_provider_dependency WHERE request_id = operation.id)").
 		Exec(ctx)
 	if err != nil {

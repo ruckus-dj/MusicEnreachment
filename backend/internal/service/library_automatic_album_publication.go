@@ -42,6 +42,38 @@ func firstPublicationAutomaticChoice(snapshot *persistence.LibraryFirstPublicati
 }
 
 func (service *LibraryPublications) AdmitAutomaticAlbum(ctx context.Context, request persistence.PublicationAutoAlbumRequest) error {
+	// A complete matching layout can still contain a position requiring a
+	// manual stream/quality choice. Establish automatic source availability
+	// for the whole edition before any per-position admission can enqueue.
+	if service == nil || service.repository == nil {
+		return nil
+	}
+	repository, ok := service.repository.(firstPublicationContextReader)
+	settings, canPlan := service.settings.(firstPublicationFormatSettings)
+	if !ok || !canPlan {
+		return nil
+	}
+	runtime, err := settings.ReadPublicationPlanningSettings(ctx)
+	if err != nil {
+		return err
+	}
+	for _, position := range request.Scope {
+		snapshot, err := repository.ReadLibraryFirstPublicationContext(ctx, request.ReleaseID, position.PositionID)
+		if errors.Is(err, persistence.ErrPublicationPositionNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != request.OutputEpoch {
+			return nil
+		}
+		if snapshot.Library.Current == nil {
+			if _, err := firstPublicationAutomaticChoice(snapshot, publication.AudioPublicationFormat(runtime.PublicationFormat), &request, position.PositionID); err != nil {
+				return nil
+			}
+		}
+	}
 	for _, position := range request.Scope {
 		_, err := service.admitFirst(ctx, request.ReleaseID, position.PositionID, "", request.OutputEpoch, nil, &request)
 		if err == nil || errors.Is(err, persistence.ErrPublicationAdmissionConflict) || errors.Is(err, persistence.ErrPublicationPositionNotFound) {

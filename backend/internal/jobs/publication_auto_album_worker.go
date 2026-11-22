@@ -2,10 +2,12 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
@@ -30,13 +32,17 @@ func (worker *PublicationAutoAlbumWorker) Work(ctx context.Context, job *river.J
 		return nil
 	}
 	request, err := worker.repository.ReadPublicationAutoAlbum(ctx, id)
-	if err != nil {
+	if err == nil && request != nil {
+		err = worker.service.AdmitAutomaticAlbum(ctx, *request)
+	}
+	if errors.Is(err, service.ErrPublicationArtistDiscography) && errors.Is(err, musicbrainz.ErrTemporarilyUnavailable) {
+		return river.JobSnooze(15 * time.Minute)
+	}
+	if errors.Is(err, persistence.ErrMatchingTargetNeedsRefresh) {
+		return river.JobSnooze(time.Minute)
+	}
+	if err != nil && (job.MaxAttempts < 1 || job.Attempt < job.MaxAttempts || ctx.Err() != nil) {
 		return err
 	}
-	if request != nil {
-		if err := worker.service.AdmitAutomaticAlbum(ctx, *request); err != nil {
-			return err
-		}
-	}
-	return worker.repository.CompletePublicationAutoAlbum(ctx, id)
+	return errors.Join(err, worker.repository.CompletePublicationAutoAlbum(ctx, id))
 }

@@ -20,6 +20,23 @@ func ScorePublicationMatchingCapture(capture persistence.IncomingGroupingCapture
 	return &score.Confidence, nil
 }
 
+// ScorePublicationMatchingLayoutCapture evaluates one exact Local capture
+// against the selected provider position. It returns trackEvidence=false when
+// the pair has a confidence but no audio-to-track proof, matching the gate used
+// by automatic layout selection.
+func ScorePublicationMatchingLayoutCapture(capture persistence.IncomingGroupingCapture, provider persistence.PublicationProviderTagContext) (*float64, bool, error) {
+	if capture.MediaVariantID == nil {
+		return nil, false, nil
+	}
+	score, scored, err := ScorePublicationMatchingProviderContext(
+		[]persistence.IncomingGroupingCapture{capture}, provider, capture.WorkID, *capture.MediaVariantID, PublicationMatchingEvidence{},
+	)
+	if err != nil || !scored || score.TotalWeight == 0 {
+		return nil, false, err
+	}
+	return &score.Confidence, matchingLayoutHasTrackEvidence(score), nil
+}
+
 // PublicationMatchingPair identifies the exact saved source and accepted
 // provider position whose assignment confidence publication records. WorkID and
 // MediaVariantID select the frozen publication source; Medium and Track are the
