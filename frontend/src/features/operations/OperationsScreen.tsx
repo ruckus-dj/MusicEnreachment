@@ -2,14 +2,17 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
+  abandonMatchingRecheckPublications,
   dismissOperation,
   getListCurrentOperationsQueryKey,
   type listCurrentOperationsResponse,
+  previewMatchingRecheckAbandonment,
   retryOperation,
   useListCurrentOperations,
 } from "../../api/generated/client";
 import type {
   ListCurrentOperationsParams,
+  MatchingRecheckAbandonmentPosition,
   OperationResponse,
   OperationTargetRef,
 } from "../../api/generated/client.schemas";
@@ -17,6 +20,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { Locale } from "../../i18n/locale";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
+import { MatchingRecheckAbandonDialog } from "./MatchingRecheckAbandonDialog";
 import type {
   OperationsListAction,
   OperationsListRow,
@@ -79,8 +83,14 @@ const messages = {
       `Could not retry operation (HTTP ${status}).`,
     dismissHttpError: (status: number) =>
       `Could not dismiss operation (HTTP ${status}).`,
+    abandonHttpError: (status: number) =>
+      `Could not abandon unfinished republications (HTTP ${status}).`,
     loadHttpError: (status: number) =>
       `Could not load operations (HTTP ${status}).`,
+    abandon: "Abandon…",
+    abandoning: "Loading…",
+    abandoned: "Unfinished republications abandoned.",
+    abandonError: "Could not abandon unfinished republications.",
   },
   ru: {
     ...operationsScreenCopy.ru,
@@ -88,8 +98,14 @@ const messages = {
       `Не удалось повторить операцию (HTTP ${status}).`,
     dismissHttpError: (status: number) =>
       `Не удалось скрыть операцию (HTTP ${status}).`,
+    abandonHttpError: (status: number) =>
+      `Не удалось прервать незавершённые перепубликации (HTTP ${status}).`,
     loadHttpError: (status: number) =>
       `Не удалось загрузить операции (HTTP ${status}).`,
+    abandon: "Прервать…",
+    abandoning: "Загрузка…",
+    abandoned: "Незавершённые перепубликации прерваны.",
+    abandonError: "Не удалось прервать незавершённые перепубликации.",
   },
 } as const;
 
@@ -230,12 +246,14 @@ function reconcilePage(
   };
 }
 
+type OperationAction = "retry" | "dismiss" | "abandon";
+
 type ActionFailure =
   | {
-      action: "retry" | "dismiss";
+      action: OperationAction;
       response: { status: number; data?: unknown };
     }
-  | { action: "retry" | "dismiss"; reason: unknown };
+  | { action: OperationAction; reason: unknown };
 
 function formatDate(value: string | undefined, locale: string) {
   if (!value) return "—";
@@ -304,29 +322,36 @@ function targetHref(ref: OperationTargetRef | undefined) {
 function actionErrorText(failure: ActionFailure | null, copy: Copy) {
   if (!failure) return undefined;
   if ("response" in failure) {
+    const { status } = failure.response;
     return apiResponseError(
       failure.response,
       failure.action === "retry"
-        ? copy.retryHttpError(failure.response.status)
-        : copy.dismissHttpError(failure.response.status),
+        ? copy.retryHttpError(status)
+        : failure.action === "dismiss"
+          ? copy.dismissHttpError(status)
+          : copy.abandonHttpError(status),
     ).message;
   }
   return errorMessage(
     failure.reason,
-    failure.action === "retry" ? copy.retryError : copy.dismissError,
+    failure.action === "retry"
+      ? copy.retryError
+      : failure.action === "dismiss"
+        ? copy.dismissError
+        : copy.abandonError,
   );
 }
 
 interface PendingAction {
   id: string;
-  action: "retry" | "dismiss";
+  action: OperationAction;
 }
 
 function operationRow(
   operation: OperationResponse,
   locale: Locale,
   pending: PendingAction | undefined,
-  perform: (id: string, action: "retry" | "dismiss", trigger: Element) => void,
+  perform: (id: string, action: OperationAction, trigger: Element) => void,
   copy: Copy,
   actionsAvailable: boolean,
 ): OperationsListRow {
@@ -343,6 +368,17 @@ function operationRow(
       id: "retry",
       label: isPending ? copy.retrying : copy.retry,
       onPress: (trigger) => perform(operation.id, "retry", trigger),
+      isPending,
+      isDisabled: Boolean(pending) && !isPending,
+    });
+  }
+  if (actionsAvailable && failed && operation.matching_recheck_member) {
+    const isPending =
+      pending?.id === operation.id && pending.action === "abandon";
+    actions.push({
+      id: "abandon",
+      label: isPending ? copy.abandoning : copy.abandon,
+      onPress: (trigger) => perform(operation.id, "abandon", trigger),
       isPending,
       isDisabled: Boolean(pending) && !isPending,
     });
@@ -401,8 +437,15 @@ export function OperationsScreen() {
   >(undefined);
   const [searchText, setSearchText] = useState("");
   const [pending, setPending] = useState<PendingAction>();
-  const [notice, setNotice] = useState<"dismissed">();
+  const [notice, setNotice] = useState<"dismissed" | "abandoned">();
   const [actionError, setActionError] = useState<ActionFailure | null>(null);
+  const [abandonPreview, setAbandonPreview] = useState<{
+    id: string;
+    revision: string;
+    positions: MatchingRecheckAbandonmentPosition[];
+  }>();
+  const [abandonBusy, setAbandonBusy] = useState(false);
+  const [abandonError, setAbandonError] = useState<string>();
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const updateRoute = useCallback(
@@ -437,7 +480,8 @@ export function OperationsScreen() {
     query: {
       // Foreground-only: background tabs must not keep polling. The list stays
       // bounded, so an empty or failed filter keeps polling too.
-      refetchInterval: pending ? false : OPERATIONS_POLL_INTERVAL_MS,
+      refetchInterval:
+        pending || abandonPreview ? false : OPERATIONS_POLL_INTERVAL_MS,
       refetchIntervalInBackground: false,
     },
   });
@@ -567,12 +611,81 @@ export function OperationsScreen() {
     }
   }
 
+  async function openAbandon(id: string) {
+    if (pendingGuard.current) return;
+    pendingGuard.current = true;
+    setPending({ id, action: "abandon" });
+    setActionError(null);
+    setNotice(undefined);
+    try {
+      const response = await previewMatchingRecheckAbandonment(id, {
+        cache: "no-store",
+      });
+      if (response.status !== 200) {
+        setActionError({ action: "abandon", response });
+        return;
+      }
+      setAbandonError(undefined);
+      setAbandonPreview({
+        id,
+        revision: response.data.revision,
+        positions: response.data.positions ?? [],
+      });
+    } catch (reason) {
+      setActionError({ action: "abandon", reason });
+    } finally {
+      pendingGuard.current = false;
+      setPending(undefined);
+    }
+  }
+
+  async function confirmAbandon() {
+    if (!abandonPreview || abandonBusy) return;
+    setAbandonBusy(true);
+    setAbandonError(undefined);
+    try {
+      const response = await abandonMatchingRecheckPublications(
+        abandonPreview.id,
+        { revision: abandonPreview.revision },
+      );
+      if (response.status !== 204) {
+        if (response.status === 409) {
+          setAbandonPreview(undefined);
+          setActionError({ action: "abandon", response });
+          await queryClient.invalidateQueries({
+            queryKey: operationsListQueryKey,
+          });
+          return;
+        }
+        setAbandonError(
+          apiResponseError(response, copy.abandonHttpError(response.status))
+            .message,
+        );
+        return;
+      }
+      const { id } = abandonPreview;
+      setAbandonPreview(undefined);
+      await reconcileCachedPages(id, null);
+      setNotice("abandoned");
+      heading.current?.focus({ preventScroll: true });
+      await queryClient.invalidateQueries({ queryKey: operationsListQueryKey });
+    } catch (reason) {
+      setAbandonError(errorMessage(reason, copy.abandonError));
+    } finally {
+      setAbandonBusy(false);
+    }
+  }
+
   const rows = operations.map((operation) =>
     operationRow(
       operation,
       locale,
       pending,
       (id, action, trigger) => {
+        if (action === "abandon") {
+          void openAbandon(id);
+          return;
+        }
         void perform(id, action, trigger);
       },
       copy,
@@ -612,40 +725,58 @@ export function OperationsScreen() {
   }
 
   return (
-    <OperationsScreenView
-      copy={copy}
-      locale={locale}
-      rows={rows}
-      status={listStatus}
-      error={loadError}
-      notice={notice ? copy[notice] : undefined}
-      actionError={actionErrorText(actionError, copy)}
-      headingRef={heading}
-      sortColumn={route.sort}
-      sortDirection={route.direction}
-      onSortChange={(sort, direction) =>
-        updateRoute({ sort, direction, offset: 0 })
-      }
-      onRefresh={() => {
-        void refresh();
-      }}
-      isRefreshing={manualRefreshing}
-      filters={{
-        query: searchText,
-        onQueryChange: (value) => {
-          setSearchText(value);
-          if (route.offset !== 0) updateRoute({ offset: 0 });
-        },
-        status: route.status,
-        onStatusChange: (value) => {
-          updateRoute({ status: value, offset: 0 });
-        },
-        kind: route.kind,
-        onKindChange: (value) => {
-          updateRoute({ kind: value, offset: 0 });
-        },
-      }}
-      pagination={pagination}
-    />
+    <>
+      <OperationsScreenView
+        copy={copy}
+        locale={locale}
+        rows={rows}
+        status={listStatus}
+        error={loadError}
+        notice={notice ? copy[notice] : undefined}
+        actionError={actionErrorText(actionError, copy)}
+        headingRef={heading}
+        sortColumn={route.sort}
+        sortDirection={route.direction}
+        onSortChange={(sort, direction) =>
+          updateRoute({ sort, direction, offset: 0 })
+        }
+        onRefresh={() => {
+          void refresh();
+        }}
+        isRefreshing={manualRefreshing}
+        filters={{
+          query: searchText,
+          onQueryChange: (value) => {
+            setSearchText(value);
+            if (route.offset !== 0) updateRoute({ offset: 0 });
+          },
+          status: route.status,
+          onStatusChange: (value) => {
+            updateRoute({ status: value, offset: 0 });
+          },
+          kind: route.kind,
+          onKindChange: (value) => {
+            updateRoute({ kind: value, offset: 0 });
+          },
+        }}
+        pagination={pagination}
+      />
+      {abandonPreview && (
+        <MatchingRecheckAbandonDialog
+          locale={locale}
+          positions={abandonPreview.positions}
+          busy={abandonBusy}
+          error={abandonError}
+          onConfirm={() => {
+            void confirmAbandon();
+          }}
+          onCancel={() => {
+            if (abandonBusy) return;
+            setAbandonPreview(undefined);
+            setAbandonError(undefined);
+          }}
+        />
+      )}
+    </>
   );
 }

@@ -43,9 +43,10 @@ type OperationTargetRef struct {
 }
 
 type CurrentOperationRow struct {
-	Operation   `bun:",extend"`
-	TargetLabel string              `bun:"target_label"`
-	TargetRef   *OperationTargetRef `bun:"-"`
+	Operation             `bun:",extend"`
+	TargetLabel           string              `bun:"target_label"`
+	TargetRef             *OperationTargetRef `bun:"-"`
+	MatchingRecheckMember bool                `bun:"matching_recheck_member"`
 }
 
 type currentOperationTargetRow struct {
@@ -119,7 +120,11 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 			applyCurrentOperationsOrder(page, order).
 				Limit(currentOperationsPageSize).Offset(offset)
 		}
-		selectPage := tx.NewSelect().TableExpr("(?) AS op", page).ColumnExpr("op.*")
+		selectPage := tx.NewSelect().TableExpr("(?) AS op", page).ColumnExpr("op.*").
+			ColumnExpr(`op.state='failed' AND EXISTS (SELECT 1 FROM matching_local_recheck_publication m
+				WHERE m.operation_id=op.id AND m.committed_at IS NULL AND EXISTS (
+					SELECT 1 FROM matching_local_recheck_publication done
+					WHERE done.recheck_id=m.recheck_id AND done.committed_at IS NOT NULL)) AS matching_recheck_member`)
 		if !needsTargets {
 			selectPage.Join(currentOperationTargets).
 				ColumnExpr(currentOperationTargetLabel + " AS target_label").

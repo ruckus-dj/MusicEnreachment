@@ -14,6 +14,33 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// MatchingLayoutTarget is one frozen automatic layout target in calculator
+// input form. It is evidence for calculation, not an apply authorization.
+type MatchingLayoutTarget struct {
+	Evidence  json.RawMessage
+	Captures  []IncomingGroupingCapture
+	Threshold float64
+}
+
+// CaptureMatchingLayoutTarget freezes one automatic group's current layout
+// target in a short read-committed transaction. Calculation happens outside
+// that transaction; the eventual apply rechecks this exact evidence.
+func (repository *IncomingMatchCandidateRepository) CaptureMatchingLayoutTarget(ctx context.Context, groupID uuid.UUID, policyVersion string) (MatchingLayoutTarget, error) {
+	if repository == nil || repository.db == nil {
+		return MatchingLayoutTarget{}, errors.New("matching layout target capture is unavailable")
+	}
+	var target MatchingLayoutTarget
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		target.Evidence, target.Captures, target.Threshold, err = CaptureMatchingLayoutTargetTx(ctx, tx, groupID, policyVersion)
+		return err
+	})
+	if err != nil {
+		return MatchingLayoutTarget{}, err
+	}
+	return target, nil
+}
+
 // ApplyAutomaticLocalFallbackTx materializes a complete, already authorized
 // Local layout and acquires cleanup protection in the same transaction. The
 // caller must hold the output, source, and catalog fences and roll back on any
@@ -117,7 +144,10 @@ func (repository *IncomingMatchCandidateRepository) ApplyAutomaticLocalFallback(
 		if generation.CurrentRunID == nil || *generation.CurrentRunID != commit.OutageRunID {
 			return fmt.Errorf("apply automatic Local fallback: current run is not the observed outage: %w", ErrIncomingMatchConflict)
 		}
-		outageRunID, err := currentMatchingMusicBrainzOutage(ctx, tx, commit.GroupID)
+		// The pending generation must still be the dedicated generation written
+		// by the outage failure, not a later independent request. The marker and
+		// the original-admission-generation relation are both required.
+		outageRunID, err := currentMatchingMusicBrainzOutageFallback(ctx, tx, commit.GroupID, commit.ObservedRequestGeneration)
 		if err != nil {
 			return err
 		}

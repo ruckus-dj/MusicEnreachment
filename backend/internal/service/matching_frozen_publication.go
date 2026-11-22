@@ -27,7 +27,7 @@ func SerializeFrozenFallbackEvaluation(prepared PreparedFrozenFallbackEvaluation
 	if hex.EncodeToString(targetDigest[:]) != a.TargetCaptureDigest {
 		return persistence.FrozenMatchingPublication{}, fmt.Errorf("frozen matching publication: target capture digest does not match authority")
 	}
-	releases := frozenInventoryReleases(prepared.Releases)
+	releases := persistence.FrozenMatchingReviewReleases(prepared.Releases)
 	evaluation, err := persistence.BuildFrozenMatchingLayoutEvaluation(prepared.LayoutDecision, releases)
 	if err != nil {
 		return persistence.FrozenMatchingPublication{}, err
@@ -69,18 +69,4 @@ func SerializeFrozenFallbackEvaluation(prepared PreparedFrozenFallbackEvaluation
 			CapturedMetadata: inventory.CapturedMetadata, Captures: inventory.Captures,
 		},
 	}, nil
-}
-
-// frozenInventoryReleases converts persisted zero-based ordinals to one-based
-// presentation coordinates without changing the accepted layouts.
-func frozenInventoryReleases(releases []persistence.MatchingRelease) []persistence.MatchingRelease {
-	copied := append([]persistence.MatchingRelease(nil), releases...)
-	for index := range copied {
-		copied[index].Tracks = append([]persistence.MatchingReleaseTrack(nil), releases[index].Tracks...)
-		for trackIndex := range copied[index].Tracks {
-			copied[index].Tracks[trackIndex].Medium++
-			copied[index].Tracks[trackIndex].Position++
-		}
-	}
-	return copied
 }

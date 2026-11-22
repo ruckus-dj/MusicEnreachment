@@ -72,7 +72,26 @@ func (service *ProviderFetchService) RetrieveMatchingLocalRecheckMusicBrainz(
 	if query == "" {
 		return service.retrieveArtistlessLocalRecheck(ctx, captures, members, threshold)
 	}
-	return service.retrieveMatchingArtistCatalog(ctx, members, query, false)
+	result, err := service.retrieveMatchingArtistCatalog(ctx, members, query, false)
+	if err != nil {
+		return MatchingLocalRecheckMusicBrainzRetrieval{}, err
+	}
+	if err := sealLocalRecheckProviderRevision(&result); err != nil {
+		return MatchingLocalRecheckMusicBrainzRetrieval{}, err
+	}
+	return result, nil
+}
+
+func sealLocalRecheckProviderRevision(result *MatchingLocalRecheckMusicBrainzRetrieval) error {
+	if len(result.Evidence) != 1 {
+		return ErrMatchingLocalRecheckMusicBrainzIncomplete
+	}
+	revision, err := persistence.MatchingLocalRecheckProviderRevision(result.Snapshot)
+	if err != nil {
+		return err
+	}
+	result.Evidence[0].AcceptedProjectionRevision = revision
+	return nil
 }
 
 func (service *ProviderFetchService) retrieveMatchingArtistCatalog(ctx context.Context, members []persistence.MatchingAcquisitionCapturedMember, query string, cachedOnly bool) (MatchingLocalRecheckMusicBrainzRetrieval, error) {
@@ -296,6 +315,9 @@ func (service *ProviderFetchService) retrieveArtistlessLocalRecheck(ctx context.
 		}
 		result, err := service.finishLocalRecheckRetrieval(ctx, scope.RankedReleaseIDs, map[string][]byte{key: response.Raw}, "", false)
 		if err != nil {
+			return MatchingLocalRecheckMusicBrainzRetrieval{}, err
+		}
+		if err := sealLocalRecheckProviderRevision(&result); err != nil {
 			return MatchingLocalRecheckMusicBrainzRetrieval{}, err
 		}
 		history = append(history, result.Evidence...)

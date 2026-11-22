@@ -240,10 +240,17 @@ func DecodeMatchingLayoutTarget(expected json.RawMessage, groupID uuid.UUID, pol
 }
 
 func matchingLayoutTargetPairThreshold(ctx context.Context, tx bun.Tx) (string, error) {
+	return readMatchingLayoutPairThreshold(ctx, tx, true)
+}
+
+func readMatchingLayoutPairThreshold(ctx context.Context, tx bun.Tx, lock bool) (string, error) {
 	threshold := *appsettings.DefaultRuntimeSettingsExpected().MatchingPairThreshold
 	var stored string
-	err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name=? FOR SHARE`, appsettings.MatchingPairThresholdKey).
-		Scan(ctx, &stored)
+	query := `SELECT setting_value FROM app_setting WHERE setting_name=?`
+	if lock {
+		query += ` FOR SHARE`
+	}
+	err := tx.NewRaw(query, appsettings.MatchingPairThresholdKey).Scan(ctx, &stored)
 	if err == nil {
 		parsed, parseErr := parseMatchingLayoutPairThreshold(strings.TrimSpace(stored))
 		if parseErr != nil {

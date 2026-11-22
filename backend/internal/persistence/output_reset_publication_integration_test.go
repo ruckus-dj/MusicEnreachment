@@ -5,12 +5,14 @@ package persistence
 import (
 	"context"
 	"crypto/sha256"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -20,7 +22,15 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, db)
-	oldRoot, newRoot := nativeTestPath(t, "/music/old"), nativeTestPath(t, "/music/new")
+	oldRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeMatchingRecheckOutput(t, oldRoot, "track.flac", "preserve on reset")
 	settings := NewSettingsRepository(db)
 	if err := settings.Set(ctx, "output_directory", oldRoot); err != nil {
 		t.Fatal(err)
@@ -79,6 +89,34 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
+	recheck := seedMatchingRecheckBatch(t, db)
+	publish, candidate := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		job, err := newSourceRepublishRiverClient(t, ctx, db).InsertTx(ctx, tx.Tx, publication.TrackArgs{OperationID: publish}, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO operation(id,kind,state,stage,river_job_id,input_snapshot)
+			VALUES (?,'publish_track_v1','queued','queued',?,jsonb_build_object('version',1,'position_id',?::uuid,'output_epoch',?::uuid,'intent_kind','rewrite'))`,
+			publish, job.Job.ID, position, epoch).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO track_publication_attempt
+			(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+			VALUES (?,?,?,?,?,'rewrite','queued','{}','{}')`, publish, position, epoch, generation, candidate).Exec(ctx); err != nil {
+			return err
+		}
+		_, err = tx.NewRaw(`INSERT INTO matching_local_recheck_publication(operation_id,recheck_id,output_epoch,position_id,
+			candidate_generation,predecessor_position_id,predecessor_generation,predecessor_claim_id,same_path,predecessor_snapshot)
+			VALUES (?,?,?,?,?,?,?,?,true,jsonb_build_object('version',1,'position_id',?::uuid,'output_epoch',?::uuid,
+				'generation',?::uuid,'namespace_claim_id',?::uuid,'relative_path','track.flac',
+				'current',jsonb_build_object('relative_path','track.flac','generation',?::uuid)))`,
+			publish, recheck, epoch, position, candidate, position, generation, claimID,
+			position, epoch, generation, claimID, generation).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
 		ExpectedOldRoot: oldRoot, NewRoot: newRoot,
 		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
@@ -86,6 +124,18 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var retired bool
+	if err := db.NewRaw(`SELECT NOT EXISTS(SELECT 1 FROM matching_local_recheck WHERE id=?)
+		AND NOT EXISTS(SELECT 1 FROM matching_local_recheck_publication WHERE operation_id=?)
+		AND NOT EXISTS(SELECT 1 FROM track_publication_attempt WHERE operation_id=?)
+		AND EXISTS(SELECT 1 FROM operation o JOIN river_job j ON j.id=o.river_job_id
+			WHERE o.id=? AND o.state='failed' AND o.finished_at IS NOT NULL AND j.state='cancelled')`,
+		recheck, publish, publish, publish).Scan(ctx, &retired); err != nil || !retired {
+		t.Fatalf("reset did not retire matching republication: %v, %v", retired, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(oldRoot, "track.flac")); err != nil || string(data) != "preserve on reset" {
+		t.Fatalf("reset changed original output: %q, %v", data, err)
 	}
 	var got uuid.UUID
 	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &got); err != nil {

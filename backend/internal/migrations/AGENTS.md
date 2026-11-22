@@ -18,6 +18,7 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - 20261015000003_provider_cache.tx.up.sql - providers, cache, source projections
 - 20261015000004_local_library.tx.up.sql - local entities, credits, provider and source links
 - 20261015000005_incoming_matching.tx.up.sql - grouping, matching, publication and cleanup schema
+- 20261122000003_matching_local_recheck_publication.tx.up.sql - Local recheck batch membership and different-path recovery proof
 - backend/cmd/migrate/main.go - rollback CLI (down migrations only; up is startup-only)
 
 ## CONVENTIONS

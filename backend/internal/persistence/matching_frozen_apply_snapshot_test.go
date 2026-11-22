@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -125,12 +126,7 @@ func TestMatchingApplyInputSnapshotV2RejectsInvalidDecisionAssignments(t *testin
 	decision.SelectedRelease.ProviderReleaseID = release.ID
 	decision.SelectedRelease.ProviderReleaseKey = release.ProviderKey
 	foreign := decision
-	foreign.Assignments = append([]struct {
-		FileMemberID    uuid.UUID `json:"file_member_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		Medium          int       `json:"medium"`
-		Position        int       `json:"position"`
-	}(nil), decision.Assignments...)
+	foreign.Assignments = slices.Clone(decision.Assignments)
 	foreign.Assignments[0].FileMemberID = uuid.New()
 	if _, _, err := BuildMatchingApplyInputSnapshotV2(seal, context, "eval-rev", foreign); err == nil {
 		t.Fatal("foreign member assignment was accepted")
@@ -141,23 +137,13 @@ func TestMatchingApplyInputSnapshotV2RejectsInvalidDecisionAssignments(t *testin
 		t.Fatal("partial group was accepted")
 	}
 	wrongLayout := decision
-	wrongLayout.Assignments = append([]struct {
-		FileMemberID    uuid.UUID `json:"file_member_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		Medium          int       `json:"medium"`
-		Position        int       `json:"position"`
-	}(nil), decision.Assignments...)
+	wrongLayout.Assignments = slices.Clone(decision.Assignments)
 	wrongLayout.Assignments[0].Position = 2
 	if _, _, err := BuildMatchingApplyInputSnapshotV2(seal, context, "eval-rev", wrongLayout); err == nil {
 		t.Fatal("out-of-layout coordinate was accepted")
 	}
 	wrongTrack := decision
-	wrongTrack.Assignments = append([]struct {
-		FileMemberID    uuid.UUID `json:"file_member_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		Medium          int       `json:"medium"`
-		Position        int       `json:"position"`
-	}(nil), decision.Assignments...)
+	wrongTrack.Assignments = slices.Clone(decision.Assignments)
 	wrongTrack.Assignments[0].ProviderTrackID = uuid.New()
 	if _, _, err := BuildMatchingApplyInputSnapshotV2(seal, context, "eval-rev", wrongTrack); err == nil {
 		t.Fatal("foreign provider track assignment was accepted")
@@ -305,12 +291,10 @@ func matchingApplySnapshotFixture() (MatchingFallbackSealAuthority, MatchingFall
 			ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
 			ProviderReleaseKey string    `json:"provider_release_key"`
 		}{ProviderReleaseKey: releaseA.ProviderKey},
-		Assignments: []struct {
-			FileMemberID    uuid.UUID `json:"file_member_id"`
-			ProviderTrackID uuid.UUID `json:"provider_track_id"`
-			Medium          int       `json:"medium"`
-			Position        int       `json:"position"`
-		}{{FileMemberID: memberA, ProviderTrackID: trackA, Medium: 1, Position: 1}, {FileMemberID: memberB, ProviderTrackID: trackA, Medium: 1, Position: 1}}}
+		Assignments: []FrozenMatchingAssignment{
+			{FileMemberID: memberA, ProviderTrackID: trackA, Medium: 1, Position: 1},
+			{FileMemberID: memberB, ProviderTrackID: trackA, Medium: 1, Position: 1},
+		}}
 	decision.SelectedRelease.ProviderReleaseID = releaseA.ID
 	sealApplyFixtureDecision(&seal, decision)
 	return seal, ctx, decision, releaseA, releaseB

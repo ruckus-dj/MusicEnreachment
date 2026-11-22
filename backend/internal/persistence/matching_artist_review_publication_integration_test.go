@@ -47,6 +47,100 @@ func TestArtistMatchingKeepsAcceptedResponseAfterCacheReplacement(t *testing.T) 
 	}
 }
 
+// TestAutomaticArtistTerminalOutageWakesOnlyAdmittedGeneration proves that a
+// terminal provider outage issues exactly one new reconciliation obligation for
+// the run's admitted generation and that a later independent request cannot
+// consume that stale outage.
+func TestAutomaticArtistTerminalOutageWakesOnlyAdmittedGeneration(t *testing.T) {
+	t.Parallel()
+	run := prepareAutomaticArtistOutageDelivery(t)
+	groupID := run.source.group.ID
+	var admitted int64
+	if err := run.db.NewRaw(`SELECT reconciliation_generation FROM matching_run_target WHERE run_id=? AND group_id=?`,
+		run.admission.OriginalRunID, groupID).Scan(run.ctx, &admitted); err != nil || admitted < 1 {
+		t.Fatalf("read admitted target generation: generation=%d err=%v", admitted, err)
+	}
+	var requested int64
+	if err := run.db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(run.ctx, &requested); err != nil {
+		t.Fatalf("read admitted request generation: %v", err)
+	}
+	if requested != admitted {
+		t.Fatalf("fixture request generation = %d, admitted target generation = %d", requested, admitted)
+	}
+	var pendingBefore int
+	if err := run.db.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE reason='current' AND state='pending'`).Scan(run.ctx, &pendingBefore); err != nil {
+		t.Fatalf("count pending current wakes before outage: %v", err)
+	}
+	if pendingBefore != 0 {
+		t.Fatalf("fixture already had %d pending current wakes before the outage", pendingBefore)
+	}
+
+	changed, err := run.repository.FailMatchingDelivery(run.ctx, run.admission.OriginalRunID, 1, run.jobID, run.claim,
+		"MusicBrainz is temporarily unavailable.")
+	if err != nil || !changed {
+		t.Fatalf("fail terminal artist delivery: changed=%t err=%v", changed, err)
+	}
+
+	state := struct {
+		Requested int64   `bun:"requested_generation"`
+		State     string  `bun:"state"`
+		Stage     string  `bun:"stage"`
+		SafeError *string `bun:"safe_error"`
+	}{}
+	if err := run.db.NewRaw(`SELECT generation.requested_generation,parent.state,parent.stage,parent.safe_error
+		FROM incoming_matching_generation generation
+		JOIN operation parent ON parent.id=?
+		WHERE generation.group_id=?`, run.admission.OriginalRunID, groupID).Scan(run.ctx, &state); err != nil {
+		t.Fatalf("read terminal outage state: %v", err)
+	}
+	if state.Requested != admitted+1 {
+		t.Fatalf("terminal outage moved request generation to %d, want %d", state.Requested, admitted+1)
+	}
+	if state.State != "failed" || state.Stage != "local_fallback_pending" || state.SafeError == nil || *state.SafeError == "" {
+		t.Fatalf("terminal outage parent = state %q stage %q safe_error %v", state.State, state.Stage, state.SafeError)
+	}
+	var pendingAfter int
+	if err := run.db.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE reason='current' AND state='pending'`).Scan(run.ctx, &pendingAfter); err != nil {
+		t.Fatalf("count pending current wakes after outage: %v", err)
+	}
+	if pendingAfter != 1 {
+		t.Fatalf("terminal outage pending current wakes = %d, want 1", pendingAfter)
+	}
+
+	outages := persistence.NewIncomingMatchCandidateRepository(run.db)
+	outageRunID, err := outages.CurrentMatchingMusicBrainzOutage(run.ctx, groupID)
+	if err != nil || outageRunID != run.admission.OriginalRunID {
+		t.Fatalf("outage evidence = %s err=%v, want %s", outageRunID, err, run.admission.OriginalRunID)
+	}
+	fallbackRunID, err := outages.CurrentMatchingMusicBrainzOutageFallback(run.ctx, groupID, admitted+1)
+	if err != nil || fallbackRunID != run.admission.OriginalRunID {
+		t.Fatalf("admitted fallback generation run = %s err=%v, want %s", fallbackRunID, err, run.admission.OriginalRunID)
+	}
+
+	// A later independent request advances beyond the dedicated fallback
+	// generation without consuming or refreshing the original outage.
+	if err := run.db.RunInTx(run.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return persistence.RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{groupID})
+	}); err != nil {
+		t.Fatalf("request later reconciliation generation: %v", err)
+	}
+	var later int64
+	if err := run.db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(run.ctx, &later); err != nil {
+		t.Fatalf("read later request generation: %v", err)
+	}
+	if later != admitted+2 {
+		t.Fatalf("later request generation = %d, want %d", later, admitted+2)
+	}
+	fallbackRunID, err = outages.CurrentMatchingMusicBrainzOutageFallback(run.ctx, groupID, later)
+	if err != nil || fallbackRunID != uuid.Nil {
+		t.Fatalf("later request consumed stale outage: run=%s err=%v", fallbackRunID, err)
+	}
+	outageRunID, err = outages.CurrentMatchingMusicBrainzOutage(run.ctx, groupID)
+	if err != nil || outageRunID != run.admission.OriginalRunID {
+		t.Fatalf("later request changed outage evidence: run=%s err=%v", outageRunID, err)
+	}
+}
+
 // This provider exposes only a previously accepted cache response. In
 // particular, acquisition never makes a provider request while advancing.
 type artistReviewCachedProvider struct {
@@ -121,6 +215,16 @@ type automaticArtistReviewDelivery struct {
 }
 
 func prepareAutomaticArtistReviewDelivery(t *testing.T, payload json.RawMessage) *automaticArtistReviewDelivery {
+	t.Helper()
+	return prepareAutomaticArtistDelivery(t, payload, false)
+}
+
+func prepareAutomaticArtistOutageDelivery(t *testing.T) *automaticArtistReviewDelivery {
+	t.Helper()
+	return prepareAutomaticArtistDelivery(t, nil, true)
+}
+
+func prepareAutomaticArtistDelivery(t *testing.T, payload json.RawMessage, outage bool) *automaticArtistReviewDelivery {
 	t.Helper()
 	ctx := context.Background()
 	db := testpostgres.OpenMigratedWithRiver(t)
@@ -204,29 +308,41 @@ func prepareAutomaticArtistReviewDelivery(t *testing.T, payload json.RawMessage)
 		t.Fatalf("start provider operation delivery: changed=%v err=%v", changed, err)
 	}
 	cache := persistence.NewProviderCacheRepository(db)
-	ticket, err := cache.BeginRefresh(ctx, sourceFixture.source, cacheKey, source.Identity)
-	if err != nil {
-		t.Fatalf("begin accepted artist-search cache generation: %v", err)
-	}
-	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
-		Ticket: ticket, FetchedAt: time.Now().UTC(), Revision: "artist-search-r1", Payload: payload,
-		Delivery: &persistence.ProviderDeliveryFence{OperationID: providerOperation.ID, Attempt: 1, RiverJobID: providerJobID, ExecutionEpoch: providerEpoch},
-	}); err != nil {
-		t.Fatalf("persist accepted artist-search response: %v", err)
-	}
-	if changed, err := repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, providerOperation.ID, 1, providerJobID, providerEpoch, client, func(operation *persistence.Operation) error {
-		operation.State, operation.Stage = "succeeded", "complete"
-		finished := time.Now().UTC()
-		operation.FinishedAt = &finished
-		return nil
-	}); err != nil || !changed {
-		t.Fatalf("settle accepted provider delivery and wake matching: changed=%v err=%v", changed, err)
-	}
-	accepted, err := repository.GetMatchingArtistResponse(ctx, admission.OriginalRunID, providerOperation.ID)
-	if err != nil || accepted == nil || accepted.Kind != "provider_artist_search" ||
-		accepted.CacheKey != cacheKey || !sameJSON(accepted.Payload, payload) ||
-		accepted.Revision == nil || *accepted.Revision != "artist-search-r1" {
-		t.Fatalf("read accepted artist response: receipt=%+v err=%v", accepted, err)
+	if outage {
+		if changed, err := repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, providerOperation.ID, 1, providerJobID, providerEpoch, client, func(operation *persistence.Operation) error {
+			message := "MusicBrainz is temporarily unavailable."
+			operation.State, operation.Stage, operation.SafeError = "failed", persistence.MusicBrainzUnavailableStage, &message
+			finished := time.Now().UTC()
+			operation.FinishedAt = &finished
+			return nil
+		}); err != nil || !changed {
+			t.Fatalf("settle provider outage and wake matching: changed=%v err=%v", changed, err)
+		}
+	} else {
+		ticket, err := cache.BeginRefresh(ctx, sourceFixture.source, cacheKey, source.Identity)
+		if err != nil {
+			t.Fatalf("begin accepted artist-search cache generation: %v", err)
+		}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+			Ticket: ticket, FetchedAt: time.Now().UTC(), Revision: "artist-search-r1", Payload: payload,
+			Delivery: &persistence.ProviderDeliveryFence{OperationID: providerOperation.ID, Attempt: 1, RiverJobID: providerJobID, ExecutionEpoch: providerEpoch},
+		}); err != nil {
+			t.Fatalf("persist accepted artist-search response: %v", err)
+		}
+		if changed, err := repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, providerOperation.ID, 1, providerJobID, providerEpoch, client, func(operation *persistence.Operation) error {
+			operation.State, operation.Stage = "succeeded", "complete"
+			finished := time.Now().UTC()
+			operation.FinishedAt = &finished
+			return nil
+		}); err != nil || !changed {
+			t.Fatalf("settle accepted provider delivery and wake matching: changed=%v err=%v", changed, err)
+		}
+		accepted, err := repository.GetMatchingArtistResponse(ctx, admission.OriginalRunID, providerOperation.ID)
+		if err != nil || accepted == nil || accepted.Kind != "provider_artist_search" ||
+			accepted.CacheKey != cacheKey || !sameJSON(accepted.Payload, payload) ||
+			accepted.Revision == nil || *accepted.Revision != "artist-search-r1" {
+			t.Fatalf("read accepted artist response: receipt=%+v err=%v", accepted, err)
+		}
 	}
 	jobID := *admission.Operation.RiverJobID
 	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, jobID).Exec(ctx); err != nil {

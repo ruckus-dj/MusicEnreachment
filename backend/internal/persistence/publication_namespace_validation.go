@@ -75,9 +75,26 @@ func validatePublicationTargetNamespace(ctx context.Context, tx bun.Tx, attempt 
 		if err != nil {
 			return err
 		}
-		if claim.CanonicalKey != key || claim.RelativePath != node.RelativePath || claim.NodeKind != node.NodeKind ||
-			(node.NodeKind == "file" && (claim.OwnerPositionID == nil || *claim.OwnerPositionID != attempt.PositionID)) ||
-			(node.NodeKind == "dir" && claim.OwnerPositionID != nil) {
+		if claim.CanonicalKey != key || claim.RelativePath != node.RelativePath || claim.NodeKind != node.NodeKind {
+			return sql.ErrNoRows
+		}
+		if node.NodeKind == "file" {
+			if claim.OwnerPositionID == nil {
+				return sql.ErrNoRows
+			}
+			if *claim.OwnerPositionID != attempt.PositionID {
+				// A same-path cross-position install keeps the predecessor as
+				// the claim owner until settlement. It is accepted only through
+				// the exact durable adoption receipt, never by owner relaxation.
+				adopted, err := publicationNamespaceAdoptionProvesClaim(ctx, tx, attempt, claim)
+				if err != nil {
+					return err
+				}
+				if !adopted {
+					return sql.ErrNoRows
+				}
+			}
+		} else if claim.OwnerPositionID != nil {
 			return sql.ErrNoRows
 		}
 		if node.NodeKind == "dir" && (claim.DirectoryScopeKey == nil || *claim.DirectoryScopeKey != node.DirectoryScope) {

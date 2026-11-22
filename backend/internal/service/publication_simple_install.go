@@ -38,6 +38,8 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	commands *simplePublicationTrackingRunner,
 	allowSourceRepublishReprepare bool,
 	authorizedObservedSourceRepublishTarget persistence.PublicationFileIdentity,
+	matchingMove *persistence.MatchingRecheckPublicationMoveInput,
+	retryMatchingMove bool,
 ) (resultErr error) {
 	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil || input.AudioUpgrade != nil) ||
 		input.IntentKind == "audio" && (input.Audio == nil || input.Rewrite != nil) ||
@@ -227,6 +229,11 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	}
 	observation := prepared.Observation
 	observation.RelativePath = manifest.RelativePath
+	if matchingMove != nil {
+		if err := matchingMove.ValidateQuality(observation); err != nil {
+			return err
+		}
+	}
 	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
 		return err
 	}
@@ -261,6 +268,10 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
 		return err
 	}
+	if matchingMove != nil && matchingMove.SamePath {
+		return executor.installMatchingRecheckSamePath(ctx, guard, matchingMove.Current, manifest.RelativePath,
+			targetParent, mutation, candidateRoot, tempName, candidateInfo, prepared, observation, retryMatchingMove)
+	}
 	var obsoleteOutput *persistence.ObsoletePublicationOutputCleanupAdmission
 	var obsoleteOutputAbsent *persistence.PublicationObsoleteOutputAbsent
 	if attempt.ExpectedGeneration != nil {
@@ -285,6 +296,9 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if statErr != nil {
 			_ = currentFile.Close()
 			return statErr
+		}
+		if matchingMove != nil {
+			return errors.Join(persistence.ErrPublicationAdmissionConflict, currentFile.Close())
 		}
 		if input.SourceRepublish != nil {
 			identity := input.SourceRepublish.Current.Ownership
@@ -335,6 +349,17 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
 			return err
 		}
+		recorder, ok := executor.repository.(interface {
+			RecordMatchingRecheckMoveCandidate(context.Context, persistence.PublicationDeliveryGuard, string, string) error
+		})
+		if matchingMove != nil {
+			if !ok {
+				return persistence.ErrPublicationAdmissionConflict
+			}
+			if err := recorder.RecordMatchingRecheckMoveCandidate(ctx, guard, manifest.RelativePath, observation.PayloadSHA256); err != nil {
+				return err
+			}
+		}
 		if input.SourceRepublish != nil {
 			replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, manifest.RelativePath)
 			if err != nil || !replaceAllowed {
@@ -342,6 +367,9 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			}
 		}
 		if err := mutation.RenameNoReplace(ctx, candidateRoot, tempName, targetParent, targetName); err != nil {
+			if matchingMove != nil && errors.Is(err, fs.ErrExist) {
+				err = errors.Join(err, recorder.RecordMatchingRecheckMoveCandidate(context.WithoutCancel(ctx), guard, manifest.RelativePath, ""))
+			}
 			return fmt.Errorf("install publication without replacement: %w", err)
 		}
 	} else {
@@ -407,6 +435,85 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		return errors.Join(err, errors.New("publication result was not committed"))
 	}
 	return nil
+}
+
+func (executor *PublicationExecutor) installMatchingRecheckSamePath(
+	ctx context.Context, guard persistence.PublicationDeliveryGuard, predecessor persistence.PublicationCurrentWitness,
+	relativePath string, parent sourcefs.OutputDirectory, mutation sourcefs.OutputMutation, candidateRoot sourcefs.OutputDirectory,
+	tempName string, candidateInfo fs.FileInfo, prepared PublicationSimplePreparationResult, observation persistence.PublicationStageObservation, retry bool,
+) error {
+	repository, ok := executor.repository.(interface {
+		InstallMatchingRecheckSamePath(context.Context, persistence.PublicationDeliveryGuard, string, func() (persistence.PublicationResult, error)) error
+	})
+	if !ok || predecessor.RelativePath != relativePath {
+		return persistence.ErrPublicationAdmissionConflict
+	}
+	targetName := path.Base(relativePath)
+	return repository.InstallMatchingRecheckSamePath(context.WithoutCancel(ctx), guard, relativePath, func() (persistence.PublicationResult, error) {
+		var result persistence.PublicationResult
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		current, openErr := mutation.OpenExistingRegular(ctx, targetName)
+		switch {
+		case errors.Is(openErr, fs.ErrNotExist) && retry:
+			if err := mutation.RenameNoReplace(ctx, candidateRoot, tempName, parent, targetName); err != nil {
+				return result, fmt.Errorf("restore missing matching replacement: %w", err)
+			}
+		case openErr != nil:
+			return result, fmt.Errorf("open guarded matching predecessor: %w", openErr)
+		default:
+			info, statErr := current.Stat(ctx)
+			if statErr != nil {
+				return result, errors.Join(statErr, current.Close())
+			}
+			if !retry {
+				identity := predecessor.Ownership
+				digest, digestErr := digestRegular(ctx, current)
+				after, afterErr := current.Stat(ctx)
+				if digestErr != nil || afterErr != nil || identity.SizeBytes == nil || identity.MTime == nil ||
+					digest != identity.SHA256 || info.Size() != *identity.SizeBytes || info.ModTime().UnixMicro() != *identity.MTime ||
+					!os.SameFile(info, after) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+					return result, errors.Join(persistence.ErrPublicationAdmissionConflict, digestErr, afterErr, current.Close())
+				}
+			}
+			if err := current.Close(); err != nil {
+				return result, err
+			}
+			replacer, ok := parent.(sourcefs.OutputAtomicReplace)
+			if !ok {
+				return result, sourcefs.ErrUnsupported
+			}
+			if err := replacer.AtomicReplaceExisting(ctx, candidateRoot, tempName, candidateInfo, targetName, info); err != nil {
+				return result, fmt.Errorf("atomically replace matching predecessor: %w", err)
+			}
+		}
+		// After mutation, finish read-back and SQL settlement even if the
+		// original River context was cancelled.
+		settleCtx := context.WithoutCancel(ctx)
+		installed, err := mutation.OpenExistingRegular(settleCtx, targetName)
+		if err != nil {
+			return result, err
+		}
+		info, statErr := installed.Stat(settleCtx)
+		digest, digestErr := digestRegular(settleCtx, installed)
+		if err := errors.Join(statErr, digestErr, installed.Close()); err != nil {
+			return result, err
+		}
+		if !info.Mode().IsRegular() || digest != observation.PayloadSHA256 {
+			return result, errors.New("installed matching publication does not match the validated candidate")
+		}
+		size, mtime := info.Size(), info.ModTime().UnixMicro()
+		if prepared.CoverEmbedding != nil {
+			prepared.CoverEmbedding.Generation = guard.CandidateGeneration
+		}
+		result = persistence.PublicationResult{
+			Observation: observation, InitialLyrics: prepared.InitialLyrics, CoverEmbedding: prepared.CoverEmbedding,
+			InstalledOwnership: persistence.PublicationCurrentOwnership{Version: persistence.PublicationCurrentOwnershipVersion,
+				Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}},
+		}
+		return result, nil
+	})
 }
 
 type simpleManualLyricsValidator struct {

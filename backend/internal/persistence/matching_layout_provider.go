@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -61,6 +62,28 @@ type MatchingProviderLayoutEvidence struct {
 // provider graph tables. Reversing the order could deadlock a provider writer
 // that already holds provider_source FOR UPDATE while waiting for those tables.
 func ValidateMatchingProviderLayoutEvidenceTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence) error {
+	return validateMatchingProviderLayoutEvidenceTx(ctx, tx, evidence, false)
+}
+
+func validateMatchingLocalRecheckProviderEvidenceTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence) error {
+	return validateMatchingProviderLayoutEvidenceTx(ctx, tx, evidence, true)
+}
+
+// MatchingLocalRecheckProviderRevision binds the accepted payloads and
+// normalized layout values without binding observation order. Another lookup
+// in the same recheck can re-observe a shared recording without changing it.
+func MatchingLocalRecheckProviderRevision(snapshot ProviderMatchingSnapshot) (string, error) {
+	projection, err := fallbackLayoutProjectionValues(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("normalize matching recheck provider projection: %w", err)
+	}
+	hash := sha256.New()
+	hash.Write([]byte(acceptedProjectionRevision(nil, nil, snapshot.Responses)))
+	hash.Write(projection)
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func validateMatchingProviderLayoutEvidenceTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence, localRecheck bool) error {
 	if err := requireMatchingLayoutEvidenceReadCommitted(ctx, tx); err != nil {
 		return err
 	}
@@ -93,12 +116,12 @@ func ValidateMatchingProviderLayoutEvidenceTx(ctx context.Context, tx bun.Tx, ev
 		source.Endpoint != evidence.Endpoint || source.ConfigurationIdentity != evidence.ConfigurationIdentity {
 		return ErrIncomingMatchConflict
 	}
-	return validateMatchingProviderLayoutSnapshotTx(ctx, tx, evidence, cacheKeys)
+	return validateMatchingProviderLayoutSnapshotTx(ctx, tx, evidence, cacheKeys, localRecheck)
 }
 
 // validateMatchingProviderLayoutSnapshotTx compares evidence while the caller
 // holds the provider configuration and source row locks.
-func validateMatchingProviderLayoutSnapshotTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence, cacheKeys []string) error {
+func validateMatchingProviderLayoutSnapshotTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence, cacheKeys []string, localRecheck bool) error {
 	snapshot, err := readMusicBrainzMatchingSnapshot(ctx, tx, evidence.Endpoint, evidence.ConfigurationIdentity, evidence.ReleaseKeys, cacheKeys, false)
 	if err != nil {
 		return fmt.Errorf("validate matching provider layout evidence: %w", err)
@@ -114,7 +137,14 @@ func validateMatchingProviderLayoutSnapshotTx(ctx context.Context, tx bun.Tx, ev
 			return fmt.Errorf("validate matching provider layout evidence: accepted cache response %q is missing: %w", key, ErrIncomingMatchConflict)
 		}
 	}
-	if snapshot.AcceptedProjectionRevision != evidence.AcceptedProjectionRevision {
+	revision := snapshot.AcceptedProjectionRevision
+	if localRecheck {
+		revision, err = MatchingLocalRecheckProviderRevision(snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	if revision != evidence.AcceptedProjectionRevision {
 		return fmt.Errorf("validate matching provider layout evidence: accepted projection changed: %w", ErrIncomingMatchConflict)
 	}
 	return nil

@@ -267,6 +267,11 @@ func Run(ctx context.Context, config Config) error {
 		return fmt.Errorf("create publication command runner: %w", err)
 	}
 	libraryPublications.WithPublicationCommands(publicationCommands)
+	localRecheckRepository := persistence.NewIncomingMatchCandidateRepository(db)
+	localFallbackCatalog := service.NewMatchingLocalCatalogSnapshotService(persistence.NewMatchingLocalCatalogRepository(db))
+	incomingMatchingReconciliation.WithLocalFallback(localRecheckRepository, localFallbackCatalog)
+	localRecheck := service.NewMatchingLocalRecheckService(localRecheckRepository, providerFetch).WithPublicationAdmission(libraryPublications, riverSlot)
+	localRecheckWorker := jobs.NewMatchingLocalRecheckWorker(localRecheck)
 	publicationBootUUID, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("create publication boot identity: %w", err)
@@ -343,6 +348,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, artistMatchingReviewRefreshWorker)
+		river.AddWorker(workers, localRecheckWorker)
 		river.AddWorker(workers, publicationWorker)
 		registerLibraryDeletionWorker(workers, libraryDeletionWorker)
 		river.AddWorker(workers, obsoleteOutputCleanupWorker)
@@ -357,7 +363,7 @@ func Run(ctx context.Context, config Config) error {
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob(), jobs.NewArtistMatchingReviewRefreshPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob(), jobs.NewArtistMatchingReviewRefreshPeriodicJob(), jobs.NewMatchingLocalRecheckPeriodicJob())
 	if err != nil {
 		return err
 	}

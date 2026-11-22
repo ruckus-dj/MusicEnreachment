@@ -92,6 +92,12 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 			deferred = true
 			continue
 		}
+		if handled, err := service.reconcileOutageFallback(ctx, groupID, request.RequestedGeneration); err != nil {
+			return fmt.Errorf("reconcile automatic Local fallback for group %s: %w", groupID, err)
+		} else if handled {
+			delete(deferredGroups, groupID)
+			continue
+		}
 		target, ok := planned[groupID]
 		if !ok {
 			fallback, hasFallback := fallbacks[groupID]

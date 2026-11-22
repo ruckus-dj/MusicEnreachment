@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -214,12 +216,15 @@ func compareFallbackLayoutProjections(frozen, current ProviderMatchingSnapshot) 
 }
 
 func fallbackLayoutProjectionValues(snapshot ProviderMatchingSnapshot) ([]byte, error) {
-	// Snapshots passed here are private to validation; the receipt bytes and
-	// their exact projection digest are never rewritten.
+	snapshot.Releases = slices.Clone(snapshot.Releases)
+	snapshot.ProjectionEntities = slices.Clone(snapshot.ProjectionEntities)
 	for i := range snapshot.Releases {
 		release := &snapshot.Releases[i]
 		release.FetchOrder = 0
 		release.RawSource = nil
+		release.FieldEvidence = maps.Clone(release.FieldEvidence)
+		release.Credits = slices.Clone(release.Credits)
+		release.Tracks = slices.Clone(release.Tracks)
 		omitFallbackLayoutFieldFetchOrder(release.FieldEvidence)
 		for j := range release.Credits {
 			release.Credits[j].FetchOrder = 0

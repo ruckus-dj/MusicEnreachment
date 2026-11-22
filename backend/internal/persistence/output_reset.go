@@ -626,6 +626,26 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if err != nil {
 		return fmt.Errorf("recheck queued publication source cleanup: %w", err)
 	}
+	// A publishing Local recheck owns a matching_local_recheck_publication row
+	// recording the output_epoch of the publication that replaces its
+	// predecessor. The exclusive output gate keeps that membership stable, and
+	// the reset gate already refused a live publication operation. Retire
+	// exactly the old-epoch memberships before any publication row they
+	// reference is removed or the epoch is rotated. The recheck FK cascades the
+	// membership, and the existing queued-operation cancellation below fails any
+	// unstarted publication, so the deleted recheck cannot be dispatched again.
+	// Waiting rechecks, assignments, and files stay untouched.
+	var oldOutputEpoch uuid.UUID
+	if err := tx.QueryRowContext(ctx, `SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(&oldOutputEpoch); err != nil {
+		return fmt.Errorf("read current publication output epoch: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM matching_local_recheck recheck
+		WHERE recheck.state='publishing' AND EXISTS (
+			SELECT 1 FROM matching_local_recheck_publication publication
+			WHERE publication.recheck_id=recheck.id AND publication.output_epoch=$1
+		)`, oldOutputEpoch); err != nil {
+		return fmt.Errorf("retire old-epoch publishing matching rechecks: %w", err)
+	}
 	// Claimed deliveries were refused by the reset gate. Cancel unclaimed work
 	// and its jobs before terminalizing operations or rotating the epoch.
 	if _, err := tx.ExecContext(ctx, `UPDATE publication_reconciliation_event SET state='cancelled',delivery_epoch=delivery_epoch+1,delivery_claimed=false,claim_token=NULL

@@ -221,6 +221,15 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return errors.Join(errors.New("publication frozen inputs are unavailable for this delivery"), err)
 	}
 	input = guarded
+	var matchingMove *persistence.MatchingRecheckPublicationMoveInput
+	if reader, ok := executor.repository.(interface {
+		ReadMatchingRecheckPublicationMoveInput(context.Context, persistence.PublicationDeliveryGuard) (*persistence.MatchingRecheckPublicationMoveInput, error)
+	}); ok && input.Audio != nil && attempt.ExpectedGeneration == nil {
+		matchingMove, err = reader.ReadMatchingRecheckPublicationMoveInput(ctx, guard)
+		if err != nil {
+			return err
+		}
+	}
 	switch claim {
 	case persistence.PublicationDeliverySourceRepublishRecovery:
 		recovered, resume, err := executor.recoverInterruptedSourceRepublish(ctx, attempt, input, guard, outputPath, root, commands, &authorizedObservedSourceRepublishTarget)
@@ -251,7 +260,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		if recovered {
 			return nil
 		}
-		recovered, err = executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
+		recovered, err = executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands, matchingMove)
 		if err != nil {
 			return err
 		}
@@ -259,6 +268,15 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			return nil
 		}
 	}
+	retryMatchingMove := matchingMove != nil && (claim == persistence.PublicationDeliveryInterrupted ||
+		claim == persistence.PublicationDeliveryReprepare || attempt.Phase != "queued" ||
+		guard.ApplicationAttempt > 1 || guard.RiverAttempt > 1)
+	if retryMatchingMove && claim != persistence.PublicationDeliveryInterrupted {
+		recovered, err := executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands, matchingMove)
+		if err != nil || recovered {
+			return err
+		}
+	}
 	allowSourceRepublishReprepare := claim == persistence.PublicationDeliveryReprepare || guard.ApplicationAttempt > 1
-	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare, authorizedObservedSourceRepublishTarget)
+	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare, authorizedObservedSourceRepublishTarget, matchingMove, retryMatchingMove)
 }

@@ -55,6 +55,8 @@ type IncomingMatchingReconciliation struct {
 	admissions      incomingMatchingAutomaticAdmission
 	river           persistence.RiverInserter
 	currentRequests incomingMatchingCurrentRequestRepository
+	localFallback   incomingMatchingOutageFallbackRepository
+	localCatalog    incomingMatchingLocalLayoutCalculator
 }
 
 func NewIncomingMatchingReconciliation(groups incomingMatchingReconcileRefresher, snapshots incomingMatchingReconcileSnapshotReader, providers incomingMatchingProviderPreparer, admissions incomingMatchingAutomaticAdmission, river persistence.RiverInserter, currentRequests ...incomingMatchingCurrentRequestRepository) *IncomingMatchingReconciliation {

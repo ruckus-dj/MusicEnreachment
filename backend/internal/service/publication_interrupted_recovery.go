@@ -423,10 +423,14 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	outputRoot string,
 	root sourcefs.OutputDirectory,
 	commands *simplePublicationTrackingRunner,
+	move *persistence.MatchingRecheckPublicationMoveInput,
 ) (bool, error) {
 	if input.Version != persistence.PublicationInputsVersion || input.IntentKind != "audio" || input.Audio == nil ||
 		input.Rewrite != nil || input.AudioUpgrade != nil || input.ManualLyrics != nil || input.ManualCover != nil ||
 		input.AutomaticLyricsRetry != nil || input.ProviderTags != nil || attempt.ExpectedGeneration != nil {
+		return false, nil
+	}
+	if move != nil && !move.SamePath && move.CandidatePayloadSHA256 == "" {
 		return false, nil
 	}
 	cover, found, err := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
@@ -484,6 +488,15 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 			_ = os.RemoveAll(tempDir)
 		}
 	}()
+	if move != nil {
+		switch {
+		case move.SamePath && digest == move.Current.Ownership.SHA256:
+			// Unchanged predecessor bytes are not proof of a replacement.
+			return false, nil
+		case !move.SamePath && digest != move.CandidatePayloadSHA256:
+			return false, nil
+		}
+	}
 
 	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
 	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
@@ -521,6 +534,11 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	}
 	capture, err := (metadata.Reader{}).Read(ctx, inspectionPath, metadata.ReadRequest{CoverInspection: true})
 	if err != nil {
+		if move != nil && move.SamePath && ctx.Err() == nil {
+			// A same-path retry may replace an unsuitable regular target after
+			// full preparation; it must not treat unreadable tags as success.
+			return false, nil
+		}
 		return false, fmt.Errorf("read interrupted publication metadata: %w", err)
 	}
 	if capture.Tags == nil || !equalTags(withoutLyrics(capture.Tags), withoutLyrics(input.DesiredTags)) {

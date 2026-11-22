@@ -369,12 +369,7 @@ type persistedMatchingDecision struct {
 		ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
 		ProviderReleaseKey string    `json:"provider_release_key"`
 	} `json:"selected_release,omitempty"`
-	Assignments []struct {
-		FileMemberID    uuid.UUID `json:"file_member_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		Medium          int       `json:"medium"`
-		Position        int       `json:"position"`
-	} `json:"assignments"`
+	Assignments []FrozenMatchingAssignment `json:"assignments"`
 }
 
 type persistedMatchingOutcome struct {
@@ -445,6 +440,14 @@ func decodePersistedMatchingDecision(evidence json.RawMessage) (persistedMatchin
 // applyPersistedMatchingDecision materializes one persisted unique decision and
 // returns the release positions whose publication inputs it changed.
 func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string, capturedMetadata ...map[uuid.UUID]capturedMatchingSourceMetadata) ([]uuid.UUID, error) {
+	return materializeMatchingDecision(ctx, tx, group, decision, fence, policy, func(member IncomingMatchMemberFence, _, localTrackID uuid.UUID, _, _ int) error {
+		return attachMatchingDecisionSources(ctx, tx, member, localTrackID, policy, capturedMetadata)
+	})
+}
+
+type matchingPositionMaterialized func(member IncomingMatchMemberFence, releaseID, trackID uuid.UUID, medium, position int) error
+
+func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string, onPosition matchingPositionMaterialized) ([]uuid.UUID, error) {
 	if len(decision.Assignments) != len(group.Members) {
 		return nil, fmt.Errorf("apply matching evaluation: assignments do not cover every group member")
 	}
@@ -578,28 +581,8 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		} else if err := reactivateProviderArtistCredits(ctx, tx, fence.ProviderID, credits); err != nil {
 			return nil, fmt.Errorf("apply matching evaluation: reactivate retained position artists: %w", err)
 		}
-		var variants []uuid.UUID
-		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, member.WorkID).Scan(ctx, &variants); err != nil {
-			return nil, fmt.Errorf("apply matching evaluation: read source work identity: %w", err)
-		}
-		if len(variants) == 0 {
-			return nil, ErrIncomingMatchConflict
-		}
-		metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, member.WorkID)
-		if err != nil {
+		if err := onPosition(member, localReleaseID, localTrackID, medium, position); err != nil {
 			return nil, err
-		}
-		if len(capturedMetadata) > 0 && capturedMetadata[0] != nil {
-			captured, ok := capturedMetadata[0][member.FileMemberID]
-			if !ok || captured.WorkID != member.WorkID || !sameOptionalUUID(captured.ResultID, metadataResultID) {
-				return nil, ErrIncomingMatchConflict
-			}
-			metadataResultID = captured.ResultID
-		}
-		for _, variantID := range variants {
-			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy, metadataResultID); err != nil {
-				return nil, err
-			}
 		}
 	}
 	positions, err := matchingApplyPublicationPositions(ctx, tx, localReleaseID, localTrackIDs)
@@ -607,6 +590,33 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		return nil, err
 	}
 	return positions, nil
+}
+
+func attachMatchingDecisionSources(ctx context.Context, tx bun.Tx, member IncomingMatchMemberFence, localTrackID uuid.UUID, policy string, capturedMetadata []map[uuid.UUID]capturedMatchingSourceMetadata) error {
+	var variants []uuid.UUID
+	if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, member.WorkID).Scan(ctx, &variants); err != nil {
+		return fmt.Errorf("apply matching evaluation: read source work identity: %w", err)
+	}
+	if len(variants) == 0 {
+		return ErrIncomingMatchConflict
+	}
+	metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, member.WorkID)
+	if err != nil {
+		return err
+	}
+	if len(capturedMetadata) > 0 && capturedMetadata[0] != nil {
+		captured, ok := capturedMetadata[0][member.FileMemberID]
+		if !ok || captured.WorkID != member.WorkID || !sameOptionalUUID(captured.ResultID, metadataResultID) {
+			return ErrIncomingMatchConflict
+		}
+		metadataResultID = captured.ResultID
+	}
+	for _, variantID := range variants {
+		if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy, metadataResultID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type capturedMatchingSourceMetadata struct {

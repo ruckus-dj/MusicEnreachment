@@ -58,6 +58,20 @@ type FrozenMatchingAssignment struct {
 	Position        int       `json:"position"`
 }
 
+// FrozenMatchingReviewReleases converts accepted zero-based provider ordinals
+// to the one-based representation used by review and apply.
+func FrozenMatchingReviewReleases(releases []MatchingRelease) []MatchingRelease {
+	copied := append([]MatchingRelease(nil), releases...)
+	for i := range copied {
+		copied[i].Tracks = append([]MatchingReleaseTrack(nil), releases[i].Tracks...)
+		for j := range copied[i].Tracks {
+			copied[i].Tracks[j].Medium++
+			copied[i].Tracks[j].Position++
+		}
+	}
+	return copied
+}
+
 // BuildFrozenMatchingLayoutEvaluation projects a sealed result onto a
 // one-based review inventory. Coordinates are display data, not identity.
 func BuildFrozenMatchingLayoutEvaluation(decision *MatchingLayoutDecision, releases []MatchingRelease) (FrozenMatchingEvaluation, error) {

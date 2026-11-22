@@ -4,6 +4,13 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
+export interface AbandonMatchingRecheckInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  revision: string;
+}
+
 export interface ApplyManualLyricsInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -143,6 +150,7 @@ export interface OperationResponse {
   finished_at?: string;
   id: string;
   kind: string;
+  matching_recheck_member?: boolean;
   safe_error?: string;
   stage: string;
   started_at?: string;
@@ -1834,6 +1842,20 @@ export interface MatchingManualPreview {
   preview_digest: string;
   provider_release_id: string;
   selected_release: MatchingReviewRelease;
+}
+
+export interface MatchingRecheckAbandonmentPosition {
+  committed: boolean;
+  operation_id: string;
+  relative_path: string;
+}
+
+export interface MatchingRecheckAbandonmentPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  positions: MatchingRecheckAbandonmentPosition[] | null;
+  revision: string;
 }
 
 export interface MatchingReturnAutomaticBody {

@@ -370,20 +370,7 @@ func frozenPersistedUniqueDecision(publication FrozenMatchingPublication) (persi
 		ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
 		ProviderReleaseKey string    `json:"provider_release_key"`
 	}{ProviderReleaseID: release.ID, ProviderReleaseKey: release.ProviderKey}
-	decision.Assignments = make([]struct {
-		FileMemberID    uuid.UUID `json:"file_member_id"`
-		ProviderTrackID uuid.UUID `json:"provider_track_id"`
-		Medium          int       `json:"medium"`
-		Position        int       `json:"position"`
-	}, 0, len(publication.Evaluation.Assignments))
-	for _, assignment := range publication.Evaluation.Assignments {
-		decision.Assignments = append(decision.Assignments, struct {
-			FileMemberID    uuid.UUID `json:"file_member_id"`
-			ProviderTrackID uuid.UUID `json:"provider_track_id"`
-			Medium          int       `json:"medium"`
-			Position        int       `json:"position"`
-		}{assignment.FileMemberID, assignment.ProviderTrackID, assignment.Medium, assignment.Position})
-	}
+	decision.Assignments = append([]FrozenMatchingAssignment{}, publication.Evaluation.Assignments...)
 	return decision, nil
 }
 

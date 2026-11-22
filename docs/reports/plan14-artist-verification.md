@@ -35,10 +35,13 @@
 macOS arm64 остановился до тестов: Homebrew установил `libarchive`, но
 `pkg-config` не увидел его метаданные. На
 [`f9902e82`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/45009003907)
-прошли все проверки платформ; общая проверка остановилась на тесте
-`ManualReleasePicker` (`Release prepared.`). В
+общая проверка сначала остановилась на тесте `ManualReleasePicker`
+(`Release prepared.`); повтор неудавшихся заданий завершился успешно.
 [CI для `f5d548ad`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/45009576975)
-общая проверка прошла; полный результат последнего прогона проверяется отдельно.
+и [CI для `4888cdbc`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/45010514261)
+прошли полностью, включая все платформы, Docker smoke и публикацию контейнера.
+На стенде после `4888cdbc` снимки группы и SHA‑256 её 21 исходника снова
+совпали; `/downloads` остался только для чтения.
 
 Перепроверка Local после восстановления MusicBrainz, передача CURRENT и
 сквозная приёмка переноса не подтверждены этим прогоном.

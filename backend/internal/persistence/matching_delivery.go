@@ -419,6 +419,26 @@ func (repository *SetupManagerRepository) failMatchingDelivery(ctx context.Conte
 		if _, err := tx.NewRaw(`UPDATE matching_run SET state='failed', active_river_job_id=NULL, active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, claim.ExecutionEpoch).Exec(ctx); err != nil {
 			return fmt.Errorf("fail matching delivery: update run: %w", err)
 		}
+		if !refreshArtist {
+			for _, target := range targets {
+				if target.ReconciliationGeneration == nil || target.RequestedGeneration != *target.ReconciliationGeneration {
+					continue
+				}
+				outage, err := currentMatchingMusicBrainzOutage(ctx, tx, target.GroupID)
+				if err != nil {
+					return err
+				}
+				if outage != operationID {
+					continue
+				}
+				if err := RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{target.GroupID}); err != nil {
+					return fmt.Errorf("fail matching delivery: request local fallback: %w", err)
+				}
+				if _, err := tx.NewRaw(`UPDATE operation SET stage=? WHERE id=?`, matchingLocalFallbackPendingStage, operationID).Exec(ctx); err != nil {
+					return fmt.Errorf("fail matching delivery: record local fallback obligation: %w", err)
+				}
+			}
+		}
 		if refreshArtist && !staleTargets {
 			for _, target := range targets {
 				if target.ReconciliationGeneration != nil && target.RequestedGeneration != *target.ReconciliationGeneration {

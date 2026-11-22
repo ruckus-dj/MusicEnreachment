@@ -65,6 +65,7 @@ type OperationResponse struct {
 	TargetIdentity         string                                            `json:"target_identity,omitempty"`
 	TargetLabel            string                                            `json:"target_label,omitempty"`
 	TargetRef              *service.OperationTargetRef                       `json:"target_ref,omitempty"`
+	MatchingRecheckMember  bool                                              `json:"matching_recheck_member,omitempty"`
 	BytesCompleted         int64                                             `json:"bytes_completed"`
 	BytesTotal             *int64                                            `json:"bytes_total,omitempty"`
 	SafeError              *string                                           `json:"safe_error,omitempty"`
@@ -211,6 +212,7 @@ func operationResponse(snapshot service.OperationSnapshot) OperationResponse {
 		TargetIdentity:         snapshot.TargetIdentity,
 		TargetLabel:            snapshot.TargetLabel,
 		TargetRef:              snapshot.TargetRef,
+		MatchingRecheckMember:  snapshot.MatchingRecheckMember,
 		BytesCompleted:         snapshot.BytesCompleted, BytesTotal: snapshot.BytesTotal,
 		SafeError: snapshot.SafeError, CreatedAt: snapshot.CreatedAt,
 		StartedAt: snapshot.StartedAt, FinishedAt: snapshot.FinishedAt, UpdatedAt: snapshot.UpdatedAt,

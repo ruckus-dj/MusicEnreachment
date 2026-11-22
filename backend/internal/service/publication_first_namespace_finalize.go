@@ -81,6 +81,29 @@ func finalizeFirstPublicationCurrentComparisonNamespace(ctx context.Context, sna
 	return manifest, nil
 }
 
+// finalizeFirstPublicationMovedNamespace resolves a cross-position destination
+// onto the exact predecessor leaf. Only the supplied predecessor file claim is
+// exempted; any other collision fails closed.
+func finalizeFirstPublicationMovedNamespace(ctx context.Context, snapshot *persistence.LibraryFirstPublicationContext, outputRoot, template string, preview *FirstPublicationPreview, predecessor persistence.PublicationNamespaceClaim) ([]persistence.PublicationNamespaceNode, error) {
+	if snapshot == nil || preview == nil || len(preview.PathComponents) == 0 || predecessor.ID == uuid.Nil {
+		return nil, fmt.Errorf("moved publication namespace inputs are incomplete")
+	}
+	candidates, err := firstPublicationNamespaceCandidates(snapshot, template, preview.PathComponents, preview.ReleaseID, preview.PositionID)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := planFirstPublicationNamespaceWithPredecessor(ctx, outputRoot, preview.PositionID, candidates, snapshot.NamespaceClaims, predecessor)
+	if err != nil {
+		return nil, err
+	}
+	preview.ResolvedPathComponents = resolvedFileComponents(manifest)
+	if len(preview.ResolvedPathComponents) == 0 {
+		return nil, fmt.Errorf("moved publication namespace has no file node")
+	}
+	preview.NativeStatus = "native namespace resolved"
+	return manifest, nil
+}
+
 func applyNamespaceDigest(preview *FirstPublicationPreview, manifest []persistence.PublicationNamespaceNode) error {
 	semantic := make([]semanticNamespaceNode, 0, len(manifest))
 	for _, node := range manifest {

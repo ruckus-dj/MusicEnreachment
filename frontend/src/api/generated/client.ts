@@ -24,6 +24,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AbandonMatchingRecheckInputBody,
   ApplyManualLyricsInputBody,
   BrowseDirectoriesBody,
   BrowseServerDirectoriesParams,
@@ -110,6 +111,7 @@ import type {
   MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
+  MatchingRecheckAbandonmentPreview,
   MatchingReturnAutomaticBody,
   MatchingReview,
   MovePreflightBody,
@@ -8360,6 +8362,248 @@ export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>
 
 
 
+
+export type previewMatchingRecheckAbandonmentResponse200 = {
+  data: MatchingRecheckAbandonmentPreview
+  status: 200
+}
+
+export type previewMatchingRecheckAbandonmentResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewMatchingRecheckAbandonmentResponseSuccess = (previewMatchingRecheckAbandonmentResponse200) & {
+  headers: Headers;
+};
+export type previewMatchingRecheckAbandonmentResponseError = (previewMatchingRecheckAbandonmentResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewMatchingRecheckAbandonmentResponse = (previewMatchingRecheckAbandonmentResponseSuccess | previewMatchingRecheckAbandonmentResponseError)
+
+export const getPreviewMatchingRecheckAbandonmentUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}/matching-recheck-abandonment`
+}
+
+/**
+ * @summary Preview abandonment of unfinished matching republications
+ */
+export const previewMatchingRecheckAbandonment = async (operationId: string, options?: RequestInit): Promise<previewMatchingRecheckAbandonmentResponse> => {
+
+  const res = await fetch(getPreviewMatchingRecheckAbandonmentUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewMatchingRecheckAbandonmentResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewMatchingRecheckAbandonmentResponse
+}
+
+
+
+
+
+export const getPreviewMatchingRecheckAbandonmentQueryKey = (operationId: string,) => {
+    return [
+    `/api/operations/${operationId}/matching-recheck-abandonment`
+    ] as const;
+    }
+
+
+export const getPreviewMatchingRecheckAbandonmentQueryOptions = <TData = Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError = ErrorModel>(operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewMatchingRecheckAbandonmentQueryKey(operationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>> = ({ signal }) => previewMatchingRecheckAbandonment(operationId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: operationId !== null && operationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreviewMatchingRecheckAbandonmentQueryResult = NonNullable<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>>
+export type PreviewMatchingRecheckAbandonmentQueryError = ErrorModel
+
+
+export function usePreviewMatchingRecheckAbandonment<TData = Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError = ErrorModel>(
+ operationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>,
+          TError,
+          Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewMatchingRecheckAbandonment<TData = Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>,
+          TError,
+          Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewMatchingRecheckAbandonment<TData = Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Preview abandonment of unfinished matching republications
+ */
+
+export function usePreviewMatchingRecheckAbandonment<TData = Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewMatchingRecheckAbandonment>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreviewMatchingRecheckAbandonmentQueryOptions(operationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type abandonMatchingRecheckPublicationsResponse204 = {
+  data: void
+  status: 204
+}
+
+export type abandonMatchingRecheckPublicationsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type abandonMatchingRecheckPublicationsResponseSuccess = (abandonMatchingRecheckPublicationsResponse204) & {
+  headers: Headers;
+};
+export type abandonMatchingRecheckPublicationsResponseError = (abandonMatchingRecheckPublicationsResponseDefault) & {
+  headers: Headers;
+};
+
+export type abandonMatchingRecheckPublicationsResponse = (abandonMatchingRecheckPublicationsResponseSuccess | abandonMatchingRecheckPublicationsResponseError)
+
+export const getAbandonMatchingRecheckPublicationsUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}/matching-recheck-abandonment`
+}
+
+/**
+ * @summary Abandon unfinished matching republications
+ */
+export const abandonMatchingRecheckPublications = async (operationId: string,
+    abandonMatchingRecheckInputBody: NonReadonly<AbandonMatchingRecheckInputBody>, options?: RequestInit): Promise<abandonMatchingRecheckPublicationsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getAbandonMatchingRecheckPublicationsUrl(operationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(abandonMatchingRecheckInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: abandonMatchingRecheckPublicationsResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as abandonMatchingRecheckPublicationsResponse
+}
+
+
+
+
+
+export const getAbandonMatchingRecheckPublicationsMutationKey = () => ['abandonMatchingRecheckPublications'] as const;
+
+export const getAbandonMatchingRecheckPublicationsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>, TError,AbandonMatchingRecheckPublicationsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>, TError,AbandonMatchingRecheckPublicationsMutationVariables, TContext> => {
+
+const mutationKey = getAbandonMatchingRecheckPublicationsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>, AbandonMatchingRecheckPublicationsMutationVariables> = (props) => {
+          const {operationId,data} = props ?? {};
+
+          return  abandonMatchingRecheckPublications(operationId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AbandonMatchingRecheckPublicationsMutationResult = NonNullable<Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>>
+    export type AbandonMatchingRecheckPublicationsMutationBody = NonReadonly<AbandonMatchingRecheckInputBody>
+    export type AbandonMatchingRecheckPublicationsMutationError = ErrorModel
+    export type AbandonMatchingRecheckPublicationsMutationVariables = {operationId: string;data: NonReadonly<AbandonMatchingRecheckInputBody>}
+
+    /**
+ * @summary Abandon unfinished matching republications
+ */
+export const useAbandonMatchingRecheckPublications = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>, TError,AbandonMatchingRecheckPublicationsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof abandonMatchingRecheckPublications>>,
+        TError,
+        AbandonMatchingRecheckPublicationsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAbandonMatchingRecheckPublicationsMutationOptions(options), queryClient);
+    }
 
 export type retryOperationResponse200 = {
   data: OperationResponse

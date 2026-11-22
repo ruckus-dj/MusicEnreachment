@@ -15,12 +15,56 @@ import (
 // whose retained source holds pin this root. The caller holds the output and
 // source-root gates; all evidence and authority changes remain in that tx.
 func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uuid.UUID) error {
-	var operations []uuid.UUID
-	if err := tx.NewRaw(`SELECT DISTINCT op.id FROM operation op
-		JOIN publication_source_hold hold ON hold.operation_id=op.id
-		WHERE hold.source_root_id=? AND op.kind='publish_track_v1' AND op.state='failed'
-		ORDER BY op.id`, rootID).Scan(ctx, &operations); err != nil {
+	// The caller holds the exclusive output gate. A source-free rewrite can
+	// still depend on the root through its batch. Do not dismantle that batch
+	// while another member can execute.
+	var rechecks []uuid.UUID
+	if err := tx.NewRaw(`SELECT r.id FROM matching_local_recheck r
+		WHERE r.state='publishing' AND EXISTS (
+			SELECT 1 FROM matching_local_recheck_source s WHERE s.recheck_id=r.id AND s.source_root_id=?
+		) ORDER BY r.id FOR UPDATE`, rootID).Scan(ctx, &rechecks); err != nil {
 		return err
+	}
+	var members []publicationMatchingRecheckMember
+	if len(rechecks) != 0 {
+		if err := tx.NewRaw(`SELECT * FROM matching_local_recheck_publication
+			WHERE recheck_id IN (?) ORDER BY operation_id FOR UPDATE`, bun.List(rechecks)).Scan(ctx, &members); err != nil {
+			return err
+		}
+		for _, member := range members {
+			if member.CommittedAt != nil {
+				continue
+			}
+			if _, err := lockMatchingRecheckAbandonmentDelivery(ctx, tx, member); err != nil {
+				if errors.Is(err, ErrPublicationAdmissionConflict) {
+					return ErrSourceRootActiveScan
+				}
+				return err
+			}
+		}
+	}
+	byOperation := make(map[uuid.UUID]publicationMatchingRecheckMember, len(members))
+	for _, member := range members {
+		if member.CommittedAt == nil {
+			byOperation[member.OperationID] = member
+		}
+	}
+	var operations []uuid.UUID
+	if err := tx.NewRaw(`SELECT op.id FROM operation op
+		WHERE op.kind='publish_track_v1' AND op.state='failed' AND (
+			EXISTS (SELECT 1 FROM publication_source_hold h WHERE h.operation_id=op.id AND h.source_root_id=?)
+			OR EXISTS (SELECT 1 FROM matching_local_recheck_publication m WHERE m.operation_id=op.id
+				AND m.recheck_id IN (?) AND m.committed_at IS NULL)
+		)
+		ORDER BY op.id`, rootID, bun.List(rechecks)).Scan(ctx, &operations); err != nil {
+		return err
+	}
+	if len(rechecks) != 0 {
+		// Keep all CURRENT rows (including committed different-path members and
+		// their predecessors); the confirmed removal must not schedule cleanup.
+		if _, err := tx.NewRaw(`DELETE FROM matching_local_recheck WHERE id IN (?)`, bun.List(rechecks)).Exec(ctx); err != nil {
+			return err
+		}
 	}
 	if len(operations) == 0 {
 		return nil
@@ -102,7 +146,9 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 			State   string `bun:"state"`
 			Attempt int    `bun:"attempt"`
 		}
-		if err := tx.NewRaw(`SELECT id,kind,state,attempt FROM river_job WHERE id=?`, *operation.RiverJobID).Scan(ctx, &currentJob); err != nil {
+		member, isRecheck := byOperation[attempt.OperationID]
+		if err := tx.NewRaw(`SELECT id,kind,state,attempt FROM river_job WHERE id=?`, *operation.RiverJobID).Scan(ctx, &currentJob); err != nil &&
+			(!isRecheck || !errors.Is(err, sql.ErrNoRows)) {
 			return err
 		}
 		version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
@@ -279,6 +325,24 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 		if len(republishReturnEvidence) != 0 {
 			evidenceFields["source_republish_return"] = republishReturnEvidence
 		}
+		if isRecheck {
+			receipt, err := json.Marshal(member)
+			if err != nil {
+				return fmt.Errorf("encode abandoned matching recheck member: %w", err)
+			}
+			evidenceFields["matching_recheck_member"] = receipt
+			if member.SamePath {
+				// This file claim still belongs to CURRENT, not to the
+				// abandoned candidate. Keep it out of the archive's live
+				// namespace protection and remove only the candidate hold.
+				namespaceIDs = withoutMatchingRecheckPredecessorClaim(namespaceIDs, *member.PredecessorClaimID)
+				if _, err := tx.NewRaw(`DELETE FROM publication_namespace_reservation
+					WHERE namespace_claim_id=? AND position_id=? AND generation=?`,
+					*member.PredecessorClaimID, member.PositionID, member.CandidateGeneration).Exec(ctx); err != nil {
+					return err
+				}
+			}
+		}
 		evidence, err := json.Marshal(evidenceFields)
 		if err != nil {
 			return fmt.Errorf("encode publication abandonment evidence: %w", err)
@@ -309,6 +373,16 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 		return err
 	}
 	return nil
+}
+
+func withoutMatchingRecheckPredecessorClaim(ids []uuid.UUID, predecessor uuid.UUID) []uuid.UUID {
+	remaining := ids[:0]
+	for _, id := range ids {
+		if id != predecessor {
+			remaining = append(remaining, id)
+		}
+	}
+	return remaining
 }
 
 // MarkPublicationDeliveryReturned records that the exact delivery owner has
@@ -405,6 +479,23 @@ func (repository *SetupManagerRepository) CheckPublicationTargetReplacement(ctx 
 	}
 	var allowed bool
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		crossNamespaceAdoption, err := publicationMatchingRecheckCrossPositionNamespaceAdoption(ctx, tx, guard.OperationID)
+		if err != nil {
+			return fmt.Errorf("check publication target replacement: read matching recheck namespace authority: %w", err)
+		}
+		if crossNamespaceAdoption {
+			// The predecessor CURRENT and its source authority are about to be
+			// retired. Take the source mutation gate after the output admission
+			// gate and before the epoch, matching admission order, so a source
+			// change cannot race this replacement. Every other replacement path
+			// keeps its existing lock set.
+			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+				return fmt.Errorf("check publication target replacement: lock output admission: %w", err)
+			}
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return fmt.Errorf("check publication target replacement: lock source mutation gate: %w", err)
+			}
+		}
 		attempt, _, claim, live, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication target replacement")
 		if err != nil {
 			return err
@@ -445,6 +536,21 @@ func (repository *SetupManagerRepository) CheckPublicationTargetReplacement(ctx 
 			}
 			if _, err := validateSourceRepublishAttemptNamespace(ctx, tx, attempt, input); err != nil {
 				return fmt.Errorf("check publication target replacement: validate source-republish CURRENT namespace: %w", err)
+			}
+		}
+		if crossNamespaceAdoption {
+			// Same native path only: the destination installs over the exact
+			// predecessor CURRENT. The receipt, not the path text, is the
+			// authority, and it must remain retirable by this member.
+			member, err := lockPublicationMatchingRecheckMemberTx(ctx, tx, attempt)
+			if err != nil {
+				return fmt.Errorf("check publication target replacement: lock matching recheck receipt: %w", err)
+			}
+			if member == nil || !member.SamePath {
+				return fmt.Errorf("check publication target replacement: namespace adoption receipt changed: %w", ErrPublicationAdmissionConflict)
+			}
+			if err := validateMatchingRecheckNamespaceReplacementTx(ctx, tx, attempt, member, relativePath); err != nil {
+				return fmt.Errorf("check publication target replacement: %w", err)
 			}
 		}
 		var pathMatches bool

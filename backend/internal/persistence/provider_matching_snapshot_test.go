@@ -36,6 +36,40 @@ func TestAcceptedProjectionRevisionIgnoresMutableResponseCacheMetadata(t *testin
 	}
 }
 
+func TestMatchingLocalRecheckProviderRevisionBindsValuesNotObservationOrder(t *testing.T) {
+	snapshot := func(order int64, title string, payload json.RawMessage) ProviderMatchingSnapshot {
+		return ProviderMatchingSnapshot{
+			Releases: []MatchingRelease{{
+				FetchOrder:    order,
+				FieldEvidence: map[string]ProviderFieldEvidence{"title": {Authority: 2, FetchOrder: order}},
+				Tracks:        []MatchingReleaseTrack{{RecordingTitle: title, FetchOrder: order}},
+			}},
+			Responses: map[string]*ProviderCachedResponse{"query": {Payload: payload}},
+		}
+	}
+	revision := func(value ProviderMatchingSnapshot) string {
+		t.Helper()
+		got, err := MatchingLocalRecheckProviderRevision(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	payload := json.RawMessage(`{"recordings":[]}`)
+	base := snapshot(1, "Song", payload)
+	want := revision(base)
+	if got := revision(snapshot(2, "Song", payload)); got != want {
+		t.Fatal("unchanged observations invalidated the preceding recheck stage")
+	}
+	if base.Releases[0].Tracks[0].FetchOrder != 1 || base.Releases[0].FieldEvidence["title"].FetchOrder != 1 {
+		t.Fatal("normalizing recheck evidence mutated the accepted snapshot")
+	}
+	if revision(snapshot(2, "Different song", payload)) == want ||
+		revision(snapshot(2, "Song", json.RawMessage(`{"recordings":[{}]}`))) == want {
+		t.Fatal("a changed layout or accepted response retained the same recheck evidence")
+	}
+}
+
 func TestMatchingReleaseTrackLengthUsesAcceptedNormalizedTrackIdentity(t *testing.T) {
 	fields := json.RawMessage(`{"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"recording","length":9000}]}`)
 	length := matchingReleaseTrackLength(fields, 0, 0, "recording")

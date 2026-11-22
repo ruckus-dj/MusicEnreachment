@@ -44,6 +44,16 @@ type PublicationObsoleteOutputAbsent struct {
 // CommitPublicationResult installs the actual output projection and consumes
 // the live publication delivery in one database transaction. It performs no I/O.
 func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Context, guard PublicationDeliveryGuard, result PublicationResult) (bool, error) {
+	var committed bool
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		committed, err = repository.commitPublicationResultTx(ctx, tx, guard, result)
+		return err
+	})
+	return committed && err == nil, err
+}
+
+func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.Context, tx bun.Tx, guard PublicationDeliveryGuard, result PublicationResult) (bool, error) {
 	if err := validatePublicationDeliveryGuard(guard); err != nil {
 		return false, err
 	}
@@ -54,12 +64,22 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		return false, errors.New("commit publication result: invalid preserved audio proof")
 	}
 	committed := false
-	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := func() error {
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("commit publication result: lock output admission gate: %w", err)
 		}
 		if err := lockPublicationSourceCleanupPolicy(ctx, tx, true); err != nil {
 			return fmt.Errorf("commit publication result: lock source cleanup policy: %w", err)
+		}
+		var matchingMove bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_local_recheck_publication
+			WHERE operation_id=? AND predecessor_position_id<>position_id)`, guard.OperationID).Scan(ctx, &matchingMove); err != nil {
+			return fmt.Errorf("commit publication result: identify matching move: %w", err)
+		}
+		if matchingMove {
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := lockProviderTagDeliveryAuthority(ctx, tx, guard); err != nil {
 			return err
@@ -99,6 +119,15 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		if (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !providerTags && !sourceRepublish) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
+		member, err := lockPublicationMatchingRecheckMemberTx(ctx, tx, attempt)
+		if err != nil {
+			return err
+		}
+		if member != nil && !matchingMove {
+			if err := member.validateSettlement(ctx, tx, attempt, input); err != nil {
+				return err
+			}
+		}
 		if sourceRepublish && (result.PreservedAudioSHA256 != "" || result.InitialLyrics != nil || result.CoverEmbedding != nil) {
 			return errors.New("commit publication result: source-republish projections must be derived from frozen inputs and actual output")
 		}
@@ -121,6 +150,29 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return errors.New("commit publication result: source-republish observation does not match its frozen policy or namespace")
 			}
 			return nil
+		}
+		var movedPrevious *TrackPublication
+		if matchingMove {
+			if member == nil {
+				return ErrPublicationAdmissionConflict
+			}
+			predecessor, witness, err := lockMatchingRecheckMovedCurrentTx(ctx, tx, member)
+			if err != nil {
+				return err
+			}
+			if err := validateMatchingRecheckMovedResult(attempt, input, member, predecessor, witness, observation); err != nil {
+				return err
+			}
+			if member.SamePath {
+				retire, err := matchingRecheckPredecessorCanRetireTx(ctx, tx, member, predecessor)
+				if err != nil {
+					return err
+				}
+				if !retire {
+					return ErrPublicationAdmissionConflict
+				}
+				movedPrevious = &predecessor
+			}
 		}
 		var previous *TrackPublication
 		if attempt.ExpectedGeneration != nil {
@@ -309,6 +361,17 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			publication.InitialLyrics = mustPublicationJSON(projection)
 		}
 		if attempt.ExpectedGeneration == nil {
+			if movedPrevious != nil {
+				if err := removeMatchingRecheckPredecessorCurrentTx(ctx, tx, *movedPrevious); err != nil {
+					return err
+				}
+				if err := transferMatchingRecheckFileClaimTx(ctx, tx, *member, *movedPrevious); err != nil {
+					return err
+				}
+				if err := retireMatchingRecheckMovedAssociationTx(ctx, tx, member, *movedPrevious); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.NewInsert().Model(&publication).Exec(ctx); err != nil {
 				return fmt.Errorf("commit publication result: insert current publication: %w", err)
 			}
@@ -398,8 +461,10 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return fmt.Errorf("commit publication result: record source-republish manual lyrics receipt: %w", err)
 			}
 		}
-		if err := repository.requestSourceCleanupTx(ctx, tx, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
-			return fmt.Errorf("commit publication result: request source cleanup: %w", err)
+		if member == nil {
+			if err := repository.requestSourceCleanupTx(ctx, tx, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
+				return fmt.Errorf("commit publication result: request source cleanup: %w", err)
+			}
 		}
 		if pathChanged {
 			if result.ObsoleteOutputAbsent != nil {
@@ -457,6 +522,11 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				}
 			}
 		}
+		if member != nil {
+			if err := settlePublicationMatchingRecheckResultTx(ctx, tx, member); err != nil {
+				return err
+			}
+		}
 		requestExists, err := lockPublicationReconciliationRequest(ctx, tx, attempt.Epoch, attempt.PositionID)
 		if err != nil {
 			return fmt.Errorf("commit publication result: lock reconciliation request: %w", err)
@@ -474,7 +544,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		}
 		committed = true
 		return nil
-	})
+	}()
 	return committed, err
 }
 

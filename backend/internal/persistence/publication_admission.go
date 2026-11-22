@@ -59,6 +59,16 @@ type PublicationAdmission struct {
 	sourceRepublishAdmission      *sourceRepublishAdmissionHook
 	reconciliationGuard           *PublicationReconciliationDeliveryGuard
 	validatedProviderTags         bool
+	// namespaceAdoption is the private cross-position same-path grant set only
+	// by the matching-recheck bridge. Generic admission cannot populate it.
+	namespaceAdoption *matchingRecheckNamespaceAdoption
+	// namespacePredecessor records the exact predecessor claim a cross-position
+	// member consumes. A different-path member carries this without an adoption:
+	// it only blocks a competing predecessor consumer.
+	namespacePredecessor *matchingRecheckNamespaceAdoption
+	// matchingRecheckCoverInput freezes the destination cover receipt for a
+	// matching-recheck install. Generic admission cannot set it.
+	matchingRecheckCoverInput *PublicationAttemptCoverInput
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -79,76 +89,99 @@ type PublicationSourceSelection struct {
 // AdmitPublication atomically inserts the source-free operation snapshot, attempt,
 // namespace reservations, and its River delivery.
 func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	input, err := request.prepareAdmission(client)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return repository.admitPreparedPublication(ctx, request, input, client)
+}
+
+// prepareAdmission applies every contract check that does not require a
+// database transaction. It validates the reconciliation guard on the caller's
+// request so the admission transaction observes the exact delivery it checked.
+func (request *PublicationAdmission) prepareAdmission(client RiverInserter) (PublicationInputs, error) {
 	if request.firstAdmission != nil && request.reconciliationGuard != nil {
-		return uuid.Nil, fmt.Errorf("admit publication: first publication requires confirmed preview admission: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: first publication requires confirmed preview admission: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.firstAdmission != nil && request.matchingRecheckCoverInput != nil {
+		return PublicationInputs{}, fmt.Errorf("admit publication: first publication and matching recheck cover receipt conflict: %w", ErrPublicationAdmissionConflict)
 	}
 	if request.reconciliationGuard != nil {
 		guard := *request.reconciliationGuard
 		request.reconciliationGuard = &guard
 		if guard.OutputEpoch != request.ExpectedEpoch || guard.PositionID != request.PositionID || guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil {
-			return uuid.Nil, fmt.Errorf("admit publication: reconciliation guard does not match admission: %w", ErrPublicationAdmissionConflict)
+			return PublicationInputs{}, fmt.Errorf("admit publication: reconciliation guard does not match admission: %w", ErrPublicationAdmissionConflict)
 		}
 	}
 	if client == nil || request.PositionID == uuid.Nil || request.ExpectedEpoch == uuid.Nil || request.CandidateGeneration == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("admit publication: invalid identity or missing River client")
+		return PublicationInputs{}, fmt.Errorf("admit publication: invalid identity or missing River client")
 	}
 	if request.IntentKind != "audio" && request.IntentKind != "rewrite" {
-		return uuid.Nil, fmt.Errorf("admit publication: unsupported intent")
+		return PublicationInputs{}, fmt.Errorf("admit publication: unsupported intent")
 	}
 	input, err := DecodePublicationInputs(request.FrozenInputs)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("admit publication: %w", err)
+		return PublicationInputs{}, fmt.Errorf("admit publication: %w", err)
 	}
 	if input.Version == PublicationSourceRepublishInputsVersion {
 		if request.sourceRepublishAdmission == nil {
-			return uuid.Nil, fmt.Errorf("admit publication: source republish execution is not activated: %w", ErrPublicationAdmissionConflict)
+			return PublicationInputs{}, fmt.Errorf("admit publication: source republish execution is not activated: %w", ErrPublicationAdmissionConflict)
 		}
 	}
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
-		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
+		return PublicationInputs{}, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
 	}
 	if input.Version == PublicationAudioUpgradeInputsVersion && !request.validatedAudioUpgrade {
-		return uuid.Nil, fmt.Errorf("admit publication: audio upgrade requires typed admission: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: audio upgrade requires typed admission: %w", ErrPublicationAdmissionConflict)
 	}
 	if input.Version == PublicationProviderTagInputsVersion && !request.validatedProviderTags {
-		return uuid.Nil, fmt.Errorf("admit publication: provider tag rewrite requires typed admission: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: provider tag rewrite requires typed admission: %w", ErrPublicationAdmissionConflict)
 	}
 	if request.validatedProviderTags && (input.Version != PublicationProviderTagInputsVersion || input.ProviderTags == nil || request.IntentKind != "rewrite") {
-		return uuid.Nil, fmt.Errorf("admit publication: invalid typed provider tag rewrite: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: invalid typed provider tag rewrite: %w", ErrPublicationAdmissionConflict)
 	}
 	if request.validatedAudioUpgrade && (input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || request.IntentKind != "audio") {
-		return uuid.Nil, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
 	}
-	if request.firstAdmission == nil && request.sourceRepublishAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" {
-		return uuid.Nil, fmt.Errorf("admit publication: source authority requires first-publication intent: %w", ErrPublicationAdmissionConflict)
+	if request.firstAdmission == nil && request.sourceRepublishAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" &&
+		!request.matchingRecheckInstall() {
+		return PublicationInputs{}, fmt.Errorf("admit publication: source authority requires first-publication intent: %w", ErrPublicationAdmissionConflict)
 	}
 	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
-		return uuid.Nil, fmt.Errorf("admit publication: manual lyrics inputs require validated admission")
+		return PublicationInputs{}, fmt.Errorf("admit publication: manual lyrics inputs require validated admission")
 	}
 	if input.AutomaticLyricsRetry != nil && !request.validatedAutomaticLyricsRetry || request.validatedAutomaticLyricsRetry && input.AutomaticLyricsRetry == nil {
-		return uuid.Nil, fmt.Errorf("admit publication: automatic lyrics retry inputs require validated admission")
+		return PublicationInputs{}, fmt.Errorf("admit publication: automatic lyrics retry inputs require validated admission")
 	}
 	if input.ManualCover != nil && !request.validatedManualCover || request.validatedManualCover && input.ManualCover == nil {
-		return uuid.Nil, fmt.Errorf("admit publication: manual cover inputs require validated admission")
+		return PublicationInputs{}, fmt.Errorf("admit publication: manual cover inputs require validated admission")
 	}
 	if request.IntentKind == "audio" {
 		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {
-			return uuid.Nil, fmt.Errorf("admit publication: source selection must match frozen audio input")
+			return PublicationInputs{}, fmt.Errorf("admit publication: source selection must match frozen audio input")
 		}
 	} else if request.Source != nil {
-		return uuid.Nil, fmt.Errorf("admit publication: rewrite cannot select an original source")
+		return PublicationInputs{}, fmt.Errorf("admit publication: rewrite cannot select an original source")
 	}
 	if request.IntentKind == "rewrite" && !sameOptionalUUID(request.ExpectedGeneration, &input.Rewrite.CurrentGeneration) {
-		return uuid.Nil, fmt.Errorf("admit publication: rewrite generation does not match frozen input")
+		return PublicationInputs{}, fmt.Errorf("admit publication: rewrite generation does not match frozen input")
 	}
 	if request.validatedAudioUpgrade && !sameOptionalUUID(request.ExpectedGeneration, &input.AudioUpgrade.Current.Generation) {
-		return uuid.Nil, fmt.Errorf("admit publication: audio upgrade generation does not match frozen current: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit publication: audio upgrade generation does not match frozen current: %w", ErrPublicationAdmissionConflict)
 	}
 	if err := validatePublicationManifest(request.NamespaceManifest); err != nil {
-		return uuid.Nil, err
+		return PublicationInputs{}, err
 	}
+	return input, nil
+}
+
+// admitPreparedPublication runs one already validated admission in its own
+// read-committed transaction. It is shared by the exported entry points and the
+// same-transaction matching recheck bridge.
+func (repository *SetupManagerRepository) admitPreparedPublication(ctx context.Context, request PublicationAdmission, input PublicationInputs, client RiverInserter) (uuid.UUID, error) {
 	operationID := uuid.New()
 	var admittedOperationID uuid.UUID
+	var err error
 	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		admittedOperationID, err = repository.admitPublicationTx(ctx, tx, request, input, operationID, client)
 		if err != nil || request.reconciliationGuard == nil {
@@ -205,12 +238,56 @@ func (repository *SetupManagerRepository) continuePublicationAudioReconciliation
 // a source-free provider metadata rewrite. Generic admission cannot confer this
 // capability without re-reading accepted evidence and local field protection.
 func (repository *SetupManagerRepository) AdmitPublicationWithProviderTags(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	input, err := request.prepareProviderTagAdmission(client)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return repository.admitPreparedPublication(ctx, request, input, client)
+}
+
+// prepareProviderTagAdmission grants the private provider-tag capability only to
+// an exact source-free rewrite and then applies the complete generic admission
+// contract. Generic admission deliberately cannot set this capability.
+func (request *PublicationAdmission) prepareProviderTagAdmission(client RiverInserter) (PublicationInputs, error) {
 	input, err := DecodePublicationInputs(request.FrozenInputs)
 	if err != nil || input.Version != PublicationProviderTagInputsVersion || input.ProviderTags == nil || request.IntentKind != "rewrite" || request.Source != nil || !request.ToolsReadRequired || len(request.Tools) != 2 {
-		return uuid.Nil, fmt.Errorf("admit provider tag publication: invalid frozen request: %w", ErrPublicationAdmissionConflict)
+		return PublicationInputs{}, fmt.Errorf("admit provider tag publication: invalid frozen request: %w", ErrPublicationAdmissionConflict)
 	}
 	request.validatedProviderTags = true
-	return repository.AdmitPublication(ctx, request, client)
+	return request.prepareAdmission(client)
+}
+
+// requireMatchingRecheckCoverInput freezes the destination cover authority for
+// one matching-recheck audio admission. The bridge reads the effective release
+// cover in its own transaction; generic admission cannot set this private field.
+func (request *PublicationAdmission) requireMatchingRecheckCoverInput(input PublicationAttemptCoverInput) error {
+	if request == nil {
+		return errors.New("require matching recheck cover input: admission is missing")
+	}
+	// matchingRecheckInstall is the private marker used by prepareAdmission to
+	// permit automatic source authority for this install. Validate it here so a
+	// mismatched release cannot widen that permission.
+	if request.IntentKind != "audio" || request.firstAdmission != nil || request.matchingRecheckCoverInput != nil ||
+		request.ExpectedReleaseID == uuid.Nil || input.ReleaseID != request.ExpectedReleaseID ||
+		input.Revision < 1 || (input.Mode != "automatic" && input.Mode != "manual") ||
+		(input.State != "absent" && input.State != "value") {
+		return fmt.Errorf("require matching recheck cover input: invalid destination receipt: %w", ErrPublicationAdmissionConflict)
+	}
+	clone := clonePublicationAttemptCoverInput(input)
+	clone.OperationID = uuid.Nil
+	clone.PositionID = uuid.Nil
+	request.matchingRecheckCoverInput = &clone
+	return nil
+}
+
+// matchingRecheckInstall identifies the private matching-recheck first-install
+// admission. It is the only matching-recheck shape allowed to carry automatic
+// source authority without a first-publication preview hook.
+func (request *PublicationAdmission) matchingRecheckInstall() bool {
+	return request != nil && request.matchingRecheckCoverInput != nil &&
+		request.ExpectedReleaseID != uuid.Nil && request.ExpectedGeneration == nil &&
+		request.IntentKind == "audio" &&
+		request.matchingRecheckCoverInput.ReleaseID == request.ExpectedReleaseID
 }
 
 func (repository *SetupManagerRepository) AdmitPublicationProviderTagsFromReconciliation(ctx context.Context, request PublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
@@ -313,6 +390,13 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	if epoch != request.ExpectedEpoch {
 		return uuid.Nil, fmt.Errorf("admit publication: output epoch changed: %w", ErrPublicationAdmissionConflict)
 	}
+	blocked, err := matchingRecheckPublicationUsesPosition(ctx, tx, epoch, request.PositionID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if blocked {
+		return uuid.Nil, fmt.Errorf("admit publication: position belongs to an unsettled matching recheck: %w", ErrPublicationAdmissionConflict)
+	}
 	if request.sourceRepublishAdmission != nil {
 		if err := repository.prepareSourceRepublishAdmission(ctx, tx, request); err != nil {
 			return uuid.Nil, err
@@ -344,7 +428,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		return uuid.Nil, fmt.Errorf("admit publication: position does not belong to expected release: %w", ErrPublicationAdmissionConflict)
 	}
 	var generation *uuid.UUID
-	err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
+	err = tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
 	if err != nil && err != sql.ErrNoRows {
 		return uuid.Nil, fmt.Errorf("admit publication: read current generation: %w", err)
 	}
@@ -429,14 +513,24 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: create attempt: %w", err)
 	}
+	var admissionCoverInput *PublicationAttemptCoverInput
 	if request.firstAdmission != nil {
-		coverInput := request.firstAdmission.coverInput
-		if coverInput == nil {
+		if request.firstAdmission.coverInput == nil {
 			return uuid.Nil, fmt.Errorf("admit publication: first publication cover receipt is unavailable")
 		}
-		coverInput.OperationID = operationID
-		coverInput.PositionID = request.PositionID
-		if err := insertPublicationAttemptCoverInput(ctx, tx, *coverInput); err != nil {
+		coverInput := clonePublicationAttemptCoverInput(*request.firstAdmission.coverInput)
+		admissionCoverInput = &coverInput
+	} else if request.matchingRecheckCoverInput != nil {
+		coverInput := clonePublicationAttemptCoverInput(*request.matchingRecheckCoverInput)
+		if request.ExpectedReleaseID != uuid.Nil && coverInput.ReleaseID != request.ExpectedReleaseID {
+			return uuid.Nil, fmt.Errorf("admit publication: matching recheck cover receipt release differs from admission: %w", ErrPublicationAdmissionConflict)
+		}
+		admissionCoverInput = &coverInput
+	}
+	if admissionCoverInput != nil {
+		admissionCoverInput.OperationID = operationID
+		admissionCoverInput.PositionID = request.PositionID
+		if err := insertPublicationAttemptCoverInput(ctx, tx, *admissionCoverInput); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: create attempt cover receipt: %w", err)
 		}
 	}
@@ -586,6 +680,7 @@ func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request Publica
 	}
 	manifest := append([]PublicationNamespaceNode(nil), request.NamespaceManifest...)
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].CanonicalKey < manifest[j].CanonicalKey })
+	adopted := 0
 	for _, n := range manifest {
 		digest := sha256.Sum256([]byte(n.CanonicalKey))
 		var reusable *PublicationNamespaceClaim
@@ -610,9 +705,22 @@ func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request Publica
 					reusable = &old
 					continue
 				}
-				if n.NodeKind == "file" && old.NodeKind == "file" && old.OwnerPositionID != nil && *old.OwnerPositionID == request.PositionID {
-					reusable = &old
-					continue
+				if n.NodeKind == "file" && old.NodeKind == "file" && old.OwnerPositionID != nil {
+					if *old.OwnerPositionID == request.PositionID {
+						reusable = &old
+						continue
+					}
+					// A different position owns this exact native path. Only the
+					// typed same-path adoption grant may take it over, and only
+					// for the exact predecessor claim it froze.
+					if request.namespaceAdoption != nil {
+						if err := validatePublicationNamespaceAdoptionTx(ctx, tx, request, old, n); err != nil {
+							return err
+						}
+						adopted++
+						reusable = &old
+						continue
+					}
 				}
 				return fmt.Errorf("admit publication: namespace conflict at %q: %w", n.RelativePath, ErrPublicationAdmissionConflict)
 			}
@@ -638,6 +746,14 @@ func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request Publica
 		reservation := &PublicationNamespaceReservation{NamespaceClaimID: claim.ID, PositionID: request.PositionID, Generation: request.CandidateGeneration}
 		if _, err := tx.NewInsert().Model(reservation).Exec(ctx); err != nil {
 			return fmt.Errorf("admit publication: reserve generation: %w", err)
+		}
+	}
+	if request.namespaceAdoption != nil && adopted != 1 {
+		return fmt.Errorf("admit publication: predecessor namespace adoption was not applied: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.namespacePredecessor != nil && request.namespaceAdoption == nil {
+		if err := validateMatchingRecheckNamespacePredecessorAvailabilityTx(ctx, tx, request); err != nil {
+			return err
 		}
 	}
 	return nil

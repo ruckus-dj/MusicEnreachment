@@ -28,18 +28,43 @@ func planExactTargetPublicationNamespace(ctx context.Context, outputRoot string,
 }
 
 func planPublicationNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget bool) (_ []persistence.PublicationNamespaceNode, resultErr error) {
-	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, exactTarget, false, "", nil)
+	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, exactTarget, false, "", nil, nil)
 }
 
 func planCurrentComparisonNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, currentPath string, currentClaimID *uuid.UUID) (_ []persistence.PublicationNamespaceNode, resultErr error) {
-	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, true, true, currentPath, currentClaimID)
+	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, true, true, currentPath, currentClaimID, nil)
+}
+
+// planFirstPublicationNamespaceWithPredecessor plans one cross-position move
+// onto the exact predecessor leaf. The predecessor file claim is treated as
+// owned by the destination only for native planning; persistence keeps the
+// original owner until the publication succeeds.
+func planFirstPublicationNamespaceWithPredecessor(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, predecessor persistence.PublicationNamespaceClaim) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+	if predecessor.ID == uuid.Nil {
+		return nil, fmt.Errorf("plan moved publication namespace: predecessor claim is required")
+	}
+	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, false, false, "", nil, &predecessor)
 }
 
 // comparison mode never falls back to the legacy same-position exemption: only
 // an exact CURRENT claim identity may be exempted. Without that authority the
 // rendered target is checked against collisions like any other exact target.
-func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget, comparison bool, currentPath string, currentClaimID *uuid.UUID) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget, comparison bool, currentPath string, currentClaimID *uuid.UUID, predecessor *persistence.PublicationNamespaceClaim) (_ []persistence.PublicationNamespaceNode, resultErr error) {
 	candidates = append([]publication.NamespaceCandidate(nil), candidates...)
+	if predecessor != nil {
+		if err := validatePredecessorNamespaceClaim(*predecessor, claims, positionID); err != nil {
+			return nil, err
+		}
+		files := 0
+		for _, candidate := range candidates {
+			if candidate.NodeKind == "file" {
+				files++
+			}
+		}
+		if files != 1 {
+			return nil, fmt.Errorf("plan moved publication namespace: expected one destination file")
+		}
+	}
 	root, err := sourcefs.NewOutputOpener().OpenRoot(ctx, outputRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open publication output root: %w", err)
@@ -210,10 +235,24 @@ func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoo
 			return nil, openErr
 		}
 		base := path.Base(candidate.RelativePath)
+		predecessorExempted := false
+		if predecessor != nil {
+			predecessorParent := path.Dir(predecessor.RelativePath)
+			if predecessorParent == "." {
+				predecessorParent = ""
+			}
+			if parentPath == predecessorParent {
+				equal, compareErr := compare(ctx, parentPath, base, path.Base(predecessor.RelativePath))
+				if compareErr != nil {
+					return nil, compareErr
+				}
+				predecessorExempted = equal
+			}
+		}
 		// First publication keeps a durable selected component across retries.
 		// Audio upgrades instead retain their explicitly requested (possibly new
 		// extension) name.
-		if !exactTarget {
+		if !exactTarget && !predecessorExempted {
 			for _, claim := range nativeClaims {
 				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
 					candidate.RelativePath = path.Join(parentCandidate, path.Base(claim.RelativePath))
@@ -222,7 +261,7 @@ func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoo
 				}
 			}
 		}
-		ownClaim := false
+		ownClaim := predecessorExempted
 		for _, claim := range nativeClaims {
 			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
 				if currentClaimID != nil {
@@ -233,6 +272,16 @@ func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoo
 				} else if !comparison && (!exactTarget || path.Base(claim.RelativePath) == base) {
 					ownClaim = true
 					break
+				}
+			}
+		}
+		if predecessorExempted {
+			// Only for the normalizer's exact single leaf, use the existing
+			// representative. The database still sees the original claim owner.
+			for i := range nativeClaims {
+				if nativeClaims[i].CanonicalKey == predecessor.CanonicalKey {
+					owner := positionID
+					nativeClaims[i].OwnerPositionID = &owner
 				}
 			}
 		}
@@ -335,6 +384,21 @@ func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoo
 	if err != nil {
 		return nil, err
 	}
+	if predecessor != nil {
+		files := 0
+		for _, node := range planned {
+			if node.NodeKind != "file" {
+				continue
+			}
+			files++
+			if node.CanonicalKey == predecessor.CanonicalKey && node.RelativePath != predecessor.RelativePath {
+				return nil, fmt.Errorf("plan moved publication namespace: destination aliases the predecessor leaf")
+			}
+		}
+		if files != 1 {
+			return nil, fmt.Errorf("plan moved publication namespace: expected one destination file")
+		}
+	}
 	for relative, id := range identities {
 		if relative == "" {
 			continue
@@ -366,6 +430,33 @@ func canonicalNamespaceParent(key string) string {
 		return key[:index]
 	}
 	return ""
+}
+
+// validatePredecessorNamespaceClaim requires the supplied claim to be the exact
+// live file claim of another position. The cross-position exemption is never
+// inferred from a path or owner alone.
+func validatePredecessorNamespaceClaim(predecessor persistence.PublicationNamespaceClaim, claims []persistence.PublicationNamespaceClaim, positionID uuid.UUID) error {
+	if predecessor.ID == uuid.Nil || predecessor.Epoch == uuid.Nil || predecessor.NodeKind != "file" ||
+		predecessor.CanonicalKey == "" || predecessor.RelativePath == "" || predecessor.Abandoned ||
+		predecessor.OwnerPositionID == nil || *predecessor.OwnerPositionID == uuid.Nil || *predecessor.OwnerPositionID == positionID {
+		return fmt.Errorf("plan moved publication namespace: predecessor claim is not an active foreign file")
+	}
+	found := false
+	for _, claim := range claims {
+		if claim.ID != predecessor.ID {
+			continue
+		}
+		if claim.Epoch != predecessor.Epoch || claim.CanonicalKey != predecessor.CanonicalKey ||
+			claim.RelativePath != predecessor.RelativePath || claim.NodeKind != "file" || claim.Abandoned ||
+			claim.OwnerPositionID == nil || *claim.OwnerPositionID != *predecessor.OwnerPositionID {
+			return fmt.Errorf("plan moved publication namespace: predecessor claim changed")
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("plan moved publication namespace: predecessor claim is unavailable")
+	}
+	return nil
 }
 
 func compareExistingNamespaceComponent(ctx context.Context, parent, technicalParent sourcefs.OutputDirectory, existing, candidate string) (bool, error) {

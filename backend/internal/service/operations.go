@@ -53,15 +53,16 @@ type OperationSnapshot struct {
 	TargetIdentity         string
 	// TargetLabel and TargetRef describe the current-operations target. They are
 	// empty on the legacy snapshot path.
-	TargetLabel    string
-	TargetRef      *OperationTargetRef
-	BytesCompleted int64
-	BytesTotal     *int64
-	SafeError      *string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	FinishedAt     *time.Time
-	UpdatedAt      time.Time
+	TargetLabel           string
+	TargetRef             *OperationTargetRef
+	MatchingRecheckMember bool
+	BytesCompleted        int64
+	BytesTotal            *int64
+	SafeError             *string
+	CreatedAt             time.Time
+	StartedAt             *time.Time
+	FinishedAt            *time.Time
+	UpdatedAt             time.Time
 }
 
 // OperationTargetRef is the JSON shape of a current-operation target identity.
@@ -270,6 +271,7 @@ func (s *Operations) ListCurrentSnapshots(ctx context.Context, query CurrentOper
 		snapshot := operationSnapshot(&rows[index].Operation)
 		snapshot.TargetLabel = rows[index].TargetLabel
 		snapshot.TargetRef = operationTargetRef(rows[index].TargetRef)
+		snapshot.MatchingRecheckMember = rows[index].MatchingRecheckMember
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots, total, nil

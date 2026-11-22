@@ -723,6 +723,9 @@ func libraryDeletionPositionBlocked(ctx context.Context, tx bun.IDB, positionID,
 	err := tx.NewRaw(`WITH target AS (SELECT ?::uuid AS position_id, ?::uuid AS epoch, ?::uuid AS generation)
 		SELECT
 			EXISTS(SELECT 1 FROM track_publication_attempt a, target t WHERE a.position_id=t.position_id)
+			OR EXISTS(SELECT 1 FROM matching_local_recheck_publication m, target t
+				WHERE m.output_epoch=t.epoch AND (m.position_id=t.position_id
+				OR (m.predecessor_position_id=t.position_id AND (m.committed_at IS NULL OR NOT m.same_path))))
 			OR EXISTS(SELECT 1 FROM publication_execution_claim c JOIN track_publication_attempt a USING (operation_id), target t WHERE a.position_id=t.position_id)
 			OR EXISTS(SELECT 1 FROM position_source_authority a LEFT JOIN track_publication p ON p.position_id=a.position_id, target t
 				WHERE a.position_id=t.position_id AND (p.position_id IS NULL OR a.publication_epoch<>p.epoch OR a.publication_generation<>p.generation))
