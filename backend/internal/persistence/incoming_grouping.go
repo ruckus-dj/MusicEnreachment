@@ -475,29 +475,86 @@ func lockCurrentIncomingSourceRows(ctx context.Context, tx bun.Tx) error {
 	return nil
 }
 
+// incomingGroupingGroupRow is one ordered group/member/location row from the
+// single projection read. Only member and location presence are pointers;
+// joined payload columns are non-null whenever their presence ID is present.
+type incomingGroupingGroupRow struct {
+	GroupID                uuid.UUID       `bun:"group_id"`
+	Manual                 bool            `bun:"manual"`
+	Revision               string          `bun:"revision"`
+	Diagnostics            json.RawMessage `bun:"diagnostics"`
+	MemberVariantID        *uuid.UUID      `bun:"member_variant_id"`
+	MemberReady            bool            `bun:"member_ready"`
+	LocationID             *uuid.UUID      `bun:"location_id"`
+	LocationRootID         uuid.UUID       `bun:"location_root_id"`
+	LocationWorkID         uuid.UUID       `bun:"location_work_id"`
+	LocationConfiguredPath string          `bun:"location_configured_path"`
+	LocationInventoryPath  string          `bun:"location_inventory_path"`
+	LocationRelativePath   string          `bun:"location_relative_path"`
+	LocationSizeBytes      int64           `bun:"location_size_bytes"`
+	LocationMtime          time.Time       `bun:"location_mtime"`
+}
+
+// loadIncomingGroupingGroups reads the whole projection in one ordered,
+// read-only statement on the supplied db or transaction. Folding the ordered
+// rows keeps deterministic group, member, and location order in a single
+// snapshot without per-group reads or locks. Group diagnostics travel only on
+// the first ordered row per group, so JSON is not repeated per location.
 func loadIncomingGroupingGroups(ctx context.Context, database bun.IDB) ([]IncomingGroupingGroup, error) {
-	groups := make([]IncomingGroupingGroup, 0)
-	if err := database.NewRaw(`SELECT id, manual, revision, diagnostics FROM incoming_group ORDER BY id`).Scan(ctx, &groups); err != nil {
+	rows := make([]incomingGroupingGroupRow, 0)
+	if err := database.NewRaw(`SELECT g.id AS group_id, g.manual AS manual, g.revision AS revision,
+		CASE WHEN row_number() OVER (PARTITION BY g.id ORDER BY m.variant_id, l.source_root_id, l.relative_path)=1
+			THEN g.diagnostics END AS diagnostics,
+		m.variant_id AS member_variant_id, m.ready AS member_ready,
+		l.source_root_id AS location_root_id, l.work_id AS location_work_id,
+		l.location_id AS location_id, l.configured_path AS location_configured_path,
+		l.inventory_path AS location_inventory_path, l.relative_path AS location_relative_path,
+		l.size_bytes AS location_size_bytes, l.mtime AS location_mtime
+		FROM incoming_group g
+		LEFT JOIN incoming_group_member m ON m.group_id=g.id
+		LEFT JOIN incoming_group_member_location l ON l.group_id=m.group_id AND l.variant_id=m.variant_id
+		ORDER BY g.id, m.variant_id, l.source_root_id, l.relative_path`).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("load incoming groups: %w", err)
 	}
-	for i := range groups {
-		var members []struct {
-			VariantID uuid.UUID `bun:"variant_id"`
-			Ready     bool      `bun:"ready"`
+	groups := make([]IncomingGroupingGroup, 0)
+	var previousMember *uuid.UUID
+	for _, row := range rows {
+		if len(groups) == 0 || groups[len(groups)-1].ID != row.GroupID {
+			groups = append(groups, IncomingGroupingGroup{
+				ID:          row.GroupID,
+				Manual:      row.Manual,
+				Revision:    row.Revision,
+				Diagnostics: row.Diagnostics,
+			})
+			previousMember = nil
 		}
-		if err := database.NewRaw(`SELECT variant_id, ready FROM incoming_group_member WHERE group_id=? ORDER BY variant_id`, groups[i].ID).Scan(ctx, &members); err != nil {
-			return nil, fmt.Errorf("load incoming group members: %w", err)
+		if row.MemberVariantID == nil {
+			continue
 		}
-		for _, member := range members {
-			if member.Ready {
-				groups[i].Members = append(groups[i].Members, member.VariantID)
+		group := &groups[len(groups)-1]
+		memberID := *row.MemberVariantID
+		if previousMember == nil || memberID != *previousMember {
+			previousMember = row.MemberVariantID
+			if row.MemberReady {
+				group.Members = append(group.Members, memberID)
 			} else {
-				groups[i].UnreadyMembers = append(groups[i].UnreadyMembers, member.VariantID)
+				group.UnreadyMembers = append(group.UnreadyMembers, memberID)
 			}
 		}
-		if err := database.NewRaw(`SELECT variant_id, source_root_id AS root_id, work_id, location_id, configured_path, inventory_path, relative_path, size_bytes, mtime FROM incoming_group_member_location WHERE group_id=? ORDER BY variant_id, source_root_id, relative_path`, groups[i].ID).Scan(ctx, &groups[i].Locations); err != nil {
-			return nil, fmt.Errorf("load incoming group location fences: %w", err)
+		if row.LocationID == nil {
+			continue
 		}
+		group.Locations = append(group.Locations, IncomingGroupingMemberLocation{
+			VariantID:      memberID,
+			RootID:         row.LocationRootID,
+			WorkID:         row.LocationWorkID,
+			LocationID:     *row.LocationID,
+			ConfiguredPath: row.LocationConfiguredPath,
+			InventoryPath:  row.LocationInventoryPath,
+			RelativePath:   row.LocationRelativePath,
+			SizeBytes:      row.LocationSizeBytes,
+			Mtime:          row.LocationMtime,
+		})
 	}
 	return groups, nil
 }

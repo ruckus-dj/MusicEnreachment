@@ -4,9 +4,12 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -22,10 +25,41 @@ func TestIncomingGroupingCorrectionsCASAndInvalidationWithPostgreSQL(t *testing.
 	if err != nil || state.Revision != 0 || !state.NeedsRefresh {
 		t.Fatalf("initial state = %+v, %v", state, err)
 	}
-	first, second := uuid.New(), uuid.New()
+	empty, err := repository.List(ctx)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("empty groups = %#v, %v; want a nonnil empty projection", empty, err)
+	}
+	ready, unready, plain := uuid.New(), uuid.New(), uuid.New()
+	groupIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i].String() < groupIDs[j].String() })
+	firstID, secondID := groupIDs[0], groupIDs[1]
+	rootIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	sort.Slice(rootIDs, func(i, j int) bool { return rootIDs[i].String() < rootIDs[j].String() })
+	lowRoot, highRoot := rootIDs[0], rootIDs[1]
+	mtime := time.Date(2026, time.November, 23, 12, 0, 0, 0, time.UTC)
+	highLocation := IncomingGroupingMemberLocation{
+		VariantID: ready, RootID: highRoot, WorkID: uuid.New(), LocationID: uuid.New(),
+		ConfiguredPath: "/high", InventoryPath: "/inventory/high", RelativePath: "b.flac", SizeBytes: 2, Mtime: mtime,
+	}
+	lowLastLocation := IncomingGroupingMemberLocation{
+		VariantID: ready, RootID: lowRoot, WorkID: uuid.New(), LocationID: uuid.New(),
+		ConfiguredPath: "/low", InventoryPath: "/inventory/low", RelativePath: "z.flac", SizeBytes: 3, Mtime: mtime,
+	}
+	lowFirstLocation := IncomingGroupingMemberLocation{
+		VariantID: ready, RootID: lowRoot, WorkID: uuid.New(), LocationID: uuid.New(),
+		ConfiguredPath: "/low", InventoryPath: "/inventory/low", RelativePath: "a.flac", SizeBytes: 1, Mtime: mtime,
+	}
+	// Insert groups and locations out of database order: the read must restore
+	// ascending group, member, and location order from the folded statement.
 	groups := []IncomingGroupingGroup{
-		{ID: uuid.New(), Manual: true, Revision: "r1", Members: []uuid.UUID{first}},
-		{ID: uuid.New(), Manual: true, Revision: "r2", Members: []uuid.UUID{second}},
+		{ID: secondID, Manual: true, Revision: "r2", Members: []uuid.UUID{plain}},
+		{
+			ID: firstID, Manual: true, Revision: "r1",
+			Diagnostics:    json.RawMessage(`[{"code":"invalid_release_mbid","values":["not-a-uuid"]}]`),
+			Members:        []uuid.UUID{ready},
+			UnreadyMembers: []uuid.UUID{unready},
+			Locations:      []IncomingGroupingMemberLocation{highLocation, lowLastLocation, lowFirstLocation},
+		},
 	}
 	compute := func(_ []IncomingGroupingCapture, _ []IncomingGroupingGroup) ([]IncomingGroupingGroup, error) {
 		return groups, nil
@@ -43,10 +77,39 @@ func TestIncomingGroupingCorrectionsCASAndInvalidationWithPostgreSQL(t *testing.
 	if err != nil || len(persisted) != 2 {
 		t.Fatalf("persisted groups = %+v, %v", persisted, err)
 	}
-	for _, group := range persisted {
-		if !group.Manual || len(group.Members) != 1 {
-			t.Errorf("persisted manual correction = %+v", group)
+	if persisted[0].ID != firstID || persisted[1].ID != secondID {
+		t.Fatalf("persisted group order = %v, %v; want %v, %v", persisted[0].ID, persisted[1].ID, firstID, secondID)
+	}
+	firstPersisted := persisted[0]
+	if !firstPersisted.Manual || firstPersisted.Revision != "r1" {
+		t.Fatalf("persisted first group = %+v; want manual r1", firstPersisted)
+	}
+	var diagnostics []map[string]any
+	if err := json.Unmarshal(firstPersisted.Diagnostics, &diagnostics); err != nil || len(diagnostics) != 1 ||
+		diagnostics[0]["code"] != "invalid_release_mbid" {
+		t.Errorf("persisted diagnostics = %s, %v; want one invalid_release_mbid entry", firstPersisted.Diagnostics, err)
+	}
+	if len(firstPersisted.Members) != 1 || firstPersisted.Members[0] != ready {
+		t.Errorf("persisted ready members = %v; want [%v]", firstPersisted.Members, ready)
+	}
+	if len(firstPersisted.UnreadyMembers) != 1 || firstPersisted.UnreadyMembers[0] != unready {
+		t.Errorf("persisted unready members = %v; want [%v]", firstPersisted.UnreadyMembers, unready)
+	}
+	wantLocations := []IncomingGroupingMemberLocation{lowFirstLocation, lowLastLocation, highLocation}
+	if len(firstPersisted.Locations) != len(wantLocations) {
+		t.Fatalf("persisted locations = %+v; want %d ordered fences", firstPersisted.Locations, len(wantLocations))
+	}
+	for i, want := range wantLocations {
+		got := firstPersisted.Locations[i]
+		if got.VariantID != want.VariantID || got.RootID != want.RootID || got.WorkID != want.WorkID || got.LocationID != want.LocationID ||
+			got.ConfiguredPath != want.ConfiguredPath || got.InventoryPath != want.InventoryPath || got.RelativePath != want.RelativePath ||
+			got.SizeBytes != want.SizeBytes || !got.Mtime.Equal(want.Mtime) {
+			t.Errorf("ordered location %d = %+v; want %+v", i, got, want)
 		}
+	}
+	if secondPersisted := persisted[1]; len(secondPersisted.Members) != 1 || secondPersisted.Members[0] != plain ||
+		len(secondPersisted.UnreadyMembers) != 0 || len(secondPersisted.Locations) != 0 {
+		t.Errorf("persisted second group = %+v; want one ready member without locations", secondPersisted)
 	}
 	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return InvalidateIncomingGrouping(ctx, tx)
