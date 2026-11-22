@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -141,7 +142,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Browse existing server directories",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, input *BrowseDirectoriesInput) (*BrowseDirectoriesOutput, error) {
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		listing, err := setup.BrowseDirectories(ctx, input.Path, input.Offset, 200)
@@ -182,7 +183,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
@@ -207,7 +208,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		paths, err := setup.ValidatePaths(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory)
@@ -234,7 +235,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.CheckMusicBrainz(ctx); err != nil {
@@ -262,10 +263,13 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.Complete(ctx); err != nil {
+			if errors.Is(err, service.ErrSetupStateUnavailable) {
+				return nil, huma.Error500InternalServerError("failed to read setup state")
+			}
 			return nil, huma.Error409Conflict("setup requirements are not met")
 		}
 		return nil, nil
@@ -295,7 +299,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
@@ -311,7 +315,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
@@ -367,11 +371,11 @@ func requireSetupIncomplete(ctx context.Context, setup *service.SetupService) er
 	if setup == nil {
 		return huma.Error503ServiceUnavailable("setup service is unavailable")
 	}
-	state, err := setup.State(ctx)
+	completed, err := setup.SetupCompleted(ctx)
 	if err != nil {
 		return huma.Error500InternalServerError("failed to read setup state")
 	}
-	if state.Completed {
+	if completed {
 		return huma.Error404NotFound("setup route is closed after completion")
 	}
 	return nil
@@ -381,28 +385,25 @@ func requireSetupComplete(ctx context.Context, setup *service.SetupService) erro
 	if setup == nil {
 		return huma.Error503ServiceUnavailable("setup service is unavailable")
 	}
-	state, err := setup.State(ctx)
+	completed, err := setup.SetupCompleted(ctx)
 	if err != nil {
 		return huma.Error500InternalServerError("failed to read setup state")
 	}
-	if !state.Completed {
+	if !completed {
 		return huma.Error409Conflict("setup is not complete")
 	}
 	return nil
 }
 
-func requireSupportedPlatform(ctx context.Context, setup *service.SetupService) error {
+func requireSupportedPlatform(setup *service.SetupService) error {
 	if setup == nil {
 		return huma.Error503ServiceUnavailable("setup service is unavailable")
 	}
-	state, err := setup.State(ctx)
-	if err != nil {
-		return huma.Error500InternalServerError("failed to read platform state")
-	}
-	if state.Platform.Diagnostic || !state.Platform.Platform.Supported() {
-		reason := state.Platform.Reason
+	platform := setup.PlatformState()
+	if platform.Diagnostic || !platform.Platform.Supported() {
+		reason := platform.Reason
 		if reason == "" {
-			reason = fmt.Sprintf("unsupported instance platform %s/%s", state.Platform.Platform.GOOS, state.Platform.Platform.GOARCH)
+			reason = fmt.Sprintf("unsupported instance platform %s/%s", platform.Platform.GOOS, platform.Platform.GOARCH)
 		}
 		return huma.Error503ServiceUnavailable("product operations are unavailable for this instance platform: " + reason)
 	}

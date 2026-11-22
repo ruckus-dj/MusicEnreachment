@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -51,6 +52,18 @@ func (store failingSettingsStore) Set(ctx context.Context, key, value string) er
 		return fmt.Errorf("database secret: private-credential")
 	}
 	return store.apiSettingsStore.Set(ctx, key, value)
+}
+
+// failingRuntimeSnapshotStore keeps individual setting reads working while
+// failing the coherent snapshot used by full configuration health.
+type failingRuntimeSnapshotStore struct {
+	apiSettingsStore
+	snapshotReads int
+}
+
+func (store *failingRuntimeSnapshotStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	store.snapshotReads++
+	return settings.RuntimeSettingsValues{}, errors.New("runtime settings snapshot unavailable")
 }
 
 type githubTokenCheckerFunc func(context.Context, string) error
@@ -187,10 +200,11 @@ func (store conditionalAPISettingsStore) UpdateRuntimeIfCurrent(ctx context.Cont
 }
 
 func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
-	store := apiSettingsStore{}
+	store := &failingRuntimeSnapshotStore{apiSettingsStore: apiSettingsStore{}}
 	registry := settings.New(store, nil)
 	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
-	handler := api.HandlerWithSetup(setup)
+	catalog := service.NewCatalogService(apiCatalogFixture{}, tools.Platform{GOOS: "linux", GOARCH: "amd64"})
+	handler := api.HandlerWithDependencies(api.Dependencies{Setup: setup, Catalog: catalog})
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPut, "/setup/runtime", strings.NewReader(`{}`))
@@ -198,6 +212,27 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("setup mutation status = %d, want %d: %s", response.Code, http.StatusNoContent, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/tools/catalog?package_kind=fpcalc", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("catalog platform read status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/setup/health", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("full health status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/setup/complete", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("complete with unavailable setup state = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+	if store.snapshotReads != 2 {
+		t.Fatalf("runtime snapshot reads = %d, want one each for health and complete", store.snapshotReads)
 	}
 
 	if err := registry.CompleteSetup(context.Background()); err != nil {

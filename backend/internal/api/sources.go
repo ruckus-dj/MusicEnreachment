@@ -153,7 +153,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.SourceRoots == nil {
@@ -193,7 +193,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.SourceRoots == nil {
@@ -224,7 +224,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.SourceRoots == nil {
@@ -288,7 +288,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.SourceScan == nil || dependencies.Operations == nil {

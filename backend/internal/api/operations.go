@@ -164,7 +164,7 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if snapshot, err := operations.Snapshot(ctx, input.ID); err == nil && snapshot.Kind == service.LibraryDeletionOperationKind {
@@ -198,7 +198,7 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := operations.Dismiss(ctx, input.ID); err != nil {

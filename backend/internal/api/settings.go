@@ -104,7 +104,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if setup == nil {
 			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SetGitHubToken(ctx, input.Body.Token); err != nil {
@@ -127,7 +127,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if setup == nil {
 			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.DeleteGitHubToken(ctx); err != nil {
@@ -156,7 +156,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		var outputDirectory, publicationFormat *string
@@ -216,7 +216,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		targetChanged := input.Body.Mode != nil || input.Body.BaseURL != nil
@@ -259,7 +259,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.CheckMusicBrainz(ctx); err != nil {
@@ -275,7 +275,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
@@ -291,7 +291,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SetSHA256Enabled(ctx, input.Body.Enabled); err != nil {
@@ -307,7 +307,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.SetLogLevel(ctx, input.Body.Level); err != nil {
@@ -320,7 +320,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		OperationID: "set-acoustid-application-key", Method: http.MethodPut, Path: "/settings/acoustid/application-key",
 		Summary: "Set the AcoustID application key", Tags: []string{"Settings"},
 	}, func(ctx context.Context, input *UpdateAcoustIDApplicationKeyInput) (*struct{}, error) {
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if len(input.Body.Key) == 0 || len(input.Body.Key) > 4096 {
@@ -336,7 +336,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		OperationID: "delete-acoustid-application-key", Method: http.MethodDelete, Path: "/settings/acoustid/application-key",
 		Summary: "Delete the AcoustID application key", Tags: []string{"Settings"},
 	}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if err := setup.DeleteAcoustIDApplicationKey(ctx); err != nil {

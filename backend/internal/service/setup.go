@@ -22,6 +22,7 @@ import (
 
 var (
 	ErrSettingsConflict                 = settings.ErrSettingsConflict
+	ErrSetupStateUnavailable            = errors.New("setup state is unavailable")
 	ErrGitHubTokenMalformed             = errors.New("GitHub token is malformed")
 	ErrGitHubTokenRejected              = errors.New("GitHub rejected the token")
 	ErrGitHubTokenValidationUnavailable = errors.New("GitHub token validation is unavailable")
@@ -141,6 +142,18 @@ func NewSetup(store settings.Store, registry *settings.Registry, platform settin
 		installations:     installations,
 	}
 }
+
+// SetupCompleted reports whether first-run Setup is complete. Route guards use
+// this narrow read instead of the full state and its configuration health probes.
+func (s *SetupService) SetupCompleted(ctx context.Context) (bool, error) {
+	return s.registry.SetupCompleted(ctx)
+}
+
+// PlatformState returns the platform state frozen when the service started.
+func (s *SetupService) PlatformState() settings.PlatformState {
+	return s.platform
+}
+
 func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 	return s.state(ctx, false)
 }
@@ -643,7 +656,7 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	}
 	state, err := s.state(ctx, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrSetupStateUnavailable, err)
 	}
 	if !state.ConfigurationHealth.Healthy {
 		return fmt.Errorf("setup requirements are not met: %s", strings.Join(state.ConfigurationHealth.Problems, ", "))

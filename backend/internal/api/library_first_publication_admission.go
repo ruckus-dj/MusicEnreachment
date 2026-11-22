@@ -39,7 +39,7 @@ func registerLibraryFirstPublicationAdmission(api huma.API, dependencies Depende
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.LibraryPublications == nil || dependencies.Operations == nil {

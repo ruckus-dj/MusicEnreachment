@@ -50,7 +50,7 @@ func registerSourceArtifactCleanup(api huma.API, cleanup *service.SourceAnalysis
 		if err := requireSetupComplete(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
 		if cleanup == nil {

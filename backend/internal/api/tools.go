@@ -127,16 +127,13 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		OperationID: "list-tool-catalog", Method: http.MethodGet, Path: "/tools/catalog",
 		Summary: "List compatible tool releases", Tags: []string{"Tools"},
 	}, func(ctx context.Context, input *CatalogInput) (*CatalogOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.Catalog == nil || dependencies.Setup == nil {
 			return nil, huma.Error503ServiceUnavailable("tool catalog is unavailable")
 		}
-		state, err := dependencies.Setup.State(ctx)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read instance state")
-		}
+		platform := dependencies.Setup.PlatformState()
 		result, err := dependencies.Catalog.ListWithNotice(ctx, input.PackageKind)
 		if err != nil {
 			return nil, huma.Error502BadGateway(service.ToolCatalogErrorMessage(err))
@@ -152,9 +149,9 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		return &CatalogOutput{Body: CatalogBody{
 			PackageKind: input.PackageKind,
 			Platform: PlatformResponse{
-				GOOS: state.Platform.Platform.GOOS, GOARCH: state.Platform.Platform.GOARCH,
-				Supported: state.Platform.Platform.Supported(), Diagnostic: state.Platform.Diagnostic,
-				Reason: state.Platform.Reason,
+				GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+				Supported: platform.Platform.Supported(), Diagnostic: platform.Diagnostic,
+				Reason: platform.Reason,
 			},
 			Releases: response, Notice: result.Notice,
 		}}, nil
@@ -164,7 +161,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		OperationID: "preflight-tool-install", Method: http.MethodPost, Path: "/tools/installations/preflight",
 		Summary: "Preflight a tool installation", Tags: []string{"Tools"},
 	}, func(ctx context.Context, input *InstallPreflightInput) (*InstallPreflightOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.InstallOperations == nil {
@@ -182,7 +179,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		OperationID: "start-tool-install", Method: http.MethodPost, Path: "/tools/installations",
 		Summary: "Start a tool installation", Tags: []string{"Tools"},
 	}, func(ctx context.Context, input *StartInstallInput) (*OperationOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.InstallOperations == nil {
@@ -236,7 +233,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.Installations == nil {
@@ -255,7 +252,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.Installations == nil {
@@ -274,7 +271,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.MoveTools == nil {
@@ -298,7 +295,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.MoveTools == nil {

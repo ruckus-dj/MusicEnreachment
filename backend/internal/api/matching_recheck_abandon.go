@@ -52,7 +52,7 @@ func registerMatchingRecheckAbandonment(api huma.API, dependencies Dependencies)
 		if !available {
 			return nil, huma.Error503ServiceUnavailable("matching republication abandonment is unavailable")
 		}
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if err := publications.AbandonMatchingRecheckPublications(ctx, input.ID, input.Body.Revision); err != nil {

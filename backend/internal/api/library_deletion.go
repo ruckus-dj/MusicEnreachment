@@ -74,7 +74,7 @@ func registerLibraryDeletion(api huma.API, dependencies Dependencies) {
 		Path: "/library/artists/{artist_id}/deletion/preview", Summary: "Preview a library artist deletion",
 		Tags: []string{"Library"},
 	}, func(ctx context.Context, input *LibraryDeletionArtistInput) (*LibraryDeletionPreviewOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.LibraryDeletion == nil {
@@ -92,7 +92,7 @@ func registerLibraryDeletion(api huma.API, dependencies Dependencies) {
 		Path: "/library/releases/{release_id}/deletion/preview", Summary: "Preview a library release deletion",
 		Tags: []string{"Library"},
 	}, func(ctx context.Context, input *LibraryDeletionReleaseInput) (*LibraryDeletionPreviewOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.LibraryDeletion == nil {
@@ -110,7 +110,7 @@ func registerLibraryDeletion(api huma.API, dependencies Dependencies) {
 		Path:    "/library/releases/{release_id}/positions/{position_id}/deletion/preview",
 		Summary: "Preview a library publication deletion", Tags: []string{"Library"},
 	}, func(ctx context.Context, input *LibraryDeletionPublicationInput) (*LibraryDeletionPreviewOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.LibraryDeletion == nil {
@@ -128,7 +128,7 @@ func registerLibraryDeletion(api huma.API, dependencies Dependencies) {
 		Path: "/library/deletion/confirm", Summary: "Confirm a previewed library deletion",
 		Tags: []string{"Library"}, DefaultStatus: http.StatusAccepted,
 	}, func(ctx context.Context, input *LibraryDeletionConfirmationInput) (*OperationOutput, error) {
-		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+		if err := requireSupportedPlatform(dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.LibraryDeletion == nil || dependencies.Operations == nil {
