@@ -334,7 +334,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	var pinnedInstallation *ToolInstallation
 	var sourceSelectionTrackID uuid.UUID
 	var sourceSelectionChanged bool
-	if request.Source != nil {
+	if request.Source != nil || repository.publicationScorer != nil {
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: lock source mutation gate: %w", err)
 		}
@@ -358,6 +358,11 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		}
 	} else if len(request.Tools) != 0 {
 		return uuid.Nil, fmt.Errorf("admit publication: tool selections require tools-read admission")
+	}
+	if repository.publicationScorer != nil {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: lock matching provider configuration: %w", err)
+		}
 	}
 	if request.Source != nil {
 		var err error
@@ -483,6 +488,10 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 			return uuid.Nil, err
 		}
 	}
+	matchingConfidence, err := repository.calculatePublicationMatchingConfidence(ctx, tx, releaseID, request.PositionID, input)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	if err := reservePublicationNamespace(ctx, tx, request); err != nil {
 		return uuid.Nil, err
 	}
@@ -509,7 +518,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
 	}{Version: 1, Nodes: request.NamespaceManifest})
-	attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", ResumeMode: PublicationResumeModePrepare, FrozenInputs: frozenInputs, NamespaceManifest: manifest}
+	attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", ResumeMode: PublicationResumeModePrepare, MatchingConfidence: matchingConfidence, FrozenInputs: frozenInputs, NamespaceManifest: manifest}
 	if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: create attempt: %w", err)
 	}

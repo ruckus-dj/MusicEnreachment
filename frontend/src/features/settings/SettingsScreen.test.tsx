@@ -54,6 +54,7 @@ const settings = {
     publication_path_template:
       '{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}',
     publication_remove_sources: false,
+    publication_auto_complete_albums: false,
     source_file_concurrency: 4,
     matching_pair_threshold: 0.7,
     musicbrainz_mode: "public",
@@ -406,6 +407,7 @@ describe("SettingsScreen", () => {
   it("autosaves publication format and log level without saving an unrelated concurrency draft", async () => {
     let publicationFormat = "mka";
     let publicationRemoveSources = false;
+    let publicationAutoCompleteAlbums = false;
     let lrclibEnabled = true;
     let logLevel = "info";
     let releaseFirstFormatWrite!: () => void;
@@ -422,9 +424,11 @@ describe("SettingsScreen", () => {
       const body = (await request.json()) as {
         publication_format?: string;
         publication_remove_sources?: boolean;
+        publication_auto_complete_albums?: boolean;
         expected: {
           publication_format?: string;
           publication_remove_sources?: boolean;
+          publication_auto_complete_albums?: boolean;
         };
       };
       if (body.publication_format !== undefined) {
@@ -441,12 +445,19 @@ describe("SettingsScreen", () => {
           });
         }
         publicationFormat = body.publication_format;
-      } else {
+      } else if (body.publication_remove_sources !== undefined) {
         expect(body).toEqual({
           publication_remove_sources: true,
           expected: { publication_remove_sources: false },
         });
         publicationRemoveSources = body.publication_remove_sources ?? false;
+      } else {
+        expect(body).toEqual({
+          publication_auto_complete_albums: true,
+          expected: { publication_auto_complete_albums: false },
+        });
+        publicationAutoCompleteAlbums =
+          body.publication_auto_complete_albums ?? false;
       }
       return new HttpResponse(null, { status: 204 });
     });
@@ -497,6 +508,7 @@ describe("SettingsScreen", () => {
             ...settings.settings,
             publication_format: publicationFormat,
             publication_remove_sources: publicationRemoveSources,
+            publication_auto_complete_albums: publicationAutoCompleteAlbums,
             lrclib_enabled: lrclibEnabled,
             log_level: logLevel,
             musicbrainz_mode: musicBrainz.mode,
@@ -598,6 +610,16 @@ describe("SettingsScreen", () => {
     expect(
       await screen.findByText("Настройка удаления исходников сохранена."),
     ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByLabelText("Автоматически публиковать полные альбомы"),
+    );
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(4));
+    expect(
+      await screen.findByText("Настройка автопубликации сохранена."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/каждая позиция издания достигает порога/),
+    ).toHaveAttribute("id", "album-completion-help");
     await selectSettingsTab("Провайдеры");
     fireEvent.click(screen.getByLabelText("LRCLIB включён"));
     await waitFor(() => expect(lrclibWrites).toHaveBeenCalledTimes(1));
@@ -609,7 +631,7 @@ describe("SettingsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
-    expect(runtimeWrites).toHaveBeenCalledTimes(3);
+    expect(runtimeWrites).toHaveBeenCalledTimes(4);
     expect(logWrites).toHaveBeenCalledTimes(1);
     expect(musicBrainzWrites).toHaveBeenCalledTimes(2);
     await waitFor(() =>

@@ -93,11 +93,12 @@ type LibraryReleaseTrackResponse struct {
 }
 
 type LibraryReleaseTrackPublicationResponse struct {
-	RelativePath string    `json:"relative_path"`
-	Generation   uuid.UUID `json:"generation"`
-	ValidatedAt  string    `json:"validated_at"`
-	Codec        string    `json:"codec"`
-	Container    string    `json:"container"`
+	RelativePath       string    `json:"relative_path"`
+	Generation         uuid.UUID `json:"generation"`
+	ValidatedAt        string    `json:"validated_at"`
+	MatchingConfidence *float64  `json:"matching_confidence" nullable:"true"`
+	Codec              string    `json:"codec"`
+	Container          string    `json:"container"`
 }
 
 type LibraryTrackSourceResponse struct {
@@ -222,7 +223,8 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 		if track.Publication != nil {
 			item.Publication = &LibraryReleaseTrackPublicationResponse{
 				RelativePath: track.Publication.RelativePath, Generation: track.Publication.Generation,
-				ValidatedAt: track.Publication.ValidatedAt, Codec: track.Publication.Codec, Container: track.Publication.Container,
+				ValidatedAt: track.Publication.ValidatedAt, MatchingConfidence: track.Publication.MatchingConfidence,
+				Codec: track.Publication.Codec, Container: track.Publication.Container,
 			}
 		}
 		for _, source := range track.Sources {

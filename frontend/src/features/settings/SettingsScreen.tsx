@@ -535,6 +535,7 @@ export function SettingsScreen() {
     restoredSettingsDraft?.publicationPathTemplate,
   );
   const publicationRemoveSources = useSectionDraft<boolean>();
+  const publicationAutoCompleteAlbums = useSectionDraft<boolean>();
   const sourceFileConcurrency = useSectionDraft<string>(
     Object.is,
     restoredSettingsDraft?.sourceFileConcurrency,
@@ -744,6 +745,9 @@ export function SettingsScreen() {
         confirmedPublicationFormat.current = freshPublicationFormat;
       publicationPathTemplate.sync(settings.publication_path_template);
       publicationRemoveSources.sync(settings.publication_remove_sources);
+      publicationAutoCompleteAlbums.sync(
+        settings.publication_auto_complete_albums,
+      );
       sourceFileConcurrency.sync(String(settings.source_file_concurrency));
       matchingThreshold.sync(
         formatMatchingThreshold(settings.matching_pair_threshold),
@@ -787,6 +791,7 @@ export function SettingsScreen() {
       publicationFormat.isPristineAndIdle,
       publicationPathTemplate.sync,
       publicationRemoveSources.sync,
+      publicationAutoCompleteAlbums.sync,
       sourceFileConcurrency.sync,
       matchingThreshold.sync,
       musicBrainz.sync,
@@ -1745,6 +1750,34 @@ export function SettingsScreen() {
         ),
       publicationRemoveSources.beginSave,
       publicationRemoveSources.endSave,
+      savedDraft,
+    );
+  }
+
+  function savePublicationAutoCompleteAlbums(enabled: boolean) {
+    publicationAutoCompleteAlbums.update(enabled);
+    const savedDraft = publicationAutoCompleteAlbums.capture();
+    void mutate(
+      (draft) =>
+        updateSettings({
+          publication_auto_complete_albums: draft.value ?? enabled,
+          expected: {
+            publication_auto_complete_albums:
+              draft.baseline ??
+              state?.settings.publication_auto_complete_albums ??
+              false,
+          } satisfies UpdateSettingsExpectedBody,
+        }),
+      204,
+      settingsNotice("albumCompletionSaved"),
+      publicationAutoCompleteAlbums.capture,
+      (fresh, revision) =>
+        publicationAutoCompleteAlbums.acknowledge(
+          fresh.settings.publication_auto_complete_albums,
+          revision,
+        ),
+      publicationAutoCompleteAlbums.beginSave,
+      publicationAutoCompleteAlbums.endSave,
       savedDraft,
     );
   }
@@ -3240,6 +3273,13 @@ export function SettingsScreen() {
                       state.settings.publication_remove_sources,
                     dirty: publicationRemoveSources.dirty,
                     onChange: savePublicationRemoveSources,
+                  },
+                  albumCompletion: {
+                    enabled:
+                      publicationAutoCompleteAlbums.value ??
+                      state.settings.publication_auto_complete_albums,
+                    dirty: publicationAutoCompleteAlbums.dirty,
+                    onChange: savePublicationAutoCompleteAlbums,
                   },
                   failures: generalFailurePresentations(),
                 }}

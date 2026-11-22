@@ -20,6 +20,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
+	"github.com/uptrace/bun"
 )
 
 // This drives real durable provider and matching deliveries against a local
@@ -472,11 +473,24 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err != nil || header == nil || header.PolicyVersion != service.MatchingPolicyVersion {
 		t.Fatalf("sealed matching publication header=%+v candidates=%d err=%v", header, len(candidates), err)
 	}
-	if len(candidates) != 1 || candidates[0].Score < .7 || len(candidates[0].Positions) != 1 || candidates[0].Positions[0].Medium != 0 || candidates[0].Positions[0].Position != 0 {
-		t.Fatalf("hydrated release candidate=%+v; want a confident assignment at actual medium/track position", candidates)
-	}
+	assertLiveMatchingReview(t, ctx, database, group.ID, candidates)
 	var publishedGroupingEpoch int64
 	if err := database.NewRaw(`SELECT grouping_epoch FROM matching_run WHERE id=?`, parentID).Scan(ctx, &publishedGroupingEpoch); err != nil || publishedGroupingEpoch != groupingEpoch {
 		t.Fatalf("published run grouping epoch=%d err=%v; want original %d", publishedGroupingEpoch, err, groupingEpoch)
+	}
+}
+
+func assertLiveMatchingReview(t *testing.T, ctx context.Context, db *bun.DB, groupID uuid.UUID, stored []persistence.IncomingMatchCandidate) {
+	t.Helper()
+	if len(stored) != 0 {
+		t.Fatalf("review unexpectedly persisted scores: %+v", stored)
+	}
+	review, err := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db)).Get(ctx, groupID)
+	if err != nil || !review.Evaluated || review.AutomaticAssignment == nil || len(review.Candidates) != 1 || len(review.Candidates[0].Positions) != 1 {
+		t.Fatalf("live matching review=%+v err=%v", review, err)
+	}
+	position := review.Candidates[0].Positions[0]
+	if position.Medium != 0 || position.Position != 0 || position.AssignmentConfidence == nil || *position.AssignmentConfidence < .7 {
+		t.Fatalf("live candidate position = %+v, want qualifying score for the first track", position)
 	}
 }

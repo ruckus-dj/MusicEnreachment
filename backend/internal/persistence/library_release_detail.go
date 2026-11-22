@@ -70,10 +70,11 @@ type LibraryReleaseTrackDetail struct {
 }
 
 type LibraryPositionPublication struct {
-	RelativePath string
-	Generation   uuid.UUID
-	ValidatedAt  string
-	ActualAudio  json.RawMessage
+	RelativePath       string
+	Generation         uuid.UUID
+	ValidatedAt        string
+	MatchingConfidence *float64
+	ActualAudio        json.RawMessage
 }
 
 type LibraryTrackSourceDetail struct {
@@ -208,13 +209,14 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 			positionIndex[result.Tracks[i].ID] = i
 		}
 		var publications []struct {
-			PositionID   uuid.UUID       `bun:"position_id"`
-			RelativePath string          `bun:"relative_path"`
-			Generation   uuid.UUID       `bun:"generation"`
-			ValidatedAt  string          `bun:"validated_at"`
-			ActualAudio  json.RawMessage `bun:"actual_audio"`
+			PositionID         uuid.UUID       `bun:"position_id"`
+			RelativePath       string          `bun:"relative_path"`
+			Generation         uuid.UUID       `bun:"generation"`
+			ValidatedAt        string          `bun:"validated_at"`
+			MatchingConfidence *float64        `bun:"matching_confidence"`
+			ActualAudio        json.RawMessage `bun:"actual_audio"`
 		}
-		if err := tx.NewRaw(`SELECT tp.position_id,tp.relative_path,tp.generation,tp.validated_at::text,tp.actual_audio
+		if err := tx.NewRaw(`SELECT tp.position_id,tp.relative_path,tp.generation,tp.validated_at::text,tp.matching_confidence,tp.actual_audio
 			FROM track_publication tp JOIN release_track rt ON rt.id=tp.position_id WHERE rt.release_id=?`, id).Scan(ctx, &publications); err != nil {
 			return fmt.Errorf("read current release position publications: %w", err)
 		}
@@ -222,7 +224,8 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 			if index, exists := positionIndex[publication.PositionID]; exists {
 				result.Tracks[index].Publication = &LibraryPositionPublication{
 					RelativePath: publication.RelativePath, Generation: publication.Generation,
-					ValidatedAt: publication.ValidatedAt, ActualAudio: publication.ActualAudio,
+					ValidatedAt: publication.ValidatedAt, MatchingConfidence: publication.MatchingConfidence,
+					ActualAudio: publication.ActualAudio,
 				}
 			}
 		}

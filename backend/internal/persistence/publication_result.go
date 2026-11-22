@@ -310,6 +310,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 			PositionID: attempt.PositionID, Epoch: attempt.Epoch, Generation: attempt.CandidateGeneration,
 			RelativePath: observation.RelativePath, Ownership: mustPublicationJSON(result.InstalledOwnership),
 			ActualAudio: observation.ActualAudio, ActualMetadata: observation.ActualMetadata, ActualAssets: observation.ActualAssets,
+			MatchingConfidence:   attempt.MatchingConfidence,
 			QualityPolicyVersion: observation.QualityPolicyVersion, ValidatedAt: time.Now().UTC(),
 		}
 		if sourceRepublish {
@@ -376,7 +377,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 				return fmt.Errorf("commit publication result: insert current publication: %w", err)
 			}
 		} else {
-			res, err := tx.NewUpdate().Model(&publication).Column("epoch", "generation", "relative_path", "ownership", "actual_audio", "actual_metadata", "actual_assets", "initial_lyrics", "cover_embedding", "quality_policy_version", "validated_at").Where("position_id=? AND generation=?", attempt.PositionID, *attempt.ExpectedGeneration).Exec(ctx)
+			res, err := tx.NewUpdate().Model(&publication).Column("epoch", "generation", "relative_path", "ownership", "actual_audio", "actual_metadata", "actual_assets", "initial_lyrics", "cover_embedding", "matching_confidence", "quality_policy_version", "validated_at").Where("position_id=? AND generation=?", attempt.PositionID, *attempt.ExpectedGeneration).Exec(ctx)
 			if err != nil {
 				return fmt.Errorf("commit publication result: replace current publication: %w", err)
 			}

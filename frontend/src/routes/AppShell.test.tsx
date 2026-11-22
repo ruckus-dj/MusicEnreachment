@@ -39,6 +39,7 @@ const state: SetupStateBody = {
     publication_path_template:
       '{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}',
     publication_remove_sources: false,
+    publication_auto_complete_albums: false,
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
     musicbrainz_self_hosted_throttle: false,

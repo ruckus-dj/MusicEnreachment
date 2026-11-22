@@ -22,6 +22,7 @@ func TestRegistryDefinesEveryTypedSetting(t *testing.T) {
 		PublicationFormatKey:             {"enum", false, true},
 		PublicationPathTemplateKey:       {"template", true, true},
 		PublicationRemoveSourcesKey:      {"bool", true, true},
+		PublicationAutoCompleteAlbumsKey: {"bool", true, true},
 		MusicBrainzModeKey:               {"enum", true, true},
 		MusicBrainzBaseURLKey:            {"url", false, true},
 		MusicBrainzConfigIdentityKey:     {"uuid", false, true},

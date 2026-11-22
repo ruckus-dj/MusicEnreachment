@@ -216,8 +216,12 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               positions: artist.position_count,
               published: artist.published_position_count,
               available: artist.available_position_count,
+              missing: artist.missing_release_groups ?? 0,
+              local:
+                artist.release_count - (artist.missing_release_groups ?? 0),
             }}
-            includesCachedGroups
+            includesCachedGroups={!artist.discography_complete}
+            discographyComplete={artist.discography_complete}
           />
           <LibraryDeletionControl
             target={{ type: "artist", artistId }}

@@ -110,6 +110,7 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		river.AddWorker(workers, &MatchingEvaluationWorker{})
 		river.AddWorker(workers, applyWorker)
 		river.AddWorker(workers, providerWorker)
+		river.AddWorker(workers, &PublicationAutoAlbumWorker{})
 		river.AddWorker(workers, &matchingReconciliationRegistrationWorker{})
 	})
 	if err != nil {
@@ -454,9 +455,7 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		header.TargetRunID != parentID || !bytes.Equal(header.TargetCaptureDigest, admissionCaptureDigest) {
 		t.Fatalf("sealed matching publication header run=%s fence=%d digest=%x; want run=%s fence=2 digest=%x; candidates=%d err=%v", header.TargetRunID, header.FenceVersion, header.TargetCaptureDigest, parentID, admissionCaptureDigest, len(candidates), err)
 	}
-	if len(candidates) != 1 || candidates[0].Score < .7 || len(candidates[0].Positions) != 1 || candidates[0].Positions[0].Medium != 0 || candidates[0].Positions[0].Position != 0 {
-		t.Fatalf("hydrated release candidate=%+v; want a confident assignment at actual medium/track position", candidates)
-	}
+	assertLiveMatchingReview(t, ctx, database, group.ID, candidates)
 	var currentGroupingEpoch int64
 	if err := database.NewRaw(`SELECT revision FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &currentGroupingEpoch); err != nil || currentGroupingEpoch == groupingEpoch {
 		t.Fatalf("unrelated grouping epoch=%d err=%v; expected advance from %d", currentGroupingEpoch, err, groupingEpoch)
@@ -490,6 +489,21 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if apply.OperationID == uuid.Nil || apply.RiverJobID < 1 || apply.Attempt < 1 {
 		t.Fatalf("durable matching apply child=%+v; want operation, River delivery, and attempt", apply)
 	}
+	runtime, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("read runtime settings before enabling automatic publication: %v", err)
+	}
+	enabled := true
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{
+		PublicationAutoCompleteAlbums: &enabled,
+		ExpectedToolsDirectory:        &runtime.ToolsDirectory,
+		ExpectedOutputDirectory:       &runtime.OutputDirectory,
+		Expected: &settings.RuntimeSettingsExpected{
+			PublicationAutoCompleteAlbums: &runtime.PublicationAutoCompleteAlbums,
+		},
+	}); err != nil {
+		t.Fatalf("enable automatic album publication: %v", err)
+	}
 	if err := applyWorker.Work(ctx, &river.Job[persistence.MatchingApplyOperationArgs]{
 		JobRow: &rivertype.JobRow{ID: apply.RiverJobID, Attempt: apply.Attempt},
 		Args:   persistence.MatchingApplyOperationArgs{OperationID: apply.OperationID},
@@ -503,6 +517,17 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	var receiptOutcome string
 	if err := database.NewRaw(`SELECT outcome FROM matching_apply_receipt WHERE apply_operation_id=? AND group_id=?`, apply.OperationID, group.ID).Scan(ctx, &receiptOutcome); err != nil || receiptOutcome != "applied" {
 		t.Fatalf("matching apply receipt outcome=%q err=%v; want applied", receiptOutcome, err)
+	}
+	album, err := repository.ReadPublicationAutoAlbum(ctx, apply.OperationID)
+	if err != nil || album == nil || len(album.Scope) != 1 || len(album.Scope[0].WorkIDs) != 1 {
+		t.Fatalf("complete edition did not yield the exact automatic album handoff: value=%+v err=%v", album, err)
+	}
+	if err := fetch.EnsureArtistDiscography(ctx, artistID); err != nil {
+		t.Fatalf("persist the complete artist catalog: %v", err)
+	}
+	var discographyCount int
+	if err := database.NewRaw(`SELECT release_count FROM provider_artist_discography WHERE artist_mbid=?`, artistID).Scan(ctx, &discographyCount); err != nil || discographyCount != 101 {
+		t.Fatalf("local artist discography count=%d err=%v; want all 101 releases", discographyCount, err)
 	}
 	var materialized struct {
 		Count          int    `bun:"count"`

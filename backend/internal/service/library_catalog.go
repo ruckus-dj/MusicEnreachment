@@ -62,6 +62,8 @@ type LibraryCatalogArtist struct {
 	Genres                 []string                     `json:"genres"`
 	ProviderLinks          []LibraryCatalogProviderLink `json:"provider_links"`
 	ReleaseCount           int                          `json:"release_count"`
+	MissingReleaseGroups   int                          `json:"missing_release_groups"`
+	DiscographyComplete    bool                         `json:"discography_complete"`
 	PositionCount          int                          `json:"position_count"`
 	PublishedPositionCount int                          `json:"published_position_count"`
 	AvailablePositionCount int                          `json:"available_position_count"`
@@ -171,11 +173,12 @@ type LibraryCatalogPublicationAudio struct {
 }
 
 type LibraryCatalogPublication struct {
-	Epoch        uuid.UUID                      `json:"epoch"`
-	Generation   uuid.UUID                      `json:"generation"`
-	RelativePath string                         `json:"relative_path"`
-	ValidatedAt  string                         `json:"validated_at"`
-	Audio        LibraryCatalogPublicationAudio `json:"audio"`
+	Epoch              uuid.UUID                      `json:"epoch"`
+	Generation         uuid.UUID                      `json:"generation"`
+	RelativePath       string                         `json:"relative_path"`
+	ValidatedAt        string                         `json:"validated_at"`
+	MatchingConfidence *float64                       `json:"matching_confidence,omitempty"`
+	Audio              LibraryCatalogPublicationAudio `json:"audio"`
 }
 
 type LibraryCatalogPosition struct {
@@ -472,7 +475,11 @@ func mapLibraryCatalogArtist(value persistence.LibraryCatalogArtist) LibraryCata
 	if genres == nil {
 		genres = []string{}
 	}
-	return LibraryCatalogArtist{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: genres, ProviderLinks: links, ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount}
+	return LibraryCatalogArtist{
+		ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: genres, ProviderLinks: links,
+		ReleaseCount: value.ReleaseCount, MissingReleaseGroups: value.MissingReleaseGroups, DiscographyComplete: value.DiscographyComplete,
+		PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount,
+	}
 }
 
 func mapLibraryCatalogCredit(value persistence.LibraryCatalogCredit) LibraryCatalogCredit {
@@ -504,7 +511,8 @@ func mapLibraryCatalogPosition(value persistence.LibraryCatalogPosition) Library
 	var publication *LibraryCatalogPublication
 	if value.Publication != nil {
 		publication = &LibraryCatalogPublication{Epoch: value.Publication.Epoch, Generation: value.Publication.Generation, RelativePath: value.Publication.RelativePath, ValidatedAt: value.Publication.ValidatedAt,
-			Audio: LibraryCatalogPublicationAudio{StreamIndex: value.Publication.Audio.StreamIndex, Codec: value.Publication.Audio.Codec, Lossless: value.Publication.Audio.Lossless, Channels: value.Publication.Audio.Channels, Bitrate: value.Publication.Audio.Bitrate, BitDepth: value.Publication.Audio.BitDepth, SampleRate: value.Publication.Audio.SampleRate, Container: value.Publication.Audio.Container, SupportedSourceContainer: value.Publication.Audio.SupportedSourceContainer, ALACCapabilitiesVerified: value.Publication.Audio.ALACCapabilitiesVerified}}
+			MatchingConfidence: value.Publication.MatchingConfidence,
+			Audio:              LibraryCatalogPublicationAudio{StreamIndex: value.Publication.Audio.StreamIndex, Codec: value.Publication.Audio.Codec, Lossless: value.Publication.Audio.Lossless, Channels: value.Publication.Audio.Channels, Bitrate: value.Publication.Audio.Bitrate, BitDepth: value.Publication.Audio.BitDepth, SampleRate: value.Publication.Audio.SampleRate, Container: value.Publication.Audio.Container, SupportedSourceContainer: value.Publication.Audio.SupportedSourceContainer, ALACCapabilitiesVerified: value.Publication.Audio.ALACCapabilitiesVerified}}
 	}
 	return LibraryCatalogPosition{ID: value.ID, LocalTrackID: value.LocalTrackID, RecordingID: value.RecordingID,
 		Release: LibraryCatalogPositionRelease{ID: value.Release.ID, Title: value.Release.Title, Artists: mapLibraryCatalogCredits(value.Release.Artists)},

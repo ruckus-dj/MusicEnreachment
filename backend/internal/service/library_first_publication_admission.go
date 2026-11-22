@@ -22,6 +22,8 @@ type FirstPublicationConfirmation struct {
 	SourceChoice  *FirstPublicationSourceChoice
 }
 
+var ErrPublicationArtistDiscography = errors.New("complete release artist discography is unavailable")
+
 type firstPublicationAdmissionRepository interface {
 	firstPublicationContextReader
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
@@ -32,7 +34,7 @@ type firstPublicationAdmissionRepository interface {
 // transaction callback reconstructs the preview from its authoritative
 // snapshot before it permits namespace reservation or publication admission.
 func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, positionID uuid.UUID, confirmation FirstPublicationConfirmation) (uuid.UUID, error) {
-	return service.admitFirst(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice)
+	return service.admitFirst(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice, nil)
 }
 
 func automaticFirstSourceChoice(snapshot *persistence.LibraryFirstPublicationContext, format publication.AudioPublicationFormat) (FirstPublicationSourceChoice, error) {
@@ -82,10 +84,10 @@ func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPubl
 	return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 }
 
-func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice) (uuid.UUID, error) {
+func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice, album *persistence.PublicationAutoAlbumRequest) (uuid.UUID, error) {
 	if service == nil || service.repository == nil || service.settings == nil || service.river == nil ||
 		releaseID == uuid.Nil || positionID == uuid.Nil || expectedEpoch == uuid.Nil ||
-		!validFirstPublicationPreviewDigest(previewDigest) {
+		album == nil && !validFirstPublicationPreviewDigest(previewDigest) {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
 	repository, ok := service.repository.(firstPublicationAdmissionRepository)
@@ -115,7 +117,7 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	}
 	automatic := sourceChoice == nil
 	if automatic {
-		choice, choiceErr := automaticFirstSourceChoice(snapshot, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat))
+		choice, choiceErr := firstPublicationAutomaticChoice(snapshot, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat), album, positionID)
 		if choiceErr != nil {
 			return uuid.Nil, choiceErr
 		}
@@ -129,6 +131,9 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
 	initialManifest, err := finalizeFirstPublicationNamespace(ctx, snapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview)
+	if err == nil && album != nil {
+		previewDigest = preview.ContextDigest
+	}
 	if err != nil || preview.ContextDigest != previewDigest {
 		if ctx.Err() != nil {
 			return uuid.Nil, ctx.Err()
@@ -147,6 +152,18 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	}
 	if selected == nil {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	var discographyArtist string
+	if service.artistDiscography != nil {
+		discographyArtist, err = firstPublicationDiscographyArtist(snapshot)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if discographyArtist != "" {
+			if err := service.artistDiscography.EnsureArtistDiscography(ctx, discographyArtist); err != nil {
+				return uuid.Nil, fmt.Errorf("%w: %w", ErrPublicationArtistDiscography, err)
+			}
+		}
 	}
 
 	frozen := persistence.PublicationInputs{
@@ -185,11 +202,18 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	}
 	first := persistence.FirstPublicationAdmission{
 		PublicationAdmission: request, PreviewDigest: previewDigest, SourceSelection: associationIntent,
+		DiscographyArtistMBID: discographyArtist, AutomaticAlbum: album,
 		PrepareFirst: func(ctx context.Context, authoritative persistence.FirstPublicationAdmissionSnapshot, actual persistence.PublicationAdmission) ([]persistence.PublicationNamespaceNode, error) {
 			if authoritative.Context == nil || authoritative.Context.Library == nil ||
 				authoritative.Context.Library.ActiveEpoch != expectedEpoch ||
 				actual.CandidateGeneration != candidateID || actual.ExpectedReleaseID != releaseID || actual.PositionID != positionID || actual.Source == nil {
 				return nil, persistence.ErrPublicationAdmissionConflict
+			}
+			if service.artistDiscography != nil {
+				freshArtist, err := firstPublicationDiscographyArtist(authoritative.Context)
+				if err != nil || freshArtist != discographyArtist {
+					return nil, persistence.ErrPublicationAdmissionConflict
+				}
 			}
 			if !sameInitialLyricsAuthority(authoritative.Context, frozen.InitialLyrics) {
 				return nil, persistence.ErrPublicationAdmissionConflict
@@ -211,7 +235,7 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			}
 			choice := sourceChoice
 			if automatic {
-				freshChoice, selectErr := automaticFirstSourceChoice(authoritative.Context, publication.AudioPublicationFormat(transactionSettings.PublicationFormat))
+				freshChoice, selectErr := firstPublicationAutomaticChoice(authoritative.Context, publication.AudioPublicationFormat(transactionSettings.PublicationFormat), album, positionID)
 				if selectErr != nil || choice == nil || freshChoice != *choice {
 					return nil, persistence.ErrPublicationAdmissionConflict
 				}
@@ -262,6 +286,15 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			return transactionManifest, nil
 		},
 	}
+	if album != nil {
+		albumRepository, ok := service.repository.(interface {
+			AdmitAutomaticAlbumFirstPublication(context.Context, persistence.FirstPublicationAdmission, persistence.RiverInserter) (uuid.UUID, error)
+		})
+		if !ok {
+			return uuid.Nil, errors.New("automatic album admission is unavailable")
+		}
+		return albumRepository.AdmitAutomaticAlbumFirstPublication(ctx, first, service.river)
+	}
 	if automatic {
 		automaticRepository, ok := service.repository.(interface {
 			AdmitDefaultFirstPublicationFromPreview(context.Context, persistence.FirstPublicationAdmission, persistence.RiverInserter) (uuid.UUID, error)
@@ -272,6 +305,18 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		return automaticRepository.AdmitDefaultFirstPublicationFromPreview(ctx, first, service.river)
 	}
 	return repository.AdmitFirstPublicationFromPreview(ctx, first, service.river)
+}
+
+func firstPublicationDiscographyArtist(snapshot *persistence.LibraryFirstPublicationContext) (string, error) {
+	identity, _ := firstPublicationPrimaryArtistToken(snapshot, "ALBUM_PRIMARY_ARTIST_ID")
+	if identity.Err != nil || !identity.Present && len(snapshot.ReleasePrimaryCredits) != 0 {
+		return "", ErrPublicationArtistDiscography
+	}
+	mbid, _ := firstPublicationPrimaryArtistToken(snapshot, "ALBUM_PRIMARY_ARTIST_MBID")
+	if mbid.Err != nil {
+		return "", ErrPublicationArtistDiscography
+	}
+	return mbid.Value, nil
 }
 
 func initialLyricsAuthorityInput(snapshot *persistence.LibraryFirstPublicationContext) *persistence.PublicationInitialLyricsInput {

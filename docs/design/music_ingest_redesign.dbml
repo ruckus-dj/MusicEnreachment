@@ -495,23 +495,6 @@ Table track_source {
   Note: 'Связь collection_track ↔ media_variant является M:N. Один variant может быть source для tracks разных recordings/MBID. track_source от variant сохраняется, пока у variant есть хотя бы одна source_location; удаление последней location удаляет все его track_source-связи, включая SHA-256 variant, который сам остаётся reusable cache. Удалённая selected-связь очищает выбор без автоматического выбора другой связи. Удаление root не удаляет collection_track и текущие публикации, не запускает fallback/перепубликацию; текущая публикация и её snapshot не изменяются. Существующая automatic quality-improvement policy сохраняется, но автоматическая замена на равное или худшее качество запрещена; ручной downgrade требует явного предупреждения и подтверждения. Очистка source associations не задаёт срок хранения анализа. Анализ с SHA-256 не удаляется никогда, без SHA-256 удаляется при отсутствии ссылающегося source_location (см. media_variant). PostgreSQL migration должна добавить partial unique index UNIQUE(collection_track_id) WHERE selected и CHECK границ CUE/manual segment: start >= 0, end > start; full_file не имеет границ.'
 }
 
-Table match_candidate {
-  id uuid [pk]
-  media_variant_id uuid [not null]
-  provider_release_track_id uuid [not null]
-  confidence numeric(6,5) [not null, note: 'Нормализованный результат matching formula; выбор оператора его не изменяет']
-  evidence jsonb [not null]
-  matching_policy_version integer [not null]
-  calculated_at timestamptz [not null]
-
-  indexes {
-    (media_variant_id, provider_release_track_id) [unique]
-    (media_variant_id, confidence)
-  }
-
-  Note: 'Текущий набор кандидатов полностью заменяется при повторном matching. Миграция добавляет CHECK confidence >= 0 AND confidence <= 1. Fingerprint, tags, duration и другие признаки принадлежат evidence/formula, а не decision method.'
-}
-
 Table lyrics_document {
   id uuid [pk]
   language varchar(16)
@@ -559,6 +542,7 @@ Table track_publication {
   lyrics_id uuid
   source_quality_score integer [not null]
   source_quality_policy_version integer [not null]
+  matching_confidence double [note: 'Необязательная оценка конкретной опубликованной пары, [0,1]; заменяется вместе с текущей публикацией.']
   source_media_info jsonb [not null, note: 'Snapshot технических характеристик использованного источника; не FK на удаляемый source']
   relative_audio_path text [not null]
   output_container varchar(32) [not null]
@@ -607,7 +591,6 @@ TableGroup local_collection {
   collection_recording_provider_link
   collection_track_provider_link
   track_source
-  match_candidate
   lyrics_document
   recording_lyrics
 }
@@ -658,8 +641,6 @@ Ref: collection_track_provider_link.(provider_release_track_id, provider_id) > p
 
 Ref: track_source.collection_track_id > collection_track.id [delete: cascade]
 Ref: track_source.media_variant_id > media_variant.id [delete: cascade]
-Ref: match_candidate.media_variant_id > media_variant.id [delete: cascade]
-Ref: match_candidate.provider_release_track_id > provider_release_track.id [delete: cascade]
 Ref: lyrics_document.provider_id > provider.id [delete: restrict]
 Ref: recording_lyrics.collection_recording_id > collection_recording.id [delete: cascade]
 Ref: recording_lyrics.lyrics_document_id > lyrics_document.id [delete: cascade]

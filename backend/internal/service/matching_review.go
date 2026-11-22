@@ -15,7 +15,12 @@ type matchingReviewReader interface {
 	GetReviewSnapshot(context.Context, uuid.UUID) (*persistence.IncomingMatchReviewSnapshot, error)
 }
 
-// MatchingReviewService projects only the exact persisted evaluation snapshot.
+type matchingReviewInputReader interface {
+	ReadMatchingReviewInputs(context.Context, uuid.UUID, string, []string, []string) ([]persistence.IncomingGroupingCapture, persistence.ProviderMatchingSnapshot, error)
+}
+
+// MatchingReviewService presents the current candidate scope and scores its
+// live accepted inputs. The stored decision still fences a later confirmation.
 type MatchingReviewService struct{ reader matchingReviewReader }
 
 func NewMatchingReviewService(reader matchingReviewReader) *MatchingReviewService {
@@ -168,6 +173,14 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 		}
 	}
 	result.AutomaticAssignment = automaticReviewAssignment(snapshot.Header.EvaluationEvidence, groupID, snapshot.Members, savedSelectedRelease)
+	if reader, ok := s.reader.(matchingReviewInputReader); ok {
+		candidates, err := readScoredMatchingReview(ctx, reader, result, snapshot.Header.EvaluationEvidence)
+		if err != nil {
+			return MatchingReview{}, err
+		}
+		result.Candidates = candidates
+		return result, nil
+	}
 	for _, candidate := range snapshot.Candidates {
 		if candidate.FileMemberID == uuid.Nil || candidate.ProviderID == uuid.Nil || candidate.ProviderSourceID == uuid.Nil || candidate.ReleaseID == uuid.Nil || math.IsNaN(candidate.Score) || math.IsInf(candidate.Score, 0) {
 			return MatchingReview{}, fmt.Errorf("persisted matching review candidate identity is invalid")

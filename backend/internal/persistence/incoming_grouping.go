@@ -85,6 +85,11 @@ type IncomingGroupingCapture struct {
 	FingerprintCalculatedAt       *time.Time
 	FingerprintParserVersion      *int
 	Ready                         bool
+	// NonAudioAnalysisSettled is true only for the current location of a work
+	// whose probe succeeded as 'no_audio' with no step still in flight or failed.
+	// Audio captures are never classified here; consumers combine it with the
+	// normal Ready capture requirement.
+	NonAudioAnalysisSettled bool `bun:"non_audio_analysis_settled" json:"-"`
 }
 
 type IncomingMatchingReconcileGroup struct {
@@ -113,7 +118,7 @@ func InvalidateIncomingGrouping(ctx context.Context, tx bun.IDB) error {
 		return fmt.Errorf("invalidate incoming grouping: %w", err)
 	}
 	// Fence current work for groups that are about to become stale.
-	if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx); err != nil {
+	if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx, true); err != nil {
 		return fmt.Errorf("invalidate incoming grouping: %w", err)
 	}
 	return nil
@@ -255,7 +260,13 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 							analysis_step.state='not_requested'
 							OR (analysis_step.state='skipped' AND analysis_step.skip_reason IN ('disabled','not_requested'))
 						))
-					)), false) AS ready
+					)), false) AS ready,
+			COALESCE(location.probe_status='no_audio'
+				AND work.id IS NOT NULL
+				AND probe.state='succeeded' AND probe.success_probe_variant_id IS NOT NULL
+				AND NOT EXISTS (SELECT 1 FROM source_analysis_step blocking_step
+					WHERE blocking_step.work_id=work.id
+					AND blocking_step.state IN ('pending','queued','running','failed')), false) AS non_audio_analysis_settled
 		FROM source_root root
 		JOIN source_location location ON location.source_root_id=root.id
 		LEFT JOIN source_analysis_work work ON work.current_location_id=location.id AND work.location_id=location.id

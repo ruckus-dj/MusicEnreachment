@@ -72,11 +72,12 @@ type LibraryReleaseTrackDetail struct {
 }
 
 type LibraryPositionPublication struct {
-	RelativePath string
-	Generation   uuid.UUID
-	ValidatedAt  string
-	Codec        string
-	Container    string
+	RelativePath       string
+	Generation         uuid.UUID
+	ValidatedAt        string
+	MatchingConfidence *float64
+	Codec              string
+	Container          string
 }
 
 type LibraryTrackSourceDetail struct {
@@ -181,7 +182,8 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 			}
 			item.Publication = &LibraryPositionPublication{
 				RelativePath: track.Publication.RelativePath, Generation: track.Publication.Generation,
-				ValidatedAt: track.Publication.ValidatedAt, Codec: audio.Facts.Codec, Container: audio.Facts.Container,
+				ValidatedAt: track.Publication.ValidatedAt, MatchingConfidence: track.Publication.MatchingConfidence,
+				Codec: audio.Facts.Codec, Container: audio.Facts.Container,
 			}
 		}
 		for _, source := range track.Sources {

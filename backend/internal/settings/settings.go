@@ -29,6 +29,7 @@ const (
 	PublicationFormatKey             = "publication_format"
 	PublicationPathTemplateKey       = "publication_path_template"
 	PublicationRemoveSourcesKey      = "publication_remove_sources"
+	PublicationAutoCompleteAlbumsKey = "publication_auto_complete_albums"
 	MusicBrainzModeKey               = "musicbrainz_mode"
 	MusicBrainzBaseURLKey            = "musicbrainz_base_url"
 	MusicBrainzConfigIdentityKey     = "musicbrainz_config_identity"
@@ -134,6 +135,7 @@ type RuntimeSettings struct {
 	PublicationFormat                 string
 	PublicationPathTemplate           string
 	PublicationRemoveSources          bool
+	PublicationAutoCompleteAlbums     bool
 	MusicBrainzMode                   string
 	MusicBrainzBaseURL                string
 	MusicBrainzVerifiedAt             *time.Time
@@ -175,32 +177,34 @@ func (r *Registry) DeleteGitHubToken(ctx context.Context) error {
 // RuntimeUpdate selects the validated runtime values to change in one write.
 // A nil field leaves its setting unchanged.
 type RuntimeUpdate struct {
-	ToolsDirectory             *string
-	WorkDirectory              *string
-	ExpectedToolsDirectory     *string
-	OutputDirectory            *string
-	ExpectedOutputDirectory    *string
-	OutputCaseSensitive        *bool
-	OutputUnicodeNormalization *string
-	PublicationFormat          *string
-	PublicationPathTemplate    *string
-	PublicationRemoveSources   *bool
-	SourceFileConcurrency      *int
-	MatchingPairThreshold      *float64
-	Expected                   *RuntimeSettingsExpected
+	ToolsDirectory                *string
+	WorkDirectory                 *string
+	ExpectedToolsDirectory        *string
+	OutputDirectory               *string
+	ExpectedOutputDirectory       *string
+	OutputCaseSensitive           *bool
+	OutputUnicodeNormalization    *string
+	PublicationFormat             *string
+	PublicationPathTemplate       *string
+	PublicationRemoveSources      *bool
+	PublicationAutoCompleteAlbums *bool
+	SourceFileConcurrency         *int
+	MatchingPairThreshold         *float64
+	Expected                      *RuntimeSettingsExpected
 }
 
 // RuntimeSettingsExpected is the typed projection of browser-saved values
 // against which supplied runtime changes are conditionally applied.
 type RuntimeSettingsExpected struct {
-	ToolsDirectory           *string
-	WorkDirectory            *string
-	OutputDirectory          *string
-	PublicationFormat        *string
-	PublicationPathTemplate  *string
-	PublicationRemoveSources *bool
-	SourceFileConcurrency    *int
-	MatchingPairThreshold    *float64
+	ToolsDirectory                *string
+	WorkDirectory                 *string
+	OutputDirectory               *string
+	PublicationFormat             *string
+	PublicationPathTemplate       *string
+	PublicationRemoveSources      *bool
+	PublicationAutoCompleteAlbums *bool
+	SourceFileConcurrency         *int
+	MatchingPairThreshold         *float64
 }
 
 // DefaultRuntimeSettingsExpected returns the effective values used when a
@@ -210,12 +214,14 @@ func DefaultRuntimeSettingsExpected() RuntimeSettingsExpected {
 	work, output, tools := "", "", ""
 	template := defaultPublicationPathTemplate
 	removeSources := defaultPublicationRemoveSources
+	autoCompleteAlbums := defaultPublicationAutoCompleteAlbums
 	concurrency := defaultFileConcurrency
 	threshold := defaultMatchingPairThreshold
 	return RuntimeSettingsExpected{
 		ToolsDirectory: &tools, WorkDirectory: &work, OutputDirectory: &output,
 		PublicationFormat: &format, PublicationPathTemplate: &template,
-		PublicationRemoveSources: &removeSources, SourceFileConcurrency: &concurrency,
+		PublicationRemoveSources: &removeSources, PublicationAutoCompleteAlbums: &autoCompleteAlbums,
+		SourceFileConcurrency: &concurrency,
 		MatchingPairThreshold: &threshold,
 	}
 }
@@ -512,6 +518,7 @@ func validateRuntimeExpected(expected RuntimeSettingsExpected, values map[string
 		{PublicationFormatKey, expected.PublicationFormat != nil},
 		{PublicationPathTemplateKey, expected.PublicationPathTemplate != nil},
 		{PublicationRemoveSourcesKey, expected.PublicationRemoveSources != nil},
+		{PublicationAutoCompleteAlbumsKey, expected.PublicationAutoCompleteAlbums != nil},
 		{SourceFileConcurrencyKey, expected.SourceFileConcurrency != nil},
 		{MatchingPairThresholdKey, expected.MatchingPairThreshold != nil},
 	}
@@ -563,6 +570,12 @@ func normalizeRuntimeExpected(expected RuntimeSettingsExpected) (RuntimeSettings
 	}
 	if expected.PublicationRemoveSources != nil {
 		_, err := serializeSetting(publicationRemoveSourcesSetting, *expected.PublicationRemoveSources)
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+	}
+	if expected.PublicationAutoCompleteAlbums != nil {
+		_, err := serializeSetting(publicationAutoCompleteAlbumsSetting, *expected.PublicationAutoCompleteAlbums)
 		if err != nil {
 			return RuntimeSettingsExpected{}, err
 		}
@@ -715,6 +728,13 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 			return nil, fmt.Errorf("publication source removal: %w", err)
 		}
 		values[PublicationRemoveSourcesKey] = value
+	}
+	if update.PublicationAutoCompleteAlbums != nil {
+		value, err := serializeSetting(publicationAutoCompleteAlbumsSetting, *update.PublicationAutoCompleteAlbums)
+		if err != nil {
+			return nil, fmt.Errorf("publication album auto-completion: %w", err)
+		}
+		values[PublicationAutoCompleteAlbumsKey] = value
 	}
 	if update.SourceFileConcurrency != nil {
 		value, err := serializeSetting(sourceFileConcurrencySetting, *update.SourceFileConcurrency)
@@ -1016,6 +1036,10 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	autoCompleteAlbums, _, err := readSetting(ctx, r.store, publicationAutoCompleteAlbumsSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	musicBrainz, err := r.GetMusicBrainzConfig(ctx)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -1088,6 +1112,7 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		PublicationFormat:                 format,
 		PublicationPathTemplate:           template,
 		PublicationRemoveSources:          removeSources,
+		PublicationAutoCompleteAlbums:     autoCompleteAlbums,
 		MusicBrainzMode:                   musicBrainz.Mode,
 		MusicBrainzBaseURL:                musicBrainz.BaseURL,
 		MusicBrainzVerifiedAt:             musicBrainz.VerifiedAt,

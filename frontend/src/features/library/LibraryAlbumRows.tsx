@@ -142,6 +142,7 @@ function releasePositions(
             state: "published" as const,
             container: track.publication.container,
             codec: track.publication.codec,
+            matchingConfidence: track.publication.matching_confidence,
           }
         : { state: "not-published" as const },
       selection: selectionControl({

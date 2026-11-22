@@ -94,8 +94,9 @@ type MusicBrainzReleaseBinding struct {
 
 type SetupManagerRepository struct {
 	*ToolInstallationRepository
-	db            *bun.DB
-	riverInserter RiverInserter
+	db                *bun.DB
+	riverInserter     RiverInserter
+	publicationScorer PublicationMatchingScorer
 }
 
 const existingSourceAnalysisArtifactCleanupOperationKind = SourceAnalysisArtifactCleanupOperationKind

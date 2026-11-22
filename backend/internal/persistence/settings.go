@@ -284,7 +284,7 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 			}
 		}
 		if musicBrainzTargetChanged {
-			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx); err != nil {
+			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx, false); err != nil {
 				return err
 			}
 		}

@@ -30,6 +30,7 @@ type TrackPublication struct {
 	ActualAssets         json.RawMessage `bun:"actual_assets,type:jsonb"`
 	InitialLyrics        json.RawMessage `bun:"initial_lyrics,type:jsonb,nullzero"`
 	CoverEmbedding       json.RawMessage `bun:"cover_embedding,type:jsonb,nullzero"`
+	MatchingConfidence   *float64        `bun:"matching_confidence,nullzero"`
 	QualityPolicyVersion int             `bun:"quality_policy_version"`
 	ValidatedAt          time.Time       `bun:"validated_at"`
 }
@@ -65,6 +66,7 @@ type TrackPublicationAttempt struct {
 	IntentKind          string          `bun:"intent_kind"`
 	Phase               string          `bun:"phase"`
 	ResumeMode          string          `bun:"resume_mode,default:'prepare'"`
+	MatchingConfidence  *float64        `bun:"matching_confidence,nullzero"`
 	FrozenInputs        json.RawMessage `bun:"frozen_inputs,type:jsonb,nullzero"`
 	NamespaceManifest   json.RawMessage `bun:"namespace_manifest,type:jsonb"`
 }

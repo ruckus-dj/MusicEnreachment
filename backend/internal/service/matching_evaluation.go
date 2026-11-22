@@ -1045,7 +1045,7 @@ func renderMatchingGroupResult(
 	}
 	evidence := map[string]any{
 		"schema_version": 1, "group_decision": decision, "decision_reason": reason,
-		"selected_release_key": selectedRelease, "release_selection": releaseSelection, "files": fileEvidence,
+		"selected_release_key": selectedRelease, "files": fileEvidence,
 		"evaluation_decision": evaluationDecision,
 		"review_proposal":     makeMatchingReviewProposal(snapshot, group, members, releaseKeys, selectedRelease),
 	}

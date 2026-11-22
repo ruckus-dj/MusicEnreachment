@@ -348,6 +348,11 @@ func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Con
 			if _, err := tx.NewRaw(`INSERT INTO matching_apply_receipt(apply_operation_id,group_id,outcome) VALUES (?,?,?)`, operationID, intent.GroupID, operation.Stage).Exec(ctx); err != nil {
 				return fmt.Errorf("apply matching operation: persist receipt: %w", err)
 			}
+			if operation.Stage == "applied" {
+				if err := repository.requestAutoAlbumPublication(ctx, tx, operationID, intent.ParentRunID, intent.GroupID); err != nil {
+					return err
+				}
+			}
 		}
 		operation.FinishedAt = &now
 		operation.UpdatedAt = now
@@ -1406,7 +1411,11 @@ func (repository *SetupManagerRepository) applyFrozenMatchingOperationTx(
 	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
 		return false, err
 	}
-	return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "applied", "")
+	finished, err := repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "applied", "")
+	if err != nil || !finished {
+		return finished, err
+	}
+	return true, repository.requestAutoAlbumPublication(ctx, tx, operationID, request.ParentRunID, request.GroupID)
 }
 
 // matchingApplyHistoricalCalculationContext binds the evaluation context to the

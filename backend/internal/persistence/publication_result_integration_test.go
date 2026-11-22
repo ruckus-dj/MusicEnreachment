@@ -101,6 +101,9 @@ func TestCommitPublicationResultInstallsCurrentProjectionPostgreSQL(t *testing.T
 	ctx := context.Background()
 	f := preparePublicationResultFixture(t)
 	repository := NewSetupManagerRepository(f.db)
+	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET matching_confidence=0 WHERE operation_id=?`, f.guard.OperationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	result := publicationResultForFixture(f)
 	committed, err := repository.CommitPublicationResult(ctx, f.guard, result)
 	if err != nil || !committed {
@@ -112,6 +115,9 @@ func TestCommitPublicationResultInstallsCurrentProjectionPostgreSQL(t *testing.T
 	}
 	if current.Epoch != f.guard.Epoch || current.Generation != f.guard.CandidateGeneration || current.RelativePath != result.Observation.RelativePath || !sameJSONValue(current.ActualAudio, result.Observation.ActualAudio) || !sameJSONValue(current.ActualMetadata, result.Observation.ActualMetadata) {
 		t.Fatalf("current publication does not match installed result: %+v", current)
+	}
+	if current.MatchingConfidence == nil || *current.MatchingConfidence != 0 {
+		t.Fatalf("current confidence = %v; want the exact frozen value of zero", current.MatchingConfidence)
 	}
 	var state, stage string
 	if err := f.db.NewRaw(`SELECT state,stage FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &state, &stage); err != nil {

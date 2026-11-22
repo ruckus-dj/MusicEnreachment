@@ -484,9 +484,6 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 		if err := copyIncomingMatchMembers(ctx, tx, group); err != nil {
 			return err
 		}
-		if err := insertIncomingMatchCandidates(ctx, tx, group); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -983,31 +980,9 @@ func nullableBytes(value []byte) any {
 	return value
 }
 
-func insertIncomingMatchCandidates(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation) error {
-	for _, candidate := range group.Candidates {
-		if _, err := tx.NewRaw(`INSERT INTO incoming_match_candidate
-			(group_id, file_member_id, provider_id, provider_source_id, release_id, score, evidence)
-			VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, candidate.FileMemberID, candidate.ProviderID,
-			candidate.ProviderSourceID, candidate.ReleaseID, candidate.Score, string(candidate.Evidence)).Exec(ctx); err != nil {
-			return fmt.Errorf("replace incoming matches: insert candidate: %w", err)
-		}
-		for _, position := range candidate.Positions {
-			if _, err := tx.NewRaw(`INSERT INTO incoming_match_candidate_track
-				(group_id, file_member_id, provider_source_id, provider_id, release_id, track_id, medium, position)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, group.GroupID, candidate.FileMemberID,
-				candidate.ProviderSourceID, candidate.ProviderID, candidate.ReleaseID, position.TrackID, position.Medium, position.Position).Exec(ctx); err != nil {
-				return fmt.Errorf("replace incoming matches: insert candidate position: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
-// Get returns nil for not evaluated and a non-nil header (possibly without any
-// candidates) for evaluated, including evaluated-empty.
+// Get returns the current evaluation authority, including evaluated-empty.
 func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, groupID uuid.UUID) (*IncomingMatchEvaluationHeader, []IncomingMatchCandidate, error) {
 	var header IncomingMatchEvaluationHeader
-	var candidates []IncomingMatchCandidate
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
@@ -1020,18 +995,6 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 		if err != nil {
 			return fmt.Errorf("get incoming match evaluation: %w", err)
 		}
-		candidates = make([]IncomingMatchCandidate, 0)
-		if err := tx.NewRaw(`SELECT file_member_id, provider_id, provider_source_id, release_id, score, evidence
-		FROM incoming_match_candidate WHERE group_id=? ORDER BY file_member_id, score DESC, release_id`, groupID).Scan(ctx, &candidates); err != nil {
-			return fmt.Errorf("get incoming match candidates: %w", err)
-		}
-		for i := range candidates {
-			if err := tx.NewRaw(`SELECT track_id, medium, position FROM incoming_match_candidate_track
-			WHERE group_id=? AND file_member_id=? AND provider_source_id=? AND release_id=? ORDER BY medium, position`,
-				groupID, candidates[i].FileMemberID, candidates[i].ProviderSourceID, candidates[i].ReleaseID).Scan(ctx, &candidates[i].Positions); err != nil {
-				return fmt.Errorf("get incoming match candidate positions: %w", err)
-			}
-		}
 		return nil
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1040,11 +1003,10 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 	if err != nil {
 		return nil, nil, err
 	}
-	return &header, candidates, nil
+	return &header, nil, nil
 }
 
-// GetReviewSnapshot reads only persisted evaluation state in one consistent
-// transaction; candidate positions are batched to avoid per-candidate queries.
+// GetReviewSnapshot reads the current review scope and decision authority.
 func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx context.Context, groupID uuid.UUID) (*IncomingMatchReviewSnapshot, error) {
 	result := &IncomingMatchReviewSnapshot{}
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
@@ -1073,36 +1035,9 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 			return fmt.Errorf("get incoming match review: %w", err)
 		}
 		result.Header = &header
-		result.Candidates = make([]IncomingMatchCandidate, 0)
-		if err := tx.NewRaw(`SELECT file_member_id, provider_id, provider_source_id, release_id, score, evidence FROM incoming_match_candidate WHERE group_id=? ORDER BY file_member_id, release_id`, groupID).Scan(ctx, &result.Candidates); err != nil {
-			return fmt.Errorf("get incoming match review candidates: %w", err)
-		}
 		result.Members = make([]uuid.UUID, 0)
 		if err := tx.NewRaw(`SELECT file_member_id FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &result.Members); err != nil {
 			return fmt.Errorf("get incoming match review members: %w", err)
-		}
-		type positionRow struct {
-			FileMemberID     uuid.UUID `bun:"file_member_id"`
-			ProviderSourceID uuid.UUID `bun:"provider_source_id"`
-			ReleaseID        uuid.UUID `bun:"release_id"`
-			TrackID          uuid.UUID `bun:"track_id"`
-			Medium           int
-			Position         int
-		}
-		positions := make([]positionRow, 0)
-		if err := tx.NewRaw(`SELECT file_member_id, provider_source_id, release_id, track_id, medium, position FROM incoming_match_candidate_track WHERE group_id=? ORDER BY file_member_id, release_id, medium, position, track_id`, groupID).Scan(ctx, &positions); err != nil {
-			return fmt.Errorf("get incoming match review positions: %w", err)
-		}
-		byCandidate := make(map[string]int, len(result.Candidates))
-		for i := range result.Candidates {
-			c := &result.Candidates[i]
-			byCandidate[c.FileMemberID.String()+"/"+c.ReleaseID.String()] = i
-			c.Positions = make([]IncomingMatchPosition, 0)
-		}
-		for _, position := range positions {
-			if i, ok := byCandidate[position.FileMemberID.String()+"/"+position.ReleaseID.String()]; ok {
-				result.Candidates[i].Positions = append(result.Candidates[i].Positions, IncomingMatchPosition{TrackID: position.TrackID, Medium: position.Medium, Position: position.Position})
-			}
 		}
 		return nil
 	})

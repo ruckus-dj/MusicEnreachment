@@ -267,6 +267,8 @@ func Run(ctx context.Context, config Config) error {
 		return fmt.Errorf("create publication command runner: %w", err)
 	}
 	libraryPublications.WithPublicationCommands(publicationCommands)
+	libraryPublications.WithArtistDiscography(providerFetch)
+	setupManagerRepository.SetPublicationMatchingScorer(service.ScorePublicationMatchingCapture)
 	localRecheckRepository := persistence.NewIncomingMatchCandidateRepository(db)
 	localFallbackCatalog := service.NewMatchingLocalCatalogSnapshotService(persistence.NewMatchingLocalCatalogRepository(db))
 	incomingMatchingReconciliation.WithLocalFallback(localRecheckRepository, localFallbackCatalog)
@@ -288,6 +290,7 @@ func Run(ctx context.Context, config Config) error {
 	obsoleteOutputCleanupRunner := service.NewObsoletePublicationOutputCleanupRunner(setupManagerRepository, registry, publicationCoordinator, nil)
 	obsoleteOutputCleanupWorker := jobs.NewObsoletePublicationOutputCleanupWorker(obsoleteOutputCleanupRunner)
 	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)
+	publicationAutoAlbumWorker := jobs.NewPublicationAutoAlbumWorker(setupManagerRepository, libraryPublications)
 	publicationReconciliationDispatcher := publicationReconciliationDispatcher{repository: setupManagerRepository, river: riverSlot}
 	publicationReconciliationDispatchWorker := jobs.NewPublicationReconciliationDispatchWorker(publicationReconciliationDispatcher)
 	publicationSourceCleanupRequestDispatcher := publicationSourceCleanupRequestDispatcher{repository: setupManagerRepository, river: riverSlot}
@@ -343,6 +346,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, artifactCleanupWorker)
 		registerPublicationSourceCleanupWorkers(workers, publicationSourceCleanupWorkers)
 		river.AddWorker(workers, providerFetchWorker)
+		river.AddWorker(workers, publicationAutoAlbumWorker)
 		river.AddWorker(workers, genreCatalogWorker)
 		river.AddWorker(workers, genreCatalogRefreshDispatchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)

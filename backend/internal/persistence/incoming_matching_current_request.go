@@ -49,7 +49,7 @@ func RequestIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB, 
 	return wakeCurrentIncomingMatchingReconciliationWith(ctx, tx)
 }
 
-func requestAllAutomaticIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB) error {
+func requestAllAutomaticIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB, groupingInvalidated bool) error {
 	var currentRequestsAvailable bool
 	if err := tx.NewRaw(`SELECT EXISTS (
 		SELECT 1 FROM information_schema.columns
@@ -76,7 +76,8 @@ func requestAllAutomaticIncomingMatchingReconciliationWith(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("count automatic incoming matching requests: %w", err)
 	}
-	if count == 0 {
+	// A folder can become ready before it has any materialized groups.
+	if count == 0 && !groupingInvalidated {
 		return nil
 	}
 	return wakeCurrentIncomingMatchingReconciliationWith(ctx, tx)

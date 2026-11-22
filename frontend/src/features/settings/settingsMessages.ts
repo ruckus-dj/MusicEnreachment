@@ -28,6 +28,7 @@ const english = {
   workDirectoryChanged: "Work directory changed.",
   shaSaved: "SHA-256 setting saved.",
   sourceDeletionSaved: "Source deletion setting saved.",
+  albumCompletionSaved: "Automatic publication setting saved.",
   lrclibSaved: "LRCLIB setting saved.",
   logLevelApplied: "Log level applied.",
   serverDidNotConfirmFormat:
@@ -170,6 +171,7 @@ const russian: Record<SettingsMessageKey, string> = {
   workDirectoryChanged: "Рабочая папка изменена.",
   shaSaved: "Настройка SHA-256 сохранена.",
   sourceDeletionSaved: "Настройка удаления исходников сохранена.",
+  albumCompletionSaved: "Настройка автопубликации сохранена.",
   lrclibSaved: "Настройка LRCLIB сохранена.",
   logLevelApplied: "Уровень журнала применён.",
   serverDidNotConfirmFormat:

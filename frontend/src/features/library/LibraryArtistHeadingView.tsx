@@ -9,6 +9,8 @@ const copy = {
     withAudio: "with audio",
     published: "published",
     missing: "releases without an edition",
+    local: "in the library",
+    complete: "Complete MusicBrainz discography saved locally.",
     performer: "Performer",
     summary: "Includes known cached groups; the discography may be incomplete.",
     select: (name: string) => `Select all positions by ${name}`,
@@ -19,6 +21,8 @@ const copy = {
     withAudio: "с аудио",
     published: "опубликовано",
     missing: "альбомов без издания",
+    local: "в медиатеке",
+    complete: "Полная дискография MusicBrainz сохранена локально.",
     performer: "Исполнитель",
     summary:
       "Включая известные группы из кэша; дискография может быть неполной.",
@@ -34,6 +38,7 @@ export function LibraryArtistHeadingView({
   palette = "clay",
   count,
   includesCachedGroups,
+  discographyComplete,
   selection,
 }: {
   locale: Locale;
@@ -47,8 +52,10 @@ export function LibraryArtistHeadingView({
     published: number;
     available?: number;
     missing?: number;
+    local?: number;
   };
   includesCachedGroups?: boolean;
+  discographyComplete?: boolean;
   selection?: {
     total: number;
     selected: number;
@@ -123,9 +130,13 @@ export function LibraryArtistHeadingView({
           {` · ${formatter.format(count.published)} ${text.published}`}
           {count.missing !== undefined &&
             ` · ${formatter.format(count.missing)} ${text.missing}`}
+          {count.local !== undefined &&
+            ` · ${formatter.format(count.local)} ${text.local}`}
         </p>
-        {includesCachedGroups && (
-          <p className="m-0 text-sm text-[var(--muted)]">{text.summary}</p>
+        {(discographyComplete || includesCachedGroups) && (
+          <p className="m-0 text-sm text-[var(--muted)]">
+            {discographyComplete ? text.complete : text.summary}
+          </p>
         )}
       </div>
     </header>

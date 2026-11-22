@@ -447,13 +447,106 @@ func (service *ProviderFetchService) SearchArtists(ctx context.Context, query st
 
 func (service *ProviderFetchService) BrowseReleasesByArtist(ctx context.Context, artistID string, offset, limit int) (musicbrainz.SearchResult, error) {
 	canonicalID := strings.ToLower(strings.TrimSpace(artistID))
-	return fetchProviderResponse(service, ctx, fmt.Sprintf("artist-release-browse:%s:%d:%d", canonicalID, offset, limit), func(provider *musicbrainz.Provider) (musicbrainz.SearchResult, persistence.ProviderGraph, []byte, string, error) {
+	return fetchProviderResponse(service, ctx, artistReleaseBrowseCacheKey(canonicalID, offset, limit), func(provider *musicbrainz.Provider) (musicbrainz.SearchResult, persistence.ProviderGraph, []byte, string, error) {
 		result, err := provider.BrowseReleasesByArtist(ctx, canonicalID, offset, limit)
 		if err != nil {
 			return result, persistence.ProviderGraph{}, nil, "", err
 		}
 		graph, err := NormalizeMusicBrainzArtistReleaseBrowse(result)
 		return result, graph, result.Raw, "", err
+	})
+}
+
+func artistReleaseBrowseCacheKey(artistID string, offset, limit int) string {
+	return fmt.Sprintf("artist-release-browse:%s:%d:%d", artistID, offset, limit)
+}
+
+const artistDiscographyPageSize = 100
+
+// EnsureArtistDiscography fetches every release-browse page for one MusicBrainz
+// artist and records completion only after the accepted pages and normalized
+// graph cover the provider's reported total. A nil result is durable evidence
+// that the discography was complete under the recorded configuration.
+func (service *ProviderFetchService) EnsureArtistDiscography(ctx context.Context, artistMBID string) error {
+	artistID := strings.ToLower(strings.TrimSpace(artistMBID))
+	if !validProviderMBID(artistID) {
+		return errors.New("invalid MusicBrainz artist id")
+	}
+	config, err := service.registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("read MusicBrainz provider configuration: %w", err)
+	}
+	if config.Identity == "" {
+		return ErrMusicBrainzConfigurationMissing
+	}
+	source, err := service.cache.ResolveMusicBrainzSource(ctx, musicBrainzEndpoint(config), config.Identity)
+	if err != nil {
+		return err
+	}
+	complete, err := service.cache.IsArtistDiscographyComplete(ctx, source.ID, config.Identity, artistID)
+	if err != nil {
+		return err
+	}
+	if complete {
+		return nil
+	}
+	total := -1
+	offset := 0
+	pageKeys := make([]string, 0)
+	releaseKeys := make([]string, 0)
+	seen := make(map[string]struct{})
+	for {
+		result, err := service.BrowseReleasesByArtist(ctx, artistID, offset, artistDiscographyPageSize)
+		if err != nil {
+			return fmt.Errorf("browse MusicBrainz artist releases at offset %d: %w", offset, err)
+		}
+		if result.Offset != offset {
+			return fmt.Errorf("browse MusicBrainz artist releases: provider returned offset %d, want %d", result.Offset, offset)
+		}
+		if total < 0 {
+			total = result.Count
+		} else if result.Count != total {
+			return fmt.Errorf("browse MusicBrainz artist releases: provider total changed from %d to %d", total, result.Count)
+		}
+		if len(result.Items) > artistDiscographyPageSize || total < offset+len(result.Items) {
+			return fmt.Errorf("browse MusicBrainz artist releases: accepted page exceeds the provider total")
+		}
+		if len(result.Items) == 0 && offset < total {
+			return fmt.Errorf("browse MusicBrainz artist releases: accepted page is empty before the provider total")
+		}
+		pageKeys = append(pageKeys, artistReleaseBrowseCacheKey(artistID, offset, artistDiscographyPageSize))
+		for _, entity := range result.Items {
+			parsed, err := uuid.Parse(entity.ID)
+			if err != nil || !strings.EqualFold(entity.ID, parsed.String()) {
+				return fmt.Errorf("browse MusicBrainz artist releases: accepted release id is invalid")
+			}
+			key := parsed.String()
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("browse MusicBrainz artist releases: accepted releases contain a duplicate")
+			}
+			seen[key] = struct{}{}
+			releaseKeys = append(releaseKeys, key)
+		}
+		offset += len(result.Items)
+		if offset < total {
+			if len(result.Items) != artistDiscographyPageSize {
+				return fmt.Errorf("browse MusicBrainz artist releases: accepted page is short before the provider total")
+			}
+			continue
+		}
+		break
+	}
+	if len(seen) != total {
+		return fmt.Errorf("browse MusicBrainz artist releases: accepted %d releases, provider reported %d", len(seen), total)
+	}
+	return service.cache.CompleteArtistDiscography(ctx, persistence.ArtistDiscographyCompletion{
+		ProviderSourceID:      source.ID,
+		ProviderID:            source.ProviderID,
+		ConfigurationIdentity: config.Identity,
+		ArtistMBID:            artistID,
+		ReleaseCount:          total,
+		PageCacheKeys:         pageKeys,
+		ReleaseKeys:           releaseKeys,
 	})
 }
 

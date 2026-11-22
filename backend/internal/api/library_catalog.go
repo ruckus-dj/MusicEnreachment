@@ -108,6 +108,8 @@ type LibraryArtistSummary struct {
 	Genres                 []string                      `json:"genres" nullable:"false"`
 	ProviderLinks          []LibraryProviderLinkResponse `json:"provider_links" nullable:"false"`
 	ReleaseCount           int                           `json:"release_count"`
+	MissingReleaseGroups   int                           `json:"missing_release_groups,omitempty"`
+	DiscographyComplete    bool                          `json:"discography_complete,omitempty"`
 	PositionCount          int                           `json:"position_count"`
 	PublishedPositionCount int                           `json:"published_position_count"`
 	AvailablePositionCount int                           `json:"available_position_count"`
@@ -156,12 +158,13 @@ type LibraryPositionReleaseResponse struct {
 type PublicationAudioResponse = publicationAudioResponse
 
 type LibraryPositionPublicationResponse struct {
-	_            struct{}                 `json:"-" nullable:"true"`
-	Epoch        uuid.UUID                `json:"epoch"`
-	Generation   uuid.UUID                `json:"generation"`
-	RelativePath string                   `json:"relative_path"`
-	ValidatedAt  string                   `json:"validated_at"`
-	Audio        PublicationAudioResponse `json:"audio"`
+	_                  struct{}                 `json:"-" nullable:"true"`
+	Epoch              uuid.UUID                `json:"epoch"`
+	Generation         uuid.UUID                `json:"generation"`
+	RelativePath       string                   `json:"relative_path"`
+	ValidatedAt        string                   `json:"validated_at"`
+	MatchingConfidence *float64                 `json:"matching_confidence" nullable:"true"`
+	Audio              PublicationAudioResponse `json:"audio"`
 }
 
 type LibraryPositionSummary struct {
@@ -497,7 +500,11 @@ func libraryCatalogSummary(value service.LibraryCatalogSummary) LibraryCatalogSu
 }
 
 func libraryArtist(value service.LibraryCatalogArtist) LibraryArtistSummary {
-	return LibraryArtistSummary{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: nonNilAPIStrings(value.Genres), ProviderLinks: libraryProviderLinks(value.ProviderLinks), ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount}
+	return LibraryArtistSummary{
+		ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: nonNilAPIStrings(value.Genres), ProviderLinks: libraryProviderLinks(value.ProviderLinks),
+		ReleaseCount: value.ReleaseCount, MissingReleaseGroups: value.MissingReleaseGroups, DiscographyComplete: value.DiscographyComplete,
+		PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount,
+	}
 }
 
 func libraryProviderLinks(values []service.LibraryCatalogProviderLink) []LibraryProviderLinkResponse {
@@ -536,7 +543,8 @@ func libraryPosition(value service.LibraryCatalogPosition) LibraryPositionSummar
 	var publication *LibraryPositionPublicationResponse
 	if value.Publication != nil {
 		publication = &LibraryPositionPublicationResponse{Epoch: value.Publication.Epoch, Generation: value.Publication.Generation, RelativePath: value.Publication.RelativePath, ValidatedAt: value.Publication.ValidatedAt,
-			Audio: PublicationAudioResponse{StreamIndex: value.Publication.Audio.StreamIndex, Codec: value.Publication.Audio.Codec, Lossless: value.Publication.Audio.Lossless, Channels: value.Publication.Audio.Channels, Bitrate: value.Publication.Audio.Bitrate, BitDepth: value.Publication.Audio.BitDepth, SampleRate: value.Publication.Audio.SampleRate, Container: value.Publication.Audio.Container, SupportedSourceContainer: value.Publication.Audio.SupportedSourceContainer, ALACCapabilitiesVerified: value.Publication.Audio.ALACCapabilitiesVerified}}
+			MatchingConfidence: value.Publication.MatchingConfidence,
+			Audio:              PublicationAudioResponse{StreamIndex: value.Publication.Audio.StreamIndex, Codec: value.Publication.Audio.Codec, Lossless: value.Publication.Audio.Lossless, Channels: value.Publication.Audio.Channels, Bitrate: value.Publication.Audio.Bitrate, BitDepth: value.Publication.Audio.BitDepth, SampleRate: value.Publication.Audio.SampleRate, Container: value.Publication.Audio.Container, SupportedSourceContainer: value.Publication.Audio.SupportedSourceContainer, ALACCapabilitiesVerified: value.Publication.Audio.ALACCapabilitiesVerified}}
 	}
 	return LibraryPositionSummary{ID: value.ID, LocalTrackID: value.LocalTrackID, RecordingID: apiUUIDString(value.RecordingID),
 		Release: LibraryPositionReleaseResponse{ID: value.Release.ID, Title: value.Release.Title, Artists: libraryCredits(value.Release.Artists)}, Medium: value.Medium, Position: value.Position,

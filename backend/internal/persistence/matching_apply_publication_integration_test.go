@@ -110,7 +110,7 @@ func runMatchingApplyPublicationCase(t *testing.T, review, failApply bool) {
 		t.Fatalf("claim current matching delivery: claim=%+v outcome=%v err=%v", claim, outcome, err)
 	}
 
-	evaluation := fixture.evaluation([]persistence.IncomingMatchCandidate{fixture.candidate(fixture.memberA, .99), fixture.candidate(fixture.memberB, .99)})
+	evaluation := fixture.evaluation(nil)
 	evaluation.Groups[0].Evidence = matchingApplyEvidence(t, fixture, fixture.trackID)
 	if review {
 		var envelope map[string]json.RawMessage
@@ -154,7 +154,7 @@ func runMatchingApplyPublicationCase(t *testing.T, review, failApply bool) {
 	}
 
 	header, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, fixture.group.ID)
-	if err != nil || header == nil || len(candidates) != 2 {
+	if err != nil || header == nil || header.EvaluationRevision == "" || len(candidates) != 0 {
 		t.Fatalf("published result: header=%+v candidates=%d err=%v", header, len(candidates), err)
 	}
 	parentAfter, err := repository.GetOperation(ctx, parentID)

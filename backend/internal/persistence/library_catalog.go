@@ -39,6 +39,8 @@ type LibraryCatalogArtist struct {
 	Genres                 []string                     `json:"genres" bun:"-"`
 	ProviderLinks          []LibraryCatalogProviderLink `json:"provider_links" bun:"-"`
 	ReleaseCount           int                          `json:"release_count" bun:"release_count"`
+	MissingReleaseGroups   int                          `json:"missing_release_groups" bun:"-"`
+	DiscographyComplete    bool                         `json:"discography_complete" bun:"-"`
 	PositionCount          int                          `json:"position_count" bun:"position_count"`
 	PublishedPositionCount int                          `json:"published_position_count" bun:"published_position_count"`
 	AvailablePositionCount int                          `json:"available_position_count" bun:"available_position_count"`
@@ -121,11 +123,12 @@ type LibraryCatalogPublicationAudio struct {
 }
 
 type LibraryCatalogPublication struct {
-	Epoch        uuid.UUID                      `json:"epoch"`
-	Generation   uuid.UUID                      `json:"generation"`
-	RelativePath string                         `json:"relative_path"`
-	ValidatedAt  string                         `json:"validated_at"`
-	Audio        LibraryCatalogPublicationAudio `json:"audio"`
+	Epoch              uuid.UUID                      `json:"epoch"`
+	Generation         uuid.UUID                      `json:"generation"`
+	RelativePath       string                         `json:"relative_path"`
+	ValidatedAt        string                         `json:"validated_at"`
+	MatchingConfidence *float64                       `json:"matching_confidence"`
+	Audio              LibraryCatalogPublicationAudio `json:"audio"`
 }
 
 type LibraryCatalogPosition struct {
@@ -239,7 +242,8 @@ func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, req
 			return fmt.Errorf("count library artists: %w", err)
 		}
 		for i := range rows {
-			rows[i].ReleaseCount += missingReleaseCounts[rows[i].ID]
+			rows[i].MissingReleaseGroups = missingReleaseCounts[rows[i].ID]
+			rows[i].ReleaseCount += rows[i].MissingReleaseGroups
 			if err := json.Unmarshal([]byte(rows[i].GenresJSON), &rows[i].Genres); err != nil {
 				return fmt.Errorf("decode local artist genres: %w", err)
 			}
@@ -281,7 +285,19 @@ func (repository *LibraryRepository) ReadLibraryArtist(ctx context.Context, id u
 		if err != nil {
 			return err
 		}
-		result.ReleaseCount += missingReleaseCounts[result.ID]
+		result.MissingReleaseGroups = missingReleaseCounts[result.ID]
+		result.ReleaseCount += result.MissingReleaseGroups
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM provider_local_artist binding
+			JOIN provider_artist artist ON artist.id=binding.provider_artist_id AND artist.provider_id=binding.provider_id
+			JOIN provider ON provider.id=artist.provider_id AND provider.code='musicbrainz'
+			JOIN provider_artist_discography catalog ON catalog.provider_id=artist.provider_id AND catalog.artist_mbid::text=artist.provider_key
+			JOIN provider_source source ON source.id=catalog.provider_source_id AND source.configuration_identity=catalog.configuration_identity
+			JOIN app_setting config ON config.setting_name='musicbrainz_config_identity' AND config.setting_value=catalog.configuration_identity
+			WHERE binding.local_artist_id=?
+		)`, result.ID).Scan(ctx, &result.DiscographyComplete); err != nil {
+			return fmt.Errorf("read artist discography state: %w", err)
+		}
 		result.ProviderLinks = make([]LibraryCatalogProviderLink, 0)
 		return readArtistProviderLinksBatch(ctx, tx, []LibraryCatalogArtist{result}, &result)
 	})
@@ -386,7 +402,7 @@ func (repository *LibraryRepository) ReadLibraryPositions(ctx context.Context, r
 			}
 			var data []positionData
 			if err := tx.NewRaw(`SELECT rt.id AS position_id,(SELECT count(*) FROM track_source ts WHERE ts.track_id=rt.track_id) AS source_variant_count,(SELECT mv.id FROM track_source ts JOIN media_variant mv ON mv.id=ts.media_variant_id WHERE ts.track_id=rt.track_id AND ts.selected ORDER BY mv.id LIMIT 1) AS selected_media_variant_id,
-				(SELECT jsonb_build_object('epoch',tp.epoch,'generation',tp.generation,'relative_path',tp.relative_path,'validated_at',tp.validated_at,'audio',tp.actual_audio->'facts') FROM track_publication tp WHERE tp.position_id=rt.id) AS publication
+				(SELECT jsonb_build_object('epoch',tp.epoch,'generation',tp.generation,'relative_path',tp.relative_path,'validated_at',tp.validated_at,'matching_confidence',tp.matching_confidence,'audio',tp.actual_audio->'facts') FROM track_publication tp WHERE tp.position_id=rt.id) AS publication
 				FROM release_track rt WHERE rt.id IN (?)`, bun.List(positionIDs)).Scan(ctx, &data); err != nil {
 				return fmt.Errorf("read library position availability: %w", err)
 			}

@@ -105,22 +105,17 @@ func assertMatchingPublicationWaiting(t *testing.T, ctx context.Context, db *bun
 	}
 }
 
-func assertIncomingMatchResult(t *testing.T, ctx context.Context, repository *persistence.IncomingMatchCandidateRepository, groupID uuid.UUID, evaluated bool, want []persistence.IncomingMatchCandidate) {
-	t.Helper()
-	header, candidates, err := repository.Get(ctx, groupID)
-	if err != nil {
-		t.Fatalf("read incoming match result: %v", err)
-	}
-	if (header != nil) != evaluated || len(candidates) != len(want) {
-		t.Fatalf("result header=%#v candidates=%#v, evaluated=%v want=%#v", header, candidates, evaluated, want)
-	}
-}
-
 func mustIncomingMatchResult(t *testing.T, ctx context.Context, repository *persistence.IncomingMatchCandidateRepository, groupID uuid.UUID) (*persistence.IncomingMatchEvaluationHeader, []persistence.IncomingMatchCandidate) {
 	t.Helper()
 	header, candidates, err := repository.Get(ctx, groupID)
 	if err != nil || header == nil {
 		t.Fatalf("read evaluated result: header=%#v err=%v", header, err)
+	}
+	if header.EvaluationRevision == "" || header.MatchingAuthorityMode == "" {
+		t.Fatalf("persisted evaluation lacks revision/authority: header=%#v", header)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("persisted evaluation retained candidate scores: %+v", candidates)
 	}
 	return header, candidates
 }

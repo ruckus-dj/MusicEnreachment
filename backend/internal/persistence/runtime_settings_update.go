@@ -46,6 +46,10 @@ func validateRuntimeSettingValues(values map[string]string) error {
 			if _, err := strconv.ParseBool(value); err != nil {
 				return fmt.Errorf("invalid publication source removal setting: %w", err)
 			}
+		case "publication_auto_complete_albums":
+			if _, err := strconv.ParseBool(value); err != nil {
+				return fmt.Errorf("invalid publication album auto-completion setting: %w", err)
+			}
 		case "source_file_concurrency":
 			concurrency, err := strconv.Atoi(value)
 			if err != nil || concurrency < 1 {

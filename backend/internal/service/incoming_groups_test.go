@@ -31,7 +31,7 @@ func TestReconcileIncomingGroupsPreservesOnlyUnchangedManualMembers(t *testing.T
 	for _, file := range files {
 		physical[file.VariantID], ready[file.VariantID] = file.Locations, true
 	}
-	groups, err := reconcileIncomingGroups(files, physical, ready, persisted)
+	groups, err := reconcileIncomingGroups(incomingCaptureView{Files: files, Locations: physical, Ready: ready}, persisted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 		Mtime: time.Date(2026, 10, 9, 11, 0, 0, 0, time.UTC), Tags: []byte(`{"ALBUM":["A"]}`),
 		MetadataWinner: &metadataWinner, MetadataObservedAt: timePointer(time.Date(2026, 10, 9, 11, 0, 0, 0, time.UTC)),
 		MetadataProvenance: []byte(`{"reader":"test"}`), Fingerprint: stringPointer("fp-current"),
-		FingerprintWinner: uuidPointer(uuid.New()), Ready: false,
+		FingerprintWinner: uuidPointer(uuid.New()), RootEnabled: true, Ready: false,
 	}
 	groupID := uuid.New()
 	fence := incomingMemberLocations(variantID, []IncomingLocation{{
@@ -138,7 +138,7 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+	retained, err := reconcileIncomingGroups(view, persisted)
 	if err != nil || len(visibleIncomingGroups(retained)) != 0 || len(retained) != 1 || len(retained[0].UnreadyMembers) != 1 {
 		t.Fatalf("unready physical member should be hidden but retained: groups=%+v err=%v", retained, err)
 	}
@@ -156,7 +156,7 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	returned, err := reconcileIncomingGroups(readyView.Files, readyView.Locations, readyView.Ready, stored)
+	returned, err := reconcileIncomingGroups(readyView, stored)
 	if err != nil || len(visibleIncomingGroups(returned)) != 2 {
 		t.Fatalf("manual group should return after analysis readiness: groups=%+v err=%v", returned, err)
 	}
@@ -174,6 +174,23 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 	if !manualReturned || !newcomerAuto {
 		t.Fatalf("manual protection/newcomer regrouping failed: %+v", returned)
 	}
+
+	pending := persistence.IncomingGroupingCapture{
+		RootID: rootID, RootEnabled: true, LocationID: uuid.New(), VariantID: uuid.New(),
+		RelativePath: "album/booklet.pdf",
+	}
+	nested := pending
+	nested.LocationID, nested.VariantID, nested.RelativePath = uuid.New(), uuid.New(), "album/CD2/pending.flac"
+	checkFolder := func(wantVisible int) {
+		t.Helper()
+		snapshot, err := buildIncomingSnapshot(0, []persistence.IncomingGroupingCapture{capture, newcomer, pending, nested}, stored)
+		if err != nil || len(snapshot.Groups) != wantVisible || len(snapshot.Files) != 2 {
+			t.Fatalf("direct folder readiness: groups=%+v files=%d err=%v", snapshot.Groups, len(snapshot.Files), err)
+		}
+	}
+	checkFolder(0)
+	pending.NonAudioAnalysisSettled = true
+	checkFolder(2)
 }
 
 func timePointer(value time.Time) *time.Time { return &value }

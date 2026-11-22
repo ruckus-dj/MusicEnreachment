@@ -90,7 +90,7 @@ func (r *SettingsRepository) UpdateMusicBrainzSettingsIfCurrent(
 			}
 		}
 		if changed {
-			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx); err != nil {
+			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx, false); err != nil {
 				return err
 			}
 		}
@@ -152,6 +152,11 @@ func checkRuntimeSettingsExpected(ctx context.Context, reader settingRowReader, 
 	}
 	if expected.PublicationRemoveSources != nil {
 		if err := checkExpectedSetting(ctx, reader, "$1", appsettings.PublicationRemoveSourcesKey, strconv.FormatBool(*expected.PublicationRemoveSources), strconv.FormatBool(*defaults.PublicationRemoveSources)); err != nil {
+			return err
+		}
+	}
+	if expected.PublicationAutoCompleteAlbums != nil {
+		if err := checkExpectedSetting(ctx, reader, "$1", appsettings.PublicationAutoCompleteAlbumsKey, strconv.FormatBool(*expected.PublicationAutoCompleteAlbums), strconv.FormatBool(*defaults.PublicationAutoCompleteAlbums)); err != nil {
 			return err
 		}
 	}

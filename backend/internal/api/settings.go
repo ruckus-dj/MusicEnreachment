@@ -15,24 +15,26 @@ type UpdateSettingsInput struct {
 }
 
 type UpdateSettingsBody struct {
-	OutputDirectory          string                      `json:"output_directory,omitempty" maxLength:"4096"`
-	WorkDirectory            *string                     `json:"work_directory,omitempty" maxLength:"4096"`
-	PublicationFormat        string                      `json:"publication_format,omitempty" enum:"source,mka,m4a"`
-	PublicationPathTemplate  *string                     `json:"publication_path_template,omitempty" maxLength:"4096"`
-	PublicationRemoveSources *bool                       `json:"publication_remove_sources,omitempty"`
-	SourceFileConcurrency    *int                        `json:"source_file_concurrency,omitempty" minimum:"1"`
-	MatchingPairThreshold    *float64                    `json:"matching_pair_threshold,omitempty" minimum:"0" maximum:"1"`
-	Expected                 *UpdateSettingsExpectedBody `json:"expected,omitempty"`
+	OutputDirectory               string                      `json:"output_directory,omitempty" maxLength:"4096"`
+	WorkDirectory                 *string                     `json:"work_directory,omitempty" maxLength:"4096"`
+	PublicationFormat             string                      `json:"publication_format,omitempty" enum:"source,mka,m4a"`
+	PublicationPathTemplate       *string                     `json:"publication_path_template,omitempty" maxLength:"4096"`
+	PublicationRemoveSources      *bool                       `json:"publication_remove_sources,omitempty"`
+	PublicationAutoCompleteAlbums *bool                       `json:"publication_auto_complete_albums,omitempty"`
+	SourceFileConcurrency         *int                        `json:"source_file_concurrency,omitempty" minimum:"1"`
+	MatchingPairThreshold         *float64                    `json:"matching_pair_threshold,omitempty" minimum:"0" maximum:"1"`
+	Expected                      *UpdateSettingsExpectedBody `json:"expected,omitempty"`
 }
 
 type UpdateSettingsExpectedBody struct {
-	WorkDirectory            *string  `json:"work_directory,omitempty" maxLength:"4096"`
-	OutputDirectory          *string  `json:"output_directory,omitempty" maxLength:"4096"`
-	PublicationFormat        *string  `json:"publication_format,omitempty"`
-	PublicationPathTemplate  *string  `json:"publication_path_template,omitempty" maxLength:"4096"`
-	PublicationRemoveSources *bool    `json:"publication_remove_sources,omitempty"`
-	SourceFileConcurrency    *int     `json:"source_file_concurrency,omitempty" minimum:"1"`
-	MatchingPairThreshold    *float64 `json:"matching_pair_threshold,omitempty" minimum:"0" maximum:"1"`
+	WorkDirectory                 *string  `json:"work_directory,omitempty" maxLength:"4096"`
+	OutputDirectory               *string  `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat             *string  `json:"publication_format,omitempty"`
+	PublicationPathTemplate       *string  `json:"publication_path_template,omitempty" maxLength:"4096"`
+	PublicationRemoveSources      *bool    `json:"publication_remove_sources,omitempty"`
+	PublicationAutoCompleteAlbums *bool    `json:"publication_auto_complete_albums,omitempty"`
+	SourceFileConcurrency         *int     `json:"source_file_concurrency,omitempty" minimum:"1"`
+	MatchingPairThreshold         *float64 `json:"matching_pair_threshold,omitempty" minimum:"0" maximum:"1"`
 }
 
 type UpdateMusicBrainzInput struct {
@@ -166,7 +168,8 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		expected := input.Body.Expected
 		hasChanges := input.Body.WorkDirectory != nil || input.Body.OutputDirectory != "" || publicationFormat != nil ||
-			input.Body.PublicationPathTemplate != nil || input.Body.PublicationRemoveSources != nil || input.Body.SourceFileConcurrency != nil ||
+			input.Body.PublicationPathTemplate != nil || input.Body.PublicationRemoveSources != nil ||
+			input.Body.PublicationAutoCompleteAlbums != nil || input.Body.SourceFileConcurrency != nil ||
 			input.Body.MatchingPairThreshold != nil
 		if hasChanges && (expected == nil ||
 			(input.Body.WorkDirectory != nil && expected.WorkDirectory == nil) ||
@@ -174,6 +177,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			(publicationFormat != nil && expected.PublicationFormat == nil) ||
 			(input.Body.PublicationPathTemplate != nil && expected.PublicationPathTemplate == nil) ||
 			(input.Body.PublicationRemoveSources != nil && expected.PublicationRemoveSources == nil) ||
+			(input.Body.PublicationAutoCompleteAlbums != nil && expected.PublicationAutoCompleteAlbums == nil) ||
 			(input.Body.SourceFileConcurrency != nil && expected.SourceFileConcurrency == nil) ||
 			(input.Body.MatchingPairThreshold != nil && expected.MatchingPairThreshold == nil)) {
 			return nil, huma.Error422UnprocessableEntity("expected saved settings are required for every changed field")
@@ -183,16 +187,19 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			expectedValues = &settings.RuntimeSettingsExpected{
 				WorkDirectory: expected.WorkDirectory, OutputDirectory: expected.OutputDirectory,
 				PublicationFormat: expected.PublicationFormat, PublicationPathTemplate: expected.PublicationPathTemplate,
-				PublicationRemoveSources: expected.PublicationRemoveSources, SourceFileConcurrency: expected.SourceFileConcurrency,
-				MatchingPairThreshold: expected.MatchingPairThreshold,
+				PublicationRemoveSources:      expected.PublicationRemoveSources,
+				PublicationAutoCompleteAlbums: expected.PublicationAutoCompleteAlbums,
+				SourceFileConcurrency:         expected.SourceFileConcurrency,
+				MatchingPairThreshold:         expected.MatchingPairThreshold,
 			}
 		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
 			OutputDirectory: outputDirectory, WorkDirectory: input.Body.WorkDirectory, PublicationFormat: publicationFormat,
-			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
-			PublicationRemoveSources: input.Body.PublicationRemoveSources,
-			SourceFileConcurrency:    input.Body.SourceFileConcurrency,
-			MatchingPairThreshold:    input.Body.MatchingPairThreshold, Expected: expectedValues,
+			PublicationPathTemplate:       input.Body.PublicationPathTemplate,
+			PublicationRemoveSources:      input.Body.PublicationRemoveSources,
+			PublicationAutoCompleteAlbums: input.Body.PublicationAutoCompleteAlbums,
+			SourceFileConcurrency:         input.Body.SourceFileConcurrency,
+			MatchingPairThreshold:         input.Body.MatchingPairThreshold, Expected: expectedValues,
 		}); err != nil {
 			if errors.Is(err, service.ErrSettingsConflict) {
 				return nil, huma.Error409Conflict("settings changed since this draft was opened")

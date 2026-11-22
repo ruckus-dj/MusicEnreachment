@@ -121,6 +121,9 @@ type LibraryPublications struct {
 	coverAcquisition interface {
 		Ensure(context.Context, uuid.UUID) error
 	}
+	artistDiscography interface {
+		EnsureArtistDiscography(context.Context, string) error
+	}
 	resolveNamespace func(context.Context, *persistence.LibraryFirstPublicationContext, string, string, *FirstPublicationPreview) ([]persistence.PublicationNamespaceNode, error)
 }
 
@@ -143,6 +146,13 @@ func (service *LibraryPublications) WithCoverAcquisition(acquisition interface {
 	Ensure(context.Context, uuid.UUID) error
 }) *LibraryPublications {
 	service.coverAcquisition = acquisition
+	return service
+}
+
+func (service *LibraryPublications) WithArtistDiscography(discography interface {
+	EnsureArtistDiscography(context.Context, string) error
+}) *LibraryPublications {
+	service.artistDiscography = discography
 	return service
 }
 

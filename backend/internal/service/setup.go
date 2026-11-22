@@ -399,15 +399,16 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 // Nil fields are preserved; supplied values follow the same validation and
 // transaction path as setup runtime updates.
 type RuntimeUpdateRequest struct {
-	ToolsDirectory           *string
-	WorkDirectory            *string
-	OutputDirectory          *string
-	PublicationFormat        *string
-	PublicationPathTemplate  *string
-	PublicationRemoveSources *bool
-	SourceFileConcurrency    *int
-	MatchingPairThreshold    *float64
-	Expected                 *settings.RuntimeSettingsExpected
+	ToolsDirectory                *string
+	WorkDirectory                 *string
+	OutputDirectory               *string
+	PublicationFormat             *string
+	PublicationPathTemplate       *string
+	PublicationRemoveSources      *bool
+	PublicationAutoCompleteAlbums *bool
+	SourceFileConcurrency         *int
+	MatchingPairThreshold         *float64
+	Expected                      *settings.RuntimeSettingsExpected
 }
 
 // SaveRuntimeUpdate saves all supplied runtime values atomically.
@@ -450,6 +451,7 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUp
 	}
 	update.PublicationPathTemplate = request.PublicationPathTemplate
 	update.PublicationRemoveSources = request.PublicationRemoveSources
+	update.PublicationAutoCompleteAlbums = request.PublicationAutoCompleteAlbums
 	update.SourceFileConcurrency = request.SourceFileConcurrency
 	update.MatchingPairThreshold = request.MatchingPairThreshold
 	if toolsDirectory != nil {

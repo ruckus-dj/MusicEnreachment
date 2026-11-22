@@ -207,6 +207,7 @@ function release(
               container: "flac",
               codec: "FLAC",
               generation,
+              matching_confidence: null,
               relative_path: "Artist/Album/01 - Position One.flac",
               validated_at: validatedAt,
             }

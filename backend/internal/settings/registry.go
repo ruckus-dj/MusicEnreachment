@@ -184,14 +184,15 @@ func timeDefinition(name string, mutable bool) settingDefinition[time.Time] {
 }
 
 var (
-	defaultPublic                   = "public"
-	defaultInfo                     = "info"
-	defaultTrue                     = true
-	defaultFileConcurrency          = 4
-	defaultSelfHostedDelay          = 0.5
-	defaultMatchingPairThreshold    = 0.70
-	defaultPublicationPathTemplate  = `{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}`
-	defaultPublicationRemoveSources = false
+	defaultPublic                        = "public"
+	defaultInfo                          = "info"
+	defaultTrue                          = true
+	defaultFileConcurrency               = 4
+	defaultSelfHostedDelay               = 0.5
+	defaultMatchingPairThreshold         = 0.70
+	defaultPublicationPathTemplate       = `{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}`
+	defaultPublicationRemoveSources      = false
+	defaultPublicationAutoCompleteAlbums = false
 
 	platformOSSetting              = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
 	platformArchSetting            = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
@@ -208,6 +209,10 @@ var (
 	publicationRemoveSourcesSetting = settingDefinition[bool]{
 		name: PublicationRemoveSourcesKey, kind: "bool", parse: strconv.ParseBool,
 		serialize: strconv.FormatBool, defaultVal: &defaultPublicationRemoveSources, mutable: true,
+	}
+	publicationAutoCompleteAlbumsSetting = settingDefinition[bool]{
+		name: PublicationAutoCompleteAlbumsKey, kind: "bool", parse: strconv.ParseBool,
+		serialize: strconv.FormatBool, defaultVal: &defaultPublicationAutoCompleteAlbums, mutable: true,
 	}
 	musicBrainzModeSetting = settingDefinition[string]{
 		name: MusicBrainzModeKey, kind: "enum", parse: parseMusicBrainzMode,
@@ -281,6 +286,7 @@ var (
 var registeredSettings = []registeredSetting{
 	platformOSSetting, platformArchSetting, toolsRootSetting, workRootSetting, outputRootSetting,
 	outputCaseSetting, outputUnicodeSetting, publicationSetting, publicationPathTemplateSetting, publicationRemoveSourcesSetting,
+	publicationAutoCompleteAlbumsSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
 	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting,

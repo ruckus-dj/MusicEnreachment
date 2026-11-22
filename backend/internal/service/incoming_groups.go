@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"time"
 
@@ -117,7 +118,7 @@ func buildIncomingSnapshot(epoch int64, captures []persistence.IncomingGroupingC
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
-	current, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+	current, err := reconcileIncomingGroups(view, persisted)
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
@@ -136,7 +137,7 @@ func (groups *IncomingGroups) Refresh(ctx context.Context) error {
 		if err != nil {
 			return nil, err
 		}
-		merged, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+		merged, err := reconcileIncomingGroups(view, persisted)
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +227,7 @@ func (groups *IncomingGroups) Confirm(ctx context.Context, epoch int64, draft In
 		if err != nil {
 			return nil, err
 		}
-		current, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+		current, err := reconcileIncomingGroups(view, persisted)
 		if err != nil {
 			return nil, err
 		}
@@ -266,7 +267,7 @@ func (groups *IncomingGroups) ConfirmActions(ctx context.Context, epoch int64, b
 		if err != nil {
 			return nil, err
 		}
-		current, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+		current, err := reconcileIncomingGroups(view, persisted)
 		if err != nil {
 			return nil, err
 		}
@@ -298,12 +299,20 @@ type incomingCaptureView struct {
 	Files     []IncomingFile
 	Locations map[uuid.UUID][]IncomingLocation
 	Ready     map[uuid.UUID]bool
+	Blocked   map[uuid.UUID]bool
+}
+
+type incomingAnalysisFolder struct {
+	root uuid.UUID
+	dir  string
 }
 
 func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (incomingCaptureView, error) {
 	filesByID := make(map[uuid.UUID]*IncomingFile)
 	locations := make(map[uuid.UUID][]IncomingLocation)
 	ready := make(map[uuid.UUID]bool)
+	pendingFolders := make(map[incomingAnalysisFolder]bool)
+	currentFolders := make(map[uuid.UUID][]incomingAnalysisFolder)
 	for _, capture := range captures {
 		technicalIdentity, err := incomingTechnicalIdentity(capture)
 		if err != nil {
@@ -316,6 +325,13 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 			RelativePath:      capture.RelativePath, SizeBytes: capture.SizeBytes, Mtime: normalizedIncomingMtime(capture.Mtime),
 		}
 		locations[capture.VariantID] = append(locations[capture.VariantID], location)
+		if capture.RootEnabled && !capture.RootStale {
+			folder := incomingAnalysisFolder{root: capture.RootID, dir: path.Dir(capture.RelativePath)}
+			currentFolders[capture.VariantID] = append(currentFolders[capture.VariantID], folder)
+			if (!capture.Ready || capture.CaptureAnalysisID == nil) && !capture.NonAudioAnalysisSettled {
+				pendingFolders[folder] = true
+			}
+		}
 		if !capture.Ready || capture.CaptureAnalysisID == nil {
 			continue
 		}
@@ -347,7 +363,16 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 		locations[variant] = uniqueIncomingLocations(locations[variant])
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].VariantID.String() < files[j].VariantID.String() })
-	return incomingCaptureView{Files: files, Locations: locations, Ready: ready}, nil
+	blocked := make(map[uuid.UUID]bool)
+	for member, folders := range currentFolders {
+		for _, folder := range folders {
+			if pendingFolders[folder] {
+				blocked[member] = true
+				break
+			}
+		}
+	}
+	return incomingCaptureView{Files: files, Locations: locations, Ready: ready, Blocked: blocked}, nil
 }
 
 // incomingTagDisplay projects the saved automatic tag-encoding corrections onto
@@ -432,12 +457,12 @@ func normalizedIncomingMtime(value time.Time) string {
 	return value.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
 }
 
-func reconcileIncomingGroups(files []IncomingFile, physical map[uuid.UUID][]IncomingLocation, ready map[uuid.UUID]bool, persisted []persistence.IncomingGroupingGroup) ([]IncomingGroup, error) {
-	derived, err := GroupIncomingFiles(files)
+func reconcileIncomingGroups(view incomingCaptureView, persisted []persistence.IncomingGroupingGroup) ([]IncomingGroup, error) {
+	derived, err := GroupIncomingFiles(view.Files)
 	if err != nil {
 		return nil, err
 	}
-	filesByID := incomingFilesByVariant(files)
+	filesByID := incomingFilesByVariant(view.Files)
 	occupied := make(map[uuid.UUID]bool)
 	manual := make([]IncomingGroup, 0)
 	for _, group := range persisted {
@@ -447,12 +472,14 @@ func reconcileIncomingGroups(files []IncomingFile, physical map[uuid.UUID][]Inco
 		kept := make([]uuid.UUID, 0, len(group.Members))
 		unready := make([]uuid.UUID, 0, len(group.UnreadyMembers))
 		allMembers := append(append([]uuid.UUID(nil), group.Members...), group.UnreadyMembers...)
+		blocked := false
 		for _, member := range allMembers {
-			currentLocations, current := physical[member]
+			currentLocations, current := view.Locations[member]
 			if !current || !hasSurvivingLocation(member, group.Locations, currentLocations) {
 				continue
 			}
-			if ready[member] {
+			blocked = blocked || view.Blocked[member]
+			if view.Ready[member] {
 				if _, hasReadyCapture := filesByID[member]; hasReadyCapture {
 					kept = append(kept, member)
 					occupied[member] = true
@@ -460,6 +487,10 @@ func reconcileIncomingGroups(files []IncomingFile, physical map[uuid.UUID][]Inco
 				}
 			}
 			unready = append(unready, member)
+		}
+		if blocked {
+			unready = append(unready, kept...)
+			kept = nil
 		}
 		if len(kept) == 0 && len(unready) == 0 {
 			continue
@@ -478,12 +509,14 @@ func reconcileIncomingGroups(files []IncomingFile, physical map[uuid.UUID][]Inco
 	filtered := make([]IncomingGroup, 0, len(derived))
 	for _, group := range derived {
 		kept := make([]uuid.UUID, 0, len(group.Members))
+		blocked := false
 		for _, member := range group.Members {
 			if !occupied[member] {
 				kept = append(kept, member)
+				blocked = blocked || view.Blocked[member]
 			}
 		}
-		if len(kept) > 0 {
+		if len(kept) > 0 && !blocked {
 			group.Members = kept
 			filtered = append(filtered, group)
 		}

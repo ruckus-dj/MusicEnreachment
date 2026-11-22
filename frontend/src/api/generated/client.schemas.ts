@@ -671,8 +671,10 @@ export interface LibraryArtistSummary {
   available_position_count: number;
   /** @nullable */
   disambiguation: string | null;
+  discography_complete?: boolean;
   genres: string[];
   id: string;
+  missing_release_groups?: number;
   name: string;
   position_count: number;
   provider_links: LibraryProviderLinkResponse[];
@@ -937,6 +939,8 @@ export type LibraryPositionPublicationResponse = {
   audio: PublicationAudioResponse;
   epoch: string;
   generation: string;
+  /** @nullable */
+  matching_confidence: number | null;
   relative_path: string;
   validated_at: string;
 } | null;
@@ -1226,6 +1230,8 @@ export interface LibraryReleaseTrackPublicationResponse {
   codec: string;
   container: string;
   generation: string;
+  /** @nullable */
+  matching_confidence: number | null;
   relative_path: string;
   validated_at: string;
 }
@@ -2007,6 +2013,7 @@ export interface RuntimeSettingsResponse {
   output_case_sensitive?: boolean;
   output_directory: string;
   output_unicode_normalization?: string;
+  publication_auto_complete_albums: boolean;
   publication_format: string;
   publication_path_template: string;
   publication_remove_sources: boolean;
@@ -2030,6 +2037,7 @@ export interface SaveRuntimeBody {
   readonly $schema?: string;
   /** @maxLength 4096 */
   output_directory?: string;
+  publication_auto_complete_albums?: boolean;
   publication_format?: SaveRuntimeBodyPublicationFormat;
   /** @maxLength 4096 */
   publication_path_template?: string;
@@ -2469,6 +2477,7 @@ export interface UpdateSettingsExpectedBody {
   matching_pair_threshold?: number;
   /** @maxLength 4096 */
   output_directory?: string;
+  publication_auto_complete_albums?: boolean;
   publication_format?: string;
   /** @maxLength 4096 */
   publication_path_template?: string;
@@ -2490,6 +2499,7 @@ export interface UpdateSettingsBody {
   matching_pair_threshold?: number;
   /** @maxLength 4096 */
   output_directory?: string;
+  publication_auto_complete_albums?: boolean;
   publication_format?: UpdateSettingsBodyPublicationFormat;
   /** @maxLength 4096 */
   publication_path_template?: string;

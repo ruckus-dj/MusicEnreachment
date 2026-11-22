@@ -53,16 +53,20 @@ type FirstPublicationSourceSelection struct {
 
 type FirstPublicationAdmission struct {
 	PublicationAdmission
-	PreviewDigest   string
-	PrepareFirst    PrepareFirstPublicationAdmission
-	SourceSelection *FirstPublicationSourceSelection
+	PreviewDigest         string
+	PrepareFirst          PrepareFirstPublicationAdmission
+	SourceSelection       *FirstPublicationSourceSelection
+	DiscographyArtistMBID string
+	AutomaticAlbum        *PublicationAutoAlbumRequest
 }
 
 type firstPublicationAdmissionHook struct {
-	digest          string
-	prepare         PrepareFirstPublicationAdmission
-	sourceSelection *FirstPublicationSourceSelection
-	coverInput      *PublicationAttemptCoverInput
+	digest                string
+	prepare               PrepareFirstPublicationAdmission
+	sourceSelection       *FirstPublicationSourceSelection
+	coverInput            *PublicationAttemptCoverInput
+	discographyArtistMBID string
+	automaticAlbum        *PublicationAutoAlbumRequest
 }
 
 // AdmitFirstPublicationFromPreview binds native namespace planning to this same
@@ -75,6 +79,15 @@ func (repository *SetupManagerRepository) AdmitFirstPublicationFromPreview(ctx c
 // source selection for a confirmed default preview, without a reconciliation
 // delivery guard. Generic first-publication admissions cannot request this mode.
 func (repository *SetupManagerRepository) AdmitDefaultFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	return repository.admitFirstPublicationFromPreview(ctx, first, client, true)
+}
+
+// AdmitAutomaticAlbumFirstPublication consumes a server-owned matching grant,
+// not a confirmation supplied by a user.
+func (repository *SetupManagerRepository) AdmitAutomaticAlbumFirstPublication(ctx context.Context, first FirstPublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	if first.AutomaticAlbum == nil {
+		return uuid.Nil, ErrPublicationAdmissionConflict
+	}
 	return repository.admitFirstPublicationFromPreview(ctx, first, client, true)
 }
 
@@ -103,7 +116,7 @@ func (repository *SetupManagerRepository) admitFirstPublicationFromPreview(ctx c
 		copySelection := cloneFirstPublicationSourceSelection(*first.SourceSelection)
 		selection = &copySelection
 	}
-	request.firstAdmission = &firstPublicationAdmissionHook{digest: first.PreviewDigest, prepare: first.PrepareFirst, sourceSelection: selection}
+	request.firstAdmission = &firstPublicationAdmissionHook{digest: first.PreviewDigest, prepare: first.PrepareFirst, sourceSelection: selection, discographyArtistMBID: first.DiscographyArtistMBID, automaticAlbum: first.AutomaticAlbum}
 	return repository.AdmitPublication(ctx, request, client)
 }
 
@@ -232,6 +245,11 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	if err := lockFirstPublicationAdmissionReadGuards(ctx, tx, hook.sourceSelection != nil, "admit first publication"); err != nil {
 		return nil, err
 	}
+	if hook.automaticAlbum != nil {
+		if err := validatePublicationAutoAlbum(ctx, tx, request, hook.automaticAlbum); err != nil {
+			return nil, err
+		}
+	}
 	var snapshot FirstPublicationAdmissionSnapshot
 	if err := readLibraryFirstPublicationContextTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, &snapshot.Context); err != nil {
 		if err == sql.ErrNoRows {
@@ -246,6 +264,25 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	}
 	for _, setting := range settings {
 		snapshot.Settings[setting.Name] = setting.Value
+	}
+	if hook.discographyArtistMBID != "" {
+		artist, err := canonicalArtistMBID(hook.discographyArtistMBID)
+		if err != nil {
+			return nil, ErrPublicationAdmissionConflict
+		}
+		var complete bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM provider_artist_discography completion
+			JOIN provider_source source ON source.id=completion.provider_source_id AND source.provider_id=completion.provider_id
+			JOIN provider ON provider.id=source.provider_id AND provider.code='musicbrainz'
+			WHERE completion.artist_mbid=? AND completion.configuration_identity=?
+			AND source.configuration_identity=completion.configuration_identity
+		)`, artist, snapshot.Settings["musicbrainz_config_identity"]).Scan(ctx, &complete); err != nil {
+			return nil, fmt.Errorf("read first publication artist discography: %w", err)
+		}
+		if !complete {
+			return nil, ErrPublicationAdmissionConflict
+		}
 	}
 	snapshot.Installations = make([]ToolInstallation, 0)
 	if err := tx.NewSelect().Model(&snapshot.Installations).Where("package_kind = ? AND state = ?", "ffmpeg", "ready").Scan(ctx); err != nil && err != sql.ErrNoRows {
