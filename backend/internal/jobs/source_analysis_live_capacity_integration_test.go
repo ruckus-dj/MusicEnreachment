@@ -50,6 +50,16 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	if err := fixture.registry.SetSourceFileConcurrency(ctx, 2); err != nil {
 		t.Fatalf("raise source file concurrency: %v", err)
 	}
+	second := enqueueLiveCapacityOperation(t, ctx, fixture, secondWork.ID)
+
+	// The first delivery occupies the only primary worker, so the second is
+	// available but cannot start before the supplemental consumer starts.
+	for _, limit := range []int{2, 1} {
+		demand, err := fixture.setup.RiverQueueDemand(ctx, service.SourceAnalysisQueue, limit)
+		if err != nil || demand != limit {
+			t.Fatalf("analysis queue demand with cap %d = %d, %v; want %d, nil", limit, demand, err, limit)
+		}
+	}
 
 	secondClient, secondListener, err := StartAnalysisConsumer(ctx, fixture.databaseURL, fixture.database.DB, func(workers *river.Workers) {
 		river.AddWorker(workers, fixture.worker)
@@ -57,17 +67,13 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	if err != nil {
 		t.Fatalf("start supplemental analysis consumer: %v", err)
 	}
-	// Subscribe before the second operation is enqueued: River only delivers
-	// events observed after Subscribe, so enqueuing first could lose the
-	// completion signal.
+	// The second preparation barrier prevents completion before subscription.
 	secondEvents, cancelSecondEvents := secondClient.Subscribe(river.EventKindJobCompleted)
 	t.Cleanup(cancelSecondEvents)
 	t.Cleanup(func() {
 		stopRiverClient(t, secondClient)
 		secondListener.Close()
 	})
-
-	second := enqueueLiveCapacityOperation(t, ctx, fixture, secondWork.ID)
 
 	select {
 	case <-barrier.secondStarted:

@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"fmt"
 )
 
 // RiverJobLiveness reports whether a stored River job id names a live delivery:
@@ -24,4 +25,22 @@ func (repository *SetupManagerRepository) RiverJobLiveness(ctx context.Context, 
 		return false, err
 	}
 	return live, nil
+}
+
+// RiverQueueDemand counts running and available deliveries, capped at the
+// current capacity because a larger backlog cannot grow the consumer pool.
+func (repository *SetupManagerRepository) RiverQueueDemand(ctx context.Context, queue string, limit int) (int, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	var demand int
+	if err := repository.db.NewRaw(`
+		SELECT count(*) FROM (
+			SELECT 1 FROM river_job
+			WHERE queue = ? AND state IN ('running', 'available')
+			LIMIT ?
+		) AS demand`, queue, limit).Scan(ctx, &demand); err != nil {
+		return 0, fmt.Errorf("count river queue demand: %w", err)
+	}
+	return demand, nil
 }

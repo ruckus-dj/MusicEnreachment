@@ -498,12 +498,16 @@ func Run(ctx context.Context, config Config) error {
 				logger.Warn("read source file concurrency for River consumers", "error", readErr)
 				continue
 			}
-			demand, readErr := jobs.AnalysisQueueDemand(controllerContext, riverClient)
-			if readErr != nil {
-				cancelController()
-				logger.Warn("read source analysis queue demand", "error", readErr)
-				continue
+			demand := 0
+			if limit > primaryAnalysisCapacity {
+				demand, readErr = setupManagerRepository.RiverQueueDemand(controllerContext, service.SourceAnalysisQueue, limit)
+				if readErr != nil {
+					cancelController()
+					logger.Warn("read source analysis queue demand", "error", readErr)
+					continue
+				}
 			}
+			// Reconcile even at base capacity so supplemental consumers retire.
 			if reconcileErr := consumerPool.SetDemandForGeneration(controllerContext, generation, limit, demand); reconcileErr != nil {
 				logger.Warn("reconcile River analysis consumers", "error", reconcileErr)
 			}

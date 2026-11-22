@@ -9,7 +9,6 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
-	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
@@ -102,35 +101,6 @@ func StartAnalysisConsumerWithLifetime(startCtx, lifetimeCtx context.Context, da
 		return nil, nil, fmt.Errorf("start River analysis consumer: %w", err)
 	}
 	return client, listenerPool, nil
-}
-
-// AnalysisQueueDemand returns the number of active and available analysis jobs.
-// River's cursor is followed to exhaustion; the page size is an I/O chunk, not
-// a cap on visible demand.
-func AnalysisQueueDemand(ctx context.Context, client *river.Client[*sql.Tx]) (int, error) {
-	if client == nil {
-		return 0, fmt.Errorf("analysis queue client is required")
-	}
-	demand := 0
-	for _, state := range []rivertype.JobState{rivertype.JobStateRunning, rivertype.JobStateAvailable} {
-		var cursor *river.JobListCursor
-		for {
-			params := river.NewJobListParams().Queues(service.SourceAnalysisQueue).States(state).First(10000)
-			if cursor != nil {
-				params.After(cursor)
-			}
-			page, err := client.JobList(ctx, params)
-			if err != nil {
-				return 0, fmt.Errorf("list source analysis queue demand: %w", err)
-			}
-			demand += len(page.Jobs)
-			if page.LastCursor == nil || len(page.Jobs) == 0 {
-				break
-			}
-			cursor = page.LastCursor
-		}
-	}
-	return demand, nil
 }
 
 func prepareWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), analysisWorkers int, periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
