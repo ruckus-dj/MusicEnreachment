@@ -765,7 +765,24 @@ func equalOptionalBytes(left, right []byte) bool {
 }
 
 func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+	return lockAndValidateMatchProviderTx(ctx, tx, evaluation, false)
+}
+
+// lockAndValidateArtistApplyProvider revalidates the same provider fence while
+// materializing an automatic artist layout. Accepted search, catalog and lookup
+// revisions remain exact; the aggregate accepted-projection digest is replaced
+// by the semantic comparison used while the layout was evaluated, because a
+// sibling request can re-observe a shared entity and advance only its
+// observation order.
+func lockAndValidateArtistApplyProvider(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+	return lockAndValidateMatchProviderTx(ctx, tx, evaluation, true)
+}
+
+func lockAndValidateMatchProviderTx(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, acceptedArtist bool) error {
 	fence := evaluation.Provider
+	if acceptedArtist && (evaluation.TargetFenceVersion != 2 || evaluation.TargetRunID == uuid.Nil) {
+		return ErrIncomingMatchConflict
+	}
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
 		return fmt.Errorf("replace incoming matches: lock provider configuration: %w", err)
 	}
@@ -896,7 +913,18 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 		releaseKeyByID[id] = key
 	}
 	snapshot, err := readMusicBrainzMatchingSnapshot(ctx, tx, fence.Endpoint, fence.ConfigurationIdentity, releaseKeys, keys, false)
-	if err != nil || snapshot.Source.ID != fence.ProviderSourceID || len(snapshot.Releases) != len(releaseKeys) || snapshot.AcceptedProjectionRevision != fence.AcceptedProjectionRevision {
+	if err != nil || snapshot.Source.ID != fence.ProviderSourceID || len(snapshot.Releases) != len(releaseKeys) {
+		return ErrIncomingMatchConflict
+	}
+	if acceptedArtist {
+		acceptedSource := ProviderSource{
+			ID: fence.ProviderSourceID, ProviderID: fence.ProviderID, Namespace: fence.Namespace,
+			Endpoint: fence.Endpoint, ConfigurationIdentity: fence.ConfigurationIdentity,
+		}
+		if _, err := validateAcceptedMatchingArtistResponsesTx(ctx, tx, evaluation.TargetRunID, acceptedSource, snapshot, keys); err != nil {
+			return fmt.Errorf("replace incoming matches: validate accepted artist responses: %w", err)
+		}
+	} else if snapshot.AcceptedProjectionRevision != fence.AcceptedProjectionRevision {
 		return ErrIncomingMatchConflict
 	}
 	type currentTrack struct {

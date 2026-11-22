@@ -100,7 +100,12 @@ keep the complete CI result unconfirmed until it can be read again.
 
 **Native artwork dependency**: backend builds (including OpenAPI generation) need
 libvips >= 8.14 and its `pkg-config` metadata. Use `libvips-dev pkg-config` on
-Debian/Ubuntu or `brew install vips pkg-config` on macOS. Windows CI builds the
+Debian/Ubuntu or `brew install vips pkg-config` on macOS. On both macOS
+architectures the brew `vips` dependency `libarchive` is keg-only, so its
+`libarchive.pc` is not on the default pkg-config path and `pkg-config --exists vips`
+fails; prepend `$(brew --prefix libarchive)/lib/pkgconfig` to `PKG_CONFIG_PATH`
+and preserve any existing value. CI exports that path through `GITHUB_ENV` in its
+macOS install step. Windows CI builds the
 pinned dependency set through `task native:windows-vips` under MSYS2 UCRT64; do
 not replace it with the upstream all-codecs SDK or copy unrelated codec DLLs
 into build output.

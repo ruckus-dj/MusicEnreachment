@@ -461,6 +461,16 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if _, err := database.NewRaw(`UPDATE incoming_grouping_state SET revision=revision+1,needs_refresh=false WHERE singleton=true`).Exec(ctx); err != nil {
 		t.Fatalf("advance unrelated grouping epoch before matching apply: %v", err)
 	}
+	// A later lookup may observe the same recording again. Its observation
+	// order changes, not the accepted data that authorized this layout.
+	res, err := database.NewRaw(`UPDATE provider_source_entity SET fetch_order=fetch_order+1
+		WHERE entity_kind='recording' AND provider_key='66666666-6666-4666-8666-666666666666'`).Exec(ctx)
+	if err != nil {
+		t.Fatalf("advance shared recording observation order: %v", err)
+	}
+	if rows, err := res.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("advanced recording observation order in %d rows: %v; want 1", rows, err)
+	}
 	var apply struct {
 		OperationID uuid.UUID `bun:"id"`
 		RiverJobID  int64     `bun:"river_job_id"`

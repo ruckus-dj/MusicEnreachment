@@ -181,7 +181,14 @@ jobs:
         run: go clean -cache
       - name: Install macOS libvips
         if: runner.os == 'macOS'
-        run: brew install vips pkg-config
+        run: |
+          brew install vips pkg-config
+          # libvips requires keg-only libarchive (same dependency on both macOS
+          # architectures), whose libarchive.pc is absent from the default
+          # pkg-config search path.
+          export PKG_CONFIG_PATH="$(brew --prefix libarchive)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          pkg-config --exists vips
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

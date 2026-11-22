@@ -133,7 +133,7 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if decision.GroupID != groupID || decision.PolicyVersion != header.PolicyVersion || decision.Outcome != "unique" || decision.SelectedRelease == nil {
 		return fmt.Errorf("apply matching evaluation: persisted decision is not uniquely applicable")
 	}
-	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
+	if err := lockAndValidateMatchingEvaluationProvider(ctx, tx, evaluation); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
@@ -154,6 +154,25 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 		return err
 	}
 	return requestMatchingApplyPublicationReconciliation(ctx, repository.db, tx, positions)
+}
+
+// lockAndValidateMatchingEvaluationProvider revalidates the evaluation's
+// provider fence for materialization. An automatic artist layout proves
+// freshness from its accepted search, catalog and lookup responses, so a shared
+// entity re-observed elsewhere with a newer observation order does not revoke an
+// unchanged accepted decision. Every other evaluation keeps the exact accepted
+// projection digest fence.
+func lockAndValidateMatchingEvaluationProvider(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+	if evaluation.TargetFenceVersion == 2 && evaluation.TargetRunID != uuid.Nil {
+		artist, err := hasAcceptedArtistResponses(ctx, tx, evaluation.TargetRunID)
+		if err != nil {
+			return fmt.Errorf("apply matching evaluation: read accepted artist responses: %w", err)
+		}
+		if artist {
+			return lockAndValidateArtistApplyProvider(ctx, tx, evaluation)
+		}
+	}
+	return lockAndValidateMatchProvider(ctx, tx, evaluation)
 }
 
 // rejectManualOnlyMatchingEvaluation protects the automatic apply entry point
