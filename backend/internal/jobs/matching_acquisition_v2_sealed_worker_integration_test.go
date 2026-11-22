@@ -559,6 +559,12 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err := detector.Refresh(ctx); err != nil {
 		t.Fatalf("refresh open artist review after catalog evidence changed: %v", err)
 	}
+	requestMu.Lock()
+	searchCount := artistSearches
+	requestMu.Unlock()
+	if searchCount != 2 {
+		t.Fatalf("artist searches=%d; want only the acquisition and explicit provider refresh", searchCount)
+	}
 	var refreshed struct {
 		Revision   string `bun:"evaluation_revision"`
 		ReviewOnly bool   `bun:"review_only"`

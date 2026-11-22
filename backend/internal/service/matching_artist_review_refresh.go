@@ -66,8 +66,8 @@ type ArtistMatchingReviewRefreshDetector struct {
 	maxPages     int
 }
 
-// WithArtistRetrieval lets changed reviews rebuild the shortlist without
-// admitting a new automatic matching run.
+// WithArtistRetrieval lets a review rebuild the shortlist from accepted cache
+// responses without writing provider data or admitting an automatic run.
 func (detector *ArtistMatchingReviewRefreshDetector) WithArtistRetrieval(fetch *ProviderFetchService) *ArtistMatchingReviewRefreshDetector {
 	detector.fetch = fetch
 	return detector
@@ -355,7 +355,9 @@ func (detector *ArtistMatchingReviewRefreshDetector) prepareRefreshedArtistRevie
 	if query == "" {
 		return PreparedMatchingEvaluation{}, nil, persistence.ErrIncomingMatchConflict
 	}
-	retrieved, err := detector.fetch.retrieveMatchingArtistCatalog(ctx, members, query)
+	// Review refresh may look at newer accepted inputs, but must not write
+	// provider data: ordinary provider fetches can wake publication work.
+	retrieved, err := detector.fetch.retrieveMatchingArtistCatalog(ctx, members, query, true)
 	if err != nil {
 		return PreparedMatchingEvaluation{}, nil, err
 	}

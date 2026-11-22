@@ -364,6 +364,7 @@ it("keeps an in-flight result from the previous selection off the new input", as
   expect(screen.queryByText("Release prepared.")).toBeNull();
   expect(onPrepared).not.toHaveBeenCalled();
 
+  await waitFor(() => expect(unsubscribe).toHaveBeenCalledWith("operation-3"));
   fireEvent.click(screen.getByRole("button", { name: "Prepare release" }));
   await screen.findByText("Release prepared.");
 

@@ -241,6 +241,9 @@ in frontend/.
   an assumption that cancellation starts before a short reservation expires. Use
   fake time and a blocked-wait handshake; assert unchanged reservation state after
   cancellation and exactly one interval for the next successful dispatch.
+- In the manual release picker regression, wait for the stale operation follower
+  to unsubscribe before submitting the replacement. The pending label can
+  disappear when the terminal snapshot arrives, before the picker retires it.
 - New migrations must update the inventory and explicit schema/table-count checks.
   JSON contract tests compare semantic fields or JSONB values, not incidental JSON
   text formatting. A rollback must refuse to discard retained recovery authority.

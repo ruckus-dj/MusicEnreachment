@@ -72,27 +72,30 @@ func (service *ProviderFetchService) RetrieveMatchingLocalRecheckMusicBrainz(
 	if query == "" {
 		return service.retrieveArtistlessLocalRecheck(ctx, captures, members, threshold)
 	}
-	return service.retrieveMatchingArtistCatalog(ctx, members, query)
+	return service.retrieveMatchingArtistCatalog(ctx, members, query, false)
 }
 
-func (service *ProviderFetchService) retrieveMatchingArtistCatalog(ctx context.Context, members []persistence.MatchingAcquisitionCapturedMember, query string) (MatchingLocalRecheckMusicBrainzRetrieval, error) {
-	search, err := service.SearchArtists(ctx, query, 0, 1)
+func (service *ProviderFetchService) retrieveMatchingArtistCatalog(ctx context.Context, members []persistence.MatchingAcquisitionCapturedMember, query string, cachedOnly bool) (MatchingLocalRecheckMusicBrainzRetrieval, error) {
+	searchKey := fmt.Sprintf("artist-search:0:1:%s", strings.TrimSpace(query))
+	search, err := service.matchingCatalogPayload(ctx, cachedOnly, searchKey, func() ([]byte, error) {
+		response, err := service.SearchArtists(ctx, query, 0, 1)
+		return response.Raw, err
+	})
 	if err != nil {
 		return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("search MusicBrainz artist: %w", err)
 	}
-	searchKey := fmt.Sprintf("artist-search:0:1:%s", strings.TrimSpace(query))
-	expected := map[string][]byte{searchKey: bytes.Clone(search.Raw)}
+	expected := map[string][]byte{searchKey: search}
 	var artists struct {
 		Values *[]struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"artists"`
 	}
-	if json.Unmarshal(search.Raw, &artists) != nil || artists.Values == nil {
+	if json.Unmarshal(search, &artists) != nil || artists.Values == nil {
 		return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("%w: accepted artist search is malformed", ErrMatchingLocalRecheckMusicBrainzIncomplete)
 	}
 	if len(*artists.Values) == 0 {
-		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckArtistNoResults)
+		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckArtistNoResults, cachedOnly)
 	}
 	top := (*artists.Values)[0]
 	if strings.TrimSpace(top.Name) == "" {
@@ -110,25 +113,28 @@ func (service *ProviderFetchService) retrieveMatchingArtistCatalog(ctx context.C
 		return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("score MusicBrainz artist fit: %w", err)
 	}
 	if !available || fit < matchingLocalRecheckArtistFitMinimum {
-		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckArtistNotFit)
+		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckArtistNotFit, cachedOnly)
 	}
 
 	headers := make([]MatchingReleaseHeader, 0)
 	seen := make(map[string]struct{})
 	var total *int
 	for offset := 0; ; {
-		browse, err := service.BrowseReleasesByArtist(ctx, artistID, offset, matchingLocalRecheckArtistPageSize)
+		key := fmt.Sprintf("artist-release-browse:%s:%d:%d", artistID, offset, matchingLocalRecheckArtistPageSize)
+		browse, err := service.matchingCatalogPayload(ctx, cachedOnly, key, func() ([]byte, error) {
+			response, err := service.BrowseReleasesByArtist(ctx, artistID, offset, matchingLocalRecheckArtistPageSize)
+			return response.Raw, err
+		})
 		if err != nil {
 			return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("browse MusicBrainz artist catalog: %w", err)
 		}
-		key := fmt.Sprintf("artist-release-browse:%s:%d:%d", artistID, offset, matchingLocalRecheckArtistPageSize)
-		expected[key] = bytes.Clone(browse.Raw)
+		expected[key] = browse
 		var page struct {
 			Count    *int                                `json:"release-count"`
 			Offset   *int                                `json:"release-offset"`
 			Releases *[]musicBrainzMatchingReleaseHeader `json:"releases"`
 		}
-		if json.Unmarshal(browse.Raw, &page) != nil || page.Count == nil || page.Offset == nil || page.Releases == nil ||
+		if json.Unmarshal(browse, &page) != nil || page.Count == nil || page.Offset == nil || page.Releases == nil ||
 			*page.Count < 0 || *page.Offset != offset || len(*page.Releases) > matchingLocalRecheckArtistPageSize ||
 			len(*page.Releases) == 0 && *page.Offset < *page.Count ||
 			*page.Offset+len(*page.Releases) > *page.Count {
@@ -155,16 +161,30 @@ func (service *ProviderFetchService) retrieveMatchingArtistCatalog(ctx context.C
 		}
 	}
 	if len(headers) == 0 {
-		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckCatalogNoResults)
+		return service.finishLocalRecheckRetrieval(ctx, nil, expected, matchingLocalRecheckCatalogNoResults, cachedOnly)
 	}
 	shortlist, err := RankMatchingReleaseShortlist(members, headers)
 	if err != nil {
 		return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("rank MusicBrainz release shortlist: %w", err)
 	}
-	return service.finishLocalRecheckRetrieval(ctx, shortlist, expected, "")
+	return service.finishLocalRecheckRetrieval(ctx, shortlist, expected, "", cachedOnly)
 }
 
-func (service *ProviderFetchService) finishLocalRecheckRetrieval(ctx context.Context, shortlist []string, expected map[string][]byte, noResult string) (MatchingLocalRecheckMusicBrainzRetrieval, error) {
+func (service *ProviderFetchService) matchingCatalogPayload(ctx context.Context, cachedOnly bool, key string, fetch func() ([]byte, error)) ([]byte, error) {
+	if !cachedOnly {
+		return fetch()
+	}
+	response, err := service.CachedResponse(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil || len(response.Payload) == 0 {
+		return nil, ErrMatchingLocalRecheckMusicBrainzIncomplete
+	}
+	return response.Payload, nil
+}
+
+func (service *ProviderFetchService) finishLocalRecheckRetrieval(ctx context.Context, shortlist []string, expected map[string][]byte, noResult string, cachedOnly bool) (MatchingLocalRecheckMusicBrainzRetrieval, error) {
 	shortlist = append([]string(nil), shortlist...)
 	sort.Strings(shortlist)
 	keys := make([]string, 0, len(expected)+len(shortlist))
@@ -181,14 +201,17 @@ func (service *ProviderFetchService) finishLocalRecheckRetrieval(ctx context.Con
 		}
 	}
 	for _, releaseID := range shortlist {
-		lookup, err := service.LookupRelease(ctx, releaseID)
+		key := "release-lookup:" + releaseID
+		lookup, err := service.matchingCatalogPayload(ctx, cachedOnly, key, func() ([]byte, error) {
+			response, err := service.LookupRelease(ctx, releaseID)
+			return response.Raw, err
+		})
 		if err != nil {
 			return MatchingLocalRecheckMusicBrainzRetrieval{}, fmt.Errorf("look up MusicBrainz release %s: %w", releaseID, err)
 		}
-		key := "release-lookup:" + releaseID
 		keys = append(keys, key)
 		evidence.HydrationKeys = append(evidence.HydrationKeys, key)
-		expected[key] = bytes.Clone(lookup.Raw)
+		expected[key] = lookup
 	}
 	config, err := service.registry.GetMusicBrainzConfig(ctx)
 	if err != nil {
@@ -271,7 +294,7 @@ func (service *ProviderFetchService) retrieveArtistlessLocalRecheck(ctx context.
 		if err != nil {
 			return MatchingLocalRecheckMusicBrainzRetrieval{}, err
 		}
-		result, err := service.finishLocalRecheckRetrieval(ctx, scope.RankedReleaseIDs, map[string][]byte{key: response.Raw}, "")
+		result, err := service.finishLocalRecheckRetrieval(ctx, scope.RankedReleaseIDs, map[string][]byte{key: response.Raw}, "", false)
 		if err != nil {
 			return MatchingLocalRecheckMusicBrainzRetrieval{}, err
 		}
