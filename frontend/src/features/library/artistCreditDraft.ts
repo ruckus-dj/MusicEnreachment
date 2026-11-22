@@ -74,10 +74,6 @@ export type ArtistCreditPatchChange =
   | { state: "explicit_empty" }
   | { state: "value"; value: ArtistCreditPatchItem[] };
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function createClientKey(): string {
   return globalThis.crypto.randomUUID();
 }
@@ -230,13 +226,4 @@ export function createArtistCreditRow(
     ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
     ...(artist.providerFacts ? { providerFacts: artist.providerFacts } : {}),
   };
-}
-
-/** Converts display metadata from a search/read adapter without leaking IDs. */
-export function artistCreditProviderFact(
-  label: string,
-  value: unknown,
-): ArtistCreditProviderFact | undefined {
-  const text = asString(value);
-  return text ? { label, value: text } : undefined;
 }

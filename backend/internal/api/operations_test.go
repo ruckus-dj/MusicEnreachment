@@ -146,7 +146,7 @@ func TestCleanupOperationDetailUsesOneConsistentRead(t *testing.T) {
 	huma := api.New(router)
 	api.RegisterAll(huma, api.Dependencies{
 		Operations:            service.NewOperations(repository),
-		SourceArtifactCleanup: service.NewSourceAnalysisArtifactCleanup(nil, nil, nil),
+		SourceArtifactCleanup: service.NewSourceAnalysisArtifactCleanup(nil, nil),
 	})
 
 	response := decodeOperationBody(t, transitionRequest(t, router, http.MethodGet, "/operations/"+operationID.String(), ""))

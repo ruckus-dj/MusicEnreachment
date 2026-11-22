@@ -81,7 +81,7 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 		}
 	}
 
-	cleanup := service.NewSourceAnalysisArtifactCleanup(repository, runtimeSettings, riverClient)
+	cleanup := service.NewSourceAnalysisArtifactCleanup(repository, riverClient)
 	operation, err := cleanup.Admit(ctx, artifactIDs)
 	if err != nil {
 		t.Fatalf("admit cleanup with service args factory: %v", err)

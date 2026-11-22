@@ -72,10 +72,6 @@ func (repository *cleanupAdmissionFixture) AdmitSourceAnalysisArtifactCleanupWit
 	return nil, errors.New("unexpected cleanup admission")
 }
 
-func (*cleanupAdmissionFixture) ListSourceAnalysisArtifactCleanupItems(context.Context, uuid.UUID) ([]persistence.SourceAnalysisArtifactCleanupItem, error) {
-	return nil, nil
-}
-
 type cleanupAdmissionRiver struct{}
 
 func (cleanupAdmissionRiver) InsertTx(context.Context, *sql.Tx, river.JobArgs, *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -113,7 +109,7 @@ func TestCleanupSourceArtifactsRequiresCompletedSetupAndSupportedPlatform(t *tes
 			}
 			setup := service.NewSetup(store, registry, test.platform, nil, nil)
 			repository := &cleanupAdmissionFixture{}
-			cleanup := service.NewSourceAnalysisArtifactCleanup(repository, nil, cleanupAdmissionRiver{})
+			cleanup := service.NewSourceAnalysisArtifactCleanup(repository, cleanupAdmissionRiver{})
 			handler := HandlerWithDependencies(Dependencies{Setup: setup, SourceArtifactCleanup: cleanup})
 			request := httptest.NewRequest(http.MethodPost, "/source-analysis/artifacts/cleanup", strings.NewReader(`{"artifact_ids":["`+uuid.NewString()+`"]}`))
 			request.Header.Set("Content-Type", "application/json")

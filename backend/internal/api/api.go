@@ -36,12 +36,6 @@ func redactAcoustIDKeyErrors(ctx huma.Context, status string, response any) (any
 	return errorResponse, nil
 }
 
-func Handler() http.Handler {
-	router := chi.NewRouter()
-	New(router)
-	return router
-}
-
 func HandlerWithSetup(setup *service.SetupService) http.Handler {
 	return HandlerWithDependencies(Dependencies{Setup: setup})
 }

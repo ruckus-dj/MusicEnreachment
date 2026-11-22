@@ -41,8 +41,6 @@ export type GenrePickerCatalog = {
   onRetryStatus: () => void;
 };
 
-export type GenreOption = GenreReference;
-
 export function GenrePicker({
   value,
   onChange,

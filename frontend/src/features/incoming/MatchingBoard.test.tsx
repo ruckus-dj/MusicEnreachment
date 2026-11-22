@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
+import { decodeMatchingFilePayload } from "../matchingWorkspace/MatchingDnD";
 import {
   MatchingBoard,
   type MatchingBoardAutomaticAssignments,
@@ -11,7 +12,6 @@ import {
   matchingBoardSavedTrack,
   matchingBoardScoresFromCandidates,
 } from "./MatchingBoard";
-import { decodeMatchingFilePayload } from "./MatchingDnD";
 
 const release = {
   provider_release_id: "release-1",

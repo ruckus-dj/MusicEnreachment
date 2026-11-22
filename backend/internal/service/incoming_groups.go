@@ -160,30 +160,6 @@ func (groups *IncomingGroups) RefreshIfNeeded(ctx context.Context) error {
 	return groups.Refresh(ctx)
 }
 
-func DraftIncomingMergePage(snapshot IncomingGroupingSnapshot, ids ...uuid.UUID) (IncomingGroupDraft, error) {
-	base, err := IncomingGroupsRevision(snapshot.Groups)
-	if err != nil {
-		return IncomingGroupDraft{}, err
-	}
-	return DraftIncomingMerge(snapshot.Groups, base, ids...)
-}
-
-func DraftIncomingSplitPage(snapshot IncomingGroupingSnapshot, groupID uuid.UUID, members []uuid.UUID) (IncomingGroupDraft, error) {
-	base, err := IncomingGroupsRevision(snapshot.Groups)
-	if err != nil {
-		return IncomingGroupDraft{}, err
-	}
-	return DraftIncomingSplit(snapshot.Groups, base, groupID, members)
-}
-
-func DraftIncomingMovePage(snapshot IncomingGroupingSnapshot, members []uuid.UUID, target uuid.UUID) (IncomingGroupDraft, error) {
-	base, err := IncomingGroupsRevision(snapshot.Groups)
-	if err != nil {
-		return IncomingGroupDraft{}, err
-	}
-	return DraftIncomingMove(snapshot.Groups, base, members, target)
-}
-
 func ReplayIncomingGroupingActions(groups []IncomingGroup, baseRevision string, actions []IncomingGroupingAction) (IncomingGroupDraft, error) {
 	if err := validateIncomingGroupsRevision(groups, baseRevision); err != nil {
 		return IncomingGroupDraft{}, persistence.ErrIncomingGroupingConflict

@@ -297,7 +297,7 @@ func Run(ctx context.Context, config Config) error {
 	publicationReconciliationDispatchWorker := jobs.NewPublicationReconciliationDispatchWorker(publicationReconciliationDispatcher)
 	publicationSourceCleanupRequestDispatcher := publicationSourceCleanupRequestDispatcher{repository: setupManagerRepository, river: riverSlot}
 	publicationSourceCleanupDispatchWorker := jobs.NewPublicationSourceCleanupDispatchWorker(publicationSourceCleanupRequestDispatcher)
-	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
+	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, riverSlot)
 	artifactCleanupDrain := service.NewSourceAnalysisArtifactCleanupDrain(artifactCleanup, setupManagerRepository)
 	sourceCleanupRetries := service.NewSourceCleanupRetries(setupManagerRepository, riverSlot)
 	publicationSourceCleanupWorkers, err := newPublicationSourceCleanupWorkers(setupManagerRepository, publicationBootUUID)

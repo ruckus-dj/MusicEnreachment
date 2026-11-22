@@ -171,7 +171,6 @@ const ru = {
 export const ownCatalogMessages = { en, ru } as const;
 
 export type OwnCatalogMessage = keyof typeof en;
-export type OwnCatalogCopy = (typeof ownCatalogMessages)[Locale];
 
 export function ownCatalogMessage(
   locale: Locale,

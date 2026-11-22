@@ -263,14 +263,6 @@ func Reset(t *testing.T, database *bun.DB) {
 	}
 }
 
-// ResetAndMigrate retains the explicit schema-reset behavior required by
-// rollback and migration-order tests. It only operates on the supplied DB.
-func ResetAndMigrate(t *testing.T, database *bun.DB) {
-	t.Helper()
-	Reset(t, database)
-	applyMigrations(t, database)
-}
-
 func adminDatabase(t *testing.T) *bun.DB {
 	t.Helper()
 	process.serverOnce.Do(func() {

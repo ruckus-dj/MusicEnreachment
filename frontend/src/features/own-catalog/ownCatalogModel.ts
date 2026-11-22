@@ -24,10 +24,6 @@ export type OwnCatalogType = (typeof ownCatalogTypes)[number];
 export const ownCatalogPageCount = (total: number) =>
   Math.max(1, Math.ceil(total / OWN_CATALOG_PAGE_SIZE));
 
-export function ownCatalogProviderLabel(item: LocalProviderItem) {
-  return ownCatalogProviderCodeLabel(item.provider_code);
-}
-
 export function ownCatalogProviderCodeLabel(code: string) {
   if (code === "local") return "Local";
   if (code === "musicbrainz") return "MusicBrainz";

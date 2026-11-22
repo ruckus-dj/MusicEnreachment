@@ -487,20 +487,6 @@ func (report Report) ConfirmCorroborated() (Overlay, error) {
 	return report.Confirm(indexes...)
 }
 
-// ConfirmCorroborated explicitly confirms corroborated candidates in every
-// file. The returned overlays correspond one-to-one with group.Files.
-func (group GroupReport) ConfirmCorroborated() ([]Overlay, error) {
-	overlays := make([]Overlay, len(group.Files))
-	for index, report := range group.Files {
-		overlay, err := report.ConfirmCorroborated()
-		if err != nil {
-			return nil, err
-		}
-		overlays[index] = overlay
-	}
-	return overlays, nil
-}
-
 // Apply returns a cloned tag map with the overlay's sparse replacements. Every
 // entry must match its recorded Original exactly; a conflict returns an error
 // and leaves the input untouched.

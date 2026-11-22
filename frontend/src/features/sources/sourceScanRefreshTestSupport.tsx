@@ -16,7 +16,6 @@ export const operationPath = "/api/operations/scan-refresh";
 export const rootError = "The source directory is not readable.";
 export const operationError =
   "The source tree could not be read. Retry the scan.";
-export const fileError = "The audio stream could not be inspected.";
 
 const availableRoot: SourceRootResponse = {
   id: "root-refresh",

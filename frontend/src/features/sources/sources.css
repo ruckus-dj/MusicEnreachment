@@ -16,10 +16,6 @@
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.sources-shell {
-  background: var(--canvas);
-}
-
 .sources-screen h1 {
   font-size: 20px;
   line-height: 26px;
@@ -74,19 +70,6 @@
   background: var(--sources-error-soft);
   border: 1px solid var(--sources-line);
   border-radius: 4px;
-}
-
-.sources-screen .sources-partial-success {
-  padding: 8px 10px;
-  margin: 8px 0;
-  color: var(--sources-warning);
-  background: var(--sources-warning-soft);
-  border: 1px solid var(--sources-line);
-  border-radius: 4px;
-}
-
-.sources-screen .sources-partial-success p {
-  margin: 0 0 4px;
 }
 
 .sources-screen button {
@@ -151,54 +134,6 @@
   align-items: center;
   gap: 6px;
   margin: 8px 0;
-}
-
-.sources-visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.sources-table-wrap {
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.sources-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sources-table th,
-.sources-table td {
-  padding: 5px 8px;
-  text-align: left;
-  vertical-align: middle;
-  border-bottom: 1px solid var(--sources-line);
-  overflow-wrap: anywhere;
-}
-
-.sources-table thead th {
-  color: var(--sources-muted);
-  font-size: 10px;
-  font-weight: 500;
-  white-space: nowrap;
-  background: var(--sources-raised);
-}
-
-.sources-table tbody tr:hover {
-  background: var(--sources-raised);
-}
-
-.sources-table tbody tr:last-child th,
-.sources-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .sources-chip {
@@ -315,51 +250,6 @@
 }
 
 @media (max-width: 599px) {
-  .sources-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .sources-table,
-  .sources-table tbody,
-  .sources-table tr,
-  .sources-table th,
-  .sources-table td {
-    display: block;
-    width: auto;
-  }
-
-  .sources-table tr {
-    padding: 6px 0;
-    border-bottom: 1px solid var(--sources-line);
-  }
-
-  .sources-table tbody tr:last-child {
-    border-bottom: 0;
-  }
-
-  .sources-table th,
-  .sources-table td {
-    display: grid;
-    grid-template-columns: minmax(96px, 1fr) minmax(0, 2fr);
-    gap: 8px;
-    padding: 3px 8px;
-    border-bottom: 0;
-  }
-
-  .sources-table th::before,
-  .sources-table td::before {
-    content: attr(data-label);
-    color: var(--sources-muted);
-    font-size: 10px;
-    font-weight: 400;
-  }
-
   .sources-summary > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;

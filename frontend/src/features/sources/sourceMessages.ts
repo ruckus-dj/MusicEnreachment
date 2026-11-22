@@ -270,7 +270,6 @@ const en = {
   fileCountOther: "{count} files",
   fileCountFew: "{count} files",
   fileCountMany: "{count} files",
-  inventorySummary: "The last successful scan inventory contains {count}.",
   streamAudio: "Audio",
   details: "Details",
   artifactPreparation: "Preparing",
@@ -571,7 +570,6 @@ const ru: Record<keyof typeof en, string> = {
   fileCountOther: "{count} файла",
   fileCountFew: "{count} файла",
   fileCountMany: "{count} файлов",
-  inventorySummary: "В инвентаре последнего успешного сканирования {count}.",
   streamAudio: "Аудио",
   details: "Подробнее",
 };
@@ -598,11 +596,4 @@ export function numberFormat(
   options?: Intl.NumberFormatOptions,
 ) {
   return new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", options);
-}
-
-export function dateTimeFormat(locale: Locale, date: string | number | Date) {
-  return new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(date));
 }

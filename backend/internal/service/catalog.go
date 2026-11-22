@@ -82,13 +82,6 @@ func (s *CatalogService) ListWithNotice(ctx context.Context, packageKind tools.P
 	return result, nil
 }
 
-func (s *CatalogService) Resolve(ctx context.Context, packageKind tools.PackageKind, identity string) (tools.Release, error) {
-	if !s.platform.Supported() {
-		return tools.Release{}, fmt.Errorf("unsupported instance platform")
-	}
-	return s.catalog.Resolve(ctx, packageKind, s.platform, identity)
-}
-
 func sourceName(packageKind tools.PackageKind, platform tools.Platform) string {
 	if packageKind == tools.PackageFFmpeg && platform.GOOS == "darwin" {
 		return "martin-riedl"

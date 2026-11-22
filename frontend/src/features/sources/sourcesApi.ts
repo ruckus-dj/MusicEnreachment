@@ -185,13 +185,3 @@ export function inventoryEmptyNote(
     ? sourceMessage(locale, "emptyInventory")
     : "";
 }
-
-export function filesSummary(root: SourceRootResponse, locale: Locale): string {
-  if (root.scan_generation === 0)
-    return sourceMessage(locale, "noInventoryYet");
-  if (root.location_count === 0)
-    return sourceMessage(locale, "noSupportedFiles");
-  return sourceMessage(locale, "inventorySummary", {
-    count: fileCount(root.location_count, locale),
-  });
-}

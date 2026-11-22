@@ -90,8 +90,6 @@ export type SaveLocalArtist = (data: {
 	name: string;
 }) => LocalReleaseArtist | Promise<LocalReleaseArtist>;
 
-export type OutcomeUncertainError = Error & { outcomeUncertain?: boolean };
-
 export function isOutcomeUncertain(error: unknown): boolean {
 	return (
 		typeof error === "object" &&

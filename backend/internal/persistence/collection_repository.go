@@ -157,42 +157,6 @@ func (repository *CollectionRepository) UpsertProviderIdentityLink(ctx context.C
 	})
 }
 
-// RemoveProviderIdentityLink refuses automatic removal of a manual identity.
-func (repository *CollectionRepository) RemoveProviderIdentityLink(ctx context.Context, entityKind string, providerID, providerEntityID uuid.UUID, method string) error {
-	table, providerColumn, _, err := providerLinkTable(entityKind)
-	if err != nil {
-		return err
-	}
-	if providerID == uuid.Nil || providerEntityID == uuid.Nil {
-		return fmt.Errorf("remove provider identity link: provider and entity IDs are required")
-	}
-	if method != "manual" && method != "automatic" {
-		return fmt.Errorf("remove provider identity link: method must be manual or automatic")
-	}
-	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-			return fmt.Errorf("remove provider identity link: lock source mutation gate: %w", err)
-		}
-		var existingMethod string
-		query := fmt.Sprintf(`SELECT method FROM %s WHERE provider_id=? AND %s=? FOR UPDATE`, table, providerColumn)
-		err := tx.NewRaw(query, providerID, providerEntityID).Scan(ctx, &existingMethod)
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("remove provider identity link: read existing decision: %w", err)
-		}
-		if existingMethod == "manual" && method != "manual" {
-			return fmt.Errorf("remove provider identity link: automatic removal cannot remove manual decision")
-		}
-		deleteQuery := fmt.Sprintf(`DELETE FROM %s WHERE provider_id=? AND %s=?`, table, providerColumn)
-		if _, err := tx.ExecContext(ctx, deleteQuery, providerID, providerEntityID); err != nil {
-			return fmt.Errorf("remove provider identity link: delete decision: %w", err)
-		}
-		return nil
-	})
-}
-
 func providerLinkTable(entityKind string) (table, providerColumn, localColumn string, err error) {
 	switch entityKind {
 	case "artist":

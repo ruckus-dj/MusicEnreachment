@@ -75,12 +75,6 @@ export function isOperationsSortColumn(
   return sortColumns.some((candidate) => candidate === value);
 }
 
-export function isOperationsSortDirection(
-  value: string,
-): value is OperationsSortDirection {
-  return value === "asc" || value === "desc";
-}
-
 export interface OperationsScreenFilters {
   query: string;
   onQueryChange: (query: string) => void;

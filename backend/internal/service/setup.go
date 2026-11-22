@@ -616,13 +616,6 @@ func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string
 	return nil
 }
 
-func (s *SetupService) SaveMusicBrainzProviderSettings(ctx context.Context, throttle *bool, delaySeconds *float64) error {
-	if err := s.registry.UpdateMusicBrainzProviderSettings(ctx, throttle, delaySeconds); err != nil {
-		return fmt.Errorf("save MusicBrainz provider settings: %w", err)
-	}
-	return nil
-}
-
 func (s *SetupService) SaveMusicBrainzSettings(ctx context.Context, mode, baseURL *string, expected settings.MusicBrainzSettingsExpected, throttle *bool, delaySeconds *float64) error {
 	if err := s.registry.UpdateMusicBrainzSettings(ctx, expected, mode, baseURL, throttle, delaySeconds); err != nil {
 		return fmt.Errorf("save MusicBrainz settings: %w", err)

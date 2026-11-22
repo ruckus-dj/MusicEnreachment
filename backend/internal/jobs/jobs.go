@@ -25,10 +25,6 @@ type bootstrapWorker struct {
 
 func (*bootstrapWorker) Work(context.Context, *river.Job[BootstrapArgs]) error { return nil }
 
-func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
-	return StartWithWorkers(ctx, databaseURL, database, nil)
-}
-
 func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
 	client, listenerPool, err := PrepareWithWorkers(ctx, databaseURL, database, register, periodicJobs...)
 	if err != nil {

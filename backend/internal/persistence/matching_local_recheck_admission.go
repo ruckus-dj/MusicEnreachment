@@ -41,15 +41,6 @@ func (repository *IncomingMatchCandidateRepository) CaptureMatchingLayoutTarget(
 	return target, nil
 }
 
-// ApplyAutomaticLocalFallbackTx materializes a complete, already authorized
-// Local layout and acquires cleanup protection in the same transaction. The
-// caller must hold the output, source, and catalog fences and roll back on any
-// error. Neither a preview nor this helper authorizes publication.
-func ApplyAutomaticLocalFallbackTx(ctx context.Context, tx bun.Tx, operationID uuid.UUID, preview MatchingLocalPreview, captures []IncomingGroupingCapture) (uuid.UUID, uuid.UUID, error) {
-	localReleaseID, recheckID, _, err := applyAutomaticLocalFallbackTx(ctx, tx, operationID, preview, captures)
-	return localReleaseID, recheckID, err
-}
-
 func applyAutomaticLocalFallbackTx(ctx context.Context, tx bun.Tx, operationID uuid.UUID, preview MatchingLocalPreview, captures []IncomingGroupingCapture) (uuid.UUID, uuid.UUID, matchingLocalRecheckSnapshot, error) {
 	if operationID == uuid.Nil || len(captures) == 0 {
 		return uuid.Nil, uuid.Nil, matchingLocalRecheckSnapshot{}, ErrIncomingMatchConflict

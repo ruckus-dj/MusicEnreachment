@@ -44,10 +44,6 @@ func (fixture *artifactCleanupDrainFixture) AdmitSourceAnalysisArtifactCleanupWi
 	return &operation, nil
 }
 
-func (fixture *artifactCleanupDrainFixture) ListSourceAnalysisArtifactCleanupItems(context.Context, uuid.UUID) ([]persistence.SourceAnalysisArtifactCleanupItem, error) {
-	return nil, nil
-}
-
 func (fixture *artifactCleanupDrainFixture) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
 	if fixture.listErr != nil {
 		return nil, fixture.listErr
@@ -63,7 +59,7 @@ func (artifactCleanupDrainRiver) InsertTx(context.Context, *sql.Tx, river.JobArg
 
 func newArtifactCleanupDrainFixture(candidates []persistence.SourceAnalysisArtifactCleanupCandidate, operations []persistence.Operation) (*artifactCleanupDrainFixture, *SourceAnalysisArtifactCleanupDrain) {
 	fixture := &artifactCleanupDrainFixture{candidates: candidates, operations: operations}
-	cleanup := NewSourceAnalysisArtifactCleanup(fixture, nil, artifactCleanupDrainRiver{})
+	cleanup := NewSourceAnalysisArtifactCleanup(fixture, artifactCleanupDrainRiver{})
 	return fixture, NewSourceAnalysisArtifactCleanupDrain(cleanup, fixture)
 }
 
