@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -57,10 +59,18 @@ type ArtistMatchingReviewRefreshDetector struct {
 	frozen       frozenMatchingReviewRefreshStore
 	runs         matchingRunFenceReader
 	evaluator    *MatchingEvaluationService
+	fetch        *ProviderFetchService
 	cursor       uuid.UUID
 	frozenCursor uuid.UUID
 	pageSize     int
 	maxPages     int
+}
+
+// WithArtistRetrieval lets changed reviews rebuild the shortlist without
+// admitting a new automatic matching run.
+func (detector *ArtistMatchingReviewRefreshDetector) WithArtistRetrieval(fetch *ProviderFetchService) *ArtistMatchingReviewRefreshDetector {
+	detector.fetch = fetch
+	return detector
 }
 
 func NewArtistMatchingReviewRefreshDetector(candidates artistMatchingReviewRefreshStore, evaluator *MatchingEvaluationService, runs matchingRunFenceReader) *ArtistMatchingReviewRefreshDetector {
@@ -209,6 +219,7 @@ func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx contex
 	if !sameProvider {
 		return nil
 	}
+	providerChanged := !unchanged
 	var threshold *float64
 	if candidate.PairThreshold != "" {
 		reader, ok := detector.evaluator.config.(interface {
@@ -252,7 +263,22 @@ func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx contex
 		return fmt.Errorf("artist matching review refresh requires read-only grouping")
 	}
 	evaluator.groups = artistReviewGroupingReader{groups: groups}
-	prepared, err := evaluator.prepareSealedForRun(ctx, detector.runs, candidate.RunID, input, true, threshold)
+	var prepared PreparedMatchingEvaluation
+	if providerChanged && threshold != nil && detector.fetch != nil {
+		prepared, candidate.RefreshedProvider, err = detector.prepareRefreshedArtistReview(ctx, &evaluator, candidate, input, threshold)
+	} else {
+		// A previous open retrieval may have replaced the original shortlist.
+		// With unchanged provider evidence, re-score that exact current scope.
+		var currentEvidence persistence.MatchingProviderLayoutEvidence
+		if threshold != nil && detector.fetch != nil {
+			currentEvidence = currentArtistReviewEvidence(provider, snapshot)
+			input.ReleaseIDs = currentEvidence.ReleaseKeys
+			input.CatalogCacheKeys = append(slices.Clone(currentEvidence.QueryKeys), currentEvidence.PageKeys...)
+			input.ReleaseLookupCacheKeys = currentEvidence.HydrationKeys
+			candidate.RefreshedProvider = &currentEvidence
+		}
+		prepared, err = evaluator.prepareSealedForRun(ctx, detector.runs, candidate.RunID, input, true, threshold)
+	}
 	if err != nil {
 		if isBenignArtistMatchingReviewRefreshError(err) {
 			return nil
@@ -274,6 +300,76 @@ func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx contex
 		return fmt.Errorf("publish artist matching review refresh for group %s: %w", candidate.GroupID, err)
 	}
 	return nil
+}
+
+func currentArtistReviewEvidence(fence persistence.IncomingMatchProviderFence, snapshot persistence.ProviderMatchingSnapshot) persistence.MatchingProviderLayoutEvidence {
+	evidence := persistence.MatchingProviderLayoutEvidence{
+		SchemaVersion: persistence.MatchingProviderLayoutEvidenceVersion, ProviderSourceID: fence.ProviderSourceID,
+		ProviderID: fence.ProviderID, Namespace: fence.Namespace, Endpoint: fence.Endpoint, ConfigurationIdentity: fence.ConfigurationIdentity,
+		ReleaseKeys: fence.ReleaseKeys, AcceptedProjectionRevision: snapshot.AcceptedProjectionRevision,
+	}
+	keys := make([]string, 0, len(snapshot.Responses))
+	for key := range snapshot.Responses {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		switch {
+		case strings.HasPrefix(key, "artist-search:"):
+			evidence.QueryKeys = append(evidence.QueryKeys, key)
+		case strings.HasPrefix(key, "artist-release-browse:"):
+			evidence.PageKeys = append(evidence.PageKeys, key)
+		case strings.HasPrefix(key, "release-lookup:"):
+			evidence.HydrationKeys = append(evidence.HydrationKeys, key)
+		}
+	}
+	return evidence
+}
+
+func (detector *ArtistMatchingReviewRefreshDetector) prepareRefreshedArtistReview(
+	ctx context.Context, evaluator *MatchingEvaluationService, candidate persistence.ArtistMatchingReviewRefreshCandidate,
+	input persistence.MatchingAcquisitionEvaluationInput, threshold *float64,
+) (PreparedMatchingEvaluation, *persistence.MatchingProviderLayoutEvidence, error) {
+	fence, found, err := detector.runs.GetMatchingRunFence(ctx, candidate.RunID)
+	if err != nil {
+		return PreparedMatchingEvaluation{}, nil, err
+	}
+	if !found || fence.Version != 2 || fence.GroupID != candidate.GroupID {
+		return PreparedMatchingEvaluation{}, nil, persistence.ErrIncomingMatchConflict
+	}
+	captures, _, err := persistence.DecodeMatchingLayoutTarget(fence.LayoutTarget, fence.GroupID, MatchingLayoutPolicyVersion)
+	if err != nil {
+		return PreparedMatchingEvaluation{}, nil, err
+	}
+	members, err := MatchingLayoutRetrievalMembers(captures)
+	if err != nil {
+		return PreparedMatchingEvaluation{}, nil, err
+	}
+	var query string
+	for _, cacheKey := range input.CatalogCacheKeys {
+		if value, ok := strings.CutPrefix(cacheKey, "artist-search:0:1:"); ok {
+			query = value
+			break
+		}
+	}
+	if query == "" {
+		return PreparedMatchingEvaluation{}, nil, persistence.ErrIncomingMatchConflict
+	}
+	retrieved, err := detector.fetch.retrieveMatchingArtistCatalog(ctx, members, query)
+	if err != nil {
+		return PreparedMatchingEvaluation{}, nil, err
+	}
+	if len(retrieved.Evidence) != 1 {
+		return PreparedMatchingEvaluation{}, nil, ErrMatchingEvaluationDeferred
+	}
+	evidence := &retrieved.Evidence[0]
+	input.ReleaseIDs = evidence.ReleaseKeys
+	input.CatalogCacheKeys = append(slices.Clone(evidence.QueryKeys), evidence.PageKeys...)
+	input.ReleaseLookupCacheKeys = evidence.HydrationKeys
+	prepared, err := evaluator.prepareSealed(ctx, input, &fence, func(context.Context, []string, []string) (persistence.ProviderMatchingSnapshot, error) {
+		return retrieved.Snapshot, nil
+	}, threshold)
+	return prepared, evidence, err
 }
 
 type artistReviewGroupingReader struct {
@@ -336,5 +432,6 @@ func validateArtistReviewProviderFence(fence persistence.IncomingMatchProviderFe
 func isBenignArtistMatchingReviewRefreshError(err error) bool {
 	return errors.Is(err, persistence.ErrIncomingMatchConflict) ||
 		errors.Is(err, persistence.ErrMatchingTargetNeedsRefresh) ||
-		errors.Is(err, ErrMatchingEvaluationDeferred)
+		errors.Is(err, ErrMatchingEvaluationDeferred) ||
+		errors.Is(err, ErrMatchingLocalRecheckMusicBrainzIncomplete)
 }

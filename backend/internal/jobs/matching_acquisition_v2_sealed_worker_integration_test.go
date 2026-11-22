@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	var requestMu sync.Mutex
 	var artistSearches int
 	var browseOffsets []int
+	var artistSearchEmpty atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -44,6 +46,10 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 			requestMu.Lock()
 			artistSearches++
 			requestMu.Unlock()
+			if artistSearchEmpty.Load() {
+				_, _ = w.Write([]byte(`{"count":0,"offset":0,"created":"2026-01-02T00:00:00Z","artists":[]}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"count":1,"offset":0,"created":"2026-01-01T00:00:00Z","artists":[{"id":"` + artistID + `","name":"Fixture Artist","disambiguation":"fixture","unknown_artist_field":"preserve-artist-search"}]}`))
 		case strings.TrimSuffix(r.URL.Path, "/") == "/ws/2/release" && r.URL.Query().Get("artist") == artistID:
 			offset := 0
@@ -544,6 +550,29 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	var pendingMatchingDeliveries int
 	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &pendingMatchingDeliveries); err != nil || pendingMatchingDeliveries != 0 {
 		t.Fatalf("pending matching deliveries for completed parent=%d err=%v; want none (provider wakes are settled and consumed)", pendingMatchingDeliveries, err)
+	}
+	artistSearchEmpty.Store(true)
+	if _, err := fetch.SearchArtists(ctx, "artist:Fixture Artist", 0, 1); err != nil {
+		t.Fatalf("accept changed artist search: %v", err)
+	}
+	detector := service.NewArtistMatchingReviewRefreshDetector(repository, evaluator, repository).WithArtistRetrieval(fetch)
+	if err := detector.Refresh(ctx); err != nil {
+		t.Fatalf("refresh open artist review after catalog evidence changed: %v", err)
+	}
+	var refreshed struct {
+		Revision   string `bun:"evaluation_revision"`
+		ReviewOnly bool   `bun:"review_only"`
+		ApplyCount int    `bun:"apply_count"`
+	}
+	if err := database.NewRaw(`SELECT evaluation_revision,
+		jsonb_exists(evaluation_evidence,'provider_refresh_review') AS review_only,
+		(SELECT count(*) FROM matching_apply_request WHERE group_id=?) AS apply_count
+		FROM incoming_match_evaluation WHERE group_id=?`, group.ID, group.ID).Scan(ctx, &refreshed); err != nil {
+		t.Fatalf("read refreshed artist review: %v", err)
+	}
+	newHeader, newCandidates, err := persistence.NewIncomingMatchCandidateRepository(database).Get(ctx, group.ID)
+	if err != nil || newHeader == nil || refreshed.Revision == header.EvaluationRevision || !refreshed.ReviewOnly || refreshed.ApplyCount != 1 || len(newCandidates) != 0 {
+		t.Fatalf("refreshed artist review=%+v candidates=%d err=%v; want empty review without new apply work", refreshed, len(newCandidates), err)
 	}
 	if _, err := database.NewRaw(`UPDATE matching_run SET immutable_plan=jsonb_set(immutable_plan,'{schema_version}','99'::jsonb) WHERE id=?`, parentID).Exec(ctx); err != nil {
 		t.Fatalf("corrupt completed run plan version for negative fence check: %v", err)

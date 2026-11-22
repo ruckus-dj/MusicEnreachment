@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -37,6 +38,9 @@ type ArtistMatchingReviewRefreshCandidate struct {
 	EvaluationRevision string
 	Provider           IncomingMatchProviderFence
 	PairThreshold      string
+	// RefreshedProvider is set only after a complete artist retrieval. A normal
+	// review refresh cannot widen the historical shortlist without this proof.
+	RefreshedProvider *MatchingProviderLayoutEvidence
 }
 
 // ListArtistMatchingReviewRefreshCandidates returns one page of eligible
@@ -133,12 +137,12 @@ func validateArtistMatchingReviewProviderFence(fence IncomingMatchProviderFence)
 	if fence.ProviderID == uuid.Nil || fence.ProviderSourceID == uuid.Nil ||
 		strings.TrimSpace(fence.Namespace) == "" || fence.Endpoint == "" || fence.ConfigurationIdentity == "" ||
 		fence.CacheKey == "" || len(mustDecodeSHA256(fence.AcceptedProjectionRevision)) != sha256.Size ||
-		len(fence.ReleaseKeys) == 0 || !canonicalReleaseKeys(fence.ReleaseKeys) ||
+		!canonicalReleaseKeys(fence.ReleaseKeys) ||
 		len(fence.AcoustID) != 0 || len(fence.AcoustIDSources) != 0 {
 		return fmt.Errorf("artist matching review provider fence is incomplete")
 	}
 	revisions := effectiveMatchCacheRevisions(fence)
-	if len(revisions) < 2 {
+	if len(revisions) == 0 {
 		return fmt.Errorf("artist matching review provider fence has an incomplete response scope")
 	}
 	if _, ok := revisions[fence.CacheKey]; !ok {
@@ -537,10 +541,16 @@ func (repository *SetupManagerRepository) PublishArtistMatchingReviewRefresh(ctx
 		if err := validateArtistMatchingReviewRefreshCurrent(ctx, tx, candidate); err != nil {
 			return err
 		}
+		if candidate.RefreshedProvider != nil {
+			scope, err = bindRefreshedArtistReviewProvider(scope, evaluation.Provider, *candidate.RefreshedProvider)
+			if err != nil {
+				return err
+			}
+		}
 		if err := bindArtistMatchingReviewRefreshEvaluation(binding, scope, candidate, &evaluation); err != nil {
 			return err
 		}
-		drifted, err := artistMatchingReviewProviderDrifted(candidate.Provider, evaluation.Provider)
+		drifted, err := artistMatchingReviewProviderDrifted(candidate.Provider, evaluation.Provider, candidate.RefreshedProvider != nil)
 		if err != nil {
 			return err
 		}
@@ -559,6 +569,22 @@ func (repository *SetupManagerRepository) PublishArtistMatchingReviewRefresh(ctx
 		}
 		evaluation.Groups[0].Evidence = evidence
 		evaluation.MatchingAuthorityMode = "automatic"
+		if candidate.RefreshedProvider != nil {
+			// Same prefix as replaceIncomingMatchesTx: the provider writer's
+			// source row is taken only after the output and source gates.
+			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+				return err
+			}
+			if err := validateRefreshedArtistCatalogTx(ctx, tx, *candidate.RefreshedProvider); err != nil {
+				return err
+			}
+		}
 		if err := validateIncomingMatchEvaluationStructure(evaluation, true); err != nil {
 			return fmt.Errorf("publish artist matching review refresh: %w", err)
 		}
@@ -573,6 +599,99 @@ func (repository *SetupManagerRepository) PublishArtistMatchingReviewRefresh(ctx
 		return false, err
 	}
 	return changed, nil
+}
+
+func bindRefreshedArtistReviewProvider(
+	sealed artistMatchingReviewRefreshSealedScope, fence IncomingMatchProviderFence, evidence MatchingProviderLayoutEvidence,
+) (artistMatchingReviewRefreshSealedScope, error) {
+	if len(evidence.QueryKeys) != 1 || !strings.HasPrefix(evidence.QueryKeys[0], "artist-search:") ||
+		!slices.Contains(sealed.CatalogKeys, evidence.QueryKeys[0]) ||
+		evidence.ProviderID != fence.ProviderID || evidence.ProviderSourceID != fence.ProviderSourceID ||
+		evidence.ConfigurationIdentity != fence.ConfigurationIdentity || evidence.Endpoint != fence.Endpoint || evidence.Namespace != fence.Namespace ||
+		evidence.AcceptedProjectionRevision != fence.AcceptedProjectionRevision ||
+		len(evidence.HydrationKeys) != len(evidence.ReleaseKeys) {
+		return artistMatchingReviewRefreshSealedScope{}, ErrIncomingMatchConflict
+	}
+	for _, key := range evidence.PageKeys {
+		if !strings.HasPrefix(key, "artist-release-browse:") {
+			return artistMatchingReviewRefreshSealedScope{}, ErrIncomingMatchConflict
+		}
+	}
+	sealed.Input.ReleaseIDs = evidence.ReleaseKeys
+	sealed.CatalogKeys = append(slices.Clone(evidence.QueryKeys), evidence.PageKeys...)
+	sealed.LookupKeys = evidence.HydrationKeys
+	return sealed, nil
+}
+
+func validateRefreshedArtistCatalogTx(ctx context.Context, tx bun.Tx, evidence MatchingProviderLayoutEvidence) error {
+	if err := ValidateMatchingProviderLayoutEvidenceTx(ctx, tx, evidence); err != nil {
+		return err
+	}
+	if len(evidence.PageKeys) == 0 {
+		if len(evidence.ReleaseKeys) != 0 {
+			return ErrIncomingMatchConflict
+		}
+		return nil
+	}
+	var search []byte
+	if err := tx.NewRaw(`SELECT payload FROM provider_response_cache WHERE provider_source_id=? AND cache_key=?`,
+		evidence.ProviderSourceID, evidence.QueryKeys[0]).Scan(ctx, &search); err != nil {
+		return err
+	}
+	var artist struct {
+		Artists []struct {
+			ID string `json:"id"`
+		} `json:"artists"`
+	}
+	if json.Unmarshal(search, &artist) != nil || len(artist.Artists) == 0 {
+		return ErrIncomingMatchConflict
+	}
+	type page struct {
+		Count    *int `json:"release-count"`
+		Offset   *int `json:"release-offset"`
+		Releases *[]struct {
+			ID string `json:"id"`
+		} `json:"releases"`
+	}
+	pages := make([]page, 0, len(evidence.PageKeys))
+	for _, key := range evidence.PageKeys {
+		var raw []byte
+		if err := tx.NewRaw(`SELECT payload FROM provider_response_cache WHERE provider_source_id=? AND cache_key=?`,
+			evidence.ProviderSourceID, key).Scan(ctx, &raw); err != nil {
+			return err
+		}
+		var observed page
+		if json.Unmarshal(raw, &observed) != nil || observed.Offset == nil || observed.Count == nil || observed.Releases == nil ||
+			key != fmt.Sprintf("artist-release-browse:%s:%d:100", artist.Artists[0].ID, *observed.Offset) {
+			return ErrIncomingMatchConflict
+		}
+		pages = append(pages, observed)
+	}
+	sort.Slice(pages, func(i, j int) bool { return *pages[i].Offset < *pages[j].Offset })
+	seen := make(map[string]bool)
+	offset, count := 0, *pages[0].Count
+	for i, p := range pages {
+		if *p.Count != count || *p.Offset != offset || len(*p.Releases) > 100 ||
+			len(*p.Releases) == 0 && (count != 0 || i != 0 || len(pages) != 1) {
+			return ErrIncomingMatchConflict
+		}
+		offset += len(*p.Releases)
+		for _, release := range *p.Releases {
+			if seen[release.ID] {
+				return ErrIncomingMatchConflict
+			}
+			seen[release.ID] = true
+		}
+	}
+	if offset != count {
+		return ErrIncomingMatchConflict
+	}
+	for _, key := range evidence.ReleaseKeys {
+		if !seen[key] {
+			return ErrIncomingMatchConflict
+		}
+	}
+	return nil
 }
 
 func validateArtistMatchingReviewRefreshCurrent(ctx context.Context, tx bun.Tx, candidate ArtistMatchingReviewRefreshCandidate) error {
@@ -696,13 +815,16 @@ func bindArtistMatchingReviewRefreshEvaluation(binding artistMatchingReviewRefre
 	return nil
 }
 
-func artistMatchingReviewProviderDrifted(previous, next IncomingMatchProviderFence) (bool, error) {
+func artistMatchingReviewProviderDrifted(previous, next IncomingMatchProviderFence, allowNewSelection ...bool) (bool, error) {
 	if previous.ProviderID != next.ProviderID || previous.ProviderSourceID != next.ProviderSourceID ||
 		previous.Namespace != next.Namespace || previous.Endpoint != next.Endpoint ||
 		previous.ConfigurationIdentity != next.ConfigurationIdentity {
 		return false, fmt.Errorf("publish artist matching review refresh: evaluated provider identity changed")
 	}
 	if !equalSortedStrings(previous.ReleaseKeys, next.ReleaseKeys) {
+		if len(allowNewSelection) == 1 && allowNewSelection[0] {
+			return true, nil
+		}
 		return false, fmt.Errorf("publish artist matching review refresh: evaluated release scope changed")
 	}
 	if previous.AcceptedProjectionRevision != next.AcceptedProjectionRevision {

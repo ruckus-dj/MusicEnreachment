@@ -234,7 +234,7 @@ func Run(ctx context.Context, config Config) error {
 	genreCatalogWorker := jobs.NewGenreCatalogWorker(genreCatalog)
 	genreCatalogRefreshDispatchWorker := jobs.NewGenreCatalogRefreshDispatchWorker(genreCatalog)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
-	artistMatchingReviewRefresh := service.NewArtistMatchingReviewRefreshDetector(setupManagerRepository, matchingEvaluation, setupManagerRepository)
+	artistMatchingReviewRefresh := service.NewArtistMatchingReviewRefreshDetector(setupManagerRepository, matchingEvaluation, setupManagerRepository).WithArtistRetrieval(providerFetch)
 	artistMatchingReviewRefreshWorker := jobs.NewArtistMatchingReviewRefreshWorker(artistMatchingReviewRefresh)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
