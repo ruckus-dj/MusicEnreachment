@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -336,6 +337,15 @@ func newMemoryStore() *memoryStore {
 
 type memoryStore struct {
 	data map[string]string
+}
+
+func (m *memoryStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	values := maps.Clone(m.data)
+	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	_, hasGitHub := values[settings.GitHubTokenKey]
+	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.GitHubTokenKey)
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
 }
 
 func (m *memoryStore) Get(_ context.Context, k string) (string, bool, error) {

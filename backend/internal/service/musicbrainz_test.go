@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -29,6 +30,17 @@ type mockSettingsStore struct {
 
 func newMockStore() *mockSettingsStore {
 	return &mockSettingsStore{data: make(map[string]string)}
+}
+
+func (m *mockSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	values := maps.Clone(m.data)
+	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	_, hasGitHub := values[settings.GitHubTokenKey]
+	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.GitHubTokenKey)
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
 }
 
 func (m *mockSettingsStore) Get(_ context.Context, key string) (string, bool, error) {

@@ -48,12 +48,17 @@ func readSetting[T any](ctx context.Context, store Store, definition settingDefi
 		var zero T
 		return zero, false, err
 	}
+	value, err := parseSettingValue(definition, raw, exists)
+	return value, exists, err
+}
+
+func parseSettingValue[T any](definition settingDefinition[T], raw string, exists bool) (T, error) {
 	if !exists {
 		if definition.defaultVal != nil {
-			return *definition.defaultVal, false, nil
+			return *definition.defaultVal, nil
 		}
 		var zero T
-		return zero, false, nil
+		return zero, nil
 	}
 	value, err := definition.parse(raw)
 	if err == nil && definition.validate != nil {
@@ -61,9 +66,9 @@ func readSetting[T any](ctx context.Context, store Store, definition settingDefi
 	}
 	if err != nil {
 		var zero T
-		return zero, true, fmt.Errorf("invalid stored %s: %w", definition.name, err)
+		return zero, fmt.Errorf("invalid stored %s: %w", definition.name, err)
 	}
-	return value, true, nil
+	return value, nil
 }
 
 func serializeSetting[T any](definition settingDefinition[T], value T) (string, error) {

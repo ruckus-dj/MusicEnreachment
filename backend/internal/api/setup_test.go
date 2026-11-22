@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,6 +28,15 @@ import (
 )
 
 type apiSettingsStore map[string]string
+
+func (store apiSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	values := maps.Clone(map[string]string(store))
+	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	_, hasGitHub := values[settings.GitHubTokenKey]
+	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.GitHubTokenKey)
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+}
 
 type failingSettingsStore struct {
 	apiSettingsStore

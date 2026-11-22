@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,15 @@ import (
 // fixture used by the external api_test package. Internal (package api) test
 // files cannot reference identifiers declared in the external test package.
 type apiSettingsStore map[string]string
+
+func (store apiSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	values := maps.Clone(map[string]string(store))
+	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	_, hasGitHub := values[settings.GitHubTokenKey]
+	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.GitHubTokenKey)
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+}
 
 func (store apiSettingsStore) Get(_ context.Context, key string) (string, bool, error) {
 	value, exists := store[key]

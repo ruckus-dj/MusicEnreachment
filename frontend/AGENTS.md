@@ -75,6 +75,8 @@ not after a fallible detail reread. Refresh tokens must preserve pending or
 uncertain admission fences; never key-remount a publication controller to refresh it.
 Confirm-button tests must wait for the preview's asynchronously enabled state
 before clicking; the button can already be rendered while confirmation is disabled.
+In retained republication tests, also wait for the workflow radio to be enabled
+after the initial comparison; an early click on the disabled fieldset has no effect.
 
 **Local-time assertions**: UI timestamps use the browser's time zone. Test the
 original `<time datetime>` instant and derive expected display text with the

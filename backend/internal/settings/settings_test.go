@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -25,6 +26,12 @@ func (store *synchronizedSettingsStore) Get(ctx context.Context, key string) (st
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.memoryStore.Get(ctx, key)
+}
+
+func (store *synchronizedSettingsStore) GetRuntimeSettingsValues(ctx context.Context) (settings.RuntimeSettingsValues, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.memoryStore.GetRuntimeSettingsValues(ctx)
 }
 
 func (store *synchronizedSettingsStore) SetMany(ctx context.Context, values map[string]string) error {
@@ -64,6 +71,15 @@ func TestUpdateMusicBrainzProviderSettingsConcurrentPartialUpdates(t *testing.T)
 
 type memoryStore struct {
 	data map[string]string
+}
+
+func (m *memoryStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
+	values := maps.Clone(m.data)
+	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	_, hasGitHub := values[settings.GitHubTokenKey]
+	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.GitHubTokenKey)
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
 }
 
 type recordingStore struct {

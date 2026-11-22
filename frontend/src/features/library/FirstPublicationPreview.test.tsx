@@ -582,14 +582,17 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
   });
 
   render(component(0, vi.fn(), true));
-  fireEvent.click(
-    screen.getByRole("radio", {
-      name: "Повторная публикация выбранного источника",
-    }),
-  );
-  await screen.findByRole("button", {
+  const republishWorkflow = screen.getByRole("radio", {
     name: "Повторная публикация выбранного источника",
   });
+  await waitFor(() => expect(republishWorkflow).toBeEnabled());
+  fireEvent.click(republishWorkflow);
+  expect(republishWorkflow).toBeChecked();
+
+  const confirmRepublish = screen.getByRole("button", {
+    name: "Повторная публикация выбранного источника",
+  });
+  await waitFor(() => expect(confirmRepublish).toBeEnabled());
 
   expect(
     screen.getByText(
@@ -599,11 +602,7 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
   expect(screen.getByText("unmapped_warning_code")).toBeInTheDocument();
   expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
 
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: "Повторная публикация выбранного источника",
-    }),
-  );
+  fireEvent.click(confirmRepublish);
 
   await waitFor(() =>
     expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(

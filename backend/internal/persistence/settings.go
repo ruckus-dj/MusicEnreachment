@@ -374,6 +374,52 @@ func (r *SettingsRepository) GetMusicBrainzConfigValues(ctx context.Context) (ma
 	return values, err
 }
 
+// GetRuntimeSettingsValues reads every runtime setting in one coherent
+// statement under the shared MusicBrainz configuration lock. Credential values
+// are masked, so only their row presence leaves the persistence layer.
+func (r *SettingsRepository) GetRuntimeSettingsValues(ctx context.Context) (appsettings.RuntimeSettingsValues, error) {
+	var snapshot appsettings.RuntimeSettingsValues
+	err := r.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// The data statement takes its snapshot after acquiring the lock, so it
+		// sees a settings write that committed while the reader was waiting.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock runtime settings snapshot: %w", err)
+		}
+		var rows []struct {
+			Name  string `bun:"setting_name"`
+			Value string `bun:"setting_value"`
+		}
+		if err := tx.NewRaw(`SELECT setting_name,
+			CASE WHEN setting_name IN (?, ?) THEN '' ELSE setting_value END AS setting_value
+			FROM app_setting
+			WHERE setting_name IN (?)`, appsettings.AcoustIDApplicationKey, appsettings.GitHubTokenKey,
+			bun.List([]string{
+				appsettings.ToolsDirectoryKey, appsettings.WorkDirectoryKey, appsettings.OutputDirectoryKey,
+				appsettings.OutputCaseSensitiveKey, appsettings.OutputUnicodeNormalizationKey, appsettings.PublicationFormatKey,
+				appsettings.PublicationPathTemplateKey, appsettings.PublicationRemoveSourcesKey, appsettings.PublicationAutoCompleteAlbumsKey,
+				appsettings.MusicBrainzModeKey, appsettings.MusicBrainzBaseURLKey, appsettings.MusicBrainzConfigIdentityKey, appsettings.MusicBrainzVerifiedAtKey,
+				appsettings.MusicBrainzSelfHostedThrottleKey, appsettings.MusicBrainzSelfHostedDelayKey,
+				appsettings.LRCLIBEnabledKey, appsettings.LogLevelKey, appsettings.ActiveFFmpegInstallationKey, appsettings.ActiveFPCalcInstallationKey,
+				appsettings.SourceFileConcurrencyKey, appsettings.MatchingPairThresholdKey, appsettings.AcoustIDApplicationKey, appsettings.GitHubTokenKey,
+			})).Scan(ctx, &rows); err != nil {
+			return fmt.Errorf("read runtime settings snapshot: %w", err)
+		}
+		snapshot.Values = make(map[string]string, len(rows))
+		for _, row := range rows {
+			switch row.Name {
+			case appsettings.AcoustIDApplicationKey:
+				snapshot.HasAcoustIDApplicationKey = true
+			case appsettings.GitHubTokenKey:
+				snapshot.HasGitHubToken = true
+			default:
+				snapshot.Values[row.Name] = row.Value
+			}
+		}
+		return nil
+	})
+	return snapshot, err
+}
+
 func syncMusicBrainzProviderSource(ctx context.Context, tx bun.Tx) error {
 	var mode, endpoint, identity string
 	for _, field := range []struct {

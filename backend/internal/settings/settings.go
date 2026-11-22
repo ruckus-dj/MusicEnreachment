@@ -80,6 +80,10 @@ type publicationPlanningSnapshotStore interface {
 	GetPublicationPlanningValues(context.Context) (map[string]string, error)
 }
 
+type runtimeSettingsSnapshotStore interface {
+	GetRuntimeSettingsValues(context.Context) (RuntimeSettingsValues, error)
+}
+
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
 }
@@ -151,13 +155,17 @@ type RuntimeSettings struct {
 	MusicBrainzSelfHostedDelaySeconds float64
 }
 
-func (r *Registry) ReadGitHubToken(ctx context.Context) (string, bool, error) {
-	return r.store.Get(ctx, GitHubTokenKey)
+// RuntimeSettingsValues is one coherent snapshot of the runtime settings.
+// Values contains only non-secret rows; credential rows are represented by
+// presence flags so their text never leaves the persistence layer.
+type RuntimeSettingsValues struct {
+	Values                    map[string]string
+	HasAcoustIDApplicationKey bool
+	HasGitHubToken            bool
 }
 
-func (r *Registry) HasGitHubToken(ctx context.Context) (bool, error) {
-	_, present, err := r.ReadGitHubToken(ctx)
-	return present, err
+func (r *Registry) ReadGitHubToken(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, GitHubTokenKey)
 }
 
 func (r *Registry) SetGitHubToken(ctx context.Context, token string) error {
@@ -279,13 +287,6 @@ func (r *Registry) SetLogLevel(ctx context.Context, value string) error {
 	}
 	r.level.Set(level)
 	return nil
-}
-
-// HasAcoustIDApplicationKey exposes key presence only; the secret itself is
-// intentionally never returned from the settings registry.
-func (r *Registry) HasAcoustIDApplicationKey(ctx context.Context) (bool, error) {
-	_, exists, err := r.store.Get(ctx, AcoustIDApplicationKey)
-	return exists, err
 }
 
 // SetAcoustIDApplicationKey saves the exact supplied application key.
@@ -769,27 +770,7 @@ func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig,
 		if err != nil {
 			return MusicBrainzConfig{}, err
 		}
-		mode, err := parseSnapshotSetting(values, musicBrainzModeSetting)
-		if err != nil {
-			return MusicBrainzConfig{}, err
-		}
-		baseURL, err := parseSnapshotSetting(values, musicBrainzURLSetting)
-		if err != nil {
-			return MusicBrainzConfig{}, err
-		}
-		identity, err := parseSnapshotSetting(values, musicBrainzIdentitySetting)
-		if err != nil {
-			return MusicBrainzConfig{}, err
-		}
-		var verifiedAt *time.Time
-		if value := values[MusicBrainzVerifiedAtKey]; value != "" {
-			parsed, parseErr := musicBrainzVerifiedSetting.parse(value)
-			if parseErr != nil {
-				return MusicBrainzConfig{}, fmt.Errorf("invalid stored MusicBrainz verification: %w", parseErr)
-			}
-			verifiedAt = &parsed
-		}
-		return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
+		return parseMusicBrainzConfigValues(values)
 	}
 	mode, _, err := readSetting(ctx, r.store, musicBrainzModeSetting)
 	if err != nil {
@@ -818,24 +799,33 @@ func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig,
 	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
 }
 
+func parseMusicBrainzConfigValues(values map[string]string) (MusicBrainzConfig, error) {
+	mode, err := parseSnapshotSetting(values, musicBrainzModeSetting)
+	if err != nil {
+		return MusicBrainzConfig{}, err
+	}
+	baseURL, err := parseSnapshotSetting(values, musicBrainzURLSetting)
+	if err != nil {
+		return MusicBrainzConfig{}, err
+	}
+	identity, err := parseSnapshotSetting(values, musicBrainzIdentitySetting)
+	if err != nil {
+		return MusicBrainzConfig{}, err
+	}
+	var verifiedAt *time.Time
+	if value := values[MusicBrainzVerifiedAtKey]; value != "" {
+		parsed, parseErr := musicBrainzVerifiedSetting.parse(value)
+		if parseErr != nil {
+			return MusicBrainzConfig{}, fmt.Errorf("invalid stored MusicBrainz verification: %w", parseErr)
+		}
+		verifiedAt = &parsed
+	}
+	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
+}
+
 func parseSnapshotSetting[T any](values map[string]string, definition settingDefinition[T]) (T, error) {
 	raw, exists := values[definition.name]
-	if !exists {
-		if definition.defaultVal != nil {
-			return *definition.defaultVal, nil
-		}
-		var zero T
-		return zero, nil
-	}
-	value, err := definition.parse(raw)
-	if err == nil && definition.validate != nil {
-		err = definition.validate(value)
-	}
-	if err != nil {
-		var zero T
-		return zero, fmt.Errorf("invalid stored %s: %w", definition.name, err)
-	}
-	return value, nil
+	return parseSettingValue(definition, raw, exists)
 }
 
 // SetMusicBrainzConfig validates and stores MusicBrainz configuration.
@@ -1012,94 +1002,101 @@ func (r *Registry) SetSourceFileConcurrency(ctx context.Context, concurrency int
 }
 
 func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
-	tools, _, err := readSetting(ctx, r.store, toolsRootSetting)
+	store, ok := r.store.(runtimeSettingsSnapshotStore)
+	if !ok {
+		return RuntimeSettings{}, fmt.Errorf("coherent runtime settings snapshot is unavailable")
+	}
+	values, err := store.GetRuntimeSettingsValues(ctx)
+	if err != nil {
+		return RuntimeSettings{}, fmt.Errorf("read runtime settings: %w", err)
+	}
+	return parseRuntimeSettingsValues(values)
+}
+
+// parseRuntimeSettingsValues decodes one coherent runtime snapshot with the same
+// typed validation, defaults, and presence semantics as the individual getters.
+func parseRuntimeSettingsValues(snapshot RuntimeSettingsValues) (RuntimeSettings, error) {
+	values := snapshot.Values
+	tools, err := parseSnapshotSetting(values, toolsRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	work, _, err := readSetting(ctx, r.store, workRootSetting)
+	work, err := parseSnapshotSetting(values, workRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	output, _, err := readSetting(ctx, r.store, outputRootSetting)
+	output, err := parseSnapshotSetting(values, outputRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	format, _, err := readSetting(ctx, r.store, publicationSetting)
+	format, err := parseSnapshotSetting(values, publicationSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	template, _, err := readSetting(ctx, r.store, publicationPathTemplateSetting)
+	template, err := parseSnapshotSetting(values, publicationPathTemplateSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	removeSources, _, err := readSetting(ctx, r.store, publicationRemoveSourcesSetting)
+	removeSources, err := parseSnapshotSetting(values, publicationRemoveSourcesSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	autoCompleteAlbums, _, err := readSetting(ctx, r.store, publicationAutoCompleteAlbumsSetting)
+	autoCompleteAlbums, err := parseSnapshotSetting(values, publicationAutoCompleteAlbumsSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	musicBrainz, err := r.GetMusicBrainzConfig(ctx)
+	musicBrainz, err := parseMusicBrainzConfigValues(values)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	lrclib, err := r.GetLRCLIBEnabled(ctx)
+	lrclib, err := parseSnapshotSetting(values, lrclibSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	logLevel, _, err := readSetting(ctx, r.store, logSetting)
-	if err != nil {
-		return RuntimeSettings{}, err
-	}
-	ffmpegID, ffmpegExists, err := readSetting(ctx, r.store, activeFFmpegSetting)
-	if err != nil {
-		return RuntimeSettings{}, err
-	}
-	fpcalcID, fpcalcExists, err := readSetting(ctx, r.store, activeFPCalcSetting)
+	logLevel, err := parseSnapshotSetting(values, logSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
 	ffmpeg, fpcalc := "", ""
-	if ffmpegExists {
-		ffmpeg = ffmpegID.String()
+	if _, exists := values[ActiveFFmpegInstallationKey]; exists {
+		parsed, err := parseSnapshotSetting(values, activeFFmpegSetting)
+		if err != nil {
+			return RuntimeSettings{}, err
+		}
+		ffmpeg = parsed.String()
 	}
-	if fpcalcExists {
-		fpcalc = fpcalcID.String()
-	}
-	caseSensitiveValue, caseExists, err := readSetting(ctx, r.store, outputCaseSetting)
-	if err != nil {
-		return RuntimeSettings{}, err
+	if _, exists := values[ActiveFPCalcInstallationKey]; exists {
+		parsed, err := parseSnapshotSetting(values, activeFPCalcSetting)
+		if err != nil {
+			return RuntimeSettings{}, err
+		}
+		fpcalc = parsed.String()
 	}
 	var caseSensitive *bool
-	if caseExists {
-		caseSensitive = &caseSensitiveValue
+	if _, exists := values[OutputCaseSensitiveKey]; exists {
+		parsed, err := parseSnapshotSetting(values, outputCaseSetting)
+		if err != nil {
+			return RuntimeSettings{}, err
+		}
+		caseSensitive = &parsed
 	}
-	unicodeNormalization, _, err := readSetting(ctx, r.store, outputUnicodeSetting)
+	unicodeNormalization, err := parseSnapshotSetting(values, outputUnicodeSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	fileConcurrency, _, err := readSetting(ctx, r.store, sourceFileConcurrencySetting)
+	fileConcurrency, err := parseSnapshotSetting(values, sourceFileConcurrencySetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	matchingPairThreshold, _, err := readSetting(ctx, r.store, matchingPairThresholdSetting)
+	matchingPairThreshold, err := parseSnapshotSetting(values, matchingPairThresholdSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	hasAcoustIDKey, err := r.HasAcoustIDApplicationKey(ctx)
+	selfHostedThrottle, err := parseSnapshotSetting(values, musicBrainzSelfHostedThrottleSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	hasGitHubToken, err := r.HasGitHubToken(ctx)
-	if err != nil {
-		return RuntimeSettings{}, err
-	}
-	selfHostedThrottle, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedThrottleSetting)
-	if err != nil {
-		return RuntimeSettings{}, err
-	}
-	selfHostedDelay, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedDelaySetting)
+	selfHostedDelay, err := parseSnapshotSetting(values, musicBrainzSelfHostedDelaySetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
@@ -1122,8 +1119,8 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		ActiveFPCalcInstallation:          fpcalc,
 		OutputCaseSensitive:               caseSensitive,
 		OutputUnicodeNormalization:        unicodeNormalization,
-		HasAcoustIDApplicationKey:         hasAcoustIDKey,
-		HasGitHubToken:                    hasGitHubToken,
+		HasAcoustIDApplicationKey:         snapshot.HasAcoustIDApplicationKey,
+		HasGitHubToken:                    snapshot.HasGitHubToken,
 		MusicBrainzSelfHostedThrottle:     selfHostedThrottle,
 		MusicBrainzSelfHostedDelaySeconds: selfHostedDelay,
 	}, nil
