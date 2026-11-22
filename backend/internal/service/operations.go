@@ -581,10 +581,11 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 	return operation, nil
 }
 
-// enqueueRetry keeps the generic retry for every kind but a scan, an analysis,
-// and a publication source cleanup. A scan retry is a new complete traversal of
-// its root; normalized analysis retries are delegated to the source-analysis
-// service; cleanup retries require the dedicated explicit recovery flow.
+// enqueueRetry keeps the generic retry only for the kinds the install/move
+// dispatcher owns. A scan retry is a new complete traversal of its root;
+// normalized analysis retries are delegated to the source-analysis service;
+// cleanup retries require the dedicated explicit recovery flow. Any other kind
+// fails closed before the attempt changes or a River job is inserted.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
 	if existing.Kind == "refresh_genre_catalog_v1" {
 		return nil, fmt.Errorf("genre catalog refreshes must be started as new operations")
@@ -622,8 +623,10 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 		return s.retryAnalysis(ctx, existing)
 	case SourceAnalysisArtifactCleanupOperationKind:
 		return nil, fmt.Errorf("cleanup failures require a new explicit artifact selection")
-	default:
+	case "install", "move_tools_root":
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, OperationJobArgs{OperationID: existing.ID}, nil)
+	default:
+		return nil, fmt.Errorf("retry operation: unsupported operation kind %q", existing.Kind)
 	}
 }
 
