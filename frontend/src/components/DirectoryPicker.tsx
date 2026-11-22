@@ -1,9 +1,5 @@
 import { browseServerDirectories } from "../api/generated/client";
-import { useI18n } from "../i18n/I18nProvider";
-import {
-  type BrowseDirectory,
-  DirectoryPickerView,
-} from "./DirectoryPickerView";
+import type { BrowseDirectory } from "./DirectoryPickerView";
 
 export const browseServerDirectory: BrowseDirectory = async (
   path,
@@ -25,19 +21,3 @@ export const browseServerDirectory: BrowseDirectory = async (
     nextOffset: page.next_offset,
   };
 };
-
-export function DirectoryPicker(props: {
-  open: boolean;
-  initialPath: string;
-  onSelect: (path: string) => void;
-  onClose: () => void;
-}) {
-  const { locale } = useI18n();
-  return (
-    <DirectoryPickerView
-      {...props}
-      browse={browseServerDirectory}
-      locale={locale}
-    />
-  );
-}

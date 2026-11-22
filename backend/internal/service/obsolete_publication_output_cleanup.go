@@ -22,7 +22,6 @@ import (
 
 type obsoleteOutputCleanupRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
-	ReadObsoletePublicationOutputCleanup(context.Context, uuid.UUID) (*persistence.ObsoletePublicationOutputCleanup, error)
 	ExecuteObsoletePublicationOutputCleanup(context.Context, uuid.UUID, int, int64, func(context.Context, persistence.ObsoletePublicationOutputCleanup) error) (bool, error)
 }
 
@@ -114,9 +113,6 @@ func (runner *ObsoletePublicationOutputCleanupRunner) remove(ctx context.Context
 		return errors.New("output root identity changed")
 	}
 	components := strings.Split(rel, string(filepath.Separator))
-	if len(components) == 0 {
-		return errors.New("invalid output authority path")
-	}
 	parent := root
 	opened := []sourcefs.OutputDirectory{}
 	type pinnedChild struct {

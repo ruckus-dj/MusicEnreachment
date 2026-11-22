@@ -46,9 +46,6 @@ func (r *obsoleteCleanupRepoFake) GetOperation(context.Context, uuid.UUID) (*per
 	}
 	return &op, nil
 }
-func (r *obsoleteCleanupRepoFake) ReadObsoletePublicationOutputCleanup(context.Context, uuid.UUID) (*persistence.ObsoletePublicationOutputCleanup, error) {
-	return r.authority, nil
-}
 func (r *obsoleteCleanupRepoFake) ExecuteObsoletePublicationOutputCleanup(ctx context.Context, _ uuid.UUID, _ int, _ int64, fn func(context.Context, persistence.ObsoletePublicationOutputCleanup) error) (bool, error) {
 	if r.executeErr != nil {
 		return false, r.executeErr

@@ -104,7 +104,7 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return worker.cleanupTerminalInstallation(ctx, operation)
 	}
-	if operation.Kind != "install" || operation.TargetInstallationID == nil {
+	if operation.TargetInstallationID == nil {
 		return fmt.Errorf("operation is not an installation")
 	}
 	if admissionState == "queued" {
