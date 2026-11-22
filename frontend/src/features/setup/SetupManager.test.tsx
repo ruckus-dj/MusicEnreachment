@@ -182,6 +182,21 @@ describe("SetupManager", () => {
     expect(requests).not.toHaveBeenCalled();
   });
 
+  it("discovers tool operations through the scoped selector", async () => {
+    let selector: string | null = null;
+    const operations = vi.fn(({ request }: { request: Request }) => {
+      selector = new URL(request.url).searchParams.get("tool_discovery");
+      return HttpResponse.json({ operations: [] });
+    });
+    server.use(http.get("/api/operations", operations));
+    localStorage.setItem("melotrove.setup.step", "2");
+
+    renderSetup(state(paths));
+
+    await waitFor(() => expect(operations).toHaveBeenCalled());
+    expect(selector).toBe("install");
+  });
+
   it("requires an explicit format and submits the current publication settings", async () => {
     let current = state(installed);
     const lrclib = vi.fn();

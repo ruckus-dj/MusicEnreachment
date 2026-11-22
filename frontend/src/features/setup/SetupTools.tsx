@@ -103,16 +103,10 @@ export function SetupTools({
     setDiscovering(true);
     setOperationsError(null);
     try {
-      const response = await listOperations();
+      const response = await listOperations({ tool_discovery: "install" });
       if (response.status !== 200) throw apiResponseError(response);
       if (!mounted.current) return;
-      const active = (response.data.operations || []).filter(
-        (item) =>
-          item.kind === "install" &&
-          (item.state === "queued" ||
-            item.state === "running" ||
-            item.state === "failed"),
-      );
+      const active = response.data.operations || [];
       setSnapshots((previous) => ({
         ...previous,
         ...Object.fromEntries(active.map((item) => [item.id, item])),

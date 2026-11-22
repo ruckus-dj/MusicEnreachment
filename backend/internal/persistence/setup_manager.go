@@ -1095,6 +1095,31 @@ func (repository *SetupManagerRepository) ListOperations(ctx context.Context, st
 	return operations, nil
 }
 
+// ListToolDiscoveryOperations is the SQL-filtered read behind managed-tool
+// discovery in Setup and Settings. It selects only install operations, or
+// installs widened with tools-root moves, in the fixed queued, running, or
+// failed discovery states. An explicit state narrows that fixed set. Ordering
+// matches the complete operation listing, and only matching rows are loaded.
+func (repository *SetupManagerRepository) ListToolDiscoveryOperations(ctx context.Context, installAndMove bool, state string) ([]Operation, error) {
+	operations := make([]Operation, 0)
+	kinds := []string{"install"}
+	if installAndMove {
+		kinds = append(kinds, "move_tools_root")
+	}
+	query := repository.db.NewSelect().
+		Model(&operations).
+		Where("kind IN (?)", bun.List(kinds)).
+		Where("state IN ('queued', 'running', 'failed')").
+		Order("created_at DESC")
+	if state != "" {
+		query.Where("state = ?", state)
+	}
+	if err := query.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("list tool discovery operations: %w", err)
+	}
+	return operations, nil
+}
+
 // ListActiveSourceScanOperations is the SQL-filtered read behind Sources scan
 // discovery. It selects only queued or running scans that own a source root, so
 // the complete operation history and its snapshots are never loaded. The

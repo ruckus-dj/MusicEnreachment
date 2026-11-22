@@ -148,7 +148,19 @@ function common({
         installations: installed.filter((item) => item.package_kind === kind),
       });
     }),
-    http.get("/api/operations", () => json({ operations })),
+    http.get("/api/operations", ({ request }) => {
+      const url = new URL(request.url);
+      if (url.searchParams.get("tool_discovery") !== "install_and_move")
+        return json({ operations });
+      const tools = (operations as { kind?: string; state?: string }[]).filter(
+        (item) =>
+          (item.kind === "install" || item.kind === "move_tools_root") &&
+          (item.state === "queued" ||
+            item.state === "running" ||
+            item.state === "failed"),
+      );
+      return json({ operations: tools });
+    }),
     http.get("/api/genres/catalog", () =>
       json({
         count: 0,
@@ -235,13 +247,17 @@ describe("SettingsScreen", () => {
     const queued = { ...operation, id: "tool", kind: "install" };
     const settingsReads = vi.fn(() => json(settings));
     const toolsReads = vi.fn(() => json({ installations: [] }));
+    const discoveryScopes: (string | null)[] = [];
     let finished = false;
     server.use(
       http.get("/api/settings", settingsReads),
       http.get("/api/tools/installations", toolsReads),
-      http.get("/api/operations", () =>
-        json({ operations: finished ? [] : [queued] }),
-      ),
+      http.get("/api/operations", ({ request }) => {
+        discoveryScopes.push(
+          new URL(request.url).searchParams.get("tool_discovery"),
+        );
+        return json({ operations: finished ? [] : [queued] });
+      }),
       http.get("/api/operations/tool", () =>
         json(
           finished
@@ -258,6 +274,7 @@ describe("SettingsScreen", () => {
     render(<SettingsScreen />);
     await selectSettingsTab("Общие");
     await firstRead;
+    expect(discoveryScopes).toContain("install_and_move");
     const stream = TestEventSource.instances[0];
     expect(stream).toBeDefined();
 

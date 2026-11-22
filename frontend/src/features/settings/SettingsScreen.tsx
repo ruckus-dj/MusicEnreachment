@@ -470,12 +470,6 @@ function activeOperation(operation: OperationResponse) {
   );
 }
 
-const toolOperationKinds = new Set<string>(["install", "move_tools_root"]);
-
-function toolOperation(operation: OperationResponse) {
-  return toolOperationKinds.has(operation.kind);
-}
-
 export function SettingsScreen() {
   const { locale } = useI18n();
   const hash = useHashLocation();
@@ -966,17 +960,19 @@ export function SettingsScreen() {
   const refreshOperations = useCallback(
     async (isCurrent: () => boolean = () => mountedRef.current) => {
       const generation = mountGeneration.current;
-      const response = settingsSuccessful(await listOperations(), 200);
+      const response = settingsSuccessful(
+        await listOperations({ tool_discovery: "install_and_move" }),
+        200,
+      );
       const active = (response.data.operations || []).filter(activeOperation);
-      const relevant = active.filter(toolOperation);
       if (
         !mountedRef.current ||
         mountGeneration.current !== generation ||
         !isCurrent()
       )
-        return relevant;
-      setOperations(relevant);
-      return relevant;
+        return active;
+      setOperations(active);
+      return active;
     },
     [],
   );

@@ -2734,6 +2734,10 @@ state?: ListOperationsState;
  * Return only queued or running source scans that own a source root; state is ignored.
  */
 active_source_scans?: boolean;
+/**
+ * Return only queued, running, or failed managed-tool operations. install lists installations; install_and_move also lists tools-root moves. An explicit state narrows that fixed set; active_source_scans takes priority.
+ */
+tool_discovery?: ListOperationsToolDiscovery;
 };
 
 export type ListOperationsState = typeof ListOperationsState[keyof typeof ListOperationsState];
@@ -2743,6 +2747,14 @@ export const ListOperationsState = {
   queued: 'queued',
   running: 'running',
   failed: 'failed',
+} as const;
+
+export type ListOperationsToolDiscovery = typeof ListOperationsToolDiscovery[keyof typeof ListOperationsToolDiscovery];
+
+
+export const ListOperationsToolDiscovery = {
+  install: 'install',
+  install_and_move: 'install_and_move',
 } as const;
 
 export type ListCurrentOperationsParams = {

@@ -119,6 +119,67 @@ func (repository *activeSourceScanAPIRepository) ListActiveSourceScanOperations(
 	return []persistence.Operation{repository.scan}, nil
 }
 
+func TestListOperationsCanRequestScopedToolDiscovery(t *testing.T) {
+	failed := persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed"}
+	repository := &toolDiscoveryAPIRepository{
+		transitionOperationsRepository: &transitionOperationsRepository{},
+		operations:                     []persistence.Operation{failed},
+		scan:                           persistence.Operation{ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued"},
+	}
+	router := chi.NewRouter()
+	api.RegisterAll(api.New(router), api.Dependencies{Operations: service.NewOperations(repository)})
+
+	response := decodeOperationBody(t, transitionRequest(t, router, http.MethodGet, "/operations?tool_discovery=install_and_move&state=failed", ""))
+	operations, ok := response["operations"].([]any)
+	if !ok || len(operations) != 1 {
+		t.Fatalf("operations=%#v, want one tool operation", response["operations"])
+	}
+	operation, ok := operations[0].(map[string]any)
+	if !ok || operation["id"] != failed.ID.String() {
+		t.Fatalf("operation=%#v, want %s", operations[0], failed.ID)
+	}
+	if !repository.installAndMove || repository.state != "failed" {
+		t.Fatalf("tool discovery scope=%v state=%q, want install_and_move and failed", repository.installAndMove, repository.state)
+	}
+
+	if response := transitionRequest(t, router, http.MethodGet, "/operations?tool_discovery=install", ""); response.Code != http.StatusOK {
+		t.Fatalf("install discovery status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repository.installAndMove || repository.state != "" {
+		t.Fatalf("tool discovery scope=%v state=%q, want install and the fixed state set", repository.installAndMove, repository.state)
+	}
+
+	// active_source_scans owns the request; tool discovery is not consulted.
+	if response := transitionRequest(t, router, http.MethodGet, "/operations?active_source_scans=true&tool_discovery=install_and_move&state=failed", ""); response.Code != http.StatusOK {
+		t.Fatalf("active scan discovery status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repository.discoveryCalls != 2 || repository.scanCalls != 1 {
+		t.Fatalf("discovery calls=%d scan calls=%d, want 2 and 1", repository.discoveryCalls, repository.scanCalls)
+	}
+}
+
+type toolDiscoveryAPIRepository struct {
+	*transitionOperationsRepository
+	operations     []persistence.Operation
+	scan           persistence.Operation
+	installAndMove bool
+	state          string
+	discoveryCalls int
+	scanCalls      int
+}
+
+func (repository *toolDiscoveryAPIRepository) ListToolDiscoveryOperations(_ context.Context, installAndMove bool, state string) ([]persistence.Operation, error) {
+	repository.discoveryCalls++
+	repository.installAndMove = installAndMove
+	repository.state = state
+	return repository.operations, nil
+}
+
+func (repository *toolDiscoveryAPIRepository) ListActiveSourceScanOperations(context.Context) ([]persistence.Operation, error) {
+	repository.scanCalls++
+	return []persistence.Operation{repository.scan}, nil
+}
+
 func TestCleanupOperationDetailUsesOneConsistentRead(t *testing.T) {
 	operationID, artifactID := uuid.New(), uuid.New()
 	repository := &operationDetailRepository{

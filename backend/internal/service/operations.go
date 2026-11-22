@@ -83,6 +83,14 @@ type currentOperationsRepository interface {
 	ListCurrentOperations(context.Context, persistence.CurrentOperationsFilter) ([]persistence.CurrentOperationRow, int, error)
 }
 
+// toolDiscoveryRepository is the narrow read slice used by managed-tool
+// discovery in Setup and Settings. It is asserted separately so the complete
+// operation listing is not the only available path, and repositories without it
+// stay valid.
+type toolDiscoveryRepository interface {
+	ListToolDiscoveryOperations(context.Context, bool, string) ([]persistence.Operation, error)
+}
+
 // activeSourceScanRepository is the narrow read slice used by Sources scan
 // discovery. It is asserted separately so the complete operation listing is not
 // the only available path, and repositories without it stay valid.
@@ -208,6 +216,27 @@ func (s *Operations) Snapshot(ctx context.Context, id uuid.UUID) (OperationSnaps
 
 func (s *Operations) ListSnapshots(ctx context.Context, states ...string) ([]OperationSnapshot, error) {
 	operations, err := s.repository.ListOperations(ctx, states...)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]OperationSnapshot, 0, len(operations))
+	for index := range operations {
+		snapshots = append(snapshots, operationSnapshot(&operations[index]))
+	}
+	return snapshots, nil
+}
+
+// ListToolDiscoverySnapshots lists managed-tool operations for discovery.
+// installAndMove widens the fixed install kind with tools-root moves; an empty
+// state reports every approved discovery state, otherwise one state narrows it.
+// Setup and Settings use it instead of the complete operation listing, whose
+// snapshots are large and unrelated to tool progress.
+func (s *Operations) ListToolDiscoverySnapshots(ctx context.Context, installAndMove bool, state string) ([]OperationSnapshot, error) {
+	repository, ok := s.repository.(toolDiscoveryRepository)
+	if !ok {
+		return nil, fmt.Errorf("tool discovery repository is unavailable")
+	}
+	operations, err := repository.ListToolDiscoveryOperations(ctx, installAndMove, state)
 	if err != nil {
 		return nil, err
 	}

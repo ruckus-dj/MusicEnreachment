@@ -16,6 +16,11 @@ type OperationsInput struct {
 	// running scan_source operations that own a source root. When set, state is
 	// ignored and no other operation is listed.
 	ActiveSourceScans bool `query:"active_source_scans" doc:"Return only queued or running source scans that own a source root; state is ignored."`
+	// ToolDiscovery selects managed-tool discovery: only failed, queued, or
+	// running installations, optionally widened with tools-root moves. An
+	// explicit state narrows that fixed set. ActiveSourceScans takes priority
+	// when both selectors are present.
+	ToolDiscovery string `query:"tool_discovery" enum:"install,install_and_move" doc:"Return only queued, running, or failed managed-tool operations. install lists installations; install_and_move also lists tools-root moves. An explicit state narrows that fixed set; active_source_scans takes priority."`
 }
 
 type OperationsOutput struct {
@@ -88,6 +93,13 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 			snapshots, err := operations.ListActiveSourceScanSnapshots(ctx)
 			if err != nil {
 				return nil, huma.Error500InternalServerError("failed to list active source scans")
+			}
+			return &OperationsOutput{Body: OperationsBody{Operations: operationResponses(snapshots)}}, nil
+		}
+		if input.ToolDiscovery != "" {
+			snapshots, err := operations.ListToolDiscoverySnapshots(ctx, input.ToolDiscovery == "install_and_move", input.State)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("failed to list tool operations")
 			}
 			return &OperationsOutput{Body: OperationsBody{Operations: operationResponses(snapshots)}}, nil
 		}
