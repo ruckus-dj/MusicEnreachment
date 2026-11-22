@@ -1525,6 +1525,17 @@ func validateMatchingAcquisitionResponse(ctx context.Context, tx bun.Tx, runID u
 	if response.RequestID == uuid.Nil || response.CacheKey == "" || len(response.PayloadSHA) != 64 {
 		return "", nil, fmt.Errorf("advance matching acquisition: response provenance is incomplete")
 	}
+	frozen, err := hasAcceptedArtistResponses(ctx, tx, runID)
+	if err != nil {
+		return "", nil, err
+	}
+	if frozen {
+		accepted, err := validateAcceptedMatchingArtistResponse(ctx, tx, runID, response)
+		if err != nil {
+			return "", nil, err
+		}
+		return accepted.Kind, accepted.Payload, nil
+	}
 	var accepted struct {
 		Kind string          `bun:"kind"`
 		Body json.RawMessage `bun:"payload"`

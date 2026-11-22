@@ -138,6 +138,10 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 				prepared, err = worker.evaluator.PrepareSealed(ctx, sealed)
 			}
 			if err != nil {
+				if len(runFence.LayoutTarget) != 0 && errors.Is(err, persistence.ErrIncomingMatchConflict) {
+					slog.DebugContext(ctx, "artist layout evidence changed during preparation", "operation", operation.ID, "cause", err)
+					return worker.refreshStaleArtistDelivery(ctx, operation, claim, job.ID)
+				}
 				if errors.Is(err, service.ErrMatchingEvaluationDeferred) {
 					changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The sealed matching input is no longer ready for evaluation.")
 					if failErr != nil {
@@ -152,6 +156,10 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 			}
 			changed, err := worker.evaluator.PublishForDelivery(ctx, worker.repository, prepared, operation.ID, operation.Attempt, job.ID, claim.ExecutionEpoch)
 			if err != nil {
+				if len(runFence.LayoutTarget) != 0 && errors.Is(err, persistence.ErrIncomingMatchConflict) {
+					slog.DebugContext(ctx, "artist layout evidence changed before publication", "operation", operation.ID, "cause", err)
+					return worker.refreshStaleArtistDelivery(ctx, operation, claim, job.ID)
+				}
 				return err
 			}
 			if changed {
@@ -172,6 +180,8 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 		if err != nil {
 			var safeError string
 			switch {
+			case len(runFence.LayoutTarget) != 0 && errors.Is(err, persistence.ErrIncomingMatchConflict):
+				return worker.refreshStaleArtistDelivery(ctx, operation, claim, job.ID)
 			case errors.Is(err, service.ErrInvalidMatchingAcquisitionResponse):
 				slog.WarnContext(ctx, "accepted matching acquisition response is invalid", "operation", operation.ID, "cause", err)
 				safeError = "The accepted provider response is invalid for matching."
@@ -351,6 +361,21 @@ func (worker *MatchingEvaluationWorker) workFrozenFallbackEvaluation(
 		worker.operations.Notify(operation.ID)
 	}
 	return nil
+}
+
+func (worker *MatchingEvaluationWorker) refreshStaleArtistDelivery(ctx context.Context, operation *persistence.Operation, claim persistence.MatchingDeliveryClaim, jobID int64) error {
+	repository, ok := worker.repository.(interface {
+		RefreshStaleArtistMatchingDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, persistence.StaleArtistMatchingFailure) (bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("artist matching refresh repository is unavailable")
+	}
+	changed, err := repository.RefreshStaleArtistMatchingDelivery(ctx, operation.ID, operation.Attempt, jobID, claim,
+		persistence.StaleArtistMatchingFailure{SafeMessage: "The accepted matching evidence changed. Matching will be evaluated again."})
+	if err == nil && changed {
+		worker.operations.Notify(operation.ID)
+	}
+	return err
 }
 
 func (worker *MatchingEvaluationWorker) workManualReleaseLookup(ctx context.Context, operation *persistence.Operation, claim persistence.MatchingDeliveryClaim, jobID int64) error {

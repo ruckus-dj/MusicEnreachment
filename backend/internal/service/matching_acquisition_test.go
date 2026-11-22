@@ -14,10 +14,47 @@ import (
 )
 
 type matchingAcquisitionRepositoryFixture struct {
-	snapshot persistence.MatchingAcquisitionSnapshot
-	phases   []persistence.MatchingAcquisitionPhase
-	children []int
-	parked   []persistence.MatchingAcquisitionPhase
+	snapshot        persistence.MatchingAcquisitionSnapshot
+	phases          []persistence.MatchingAcquisitionPhase
+	children        []int
+	parked          []persistence.MatchingAcquisitionPhase
+	artistResponses map[uuid.UUID]*persistence.MatchingArtistResponse
+}
+
+func (repository *matchingAcquisitionRepositoryFixture) GetMatchingArtistResponse(_ context.Context, _ uuid.UUID, requestID uuid.UUID) (*persistence.MatchingArtistResponse, error) {
+	return repository.artistResponses[requestID], nil
+}
+
+// acceptArtistResponse registers the immutable accepted response named by a
+// durable request identity. Tests seed it from the phase output that requested
+// the child, never from a later provider cache read.
+func (repository *matchingAcquisitionRepositoryFixture) acceptArtistResponse(requestID uuid.UUID, kind, cacheKey string, payload []byte) {
+	if repository.artistResponses == nil {
+		repository.artistResponses = make(map[uuid.UUID]*persistence.MatchingArtistResponse)
+	}
+	repository.artistResponses[requestID] = &persistence.MatchingArtistResponse{Kind: kind, CacheKey: cacheKey, Payload: payload}
+}
+
+func acceptArtistResponseForLatestPhase(t *testing.T, repository *matchingAcquisitionRepositoryFixture, provider *matchingAcquisitionProviderFixture, kind string) {
+	t.Helper()
+	if len(repository.phases) == 0 {
+		t.Fatal("no acquisition phase recorded to accept a provider response for")
+	}
+	var output struct {
+		RequestID uuid.UUID `json:"next_request_id"`
+		CacheKey  string    `json:"next_cache_key"`
+	}
+	if err := json.Unmarshal(repository.phases[len(repository.phases)-1].Output, &output); err != nil {
+		t.Fatalf("decode acquisition phase output: %v", err)
+	}
+	if output.RequestID == uuid.Nil || output.CacheKey == "" {
+		t.Fatalf("acquisition phase output has no next provider child: %s", repository.phases[len(repository.phases)-1].Output)
+	}
+	payload, ok := provider.responses[output.CacheKey]
+	if !ok {
+		t.Fatalf("no fixture response for %s", output.CacheKey)
+	}
+	repository.acceptArtistResponse(output.RequestID, kind, output.CacheKey, payload)
 }
 
 func (repository *matchingAcquisitionRepositoryFixture) GetMatchingAcquisitionMetadataCapture(context.Context, uuid.UUID, string) ([]persistence.MatchingAcquisitionCapturedMember, string, bool, error) {
@@ -101,6 +138,7 @@ func TestMatchingAcquisitionPaginatesAcceptedCatalogToCatalogReady(t *testing.T)
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{
 		Intent: intent, Phase: "admitted", Input: json.RawMessage(`{"intent_digest":"test"}`), Output: json.RawMessage(`{"state":"admitted"}`),
 	}}
+	repository.acceptArtistResponse(intent.InitialProviderInputs[0].OperationID, "provider_artist_search", initialKey, provider.responses[initialKey])
 	service := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	runID := uuid.New()
 	claim := persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1}
@@ -108,6 +146,9 @@ func TestMatchingAcquisitionPaginatesAcceptedCatalogToCatalogReady(t *testing.T)
 		changed, acquired, err := service.Advance(context.Background(), runID, 1, int64(step+1), claim)
 		if err != nil || !acquired || !changed {
 			t.Fatalf("advance step %d: changed=%t acquired=%t err=%v", step, changed, acquired, err)
+		}
+		if step < 3 {
+			acceptArtistResponseForLatestPhase(t, repository, provider, "provider_artist_release_browse")
 		}
 		// The service is reconstructed between deliveries to model process restart.
 		service = NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
@@ -137,8 +178,9 @@ func TestMatchingAcquisitionPaginatesAcceptedCatalogToCatalogReady(t *testing.T)
 // the first advance will request.
 func matchingAcquisitionCatalogFixture(artistID string, browsePayload []byte) (*matchingAcquisitionRepositoryFixture, *matchingAcquisitionProviderFixture, string) {
 	initialKey := "artist-search:0:100:artist"
+	searchID := uuid.New()
 	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1, InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{
-		OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: initialKey,
+		OperationID: searchID, Kind: "provider_artist_search", CacheKey: initialKey,
 		Input: json.RawMessage(`{"schema_version":1,"query":"artist","offset":0,"limit":100}`),
 	}}}
 	browseKey := fmt.Sprintf("artist-release-browse:%s:0:%d", artistID, matchingCatalogPageSize)
@@ -149,6 +191,7 @@ func matchingAcquisitionCatalogFixture(artistID string, browsePayload []byte) (*
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{
 		Intent: intent, Phase: "admitted", Input: json.RawMessage(`{"intent_digest":"test"}`), Output: json.RawMessage(`{"state":"admitted"}`),
 	}}
+	repository.acceptArtistResponse(searchID, "provider_artist_search", initialKey, provider.responses[initialKey])
 	return repository, provider, browseKey
 }
 
@@ -176,6 +219,7 @@ func TestMatchingAcquisitionRejectsMalformedCatalogEnvelope(t *testing.T) {
 			if _, acquired, err := service.Advance(context.Background(), runID, 1, 1, claim); err != nil || !acquired {
 				t.Fatalf("start artist browse: acquired=%t err=%v", acquired, err)
 			}
+			acceptArtistResponseForLatestPhase(t, repository, provider, "provider_artist_release_browse")
 			service = NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 			changed, acquired, err := service.Advance(context.Background(), runID, 1, 2, claim)
 			if err == nil || !acquired || changed {
@@ -196,6 +240,7 @@ func TestMatchingAcquisitionAcceptsEmptyCatalog(t *testing.T) {
 		if err != nil || !acquired || !changed {
 			t.Fatalf("advance step %d: changed=%t acquired=%t err=%v", step, changed, acquired, err)
 		}
+		acceptArtistResponseForLatestPhase(t, repository, provider, "provider_artist_release_browse")
 		service = NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	}
 	if repository.snapshot.Phase != "catalog_ready" {

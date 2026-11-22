@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -60,10 +61,26 @@ func persistAutomaticArtistSearchReview(
 		return fmt.Errorf("accepted search digest changed")
 	}
 	var namespace, cacheRevision string
-	if err := tx.NewRaw(`SELECT source.namespace,cache.revision FROM provider_source source
+	var livePayload json.RawMessage
+	if err := tx.NewRaw(`SELECT source.namespace,cache.revision,cache.payload FROM provider_source source
 		JOIN provider_response_cache cache ON cache.provider_source_id=source.id AND cache.cache_key=?
-		WHERE source.id=?`, provenance.CacheKey, source.SourceID).Scan(ctx, &namespace, &cacheRevision); err != nil {
+		WHERE source.id=?`, provenance.CacheKey, source.SourceID).Scan(ctx, &namespace, &cacheRevision, &livePayload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
 		return fmt.Errorf("read accepted artist-search cache fence: %w", err)
+	}
+	if !matchingJSONEqual(livePayload, payload) {
+		return ErrIncomingMatchConflict
+	}
+	if jsonObject(intent.LayoutTarget) {
+		receipt, err := validateAcceptedMatchingArtistResponse(ctx, tx, runID, provenance)
+		if err != nil {
+			return err
+		}
+		if !equalOptionalString(receipt.Revision, &cacheRevision) {
+			return ErrIncomingMatchConflict
+		}
 	}
 	if namespace == "" || cacheRevision == "" {
 		return fmt.Errorf("accepted artist-search cache fence is incomplete")

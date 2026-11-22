@@ -36,6 +36,7 @@ type ArtistMatchingReviewRefreshCandidate struct {
 	RunID              uuid.UUID
 	EvaluationRevision string
 	Provider           IncomingMatchProviderFence
+	PairThreshold      string
 }
 
 // ListArtistMatchingReviewRefreshCandidates returns one page of eligible
@@ -55,11 +56,14 @@ func (repository *SetupManagerRepository) ListArtistMatchingReviewRefreshCandida
 		ProviderID         uuid.UUID `bun:"provider_id"`
 		Namespace          string    `bun:"namespace"`
 		Endpoint           string    `bun:"endpoint"`
+		PairThreshold      string    `bun:"pair_threshold"`
 	}
 	if err := repository.db.NewRaw(`SELECT evaluation.group_id, evaluation.target_run_id AS run_id,
 			evaluation.evaluation_revision, evaluation.provider_fences,
 			run.provider_source_id, run.provider_configuration_identity,
-			source.provider_id, source.namespace, source.endpoint
+			source.provider_id, source.namespace, source.endpoint,
+			COALESCE(evaluation.evaluation_evidence->>'layout_pair_threshold',
+				acquisition.intent->'layout_target'->>'pair_threshold', '') AS pair_threshold
 		FROM incoming_match_evaluation evaluation
 		JOIN matching_run run ON run.id=evaluation.target_run_id
 		JOIN provider_source source ON source.id=run.provider_source_id
@@ -119,7 +123,7 @@ func (repository *SetupManagerRepository) ListArtistMatchingReviewRefreshCandida
 		}
 		candidates = append(candidates, ArtistMatchingReviewRefreshCandidate{
 			GroupID: row.GroupID, RunID: row.RunID,
-			EvaluationRevision: row.EvaluationRevision, Provider: provider,
+			EvaluationRevision: row.EvaluationRevision, Provider: provider, PairThreshold: row.PairThreshold,
 		})
 	}
 	return candidates, nil
@@ -540,7 +544,13 @@ func (repository *SetupManagerRepository) PublishArtistMatchingReviewRefresh(ctx
 		if err != nil {
 			return err
 		}
-		if !drifted {
+		var layout struct {
+			PairThreshold string `json:"layout_pair_threshold"`
+		}
+		if err := json.Unmarshal(evaluation.Groups[0].Evidence, &layout); err != nil {
+			return err
+		}
+		if !drifted && layout.PairThreshold == candidate.PairThreshold {
 			return nil
 		}
 		evidence, err := markMatchingProviderRefreshReview(evaluation.Groups[0].Evidence)

@@ -19,6 +19,7 @@ func TestMatchingAcquisitionParksAcceptedEmptyArtistSearch(t *testing.T) {
 	}}}
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Revision: 0, Phase: "admitted"}}
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{cacheKey: []byte(`{"artists":[],"count":0,"offset":0}`)}}
+	repository.acceptArtistResponse(searchID, "provider_artist_search", cacheKey, provider.responses[cacheKey])
 	acquisition := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 
 	changed, acquired, err := acquisition.Advance(context.Background(), uuid.New(), 1, 3, persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1})
@@ -35,12 +36,14 @@ func TestMatchingAcquisitionParksAcceptedEmptyArtistSearch(t *testing.T) {
 
 func TestMatchingAcquisitionClassifiesMalformedAcceptedSearch(t *testing.T) {
 	const cacheKey = "artist-search:0:100:malformed"
+	searchID := uuid.New()
 	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1, InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{
-		OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: cacheKey,
+		OperationID: searchID, Kind: "provider_artist_search", CacheKey: cacheKey,
 		Input: json.RawMessage(`{"schema_version":1,"query":"malformed","offset":0,"limit":100}`),
 	}}}
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Phase: "admitted"}}
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{cacheKey: []byte(`{"artists":[`)}}
+	repository.acceptArtistResponse(searchID, "provider_artist_search", cacheKey, provider.responses[cacheKey])
 	acquisition := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 
 	_, _, err := acquisition.Advance(context.Background(), uuid.New(), 1, 3, persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1})
@@ -51,12 +54,14 @@ func TestMatchingAcquisitionClassifiesMalformedAcceptedSearch(t *testing.T) {
 
 func TestMatchingAcquisitionRejectsAcceptedSearchWithoutArtistName(t *testing.T) {
 	const cacheKey = "artist-search:0:100:missing-name"
+	searchID := uuid.New()
 	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1, InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{
-		OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: cacheKey,
+		OperationID: searchID, Kind: "provider_artist_search", CacheKey: cacheKey,
 		Input: json.RawMessage(`{"schema_version":1,"query":"missing-name","offset":0,"limit":100}`),
 	}}}
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Phase: "admitted"}}
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{cacheKey: []byte(`{"artists":[{"id":"11111111-1111-4111-8111-111111111111"}]}`)}}
+	repository.acceptArtistResponse(searchID, "provider_artist_search", cacheKey, provider.responses[cacheKey])
 	acquisition := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 
 	_, _, err := acquisition.Advance(context.Background(), uuid.New(), 1, 3, persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1})

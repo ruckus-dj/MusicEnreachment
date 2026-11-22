@@ -205,7 +205,30 @@ func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx contex
 	if err != nil {
 		return fmt.Errorf("check artist matching review projection for group %s: %w", candidate.GroupID, err)
 	}
-	if sameProvider, unchanged := artistReviewProviderDependencies(provider, snapshot); !sameProvider || unchanged {
+	sameProvider, unchanged := artistReviewProviderDependencies(provider, snapshot)
+	if !sameProvider {
+		return nil
+	}
+	var threshold *float64
+	if candidate.PairThreshold != "" {
+		reader, ok := detector.evaluator.config.(interface {
+			GetMatchingPairThreshold(context.Context) (float64, error)
+		})
+		if !ok {
+			return fmt.Errorf("matching review threshold reader is unavailable")
+		}
+		current, err := reader.GetMatchingPairThreshold(ctx)
+		if err != nil {
+			return err
+		}
+		canonical, err := persistence.CanonicalMatchingLayoutThreshold(current)
+		if err != nil {
+			return err
+		}
+		unchanged = unchanged && canonical == candidate.PairThreshold
+		threshold = &current
+	}
+	if unchanged {
 		return nil
 	}
 	input, exists, err := detector.candidates.LoadArtistMatchingReviewRefreshScope(ctx, candidate)
@@ -229,7 +252,7 @@ func (detector *ArtistMatchingReviewRefreshDetector) refreshCandidate(ctx contex
 		return fmt.Errorf("artist matching review refresh requires read-only grouping")
 	}
 	evaluator.groups = artistReviewGroupingReader{groups: groups}
-	prepared, err := evaluator.PrepareSealedForRun(ctx, detector.runs, candidate.RunID, input)
+	prepared, err := evaluator.prepareSealedForRun(ctx, detector.runs, candidate.RunID, input, true, threshold)
 	if err != nil {
 		if isBenignArtistMatchingReviewRefreshError(err) {
 			return nil

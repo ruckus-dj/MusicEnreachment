@@ -395,28 +395,11 @@ func validateMatchingReleaseHydration(ctx context.Context, tx bun.Tx, runID uuid
 		if err := tx.NewRaw(`SELECT dependency.terminal_outcome FROM matching_provider_dependency dependency WHERE dependency.parent_run_id=? AND dependency.request_id=? AND dependency.cache_key=? FOR SHARE`, runID, lookup.RequestID, lookup.CacheKey).Scan(ctx, &dependency); err != nil || dependency.Outcome != "succeeded" {
 			return fmt.Errorf("seal matching acquisition: a selected release lookup has not succeeded")
 		}
-		var accepted struct {
-			Kind string `bun:"kind"`
-			Body []byte `bun:"payload"`
+		response := matchingAcquisitionResponseProvenance{
+			RequestID: lookup.RequestID, CacheKey: lookup.CacheKey, PayloadSHA: suppliedDigests[lookup.CacheKey],
 		}
-		if err := tx.NewRaw(`SELECT operation.kind, cache.payload FROM matching_provider_dependency dependency
-			JOIN operation ON operation.id=dependency.request_id
-			JOIN matching_run run ON run.id=dependency.parent_run_id
-			JOIN provider_response_cache cache ON cache.provider_source_id=run.provider_source_id AND cache.cache_key=dependency.cache_key
-			WHERE dependency.parent_run_id=? AND dependency.request_id=? AND dependency.cache_key=? AND dependency.terminal_outcome='succeeded' AND cache.payload IS NOT NULL FOR SHARE OF cache`, runID, lookup.RequestID, lookup.CacheKey).Scan(ctx, &accepted); err != nil {
-			return fmt.Errorf("seal matching acquisition: accepted release lookup is unavailable: %w", err)
-		}
-		if accepted.Kind != "provider_release_lookup" {
-			return fmt.Errorf("seal matching acquisition: selected dependency is not a release lookup")
-		}
-		digest := sha256.Sum256(accepted.Body)
-		payloadSHA := fmt.Sprintf("%x", digest[:])
-		if suppliedDigests[lookup.CacheKey] != payloadSHA {
-			return fmt.Errorf("seal matching acquisition: accepted release lookup payload changed")
-		}
-		response := matchingAcquisitionResponseProvenance{RequestID: lookup.RequestID, CacheKey: lookup.CacheKey, PayloadSHA: payloadSHA}
 		acceptedKind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, runID, response)
-		if err != nil || acceptedKind != accepted.Kind {
+		if err != nil || acceptedKind != "provider_release_lookup" {
 			return fmt.Errorf("seal matching acquisition: accepted release lookup changed")
 		}
 		var release struct {

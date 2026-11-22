@@ -77,7 +77,8 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		case strings.HasPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/"):
 			releaseID := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/")
 			if releaseID != "00000001-4444-4444-8444-000000000001" {
-				_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Unrelated Release","artist-credit":[{"name":"Unrelated Artist","artist":{"id":%q,"name":"Unrelated Artist"}}],"media":[]}`, releaseID, artistID)
+				const unrelatedArtistID = "77777777-7777-4777-8777-777777777777"
+				_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Unrelated Release","artist-credit":[{"name":"Unrelated Artist","artist":{"id":%q,"name":"Unrelated Artist"}}],"media":[]}`, releaseID, unrelatedArtistID)
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"55555555-5555-4555-8555-555555555555","number":"1","title":"Fixture Track","recording":{"id":"66666666-6666-4666-8666-666666666666","title":"Fixture Track","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}]}}]}]}`, releaseID, artistID, artistID)
@@ -435,6 +436,9 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	}
 	completed, err := repository.GetOperation(ctx, parentID)
 	if err != nil || completed.State != "succeeded" {
+		if completed != nil && completed.SafeError != nil {
+			t.Logf("matching failure: %s", *completed.SafeError)
+		}
 		t.Fatalf("sealed matching parent state=%v err=%v; want succeeded", completed, err)
 	}
 	var header *persistence.IncomingMatchEvaluationHeader

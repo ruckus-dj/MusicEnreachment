@@ -124,6 +124,7 @@ func TestMatchingAcquisitionArtistFitParksWithoutBrowsing(t *testing.T) {
 	}}}
 	repository := &retrievalAcquisitionRepository{matchingAcquisitionRepositoryFixture: &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Revision: 4, Phase: "admitted"}}, capture: []persistence.MatchingAcquisitionCapturedMember{{MemberID: uuid.New(), Tags: json.RawMessage(`{"ALBUMARTIST":["Different Artist"]}`)}}}
 	provider := &retrievalAcquisitionProvider{responses: map[string][]byte{searchKey: []byte(`{"artists":[{"id":"` + artistID + `","name":"Unrelated Artist"}]}`)}}
+	repository.acceptArtistResponse(intent.InitialProviderInputs[0].OperationID, "provider_artist_search", searchKey, provider.responses[searchKey])
 	service := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	changed, acquired, err := service.Advance(context.Background(), uuid.New(), 2, 55, persistence.MatchingDeliveryClaim{ExecutionEpoch: 6, RiverAttempt: 2})
 	if err != nil || !changed || !acquired {
@@ -150,6 +151,7 @@ func TestMatchingAcquisitionArtistFitAllowsMatchingTopArtist(t *testing.T) {
 		capture:                              []persistence.MatchingAcquisitionCapturedMember{{MemberID: uuid.New(), Tags: json.RawMessage(`{"ALBUMARTIST":["The Artist"]}`)}},
 	}
 	provider := &retrievalAcquisitionProvider{responses: map[string][]byte{searchKey: []byte(`{"artists":[{"id":"` + artistID + `","name":"The Artist"}]}`)}}
+	repository.acceptArtistResponse(intent.InitialProviderInputs[0].OperationID, "provider_artist_search", searchKey, provider.responses[searchKey])
 	service := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	changed, acquired, err := service.Advance(context.Background(), uuid.New(), 2, 56, persistence.MatchingDeliveryClaim{ExecutionEpoch: 6, RiverAttempt: 2})
 	if err != nil || !changed || !acquired {
@@ -176,12 +178,13 @@ func TestMatchingAcquisitionCatalogReadyRanksAndAdmitsClaimedTopTen(t *testing.T
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(payload)
-	phaseProvenance, _ := json.Marshal([]map[string]string{{"request_id": uuid.New().String(), "cache_key": searchKey, "payload_sha256": fmt.Sprintf("%x", digest[:])}})
+	browseRequestID := uuid.New()
+	phaseProvenance, _ := json.Marshal([]map[string]string{{"request_id": browseRequestID.String(), "cache_key": searchKey, "payload_sha256": fmt.Sprintf("%x", digest[:])}})
 	initialSearchProvenance, _ := json.Marshal([]map[string]string{{"request_id": uuid.New().String(), "cache_key": initialSearchKey, "payload_sha256": fmt.Sprintf("%064x", 1)}})
 	output, _ := json.Marshal(map[string]any{"artist_mbid": artistID, "complete": true, "catalog_count": 11, "covered_releases": 11, "release_ids": ids})
 	phase := persistence.MatchingAcquisitionPhase{Revision: 8, Phase: "catalog_ready", Output: output, Input: json.RawMessage(`{"artist_mbid":"` + artistID + `","offset":0,"limit":100}`), ResponseProvenance: phaseProvenance}
 	initialSearch := persistence.MatchingAcquisitionPhase{Revision: 1, Phase: persistence.MatchingAcquisitionArtistCatalogPage, ResponseProvenance: initialSearchProvenance}
-	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1,
+	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 2,
 		InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: initialSearchKey}},
 		Targets:               []persistence.MatchingTarget{{GroupID: uuid.New()}}, CapturedMembers: []persistence.MatchingAcquisitionCapturedMember{{MemberID: uuid.New(), Tags: json.RawMessage(`{"ALBUM":["Album"],"ALBUMARTIST":["Artist & Other"],"DATE":["2001-01-01"],"CATALOGNUMBER":["CAT-1"]}`)}}}
 	repository := &retrievalAcquisitionRepository{
@@ -190,6 +193,7 @@ func TestMatchingAcquisitionCatalogReadyRanksAndAdmitsClaimedTopTen(t *testing.T
 		keys: []string{initialSearchKey, searchKey},
 	}
 	provider := &retrievalAcquisitionProvider{responses: map[string][]byte{searchKey: payload}, oneShot: true}
+	repository.acceptArtistResponse(browseRequestID, "provider_artist_release_browse", searchKey, payload)
 	service := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	claim := persistence.MatchingDeliveryClaim{ExecutionEpoch: 9, RiverAttempt: 3}
 	changed, acquired, err := service.Advance(context.Background(), uuid.New(), 3, 71, claim)
@@ -202,8 +206,8 @@ func TestMatchingAcquisitionCatalogReadyRanksAndAdmitsClaimedTopTen(t *testing.T
 	if len(repository.children) != 10 || len(provider.prepared) != 10 || repository.attempt != 3 || repository.jobID != 71 || repository.claim != claim {
 		t.Fatalf("children=%d prepared=%d delivery=%d/%d/%+v", len(repository.children), len(provider.prepared), repository.attempt, repository.jobID, repository.claim)
 	}
-	if provider.readCount[searchKey] != 1 {
-		t.Fatalf("catalog cache reads for %q = %d, want exactly one", searchKey, provider.readCount[searchKey])
+	if provider.readCount[searchKey] != 0 {
+		t.Fatalf("catalog cache reads for %q = %d, want none (immutable accepted response)", searchKey, provider.readCount[searchKey])
 	}
 	var hydration struct {
 		ReleaseIDs []string `json:"release_ids"`
@@ -219,13 +223,14 @@ func TestMatchingAcquisitionEmptyCatalogParksFromVerifiedPage(t *testing.T) {
 	const initialSearchKey = "artist-search:0:100:Artist"
 	payload := []byte(`{"release-count":0,"release-offset":0,"releases":[]}`)
 	digest := sha256.Sum256(payload)
-	pageProvenance, _ := json.Marshal([]map[string]string{{"request_id": uuid.New().String(), "cache_key": catalogKey, "payload_sha256": fmt.Sprintf("%x", digest[:])}})
+	catalogRequestID := uuid.New()
+	pageProvenance, _ := json.Marshal([]map[string]string{{"request_id": catalogRequestID.String(), "cache_key": catalogKey, "payload_sha256": fmt.Sprintf("%x", digest[:])}})
 	searchProvenance, _ := json.Marshal([]map[string]string{{"request_id": uuid.New().String(), "cache_key": initialSearchKey, "payload_sha256": fmt.Sprintf("%064x", 1)}})
 	output, _ := json.Marshal(map[string]any{"artist_mbid": artistID, "complete": true, "catalog_count": 0, "covered_releases": 0, "release_ids": []string{}})
 	searchPhase := persistence.MatchingAcquisitionPhase{Revision: 1, Phase: persistence.MatchingAcquisitionArtistCatalogPage, ResponseProvenance: searchProvenance}
 	catalogPhase := persistence.MatchingAcquisitionPhase{Revision: 8, Phase: "catalog_ready", Output: output,
 		Input: json.RawMessage(`{"artist_mbid":"` + artistID + `","offset":0,"limit":100}`), ResponseProvenance: pageProvenance}
-	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1,
+	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 2,
 		InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: initialSearchKey}},
 		Targets:               []persistence.MatchingTarget{{GroupID: uuid.New()}},
 		CapturedMembers:       []persistence.MatchingAcquisitionCapturedMember{{MemberID: uuid.New(), Tags: json.RawMessage(`{"ALBUM":["Album"],"ALBUMARTIST":["Artist"]}`)}}}
@@ -236,14 +241,15 @@ func TestMatchingAcquisitionEmptyCatalogParksFromVerifiedPage(t *testing.T) {
 		keys:                                 []string{initialSearchKey, catalogKey},
 	}
 	provider := &retrievalAcquisitionProvider{responses: map[string][]byte{catalogKey: payload}, oneShot: true}
+	repository.acceptArtistResponse(catalogRequestID, "provider_artist_release_browse", catalogKey, payload)
 	service := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
 	claim := persistence.MatchingDeliveryClaim{ExecutionEpoch: 9, RiverAttempt: 3}
 	changed, acquired, err := service.Advance(context.Background(), uuid.New(), 3, 72, claim)
 	if err != nil || !changed || !acquired {
 		t.Fatalf("Advance() = %t, %t, %v; want parked no-candidates transition", changed, acquired, err)
 	}
-	if len(repository.parked) != 1 || len(repository.children) != 0 || len(provider.prepared) != 0 || provider.readCount[catalogKey] != 1 {
-		t.Fatalf("parked=%d children=%d prepared=%d reads=%d; want one park and one verified read", len(repository.parked), len(repository.children), len(provider.prepared), provider.readCount[catalogKey])
+	if len(repository.parked) != 1 || len(repository.children) != 0 || len(provider.prepared) != 0 || provider.readCount[catalogKey] != 0 {
+		t.Fatalf("parked=%d children=%d prepared=%d reads=%d; want one park and no provider cache read", len(repository.parked), len(repository.children), len(provider.prepared), provider.readCount[catalogKey])
 	}
 	var waiting struct {
 		State  string `json:"state"`

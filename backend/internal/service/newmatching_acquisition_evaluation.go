@@ -13,16 +13,26 @@ import (
 // saved by the acquisition seal. It deliberately supplies no search keys, so
 // the existing scoring kernel treats those factors as missing.
 func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, input persistence.MatchingAcquisitionEvaluationInput) (PreparedMatchingEvaluation, error) {
-	return evaluator.prepareSealed(ctx, input, nil)
+	return evaluator.prepareSealed(ctx, input, nil, nil, nil)
 }
 
 type matchingRunFenceReader interface {
 	GetMatchingRunFence(context.Context, uuid.UUID) (persistence.MatchingRunFenceSnapshot, bool, error)
 }
 
+type matchingArtistSnapshotReader interface {
+	GetAcceptedArtistMatchingSnapshot(context.Context, uuid.UUID, []string, []string) (persistence.ProviderMatchingSnapshot, error)
+}
+
+type matchingSealedProviderSnapshot func(context.Context, []string, []string) (persistence.ProviderMatchingSnapshot, error)
+
 // PrepareSealedForRun binds acquisition results to the immutable target capture
 // registered at admission. It does not widen the sealed cache-key scope.
 func (evaluator *MatchingEvaluationService) PrepareSealedForRun(ctx context.Context, reader matchingRunFenceReader, runID uuid.UUID, input persistence.MatchingAcquisitionEvaluationInput) (PreparedMatchingEvaluation, error) {
+	return evaluator.prepareSealedForRun(ctx, reader, runID, input, false, nil)
+}
+
+func (evaluator *MatchingEvaluationService) prepareSealedForRun(ctx context.Context, reader matchingRunFenceReader, runID uuid.UUID, input persistence.MatchingAcquisitionEvaluationInput, refreshReview bool, reviewThreshold *float64) (PreparedMatchingEvaluation, error) {
 	if reader == nil {
 		return PreparedMatchingEvaluation{}, fmt.Errorf("matching run fence reader is unavailable")
 	}
@@ -33,7 +43,17 @@ func (evaluator *MatchingEvaluationService) PrepareSealedForRun(ctx context.Cont
 	if !exists || fence.Version != 2 || len(input.GroupIDs) != 1 || input.GroupIDs[0] != fence.GroupID {
 		return PreparedMatchingEvaluation{}, fmt.Errorf("sealed matching scope differs from immutable target")
 	}
-	prepared, err := evaluator.prepareSealed(ctx, input, &fence)
+	var provider matchingSealedProviderSnapshot
+	if len(fence.LayoutTarget) != 0 && !refreshReview {
+		accepted, ok := reader.(matchingArtistSnapshotReader)
+		if !ok {
+			return PreparedMatchingEvaluation{}, fmt.Errorf("accepted artist matching snapshot reader is unavailable")
+		}
+		provider = func(ctx context.Context, releases, responseKeys []string) (persistence.ProviderMatchingSnapshot, error) {
+			return accepted.GetAcceptedArtistMatchingSnapshot(ctx, runID, releases, responseKeys)
+		}
+	}
+	prepared, err := evaluator.prepareSealed(ctx, input, &fence, provider, reviewThreshold)
 	if err != nil {
 		return prepared, err
 	}
@@ -42,7 +62,7 @@ func (evaluator *MatchingEvaluationService) PrepareSealedForRun(ctx context.Cont
 	return prepared, nil
 }
 
-func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, input persistence.MatchingAcquisitionEvaluationInput, fence *persistence.MatchingRunFenceSnapshot) (PreparedMatchingEvaluation, error) {
+func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, input persistence.MatchingAcquisitionEvaluationInput, fence *persistence.MatchingRunFenceSnapshot, provider matchingSealedProviderSnapshot, reviewThreshold *float64) (PreparedMatchingEvaluation, error) {
 	var prepared PreparedMatchingEvaluation
 	if evaluator == nil || evaluator.groups == nil || evaluator.captures == nil || evaluator.provider == nil || evaluator.results == nil || evaluator.config == nil {
 		return prepared, fmt.Errorf("matching evaluation dependencies are unavailable")
@@ -72,7 +92,18 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 			return prepared, ErrMatchingEvaluationDeferred
 		}
 	}
-	captures, err := evaluator.captures.CurrentCaptures(ctx)
+	var captures []persistence.IncomingGroupingCapture
+	var layoutThreshold *float64
+	if fence != nil && len(fence.LayoutTarget) != 0 {
+		var threshold float64
+		captures, threshold, err = persistence.DecodeMatchingLayoutTarget(fence.LayoutTarget, fence.GroupID, MatchingLayoutPolicyVersion)
+		layoutThreshold = &threshold
+		if reviewThreshold != nil {
+			layoutThreshold = reviewThreshold
+		}
+	} else {
+		captures, err = evaluator.captures.CurrentCaptures(ctx)
+	}
 	if err != nil {
 		return prepared, err
 	}
@@ -131,8 +162,14 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 		return prepared, fmt.Errorf("sealed matching release lookup scope contains duplicates")
 	}
 	releaseKeys, evidenceKeys := sortedMatchingKeys(releaseSet), sortedMatchingKeys(evidenceSet)
-	providerSnapshot, err := evaluator.provider.GetMusicBrainzMatchingSnapshot(ctx,
-		musicBrainzEndpoint(config), config.Identity, releaseKeys, evidenceKeys)
+	if provider == nil {
+		provider = func(ctx context.Context, releases, keys []string) (persistence.ProviderMatchingSnapshot, error) {
+			return evaluator.provider.GetMusicBrainzMatchingSnapshot(
+				ctx, musicBrainzEndpoint(config), config.Identity, releases, keys,
+			)
+		}
+	}
+	providerSnapshot, err := provider(ctx, releaseKeys, evidenceKeys)
 	if err != nil {
 		return prepared, err
 	}
@@ -147,7 +184,7 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 	if input.SchemaVersion == 2 {
 		for _, key := range input.ReleaseLookupCacheKeys {
 			response := providerSnapshot.Responses[key]
-			if response == nil || response.FetchedAt == nil || len(response.Payload) == 0 {
+			if response == nil || len(response.Payload) == 0 {
 				return prepared, fmt.Errorf("sealed matching accepted release lookup projection is incomplete")
 			}
 		}
@@ -161,7 +198,7 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 	results, err := EvaluateMatchingSnapshot(ctx, MatchingEvaluationSnapshot{
 		Grouping: grouping, Captures: captures, Provider: providerSnapshot,
 		RequestedGroupIDs: input.GroupIDs, TargetFenceVersion: targetFenceVersion(fence), ReleaseKeysByFile: releasesByFile, SearchKeysByFile: searchKeysByFile,
-		allowMissingSearchKeys: true,
+		allowMissingSearchKeys: true, layoutThreshold: layoutThreshold,
 	})
 	if err != nil {
 		return prepared, err

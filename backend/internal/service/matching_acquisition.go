@@ -47,6 +47,14 @@ type matchingAcquisitionEvaluationSealReader interface {
 	GetMatchingAcquisitionEvaluationSeal(context.Context, uuid.UUID) (persistence.MatchingAcquisitionEvaluationInput, bool, error)
 }
 
+// matchingArtistResponseReader returns the immutable response accepted for one
+// durable artist-search, catalog-browse, or release-lookup request. Acquisition
+// ranking must read those bytes, not a newer payload later stored under the same
+// provider cache key.
+type matchingArtistResponseReader interface {
+	GetMatchingArtistResponse(context.Context, uuid.UUID, uuid.UUID) (*persistence.MatchingArtistResponse, error)
+}
+
 type matchingAcquisitionSealWriter interface {
 	SealMatchingAcquisitionEvaluation(context.Context, persistence.RiverInserter, uuid.UUID, persistence.MatchingAcquisitionSealRequest) (int64, bool, error)
 }
@@ -559,12 +567,9 @@ func (acquisition *MatchingAcquisitionService) sealReleaseHydration(ctx context.
 		if err != nil || id != lookup.ReleaseID || id != phaseInput.ReleaseIDs[index] || lookup.RequestID == uuid.Nil || lookup.CacheKey != "release-lookup:"+id {
 			return false, true, fmt.Errorf("saved matching release lookup descriptor is invalid")
 		}
-		response, err := acquisition.providers.CachedResponse(ctx, lookup.CacheKey)
+		response, err := acquisition.acceptedArtistResponse(ctx, snapshot.Intent, runID, lookup.RequestID, "provider_release_lookup", lookup.CacheKey)
 		if err != nil {
 			return false, true, err
-		}
-		if response == nil || len(response.Payload) == 0 {
-			return false, true, fmt.Errorf("accepted selected release response is unavailable: %w", ErrInvalidMatchingAcquisitionResponse)
 		}
 		var release struct {
 			ID    string `json:"id"`
@@ -613,17 +618,50 @@ func (acquisition *MatchingAcquisitionService) sealReleaseHydration(ctx context.
 	return changed, true, err
 }
 
+// acceptedArtistResponse reads one immutable accepted response by its durable
+// request identity. The cache key and kind are part of that identity: a receipt
+// stored for another request or scope never substitutes for the requested step.
+func (acquisition *MatchingAcquisitionService) acceptedArtistResponse(
+	ctx context.Context, intent persistence.MatchingAcquisitionIntent, runID, requestID uuid.UUID, kind, cacheKey string,
+) (*persistence.MatchingArtistResponse, error) {
+	if intent.SchemaVersion == 1 {
+		// Explicit legacy matching plans do not register automatic artist receipts.
+		cached, err := acquisition.providers.CachedResponse(ctx, cacheKey)
+		if err != nil {
+			return nil, err
+		}
+		if cached == nil || len(cached.Payload) == 0 {
+			return nil, fmt.Errorf("accepted %s response is unavailable", strings.TrimPrefix(kind, "provider_"))
+		}
+		return &persistence.MatchingArtistResponse{
+			Kind: kind, CacheKey: cacheKey, Payload: cached.Payload, Revision: cached.Revision,
+		}, nil
+	}
+	reader, ok := acquisition.repository.(matchingArtistResponseReader)
+	if !ok {
+		return nil, fmt.Errorf("matching artist response reader is unavailable")
+	}
+	response, err := reader.GetMatchingArtistResponse(ctx, runID, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil || len(response.Payload) == 0 {
+		return nil, fmt.Errorf("accepted %s response is unavailable", strings.TrimPrefix(kind, "provider_"))
+	}
+	if response.Kind != kind || response.CacheKey != cacheKey {
+		return nil, fmt.Errorf("accepted %s response does not match its request", strings.TrimPrefix(kind, "provider_"))
+	}
+	return response, nil
+}
+
 func (acquisition *MatchingAcquisitionService) startArtistBrowse(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
 	if len(snapshot.Intent.InitialProviderInputs) != 1 || snapshot.Intent.InitialProviderInputs[0].Kind != "provider_artist_search" {
 		return false, true, fmt.Errorf("matching acquisition initial artist search is invalid")
 	}
 	initial := snapshot.Intent.InitialProviderInputs[0]
-	response, err := acquisition.providers.CachedResponse(ctx, initial.CacheKey)
+	response, err := acquisition.acceptedArtistResponse(ctx, snapshot.Intent, runID, initial.OperationID, initial.Kind, initial.CacheKey)
 	if err != nil {
 		return false, true, err
-	}
-	if response == nil || len(response.Payload) == 0 {
-		return false, true, fmt.Errorf("accepted artist search response is unavailable")
 	}
 	var page struct {
 		Artists *[]struct {
@@ -691,6 +729,22 @@ func (acquisition *MatchingAcquisitionService) validatedCapture(ctx context.Cont
 		return nil, fmt.Errorf("validated matching acquisition metadata capture is unavailable")
 	}
 	return captured, nil
+}
+
+func (acquisition *MatchingAcquisitionService) artistRetrievalCapture(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID) ([]persistence.MatchingAcquisitionCapturedMember, error) {
+	if len(snapshot.Intent.LayoutTarget) == 0 {
+		return acquisition.validatedCapture(ctx, runID, snapshot.Phase)
+	}
+	if len(snapshot.Intent.Targets) != 1 {
+		return nil, fmt.Errorf("artist retrieval requires one captured group")
+	}
+	captures, _, err := persistence.DecodeMatchingLayoutTarget(
+		snapshot.Intent.LayoutTarget, snapshot.Intent.Targets[0].GroupID, MatchingLayoutPolicyVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return MatchingLayoutRetrievalMembers(captures)
 }
 
 func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
@@ -822,18 +876,17 @@ func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.C
 		}
 		seenKeys[key] = true
 		var provenance []struct {
-			CacheKey   string `json:"cache_key"`
-			PayloadSHA string `json:"payload_sha256"`
+			RequestID  uuid.UUID `json:"request_id"`
+			CacheKey   string    `json:"cache_key"`
+			PayloadSHA string    `json:"payload_sha256"`
 		}
-		if json.Unmarshal(phase.ResponseProvenance, &provenance) != nil || len(provenance) != 1 || provenance[0].CacheKey != key || provenance[0].PayloadSHA == "" {
+		if json.Unmarshal(phase.ResponseProvenance, &provenance) != nil || len(provenance) != 1 ||
+			provenance[0].RequestID == uuid.Nil || provenance[0].CacheKey != key || provenance[0].PayloadSHA == "" {
 			return false, true, fmt.Errorf("accepted matching catalog page provenance is invalid")
 		}
-		response, err := acquisition.providers.CachedResponse(ctx, key)
+		response, err := acquisition.acceptedArtistResponse(ctx, snapshot.Intent, runID, provenance[0].RequestID, "provider_artist_release_browse", key)
 		if err != nil {
 			return false, true, err
-		}
-		if response == nil || len(response.Payload) == 0 {
-			return false, true, fmt.Errorf("accepted matching catalog page is unavailable")
 		}
 		digest := sha256.Sum256(response.Payload)
 		if fmt.Sprintf("%x", digest[:]) != provenance[0].PayloadSHA {
@@ -859,11 +912,7 @@ func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.C
 			if err != nil {
 				return false, true, err
 			}
-			candidate := header.MatchingRetrievalCandidate
-			// Keep the existing caption-only browse rank until the whole-layout
-			// acquisition and apply switch can land together.
-			candidate.ArtistCredits = nil
-			candidatesByID[id] = candidate
+			candidatesByID[id] = header.MatchingRetrievalCandidate
 		}
 	}
 	// The cache-key reader is sorted; the payload pages still must cover every
@@ -945,7 +994,7 @@ func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.C
 			acquisitionPhase(snapshot.Revision+1, "waiting_policy", input, output, provenance[0].RequestID, provenance[0].CacheKey, finalPayload))
 		return changed, true, err
 	}
-	captured, err := acquisition.validatedCapture(ctx, runID, "catalog_ready")
+	captured, err := acquisition.artistRetrievalCapture(ctx, snapshot, runID)
 	if err != nil {
 		return false, true, err
 	}
@@ -1004,14 +1053,11 @@ func (acquisition *MatchingAcquisitionService) advanceCatalogPage(ctx context.Co
 	if cacheKey != prior.CacheKey {
 		return false, true, fmt.Errorf("saved matching catalog child cache key does not match its cursor")
 	}
-	response, err := acquisition.providers.CachedResponse(ctx, cacheKey)
+	response, err := acquisition.acceptedArtistResponse(ctx, snapshot.Intent, runID, responseRequestID, "provider_artist_release_browse", cacheKey)
 	if err != nil {
 		return false, true, err
 	}
-	if response == nil || len(response.Payload) == 0 {
-		return false, true, fmt.Errorf("accepted artist catalog page is unavailable")
-	}
-	// The cached payload is the raw MusicBrainz artist release browse envelope,
+	// The accepted payload is the raw MusicBrainz artist release browse envelope,
 	// which reports hyphenated release-count/release-offset keys. Parse them
 	// strictly: absent or null values must not be silently read as zero, while a
 	// genuine zero count with zero offset and no releases is a valid empty catalog.

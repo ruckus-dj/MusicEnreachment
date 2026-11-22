@@ -90,5 +90,6 @@ func matchingAcquisitionFailureCatalogFixture(artistID string, catalogCount *int
 		Output:   encoded,
 	}}
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{cacheKey: payload}}
+	repository.acceptArtistResponse(output["next_request_id"].(uuid.UUID), "provider_artist_release_browse", cacheKey, payload)
 	return repository, provider
 }

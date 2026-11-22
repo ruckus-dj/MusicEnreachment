@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -36,6 +37,14 @@ func TestArtistMatchingKeepsAcceptedResponseAfterCacheReplacement(t *testing.T) 
 		WHERE parent_run_id=? AND request_id=?`, run.admission.OriginalRunID, request.OperationID).Exec(run.ctx); err == nil {
 		t.Fatal("accepted artist response was mutable")
 	}
+	changed, acquired, err := run.acquisition.Advance(run.ctx, run.admission.OriginalRunID, 1, run.jobID, run.claim)
+	if !errors.Is(err, persistence.ErrIncomingMatchConflict) || changed || !acquired {
+		t.Fatalf("reject stale empty search after cache replacement: changed=%t acquired=%t err=%v", changed, acquired, err)
+	}
+	snapshot, found, err = run.repository.GetMatchingAcquisition(run.ctx, run.admission.OriginalRunID)
+	if err != nil || !found || snapshot.Phase != "admitted" {
+		t.Fatalf("stale search advanced the acquisition: phase=%q found=%t err=%v", snapshot.Phase, found, err)
+	}
 }
 
 // This provider exposes only a previously accepted cache response. In
@@ -46,7 +55,7 @@ type artistReviewCachedProvider struct {
 }
 
 func (provider artistReviewCachedProvider) CachedResponse(ctx context.Context, key string) (*persistence.ProviderCachedResponse, error) {
-	return provider.cache.GetCachedResponse(ctx, provider.sourceID, key)
+	return nil, fmt.Errorf("unexpected mutable cache read for %s", key)
 }
 
 func (artistReviewCachedProvider) PrepareOperation(context.Context, string, string, int, int, bool) (*persistence.Operation, error) {

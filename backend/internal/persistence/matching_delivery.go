@@ -262,12 +262,35 @@ func (repository *SetupManagerRepository) ConsumePendingMatchingDelivery(ctx con
 	return consumed, err
 }
 
+// StaleArtistMatchingFailure is the typed stale-evaluation failure reported by
+// the sealed artist layout path. It requests a fresh automatic generation; it is
+// never evidence of a MusicBrainz outage and never creates Local fallback
+// authority.
+type StaleArtistMatchingFailure struct {
+	SafeMessage string
+}
+
 // FailMatchingDelivery marks an invalid admitted plan failed only while this
 // River attempt still owns the matching execution fence.
 func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Context, operationID uuid.UUID, operationAttempt int, riverJobID int64, claim MatchingDeliveryClaim, safeMessage string) (bool, error) {
 	if safeMessage == "" {
 		return false, fmt.Errorf("fail matching delivery: safe message is required")
 	}
+	return repository.failMatchingDelivery(ctx, operationID, operationAttempt, riverJobID, claim, safeMessage, false)
+}
+
+// RefreshStaleArtistMatchingDelivery marks a stale sealed artist evaluation
+// failed under the same execution fence and, only while the run's admission
+// generation is still the latest request, issues a fresh reconciliation
+// generation. It never turns a stale decision into outage evidence.
+func (repository *SetupManagerRepository) RefreshStaleArtistMatchingDelivery(ctx context.Context, operationID uuid.UUID, operationAttempt int, riverJobID int64, claim MatchingDeliveryClaim, failure StaleArtistMatchingFailure) (bool, error) {
+	if failure.SafeMessage == "" {
+		return false, fmt.Errorf("refresh stale artist matching delivery: safe message is required")
+	}
+	return repository.failMatchingDelivery(ctx, operationID, operationAttempt, riverJobID, claim, failure.SafeMessage, true)
+}
+
+func (repository *SetupManagerRepository) failMatchingDelivery(ctx context.Context, operationID uuid.UUID, operationAttempt int, riverJobID int64, claim MatchingDeliveryClaim, safeMessage string, refreshArtist bool) (bool, error) {
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		var runPlan struct {
@@ -275,14 +298,16 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 			Identity     string    `bun:"provider_configuration_identity"`
 			FenceVersion int       `bun:"fence_version"`
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-			return fmt.Errorf("fail matching delivery: lock provider configuration: %w", err)
-		}
 		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
 			return fmt.Errorf("fail matching delivery: read run identity: %w", err)
 		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("fail matching delivery: lock source mutation gate: %w", err)
+		}
+		// Provider configuration follows the source mutation gate everywhere
+		// that a matching delivery captures provider-source identity.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("fail matching delivery: lock provider configuration: %w", err)
 		}
 		var sourceIdentity string
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, runPlan.SourceID).Scan(ctx, &sourceIdentity); err != nil {
@@ -316,15 +341,19 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 			return nil
 		}
 		var targets []struct {
-			GroupID          uuid.UUID  `bun:"group_id"`
-			HighWater        int64      `bun:"high_water"`
-			CurrentRunID     *uuid.UUID `bun:"current_run_id"`
-			TargetGeneration int64      `bun:"target_generation"`
-			CurrentRevision  *string    `bun:"current_revision"`
-			CapturedRevision string     `bun:"captured_group_revision"`
+			GroupID                  uuid.UUID  `bun:"group_id"`
+			HighWater                int64      `bun:"high_water"`
+			CurrentRunID             *uuid.UUID `bun:"current_run_id"`
+			TargetGeneration         int64      `bun:"target_generation"`
+			CurrentRevision          *string    `bun:"current_revision"`
+			CapturedRevision         string     `bun:"captured_group_revision"`
+			ReconciliationGeneration *int64     `bun:"reconciliation_generation"`
+			RequestedGeneration      int64      `bun:"requested_generation"`
 		}
 		if err := tx.NewRaw(`SELECT generation.group_id, generation.high_water, generation.current_run_id,
-			target.target_generation, current_group.revision AS current_revision, target.captured_group_revision
+			generation.requested_generation,
+			target.target_generation, target.reconciliation_generation,
+			current_group.revision AS current_revision, target.captured_group_revision
 			FROM matching_run_target target
 			JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 			JOIN incoming_group current_group ON current_group.id=target.group_id
@@ -349,12 +378,15 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 			}
 		case 2:
 			if err := validateMatchingRunFence(ctx, tx, operationID, runPlan.FenceVersion); err != nil {
-				return err
+				if !refreshArtist || !errors.Is(err, ErrIncomingMatchConflict) {
+					return err
+				}
+				staleTargets = true
 			}
 		default:
 			return fmt.Errorf("fail matching delivery: unsupported fence version %d", runPlan.FenceVersion)
 		}
-		if staleTargets {
+		if staleTargets && !refreshArtist {
 			return nil
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -386,6 +418,16 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 		}
 		if _, err := tx.NewRaw(`UPDATE matching_run SET state='failed', active_river_job_id=NULL, active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, claim.ExecutionEpoch).Exec(ctx); err != nil {
 			return fmt.Errorf("fail matching delivery: update run: %w", err)
+		}
+		if refreshArtist && !staleTargets {
+			for _, target := range targets {
+				if target.ReconciliationGeneration != nil && target.RequestedGeneration != *target.ReconciliationGeneration {
+					continue
+				}
+				if err := requestFrozenMatchingRefresh(ctx, tx, target.GroupID); err != nil {
+					return fmt.Errorf("fail matching delivery: request fresh artist matching: %w", err)
+				}
+			}
 		}
 		if _, err := tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND consumed_at IS NULL`, now, operationID, riverJobID).Exec(ctx); err != nil {
 			return fmt.Errorf("fail matching delivery: consume delivery: %w", err)

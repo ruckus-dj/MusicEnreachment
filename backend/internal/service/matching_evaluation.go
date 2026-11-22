@@ -406,6 +406,7 @@ type MatchingEvaluationSnapshot struct {
 	ReleaseKeysByFile      map[uuid.UUID][]string
 	SearchKeysByFile       map[uuid.UUID]MatchingSearchKeys
 	allowMissingSearchKeys bool
+	layoutThreshold        *float64
 	acoustIDScores         map[MatchingAcoustIDKey]float64
 	acoustIDResponses      map[string]*persistence.ProviderCachedResponse
 	acoustIDKeysByFile     map[uuid.UUID]string
@@ -851,6 +852,20 @@ func evaluateMatchingGroup(
 		}
 	}
 	inputs := make([]MatchingInput, 0)
+	if snapshot.layoutThreshold != nil {
+		stage, err := calculateMatchingLayoutStage(
+			ctx, allCaptures, providerKeys, filtered.Releases, *snapshot.layoutThreshold,
+			func() ([]MatchingInput, error) {
+				var err error
+				inputs, err = BuildLayoutMatchingInputs(allCaptures, filtered, searchKeys, snapshot.acoustIDScores)
+				return inputs, err
+			},
+		)
+		if err != nil {
+			return persistence.IncomingMatchEvaluation{}, "", "", err
+		}
+		return renderMatchingGroupResult(ctx, snapshot, groupsRevision, group, memberFences, inputs, providerKeys, cacheRevisions, &stage)
+	}
 	for _, memberID := range group.Members {
 		memberKeys := make(map[string]bool)
 		for _, key := range snapshot.ReleaseKeysByFile[memberID] {
@@ -882,6 +897,20 @@ func makeMatchingGroupResult(
 	releaseKeys []string,
 	cacheRevisions map[string]*string,
 ) (persistence.IncomingMatchEvaluation, MatchingGroupDecision, string, error) {
+	return renderMatchingGroupResult(ctx, snapshot, groupsRevision, group, members, inputs, releaseKeys, cacheRevisions, nil)
+}
+
+func renderMatchingGroupResult(
+	ctx context.Context,
+	snapshot MatchingEvaluationSnapshot,
+	groupsRevision string,
+	group IncomingGroup,
+	members []persistence.IncomingMatchMemberFence,
+	inputs []MatchingInput,
+	releaseKeys []string,
+	cacheRevisions map[string]*string,
+	layout *MatchingLayoutStage,
+) (persistence.IncomingMatchEvaluation, MatchingGroupDecision, string, error) {
 	conflicts := make(map[uuid.UUID]bool)
 	groupFiles := make([]IncomingFile, 0, len(members))
 	for _, member := range members {
@@ -894,12 +923,18 @@ func makeMatchingGroupResult(
 		}
 		groupFiles = append(groupFiles, file)
 	}
-	core, err := EvaluateMatchingGroupFromInputs(ctx, MatchingGroupEvaluationInput{
-		Members: members, Inputs: inputs, Files: groupFiles,
-		ReleaseLayouts: snapshot.Provider.Releases, ConflictingFingerprints: conflicts,
-	})
-	if err != nil {
-		return persistence.IncomingMatchEvaluation{}, "", "", err
+	var core MatchingGroupEvaluationDecisionResult
+	if layout == nil {
+		var err error
+		core, err = EvaluateMatchingGroupFromInputs(ctx, MatchingGroupEvaluationInput{
+			Members: members, Inputs: inputs, Files: groupFiles,
+			ReleaseLayouts: snapshot.Provider.Releases, ConflictingFingerprints: conflicts,
+		})
+		if err != nil {
+			return persistence.IncomingMatchEvaluation{}, "", "", err
+		}
+	} else {
+		core = matchingLayoutReviewCore(snapshot.Provider.Releases, inputs, *layout)
 	}
 	type edgeKey = matchingGroupEdgeKey
 	byFileRelease := make(map[edgeKey][]struct{ input MatchingInput })
@@ -931,7 +966,12 @@ func makeMatchingGroupResult(
 		}
 	}
 	decisionAssignments := make([]MatchingDecisionAssignment, 0)
-	if decisionOutcome == MatchingDecisionOutcomeUnique && assignment.Unique {
+	if layout != nil && decisionOutcome == MatchingDecisionOutcomeUnique {
+		decisionAssignments = matchingLayoutReviewAssignments(snapshot.Provider.Releases, *layout)
+		if len(decisionAssignments) != len(members) {
+			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("layout assignment does not cover every group member")
+		}
+	} else if decisionOutcome == MatchingDecisionOutcomeUnique && assignment.Unique {
 		if len(assignment.Choices) != len(members) {
 			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("unique assignment does not cover every group member")
 		}
@@ -1003,12 +1043,20 @@ func makeMatchingGroupResult(
 			"acoustid_cache_evidence": matchingAcoustIDEvidence(snapshot, member.FileMemberID),
 		})
 	}
-	groupEvidence, err := json.Marshal(map[string]any{
+	evidence := map[string]any{
 		"schema_version": 1, "group_decision": decision, "decision_reason": reason,
 		"selected_release_key": selectedRelease, "release_selection": releaseSelection, "files": fileEvidence,
 		"evaluation_decision": evaluationDecision,
 		"review_proposal":     makeMatchingReviewProposal(snapshot, group, members, releaseKeys, selectedRelease),
-	})
+	}
+	if layout != nil {
+		threshold, err := persistence.CanonicalMatchingLayoutThreshold(layout.PairThreshold)
+		if err != nil {
+			return persistence.IncomingMatchEvaluation{}, "", "", err
+		}
+		evidence["layout_pair_threshold"] = threshold
+	}
+	groupEvidence, err := json.Marshal(evidence)
 	if err != nil {
 		return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("encode group matching evidence: %w", err)
 	}
@@ -1092,6 +1140,50 @@ func makeMatchingGroupResult(
 	providerFence := persistence.IncomingMatchProviderFence{ProviderID: snapshot.Provider.Source.ProviderID, ProviderSourceID: snapshot.Provider.Source.ID, Namespace: snapshot.Provider.Source.Namespace, Endpoint: snapshot.Provider.Source.Endpoint, ConfigurationIdentity: snapshot.Provider.Source.ConfigurationIdentity, CacheKey: cacheKey, CacheRevision: cacheRevision, CacheRevisions: cacheRevisions, AcceptedProjectionRevision: snapshot.Provider.AcceptedProjectionRevision, ReleaseKeys: releaseKeys, AcoustID: acoustIDFences, AcoustIDSources: acoustIDSources}
 	evaluation := persistence.IncomingMatchEvaluation{ExpectedGroupsRevision: groupsRevision, ExpectedGroupingEpoch: snapshot.Grouping.Epoch, PolicyVersion: MatchingPolicyVersion, Provider: providerFence, Groups: []persistence.IncomingMatchGroupEvaluation{groupEval}}
 	return evaluation, decision, reason, nil
+}
+
+func matchingLayoutReviewCore(releases []persistence.MatchingRelease, inputs []MatchingInput, layout MatchingLayoutStage) MatchingGroupEvaluationDecisionResult {
+	core := MatchingGroupEvaluationDecisionResult{
+		Decision: MatchingDecisionReview, Reason: layout.Decision.Reason,
+		Outcome: MatchingDecisionOutcomeInfeasible, PositionsByFileRelease: make(map[matchingGroupEdgeKey][]persistence.IncomingMatchPosition),
+	}
+	if layout.Decision.Status == MatchingLayoutSelectionSelected {
+		core.Decision, core.Outcome = MatchingDecisionSelected, MatchingDecisionOutcomeUnique
+		core.SelectedReleaseID = layout.Decision.ReleaseID
+		core.Reason = "complete qualifying layout"
+	}
+	for _, edge := range inputs {
+		key := matchingGroupEdgeKey{file: edge.FileID, release: edge.ReleaseID}
+		core.PositionsByFileRelease[key] = append(core.PositionsByFileRelease[key], persistence.IncomingMatchPosition{
+			TrackID: matchingGroupTrackID(releases, edge.ReleaseID, edge.Medium, edge.Track),
+			Medium:  edge.Medium, Position: edge.Track,
+		})
+	}
+	return core
+}
+
+func matchingLayoutReviewAssignments(releases []persistence.MatchingRelease, layout MatchingLayoutStage) []MatchingDecisionAssignment {
+	positions := make(map[uuid.UUID]persistence.MatchingReleaseTrack)
+	for _, release := range releases {
+		if release.ProviderKey == layout.Decision.ReleaseID {
+			for _, track := range release.Tracks {
+				positions[track.ID] = track
+			}
+			break
+		}
+	}
+	assignments := make([]MatchingDecisionAssignment, 0, len(layout.Assignments))
+	for _, pair := range layout.Assignments {
+		position, ok := positions[pair.ProviderTrackID]
+		if !ok {
+			return nil
+		}
+		assignments = append(assignments, MatchingDecisionAssignment{
+			FileMemberID: pair.FileMemberID, ProviderTrackID: pair.ProviderTrackID,
+			Medium: position.Medium + 1, Position: position.Position + 1,
+		})
+	}
+	return assignments
 }
 
 // makeMatchingReviewProposal snapshots every group-scoped release layout and saved

@@ -23,6 +23,7 @@ type MatchingRunFenceSnapshot struct {
 	GroupRevision string
 	Capture       json.RawMessage
 	CaptureDigest string
+	LayoutTarget  json.RawMessage
 }
 
 func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Context, runID uuid.UUID) (MatchingRunFenceSnapshot, bool, error) {
@@ -113,7 +114,10 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 	if err != nil || !equalDigest(digest[:], targets[0].Digest) || hex.EncodeToString(digest[:]) != plan.TargetCaptureDigest {
 		return result, false, fmt.Errorf("read matching run fence: target capture digest changed")
 	}
-	result = MatchingRunFenceSnapshot{Version: 2, GroupID: targets[0].GroupID, GroupRevision: targets[0].Revision, Capture: canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:])}
+	result = MatchingRunFenceSnapshot{
+		Version: 2, GroupID: targets[0].GroupID, GroupRevision: targets[0].Revision,
+		Capture: canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:]), LayoutTarget: intent.LayoutTarget,
+	}
 	return result, true, nil
 }
 

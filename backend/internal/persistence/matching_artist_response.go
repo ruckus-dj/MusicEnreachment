@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,117 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
+
+func hasAcceptedArtistResponses(ctx context.Context, tx bun.Tx, runID uuid.UUID) (bool, error) {
+	var frozen bool
+	err := tx.NewRaw(`SELECT EXISTS(
+		SELECT 1 FROM matching_acquisition acquisition JOIN matching_run run ON run.id=acquisition.run_id
+		WHERE run.id=? AND acquisition.intent_version=2
+			AND jsonb_typeof(acquisition.intent->'layout_target')='object'
+			AND run.immutable_plan->>'intent'='automatic_artist_acquisition'
+	)`, runID).Scan(ctx, &frozen)
+	return frozen, err
+}
+
+// GetAcceptedArtistMatchingSnapshot uses the exact release lookups accepted by
+// the run. Only after proving their current semantic equivalence does it issue
+// the live provider fence used by review and materialization.
+func (repository *SetupManagerRepository) GetAcceptedArtistMatchingSnapshot(
+	ctx context.Context, runID uuid.UUID, releaseKeys, responseKeys []string,
+) (ProviderMatchingSnapshot, error) {
+	var result ProviderMatchingSnapshot
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		var source ProviderSource
+		if err := tx.NewRaw(`SELECT source.id,source.provider_id,source.namespace,source.endpoint,source.configuration_identity
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id
+			JOIN app_setting config ON config.setting_name='musicbrainz_config_identity'
+				AND config.setting_value=run.provider_configuration_identity
+			WHERE run.id=? AND source.configuration_identity=run.provider_configuration_identity`, runID).Scan(ctx, &source); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("read accepted artist matching source: %w", err)
+		}
+		current, err := readMusicBrainzMatchingSnapshot(ctx, tx, source.Endpoint, source.ConfigurationIdentity, releaseKeys, responseKeys, false)
+		if err != nil {
+			return err
+		}
+		var dependencies []struct {
+			RequestID uuid.UUID `bun:"request_id"`
+			CacheKey  string    `bun:"cache_key"`
+		}
+		if err := tx.NewRaw(`SELECT dependency.request_id, dependency.cache_key `+artistResponseScope+`
+			AND dependency.parent_run_id=? AND dependency.terminal_outcome='succeeded'
+			AND child.state='succeeded' AND dependency.cache_key IN (?)`,
+			runID, bun.List(responseKeys)).Scan(ctx, &dependencies); err != nil {
+			return fmt.Errorf("read accepted artist matching dependencies: %w", err)
+		}
+		requests := make(map[string]uuid.UUID, len(dependencies))
+		for _, dependency := range dependencies {
+			if requests[dependency.CacheKey] != uuid.Nil {
+				return errors.New("accepted artist matching response key is ambiguous")
+			}
+			requests[dependency.CacheKey] = dependency.RequestID
+		}
+		frozenReleases := make(map[string]MatchingRelease, len(releaseKeys))
+		for _, key := range responseKeys {
+			receipt, err := getMatchingArtistResponse(ctx, tx, runID, requests[key], key, nil)
+			if err != nil {
+				return err
+			}
+			if receipt == nil {
+				return fmt.Errorf("accepted artist matching response %q is missing", key)
+			}
+			accepted := current.Responses[key]
+			if accepted == nil || !matchingJSONEqual(accepted.Payload, receipt.Payload) ||
+				!equalOptionalString(accepted.Revision, receipt.Revision) {
+				return fmt.Errorf("accepted artist matching response %q changed: %w", key, ErrIncomingMatchConflict)
+			}
+			if receipt.Kind != "provider_release_lookup" {
+				continue
+			}
+			frozen := receipt.Projection
+			releaseKey := strings.TrimPrefix(key, "release-lookup:")
+			if frozen == nil || frozen.Source.ID != source.ID || len(frozen.Releases) != 1 ||
+				frozen.Releases[0].ProviderKey != releaseKey || !frozen.Releases[0].Complete {
+				return errors.New("accepted artist matching release projection is invalid")
+			}
+			lookup, err := readMusicBrainzMatchingSnapshot(ctx, tx, source.Endpoint, source.ConfigurationIdentity, []string{releaseKey}, []string{key}, false)
+			if err != nil {
+				return err
+			}
+			release := frozen.Releases[0]
+			if err := compareFallbackLayoutProjections(*frozen, lookup); err != nil {
+				return fmt.Errorf("check accepted artist matching release %q: %w", releaseKey, err)
+			}
+			frozenReleases[releaseKey] = release
+		}
+		result = current
+		result.Releases = make([]MatchingRelease, 0, len(releaseKeys))
+		for _, key := range releaseKeys {
+			release := frozenReleases[key]
+			if release.ID == uuid.Nil {
+				return fmt.Errorf("accepted artist matching release %q is missing", key)
+			}
+			result.Releases = append(result.Releases, release)
+		}
+		return nil
+	})
+	return result, err
+}
+
+func validateAcceptedMatchingArtistResponse(
+	ctx context.Context, tx bun.Tx, runID uuid.UUID, response matchingAcquisitionResponseProvenance,
+) (*MatchingArtistResponse, error) {
+	accepted, err := getMatchingArtistResponse(ctx, tx, runID, response.RequestID, response.CacheKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	if accepted == nil || fmt.Sprintf("%x", sha256.Sum256(accepted.Payload)) != response.PayloadSHA {
+		return nil, errors.New("accepted artist matching response does not match its provenance")
+	}
+	return accepted, nil
+}
 
 // MatchingArtistResponse preserves one accepted search, browse, or release
 // lookup. The dependency key owns it; cache replacement cannot change it.

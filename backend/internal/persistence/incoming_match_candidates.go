@@ -205,6 +205,40 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 		return fmt.Errorf("%s: lock source mutation gate: %w", operation, err)
 	}
+	if evaluation.TargetFenceVersion == 2 && manualContext == nil && evaluation.MatchingAuthorityMode != "manual_review" {
+		var frozenLayout string
+		err := tx.NewRaw(`SELECT COALESCE(intent->'layout_target', 'null'::jsonb)::text
+			FROM matching_acquisition WHERE run_id=? AND intent_version=2`, evaluation.TargetRunID).Scan(ctx, &frozenLayout)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%s: read artist layout target: %w", operation, err)
+		}
+		layoutTarget := json.RawMessage(frozenLayout)
+		if jsonObject(layoutTarget) {
+			group := evaluation.Groups[0]
+			reviewOnly, err := matchingProviderRefreshReviewOnly(group.Evidence)
+			if err != nil {
+				return err
+			}
+			if reviewOnly {
+				var review struct {
+					PairThreshold string `json:"layout_pair_threshold"`
+				}
+				var target matchingLayoutTargetEvidence
+				if json.Unmarshal(group.Evidence, &review) != nil ||
+					json.Unmarshal(layoutTarget, &target) != nil || review.PairThreshold == "" {
+					return ErrIncomingMatchConflict
+				}
+				target.PairThreshold = review.PairThreshold
+				layoutTarget, err = json.Marshal(target)
+				if err != nil {
+					return err
+				}
+			}
+			if _, err := RecheckMatchingLayoutTargetTx(ctx, tx, evaluation.Groups[0].GroupID, MatchingLayoutPolicyVersion, layoutTarget); err != nil {
+				return err
+			}
+		}
+	}
 	keys := matchingAcoustIDCacheKeys(evaluation.Provider)
 	if len(keys) != 0 {
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
