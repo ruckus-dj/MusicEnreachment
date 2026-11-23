@@ -72,6 +72,7 @@ export const settingsMessages = createNamespace({
 		available: "Available",
 		staleOutput: "Settings changed. Check the directory again.",
 		staleMove: "Move settings changed. Check again.",
+		staleInstall: "Install settings changed. Check this version again.",
 		invalidPath: "Choose an absolute server path.",
 		invalidTemplate: "Enter a valid relative publication path template.",
 		pathOverlap:
@@ -195,6 +196,8 @@ export const settingsMessages = createNamespace({
 		available: "Доступна",
 		staleOutput: "Параметры изменились. Проверьте каталог ещё раз.",
 		staleMove: "Параметры переноса изменились. Повторите проверку.",
+		staleInstall:
+			"Параметры установки изменились. Проверьте эту версию ещё раз.",
 		invalidPath: "Выберите абсолютный путь на сервере.",
 		invalidTemplate: "Введите корректный относительный шаблон пути публикации.",
 		pathOverlap:

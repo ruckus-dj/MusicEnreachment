@@ -3621,7 +3621,7 @@ export function SettingsScreen() {
         <SettingsToolInstallDialog
           locale={locale}
           release={installDialog.release}
-          targets={{ kind: "paths", items: installDialog.plan.targets || [] }}
+          targets={installDialog.plan.targets || []}
           conflicts={installDialog.plan.conflicts || []}
           busy={effectiveBusy}
           {...(installDialogError

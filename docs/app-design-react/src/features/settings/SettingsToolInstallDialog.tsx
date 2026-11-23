@@ -6,28 +6,19 @@ const messages = {
     title: (release: string) => `Download and verify ${release}`,
     note: "Downloading and verifying does not activate this version.",
     paths: "Target files",
-    executables: "Executables to verify",
     conflicts: "Conflicts to confirm",
     confirm: "Confirm listed conflicts",
-    download: "Download and verify",
     cancel: "Cancel",
   },
   ru: {
     title: (release: string) => `Скачать и проверить ${release}`,
     note: "Скачивание и проверка не активируют эту версию.",
     paths: "Целевые файлы",
-    executables: "Проверяемые программы",
     conflicts: "Конфликты для подтверждения",
     confirm: "Подтвердить перечисленные конфликты",
-    download: "Скачать и проверить",
     cancel: "Отмена",
   },
 } as const;
-
-function outsideDialog(element: HTMLDialogElement, x: number, y: number) {
-  const { left, right, top, bottom } = element.getBoundingClientRect();
-  return x < left || x >= right || y < top || y >= bottom;
-}
 
 export function SettingsToolInstallDialog({
   locale,
@@ -36,7 +27,6 @@ export function SettingsToolInstallDialog({
   conflicts,
   busy,
   confirmDisabled,
-  dismissOnBackdrop,
   returnFocusTo,
   error,
   onConfirm,
@@ -44,11 +34,10 @@ export function SettingsToolInstallDialog({
 }: {
   locale: "en" | "ru";
   release: string;
-  targets: { kind: "paths" | "executables"; items: readonly string[] };
+  targets: readonly string[];
   conflicts: readonly string[];
   busy: boolean;
   confirmDisabled?: boolean;
-  dismissOnBackdrop?: boolean;
   returnFocusTo?: HTMLElement | null;
   error?: string;
   onConfirm: () => void;
@@ -58,7 +47,6 @@ export function SettingsToolInstallDialog({
   const title = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
-  const pressedBackdrop = useRef(false);
 
   useLayoutEffect(() => {
     const node = dialog.current;
@@ -115,49 +103,31 @@ export function SettingsToolInstallDialog({
           (event.shiftKey ? last : first).focus();
         }
       }}
-      onPointerDown={(event) => {
-        pressedBackdrop.current =
-          Boolean(dismissOnBackdrop) &&
-          event.target === event.currentTarget &&
-          outsideDialog(event.currentTarget, event.clientX, event.clientY);
-      }}
-      onClick={(event) => {
-        if (
-          pressedBackdrop.current &&
-          event.target === event.currentTarget &&
-          outsideDialog(event.currentTarget, event.clientX, event.clientY)
-        ) {
-          onDismiss();
-        }
-        pressedBackdrop.current = false;
-      }}
     >
       <h2 id={title} className="m-0 wrap-anywhere text-base font-semibold">
         {copy.title(release)}
       </h2>
       <p className="m-0">{copy.note}</p>
       <section>
-        <h3 className="m-0 font-semibold">{copy[targets.kind]}</h3>
+        <h3 className="m-0 font-semibold">{copy.paths}</h3>
         <ul className="my-1 list-disc pl-5">
-          {targets.items.map((target) => (
+          {targets.map((target) => (
             <li key={target} className="wrap-anywhere">
               <code>{target}</code>
             </li>
           ))}
         </ul>
       </section>
-      {conflicts.length > 0 && (
-        <section>
-          <h3 className="m-0 font-semibold">{copy.conflicts}</h3>
-          <ul className="my-1 list-disc pl-5">
-            {conflicts.map((path) => (
-              <li key={path} className="wrap-anywhere">
-                <code>{path}</code>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <section>
+        <h3 className="m-0 font-semibold">{copy.conflicts}</h3>
+        <ul className="my-1 list-disc pl-5">
+          {conflicts.map((path) => (
+            <li key={path} className="wrap-anywhere">
+              <code>{path}</code>
+            </li>
+          ))}
+        </ul>
+      </section>
       {error && (
         <p
           ref={alert}
@@ -170,7 +140,7 @@ export function SettingsToolInstallDialog({
       )}
       <div className="flex flex-wrap justify-end gap-2">
         <AppButton isDisabled={busy || confirmDisabled} onPress={onConfirm}>
-          {conflicts.length ? copy.confirm : copy.download}
+          {copy.confirm}
         </AppButton>
         <AppButton isDisabled={busy} onPress={onDismiss}>
           {copy.cancel}

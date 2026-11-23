@@ -10,7 +10,6 @@ import {
 	isValidMusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
 } from "../../infrastructure/providerValidation";
-import { setupToolExecutables } from "../setup/setupToolsLifecycle";
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { GenreCatalogDemoProvider } from "./GenreCatalogDemoProvider";
 import {
@@ -63,6 +62,8 @@ import {
 	createDemoInstallation,
 	type DemoInstallation,
 	initialDemoInstallations,
+	initialDemoUnmanagedToolFiles,
+	installPreflightDemo,
 	isAbsoluteDemoServerPath,
 	type ManagedToolPackage,
 	movePreflightDemo,
@@ -128,6 +129,7 @@ export interface DemoSettings {
 	logLevel?: "" | "debug" | "info" | "warn" | "error";
 	platformMismatch?: boolean;
 	installations?: DemoInstallation[];
+	unmanagedToolFiles?: readonly string[];
 	selectedRelease?: Partial<Record<ManagedToolPackage, string>>;
 	setupVerified?: Partial<Record<ManagedToolPackage, string>>;
 	toolCatalog?: Record<ManagedToolPackage, string[]>;
@@ -163,6 +165,7 @@ export const initialDemoSettings: DemoSettings = {
 	logLevel: "info",
 	platformMismatch: false,
 	installations: initialDemoInstallations,
+	unmanagedToolFiles: initialDemoUnmanagedToolFiles,
 	selectedRelease: {},
 	toolCatalog: availableToolReleases,
 	runtimeSaved: false,
@@ -208,6 +211,7 @@ type FolderReplacement = {
 };
 type NoticeKey =
 	| "staleMove"
+	| "staleInstall"
 	| "invalidPath"
 	| "conflicts"
 	| "invalidProvider"
@@ -245,9 +249,7 @@ export function SettingsScreen({
 	const [moveConflictsAcknowledged, setMoveConflictsAcknowledged] =
 		useState(false);
 	const [installPlan, setInstallPlan] = useState<{
-		kind: ManagedToolPackage;
-		release: string;
-		token: string;
+		preflight: ReturnType<typeof installPreflightDemo>;
 		opener: HTMLElement | null;
 	} | null>(null);
 	const [draftState, setDraftState] = useState(() => {
@@ -835,6 +837,8 @@ export function SettingsScreen({
 	const currentOutput = settings.currentOutput ?? "/srv/music";
 	const platformMismatch = settings.platformMismatch ?? false;
 	const installations = settings.installations ?? initialDemoInstallations;
+	const unmanagedToolFiles =
+		settings.unmanagedToolFiles ?? initialDemoUnmanagedToolFiles;
 	const selectedRelease = settings.selectedRelease ?? {};
 	const catalog = settings.toolCatalog ?? availableToolReleases;
 	const blocked = ["running", "claimed"].includes(settings.outputDemoExecution);
@@ -916,10 +920,26 @@ export function SettingsScreen({
 				onPress: (opener) => {
 					const release = selectedRelease[kind];
 					if (!release) return;
-					setInstallPlan({
+					const preflight = installPreflightDemo(
+						settings.toolsPath,
 						kind,
 						release,
-						token: [kind, release, settings.toolsPath].join("|"),
+						installations,
+						unmanagedToolFiles,
+					);
+					if (preflight.conflicts.length === 0) {
+						update({
+							installations: createDemoInstallation(
+								installations,
+								kind,
+								release,
+							),
+						});
+						setNotice("");
+						return;
+					}
+					setInstallPlan({
+						preflight,
 						opener: opener instanceof HTMLElement ? opener : null,
 					});
 				},
@@ -1007,21 +1027,33 @@ export function SettingsScreen({
 	);
 	const startInstall = () => {
 		if (!installPlan || platformMismatch) return;
-		const token = [
-			installPlan.kind,
-			selectedRelease[installPlan.kind],
-			settings.toolsPath,
-		].join("|");
-		if (token !== installPlan.token) {
+		const { kind } = installPlan.preflight;
+		const release = selectedRelease[kind];
+		if (!release) {
 			setInstallPlan(null);
-			setNotice("staleMove");
+			setNotice("staleInstall");
+			return;
+		}
+		const fresh = installPreflightDemo(
+			settings.toolsPath,
+			kind,
+			release,
+			installations,
+			unmanagedToolFiles,
+		);
+		if (fresh.token !== installPlan.preflight.token) {
+			setInstallPlan(null);
+			setNotice("staleInstall");
 			return;
 		}
 		update({
 			installations: createDemoInstallation(
 				installations,
-				installPlan.kind,
-				installPlan.release,
+				kind,
+				installPlan.preflight.release,
+			),
+			unmanagedToolFiles: unmanagedToolFiles.filter(
+				(path) => !fresh.conflicts.includes(path),
 			),
 		});
 		setInstallPlan(null);
@@ -1458,16 +1490,12 @@ export function SettingsScreen({
 			{installPlan && (
 				<SettingsToolInstallDialog
 					locale={locale}
-					release={installPlan.release}
-					targets={{
-						kind: "executables",
-						items: setupToolExecutables(installPlan.kind),
-					}}
-					conflicts={[]}
+					release={installPlan.preflight.release}
+					targets={installPlan.preflight.targets}
+					conflicts={installPlan.preflight.conflicts}
 					busy={false}
 					confirmDisabled={platformMismatch}
 					returnFocusTo={installPlan.opener}
-					dismissOnBackdrop
 					onConfirm={startInstall}
 					onDismiss={() => setInstallPlan(null)}
 				/>

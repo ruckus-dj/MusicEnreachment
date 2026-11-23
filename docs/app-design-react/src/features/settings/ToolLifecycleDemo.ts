@@ -38,6 +38,89 @@ export const availableToolReleases: Record<ManagedToolPackage, string[]> = {
 	fpcalc: ["1.5.1"],
 };
 
+export type DemoInstallPreflight = {
+	kind: ManagedToolPackage;
+	release: string;
+	targets: string[];
+	conflicts: string[];
+	token: string;
+};
+
+/** Executables a managed package publishes, matching the demo server platform. */
+function demoExecutables(kind: ManagedToolPackage): string[] {
+	return kind === "ffmpeg" ? ["ffmpeg", "ffprobe"] : ["fpcalc"];
+}
+
+function demoInstallTarget(
+	toolsDirectory: string,
+	kind: ManagedToolPackage,
+	release: string,
+	executable: string,
+): string {
+	const root = toolsDirectory.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+	return `${root}/${kind}/${release}/${executable}`;
+}
+
+/**
+ * Files that already exist in the demo tools directory but are not owned by a
+ * managed installation. A real preflight reports exactly such targets as
+ * conflicts: the path is occupied, yet no ready installation manages it. The
+ * data is in-memory only and never touches a real filesystem.
+ */
+export const initialDemoUnmanagedToolFiles = [
+	"/var/lib/melotrove/tools/ffmpeg/8.0.1/ffmpeg",
+];
+
+/**
+ * In-memory mirror of the installation preflight. It computes the same target
+ * list and conflict list the server derives from the tools directory, so the
+ * demo host can start a clean install directly and review exact conflicts
+ * without inventing filesystem behavior.
+ */
+export function installPreflightDemo(
+	toolsDirectory: string,
+	kind: ManagedToolPackage,
+	release: string,
+	installations: readonly DemoInstallation[],
+	unmanagedFiles: readonly string[],
+): DemoInstallPreflight {
+	const targets = demoExecutables(kind).map((executable) =>
+		demoInstallTarget(toolsDirectory, kind, release, executable),
+	);
+	// Only verified installations can account for occupied paths.
+	const known = new Set(
+		installations
+			.filter((item) => item.status !== "available")
+			.flatMap((item) =>
+				demoExecutables(item.package).map((executable) =>
+					demoInstallTarget(
+						toolsDirectory,
+						item.package,
+						item.release,
+						executable,
+					),
+				),
+			),
+	);
+	const conflicts = targets.filter(
+		(target) => unmanagedFiles.includes(target) && !known.has(target),
+	);
+	return {
+		kind,
+		release,
+		targets,
+		conflicts,
+		token: [
+			"demo-install-preflight",
+			toolsDirectory.trim(),
+			kind,
+			release,
+			...targets,
+			...conflicts,
+		].join("|"),
+	};
+}
+
 export function activateDemoInstallation(
 	items: DemoInstallation[],
 	id: string,

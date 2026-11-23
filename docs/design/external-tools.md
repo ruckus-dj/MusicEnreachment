@@ -32,7 +32,9 @@
   активируя её; activation выполняется отдельным явным действием. Удаление
   доступно только для inactive installation без занятой операции, а backend
   повторно запрещает удаление active/occupied installation.
-- Install dialog показывает серверные target paths и conflicts. Move dialog
+- При конфликтах install dialog показывает серверные target paths и conflicts;
+  порядок показа задан в [продуктовом контракте](./decisions.md#настройка-среда-и-инструменты).
+  Move dialog
   выполняет server preflight и показывает число managed files и conflict paths;
   полный список move targets API/UI не раскрывает. В обоих flow серверный token
   ограничивает подтверждение актуальным набором preflight conflicts. Запуск
