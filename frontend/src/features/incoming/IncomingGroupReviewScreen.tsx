@@ -39,6 +39,12 @@ import {
 } from "../matchingWorkspace/matchingBoardStyles";
 import type { MatchingWorkspacePosition } from "../matchingWorkspace/types";
 import { apiMatchingSources } from "./apiMatchingSources";
+import {
+  findIncomingConfirmReceipt,
+  nextIncomingConfirmOrder,
+  saveIncomingConfirmReceipt,
+  useIncomingConfirmReceipts,
+} from "./confirmReceipts";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
 import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
@@ -46,6 +52,7 @@ import {
   incomingGroupNames,
   incomingGroupNameText,
 } from "./incomingGroupNames";
+import { incomingGroupCountQueryKey } from "./incomingGroupsQueryKeys";
 import {
   type IncomingGroupsRoute,
   incomingGroupMatchingHref,
@@ -97,6 +104,7 @@ type ConfirmIntent = {
   groupId: string;
   generation: number;
   intent: string;
+  order: number;
   body: MatchingManualConfirmBody;
 };
 type AuthorityIntent = {
@@ -221,6 +229,7 @@ export function IncomingGroupReviewScreen({
 
 function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const queryClient = useQueryClient();
+  const receipts = useIncomingConfirmReceipts();
   const { locale } = useI18n();
   const copy = incomingMessages[locale];
   const localMatchingCopy = localMatchingMessages[locale];
@@ -248,6 +257,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     },
   });
   const groups = groupsQuery.data?.groups ?? [];
+  const group = groups.find((candidate) => candidate.id === groupId);
   const groupNames = useMemo(
     () =>
       incomingGroupNames(
@@ -283,11 +293,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const [authorityNotice, setAuthorityNotice] =
     useState<IncomingFeedback | null>(null);
   const [authorityIntent, setAuthorityIntent] = useState<AuthorityIntent>();
-  const [receipt, setReceipt] = useState<{
-    groupId: string;
-    response: MatchingManualPreview;
-    omittedFileLabels: Record<string, string>;
-  }>();
   const [pendingRequest, setPendingRequest] = useState<{
     id: number;
     groupId: string;
@@ -331,7 +336,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       setSelectedReleaseId(nextReleaseId);
       setPreview(undefined);
       setConfirmIntent(undefined);
-      setReceipt(undefined);
       setNotice(null);
       setError(null);
     },
@@ -355,7 +359,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     setPreparingRelease(false);
     setPreview(undefined);
     setConfirmIntent(undefined);
-    setReceipt(undefined);
     setAuthorityIntent(undefined);
     setAuthorityNotice(null);
   }, [routeGroupId]);
@@ -389,10 +392,9 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     refetchInterval: matchingActive ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
-  const review = reviewQuery.data;
+  const review = group ? reviewQuery.data : undefined;
   evaluationRevisionRef.current = review?.evaluation_revision ?? "";
   const proposal = parsedProposal(review);
-  const group = groups.find((candidate) => candidate.id === groupId);
   const releases = review?.releases ?? [];
   const savedSelectedId = proposal.selected_release?.provider_release_id ?? "";
 
@@ -479,7 +481,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     };
     setPreview(undefined);
     setConfirmIntent(undefined);
-    setReceipt(undefined);
     setPreparedReleaseMBID("");
     window.location.hash = incomingGroupMatchingHref(
       groupId,
@@ -524,6 +525,25 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const release = releases.find(
     (candidate) => candidate.provider_release_id === selectedReleaseId,
   );
+  const receiptReleaseId = routeReleaseId || release?.provider_release_id;
+  const bareMissingGroup = !receiptReleaseId && groupsQuery.isSuccess && !group;
+  const receipt =
+    !localMode && !prepareReleaseId && (receiptReleaseId || bareMissingGroup)
+      ? findIncomingConfirmReceipt(
+          receipts,
+          "manual",
+          groupId,
+          receiptReleaseId,
+        )
+      : undefined;
+  const localReceipt = preferredLocalReleaseId
+    ? findIncomingConfirmReceipt(
+        receipts,
+        "local",
+        groupId,
+        preferredLocalReleaseId,
+      )
+    : undefined;
   const draftKey = `${groupId}:${selectedReleaseId}`;
   const savedAssignments = useMemo(
     () => savedAutomaticAssignments(review, selectedReleaseId),
@@ -542,14 +562,33 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }, [drafts, draftKey, release, savedAssignments]);
   const tagOverridesByTrack = tagOverrideDrafts[draftKey] ?? {};
   const files = groupsQuery.data?.files ?? [];
+  function invalidateMatching(originGroupId: string) {
+    return Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: getGetIncomingGroupsQueryKey(),
+        exact: true,
+      }),
+      queryClient.invalidateQueries({ queryKey: incomingGroupCountQueryKey() }),
+      queryClient.invalidateQueries({
+        queryKey: getGetIncomingGroupMatchingQueryKey(originGroupId),
+      }),
+    ]);
+  }
   const local = useLocalMatching({
     group,
     files,
     authorityRevision: review?.authority_revision,
     preferredReleaseId: preferredLocalReleaseId,
-    onConfirmed: async (result) => {
+    onConfirmed: async (result, order) => {
+      saveIncomingConfirmReceipt(queryClient, {
+        kind: "local",
+        order,
+        groupId: result.group_id,
+        releaseId: result.provider_release_id,
+        response: result,
+      });
       if (
-        scopeRef.current.groupId === groupId &&
+        scopeRef.current.groupId === result.group_id &&
         activeLocalReleaseRef.current === result.provider_release_id
       ) {
         invalidateIntent();
@@ -557,14 +596,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         setConfirmIntent(undefined);
         setAuthorityIntent(undefined);
       }
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: getGetIncomingGroupsQueryKey(),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-        }),
-      ]);
+      await invalidateMatching(result.group_id);
     },
   });
   const groupFiles = useMemo(() => {
@@ -814,7 +846,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     }));
     setPreview(undefined);
     setConfirmIntent(undefined);
-    setReceipt(undefined);
     setNotice(null);
     setError(null);
   }
@@ -831,7 +862,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     }));
     setPreview(undefined);
     setConfirmIntent(undefined);
-    setReceipt(undefined);
     setNotice(null);
     setError(null);
   }
@@ -869,6 +899,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       groupId,
       generation: scopeRef.current.generation,
       intent: intentPayload,
+      order: nextIncomingConfirmOrder(),
       body: {
         ...intent,
         preview_digest: currentPreview.preview_digest,
@@ -886,16 +917,26 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         preserved.groupId,
         preserved.body,
       );
-      if (requestScope !== scopeIdentity()) return;
       if (response.status !== 200) {
+        if (requestScope !== scopeIdentity()) return;
         if (response.status === 409) {
           setError({ key: "confirmConflict", refresh: "evaluation" });
           return;
         }
         throw responseError(response, "confirmError");
       }
-      setReceipt({
+      if (
+        response.data.group_id !== preserved.groupId ||
+        response.data.provider_release_id !== preserved.body.provider_release_id
+      ) {
+        if (requestScope === scopeIdentity()) setError({ key: "confirmError" });
+        return;
+      }
+      saveIncomingConfirmReceipt(queryClient, {
+        kind: "manual",
+        order: preserved.order,
         groupId: preserved.groupId,
+        releaseId: preserved.body.provider_release_id,
         response: response.data,
         omittedFileLabels: Object.fromEntries(
           (response.data.omitted_member_ids ?? []).map((memberId) => [
@@ -904,17 +945,12 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
           ]),
         ),
       });
-      setPreview(undefined);
-      setConfirmIntent(undefined);
-      setNotice({ key: "confirmNotice" });
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: getGetIncomingGroupsQueryKey(),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-        }),
-      ]);
+      if (requestScope === scopeIdentity()) {
+        setPreview(undefined);
+        setConfirmIntent(undefined);
+        setNotice({ key: "confirmNotice" });
+      }
+      await invalidateMatching(preserved.groupId);
     } catch (reason) {
       if (requestScope === scopeIdentity())
         setError(errorText(reason, "confirmError"));
@@ -1104,7 +1140,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                 )}
               </p>
             ) : null}
-            {groupsQuery.data && !group ? (
+            {groupsQuery.data && !group && !receipt && !localReceipt ? (
               <p role="alert" className="rounded border border-stone-300 p-4">
                 {copy.groupNotFound}
               </p>
@@ -1138,10 +1174,10 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               />
             ) : null}
 
-            {reviewQuery.isLoading ? (
+            {group && reviewQuery.isLoading ? (
               <p role="status">{copy.loadingEvaluation}</p>
             ) : null}
-            {reviewQuery.isError ? (
+            {group && reviewQuery.isError ? (
               <div role="alert" className="space-y-2">
                 <p>
                   {incomingFeedbackText(
@@ -1771,7 +1807,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               </section>
             ) : null}
 
-            {localMode && local.previewResult ? (
+            {group && localMode && local.previewResult ? (
               <MatchingPreview
                 heading={copy.previewHeading}
                 releaseTitle={local.previewResult.release_title}
@@ -1886,15 +1922,15 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                 ) : null}
               </MatchingPreview>
             ) : null}
-            {localMode && local.receipt ? (
+            {localMode && localReceipt && !local.previewResult ? (
               <p
                 role="status"
                 className="rounded border border-green-700 bg-white p-4"
               >
-                {localMatchingCopy.receipt(local.receipt.release_title)}
+                {localMatchingCopy.receipt(localReceipt.response.release_title)}
               </p>
             ) : null}
-            {!localMode && receipt?.groupId === groupId ? (
+            {!localMode && !currentPreview && receipt?.groupId === groupId ? (
               <section
                 className="rounded border border-green-700 bg-white p-4"
                 aria-labelledby="receipt-title"

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -21,6 +22,10 @@ import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
+import {
+  nextIncomingConfirmOrder,
+  saveIncomingConfirmReceipt,
+} from "./confirmReceipts";
 import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
 import {
   type IncomingGroupsRoute,
@@ -727,7 +732,7 @@ it("uses saved automatic assignments as a baseline and keeps explicit removals",
 
 describe("incoming manual group review", () => {
   it("confirms partial receipt; network retry preserves request id and payload", async () => {
-    setup(
+    const queryClient = setup(
       review({
         authority_mode: "manual",
         current_linked_manual_media_source_ids: [
@@ -741,6 +746,11 @@ describe("incoming manual group review", () => {
     );
     await openMatching();
     expect(await screen.findAllByText("folder/01.flac")).not.toHaveLength(0);
+    expect(
+      await screen.findByRole("button", {
+        name: "Вернуть к автоматическому сопоставлению",
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("550e8400-e29b-41d4-a716-446655440000"),
     ).not.toBeInTheDocument();
@@ -766,6 +776,7 @@ describe("incoming manual group review", () => {
     });
 
     const requestBodies: MatchingManualConfirmBody[] = [];
+    const olderOrder = nextIncomingConfirmOrder();
     let failOnce = true;
     server.use(
       http.post(
@@ -786,7 +797,23 @@ describe("incoming manual group review", () => {
     await screen.findByRole("alert");
     server.use(
       http.get("/api/incoming-groups", () => {
-        return HttpResponse.json({ ...incomingGroups(), files: [] });
+        const original = incomingGroups();
+        const originalGroup = original.groups?.[0];
+        if (!originalGroup || !original.files)
+          throw new Error("Missing incoming fixture");
+        return HttpResponse.json({
+          ...original,
+          groups: [
+            {
+              ...originalGroup,
+              id: "remaining-group",
+              members: [ids.memberTwo],
+            },
+          ],
+          files: original.files.filter(
+            (file) => file.variant_id === ids.memberTwo,
+          ),
+        });
       }),
     );
     fireEvent.click(
@@ -817,6 +844,60 @@ describe("incoming manual group review", () => {
         }),
       ).getByText("folder/02.flac остаётся во входящих"),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Этой входящей группы больше нет в списке."),
+    ).not.toBeInTheDocument();
+
+    // An older successful response that arrives after this request cannot
+    // replace the saved result for the same origin.
+    act(() => {
+      saveIncomingConfirmReceipt(queryClient, {
+        kind: "manual",
+        order: olderOrder,
+        groupId: ids.group,
+        releaseId: ids.releaseOne,
+        response: { ...preview(1), omitted_member_ids: [] },
+        omittedFileLabels: {},
+      });
+    });
+    cleanup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <IncomingRouteHarness />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByRole("heading", {
+        name: "Подтверждено · локальное издание",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("folder/02.flac остаётся во входящих"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Явно подтвердить" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Вернуть к автоматическому сопоставлению",
+      }),
+    ).not.toBeInTheDocument();
+    act(() => {
+      window.location.hash = incomingGroupMatchingHref(
+        ids.group,
+        ids.releaseTwo,
+      );
+    });
+    expect(
+      await screen.findByText("Этой входящей группы больше нет в списке."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Подтверждено · локальное издание",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not compare a free file with an unrelated position or change the draft", async () => {

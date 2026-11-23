@@ -21,9 +21,7 @@ var ErrIncomingGroupingInvalid = errors.New("incoming grouping correction is inv
 type incomingGroupingStore interface {
 	State(context.Context) (persistence.IncomingGroupingState, error)
 	ReadVisibleCount(context.Context) (int, bool, error)
-	ReadCountInputs(context.Context) ([]persistence.IncomingGroupingCapture, []persistence.IncomingGroupingGroup, error)
-	CurrentCaptures(context.Context) ([]persistence.IncomingGroupingCapture, error)
-	List(context.Context) ([]persistence.IncomingGroupingGroup, error)
+	ReadPartition(context.Context) (persistence.IncomingGroupingPartition, error)
 	Refresh(context.Context, persistence.IncomingGroupingCompute) error
 	Confirm(context.Context, int64, persistence.IncomingGroupingCompute) error
 }
@@ -67,11 +65,11 @@ func (groups *IncomingGroups) Count(ctx context.Context) (int, error) {
 	if err != nil || current {
 		return count, err
 	}
-	captures, persisted, err := groups.store.ReadCountInputs(ctx)
+	partition, err := groups.store.ReadPartition(ctx)
 	if err != nil {
 		return 0, err
 	}
-	snapshot, err := buildIncomingSnapshot(0, captures, persisted)
+	snapshot, err := buildIncomingSnapshot(partition.State.Revision, partition.Captures, partition.Groups)
 	if err != nil {
 		return 0, err
 	}
@@ -82,35 +80,23 @@ func (groups *IncomingGroups) snapshot(ctx context.Context, refresh bool) (Incom
 	if groups == nil || groups.store == nil {
 		return IncomingGroupingSnapshot{}, fmt.Errorf("incoming grouping store is unavailable")
 	}
-	state, err := groups.store.State(ctx)
+	partition, err := groups.store.ReadPartition(ctx)
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
-	if state.NeedsRefresh {
+	if partition.State.NeedsRefresh {
 		if !refresh {
 			return IncomingGroupingSnapshot{}, ErrMatchingEvaluationDeferred
 		}
 		if err := groups.Refresh(ctx); err != nil {
 			return IncomingGroupingSnapshot{}, err
 		}
-		state, err = groups.store.State(ctx)
+		partition, err = groups.store.ReadPartition(ctx)
 		if err != nil {
 			return IncomingGroupingSnapshot{}, err
 		}
 	}
-	return groups.readSnapshot(ctx, state.Revision)
-}
-
-func (groups *IncomingGroups) readSnapshot(ctx context.Context, epoch int64) (IncomingGroupingSnapshot, error) {
-	captures, err := groups.store.CurrentCaptures(ctx)
-	if err != nil {
-		return IncomingGroupingSnapshot{}, err
-	}
-	persisted, err := groups.store.List(ctx)
-	if err != nil {
-		return IncomingGroupingSnapshot{}, err
-	}
-	return buildIncomingSnapshot(epoch, captures, persisted)
+	return buildIncomingSnapshot(partition.State.Revision, partition.Captures, partition.Groups)
 }
 
 func buildIncomingSnapshot(epoch int64, captures []persistence.IncomingGroupingCapture, persisted []persistence.IncomingGroupingGroup) (IncomingGroupingSnapshot, error) {

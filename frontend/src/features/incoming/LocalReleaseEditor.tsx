@@ -23,6 +23,7 @@ import {
   incomingSourceFileName,
   readIncomingSourceTrackOrder,
 } from "./apiMatchingSources";
+import { nextIncomingConfirmOrder } from "./confirmReceipts";
 import {
   type LocalMatchingMessages,
   type LocalMatchingNotice,
@@ -45,7 +46,7 @@ type PreviewState = {
   body: PreviewBody;
   response: MatchingLocalPreview;
 };
-type PendingConfirmation = { scope: string; body: ConfirmBody };
+type PendingConfirmation = { scope: string; body: ConfirmBody; order: number };
 type EditorState = {
   selectedReleaseID: string;
   release?: LocalProviderItem;
@@ -77,7 +78,10 @@ export interface LocalMatchingProps {
   files: IncomingFileResponse[];
   authorityRevision: number | undefined;
   preferredReleaseId?: string;
-  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
+  onConfirmed?: (
+    receipt: MatchingLocalPreview,
+    order: number,
+  ) => void | Promise<void>;
 }
 
 export interface LocalMatchingController {
@@ -553,6 +557,7 @@ export function useLocalMatching({
       current.preview.response.provider_release_id === targetReleaseID
         ? {
             scope: currentScope,
+            order: nextIncomingConfirmOrder(),
             body: {
               ...current.preview.body,
               preview_digest: current.preview.response.preview_digest,
@@ -591,6 +596,13 @@ export function useLocalMatching({
         }));
         return;
       }
+      if (
+        response.data.group_id !== targetGroupID ||
+        response.data.provider_release_id !==
+          pendingConfirmation.body.provider_release_id
+      ) {
+        throw new Error(copy.confirmError);
+      }
       updateState(targetGroupID, (latest) => ({
         ...latest,
         busy: undefined,
@@ -600,7 +612,7 @@ export function useLocalMatching({
         notice: { key: "confirmed" },
       }));
       try {
-        await onConfirmed?.(response.data);
+        await onConfirmed?.(response.data, pendingConfirmation.order);
       } catch (reason) {
         updateState(targetGroupID, (latest) => ({
           ...latest,

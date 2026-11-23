@@ -145,21 +145,30 @@ func (repository *IncomingGroupingRepository) ReadVisibleCount(ctx context.Conte
 	return count, current, nil
 }
 
-// ReadCountInputs reads the invalidated projection and its current evidence
-// together, without invoking the refresh writer.
-func (repository *IncomingGroupingRepository) ReadCountInputs(ctx context.Context) ([]IncomingGroupingCapture, []IncomingGroupingGroup, error) {
-	var captures []IncomingGroupingCapture
-	var groups []IncomingGroupingGroup
+type IncomingGroupingPartition struct {
+	State    IncomingGroupingState
+	Captures []IncomingGroupingCapture
+	Groups   []IncomingGroupingGroup
+}
+
+// ReadPartition binds the grouping epoch to the membership and evidence read
+// from the same database snapshot. It never invokes the refresh writer.
+func (repository *IncomingGroupingRepository) ReadPartition(ctx context.Context) (IncomingGroupingPartition, error) {
+	var partition IncomingGroupingPartition
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		if err := tx.NewRaw(`SELECT revision, needs_refresh FROM incoming_grouping_state WHERE singleton=true`).
+			Scan(ctx, &partition.State.Revision, &partition.State.NeedsRefresh); err != nil {
+			return fmt.Errorf("read incoming grouping partition state: %w", err)
+		}
 		var err error
-		captures, err = loadIncomingGroupingCaptures(ctx, tx)
+		partition.Captures, err = loadIncomingGroupingCaptures(ctx, tx)
 		if err != nil {
 			return err
 		}
-		groups, err = loadIncomingGroupingGroups(ctx, tx)
+		partition.Groups, err = loadIncomingGroupingGroups(ctx, tx)
 		return err
 	})
-	return captures, groups, err
+	return partition, err
 }
 
 func (repository *IncomingGroupingRepository) List(ctx context.Context) ([]IncomingGroupingGroup, error) {

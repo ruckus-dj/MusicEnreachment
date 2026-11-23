@@ -39,16 +39,10 @@ func (store *incomingGroupsTestStore) ReadVisibleCount(context.Context) (int, bo
 	return len(visible), true, nil
 }
 
-func (store *incomingGroupsTestStore) ReadCountInputs(context.Context) ([]persistence.IncomingGroupingCapture, []persistence.IncomingGroupingGroup, error) {
-	return store.captures, store.groups, nil
-}
-
-func (store *incomingGroupsTestStore) CurrentCaptures(context.Context) ([]persistence.IncomingGroupingCapture, error) {
-	return store.captures, nil
-}
-
-func (store *incomingGroupsTestStore) List(context.Context) ([]persistence.IncomingGroupingGroup, error) {
-	return store.groups, nil
+func (store *incomingGroupsTestStore) ReadPartition(context.Context) (persistence.IncomingGroupingPartition, error) {
+	return persistence.IncomingGroupingPartition{
+		State: store.state, Captures: store.captures, Groups: store.groups,
+	}, nil
 }
 
 func (store *incomingGroupsTestStore) Refresh(ctx context.Context, compute persistence.IncomingGroupingCompute) error {
