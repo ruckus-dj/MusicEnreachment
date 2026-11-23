@@ -868,6 +868,77 @@ func (r *SettingsRepository) SetMusicBrainzVerifiedIfCurrent(ctx context.Context
 	return matched, err
 }
 
+// SetSetupMusicBrainzConfig persists the provider target while Setup is open and
+// returns the identity that was actually stored. A save for the already-saved
+// target preserves the existing identity and verification; a target change keeps
+// the supplied identity and clears verification. Setup completion is locked
+// before the MusicBrainz configuration, and a write after completion is refused.
+func (r *SettingsRepository) SetSetupMusicBrainzConfig(ctx context.Context, mode, baseURL, identity string) (string, error) {
+	if identity == "" {
+		return "", fmt.Errorf("setup MusicBrainz configuration identity is required")
+	}
+	persisted := identity
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("lock output admission for setup MusicBrainz configuration: %w", err)
+		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("lock setup completion: %w", err)
+		}
+		var completedAt string
+		completionErr := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", appsettings.SetupCompletedAtKey).Scan(ctx, &completedAt)
+		if completionErr != nil && completionErr != sql.ErrNoRows {
+			return fmt.Errorf("read setup completion: %w", completionErr)
+		}
+		if completionErr == nil {
+			return fmt.Errorf("%w: setup is already complete", appsettings.ErrSettingsConflict)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("lock source mutations for setup MusicBrainz configuration: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+		}
+		values := map[string]string{
+			appsettings.MusicBrainzModeKey:           mode,
+			appsettings.MusicBrainzBaseURLKey:        baseURL,
+			appsettings.MusicBrainzConfigIdentityKey: identity,
+			appsettings.MusicBrainzVerifiedAtKey:     "",
+		}
+		changed, err := preserveOrRotateMusicBrainzIdentity(ctx, tx, values)
+		if err != nil {
+			return fmt.Errorf("compare MusicBrainz provider target: %w", err)
+		}
+		names := make([]string, 0, len(values))
+		for name := range values {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			if _, err := tx.NewInsert().Model(&AppSetting{Name: name, Value: values[name]}).
+				On("CONFLICT (setting_name) DO UPDATE").
+				Set("setting_value = EXCLUDED.setting_value").
+				Set("updated_at = now()").Exec(ctx); err != nil {
+				return fmt.Errorf("set setting %q: %w", name, err)
+			}
+		}
+		if err := syncMusicBrainzProviderSource(ctx, tx); err != nil {
+			return fmt.Errorf("synchronize MusicBrainz provider source: %w", err)
+		}
+		if changed {
+			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx, false); err != nil {
+				return err
+			}
+		}
+		persisted = values[appsettings.MusicBrainzConfigIdentityKey]
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return persisted, nil
+}
+
 // SetIfAbsent atomically writes a setting once and returns its persisted value.
 func (r *SettingsRepository) SetIfAbsent(ctx context.Context, name, value string) (string, error) {
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -991,7 +1062,8 @@ func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expecte
 		if completionErr != nil && completionErr != sql.ErrNoRows {
 			return fmt.Errorf("read setup completion: %w", completionErr)
 		}
-		if completionErr == sql.ErrNoRows {
+		firstCompletion := completionErr == sql.ErrNoRows
+		if firstCompletion {
 			for _, kind := range []string{"ffmpeg", "fpcalc"} {
 				if err := refuseAmbiguousReadyInstallationsTx(ctx, tx, kind); err != nil {
 					return fmt.Errorf("complete setup: %w", err)
@@ -1048,6 +1120,38 @@ func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expecte
 		for name, checked := range expected {
 			if saved, exists := values[name]; !exists || saved != checked {
 				return fmt.Errorf("setup configuration changed during final check")
+			}
+		}
+		if firstCompletion {
+			// Completion is admitted only for the verified generation that was
+			// checked: the identity must still be the expected one, its
+			// verification must be present, and the served catalog must have
+			// been published for that exact identity.
+			identity := values[appsettings.MusicBrainzConfigIdentityKey]
+			if identity == "" || identity != expected[appsettings.MusicBrainzConfigIdentityKey] {
+				return fmt.Errorf("%w: setup MusicBrainz configuration changed during completion", appsettings.ErrSettingsConflict)
+			}
+			if _, err := uuid.Parse(identity); err != nil {
+				return fmt.Errorf("%w: setup MusicBrainz configuration identity is invalid", appsettings.ErrSettingsConflict)
+			}
+			_, verified, err := readSetupMusicBrainzConfiguration(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if !verified {
+				return fmt.Errorf("%w: setup MusicBrainz verification is missing for this configuration", appsettings.ErrSettingsConflict)
+			}
+			var published *string
+			var publishedAt *time.Time
+			if err := tx.NewRaw(`SELECT published_configuration_identity, updated_at FROM genre_catalog WHERE singleton=true FOR UPDATE`).Scan(ctx, &published, &publishedAt); err != nil {
+				return fmt.Errorf("read genre catalog setup publication: %w", err)
+			}
+			if published == nil || *published != identity || publishedAt == nil {
+				return fmt.Errorf("complete setup: %w", appsettings.ErrSetupGenreCatalogNotReady)
+			}
+			deadline := publishedAt.Add(7 * 24 * time.Hour)
+			if _, err := tx.NewRaw(`UPDATE genre_catalog SET refresh_due_at=? WHERE singleton=true AND refresh_due_at IS NULL`, deadline).Exec(ctx); err != nil {
+				return fmt.Errorf("seed genre catalog refresh deadline: %w", err)
 			}
 		}
 		if _, err := tx.NewInsert().Model(&AppSetting{Name: "musicbrainz_verified_at", Value: value}).

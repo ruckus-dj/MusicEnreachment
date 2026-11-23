@@ -199,7 +199,8 @@ func Run(ctx context.Context, config Config) error {
 	riverSlot := &riverClientSlot{}
 	genreCatalogRepository := persistence.NewGenreCatalogRepository(db, setupManagerRepository)
 	genreCatalog := service.NewGenreCatalogService(genreCatalogRepository, registry, providerFactory).WithRefreshQueue(genreCatalogRepository, jobs.NewGenreCatalogQueueEnqueuer(riverSlot)).WithSetupCompletion(registry)
-	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).WithOutputReset(outputReset).WithGenreCatalogRefresh(genreCatalog)
+	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).
+		WithOutputReset(outputReset).WithGenreCatalog(genreCatalog)
 	if err := outputReset.RecoverOutputReset(ctx); err != nil {
 		return fmt.Errorf("recover output reset: %w", err)
 	}

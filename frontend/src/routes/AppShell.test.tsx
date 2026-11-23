@@ -25,6 +25,8 @@ import { server } from "../test/server";
 
 const state: SetupStateBody = {
   completed: false,
+  musicbrainz_configuration_identity: "",
+  genre_catalog: { ready: false, status: "idle", count: 0 },
   platform: {
     diagnostic: false,
     supported: true,

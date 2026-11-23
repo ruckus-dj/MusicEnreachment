@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,10 +73,17 @@ func TestCompleteHTTPRequiresCurrentMusicBrainzResponse(t *testing.T) {
 				}
 			}))
 			defer upstream.Close()
-			setup, _, store := mockCompletionFixture(t, upstream.URL+"/ws/2", time.Now)
+			setup, registry, store := mockCompletionFixture(t, upstream.URL+"/ws/2", time.Now)
+			config, err := registry.GetMusicBrainzConfig(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
 			handler := api.HandlerWithSetup(setup)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/setup/complete", nil))
+			body := `{"configuration_identity":"` + config.Identity + `"}`
+			request := httptest.NewRequest(http.MethodPost, "/setup/complete", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(recorder, request)
 			if recorder.Code != response.wantStatus {
 				t.Fatalf("completion status = %d, want %d: %s", recorder.Code, response.wantStatus, recorder.Body)
 			}
@@ -104,12 +112,16 @@ func TestCompletePreservesOriginalTimestamp(t *testing.T) {
 	defer upstream.Close()
 	first := time.Date(2026, 9, 28, 12, 0, 0, 123, time.UTC)
 	now := first
-	setup, _, store := mockCompletionFixture(t, upstream.URL, func() time.Time { return now })
-	if err := setup.Complete(t.Context()); err != nil {
+	setup, registry, store := mockCompletionFixture(t, upstream.URL, func() time.Time { return now })
+	config, err := registry.GetMusicBrainzConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Complete(t.Context(), config.Identity); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if err := setup.Complete(t.Context()); err != nil {
+	if err := setup.Complete(t.Context(), config.Identity); err != nil {
 		t.Fatal(err)
 	}
 	value, exists, err := store.Get(t.Context(), settings.SetupCompletedAtKey)
@@ -128,6 +140,10 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 	}))
 	defer server.Close()
 	setup, registry, _ := mockCompletionFixture(t, server.URL+"/ws/2", time.Now)
+	config, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	output, _, err := registry.GetOutputDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +188,7 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 		t.Fatalf("semantics probe entries are not present while paused: %v, %v", entries, err)
 	}
 	completeDone := make(chan error, 1)
-	go func() { completeDone <- setup.Complete(ctx) }()
+	go func() { completeDone <- setup.Complete(ctx, config.Identity) }()
 	select {
 	case <-registered:
 	case <-ctx.Done():

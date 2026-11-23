@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { GenreLibrary } from "../../components/GenreLibrary";
 import { Button, Dialog, Heading, Modal } from "../../components/ui";
 import {
 	browseDemoDirectory,
@@ -22,6 +21,7 @@ import {
 } from "../settings/ToolLifecycleDemo";
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
+import { SetupGenreCatalogView } from "./SetupGenreCatalogView";
 import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
 import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummaryView } from "./SetupSummaryView";
@@ -33,11 +33,16 @@ import {
 	setupToolReleases,
 	setupToolStateAfterAttempt,
 } from "./setupToolsLifecycle";
+import {
+	setupGenreCatalogEndpoint,
+	useSetupGenreCatalogDemoProvider,
+} from "./useSetupGenreCatalogDemoProvider";
 
 type NoticeKey =
 	| "missingPath"
 	| "missingTools"
 	| "missingPublication"
+	| "missingGenres"
 	| "staleMove"
 	| "invalidProvider";
 
@@ -100,6 +105,15 @@ export function SetupScreen({
 					delay: settings.musicBrainzDelay,
 				}),
 	);
+	const genreCatalogEndpoint = setupGenreCatalogEndpoint(
+		musicBrainzMode,
+		musicBrainzURL,
+	);
+	const genreCatalog = useSetupGenreCatalogDemoProvider({
+		endpoint: genreCatalogEndpoint,
+	});
+	const genreCatalogReady = genreCatalog.state === "ready";
+
 	const nextTool = (["ffmpeg", "fpcalc"] as const).find(
 		(kind) =>
 			!toolSelection[kind] ||
@@ -191,9 +205,14 @@ export function SetupScreen({
 				setNotice("missingPublication");
 				return;
 			}
+			if (!genreCatalogReady) {
+				setNotice("missingGenres");
+				return;
+			}
 			// Commit the validated output and provider state together; edits invalidate the check.
 			update({
 				outputChecked: true,
+				genresLoaded: true,
 				musicBrainzVerified: true,
 				musicBrainzVerifiedFingerprint: musicBrainzConfigurationFingerprint({
 					mode: musicBrainzMode,
@@ -206,6 +225,10 @@ export function SetupScreen({
 			setStep(3);
 			return;
 		} else {
+			if (!genreCatalogReady) {
+				setNotice("missingGenres");
+				return;
+			}
 			if (
 				!settings.pathChecked ||
 				!toolsReady ||
@@ -228,8 +251,13 @@ export function SetupScreen({
 			: step === 1
 				? toolsReady
 				: step === 2
-					? Boolean(outputPath && musicBrainzMode && format)
-					: settings.pathChecked && toolsReady && publicationReady;
+					? Boolean(
+							outputPath && musicBrainzMode && format && genreCatalogReady,
+						)
+					: settings.pathChecked &&
+						toolsReady &&
+						publicationReady &&
+						genreCatalogReady;
 	const noticeText = notice ? copy[notice] : "";
 
 	return (
@@ -365,14 +393,13 @@ export function SetupScreen({
 								}
 							/>
 						</section>
-						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
-							<h3 className="m-0 font-semibold">{copy.genreOptional}</h3>
-							<GenreLibrary
-								loaded={settings.genresLoaded}
-								onLoadedChange={(genresLoaded) => update({ genresLoaded })}
-								buttonLabel={copy.refreshGenres}
-							/>
-						</section>
+						<SetupGenreCatalogView
+							locale={locale}
+							state={genreCatalog.state}
+							count={genreCatalog.count}
+							disabled={!providerReady || platformMismatch}
+							onLoad={genreCatalog.load}
+						/>
 					</>
 				)}
 				{step === 3 && (
@@ -384,6 +411,7 @@ export function SetupScreen({
 								settings.pathChecked &&
 								toolsReady &&
 								publicationReady &&
+								genreCatalogReady &&
 								isAbsoluteDemoServerPath(outputPath.trim()),
 							problems: [
 								...(platformMismatch ? [copy.conflicts] : []),
@@ -393,6 +421,7 @@ export function SetupScreen({
 								!isAbsoluteDemoServerPath(outputPath.trim())
 									? [copy.missingPublication]
 									: []),
+								...(!genreCatalogReady ? [copy.missingGenres] : []),
 							],
 						}}
 						values={{
@@ -412,7 +441,7 @@ export function SetupScreen({
 									musicBrainzMode === "public"
 										? copy.publicSource
 										: `${copy.privateSource} · ${musicBrainzURL}`,
-								genres: settings.genresLoaded
+								genres: genreCatalogReady
 									? copy.genreLoaded
 									: copy.genreUnavailable,
 							},

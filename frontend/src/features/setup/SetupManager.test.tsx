@@ -8,7 +8,10 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SetupStateBody } from "../../api/generated/client.schemas";
+import type {
+  OperationResponse,
+  SetupStateBody,
+} from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
@@ -38,6 +41,7 @@ const settings: SetupStateBody["settings"] = {
 function state(
   overrides: Partial<SetupStateBody["settings"]> = {},
   healthy = false,
+  extra: Partial<SetupStateBody> = {},
 ): SetupStateBody {
   return {
     completed: false,
@@ -52,6 +56,24 @@ function state(
       healthy,
       problems: healthy ? [] : ["setup incomplete"],
     },
+    musicbrainz_configuration_identity: "",
+    genre_catalog: { ready: false, status: "idle", count: 0 },
+    ...extra,
+  };
+}
+function catalogOperation(
+  id: string,
+  operationState: string,
+): OperationResponse {
+  const at = "2026-11-23T12:00:00Z";
+  return {
+    id,
+    kind: "genre_catalog_refresh",
+    state: operationState,
+    stage: "fetch",
+    bytes_completed: 0,
+    created_at: at,
+    updated_at: at,
   };
 }
 const paths = {
@@ -211,20 +233,44 @@ describe("SetupManager", () => {
     expect(selector).toBe("install");
   });
 
-  it("requires an explicit format and submits the current publication settings", async () => {
+  it("requires a catalog proof for the verified provider before continuing", async () => {
     let current = state(installed);
     const lrclib = vi.fn();
-    let providerAvailable = false;
     let acceptLrclib = () => {};
     const held = new Promise<void>((resolve) => {
       acceptLrclib = resolve;
     });
     const saved = vi.fn((body: Partial<SetupStateBody["settings"]>) => {
-      current = state({ ...current.settings, ...body });
+      current = {
+        ...current,
+        settings: { ...current.settings, ...body },
+      };
       return new HttpResponse(null, { status: 204 });
     });
     const checkedPaths = vi.fn();
-    const checkedProvider = vi.fn();
+    const savedProvider = vi.fn(async ({ request }: { request: Request }) => {
+      await request.json();
+      current = {
+        ...current,
+        musicbrainz_configuration_identity: "identity-1",
+      };
+      return HttpResponse.json({ configuration_identity: "identity-1" });
+    });
+    const checkedProvider = vi.fn(async ({ request }: { request: Request }) => {
+      await request.json();
+      current = {
+        ...current,
+        settings: {
+          ...current.settings,
+          musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+        },
+      };
+      return HttpResponse.json({ success: true });
+    });
+    const catalogBodies = vi.fn();
+    let catalogAttempt = 0;
+    const failedOperation = catalogOperation("catalog-op-1", "failed");
+    const readyOperation = catalogOperation("catalog-op-2", "succeeded");
     server.use(
       http.get("/api/setup", () => HttpResponse.json(current)),
       http.put("/api/setup/runtime", async ({ request }) =>
@@ -234,23 +280,30 @@ describe("SetupManager", () => {
         checkedPaths(await request.json());
         return HttpResponse.json(paths);
       }),
-      http.put(
-        "/api/setup/musicbrainz",
-        () => new HttpResponse(null, { status: 204 }),
-      ),
-      http.post("/api/setup/check-musicbrainz", () => {
-        checkedProvider();
-        if (!providerAvailable)
-          return HttpResponse.json({
-            success: false,
-            error: "service unavailable",
-          });
-        current = state({
-          ...current.settings,
-          musicbrainz_verified_at: "2026-11-20T12:00:00Z",
-        });
-        return HttpResponse.json({ success: true });
+      http.put("/api/setup/musicbrainz", savedProvider),
+      http.post("/api/setup/musicbrainz/check", checkedProvider),
+      http.post("/api/setup/genre-catalog/refresh", async ({ request }) => {
+        catalogBodies(await request.json());
+        catalogAttempt += 1;
+        if (catalogAttempt === 1) {
+          current = {
+            ...current,
+            genre_catalog: { ready: false, status: "failed", count: 0 },
+          };
+          return HttpResponse.json(failedOperation, { status: 202 });
+        }
+        current = {
+          ...current,
+          genre_catalog: { ready: true, status: "ready", count: 120 },
+        };
+        return HttpResponse.json(readyOperation, { status: 202 });
       }),
+      http.get("/api/operations/catalog-op-1", () =>
+        HttpResponse.json(failedOperation),
+      ),
+      http.get("/api/operations/catalog-op-2", () =>
+        HttpResponse.json(readyOperation),
+      ),
       http.put("/api/setup/lrclib", async ({ request }) => {
         lrclib(await request.json());
         await held;
@@ -258,21 +311,31 @@ describe("SetupManager", () => {
       }),
     );
     renderSetup(current);
-    await click("Продолжить");
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("Выберите формат"),
-    );
-    expect(saved).not.toHaveBeenCalled();
-    expect(checkedPaths).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "Исходный формат" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "LRCLIB включён" }));
-    await click("Продолжить");
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "service unavailable",
+    expect(screen.getByRole("button", { name: "Продолжить" })).toBeDisabled();
+    await click("Загрузить каталог");
+    await waitFor(() => expect(checkedProvider).toHaveBeenCalledTimes(1));
+    expect(savedProvider).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(catalogBodies).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Повторить" })).toBeVisible(),
     );
-    expect(heading("Публикация")).toBeVisible();
-    expect(lrclib).not.toHaveBeenCalled();
-    providerAvailable = true;
+    await click("Повторить");
+    await waitFor(() => expect(catalogBodies).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Продолжить" }),
+      ).not.toBeDisabled(),
+    );
+    expect(savedProvider).toHaveBeenCalledTimes(1);
+    expect(checkedProvider).toHaveBeenCalledTimes(1);
+    expect(catalogBodies).toHaveBeenNthCalledWith(1, {
+      configuration_identity: "identity-1",
+    });
+    expect(catalogBodies).toHaveBeenNthCalledWith(2, {
+      configuration_identity: "identity-1",
+    });
     await click("Продолжить");
     try {
       await waitFor(() =>
@@ -284,12 +347,82 @@ describe("SetupManager", () => {
         publication_format: "source",
         publication_remove_sources: false,
       });
-      expect(checkedProvider).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("button", { name: "Назад" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Продолжить" })).toBeDisabled();
     } finally {
       acceptLrclib();
     }
     await waitFor(() => expect(heading("Итог")).toBeVisible());
+  });
+
+  it("completes setup with the identity rendered by the summary", async () => {
+    const ready = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    localStorage.setItem("melotrove.setup.step", "summary");
+    const completed = vi.fn();
+    const onCompleted = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(ready)),
+      http.post("/api/setup/complete", async ({ request }) => {
+        completed(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderSetup(ready, onCompleted);
+    await click("Завершить настройку");
+    await waitFor(() =>
+      expect(completed).toHaveBeenCalledWith({
+        configuration_identity: "identity-1",
+      }),
+    );
+    await waitFor(() => expect(onCompleted).toHaveBeenCalledTimes(1));
+  });
+
+  it("returns a stale restored summary to the publication step", async () => {
+    const ready = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    let current = ready;
+    localStorage.setItem("melotrove.setup.step", "summary");
+    const completed = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.post("/api/setup/complete", async ({ request }) => {
+        completed(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderSetup(ready);
+    current = {
+      ...current,
+      musicbrainz_configuration_identity: "identity-2",
+    };
+    await click("Завершить настройку");
+    await waitFor(() => expect(heading("Публикация")).toBeVisible());
+    expect(completed).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "больше не соответствует",
+    );
   });
 });

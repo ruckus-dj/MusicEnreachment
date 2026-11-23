@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -35,6 +34,7 @@ type SetupState struct {
 	Platform            settings.PlatformState
 	Runtime             settings.RuntimeSettings
 	SHA256Enabled       bool
+	GenreCatalog        GenreCatalogSetupState
 }
 
 func (s *SetupService) SetAcoustIDApplicationKey(ctx context.Context, key string) error {
@@ -93,18 +93,23 @@ type DirectoryListing struct {
 }
 
 type SetupService struct {
-	store               settings.Store
-	registry            *settings.Registry
-	platform            settings.PlatformState
-	musicbrainzClient   musicbrainz.Checker
-	installations       InstallationLookup
-	outputReset         *OutputReset
-	githubTokenChecker  GitHubTokenChecker
-	genreCatalogRefresh interface{ DispatchDueRefresh(context.Context) error }
+	store              settings.Store
+	registry           *settings.Registry
+	platform           settings.PlatformState
+	musicbrainzClient  musicbrainz.Checker
+	installations      InstallationLookup
+	outputReset        *OutputReset
+	githubTokenChecker GitHubTokenChecker
+	genreCatalog       setupGenreCatalog
 }
 
-func (s *SetupService) WithGenreCatalogRefresh(refresh interface{ DispatchDueRefresh(context.Context) error }) *SetupService {
-	s.genreCatalogRefresh = refresh
+type setupGenreCatalog interface {
+	SetupState(context.Context, string, bool) (GenreCatalogSetupState, error)
+	StartSetupRefresh(context.Context, string) (OperationSnapshot, error)
+}
+
+func (s *SetupService) WithGenreCatalog(catalog setupGenreCatalog) *SetupService {
+	s.genreCatalog = catalog
 	return s
 }
 
@@ -405,7 +410,17 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 			}
 		}
 	}
-	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings, SHA256Enabled: sha256Enabled}, nil
+	catalog := GenreCatalogSetupState{Status: "idle"}
+	if !completed && s.genreCatalog != nil {
+		catalog, err = s.genreCatalog.SetupState(ctx, runtimeSettings.MusicBrainzConfigIdentity, runtimeSettings.MusicBrainzVerifiedAt != nil)
+		if err != nil {
+			return SetupState{}, fmt.Errorf("read setup genre catalog readiness: %w", err)
+		}
+	}
+	return SetupState{
+		Completed: completed, ConfigurationHealth: health, Platform: s.platform,
+		Runtime: runtimeSettings, SHA256Enabled: sha256Enabled, GenreCatalog: catalog,
+	}, nil
 }
 
 // RuntimeUpdateRequest is a presence-aware request to update runtime settings.
@@ -609,7 +624,21 @@ func (s *SetupService) CheckMusicBrainz(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load MusicBrainz config: %w", err)
 	}
+	return s.checkMusicBrainz(ctx, config)
+}
 
+func (s *SetupService) CheckSetupMusicBrainz(ctx context.Context, identity string) error {
+	config, err := s.registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("read setup MusicBrainz configuration: %w", err)
+	}
+	if identity == "" || config.Identity != identity {
+		return ErrSettingsConflict
+	}
+	return s.checkMusicBrainz(ctx, config)
+}
+
+func (s *SetupService) checkMusicBrainz(ctx context.Context, config settings.MusicBrainzConfig) error {
 	result := s.musicbrainzClient.CheckConnectivity(ctx, config.Mode, config.BaseURL)
 	if !result.Success {
 		return fmt.Errorf("MusicBrainz connectivity check failed: %s", result.Error)
@@ -622,11 +651,19 @@ func (s *SetupService) CheckMusicBrainz(ctx context.Context) error {
 	return nil
 }
 
-func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string) error {
-	if err := s.registry.SetMusicBrainzConfig(ctx, mode, baseURL); err != nil {
-		return fmt.Errorf("save MusicBrainz settings: %w", err)
+func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string) (string, error) {
+	identity, err := s.registry.SetSetupMusicBrainzConfig(ctx, mode, baseURL)
+	if err != nil {
+		return "", fmt.Errorf("save setup MusicBrainz settings: %w", err)
 	}
-	return nil
+	return identity, nil
+}
+
+func (s *SetupService) StartGenreCatalogRefresh(ctx context.Context, identity string) (OperationSnapshot, error) {
+	if s.genreCatalog == nil {
+		return OperationSnapshot{}, fmt.Errorf("setup genre catalog is unavailable")
+	}
+	return s.genreCatalog.StartSetupRefresh(ctx, identity)
 }
 
 func (s *SetupService) SaveMusicBrainzSettings(ctx context.Context, mode, baseURL *string, expected settings.MusicBrainzSettingsExpected, throttle *bool, delaySeconds *float64) error {
@@ -650,7 +687,7 @@ func (s *SetupService) SetLogLevel(ctx context.Context, level string) error {
 	return nil
 }
 
-func (s *SetupService) Complete(ctx context.Context) error {
+func (s *SetupService) Complete(ctx context.Context, identity string) error {
 	if s.platform.Diagnostic || !s.platform.Platform.Supported() {
 		return fmt.Errorf("setup is unavailable for the current platform")
 	}
@@ -664,6 +701,12 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	config, err := s.registry.GetMusicBrainzConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("read MusicBrainz configuration: %w", err)
+	}
+	if identity == "" || config.Identity != identity {
+		return ErrSettingsConflict
+	}
+	if config.VerifiedAt == nil || (s.genreCatalog != nil && (!state.GenreCatalog.Ready || state.Runtime.MusicBrainzConfigIdentity != identity)) {
+		return settings.ErrSetupGenreCatalogNotReady
 	}
 	result := s.musicbrainzClient.CheckConnectivity(ctx, config.Mode, config.BaseURL)
 	if !result.Success {
@@ -682,20 +725,5 @@ func (s *SetupService) Complete(ctx context.Context) error {
 		semantics.UnicodeNormalization != state.Runtime.OutputUnicodeNormalization {
 		return fmt.Errorf("output filesystem semantics changed")
 	}
-	if err := s.registry.CompleteSetupIfCurrent(ctx, s.platform.Platform, state.Runtime, config); err != nil {
-		return err
-	}
-	if s.genreCatalogRefresh != nil {
-		s.dispatchGenreCatalogRefresh()
-	}
-	return nil
-}
-
-func (s *SetupService) dispatchGenreCatalogRefresh() {
-	refresh := s.genreCatalogRefresh
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = refresh.DispatchDueRefresh(ctx)
-	}()
+	return s.registry.CompleteSetupIfCurrent(ctx, s.platform.Platform, state.Runtime, config)
 }

@@ -36,6 +36,12 @@ const english = {
   musicBrainzNotChecked: "Connection has not been checked yet.",
   saveAndCheckMusicBrainz:
     "Save and check MusicBrainz after changing its configuration.",
+  musicBrainzIdentityMissing:
+    "MusicBrainz configuration identity is unavailable. Save and check MusicBrainz again.",
+  genreCatalogRequired:
+    "Load the complete MusicBrainz genre catalog before continuing.",
+  genreCatalogOutdated:
+    "The MusicBrainz genre catalog no longer matches the current configuration. Load it again.",
   acoustidOptional: "AcoustID (optional)",
   saveSettings: "Save settings",
   toolsInventoryLoadError: "Could not load tool status.",
@@ -68,6 +74,8 @@ const english = {
   connectionChecked: "Connection checked · ",
   publicService: "public service",
   connectionNotChecked: "Connection not checked",
+  genreCatalogLoaded: "Loaded for the current MusicBrainz configuration",
+  genreCatalogMissing: "Not loaded",
   lrclibLyrics: "LRCLIB lyrics",
   enabledAvailableForSearch: "Enabled — available for search",
   disabled: "Disabled",
@@ -166,6 +174,12 @@ const russian: SetupMessages = {
   musicBrainzNotChecked: "Соединение ещё не проверено.",
   saveAndCheckMusicBrainz:
     "Сохраните и проверьте MusicBrainz после изменения конфигурации.",
+  musicBrainzIdentityMissing:
+    "Идентификатор конфигурации MusicBrainz недоступен. Сохраните и проверьте MusicBrainz снова.",
+  genreCatalogRequired:
+    "Загрузите полный каталог жанров MusicBrainz, чтобы продолжить.",
+  genreCatalogOutdated:
+    "Каталог жанров MusicBrainz больше не соответствует текущей конфигурации. Загрузите его снова.",
   acoustidOptional: "AcoustID (необязательно)",
   saveSettings: "Сохранить настройки",
   toolsInventoryLoadError: "Не удалось загрузить состояние инструментов.",
@@ -198,6 +212,8 @@ const russian: SetupMessages = {
   connectionChecked: "Подключение проверено · ",
   publicService: "публичный сервис",
   connectionNotChecked: "Подключение не проверено",
+  genreCatalogLoaded: "Загружен для текущей конфигурации MusicBrainz",
+  genreCatalogMissing: "Не загружен",
   lrclibLyrics: "Тексты LRCLIB",
   enabledAvailableForSearch: "Включены — доступны для поиска",
   disabled: "Выключены",

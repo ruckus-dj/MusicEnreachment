@@ -18,6 +18,12 @@ import (
 // ErrSettingsConflict reports that a browser's expected saved value is stale.
 var ErrSettingsConflict = errors.New("settings conflict")
 
+// ErrSetupGenreCatalogNotReady reports that Setup cannot complete until a
+// complete genre catalog is published for the exact verified MusicBrainz
+// configuration. It lives in this package so persistence can return it without
+// importing the service layer.
+var ErrSetupGenreCatalogNotReady = errors.New("genre catalog is not ready for the current MusicBrainz configuration")
+
 const (
 	PlatformGOOSKey                  = "instance.goos"
 	PlatformGOARCHKey                = "instance.goarch"
@@ -62,6 +68,10 @@ type SetupCompletionStore interface {
 
 type verifiedSetupCompletionStore interface {
 	CompleteSetupIfCurrent(context.Context, map[string]string, string) error
+}
+
+type setupMusicBrainzConfigStore interface {
+	SetSetupMusicBrainzConfig(context.Context, string, string, string) (string, error)
 }
 
 type musicBrainzVerificationStore interface {
@@ -142,6 +152,7 @@ type RuntimeSettings struct {
 	PublicationAutoCompleteAlbums     bool
 	MusicBrainzMode                   string
 	MusicBrainzBaseURL                string
+	MusicBrainzConfigIdentity         string
 	MusicBrainzVerifiedAt             *time.Time
 	LRCLIBEnabled                     bool
 	LogLevel                          string
@@ -828,32 +839,83 @@ func parseSnapshotSetting[T any](values map[string]string, definition settingDef
 	return parseSettingValue(definition, raw, exists)
 }
 
-// SetMusicBrainzConfig validates and stores MusicBrainz configuration.
-// Changing the effective provider target invalidates the previous verification.
-func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL string) error {
+func normalizeMusicBrainzTarget(mode, baseURL string) (string, string, error) {
 	mode, err := serializeSetting(musicBrainzModeSetting, mode)
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	if mode == "self-hosted" {
-		if baseURL == "" {
-			return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
-		}
+	if mode == "self-hosted" && baseURL == "" {
+		return "", "", fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
 	}
 	if mode == "public" {
 		baseURL = "" // Public mode ignores base URL
 	}
 	baseURL, err = serializeSetting(musicBrainzURLSetting, baseURL)
 	if err != nil {
+		return "", "", err
+	}
+	return mode, baseURL, nil
+}
+
+// SetMusicBrainzConfig validates and stores MusicBrainz configuration.
+// Changing the effective provider target invalidates the previous verification.
+func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL string) error {
+	mode, baseURL, err := normalizeMusicBrainzTarget(mode, baseURL)
+	if err != nil {
 		return err
 	}
-
 	return r.store.SetMany(ctx, map[string]string{
 		MusicBrainzModeKey:           mode,
 		MusicBrainzBaseURLKey:        baseURL,
 		MusicBrainzConfigIdentityKey: uuid.NewString(),
 		MusicBrainzVerifiedAtKey:     "",
 	})
+}
+
+// SetSetupMusicBrainzConfig saves the MusicBrainz provider target while Setup is
+// still open and returns the opaque configuration identity that was actually
+// persisted. A save for the already-saved target preserves the existing
+// identity and verification; a target change (including saving the initial
+// public default for the first time) rotates the identity and clears
+// verification.
+func (r *Registry) SetSetupMusicBrainzConfig(ctx context.Context, mode, baseURL string) (string, error) {
+	mode, baseURL, err := normalizeMusicBrainzTarget(mode, baseURL)
+	if err != nil {
+		return "", err
+	}
+	identity, err := serializeSetting(musicBrainzIdentitySetting, uuid.NewString())
+	if err != nil {
+		return "", err
+	}
+	if store, ok := r.store.(setupMusicBrainzConfigStore); ok {
+		persisted, err := store.SetSetupMusicBrainzConfig(ctx, mode, baseURL, identity)
+		if err != nil {
+			return "", err
+		}
+		if _, err := serializeSetting(musicBrainzIdentitySetting, persisted); err != nil {
+			return "", fmt.Errorf("stored setup MusicBrainz identity: %w", err)
+		}
+		return persisted, nil
+	}
+	// Isolated in-memory stores have no transaction in which Setup completion
+	// and the configuration write can share a lock; keep the same write shape
+	// so their persisted identity remains readable.
+	if err := r.store.SetMany(ctx, map[string]string{
+		MusicBrainzModeKey:           mode,
+		MusicBrainzBaseURLKey:        baseURL,
+		MusicBrainzConfigIdentityKey: identity,
+		MusicBrainzVerifiedAtKey:     "",
+	}); err != nil {
+		return "", err
+	}
+	persisted, exists, err := r.store.Get(ctx, MusicBrainzConfigIdentityKey)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", fmt.Errorf("setup MusicBrainz configuration identity was not persisted")
+	}
+	return persisted, nil
 }
 
 // UpdateMusicBrainzSettings atomically applies the provider target group and
@@ -1112,6 +1174,7 @@ func parseRuntimeSettingsValues(snapshot RuntimeSettingsValues) (RuntimeSettings
 		PublicationAutoCompleteAlbums:     autoCompleteAlbums,
 		MusicBrainzMode:                   musicBrainz.Mode,
 		MusicBrainzBaseURL:                musicBrainz.BaseURL,
+		MusicBrainzConfigIdentity:         musicBrainz.Identity,
 		MusicBrainzVerifiedAt:             musicBrainz.VerifiedAt,
 		LRCLIBEnabled:                     lrclib,
 		LogLevel:                          logLevel,

@@ -116,6 +116,9 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
             : messages.connectionNotChecked,
           lrclibEnabled: state.settings.lrclib_enabled,
           hasAcoustIdKey: state.settings.has_acoustid_application_key,
+          genres: state.genre_catalog.ready
+            ? messages.genreCatalogLoaded
+            : messages.genreCatalogMissing,
         },
         technical: {
           platform: `${state.platform.goos}/${state.platform.goarch}`,

@@ -77,7 +77,6 @@ export const settingsMessages = createNamespace({
 		pathOverlap:
 			"This directory overlaps the shared work directory, a source directory, the tools directory, or the publication directory.",
 		setup: "Initial setup",
-		refreshGenres: "Refresh genre catalog",
 		pathReady: "Directory selected",
 		selectVersion: "Choose a version for each tool.",
 		verifiedTool: "Installed and verified",
@@ -106,20 +105,21 @@ export const settingsMessages = createNamespace({
 		publicationDirectory: "Publication directory",
 		providerDescription:
 			"Choose the MusicBrainz service used for metadata lookup.",
-		genreOptional: "Genre catalog · optional",
 		toolStatus: "Tool status",
 		missingTools:
 			"Choose and install a version for each tool before continuing.",
 		missingPath: "Choose an absolute tools directory before continuing.",
 		missingPublication:
 			"Choose a publication directory and configure MusicBrainz before continuing.",
+		missingGenres:
+			"Load the complete genre catalog for the current MusicBrainz configuration before continuing.",
 		summaryTools: "Tools",
 		summaryDirectory: "Publication directory",
 		summaryProvider: "MusicBrainz",
 		publicSource: "Public service",
 		privateSource: "Self-hosted server",
-		genreLoaded: "Available",
-		genreUnavailable: "Not loaded · optional",
+		genreLoaded: "Ready — complete catalog",
+		genreUnavailable: "Not loaded",
 		ffmpegName: "FFmpeg",
 		fpcalcName: "fpcalc",
 	},
@@ -201,7 +201,6 @@ export const settingsMessages = createNamespace({
 		pathOverlap:
 			"Этот каталог пересекается с общей рабочей папкой, каталогом источника, каталогом инструментов или каталогом публикации.",
 		setup: "Первый запуск",
-		refreshGenres: "Обновить каталог жанров",
 		pathReady: "Каталог выбран",
 		selectVersion: "Выберите версию для каждого инструмента.",
 		verifiedTool: "Установлено и проверено",
@@ -230,20 +229,21 @@ export const settingsMessages = createNamespace({
 		outputDescription: "Выберите каталог для новых публикаций.",
 		publicationDirectory: "Каталог публикации",
 		providerDescription: "Выберите сервис MusicBrainz для поиска метаданных.",
-		genreOptional: "Каталог жанров · необязательно",
 		toolStatus: "Состояние инструмента",
 		missingTools:
 			"Перед продолжением выберите и установите версию каждого инструмента.",
 		missingPath: "Перед продолжением выберите абсолютный каталог инструментов.",
 		missingPublication:
 			"Выберите каталог публикации и настройте MusicBrainz перед продолжением.",
+		missingGenres:
+			"Перед продолжением загрузите полный каталог жанров для текущей конфигурации MusicBrainz.",
 		summaryTools: "Инструменты",
 		summaryDirectory: "Каталог публикации",
 		summaryProvider: "MusicBrainz",
 		publicSource: "Публичный сервис",
 		privateSource: "Собственный сервер",
-		genreLoaded: "Доступен",
-		genreUnavailable: "Не загружен · необязательно",
+		genreLoaded: "Готов — полный каталог",
+		genreUnavailable: "Не загружен",
 		ffmpegName: "FFmpeg",
 		fpcalcName: "fpcalc",
 	},

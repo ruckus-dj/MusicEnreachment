@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
@@ -16,10 +17,12 @@ type SetupStateOutput struct {
 }
 
 type SetupStateBody struct {
-	Completed           bool                        `json:"completed"`
-	ConfigurationHealth ConfigurationHealthResponse `json:"configuration_health"`
-	Platform            PlatformResponse            `json:"platform"`
-	Settings            RuntimeSettingsResponse     `json:"settings"`
+	Completed                        bool                           `json:"completed"`
+	ConfigurationHealth              ConfigurationHealthResponse    `json:"configuration_health"`
+	Platform                         PlatformResponse               `json:"platform"`
+	Settings                         RuntimeSettingsResponse        `json:"settings"`
+	MusicBrainzConfigurationIdentity string                         `json:"musicbrainz_configuration_identity"`
+	GenreCatalog                     service.GenreCatalogSetupState `json:"genre_catalog"`
 }
 
 type PlatformResponse struct {
@@ -85,6 +88,18 @@ type SaveSetupMusicBrainzBody struct {
 	BaseURL string `json:"base_url" maxLength:"2048"`
 }
 
+type SetupMusicBrainzIdentityBody struct {
+	ConfigurationIdentity string `json:"configuration_identity" minLength:"1" maxLength:"64"`
+}
+
+type SetupMusicBrainzIdentityInput struct {
+	Body SetupMusicBrainzIdentityBody `json:"body"`
+}
+
+type SetupMusicBrainzIdentityOutput struct {
+	Body SetupMusicBrainzIdentityBody `json:"body"`
+}
+
 type CheckPathsInput struct {
 	Body struct {
 		ToolsDirectory  string `json:"tools_directory,omitempty" maxLength:"4096"`
@@ -103,8 +118,6 @@ type CheckPathsBody struct {
 	OutputUnicodeNormalization string `json:"output_unicode_normalization"`
 }
 
-type CheckMusicBrainzInput struct{}
-
 type CheckMusicBrainzOutput struct {
 	Body CheckMusicBrainzBody `json:"body"`
 }
@@ -113,8 +126,6 @@ type CheckMusicBrainzBody struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 }
-
-type CompleteSetupInput struct{}
 
 type BrowseDirectoriesInput struct {
 	Path   string `query:"path"`
@@ -223,22 +234,22 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "check-musicbrainz",
+		OperationID: "check-setup-musicbrainz",
 		Method:      http.MethodPost,
-		Path:        "/setup/check-musicbrainz",
+		Path:        "/setup/musicbrainz/check",
 		Summary:     "Check MusicBrainz connectivity",
 		Tags:        []string{"Setup"},
-	}, func(ctx context.Context, _ *CheckMusicBrainzInput) (*CheckMusicBrainzOutput, error) {
-		if setup == nil {
-			return nil, huma.Error503ServiceUnavailable("setup service is unavailable")
-		}
+	}, func(ctx context.Context, input *SetupMusicBrainzIdentityInput) (*CheckMusicBrainzOutput, error) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
 		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
-		if err := setup.CheckMusicBrainz(ctx); err != nil {
+		if err := setup.CheckSetupMusicBrainz(ctx, input.Body.ConfigurationIdentity); err != nil {
+			if errors.Is(err, service.ErrSettingsConflict) {
+				return nil, huma.Error409Conflict("MusicBrainz configuration changed")
+			}
 			return &CheckMusicBrainzOutput{
 				Body: CheckMusicBrainzBody{
 					Success: false,
@@ -259,14 +270,14 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Path:        "/setup/complete",
 		Summary:     "Complete setup wizard",
 		Tags:        []string{"Setup"},
-	}, func(ctx context.Context, _ *CompleteSetupInput) (*struct{}, error) {
+	}, func(ctx context.Context, input *SetupMusicBrainzIdentityInput) (*struct{}, error) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
 		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
-		if err := setup.Complete(ctx); err != nil {
+		if err := setup.Complete(ctx, input.Body.ConfigurationIdentity); err != nil {
 			if errors.Is(err, service.ErrSetupStateUnavailable) {
 				return nil, huma.Error500InternalServerError("failed to read setup state")
 			}
@@ -295,17 +306,51 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "save-setup-musicbrainz", Method: http.MethodPut, Path: "/setup/musicbrainz",
 		Summary: "Save setup MusicBrainz configuration", Tags: []string{"Setup"},
-	}, func(ctx context.Context, input *SaveSetupMusicBrainzInput) (*struct{}, error) {
+	}, func(ctx context.Context, input *SaveSetupMusicBrainzInput) (*SetupMusicBrainzIdentityOutput, error) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}
 		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
-		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
+		identity, err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL)
+		if err != nil {
+			if errors.Is(err, service.ErrSettingsConflict) {
+				return nil, huma.Error409Conflict("setup configuration changed")
+			}
 			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
 		}
-		return nil, nil
+		return &SetupMusicBrainzIdentityOutput{
+			Body: SetupMusicBrainzIdentityBody{ConfigurationIdentity: identity},
+		}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "start-setup-genre-catalog-refresh",
+		Method:        http.MethodPost,
+		Path:          "/setup/genre-catalog/refresh",
+		Summary:       "Queue a genre catalog refresh for the verified Setup configuration",
+		Tags:          []string{"Setup"},
+		DefaultStatus: http.StatusAccepted,
+	}, func(ctx context.Context, input *SetupMusicBrainzIdentityInput) (*genreCatalogRefreshOutput, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(setup); err != nil {
+			return nil, err
+		}
+		snapshot, err := setup.StartGenreCatalogRefresh(ctx, input.Body.ConfigurationIdentity)
+		if err != nil {
+			if errors.Is(err, persistence.ErrGenreCatalogSetupCompleted) {
+				return nil, huma.Error404NotFound("setup route is closed after completion")
+			}
+			if errors.Is(err, persistence.ErrGenreCatalogSetupIdentityStale) ||
+				errors.Is(err, persistence.ErrGenreCatalogRefreshConflict) {
+				return nil, huma.Error409Conflict("MusicBrainz configuration changed or another catalog refresh is still active")
+			}
+			return nil, huma.Error503ServiceUnavailable("failed to queue genre catalog refresh")
+		}
+		return &genreCatalogRefreshOutput{Body: operationResponse(snapshot)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -328,7 +373,9 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 func setupStateOutput(state service.SetupState) *SetupStateOutput {
 	return &SetupStateOutput{
 		Body: SetupStateBody{
-			Completed: state.Completed,
+			Completed:                        state.Completed,
+			MusicBrainzConfigurationIdentity: state.Runtime.MusicBrainzConfigIdentity,
+			GenreCatalog:                     state.GenreCatalog,
 			ConfigurationHealth: ConfigurationHealthResponse{
 				Healthy:  state.ConfigurationHealth.Healthy,
 				Problems: state.ConfigurationHealth.Problems,

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkSetupPaths,
   completeSetup,
@@ -13,6 +13,7 @@ import { AppButton } from "../../components/AppButton";
 import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
+import { SetupGenreCatalogView } from "./SetupGenreCatalogView";
 import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
 import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummary } from "./SetupSummary";
@@ -26,6 +27,7 @@ import {
   setupMessage,
   setupMessages,
 } from "./setupMessages";
+import { useSetupGenreCatalogProvider } from "./useSetupGenreCatalogProvider";
 import "./setup.css";
 
 const stepKey = "melotrove.setup.step";
@@ -39,6 +41,8 @@ function earliest(state: SetupStateBody) {
     !knownFormat(s.publication_format) ||
     !s.musicbrainz_verified_at
   )
+    return 2;
+  if (!state.genre_catalog.ready || !state.musicbrainz_configuration_identity)
     return 2;
   return 3;
 }
@@ -73,6 +77,17 @@ export function SetupManager({
   const { locale } = useI18n();
   const messages = setupMessages[locale];
   const [state, setState] = useState(initialState);
+  const notifiedCompletion = useRef(false);
+  useEffect(() => {
+    if (!state.completed || notifiedCompletion.current) return;
+    notifiedCompletion.current = true;
+    try {
+      window.localStorage.removeItem(stepKey);
+    } catch {
+      // Setup completed on the server even if storage is unavailable.
+    }
+    onCompleted();
+  }, [onCompleted, state.completed]);
   const [step, setStep] = useState(() => restoredStep(initialState));
   const [toolsDirectory, setToolsDirectory] = useState(
     initialState.settings.tools_directory,
@@ -94,12 +109,21 @@ export function SetupManager({
   const actionInFlight = useRef(false);
   const metadataAction = useRef<SetupMetadataAction | null>(null);
   const [metadataBusy, setMetadataBusy] = useState(false);
+  const [providerDirty, setProviderDirty] = useState(false);
+  const summaryIdentity = useRef<string | undefined>(
+    initialState.genre_catalog.ready
+      ? initialState.musicbrainz_configuration_identity
+      : undefined,
+  );
   const updateToolsBlocked = useCallback((blocked: boolean) => {
     setToolsBlocked(blocked);
   }, []);
-  function navigate(next: number) {
+  function navigate(next: number, identity?: string) {
     setError(null);
     setNotice(null);
+    if (next === 3)
+      summaryIdentity.current =
+        identity ?? state.musicbrainz_configuration_identity;
     setStep(next);
     try {
       window.localStorage.setItem(stepKey, setupSteps[next]);
@@ -107,12 +131,27 @@ export function SetupManager({
       // The current step is still available for this page session.
     }
   }
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const response = await getSetupState({ cache: "no-store" });
     if (response.status !== 200) throw setupHttpError(response);
     setState(response.data);
     return response.data;
-  }
+  }, []);
+  const reportError = useCallback((reason: unknown) => {
+    setError(setupFeedback(reason, "unknownError"));
+  }, []);
+  const ensureProvider = useCallback(async () => {
+    const action = metadataAction.current;
+    if (!action) throw setupMessage("musicBrainzIdentityMissing");
+    return action.ensureProvider();
+  }, []);
+  const genreCatalog = useSetupGenreCatalogProvider({
+    state,
+    enabled: step === 2,
+    ensureProvider,
+    refresh,
+    onError: reportError,
+  });
   async function advance() {
     if (
       actionInFlight.current ||
@@ -145,6 +184,9 @@ export function SetupManager({
       if (step === 2) {
         if (!outputDirectory) throw setupMessage("outputDirectoryRequired");
         if (!format) throw setupMessage("chooseFormat");
+        const expectedIdentity = state.musicbrainz_configuration_identity;
+        if (providerDirty || !state.genre_catalog.ready || !expectedIdentity)
+          throw setupMessage("genreCatalogRequired");
         const checked = await checkSetupPaths({
           tools_directory: state.settings.tools_directory,
           output_directory: outputDirectory,
@@ -158,23 +200,47 @@ export function SetupManager({
         if (saved.status !== 204) throw setupHttpError(saved);
         const fresh = await refresh();
         setOutputDirectory(fresh.settings.output_directory);
-        if (!(await metadataAction.current?.continue())) return;
+        const action = metadataAction.current;
+        if (!action || !(await action.continue())) return;
+        const live = await refresh();
+        if (
+          !live.genre_catalog.ready ||
+          !live.musicbrainz_configuration_identity
+        )
+          throw setupMessage("genreCatalogRequired");
+        if (live.musicbrainz_configuration_identity !== expectedIdentity)
+          throw setupMessage("genreCatalogOutdated");
+        navigate(3, live.musicbrainz_configuration_identity);
+        return;
       }
       if (step === 3) {
+        const expectedIdentity = summaryIdentity.current;
         const fresh = await refresh();
+        if (fresh.completed) return;
+        if (
+          !expectedIdentity ||
+          !fresh.genre_catalog.ready ||
+          fresh.musicbrainz_configuration_identity !== expectedIdentity
+        ) {
+          navigate(2);
+          throw setupMessage("genreCatalogOutdated");
+        }
         if (!fresh.configuration_health.healthy) {
           const problems = fresh.configuration_health.problems;
           if (problems?.length) throw new Error(problems.join(", "));
           throw setupMessage("setupNotReady");
         }
-        const completed = await completeSetup();
-        if (completed.status !== 204) throw setupHttpError(completed);
         try {
-          window.localStorage.removeItem(stepKey);
-        } catch {
-          // Setup completed on the server even if storage is unavailable.
+          const completed = await completeSetup({
+            configuration_identity: expectedIdentity,
+          });
+          if (completed.status !== 204) throw setupHttpError(completed);
+          setState({ ...fresh, completed: true });
+        } catch (reason) {
+          // Another tab or an ambiguous POST may already have finished Setup.
+          const current = await refresh().catch(() => undefined);
+          if (!current?.completed) throw reason;
         }
-        onCompleted();
         return;
       }
       navigate(step + 1);
@@ -191,6 +257,12 @@ export function SetupManager({
     `${messages.publicationHelp} ${messages.metadataHelp}`,
     messages.summaryHelp,
   ][step];
+  const catalogViewState =
+    genreCatalog.state === "loading"
+      ? "loading"
+      : providerDirty
+        ? "idle"
+        : genreCatalog.state;
   return (
     <SetupWizard
       locale={locale}
@@ -211,7 +283,9 @@ export function SetupManager({
         state.platform.diagnostic ||
         pending ||
         metadataBusy ||
-        (step === 1 && toolsBlocked)
+        (step === 1 && toolsBlocked) ||
+        (step === 2 && (providerDirty || catalogViewState !== "ready")) ||
+        (step === 3 && catalogViewState !== "ready")
       }
       backDisabled={pending || metadataBusy}
     >
@@ -280,7 +354,20 @@ export function SetupManager({
             refresh={refresh}
             disabled={pending}
             onBusyChange={setMetadataBusy}
+            onConfigurationDirtyChange={setProviderDirty}
             actionRef={metadataAction}
+          />
+          <SetupGenreCatalogView
+            locale={locale}
+            state={catalogViewState}
+            count={providerDirty ? undefined : genreCatalog.count}
+            disabled={
+              pending ||
+              metadataBusy ||
+              !state.platform.supported ||
+              state.platform.diagnostic
+            }
+            onLoad={genreCatalog.load}
           />
         </div>
       )}
@@ -303,7 +390,17 @@ export function SetupManager({
     setPending(true);
     setError(null);
     try {
-      await refresh();
+      const expectedIdentity = summaryIdentity.current;
+      const fresh = await refresh();
+      if (fresh.completed) return;
+      if (
+        !expectedIdentity ||
+        !fresh.genre_catalog.ready ||
+        fresh.musicbrainz_configuration_identity !== expectedIdentity
+      ) {
+        navigate(2);
+        throw setupMessage("genreCatalogOutdated");
+      }
       setSummaryRefreshToken((token) => token + 1);
       setNotice(setupMessage("serverStateUpdated"));
     } catch (reason) {

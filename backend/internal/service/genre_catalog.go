@@ -28,7 +28,7 @@ func LoadGenreCatalog(ctx context.Context, provider GenrePageReader) ([]GenreCat
 	if provider == nil {
 		return nil, fmt.Errorf("musicbrainz genre provider is unavailable")
 	}
-	var items []GenreCatalogItem
+	items := make([]GenreCatalogItem, 0)
 	seen := make(map[string]struct{})
 	count := -1
 	for offset := 0; count < 0 || offset < count; {

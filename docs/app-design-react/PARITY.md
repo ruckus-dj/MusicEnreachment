@@ -82,7 +82,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки, поля и подтверждение переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx`, `SettingsToolsMoveReviewDialog.tsx` | Те же пути |
 | Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: порядок шагов, каркас мастера, поля папок, карточки инструментов, формат публикации, MusicBrainz и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupSummaryView.tsx` | Те же пути |
+| Первый запуск: порядок шагов, каркас мастера, поля папок, карточки инструментов, формат публикации, MusicBrainz, загрузка каталога жанров и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupGenreCatalogView.tsx`, `SetupSummaryView.tsx` | Те же пути |
 | Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, вкладки, поиск, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogControls.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
@@ -96,9 +96,11 @@ source channel, а fixture макета такого происхождения 
   приложении совпадают по байтам. Провайдер макета планирует и исполняет
   публикацию только на демонстрационных данных; приложение получает точное
   решение и подтверждает позиции через сервер. Ответы сервера о проверках
-  и ходе операций не заменяются демонстрационными результатами.
-- **Первый запуск.** Порядок шагов общий. Часть композиции провайдеров и
-  вывод ошибок проверки остаются в разных контроллерах.
+   и ходе операций не заменяются демонстрационными результатами.
+- **Первый запуск.** Порядок шагов и показ загрузки обязательного каталога
+  жанров общие. Макет загружает демонстрационный каталог; приложение ждёт
+  подтверждённый сервером результат для проверенной конфигурации MusicBrainz.
+  Часть композиции остальных провайдеров и вывод ошибок проверки ещё различаются.
 - **Источники.** Инспектор открывается из инвентаря в обеих сборках.
   Провайдер макета использует состояние демонстрационного анализа и не
   подставляет отсутствующие измерения, отпечатки и исходный вывод ffprobe.
@@ -111,10 +113,6 @@ source channel, а fixture макета такого происхождения 
   диалогах и каталогах переводов остаются разные реализации. Перед копированием
   нужно отделить представление и форматирование от загрузки, черновиков и
   записи, чтобы не заменить серверный workflow демонстрационным.
-- **Публикация из результата сопоставления.** Серверный результат подтверждения
-  уже содержит точные связи с позициями медиатеки. Отдельный предпросмотр по
-  этим связям и исключение сопоставленных файлов из активных «Входящих» ещё
-  не подключены.
 - **Стили.** Рукописные стили отдельных экранов в `frontend/src/features/`
   ещё надо заменить соответствующими стилями макета. Одинаковый компонент
   может выглядеть по-разному при разных глобальных стилях или версиях библиотек.

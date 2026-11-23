@@ -256,31 +256,3 @@ func TestDispatchDueRefreshNotifiesRetiredOperationAfterSuccess(t *testing.T) {
 		t.Fatal("retired operation was not notified after dispatch commit")
 	}
 }
-
-type blockingGenreCatalogDispatcher struct{ started chan struct{} }
-
-func (dispatcher blockingGenreCatalogDispatcher) DispatchDueRefresh(ctx context.Context) error {
-	close(dispatcher.started)
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func TestSetupGenreCatalogDispatchDoesNotBlockCaller(t *testing.T) {
-	started := make(chan struct{})
-	setup := &SetupService{genreCatalogRefresh: blockingGenreCatalogDispatcher{started: started}}
-	done := make(chan struct{})
-	go func() {
-		setup.dispatchGenreCatalogRefresh()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("genre catalog dispatch blocked setup completion")
-	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("genre catalog dispatch did not start")
-	}
-}

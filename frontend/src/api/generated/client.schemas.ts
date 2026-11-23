@@ -364,6 +364,22 @@ export interface GenreCatalogSearchBody {
   items: GenreCatalogItem[] | null;
 }
 
+export type GenreCatalogSetupStateStatus = typeof GenreCatalogSetupStateStatus[keyof typeof GenreCatalogSetupStateStatus];
+
+
+export const GenreCatalogSetupStateStatus = {
+  idle: 'idle',
+  loading: 'loading',
+  ready: 'ready',
+  failed: 'failed',
+} as const;
+
+export interface GenreCatalogSetupState {
+  count: number;
+  ready: boolean;
+  status: GenreCatalogSetupStateStatus;
+}
+
 export interface GenreCatalogStatus {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2091,11 +2107,23 @@ export interface SetGitHubTokenBody {
   token: string;
 }
 
+export interface SetupMusicBrainzIdentityBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  configuration_identity: string;
+}
+
 export interface SetupStateBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   completed: boolean;
   configuration_health: ConfigurationHealthResponse;
+  genre_catalog: GenreCatalogSetupState;
+  musicbrainz_configuration_identity: string;
   platform: PlatformResponse;
   settings: RuntimeSettingsResponse;
 }

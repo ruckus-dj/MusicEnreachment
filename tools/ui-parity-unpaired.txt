@@ -84,6 +84,7 @@ docs/app-design-react/src/features/settings/settingsDraft.ts
 docs/app-design-react/src/features/settings/useToolCatalogDemoProvider.ts
 docs/app-design-react/src/features/setup/SetupScreen.tsx
 docs/app-design-react/src/features/setup/setupToolsLifecycle.ts
+docs/app-design-react/src/features/setup/useSetupGenreCatalogDemoProvider.ts
 docs/app-design-react/src/features/sources/SourcesScreen.tsx
 docs/app-design-react/src/features/sources/retainedCopyPath.ts
 docs/app-design-react/src/features/sources/sourceDemoRoute.ts
@@ -218,6 +219,7 @@ frontend/src/features/setup/SetupSummary.tsx
 frontend/src/features/setup/SetupTools.tsx
 frontend/src/features/setup/setup.css
 frontend/src/features/setup/setupMessages.ts
+frontend/src/features/setup/useSetupGenreCatalogProvider.ts
 frontend/src/features/sources/SourceArtifactCleanupPanel.tsx
 frontend/src/features/sources/SourceDetailScreen.tsx
 frontend/src/features/sources/SourceInspectorScreen.tsx

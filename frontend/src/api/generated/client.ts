@@ -127,6 +127,7 @@ import type {
   SearchGenreCatalogParams,
   SearchLibraryArtistReferencesParams,
   SetGitHubTokenBody,
+  SetupMusicBrainzIdentityBody,
   SetupStateBody,
   SourceArtifactCleanupBody,
   SourceArtifactCleanupCandidatesBody,
@@ -11627,106 +11628,6 @@ export function useGetSetupState<TData = Awaited<ReturnType<typeof getSetupState
 
 
 
-export type checkMusicbrainzResponse200 = {
-  data: CheckMusicBrainzBody
-  status: 200
-}
-
-export type checkMusicbrainzResponseDefault = {
-  data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type checkMusicbrainzResponseSuccess = (checkMusicbrainzResponse200) & {
-  headers: Headers;
-};
-export type checkMusicbrainzResponseError = (checkMusicbrainzResponseDefault) & {
-  headers: Headers;
-};
-
-export type checkMusicbrainzResponse = (checkMusicbrainzResponseSuccess | checkMusicbrainzResponseError)
-
-export const getCheckMusicbrainzUrl = () => {
-
-
-
-
-  return `/api/setup/check-musicbrainz`
-}
-
-/**
- * @summary Check MusicBrainz connectivity
- */
-export const checkMusicbrainz = async ( options?: RequestInit): Promise<checkMusicbrainzResponse> => {
-
-  const res = await fetch(getCheckMusicbrainzUrl(),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: checkMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
-  return { data, status: res.status, headers: res.headers } as checkMusicbrainzResponse
-}
-
-
-
-
-
-export const getCheckMusicbrainzMutationKey = () => ['checkMusicbrainz'] as const;
-
-export const getCheckMusicbrainzMutationOptions = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
-): UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext> => {
-
-const mutationKey = getCheckMusicbrainzMutationKey();
-const {mutation: mutationOptions, fetch: fetchOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, fetch: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkMusicbrainz>>, void> = () => {
-
-
-          return  checkMusicbrainz(fetchOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CheckMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof checkMusicbrainz>>>
-
-    export type CheckMusicbrainzMutationError = ErrorModel
-
-
-    /**
- * @summary Check MusicBrainz connectivity
- */
-export const useCheckMusicbrainz = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof checkMusicbrainz>>,
-        TError,
-        void,
-        TContext
-      > => {
-      return useMutation(getCheckMusicbrainzMutationOptions(options), queryClient);
-    }
-
 export type completeSetupResponse204 = {
   data: void
   status: 204
@@ -11757,14 +11658,28 @@ export const getCompleteSetupUrl = () => {
 /**
  * @summary Complete setup wizard
  */
-export const completeSetup = async ( options?: RequestInit): Promise<completeSetupResponse> => {
+export const completeSetup = async (setupMusicBrainzIdentityBody: NonReadonly<SetupMusicBrainzIdentityBody>, options?: RequestInit): Promise<completeSetupResponse> => {
 
-  const res = await fetch(getCompleteSetupUrl(),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCompleteSetupUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setupMusicBrainzIdentityBody)
   }
 )
 
@@ -11782,8 +11697,8 @@ export const completeSetup = async ( options?: RequestInit): Promise<completeSet
 export const getCompleteSetupMutationKey = () => ['completeSetup'] as const;
 
 export const getCompleteSetupMutationOptions = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext>, fetch?: RequestInit}
-): UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,CompleteSetupMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,CompleteSetupMutationVariables, TContext> => {
 
 const mutationKey = getCompleteSetupMutationKey();
 const {mutation: mutationOptions, fetch: fetchOptions} = options ?
@@ -11795,10 +11710,10 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeSetup>>, void> = () => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeSetup>>, CompleteSetupMutationVariables> = (props) => {
+          const {data} = props ?? {};
 
-
-          return  completeSetup(fetchOptions)
+          return  completeSetup(data,fetchOptions)
         }
 
 
@@ -11809,19 +11724,19 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type CompleteSetupMutationResult = NonNullable<Awaited<ReturnType<typeof completeSetup>>>
-
+    export type CompleteSetupMutationBody = NonReadonly<SetupMusicBrainzIdentityBody>
     export type CompleteSetupMutationError = ErrorModel
-
+    export type CompleteSetupMutationVariables = {data: NonReadonly<SetupMusicBrainzIdentityBody>}
 
     /**
  * @summary Complete setup wizard
  */
 export const useCompleteSetup = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext>, fetch?: RequestInit}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,CompleteSetupMutationVariables, TContext>, fetch?: RequestInit}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof completeSetup>>,
         TError,
-        void,
+        CompleteSetupMutationVariables,
         TContext
       > => {
       return useMutation(getCompleteSetupMutationOptions(options), queryClient);
@@ -11960,6 +11875,120 @@ export function useBrowseServerDirectories<TData = Awaited<ReturnType<typeof bro
 
 
 
+
+export type startSetupGenreCatalogRefreshResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type startSetupGenreCatalogRefreshResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type startSetupGenreCatalogRefreshResponseSuccess = (startSetupGenreCatalogRefreshResponse202) & {
+  headers: Headers;
+};
+export type startSetupGenreCatalogRefreshResponseError = (startSetupGenreCatalogRefreshResponseDefault) & {
+  headers: Headers;
+};
+
+export type startSetupGenreCatalogRefreshResponse = (startSetupGenreCatalogRefreshResponseSuccess | startSetupGenreCatalogRefreshResponseError)
+
+export const getStartSetupGenreCatalogRefreshUrl = () => {
+
+
+
+
+  return `/api/setup/genre-catalog/refresh`
+}
+
+/**
+ * @summary Queue a genre catalog refresh for the verified Setup configuration
+ */
+export const startSetupGenreCatalogRefresh = async (setupMusicBrainzIdentityBody: NonReadonly<SetupMusicBrainzIdentityBody>, options?: RequestInit): Promise<startSetupGenreCatalogRefreshResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartSetupGenreCatalogRefreshUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setupMusicBrainzIdentityBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startSetupGenreCatalogRefreshResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startSetupGenreCatalogRefreshResponse
+}
+
+
+
+
+
+export const getStartSetupGenreCatalogRefreshMutationKey = () => ['startSetupGenreCatalogRefresh'] as const;
+
+export const getStartSetupGenreCatalogRefreshMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>, TError,StartSetupGenreCatalogRefreshMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>, TError,StartSetupGenreCatalogRefreshMutationVariables, TContext> => {
+
+const mutationKey = getStartSetupGenreCatalogRefreshMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>, StartSetupGenreCatalogRefreshMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startSetupGenreCatalogRefresh(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartSetupGenreCatalogRefreshMutationResult = NonNullable<Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>>
+    export type StartSetupGenreCatalogRefreshMutationBody = NonReadonly<SetupMusicBrainzIdentityBody>
+    export type StartSetupGenreCatalogRefreshMutationError = ErrorModel
+    export type StartSetupGenreCatalogRefreshMutationVariables = {data: NonReadonly<SetupMusicBrainzIdentityBody>}
+
+    /**
+ * @summary Queue a genre catalog refresh for the verified Setup configuration
+ */
+export const useStartSetupGenreCatalogRefresh = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>, TError,StartSetupGenreCatalogRefreshMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startSetupGenreCatalogRefresh>>,
+        TError,
+        StartSetupGenreCatalogRefreshMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartSetupGenreCatalogRefreshMutationOptions(options), queryClient);
+    }
 
 export type getConfigurationHealthResponse200 = {
   data: SetupStateBody
@@ -12202,17 +12231,17 @@ export const useSaveSetupLrclib = <TError = ErrorModel,
       return useMutation(getSaveSetupLrclibMutationOptions(options), queryClient);
     }
 
-export type saveSetupMusicbrainzResponse204 = {
-  data: void
-  status: 204
+export type saveSetupMusicbrainzResponse200 = {
+  data: SetupMusicBrainzIdentityBody
+  status: 200
 }
 
 export type saveSetupMusicbrainzResponseDefault = {
   data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type saveSetupMusicbrainzResponseSuccess = (saveSetupMusicbrainzResponse204) & {
+export type saveSetupMusicbrainzResponseSuccess = (saveSetupMusicbrainzResponse200) & {
   headers: Headers;
 };
 export type saveSetupMusicbrainzResponseError = (saveSetupMusicbrainzResponseDefault) & {
@@ -12260,7 +12289,7 @@ const res = await fetch(getSaveSetupMusicbrainzUrl(),
 
   const body = [204, 205, 304].includes(res.status) ? null : await res.text();
 
-  const data: saveSetupMusicbrainzResponse['data'] = body ? JSON.parse(body) : undefined
+  const data: saveSetupMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as saveSetupMusicbrainzResponse
 }
 
@@ -12314,6 +12343,120 @@ export const useSaveSetupMusicbrainz = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSaveSetupMusicbrainzMutationOptions(options), queryClient);
+    }
+
+export type checkSetupMusicbrainzResponse200 = {
+  data: CheckMusicBrainzBody
+  status: 200
+}
+
+export type checkSetupMusicbrainzResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type checkSetupMusicbrainzResponseSuccess = (checkSetupMusicbrainzResponse200) & {
+  headers: Headers;
+};
+export type checkSetupMusicbrainzResponseError = (checkSetupMusicbrainzResponseDefault) & {
+  headers: Headers;
+};
+
+export type checkSetupMusicbrainzResponse = (checkSetupMusicbrainzResponseSuccess | checkSetupMusicbrainzResponseError)
+
+export const getCheckSetupMusicbrainzUrl = () => {
+
+
+
+
+  return `/api/setup/musicbrainz/check`
+}
+
+/**
+ * @summary Check MusicBrainz connectivity
+ */
+export const checkSetupMusicbrainz = async (setupMusicBrainzIdentityBody: NonReadonly<SetupMusicBrainzIdentityBody>, options?: RequestInit): Promise<checkSetupMusicbrainzResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCheckSetupMusicbrainzUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setupMusicBrainzIdentityBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: checkSetupMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as checkSetupMusicbrainzResponse
+}
+
+
+
+
+
+export const getCheckSetupMusicbrainzMutationKey = () => ['checkSetupMusicbrainz'] as const;
+
+export const getCheckSetupMusicbrainzMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSetupMusicbrainz>>, TError,CheckSetupMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof checkSetupMusicbrainz>>, TError,CheckSetupMusicbrainzMutationVariables, TContext> => {
+
+const mutationKey = getCheckSetupMusicbrainzMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkSetupMusicbrainz>>, CheckSetupMusicbrainzMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  checkSetupMusicbrainz(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckSetupMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof checkSetupMusicbrainz>>>
+    export type CheckSetupMusicbrainzMutationBody = NonReadonly<SetupMusicBrainzIdentityBody>
+    export type CheckSetupMusicbrainzMutationError = ErrorModel
+    export type CheckSetupMusicbrainzMutationVariables = {data: NonReadonly<SetupMusicBrainzIdentityBody>}
+
+    /**
+ * @summary Check MusicBrainz connectivity
+ */
+export const useCheckSetupMusicbrainz = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSetupMusicbrainz>>, TError,CheckSetupMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof checkSetupMusicbrainz>>,
+        TError,
+        CheckSetupMusicbrainzMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCheckSetupMusicbrainzMutationOptions(options), queryClient);
     }
 
 export type checkSetupPathsResponse200 = {

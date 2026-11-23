@@ -27,7 +27,7 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	setup := NewSetup(store, registry, platform, installations, nil)
 	ctx := context.Background()
 
-	if err := setup.Complete(ctx); err == nil {
+	if err := setup.Complete(ctx, ""); err == nil {
 		t.Fatal("complete succeeded without required settings")
 	}
 
@@ -55,6 +55,11 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	if err := registry.MarkMusicBrainzVerified(ctx); err != nil {
 		t.Fatal(err)
 	}
+	config, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := config.Identity
 	if err := store.Set(ctx, settings.ActiveFFmpegInstallationKey, "test-ffmpeg-id"); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +74,7 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	installations.items[ffmpegID] = &persistence.ToolInstallation{ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"}
 	installations.items[fpcalcID] = &persistence.ToolInstallation{ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"}
 
-	if err := setup.Complete(ctx); err == nil {
+	if err := setup.Complete(ctx, identity); err == nil {
 		t.Fatal("complete accepted ready installations without executable verification")
 	}
 	verifiedAt := time.Now().UTC()
@@ -77,7 +82,7 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	installations.items[ffmpegID].ExecutableVerificationOutput = []byte(`{"ffmpeg":"ffmpeg version 8.0"}`)
 	installations.items[fpcalcID].VerifiedAt = &verifiedAt
 	installations.items[fpcalcID].ExecutableVerificationOutput = []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)
-	if err := setup.Complete(ctx); err == nil {
+	if err := setup.Complete(ctx, identity); err == nil {
 		t.Fatal("complete accepted FFmpeg without a verified ffprobe")
 	}
 	installations.items[ffmpegID].ExecutableVerificationOutput = []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)
@@ -87,11 +92,11 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	} else {
 		store.data[settings.OutputCaseSensitiveKey] = "true"
 	}
-	if err := setup.Complete(ctx); err == nil || !strings.Contains(err.Error(), "semantics") {
+	if err := setup.Complete(ctx, identity); err == nil || !strings.Contains(err.Error(), "semantics") {
 		t.Fatalf("complete accepted stale filesystem semantics: %v", err)
 	}
 	store.data[settings.OutputCaseSensitiveKey] = savedCaseSensitivity
-	if err := setup.Complete(ctx); err != nil {
+	if err := setup.Complete(ctx, identity); err != nil {
 		t.Fatalf("complete failed with all required settings: %v", err)
 	}
 
@@ -138,7 +143,7 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	if err != nil || !state.Completed || state.ConfigurationHealth.Healthy {
 		t.Fatalf("completed setup did not report degraded health: %#v, %v", state, err)
 	}
-	if err := setup.Complete(ctx); err == nil {
+	if err := setup.Complete(ctx, identity); err == nil {
 		t.Fatal("complete accepted degraded health")
 	}
 	if store.data[settings.SetupCompletedAtKey] != firstCompletion {

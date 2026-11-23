@@ -227,7 +227,9 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/setup/complete", nil))
+	request = httptest.NewRequest(http.MethodPost, "/setup/complete", strings.NewReader(`{"configuration_identity":"test-revision"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("complete with unavailable setup state = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
 	}
@@ -241,12 +243,16 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	for _, test := range []struct {
 		method string
 		path   string
+		body   string
 	}{
-		{http.MethodPut, "/setup/runtime"},
-		{http.MethodPost, "/setup/paths/check"},
+		{http.MethodPut, "/setup/runtime", `{}`},
+		{http.MethodPost, "/setup/paths/check", `{}`},
+		{http.MethodPost, "/setup/musicbrainz/check", `{"configuration_identity":"test-revision"}`},
+		{http.MethodPost, "/setup/genre-catalog/refresh", `{"configuration_identity":"test-revision"}`},
+		{http.MethodPost, "/setup/complete", `{"configuration_identity":"test-revision"}`},
 	} {
 		response = httptest.NewRecorder()
-		request = httptest.NewRequest(test.method, test.path, strings.NewReader(`{}`))
+		request = httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
 		request.Header.Set("Content-Type", "application/json")
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusNotFound {
@@ -615,16 +621,21 @@ func TestSetupMutationDoesNotExposeStorageError(t *testing.T) {
 }
 
 func TestMusicBrainzCheckDoesNotExposeStorageError(t *testing.T) {
-	store := failingSettingsStore{apiSettingsStore{}}
+	identity := uuid.NewString()
+	store := failingSettingsStore{apiSettingsStore{settings.MusicBrainzConfigIdentityKey: identity}}
 	registry := settings.New(store, nil)
 	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, successfulMusicBrainzChecker{})
 	handler := api.HandlerWithSetup(setup)
-	for _, path := range []string{"/setup/check-musicbrainz", "/settings/musicbrainz/check"} {
+	for _, path := range []string{"/setup/musicbrainz/check", "/settings/musicbrainz/check"} {
 		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, nil)
 		if path == "/settings/musicbrainz/check" {
 			store.apiSettingsStore[settings.SetupCompletedAtKey] = time.Now().UTC().Format(time.RFC3339Nano)
+		} else {
+			request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"configuration_identity":"`+identity+`"}`))
+			request.Header.Set("Content-Type", "application/json")
 		}
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "private-credential") {
 			t.Errorf("%s status=%d body=%s", path, response.Code, response.Body.String())
 		}
@@ -688,13 +699,18 @@ func TestPlatformDiagnosticBlocksSetupMutations(t *testing.T) {
 		Platform:   settings.Platform{GOOS: "linux", GOARCH: "amd64"},
 		Diagnostic: true, Reason: "instance platform mismatch",
 	}, nil, nil)
-	for _, path := range []string{"/setup/complete", "/setup/paths/check"} {
+	for _, test := range []struct{ path, body string }{
+		{"/setup/complete", `{"configuration_identity":"test-revision"}`},
+		{"/setup/musicbrainz/check", `{"configuration_identity":"test-revision"}`},
+		{"/setup/genre-catalog/refresh", `{"configuration_identity":"test-revision"}`},
+		{"/setup/paths/check", `{}`},
+	} {
 		response := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 		request.Header.Set("Content-Type", "application/json")
 		api.HandlerWithSetup(setup).ServeHTTP(response, request)
 		if response.Code != http.StatusServiceUnavailable {
-			t.Errorf("diagnostic %s status=%d, want %d: %s", path, response.Code, http.StatusServiceUnavailable, response.Body.String())
+			t.Errorf("diagnostic %s status=%d, want %d: %s", test.path, response.Code, http.StatusServiceUnavailable, response.Body.String())
 		}
 	}
 }
@@ -789,6 +805,7 @@ func TestOpenAPIGeneratorRegistrationContainsProductionOperations(t *testing.T) 
 	spec := string(encoded)
 	for _, operationID := range []string{
 		"get-setup-state", "save-setup-runtime", "check-setup-paths", "complete-setup",
+		"check-setup-musicbrainz", "start-setup-genre-catalog-refresh",
 		"list-tool-catalog", "preflight-tool-install", "start-tool-install",
 		"list-installations", "activate-tool-installation", "delete-tool-installation",
 		"preflight-tools-root-move", "start-tools-root-move",

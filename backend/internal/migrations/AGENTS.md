@@ -23,6 +23,7 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - 20261122000105_automatic_local_album.tx.up.sql - automatic album authorization from a successful Local outage apply
 - 20261122000106_local_matching_receipt_immutable.tx.up.sql - INSERT-only guard for Local matching receipts
 - 20261122000107_publication_source_receipt_pin.tx.up.sql - optional exact compatible association pin for receipt-scoped publication holds
+- 20261123000001_genre_catalog_published_identity.tx.up.sql - last successful MusicBrainz catalog identity, separate from the active attempt
 - backend/cmd/migrate/main.go - rollback CLI (down migrations only; up is startup-only)
 
 ## CONVENTIONS

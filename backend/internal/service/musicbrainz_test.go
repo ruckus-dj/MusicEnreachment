@@ -165,11 +165,18 @@ func TestComplete_RequiresMusicBrainzVerification(t *testing.T) {
 	_ = store.Set(context.Background(), settings.MusicBrainzModeKey, "public")
 
 	registry := settings.NewRegistryWithClock(store, func() time.Time { return time.Now() })
+	if err := registry.SetMusicBrainzConfig(context.Background(), "public", ""); err != nil {
+		t.Fatal(err)
+	}
+	config, err := registry.GetMusicBrainzConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},
 	}, nil, nil)
 
-	err := setupService.Complete(context.Background())
+	err = setupService.Complete(context.Background(), config.Identity)
 	if err == nil {
 		t.Error("expected Complete to fail without MusicBrainz verification")
 	}
@@ -199,6 +206,13 @@ func TestComplete_Success(t *testing.T) {
 	if err := registry.SetMusicBrainzConfig(t.Context(), "self-hosted", upstream.URL); err != nil {
 		t.Fatal(err)
 	}
+	if err := registry.MarkMusicBrainzVerified(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	config, err := registry.GetMusicBrainzConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := registry.SetToolsDirectory(t.Context(), t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +227,7 @@ func TestComplete_Success(t *testing.T) {
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},
 	}, installations, nil)
 
-	if err := setupService.Complete(context.Background()); err != nil {
+	if err := setupService.Complete(context.Background(), config.Identity); err != nil {
 		t.Errorf("expected Complete to succeed, got: %v", err)
 	}
 
