@@ -1,5 +1,11 @@
-import { useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import {
+	comparisonTableWrap,
+	dialogFooter,
+	surfacePanel,
+	table,
+} from "../../components/styles/matchingStyles";
 import {
 	Button,
 	Checkbox,
@@ -15,30 +21,11 @@ import {
 	Tabs,
 	TextField,
 } from "../../components/ui";
-import {
-	publicationMetadataIssueMessages,
-	publicationSortTagCollisions,
-	type CatalogArtist,
-} from "../library/catalogData";
-import { MatchingSearchPicker } from "./MatchingSearchPicker";
-import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
-import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
-import { MatchingBoard, MatchingEvidenceInspector } from "./";
-import {
-	MatchingWorkspaceLayout,
-	matchingCandidatesPanel,
-	matchingInspectorContent,
-	matchingInspectorPanel,
-} from "./MatchingWorkspaceLayout";
-import { metadataSnapshotDiff } from "../publication/publicationMetadataDiff";
-import { PublicationInspector } from "../publication/PublicationInspector";
-import type { PublicationInspection } from "../publication/PublicationInspector";
-import { publicationMessage } from "../publication/publicationMessages";
 import { useI18n } from "../../i18n";
-import { matchingAction, matchingMessage } from "./matchingMessages";
 import { formatUiNotice, type UiNotice } from "../../infrastructure/uiNotice";
 import {
+	type Assignment,
 	applyPlan,
 	artistName,
 	assignFile,
@@ -46,6 +33,10 @@ import {
 	findProviderTrack,
 	findTarget,
 	getDraft,
+	type IncomingFiles,
+	type IncomingPlan,
+	type IncomingReleases,
+	type IncomingState,
 	incomingFixtures,
 	normalized,
 	planRows,
@@ -56,18 +47,27 @@ import {
 	tagFieldGroups,
 	unassignFile,
 	usableFile,
-	type Assignment,
-	type IncomingFiles,
-	type IncomingReleases,
-	type IncomingPlan,
-	type IncomingState,
 } from "../incoming/incomingModel";
 import {
-	comparisonTableWrap,
-	dialogFooter,
-	surfacePanel,
-	table,
-} from "../../components/styles/matchingStyles";
+	type CatalogArtist,
+	publicationMetadataIssueMessages,
+	publicationSortTagCollisions,
+} from "../library/catalogData";
+import type { PublicationInspection } from "../publication/PublicationInspector";
+import { PublicationInspector } from "../publication/PublicationInspector";
+import { publicationMessage } from "../publication/publicationMessages";
+import { metadataSnapshotDiff } from "../publication/publicationMetadataDiff";
+import { MatchingBoard, MatchingEvidenceInspector } from "./";
+import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
+import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
+import { MatchingReviewSearchView } from "./MatchingReviewSearchView";
+import { MatchingSearchPicker } from "./MatchingSearchPicker";
+import {
+	MatchingWorkspaceLayout,
+	matchingInspectorContent,
+	matchingInspectorPanel,
+} from "./MatchingWorkspaceLayout";
+import { matchingAction, matchingMessage } from "./matchingMessages";
 
 export type MatchingScreenProps = {
 	destination?: import("../publication/publicationOutput").PublicationDestination;
@@ -591,11 +591,10 @@ export function MatchingScreen({
 								.join(" · ")}
 				</span>
 			</div>
-			<section data-matching-candidates className={matchingCandidatesPanel}>
-				<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-					{matchingMessage(locale, "findRelease")}
-				</h2>
-				<div className="grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+			<MatchingReviewSearchView
+				locale={locale}
+				createLocalReleaseHref={createLocalReleaseHref}
+				search={
 					<MatchingSearchPicker
 						artists={artists}
 						releases={searchableEditions}
@@ -612,26 +611,16 @@ export function MatchingScreen({
 							return true;
 						}}
 					/>
-					<div className="grid min-w-0 gap-2">
-						<MatchingReleasePreparation
-							key={group.id}
-							releaseId={prepareReleaseId}
-							resolveRelease={resolveMusicBrainzEdition}
-							onPrepared={setCandidate}
-						/>
-						{createLocalReleaseHref && (
-							<a
-								className="demo-button w-fit max-w-full text-center no-underline max-[520px]:w-full"
-								href={createLocalReleaseHref}
-							>
-								{locale === "ru"
-									? "Создать свой релиз"
-									: "Create your own release"}
-							</a>
-						)}
-					</div>
-				</div>
-			</section>
+				}
+				preparation={
+					<MatchingReleasePreparation
+						key={group.id}
+						releaseId={prepareReleaseId}
+						resolveRelease={resolveMusicBrainzEdition}
+						onPrepared={setCandidate}
+					/>
+				}
+			/>
 			<MatchingWorkspaceLayout>
 				<MatchingBoard
 					{...fixtureBoard}

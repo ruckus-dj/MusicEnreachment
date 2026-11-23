@@ -6,6 +6,7 @@ import {
 	MetadataFieldGroup,
 	MetadataFieldsGrid,
 } from "../features/library/MetadataFieldPresentation";
+import { ProviderGenreBaselineRow } from "../features/library/ProviderGenreBaselineRow";
 import { useI18n } from "../i18n";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
@@ -133,45 +134,6 @@ function writeRoleContributors(
 
 function marker(keys: string[]) {
 	return { "data-metadata-keys": keys.join(",") };
-}
-
-function ProviderGenreBaselineRow({
-	baseline,
-	locale,
-}: {
-	baseline: { genres: GenreReference[] } | null;
-	locale: "en" | "ru";
-}) {
-	const label = metadataMessage(locale, "genre.providerBaseline");
-	return (
-		<section
-			aria-label={label}
-			data-provider-genre-baseline
-			className="grid min-w-0 gap-1 border-t border-[var(--line)] pt-2 text-sm"
-		>
-			<h4 className="m-0 text-sm font-medium">{label}</h4>
-			{baseline === null ? (
-				<p className="m-0 text-[var(--muted)]">
-					{metadataMessage(locale, "genre.providerBaselineUnavailable")}
-				</p>
-			) : baseline.genres.length ? (
-				<ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-					{baseline.genres.map((genre) => (
-						<li
-							key={genre.id ?? genre.name}
-							className="rounded-full border border-[var(--line)] px-2 py-0.5"
-						>
-							{genre.name}
-						</li>
-					))}
-				</ul>
-			) : (
-				<p className="m-0 text-[var(--muted)]">
-					{metadataMessage(locale, "genre.providerBaselineEmpty")}
-				</p>
-			)}
-		</section>
-	);
 }
 
 function move<T>(items: T[], index: number, delta: number): T[] {
@@ -731,12 +693,10 @@ export function MetadataEditor({
 					</div>
 				</section>
 			)}
-			{providerGenreBaseline !== undefined && (
-				<ProviderGenreBaselineRow
-					baseline={providerGenreBaseline}
-					locale={locale}
-				/>
-			)}
+			<ProviderGenreBaselineRow
+				baseline={providerGenreBaseline}
+				locale={locale}
+			/>
 			{artistFields.length > 0 && (
 				<div className="grid gap-2 rounded border border-[var(--line)] p-2">
 					<div className="flex flex-wrap items-center gap-2 text-sm">

@@ -22,10 +22,13 @@ import { type Locale, useI18n } from "../../i18n";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
 import type { SourceFiles } from "../library/catalogData";
 import { retainedCopyLabel } from "./retainedCopyPath";
+import { SourceInspectorView } from "./SourceInspectorView";
 import { SourceInventoryView } from "./SourceInventoryView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
 import { SourceScanPanel } from "./SourceScanPanel";
+import { demoSourceLocationHref } from "./sourceDemoRoute";
+import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
 import { rootLocations } from "./sourceInventory";
 import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
@@ -104,6 +107,7 @@ export function SourcesScreen({
 	files,
 	onRemove,
 	selectedRootId,
+	selectedLocationId,
 	workDirectory = "",
 	toolsPath = "",
 	currentOutput = "",
@@ -116,6 +120,7 @@ export function SourcesScreen({
 	files: SourceFiles;
 	onRemove: (rootId: string) => void;
 	selectedRootId?: string;
+	selectedLocationId?: string;
 	workDirectory?: string;
 	toolsPath?: string;
 	currentOutput?: string;
@@ -243,6 +248,24 @@ export function SourcesScreen({
 		</p>
 	) : null;
 
+	if (selectedRootId && selectedLocationId)
+		return (
+			<SourceInspectorView
+				key={`${selectedRootId}:${selectedLocationId}`}
+				{...sourceInspectorDemoProvider({
+					locale,
+					rootId: selectedRootId,
+					locationId: selectedLocationId,
+					root,
+					files,
+					processing,
+					updateProcessing,
+					workDirectory,
+					scanning: scans.active(selectedRootId),
+				})}
+			/>
+		);
+
 	return (
 		<section className={styles.page}>
 			{selectedRootId ? (
@@ -286,6 +309,7 @@ export function SourcesScreen({
 									return {
 										id: location.id,
 										path: location.path,
+										href: demoSourceLocationHref(root.id, location.id),
 										size:
 											location.size === undefined
 												? "—"

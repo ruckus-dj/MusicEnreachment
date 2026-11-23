@@ -1,71 +1,38 @@
-import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { useI18n } from "../../i18n/I18nProvider";
 import { SourceTechnicalResult } from "./SourceTechnicalResult";
-import { sourceMessage } from "./sourceMessages";
+import {
+  type SourceInspectorMessageKey,
+  sourceInspectorMessage,
+} from "./sourceInspectorMessages";
+import {
+  type SourceInspectorFingerprintSuccess,
+  type SourceInspectorLocale,
+  type SourceInspectorMetadataSuccess,
+  type SourceInspectorProbe,
+  type SourceInspectorSHA256Success,
+  type SourceInspectorStepName,
+  type SourceInspectorStepStatus,
+  sourceInspectorStepBusy,
+} from "./sourceInspectorModel";
 
-export type SourceAnalysisStepName =
-  | "sha256"
-  | "probe"
-  | "fingerprint"
-  | "metadata";
-export type SourceAnalysisStepState =
-  | "not_requested"
-  | "loading"
-  | "queued"
-  | "running"
-  | "failed"
-  | "succeeded"
-  | "skipped"
-  | "pending";
+const panel =
+  "grid min-w-0 gap-1 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2.5";
+const heading = "m-0 text-sm font-semibold";
+const note = "m-0 text-[11px] text-[var(--muted)] wrap-anywhere";
+const alert =
+  "my-2 rounded-[4px] border border-[var(--line)] bg-[var(--error-soft)] px-2.5 py-2 text-[var(--error)] wrap-anywhere";
+const stepsList = "m-0 grid list-none gap-2 p-0";
+const stepPanel =
+  "grid min-w-0 gap-1 rounded border border-[var(--line)] bg-[var(--surface)] p-2";
+const facts = "m-0 grid text-[13px]";
+const fact =
+  "grid min-w-0 gap-3 border-b border-[var(--line)] py-1.5 last:border-b-0 min-[600px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] max-[599px]:gap-0.5";
+const term = "m-0 text-[var(--muted)]";
+const detail = "m-0 min-w-0 wrap-anywhere";
+const code = "font-mono text-[11px] wrap-anywhere";
 
-export interface SourceAnalysisStepStatus {
-  readonly state: SourceAnalysisStepState;
-  readonly safeError?: string;
-  readonly skipReason?: string;
-}
-
-export interface SourceAnalysisFingerprintSuccess {
-  readonly value: string;
-  readonly version: string;
-  readonly provenance?: string;
-}
-
-export interface SourceAnalysisMetadataSuccess {
-  // Tag values are nullable in the API projection: a present key with a null
-  // value means the tag exists but its values are unknown. Keep the key and
-  // render the unknown text instead of dropping it or crashing on join.
-  readonly tags: Readonly<Record<string, readonly string[] | null>>;
-  readonly provenance: {
-    readonly name: string;
-    readonly version: string;
-    readonly contract: string;
-  };
-}
-
-export interface SourceAnalysisStepsProps {
-  readonly steps: Readonly<
-    Partial<Record<SourceAnalysisStepName, SourceAnalysisStepStatus>>
-  >;
-  readonly sha256?: { readonly value: string; readonly provenance?: string };
-  readonly probeResult?: SourceTechnicalResultResponse;
-  readonly probeProvenance?: string;
-  readonly fingerprint?: SourceAnalysisFingerprintSuccess;
-  readonly metadata?: SourceAnalysisMetadataSuccess;
-  readonly retryAvailable: Readonly<
-    Partial<Record<SourceAnalysisStepName, boolean>>
-  >;
-  readonly onRetry: (step: SourceAnalysisStepName) => void;
-  readonly fingerprintRerunAvailable: boolean;
-  readonly onRerunFingerprint: () => void;
-  // The active fpcalc version is optional: an absent value means the active
-  // version is unknown and must never be compared as if it were a real version.
-  readonly activeFingerprintVersion?: string;
-  readonly matching: { readonly eligible: boolean; readonly reason?: string };
-}
-
-const stepNames: ReadonlyArray<{
-  readonly name: SourceAnalysisStepName;
+const stepLabels: ReadonlyArray<{
+  readonly name: SourceInspectorStepName;
   readonly label: "sha256" | "probeStep" | "fingerprint" | "metadata";
 }> = [
   { name: "sha256", label: "sha256" },
@@ -74,31 +41,45 @@ const stepNames: ReadonlyArray<{
   { name: "metadata", label: "metadata" },
 ];
 
-function isBusy(state: SourceAnalysisStepState): boolean {
-  return (
-    state === "loading" ||
-    state === "queued" ||
-    state === "running" ||
-    state === "pending"
-  );
-}
+const stateMessages: Record<
+  SourceInspectorStepStatus["state"],
+  SourceInspectorMessageKey
+> = {
+  not_requested: "notRequested",
+  loading: "loadingState",
+  pending: "pending",
+  queued: "queued",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  skipped: "skipped",
+};
 
-function stateMessageKey(state: SourceAnalysisStepState) {
-  switch (state) {
-    case "not_requested":
-      return "notRequested";
-    case "loading":
-      return "loadingState";
-    default:
-      return state;
-  }
+export interface SourceAnalysisStepsProps {
+  readonly locale: SourceInspectorLocale;
+  readonly steps: Readonly<
+    Partial<Record<SourceInspectorStepName, SourceInspectorStepStatus>>
+  >;
+  readonly sha256?: SourceInspectorSHA256Success;
+  readonly probe?: SourceInspectorProbe;
+  readonly fingerprint?: SourceInspectorFingerprintSuccess;
+  readonly metadata?: SourceInspectorMetadataSuccess;
+  readonly retryAvailable: Readonly<
+    Partial<Record<SourceInspectorStepName, boolean>>
+  >;
+  readonly onRetry: (step: SourceInspectorStepName) => void;
+  readonly fingerprintRerunAvailable: boolean;
+  readonly onRerunFingerprint: () => void;
+  readonly activeFingerprintVersion?: string;
+  // Absent matching evidence renders as unknown rather than as unavailable.
+  readonly matching?: { readonly eligible: boolean; readonly reason?: string };
 }
 
 export function SourceAnalysisSteps({
+  locale,
   steps,
   sha256,
-  probeResult,
-  probeProvenance,
+  probe,
   fingerprint,
   metadata,
   retryAvailable,
@@ -108,15 +89,14 @@ export function SourceAnalysisSteps({
   activeFingerprintVersion,
   matching,
 }: SourceAnalysisStepsProps) {
-  const { locale } = useI18n();
   const t = (
-    key: Parameters<typeof sourceMessage>[1],
+    key: SourceInspectorMessageKey,
     values?: Record<string, string | number>,
-  ) => sourceMessage(locale, key, values);
+  ) => sourceInspectorMessage(locale, key, values);
   const unknown = t("unknown");
-  const stepLabel = (name: SourceAnalysisStepName) =>
-    t(stepNames.find((step) => step.name === name)?.label ?? "metadata");
-  const firstError = stepNames
+  const stepLabel = (name: SourceInspectorStepName) =>
+    t(stepLabels.find((step) => step.name === name)?.label ?? "metadata");
+  const firstError = stepLabels
     .map(({ name }) => ({
       name,
       label: stepLabel(name),
@@ -125,88 +105,94 @@ export function SourceAnalysisSteps({
     .find(({ error }) => error);
 
   return (
-    <section className="sources-panel" aria-labelledby="analysis-steps-title">
-      <h2 id="analysis-steps-title">{t("analysisSteps")}</h2>
+    <section className={panel} aria-labelledby="analysis-steps-title">
+      <h2 id="analysis-steps-title" className={heading}>
+        {t("analysisSteps")}
+      </h2>
       {firstError && (
-        <p role="alert">
+        <p role="alert" className={alert}>
           {t("stepError", { step: firstError.label })} {firstError.error}
         </p>
       )}
-      <ul>
-        {stepNames.map(({ name }) => {
+      <ul className={stepsList}>
+        {stepLabels.map(({ name }) => {
           const label = stepLabel(name);
           const step = steps[name] ?? { state: "not_requested" as const };
-          const busy = isBusy(step.state);
+          const busy = sourceInspectorStepBusy(step.state);
           const hasSuccess =
             (name === "sha256" && !!sha256) ||
-            (name === "probe" && !!probeResult) ||
+            (name === "probe" && !!probe) ||
             (name === "fingerprint" && !!fingerprint);
           const successful = hasSuccess || (name === "metadata" && !!metadata);
           return (
-            <li key={name} aria-label={label}>
-              <h3>{label}</h3>
-              <p>
-                {t("state")}: {t(stateMessageKey(step.state))}
+            <li key={name} className={stepPanel} aria-label={label}>
+              <h3 className={heading}>{label}</h3>
+              <p className="m-0">
+                {t("state")}: {t(stateMessages[step.state])}
               </p>
-              {step.safeError && <p role="alert">{step.safeError}</p>}
-              {step.skipReason && (
-                <p className="sources-note">{step.skipReason}</p>
+              {step.safeError && (
+                <p role="alert" className={alert}>
+                  {step.safeError}
+                </p>
               )}
+              {step.skipReason && <p className={note}>{step.skipReason}</p>}
               {name === "sha256" && sha256 && (
-                <p>
-                  SHA-256: <code>{sha256.value}</code>
+                <p className="m-0 wrap-anywhere">
+                  SHA-256: <code className={code}>{sha256.value}</code>
                   {sha256.provenance && <> · {sha256.provenance}</>}
                 </p>
               )}
-              {name === "probe" && probeResult && (
+              {name === "probe" && probe && (
                 <>
-                  {probeProvenance && (
-                    <p className="sources-note">{probeProvenance}</p>
+                  {probe.provenance && (
+                    <p className={note}>{probe.provenance}</p>
                   )}
-                  <SourceTechnicalResult result={probeResult} />
+                  <SourceTechnicalResult
+                    locale={locale}
+                    result={probe.result}
+                  />
                 </>
               )}
               {name === "fingerprint" && fingerprint && (
                 <>
-                  <p>
-                    {t("fingerprintValue")} <code>{fingerprint.value}</code>
+                  <p className="m-0 wrap-anywhere">
+                    {t("fingerprintValue")}{" "}
+                    <code className={code}>{fingerprint.value}</code>
                   </p>
-                  <p>
+                  <p className="m-0">
                     {t("resultVersion")} {fingerprint.version}
                     {activeFingerprintVersion !== undefined &&
                       activeFingerprintVersion !== fingerprint.version &&
                       ` · ${t("activeVersion")} ${activeFingerprintVersion}`}
                   </p>
                   {activeFingerprintVersion === undefined && (
-                    <p className="sources-note">
-                      {t("activeVersionUnavailable")}
-                    </p>
+                    <p className={note}>{t("activeVersionUnavailable")}</p>
                   )}
                   {fingerprint.provenance && (
-                    <p className="sources-note">{fingerprint.provenance}</p>
+                    <p className={note}>{fingerprint.provenance}</p>
                   )}
                 </>
               )}
               {name === "metadata" && metadata && (
                 <>
-                  <p>
+                  <p className="m-0">
                     {t("metadataSource")} {metadata.provenance.name}{" "}
                     {metadata.provenance.version}
                   </p>
-                  <p className="sources-note">{metadata.provenance.contract}</p>
+                  <p className={note}>{metadata.provenance.contract}</p>
                   {Object.entries(metadata.tags).length > 0 ? (
-                    <dl className="sources-summary">
+                    <dl className={facts}>
                       {Object.entries(metadata.tags).map(([tag, values]) => (
-                        <div key={tag}>
-                          <dt>{tag}</dt>
-                          <dd>
+                        <div key={tag} className={fact}>
+                          <dt className={term}>{tag}</dt>
+                          <dd className={detail}>
                             {values === null ? unknown : values.join(" · ")}
                           </dd>
                         </div>
                       ))}
                     </dl>
                   ) : (
-                    <p className="sources-note">{t("noSavedTags")}</p>
+                    <p className={note}>{t("noSavedTags")}</p>
                   )}
                 </>
               )}
@@ -227,17 +213,26 @@ export function SourceAnalysisSteps({
                 step.state !== "failed" &&
                 step.state !== "skipped" &&
                 step.state !== "not_requested" && (
-                  <p className="sources-note">{t("noSuccessfulStep")}</p>
+                  <p className={note}>{t("noSuccessfulStep")}</p>
                 )}
             </li>
           );
         })}
       </ul>
-      <section aria-labelledby="matching-title">
-        <h3 id="matching-title">{t("matching")}</h3>
-        <p>
-          {matching.eligible ? t("available") : t("unavailable")}
-          {matching.reason && ` · ${matching.reason}`}
+      <section
+        aria-labelledby="matching-title"
+        className="grid gap-1 border-t border-[var(--line)] pt-2"
+      >
+        <h3 id="matching-title" className={heading}>
+          {t("matching")}
+        </h3>
+        <p className="m-0">
+          {matching
+            ? matching.eligible
+              ? t("available")
+              : t("unavailable")
+            : t("unknown")}
+          {matching?.reason && ` · ${matching.reason}`}
         </p>
       </section>
     </section>

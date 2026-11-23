@@ -38,10 +38,12 @@ const storageKey = "music-design-v2-language";
 
 function Harness({
 	selectedRootId,
+	selectedLocationId,
 	onRoots,
 	onProcessingState,
 }: {
 	selectedRootId?: string;
+	selectedLocationId?: string;
 	onRoots: (roots: SourceRoot[]) => void;
 	onProcessingState: (state: SourceProcessingState) => void;
 }) {
@@ -65,6 +67,7 @@ function Harness({
 			files={files}
 			onRemove={() => {}}
 			selectedRootId={selectedRootId}
+			selectedLocationId={selectedLocationId}
 			workDirectory="/work"
 			processing={processing}
 			scans={scans}
@@ -77,10 +80,12 @@ const element = (
 	selectedRootId: string | undefined,
 	onRoots: (roots: SourceRoot[]) => void,
 	onProcessingState: (state: SourceProcessingState) => void,
+	selectedLocationId?: string,
 ) => (
 	<I18nProvider>
 		<Harness
 			selectedRootId={selectedRootId}
+			selectedLocationId={selectedLocationId}
 			onRoots={onRoots}
 			onProcessingState={onProcessingState}
 		/>
@@ -220,8 +225,22 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(processing.copies).toEqual([]);
 	expect(
 		within(screen.getByRole("table", { name: "Inventory files" })).getByRole(
-			"rowheader",
+			"link",
 			{ name: "/mnt/music/01 - First Light.flac" },
 		),
-	).toBeInTheDocument();
+	).toHaveAttribute("href", "#sources/root-library/locations/loc-1");
+
+	view.rerender(element("root-library", onRoots, onProcessingState, "loc-1"));
+	expect(screen.getByRole("heading", { name: "File inspector" })).toHaveFocus();
+	expect(screen.getByText("01 - First Light.flac")).toBeInTheDocument();
+	expect(
+		screen.queryByRole("heading", { name: "Saved technical result" }),
+	).not.toBeInTheDocument();
+	fireEvent.click(
+		screen.getByRole("button", { name: /Retry step .*fingerprint/i }),
+	);
+	expect(
+		lastProcessing()?.files[0].steps.find((step) => step.id === "fingerprint")
+			?.status,
+	).toBe("succeeded");
 });

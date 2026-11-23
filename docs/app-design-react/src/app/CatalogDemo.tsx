@@ -98,6 +98,7 @@ import {
 	initialSourceRoots,
 	SourcesScreen,
 } from "../features/sources/SourcesScreen";
+import { parseDemoSourceRoute } from "../features/sources/sourceDemoRoute";
 import { removeRootFromInventory } from "../features/sources/sourceInventory";
 import {
 	initialSourceProcessingState,
@@ -1253,7 +1254,8 @@ export function CatalogDemo({
 				/>
 			</section>
 		);
-	if (routeName === "sources" || routeName.startsWith("sources/"))
+	const sourceRoute = parseDemoSourceRoute(routeName);
+	if (sourceRoute)
 		return (
 			<section className={screenLayout}>
 				<SourcesScreen
@@ -1261,9 +1263,10 @@ export function CatalogDemo({
 					onRoots={setSourceRoots}
 					files={files}
 					selectedRootId={
-						routeName.startsWith("sources/")
-							? routeId(routeName.slice("sources/".length))
-							: undefined
+						sourceRoute.view === "list" ? undefined : sourceRoute.rootId
+					}
+					selectedLocationId={
+						sourceRoute.view === "location" ? sourceRoute.locationId : undefined
 					}
 					workDirectory={settings.workDirectory}
 					toolsPath={settings.toolsPath}

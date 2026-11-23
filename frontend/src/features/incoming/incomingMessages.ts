@@ -95,7 +95,6 @@ export const incomingMessages = {
     linkedManualFiles: "Unique files with saved manual links:",
     draftDoesNotChangeLinks:
       "The assignment draft does not change these links until confirmation.",
-    searchFilesHeading: "Search and files",
     savedEvaluation: "Saved evaluation",
     releaseSelectionLabel: "Release (manual selection)",
     chooseRelease: "Choose a release…",
@@ -238,7 +237,6 @@ export const incomingMessages = {
     linkedManualFiles: "Уникальных файлов с сохранёнными ручными связями:",
     draftDoesNotChangeLinks:
       "Черновик назначений не изменяет эти связи до подтверждения.",
-    searchFilesHeading: "Поиск и файлы",
     savedEvaluation: "Сохраненная оценка",
     releaseSelectionLabel: "Издание (выбор вручную)",
     chooseRelease: "Выберите издание…",

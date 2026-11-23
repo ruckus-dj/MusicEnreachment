@@ -1,6 +1,6 @@
 export const incomingScreenClass = [
   "mx-auto max-w-[1800px] space-y-4 wrap-anywhere text-[13px]/[18px] text-[var(--ink)]",
-  "[&_:is(section,fieldset,.grid>*)]:min-w-0 [&_h1]:text-[20px]/[26px] [&_:is(h2,h3)]:text-[14px]/5",
+  "[&_:is(section,fieldset,.grid>*)]:min-w-0 [&_h1]:text-[20px]/[26px] [&_:is(h2,h3):not([data-matching-search-heading])]:text-[14px]/5",
   "[&_.bg-white]:bg-[var(--surface)] [&_:is(.border-stone-200,.border-stone-300,.border-stone-400)]:border-[var(--line)]",
   "[&_.border-amber-500]:border-[var(--warning)] [&_.border-green-700]:border-[var(--accent)] [&_.border-sky-700]:border-[var(--info)]",
   "[&_:is(.bg-stone-50,.bg-stone-100)]:bg-[var(--raised)] [&_.bg-amber-50]:bg-[var(--warning-soft)] [&_.bg-green-50]:bg-[var(--accent-soft)] [&_.bg-sky-50]:bg-[var(--info-soft)]",

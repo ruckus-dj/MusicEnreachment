@@ -82,6 +82,8 @@ docs/app-design-react/src/features/setup/SetupScreen.tsx
 docs/app-design-react/src/features/setup/setupToolsLifecycle.ts
 docs/app-design-react/src/features/sources/SourcesScreen.tsx
 docs/app-design-react/src/features/sources/retainedCopyPath.ts
+docs/app-design-react/src/features/sources/sourceDemoRoute.ts
+docs/app-design-react/src/features/sources/sourceInspectorDemoProvider.ts
 docs/app-design-react/src/features/sources/sourceInventory.ts
 docs/app-design-react/src/features/sources/sourceMessages.ts
 docs/app-design-react/src/features/sources/sourceProcessingModel.ts
@@ -208,13 +210,11 @@ frontend/src/features/setup/SetupSummary.tsx
 frontend/src/features/setup/SetupTools.tsx
 frontend/src/features/setup/setup.css
 frontend/src/features/setup/setupMessages.ts
-frontend/src/features/sources/SourceAnalysisSteps.tsx
 frontend/src/features/sources/SourceArtifactCleanupPanel.tsx
 frontend/src/features/sources/SourceDetailScreen.tsx
 frontend/src/features/sources/SourceInspectorScreen.tsx
 frontend/src/features/sources/SourceLocations.tsx
 frontend/src/features/sources/SourceScanControl.tsx
-frontend/src/features/sources/SourceTechnicalResult.tsx
 frontend/src/features/sources/SourcesScreen.tsx
 frontend/src/features/sources/sourceMessages.ts
 frontend/src/features/sources/sourceScanRefreshTestSupport.tsx

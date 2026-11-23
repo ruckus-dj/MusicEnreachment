@@ -1,78 +1,77 @@
 import { Button, Disclosure, DisclosurePanel } from "react-aria-components";
-import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
-import { useI18n } from "../../i18n/I18nProvider";
 import { TagSnapshotView } from "../library/TagSnapshotView";
-import { numberFormat, sourceMessage } from "./sourceMessages";
+import { sourceInspectorMessage } from "./sourceInspectorMessages";
+import {
+  type SourceInspectorLocale,
+  type SourceInspectorTechnicalResult,
+  sourceInspectorDateTime,
+  sourceInspectorDuration,
+  sourceInspectorMeasured,
+} from "./sourceInspectorModel";
 
-function measured(
-  value: number | undefined,
-  unit: string,
-  locale: "en" | "ru",
-  unknown: string,
-) {
-  const number = numberFormat(locale, { maximumFractionDigits: 3 });
-  return value === undefined ? unknown : `${number.format(value)} ${unit}`;
-}
-
-function duration(
-  milliseconds: number | undefined,
-  unknown: string,
-  locale: "en" | "ru",
-) {
-  if (milliseconds === undefined) return unknown;
-  const seconds = Math.round(milliseconds / 1000);
-  const format = (value: number) =>
-    numberFormat(locale, {
-      minimumIntegerDigits: 2,
-      useGrouping: false,
-    }).format(value);
-  return `${format(Math.floor(seconds / 3600))}:${format(Math.floor(seconds / 60) % 60)}:${format(seconds % 60)}`;
-}
+const panel =
+  "grid min-w-0 gap-1 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2.5";
+const heading = "m-0 text-sm font-semibold";
+const note = "m-0 text-[11px] text-[var(--muted)] wrap-anywhere";
+const facts = "m-0 grid text-[13px]";
+const fact =
+  "grid min-w-0 gap-3 border-b border-[var(--line)] py-1.5 last:border-b-0 min-[600px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] max-[599px]:gap-0.5";
+const term = "m-0 text-[var(--muted)]";
+const detail = "m-0 min-w-0 wrap-anywhere";
+const code = "font-mono text-[11px] wrap-anywhere";
+const rawTrigger =
+  "min-h-8 w-fit cursor-pointer rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-left text-[13px] font-semibold text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
 
 export function SourceTechnicalResult({
+  locale,
   result,
 }: {
-  readonly result: SourceTechnicalResultResponse;
+  readonly locale: SourceInspectorLocale;
+  readonly result: SourceInspectorTechnicalResult;
 }) {
-  const { locale } = useI18n();
   const t = (
-    key: Parameters<typeof sourceMessage>[1],
+    key: Parameters<typeof sourceInspectorMessage>[1],
     values?: Record<string, string | number>,
-  ) => sourceMessage(locale, key, values);
+  ) => sourceInspectorMessage(locale, key, values);
   const unknown = t("unknown");
-  const date = new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(result.inspected_at));
+  const date = sourceInspectorDateTime(result.inspectedAt, locale);
   return (
     <>
-      <section className="sources-panel" aria-labelledby="technical-title">
-        <h2 id="technical-title">{t("savedTechnicalResult")}</h2>
-        <p className="sources-note">
+      <section className={panel} aria-labelledby="technical-title">
+        <h2 id="technical-title" className={heading}>
+          {t("savedTechnicalResult")}
+        </h2>
+        <p className={note}>
           {t("analysisAt", { date })} ·{" "}
-          <span title={result.ffprobe_version}>
-            {result.ffprobe_version.split("\n")[0]}
+          <span title={result.ffprobeVersion}>
+            {result.ffprobeVersion.split("\n")[0]}
           </span>{" "}
-          · {t("policy")} {result.analysis_policy_version}
+          · {t("policy")} {result.analysisPolicyVersion}
         </p>
-        <dl className="sources-summary">
-          <div>
-            <dt>{t("container")}</dt>
-            <dd>{result.container.name ?? unknown}</dd>
+        <dl className={facts}>
+          <div className={fact}>
+            <dt className={term}>{t("container")}</dt>
+            <dd className={detail}>{result.container.name ?? unknown}</dd>
           </div>
-          <div>
-            <dt>{t("containerDescription")}</dt>
-            <dd>{result.container.long_name ?? unknown}</dd>
+          <div className={fact}>
+            <dt className={term}>{t("containerDescription")}</dt>
+            <dd className={detail}>{result.container.longName ?? unknown}</dd>
           </div>
-          <div>
-            <dt>{t("duration")}</dt>
-            <dd>{duration(result.container.duration_ms, unknown, locale)}</dd>
+          <div className={fact}>
+            <dt className={term}>{t("duration")}</dt>
+            <dd className={detail}>
+              {sourceInspectorDuration(
+                result.container.durationMs,
+                locale,
+                unknown,
+              )}
+            </dd>
           </div>
-          <div>
-            <dt>{t("containerBitrate")}</dt>
-            <dd>
-              {measured(
-                result.container.bit_rate,
+          <div className={fact}>
+            <dt className={term}>{t("containerBitrate")}</dt>
+            <dd className={detail}>
+              {sourceInspectorMeasured(
+                result.container.bitRate,
                 t("bitsPerSecond"),
                 locale,
                 unknown,
@@ -81,91 +80,100 @@ export function SourceTechnicalResult({
           </div>
         </dl>
       </section>
-      <section className="sources-panel" aria-labelledby="streams-title">
-        <h2 id="streams-title">{t("audioStreams")}</h2>
-        {(result.streams ?? []).map((stream, position) => (
+      <section className={panel} aria-labelledby="streams-title">
+        <h2 id="streams-title" className={heading}>
+          {t("audioStreams")}
+        </h2>
+        {result.streams.map((stream, position) => (
           <section
-            className="sources-stream"
+            className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
             key={stream.index ?? `unknown-${position}`}
             aria-label={t("audioStream", { index: stream.index ?? unknown })}
           >
-            <h3>{t("stream", { index: stream.index ?? unknown })}</h3>
-            <dl className="sources-summary">
-              <div>
-                <dt>{t("codecProfile")}</dt>
-                <dd>
-                  {stream.codec_name ?? unknown} / {stream.profile ?? unknown}
+            <h3 className={heading}>
+              {t("stream", { index: stream.index ?? unknown })}
+            </h3>
+            <dl className={facts}>
+              <div className={fact}>
+                <dt className={term}>{t("codecProfile")}</dt>
+                <dd className={detail}>
+                  {stream.codecName ?? unknown} / {stream.profile ?? unknown}
                 </dd>
               </div>
-              <div>
-                <dt>{t("duration")}</dt>
-                <dd>{duration(stream.duration_ms, unknown, locale)}</dd>
+              <div className={fact}>
+                <dt className={term}>{t("duration")}</dt>
+                <dd className={detail}>
+                  {sourceInspectorDuration(stream.durationMs, locale, unknown)}
+                </dd>
               </div>
-              <div>
-                <dt>{t("bitrate")}</dt>
-                <dd>
-                  {measured(
-                    stream.bit_rate,
+              <div className={fact}>
+                <dt className={term}>{t("bitrate")}</dt>
+                <dd className={detail}>
+                  {sourceInspectorMeasured(
+                    stream.bitRate,
                     t("bitsPerSecond"),
                     locale,
                     unknown,
                   )}
                 </dd>
               </div>
-              <div>
-                <dt>{t("sampleRate")}</dt>
-                <dd>
-                  {measured(
-                    stream.sample_rate_hz,
+              <div className={fact}>
+                <dt className={term}>{t("sampleRate")}</dt>
+                <dd className={detail}>
+                  {sourceInspectorMeasured(
+                    stream.sampleRateHz,
                     t("hertzUnit"),
                     locale,
                     unknown,
                   )}
                 </dd>
               </div>
-              <div>
-                <dt>{t("sampleFormat")}</dt>
-                <dd>{stream.sample_format ?? unknown}</dd>
+              <div className={fact}>
+                <dt className={term}>{t("sampleFormat")}</dt>
+                <dd className={detail}>{stream.sampleFormat ?? unknown}</dd>
               </div>
-              <div>
-                <dt>{t("bitDepth")}</dt>
-                <dd>
-                  {measured(
-                    stream.bits_per_sample,
+              <div className={fact}>
+                <dt className={term}>{t("bitDepth")}</dt>
+                <dd className={detail}>
+                  {sourceInspectorMeasured(
+                    stream.bitsPerSample,
                     t("bitsUnit"),
                     locale,
                     unknown,
                   )}
                 </dd>
               </div>
-              <div>
-                <dt>{t("channelsLayout")}</dt>
-                <dd>
+              <div className={fact}>
+                <dt className={term}>{t("channelsLayout")}</dt>
+                <dd className={detail}>
                   {stream.channels ?? unknown} /{" "}
-                  {stream.channel_layout ?? unknown}
+                  {stream.channelLayout ?? unknown}
                 </dd>
               </div>
             </dl>
           </section>
         ))}
-        {!result.streams?.length && (
-          <p className="sources-note">{t("noAudioStreams")}</p>
+        {!result.streams.length && (
+          <p className={note}>{t("noAudioStreams")}</p>
         )}
       </section>
       <TagSnapshotView
         title={t("sourceTags")}
-        rows={Object.entries(result.tags).map(([key, values]) => ({
-          key,
-          values: values ?? [],
-        }))}
+        rows={result.tags}
         empty={t("noSourceTags")}
         unknown={unknown}
       />
-      <Disclosure className="sources-panel sources-raw">
-        <Button slot="trigger">{t("rawFfprobe")}</Button>
+      <Disclosure className={panel}>
+        <Button slot="trigger" className={rawTrigger}>
+          {t("rawFfprobe")}
+        </Button>
         <DisclosurePanel>
           <section aria-label={t("rawFfprobe")}>
-            <pre>{JSON.stringify(result.raw_json, null, 2)}</pre>
+            <pre
+              className={`m-0 max-w-full whitespace-pre-wrap rounded bg-[var(--raised)] p-2 ${code}`}
+            >
+              {JSON.stringify(result.rawJson, null, 2)}
+            </pre>
           </section>
         </DisclosurePanel>
       </Disclosure>

@@ -25,11 +25,10 @@ import type {
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { IncomingLocalReleaseCreation } from "../local-release/IncomingLocalReleaseCreation";
-import { localReleaseMessages } from "../local-release/localReleaseMessages";
 import { MatchingPreview } from "../matchingWorkspace/MatchingPreview";
+import { MatchingReviewSearchView } from "../matchingWorkspace/MatchingReviewSearchView";
 import {
   MatchingWorkspaceLayout,
-  matchingCandidatesPanel,
   matchingInspectorActions,
   matchingInspectorContent,
   matchingInspectorPanel,
@@ -1139,19 +1138,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               />
             ) : null}
 
-            {group && !releaseSelectionLocked && (
-              <a
-                className="inline-block rounded border border-[var(--control)] px-2.5 py-1.5 text-sm text-[var(--ink)] no-underline hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                href={incomingGroupMatchingHref(group.id, routeReleaseId, {
-                  localReleaseId: preferredLocalReleaseId,
-                  prepareReleaseId,
-                  creatingLocalRelease: true,
-                })}
-              >
-                {localReleaseMessages[locale].title}
-              </a>
-            )}
-
             {reviewQuery.isLoading ? (
               <p role="status">{copy.loadingEvaluation}</p>
             ) : null}
@@ -1249,18 +1235,18 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
 
             {group ? (
               <>
-                <section
-                  data-matching-candidates
-                  className={matchingCandidatesPanel}
-                  aria-labelledby="matching-search-title"
-                >
-                  <h2
-                    id="matching-search-title"
-                    className="mb-2.5 font-semibold"
-                  >
-                    {copy.searchFilesHeading}
-                  </h2>
-                  <div className="grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <MatchingReviewSearchView
+                  locale={locale}
+                  createLocalReleaseHref={
+                    releaseSelectionLocked
+                      ? undefined
+                      : incomingGroupMatchingHref(group.id, routeReleaseId, {
+                          localReleaseId: preferredLocalReleaseId,
+                          prepareReleaseId,
+                          creatingLocalRelease: true,
+                        })
+                  }
+                  search={
                     <ManualSearchPicker
                       groupId={groupId}
                       groupRevision={group.revision}
@@ -1301,6 +1287,8 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         });
                       }}
                     />
+                  }
+                  preparation={
                     <ManualReleasePicker
                       groupId={groupId}
                       groupRevision={group.revision}
@@ -1321,7 +1309,8 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                         }
                       }}
                     />
-                  </div>
+                  }
+                >
                   {review?.evaluated && review.proposal_available ? (
                     <div className="mt-3 space-y-3">
                       <h3 className="font-medium">{copy.savedEvaluation}</h3>
@@ -1437,7 +1426,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                       </details>
                     </div>
                   ) : null}
-                </section>
+                </MatchingReviewSearchView>
                 <MatchingWorkspaceLayout>
                   {workspaceRelease ? (
                     <MatchingBoard

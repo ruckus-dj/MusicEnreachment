@@ -35,6 +35,7 @@ import {
   MetadataFieldGroup,
   MetadataFieldsGrid,
 } from "./MetadataFieldPresentation";
+import { ProviderGenreBaselineRow } from "./ProviderGenreBaselineRow";
 import {
   createMetadataDraftRowKey,
   type MetadataMovementDraft,
@@ -1638,30 +1639,10 @@ function LibraryScopedMetadataEditorSession({
                 </AppButton>
               </div>
             )}
-            <section
-              aria-label={genreCopy.providerGenres}
-              className="grid gap-1 border-t border-[var(--line)] pt-2 text-sm"
-            >
-              <h4 className="m-0 font-medium">{genreCopy.providerGenres}</h4>
-              {providerGenreBaseline?.genres?.length ? (
-                <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-                  {providerGenreBaseline.genres.map((genre) => (
-                    <li
-                      className="rounded-full border border-[var(--line)] px-2 py-0.5"
-                      key={genre.id}
-                    >
-                      {genre.name}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="m-0 text-[var(--muted)]">
-                  {providerGenreBaseline
-                    ? genreCopy.providerGenresEmpty
-                    : genreCopy.providerGenresUnavailable}
-                </p>
-              )}
-            </section>
+            <ProviderGenreBaselineRow
+              baseline={providerGenreBaseline}
+              locale={locale}
+            />
           </section>
         )}
         <MetadataFieldsGrid

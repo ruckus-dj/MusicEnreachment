@@ -117,10 +117,12 @@ export function blockStagedSourceQueue(
 export function processSourceQueue(
 	state: SourceProcessingState,
 	rootId?: string,
+	fileId?: string,
 ): SourceProcessingState {
 	const files = state.files.map((file) => {
 		if (
 			(rootId !== undefined && file.rootId !== rootId) ||
+			(fileId !== undefined && file.id !== fileId) ||
 			(file.status !== "queued" && file.status !== "failed") ||
 			file.blockedReason === "output_reset" ||
 			!file.steps.some((step) => step.status === "queued")

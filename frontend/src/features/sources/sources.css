@@ -195,38 +195,6 @@
   text-decoration: underline;
 }
 
-.sources-breadcrumb {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 11px;
-}
-
-.sources-inspector,
-.sources-inspector > *,
-.sources-stream {
-  min-width: 0;
-}
-
-.sources-stream + .sources-stream {
-  margin-top: 10px;
-}
-
-.sources-stream h3 {
-  font-weight: 600;
-}
-
-.sources-raw pre {
-  max-width: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: 8px;
-  color: var(--sources-ink);
-  background: var(--sources-raised);
-  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-
 .sources-dialog {
   position: fixed;
   inset: 50% auto auto 50%;
