@@ -1,10 +1,8 @@
 import type { FormEvent } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-	comparisonTableWrap,
 	dialogFooter,
 	surfacePanel,
-	table,
 } from "../../components/styles/matchingStyles";
 import {
 	Button,
@@ -15,10 +13,6 @@ import {
 	Modal,
 	Radio,
 	RadioGroup,
-	Tab,
-	TabList,
-	TabPanel,
-	Tabs,
 	TextField,
 } from "../../components/ui";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
@@ -30,7 +24,6 @@ import {
 	artistName,
 	assignFile,
 	createIncomingState,
-	findProviderTrack,
 	findTarget,
 	getDraft,
 	type IncomingFiles,
@@ -41,10 +34,8 @@ import {
 	normalized,
 	planRows,
 	providerReleases,
-	providerTags,
 	selectedSourceId,
 	sourceIds,
-	tagFieldGroups,
 	unassignFile,
 	usableFile,
 } from "../incoming/incomingModel";
@@ -87,8 +78,6 @@ const duration = (seconds: unknown) =>
 	Number.isFinite(Number(seconds))
 		? `${Math.floor(Number(seconds) / 60)}:${String(Math.round(Number(seconds) % 60)).padStart(2, "0")}`
 		: "—";
-const tagValue = (tags: Record<string, string[]> | undefined, key: string) =>
-	tags?.[key]?.length ? tags[key].join("; ") : "—";
 export function MatchingScreen({
 	destination,
 	groupId,
@@ -206,10 +195,6 @@ export function MatchingScreen({
 	const evidencePosition = fixtureBoard.release.positions.find(
 		(position) => position.track_id === inspected?.id,
 	);
-	const providerTrack = findProviderTrack(
-		assignment?.providerTrackId ?? null,
-		providers,
-	);
 	const existingRelease =
 		group.mode === "local"
 			? releases.find((release) => release.id === group.releaseId)
@@ -218,9 +203,6 @@ export function MatchingScreen({
 						release.providerId === target.id ||
 						release.providerId === target.providerId,
 				);
-	const localTrack = existingRelease?.tracks.find(
-		(track) => track.position === inspected?.position,
-	);
 	const used = new Set(
 		Object.values(assignments).flatMap((item) => item.sourceIds),
 	);
@@ -490,28 +472,6 @@ export function MatchingScreen({
 		state.confirmDowngrade = false;
 		commitState();
 	};
-	const tagFields = tagFieldGroups()[state.tagScope];
-	const sourceTags = selectedFile?.tags ?? {};
-	const remoteTags = providerTrack
-		? providerTags(providerTrack.release, providerTrack.track, artists)
-		: {};
-	const localTags =
-		existingRelease && localTrack
-			? providerTags(existingRelease, localTrack, artists)
-			: group.mode === "local"
-				? providerTags(target, inspected, artists)
-				: {};
-	const publication = localTrack?.published ?? undefined;
-	const publicationTags = publication?.tags ?? {};
-	const tagRows = tagFields.filter(
-		(key) =>
-			!state.differencesOnly ||
-			new Set(
-				[sourceTags, remoteTags, localTags, publicationTags].map((tags) =>
-					JSON.stringify(tags[key] ?? []),
-				),
-			).size > 1,
-	);
 	const bindRecording = (recordingId: string) => {
 		const item = assignments[String(state.recordingTarget)];
 		if (!item) {
@@ -638,7 +598,6 @@ export function MatchingScreen({
 					onInspectPosition={(trackId) => {
 						setInspectedPair(undefined);
 						state.selectedTarget = trackId;
-						state.inspector = "tags";
 						commitState();
 					}}
 					onInspectPair={(fileId, trackId) => {
@@ -646,7 +605,6 @@ export function MatchingScreen({
 						state.selectedTarget = trackId;
 						state.recordingTarget = null;
 						state.recordingResults = null;
-						state.inspector = "evidence";
 						commitState();
 					}}
 					renderPositionMeta={({ position }) => {
@@ -718,143 +676,31 @@ export function MatchingScreen({
 						);
 					}}
 				/>
-				<section data-matching-inspector className={matchingInspectorPanel}>
+				<section
+					data-matching-inspector
+					aria-label={matchingMessage(locale, "ariaTrackInspector")}
+					className={matchingInspectorPanel}
+				>
 					<div className={matchingInspectorContent}>
 						<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 							{matchingMessage(locale, "inspectorTitle", {
 								track: String(inspected.title),
 							})}
 						</h2>
-						<Tabs
-							className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
-							selectedKey={state.inspector}
-							onSelectionChange={(key) => {
-								state.inspector = key as "tags" | "evidence";
-								commitState();
-							}}
-						>
-							<TabList
-								aria-label={matchingMessage(locale, "ariaTrackInspector")}
-							>
-								<Tab id="tags">{matchingMessage(locale, "tagComparison")}</Tab>
-								<Tab id="evidence">
-									{matchingMessage(locale, "matchReason")}
-								</Tab>
-							</TabList>
-							{state.inspector === "tags" ? (
-								<TabPanel id="tags">
-									<>
-										<div className="tag-controls mb-2.5 mt-0 flex flex-wrap items-center gap-2.5">
-											<Tabs
-												selectedKey={state.tagScope}
-												onSelectionChange={(key) => {
-													state.tagScope = key as
-														| "artist"
-														| "release"
-														| "track";
-													commitState();
-												}}
-											>
-												<TabList
-													aria-label={matchingMessage(locale, "ariaTagScope")}
-												>
-													<Tab id="artist">
-														{matchingMessage(locale, "artistScope")}
-													</Tab>
-													<Tab id="release">
-														{matchingMessage(locale, "releaseScope")}
-													</Tab>
-													<Tab id="track">
-														{matchingMessage(locale, "trackScope")}
-													</Tab>
-												</TabList>
-											</Tabs>
-											<Checkbox
-												isSelected={state.differencesOnly}
-												onChange={(checked) => {
-													state.differencesOnly = checked;
-													commitState();
-												}}
-											>
-												<span className="checkbox" />
-												{matchingMessage(locale, "differencesOnly")}
-											</Checkbox>
-										</div>
-										<div className={comparisonTableWrap}>
-											<table className={table}>
-												<thead>
-													<tr>
-														<th>{matchingMessage(locale, "fieldColumn")}</th>
-														<th>
-															{matchingMessage(locale, "sourceFileColumn")}
-														</th>
-														<th>
-															{matchingMessage(locale, "providerCacheColumn")}
-														</th>
-														<th>
-															{matchingMessage(locale, "localLibraryColumn")}
-														</th>
-														<th>
-															{matchingMessage(
-																locale,
-																"currentPublicationColumn",
-															)}
-														</th>
-													</tr>
-												</thead>
-												<tbody>
-													{tagRows.map((key) => (
-														<tr key={key}>
-															<th>{key}</th>
-															<td>{tagValue(sourceTags, key)}</td>
-															<td>
-																{providerTrack
-																	? tagValue(remoteTags, key)
-																	: matchingMessage(locale, "noProviderLink")}
-															</td>
-															<td>{tagValue(localTags, key)}</td>
-															<td>
-																{publication
-																	? tagValue(publicationTags, key)
-																	: matchingMessage(locale, "unpublished")}
-															</td>
-														</tr>
-													))}
-												</tbody>
-											</table>
-										</div>
-										<p>
-											{selectedFile?.path ??
-												matchingMessage(locale, "noSourceSelected")}{" "}
-											·{" "}
-											{publication
-												? matchingMessage(locale, "publicationRead", {
-														path: String(publication.path),
-														readAt: String(publication.readAt),
-													})
-												: matchingMessage(locale, "publicationAbsent")}
-										</p>
-									</>
-								</TabPanel>
-							) : (
-								<TabPanel id="evidence">
-									{evidencePosition && evidenceFile ? (
-										<>
-											<p className="mt-1 text-sm wrap-anywhere">
-												{evidenceFile.name}
-											</p>
-											<MatchingEvidenceInspector
-												position={evidencePosition}
-												rawTags={evidenceFile.tags}
-												locale={locale}
-											/>
-										</>
-									) : (
-										<p>{matchingMessage(locale, "noEvidenceFile")}</p>
-									)}
-								</TabPanel>
-							)}
-						</Tabs>
+						{evidencePosition && evidenceFile ? (
+							<>
+								<p className="mt-1 text-sm wrap-anywhere">
+									{evidenceFile.name}
+								</p>
+								<MatchingEvidenceInspector
+									position={evidencePosition}
+									rawTags={evidenceFile.tags}
+									locale={locale}
+								/>
+							</>
+						) : (
+							<p>{matchingMessage(locale, "noEvidenceFile")}</p>
+						)}
 					</div>
 				</section>
 			</MatchingWorkspaceLayout>

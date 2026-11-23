@@ -1236,59 +1236,63 @@ export function CatalogDemo({
 			</section>
 		);
 	const sourceRoute = parseDemoSourceRoute(routeName);
-	if (sourceRoute)
-		return (
-			<section className={screenLayout}>
-				<SourcesScreen
-					roots={sourceRoots}
-					onRoots={setSourceRoots}
-					files={files}
-					selectedRootId={
-						sourceRoute.view === "list" ? undefined : sourceRoute.rootId
-					}
-					selectedLocationId={
-						sourceRoute.view === "location" ? sourceRoute.locationId : undefined
-					}
-					workDirectory={settings.workDirectory}
-					toolsPath={settings.toolsPath}
-					currentOutput={settings.currentOutput ?? "/srv/music"}
-					processing={sourceProcessing}
-					scans={sourceScans}
-					onProcessingState={setSourceProcessing}
-					onRemove={(id) => {
-						const next = removeRootFromInventory(files, releases, id);
-						setIncoming((previous) => {
-							const updated = structuredClone(previous);
-							for (const group of updated.groups) {
-								group.fileIds = group.fileIds.filter(
-									(fileId) => !next.orphaned.has(fileId),
-								);
-								for (const assignments of Object.values(group.drafts))
-									for (const assignment of Object.values(assignments)) {
-										assignment.sourceIds = assignment.sourceIds.filter(
-											(fileId) => !next.orphaned.has(fileId),
-										);
-										if (
-											assignment.selectedSourceId &&
-											next.orphaned.has(assignment.selectedSourceId)
-										)
-											assignment.selectedSourceId = null;
-										for (const fileId of next.orphaned)
-											delete assignment.sourceMeta[fileId];
-									}
-							}
-							updated.inventoryVersion++;
-							return updated;
-						});
-						setFiles(next.files);
-						setReleases(next.releases);
-						setSourceRoots((previous) =>
-							previous.filter((root) => root.id !== id),
-						);
-					}}
-				/>
-			</section>
+	if (sourceRoute) {
+		const sourceScreen = (
+			<SourcesScreen
+				roots={sourceRoots}
+				onRoots={setSourceRoots}
+				files={files}
+				selectedRootId={
+					sourceRoute.view === "list" ? undefined : sourceRoute.rootId
+				}
+				selectedLocationId={
+					sourceRoute.view === "location" ? sourceRoute.locationId : undefined
+				}
+				workDirectory={settings.workDirectory}
+				toolsPath={settings.toolsPath}
+				currentOutput={settings.currentOutput ?? "/srv/music"}
+				processing={sourceProcessing}
+				scans={sourceScans}
+				onProcessingState={setSourceProcessing}
+				onRemove={(id) => {
+					const next = removeRootFromInventory(files, releases, id);
+					setIncoming((previous) => {
+						const updated = structuredClone(previous);
+						for (const group of updated.groups) {
+							group.fileIds = group.fileIds.filter(
+								(fileId) => !next.orphaned.has(fileId),
+							);
+							for (const assignments of Object.values(group.drafts))
+								for (const assignment of Object.values(assignments)) {
+									assignment.sourceIds = assignment.sourceIds.filter(
+										(fileId) => !next.orphaned.has(fileId),
+									);
+									if (
+										assignment.selectedSourceId &&
+										next.orphaned.has(assignment.selectedSourceId)
+									)
+										assignment.selectedSourceId = null;
+									for (const fileId of next.orphaned)
+										delete assignment.sourceMeta[fileId];
+								}
+						}
+						updated.inventoryVersion++;
+						return updated;
+					});
+					setFiles(next.files);
+					setReleases(next.releases);
+					setSourceRoots((previous) =>
+						previous.filter((root) => root.id !== id),
+					);
+				}}
+			/>
 		);
+		return sourceRoute.view === "location" ? (
+			<ShellContent>{sourceScreen}</ShellContent>
+		) : (
+			<section className={screenLayout}>{sourceScreen}</section>
+		);
+	}
 	if (route === "operations")
 		return (
 			<section className={screenLayout}>

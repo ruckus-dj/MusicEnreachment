@@ -59,9 +59,6 @@ export type IncomingState = {
 	groupId: string;
 	selectedFile: string | null;
 	selectedTarget: string | null;
-	inspector: "tags" | "evidence";
-	tagScope: "artist" | "release" | "track";
-	differencesOnly: boolean;
 	providerQuery: string;
 	providerResults: IncomingReleases | null;
 	recordingQuery: string;
@@ -126,9 +123,6 @@ export function createIncomingState(): IncomingState {
 		groupId: "north",
 		selectedFile: null,
 		selectedTarget: null,
-		inspector: "tags",
-		tagScope: "track",
-		differencesOnly: false,
 		providerQuery: "Northern Lines",
 		providerResults: null,
 		recordingQuery: "",
@@ -253,27 +247,6 @@ export function unassignFile(
 	if (!assignment.sourceIds.length) delete assignmentMap[targetId];
 }
 
-const tagSets: Record<string, string[]> = {
-	artist: ["ARTIST", "ARTISTSORT", "MUSICBRAINZ_ARTISTID"],
-	release: [
-		"ALBUM",
-		"ALBUMARTIST",
-		"DATE",
-		"COUNTRY",
-		"LABEL",
-		"CATALOGNUMBER",
-		"MUSICBRAINZ_ALBUMID",
-	],
-	track: [
-		"TITLE",
-		"ARTIST",
-		"TRACKNUMBER",
-		"DISCNUMBER",
-		"GENRE",
-		"MUSICBRAINZ_TRACKID",
-		"COMMENT",
-	],
-};
 export function providerTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
@@ -700,8 +673,4 @@ export function removeRootFromIncomingInventory(
 		}
 	}
 	state.inventoryVersion++;
-}
-
-export function tagFieldGroups() {
-	return tagSets;
 }
