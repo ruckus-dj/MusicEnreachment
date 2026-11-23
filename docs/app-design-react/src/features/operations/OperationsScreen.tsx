@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
+import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import type {
 	DemoOperationStatus,
@@ -66,6 +67,7 @@ export function OperationsScreen({
 	const [kind, setKind] = useState<OperationsKindSelection>("all");
 	const [page, setPage] = useState(0);
 	const [sort, setSort] = useState(defaultSort);
+	const [abandonOpen, setAbandonOpen] = useState(false);
 	const [demoStartedAt] = useState(() =>
 		Math.max(Date.now(), latestQueueSample + 60_000),
 	);
@@ -120,11 +122,16 @@ export function OperationsScreen({
 		addRow(provider.signals, "publication", {
 			id: "signals",
 			target: copy.signalsTrack,
-			targetHref: "#track/signals-t6",
+			targetHref: matchingRecheckAbandonFixture.targetHref,
 			operation: copy.publishPositions,
 			error: `${copy.writeAccessFailure} ${copy.prepareAgain}`,
 			actions: [
 				{ id: "retry", label: copy.retry, onPress: provider.retrySignals },
+				{
+					id: "abandon",
+					label: copy.abandon,
+					onPress: () => setAbandonOpen(true),
+				},
 			],
 		});
 		addRow(provider.recovery, "publication", {
@@ -353,6 +360,19 @@ export function OperationsScreen({
 				setPage(0);
 			}}
 			pagination={pagination}
+			matchingRecheckAbandon={
+				abandonOpen && provider.signals === "failed"
+					? {
+							positions: matchingRecheckAbandonFixture.positions,
+							busy: false,
+							onConfirm: () => {
+								setAbandonOpen(false);
+								provider.abandonSignals();
+							},
+							onCancel: () => setAbandonOpen(false),
+						}
+					: undefined
+			}
 		/>
 	);
 }

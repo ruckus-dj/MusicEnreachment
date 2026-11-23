@@ -8,9 +8,11 @@ import {
   useState,
 } from "react";
 import { I18nProvider as ReactAriaI18nProvider } from "react-aria-components";
-import { type LanguagePreference, type Locale, resolveLocale } from "./locale";
-
-const storageKey = "melotrove-language";
+import { catalog } from "./catalog";
+import { defaultLocale, defaultPreference, languageStorageKey } from "./config";
+import { resolveLocale } from "./locale";
+import { createTranslator } from "./translator";
+import type { LanguagePreference, Locale, Translator } from "./types";
 
 type PreferenceState = {
   preference: LanguagePreference;
@@ -23,7 +25,7 @@ function isPreference(value: string | null): value is LanguagePreference {
 
 function initialPreference(): PreferenceState {
   try {
-    const saved = window.localStorage.getItem(storageKey);
+    const saved = window.localStorage.getItem(languageStorageKey);
     if (isPreference(saved))
       return { preference: saved, persistenceIssue: null };
   } catch {
@@ -45,13 +47,16 @@ export type I18nValue = {
   locale: Locale;
   preference: LanguagePreference;
   setPreference: (preference: LanguagePreference) => void;
+  t: Translator<typeof catalog>;
   persistenceIssue: PreferenceState["persistenceIssue"];
 };
 
+const isolatedTranslator = createTranslator(defaultLocale, catalog);
 const defaultContext: I18nValue = {
-  locale: "en",
-  preference: "system",
+  locale: defaultLocale,
+  preference: defaultPreference,
   setPreference: () => undefined,
+  t: isolatedTranslator,
   persistenceIssue: null,
 };
 
@@ -61,6 +66,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState(initialPreference);
   const [systemLanguages, setSystemLanguages] = useState(readSystemLanguages);
   const locale = resolveLocale(state.preference, systemLanguages);
+  const t = useMemo(() => createTranslator(locale, catalog), [locale]);
 
   useEffect(() => {
     if (state.preference !== "system") return;
@@ -77,21 +83,21 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const setPreference = useCallback((preference: LanguagePreference) => {
     let persistenceIssue: PreferenceState["persistenceIssue"] = null;
     try {
-      window.localStorage.setItem(storageKey, preference);
+      window.localStorage.setItem(languageStorageKey, preference);
     } catch {
       persistenceIssue = "write";
     }
     setState({ preference, persistenceIssue });
   }, []);
-
   const value = useMemo<I18nValue>(
     () => ({
       locale,
       preference: state.preference,
       setPreference,
+      t,
       persistenceIssue: state.persistenceIssue,
     }),
-    [locale, state.preference, state.persistenceIssue, setPreference],
+    [locale, state.preference, state.persistenceIssue, setPreference, t],
   );
 
   return (

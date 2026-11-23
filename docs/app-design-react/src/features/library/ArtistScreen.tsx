@@ -297,8 +297,11 @@ export function ArtistScreen({
 					releases: artistReleases.length + unrepresentedMissingGroups.length,
 					positions: tracks.length,
 					published: counts((track) => Boolean(track.published)),
-					missing: filteredMissingGroups.length,
+					missing: unrepresentedMissingGroups.length,
+					local: artistReleases.length,
 				}}
+				discographyComplete={artist.discographyComplete}
+				includesCachedGroups={!artist.discographyComplete}
 				selection={{
 					total: ids.length,
 					selected: selectedCount,

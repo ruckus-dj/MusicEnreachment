@@ -1,0 +1,8 @@
+frontend/src/**/*.ts text eol=lf
+frontend/src/**/*.tsx text eol=lf
+frontend/src/**/*.css text eol=lf
+frontend/index.html text eol=lf
+docs/app-design-react/src/**/*.ts text eol=lf
+docs/app-design-react/src/**/*.tsx text eol=lf
+docs/app-design-react/src/**/*.css text eol=lf
+docs/app-design-react/index.html text eol=lf

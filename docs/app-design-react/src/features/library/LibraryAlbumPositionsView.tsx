@@ -17,6 +17,7 @@ export interface LibraryPublishedAlbumPosition {
   state: "published";
   container: string;
   codec: string;
+  matchingConfidence?: number | null;
   /** Optional published title shown under the separate tags link. */
   title?: string | null;
 }
@@ -88,6 +89,7 @@ const copy = {
     tags: "Tags",
     empty: "No positions.",
     notPublished: "Not published",
+    matchingConfidence: "Match",
     hasAudio: "Has audio",
     noAudio: "No audio",
     noSourceSelected: "No source selected",
@@ -110,6 +112,7 @@ const copy = {
     tags: "Теги",
     empty: "Нет позиций.",
     notPublished: "Не опубликовано",
+    matchingConfidence: "Совпадение",
     hasAudio: "Есть аудио",
     noAudio: "Нет аудио",
     noSourceSelected: "Источник не выбран",
@@ -252,7 +255,10 @@ function publicationLabel(
 ) {
   if (!publication || publication.state === "unknown") return "—";
   if (publication.state === "not-published") return text.notPublished;
-  return `${publication.container} · ${publication.codec}`;
+  const format = `${publication.container} · ${publication.codec}`;
+  return publication.matchingConfidence == null
+    ? format
+    : `${format} · ${text.matchingConfidence}: ${Math.round(publication.matchingConfidence * 100)}%`;
 }
 
 function publishedTitle(position: LibraryAlbumPosition) {

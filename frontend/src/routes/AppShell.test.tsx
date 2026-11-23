@@ -135,7 +135,7 @@ describe("AppShell sources routing", () => {
     render(<App />);
 
     const navigation = await screen.findByRole("navigation", {
-      name: "Разделы приложения",
+      name: "Основная навигация",
     });
     expect(navigation.querySelectorAll("a")).toHaveLength(6);
     expect(
@@ -149,9 +149,9 @@ describe("AppShell sources routing", () => {
     fireEvent.click(screen.getByRole("button", { name: /Язык интерфейса/ }));
     fireEvent.click(await screen.findByRole("option", { name: "English" }));
     expect(
-      await screen.findByRole("navigation", { name: "Application sections" }),
+      await screen.findByRole("navigation", { name: "Main navigation" }),
     ).toHaveTextContent(
-      /Incoming\d*LibraryOwn catalogSourcesOperationsSettings/,
+      /Incoming\d*LibraryOwn catalogueSourcesOperationsSettings/,
     );
     expect(
       screen.getByRole("link", { name: "Operations", current: "page" }),
@@ -326,7 +326,7 @@ describe("AppShell sources routing", () => {
       await screen.findByRole("heading", { level: 1, name: "Медиатека" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("navigation", { name: "Разделы приложения" }),
+      screen.getByRole("navigation", { name: "Основная навигация" }),
     ).not.toHaveTextContent("Публикации");
   });
 
@@ -365,7 +365,7 @@ describe("AppShell sources routing", () => {
     render(<App />);
 
     const navigation = await screen.findByRole("navigation", {
-      name: "Разделы приложения",
+      name: "Основная навигация",
     });
     await waitFor(() =>
       expect(
@@ -426,7 +426,7 @@ describe("AppShell sources routing", () => {
       expect(
         within(
           within(
-            screen.getByRole("navigation", { name: "Разделы приложения" }),
+            screen.getByRole("navigation", { name: "Основная навигация" }),
           ).getByRole("link", { name: /Входящие/ }),
         ).getByText("1"),
       ).toBeInTheDocument(),

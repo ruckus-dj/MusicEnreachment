@@ -26,6 +26,10 @@ export interface OperationsScreenCopy extends OperationsListCopy {
   dismiss: string;
   dismissing: string;
   dismissed: string;
+  abandon: string;
+  abandoning: string;
+  abandoned: string;
+  abandonError: string;
   retryError: string;
   dismissError: string;
 }
@@ -75,6 +79,10 @@ export const operationsScreenCopy = {
     dismiss: "Dismiss",
     dismissing: "Dismissing…",
     dismissed: "Operation dismissed.",
+    abandon: "Abandon…",
+    abandoning: "Loading…",
+    abandoned: "Unfinished republications abandoned.",
+    abandonError: "Could not abandon unfinished republications.",
     retryError: "Could not retry operation.",
     dismissError: "Could not dismiss operation.",
   },
@@ -122,6 +130,10 @@ export const operationsScreenCopy = {
     dismiss: "Скрыть",
     dismissing: "Скрытие…",
     dismissed: "Операция скрыта.",
+    abandon: "Прервать…",
+    abandoning: "Загрузка…",
+    abandoned: "Незавершённые перепубликации прерваны.",
+    abandonError: "Не удалось прервать незавершённые перепубликации.",
     retryError: "Не удалось повторить операцию.",
     dismissError: "Не удалось скрыть операцию.",
   },

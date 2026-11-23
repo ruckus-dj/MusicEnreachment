@@ -49,6 +49,7 @@ export interface OriginalTrack {
 		readAt: string;
 		coverHash: string | null;
 		lyrics: string | null;
+		matchingConfidence?: number;
 	};
 	metadataBaseline?: Record<string, string[]>;
 	metadataBaselineExtras?: { coverHash: string | null; lyrics: string | null };
@@ -119,7 +120,23 @@ export function trackNumberLabel(
 		: String(track.mediumPosition || track.position).padStart(2, "0");
 }
 
-export const originalReleases: OriginalRelease[] = original.releases;
+// Sample an available confidence separately from the canonical fixture.
+const demoMatchingConfidence: Partial<Record<string, number>> = {
+	"north-t1": 0.94,
+};
+export const originalReleases: OriginalRelease[] = original.releases.map(
+	(release) => ({
+		...release,
+		tracks: release.tracks.map((track) => {
+			const matchingConfidence = demoMatchingConfidence[track.id];
+			if (!track.published || matchingConfidence === undefined) return track;
+			return {
+				...track,
+				published: { ...track.published, matchingConfidence },
+			};
+		}),
+	}),
+);
 export const recoveryFixture = original.recoveryFixture;
 export type CatalogArtist = {
 	id: string;
@@ -127,6 +144,7 @@ export type CatalogArtist = {
 	mbid?: string;
 	sortName?: string;
 	disambiguation?: string;
+	discographyComplete?: boolean;
 	genres?: { id?: string; name?: string }[];
 	genreOverride?: {
 		state: "absent" | "explicit_empty" | "value";
@@ -145,6 +163,8 @@ export const originalArtists: CatalogArtist[] = original.artists.map(
 	(artist) => ({
 		...artist,
 		sortName: demoSortNames[artist.id],
+		// Simulate the completed provider state; do not infer it from cached rows.
+		discographyComplete: artist.id === "arden",
 	}),
 );
 export const originalArtistName = (

@@ -1,6 +1,6 @@
-export type ThemePreference = "system" | "light" | "dark";
+import { themeStorageKey } from "./themePreferenceConfig";
 
-const storageKey = "melotrove-theme";
+export type ThemePreference = "system" | "light" | "dark";
 
 // Keep a page-session choice even when storage is unavailable or the control remounts.
 let sessionPreference: ThemePreference | undefined;
@@ -13,7 +13,7 @@ export function readThemePreference(): ThemePreference {
   if (sessionPreference) return sessionPreference;
   let preference: ThemePreference = "system";
   try {
-    const stored = window.localStorage.getItem(storageKey);
+    const stored = window.localStorage.getItem(themeStorageKey);
     if (stored === "light" || stored === "dark") preference = stored;
   } catch {
     // Storage is optional; keep the default usable for this page session.
@@ -25,7 +25,7 @@ export function readThemePreference(): ThemePreference {
 export function saveThemePreference(preference: ThemePreference): boolean {
   sessionPreference = preference;
   try {
-    window.localStorage.setItem(storageKey, preference);
+    window.localStorage.setItem(themeStorageKey, preference);
     return true;
   } catch {
     return false;

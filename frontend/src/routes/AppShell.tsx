@@ -39,8 +39,9 @@ import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
 import { parseSourcesRoute } from "../features/sources/sourcesRoute";
+import { appShellMessages } from "../i18n/appShellMessages";
 import { useI18n } from "../i18n/I18nProvider";
-import { type ShellMessageKey, shellMessages } from "../i18n/shellMessages";
+import { shell } from "../i18n/namespaces/shell";
 import { useHashLocation } from "../navigation/hashLocation";
 import { type ShellNavigationItem, ShellView } from "./ShellView";
 
@@ -97,7 +98,8 @@ function currentRoute(
 }
 export function AppShell() {
   const { locale } = useI18n();
-  const copy = shellMessages[locale];
+  const copy = shell[locale];
+  const appCopy = appShellMessages[locale];
   const hash = useHashLocation();
   const sourcesRoute = parseSourcesRoute(hash);
   const incomingGroupsRoute = parseIncomingGroupsRoute(hash);
@@ -200,22 +202,24 @@ export function AppShell() {
 
   function renderRouteContent() {
     return loading ? (
-      <p role="status">{copy.loadingServer}</p>
+      <p role="status">{appCopy.loadingServer}</p>
     ) : error ? (
       <div ref={errorRef} tabIndex={-1} role="alert">
-        {"fallback" in error ? copy.loadError : error.message}{" "}
-        <AppButton onPress={load}>{copy.retry}</AppButton>
+        {"fallback" in error ? appCopy.loadError : error.message}{" "}
+        <AppButton onPress={load}>{appCopy.retry}</AppButton>
       </div>
     ) : state && (state.platform.diagnostic || !state.platform.supported) ? (
       <section aria-labelledby="diagnostic-title">
         <h1 ref={diagnosticRef} tabIndex={-1} id="diagnostic-title">
-          {copy.diagnose}
+          {appCopy.diagnose}
         </h1>
-        <p role="alert">{state.platform.reason || copy.unsupportedPlatform}</p>
+        <p role="alert">
+          {state.platform.reason || appCopy.unsupportedPlatform}
+        </p>
         <p>
           {state.platform.goos}/{state.platform.goarch}
         </p>
-        <AppButton onPress={load}>{copy.refreshDiagnostics}</AppButton>
+        <AppButton onPress={load}>{appCopy.refreshDiagnostics}</AppButton>
       </section>
     ) : state && !state.completed ? (
       <SetupManager
@@ -259,7 +263,8 @@ function ProductShell({
   children: ReactNode;
 }) {
   const { locale } = useI18n();
-  const copy = shellMessages[locale];
+  const copy = shell[locale];
+  const appCopy = appShellMessages[locale];
   const incomingActive =
     route === "/incoming-groups" || route.startsWith("/incoming-groups/");
   // Observe the shared group-list cache without fetching: the Incoming review
@@ -300,7 +305,7 @@ function ProductShell({
   const navigation: ShellNavigationItem[] = [
     {
       id: "incoming",
-      label: copy.incoming,
+      label: copy.review,
       href: "#/incoming-groups",
       current:
         route === "/incoming-groups" || route.startsWith("/incoming-groups/"),
@@ -314,7 +319,7 @@ function ProductShell({
     },
     {
       id: "own-catalog",
-      label: copy.ownCatalog,
+      label: copy.local,
       href: "#/own-catalog",
       current: route === "/own-catalog",
     },
@@ -343,8 +348,8 @@ function ProductShell({
       <ShellView
         brand={{ href: "#/", label: "MeloTrove", mark: "mt" }}
         skipLabel={copy.skip}
-        navigationLabel={copy.sections}
-        sectionLabel={sectionLabel(route, copy)}
+        navigationLabel={copy.navigation}
+        sectionLabel={sectionLabel(route, copy, appCopy.home)}
         navigation={navigation}
         controls={{
           language: <LanguageControl />,
@@ -360,7 +365,7 @@ function ProductShell({
 
 function RootLanding() {
   const { locale } = useI18n();
-  const copy = shellMessages[locale];
+  const copy = appShellMessages[locale];
   const sourcesQuery = useListSources({
     fetch: { cache: "no-store" },
     query: { retry: false, refetchOnMount: "always" },
@@ -411,15 +416,16 @@ function RootLanding() {
 
 function sectionLabel(
   route: Route,
-  copy: Record<ShellMessageKey, string>,
+  copy: (typeof shell)["en" | "ru"],
+  home: string,
 ): string {
   if (route === "/incoming-groups" || route.startsWith("/incoming-groups/"))
-    return copy.incoming;
+    return copy.review;
   if (route === "/library" || route.startsWith("/library/"))
     return copy.library;
-  if (route === "/own-catalog") return copy.ownCatalog;
+  if (route === "/own-catalog") return copy.local;
   if (route === "/sources") return copy.sources;
   if (route === "/operations") return copy.operations;
   if (route === "/settings") return copy.settings;
-  return copy.home;
+  return home;
 }

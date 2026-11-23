@@ -1,6 +1,10 @@
 import type { Ref } from "react";
 import type { SortDescriptor } from "react-aria-components";
 import {
+  MatchingRecheckAbandonDialog,
+  type MatchingRecheckAbandonPosition,
+} from "./MatchingRecheckAbandonDialog";
+import {
   OperationsList,
   type OperationsListFilterOption,
   type OperationsListRow,
@@ -14,8 +18,8 @@ import type { OperationsScreenCopy } from "./operationsScreenCopy";
  *
  * The list, details dialog and row actions already come from the shared
  * `OperationsList`. This module adds the remaining screen-level presentation
- * both hosts render identically: status/kind filter options, sortable headers
- * and the pagination range label.
+ * both hosts render identically: status/kind filter options, sortable headers,
+ * the pagination range label and the matching recheck abandonment modal.
  *
  * Hosts keep their own typed adapters. The application keeps server scope
  * (`status`, `kind`, `q`, `sort`, `direction`, `locale`, `offset`) and server
@@ -94,6 +98,15 @@ export interface OperationsScreenPagination {
   onNext?: () => void;
 }
 
+/** Snapshot and actions for abandoning one failed matching recheck member. */
+export interface OperationsScreenMatchingRecheckAbandon {
+  positions: MatchingRecheckAbandonPosition[];
+  busy: boolean;
+  error?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
 export interface OperationsScreenViewProps {
   copy: OperationsScreenCopy;
   locale: "en" | "ru";
@@ -116,6 +129,7 @@ export interface OperationsScreenViewProps {
     direction: OperationsSortDirection,
   ) => void;
   pagination?: OperationsScreenPagination;
+  matchingRecheckAbandon?: OperationsScreenMatchingRecheckAbandon;
 }
 
 function paginationLabel(
@@ -146,6 +160,7 @@ export function OperationsScreenView({
   sortDirection,
   onSortChange,
   pagination,
+  matchingRecheckAbandon,
 }: OperationsScreenViewProps) {
   const statusOptions: OperationsListFilterOption[] =
     operationsStatusFilters.map((value) => ({
@@ -177,45 +192,57 @@ export function OperationsScreenView({
   };
 
   return (
-    <OperationsList
-      copy={copy}
-      rows={rows}
-      status={status}
-      error={error}
-      notice={notice}
-      actionError={actionError}
-      headingRef={headingRef}
-      onRefresh={onRefresh}
-      isRefreshing={isRefreshing}
-      sortDescriptor={sortDescriptor}
-      onSortChange={({ column, direction }) => {
-        if (typeof column !== "string" || !isOperationsSortColumn(column))
-          return;
-        onSortChange(column, direction === "ascending" ? "asc" : "desc");
-      }}
-      filters={{
-        query: filters.query,
-        onQueryChange: filters.onQueryChange,
-        status: filters.status,
-        statusOptions,
-        onStatusChange: (value) => {
-          if (isOperationsStatusFilter(value)) filters.onStatusChange(value);
-        },
-        kind: filters.kind,
-        kindOptions,
-        onKindChange: (value) => {
-          if (isOperationsKindSelection(value)) filters.onKindChange(value);
-        },
-      }}
-      pagination={
-        pagination && pagination.total > 0 && pagination.from > 0
-          ? {
-              label: paginationLabel(copy, locale, pagination),
-              onPrevious: pagination.onPrevious,
-              onNext: pagination.onNext,
-            }
-          : undefined
-      }
-    />
+    <>
+      <OperationsList
+        copy={copy}
+        rows={rows}
+        status={status}
+        error={error}
+        notice={notice}
+        actionError={actionError}
+        headingRef={headingRef}
+        onRefresh={onRefresh}
+        isRefreshing={isRefreshing}
+        sortDescriptor={sortDescriptor}
+        onSortChange={({ column, direction }) => {
+          if (typeof column !== "string" || !isOperationsSortColumn(column))
+            return;
+          onSortChange(column, direction === "ascending" ? "asc" : "desc");
+        }}
+        filters={{
+          query: filters.query,
+          onQueryChange: filters.onQueryChange,
+          status: filters.status,
+          statusOptions,
+          onStatusChange: (value) => {
+            if (isOperationsStatusFilter(value)) filters.onStatusChange(value);
+          },
+          kind: filters.kind,
+          kindOptions,
+          onKindChange: (value) => {
+            if (isOperationsKindSelection(value)) filters.onKindChange(value);
+          },
+        }}
+        pagination={
+          pagination && pagination.total > 0 && pagination.from > 0
+            ? {
+                label: paginationLabel(copy, locale, pagination),
+                onPrevious: pagination.onPrevious,
+                onNext: pagination.onNext,
+              }
+            : undefined
+        }
+      />
+      {matchingRecheckAbandon && (
+        <MatchingRecheckAbandonDialog
+          locale={locale}
+          positions={matchingRecheckAbandon.positions}
+          busy={matchingRecheckAbandon.busy}
+          error={matchingRecheckAbandon.error}
+          onConfirm={matchingRecheckAbandon.onConfirm}
+          onCancel={matchingRecheckAbandon.onCancel}
+        />
+      )}
+    </>
   );
 }

@@ -24,6 +24,7 @@ tasks:
     deps: [design:install]
     dir: docs/app-design-react
     cmds:
+      - node ../../tools/check-ui-parity.mjs
       - node check-fixtures.mjs
       - node --test check-fixtures.test.mjs
       - node_modules/.bin/tsc --project tsconfig.json
@@ -31,9 +32,9 @@ tasks:
       - node_modules/.bin/vite build
 
   design:parity:
-    desc: Compare the exact UI source pairs after a prototype-to-application port
+    desc: Compare ported UI source bytes; pass -- --inventory to list unpaired files
     cmds:
-      - node tools/check-ui-parity.mjs
+      - node tools/check-ui-parity.mjs {{.CLI_ARGS}}
 
   default:
     desc: Build the complete application

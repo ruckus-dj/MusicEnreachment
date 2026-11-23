@@ -1,7 +1,7 @@
-export const supportedLocales = ["en", "ru"] as const;
+import type { LanguagePreference, Locale } from "./types";
 
-export type Locale = (typeof supportedLocales)[number];
-export type LanguagePreference = "system" | Locale;
+export type { LanguagePreference, Locale } from "./types";
+export { supportedLocales } from "./types";
 
 function localeFromLanguageTag(language: string): Locale | undefined {
   const normalized = language.trim().replaceAll("_", "-").toLowerCase();

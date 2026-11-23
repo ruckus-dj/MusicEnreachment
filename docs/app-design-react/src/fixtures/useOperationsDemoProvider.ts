@@ -67,6 +67,7 @@ export interface OperationsDemoProvider {
 	reset: () => void;
 	retrySignals: () => void;
 	dismissSignals: () => void;
+	abandonSignals: () => void;
 	retryRecovery: () => void;
 	dismissRecovery: () => void;
 	retryDeletion: (operation: DeletionOperation) => void;
@@ -312,6 +313,11 @@ export function useOperationsDemoProvider({
 		setNotice("dismissed");
 	}, []);
 
+	const abandonSignals = useCallback(() => {
+		setSignals("succeeded");
+		setNotice("abandoned");
+	}, []);
+
 	const retryRecovery = useCallback(() => {
 		setRecovery((current) => (current === "failed" ? "queued" : current));
 	}, []);
@@ -362,6 +368,7 @@ export function useOperationsDemoProvider({
 		},
 		retrySignals,
 		dismissSignals,
+		abandonSignals,
 		retryRecovery,
 		dismissRecovery,
 		retryDeletion,

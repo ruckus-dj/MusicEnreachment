@@ -1,10 +1,13 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const prototype = new URL("../docs/app-design-react/src/", import.meta.url);
 const application = new URL("../frontend/src/", import.meta.url);
 
-// Only files mounted as the same presentation in both applications belong here.
-// A new prototype revision may lead the port; compare after integrating it.
+// Register each portable UI module after its first port. A prototype-first
+// revision may lead the port only with exact bytes recorded in the receipt.
 const pairs = [
   ["routes", "routes", ["ShellView.tsx"]],
   [
@@ -17,10 +20,13 @@ const pairs = [
       "DirectoryPickerView.tsx",
       "LanguageControl.tsx",
       "ThemeControl.tsx",
+      "themePreference.ts",
     ],
   ],
+  ["i18n", "i18n", ["I18nProvider.tsx", "createNamespace.ts", "locale.ts", "translator.ts", "types.ts"]],
+  ["i18n/namespaces", "i18n/namespaces", ["shell.ts"]],
   ["features/incoming", "features/incoming", ["IncomingFileActions.tsx", "IncomingGroupsOverviewView.tsx"]],
-  ["features/operations", "features/operations", ["OperationsList.tsx", "OperationsScreenView.tsx", "operationsScreenCopy.ts"]],
+  ["features/operations", "features/operations", ["MatchingRecheckAbandonDialog.tsx", "OperationsList.tsx", "OperationsScreenView.tsx", "operationsScreenCopy.ts"]],
   ["features/sources", "features/sources", ["SourceInventoryView.tsx", "SourceRootHeadingView.tsx", "SourceRootList.tsx", "SourceScanPanel.tsx"]],
   [
     "features/settings",
@@ -120,26 +126,127 @@ const pairs = [
   ],
 ];
 
-let total = 0;
-let identical = 0;
-for (const [prototypeDir, applicationDir, files] of pairs) {
-  for (const file of files) {
-    const from = `${prototypeDir}/${file}`;
-    const to = `${applicationDir}/${file}`;
+const sourcePairs = [
+  ["app/tailwind.css", "styles/index.css"],
+  ...pairs.flatMap(([from, to, files]) =>
+    files.map((file) => [`${from}/${file}`, `${to}/${file}`]),
+  ),
+];
+
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+export function compareUiSources(pairs, receipts, readSource, readCopy) {
+  const leads = new Map();
+  const errors = [];
+  for (const receipt of receipts) {
+    if (
+      typeof receipt?.from !== "string" ||
+      typeof receipt.reason !== "string" ||
+      !receipt.reason.trim() ||
+      !/^[a-f0-9]{64}$/.test(receipt.prototypeSHA256) ||
+      (receipt.applicationSHA256 !== null &&
+        !/^[a-f0-9]{64}$/.test(receipt.applicationSHA256)) ||
+      leads.has(receipt.from)
+    ) {
+      errors.push(`Invalid or duplicate prototype lead: ${receipt?.from}`);
+      continue;
+    }
+    leads.set(receipt.from, receipt);
+  }
+
+  let identical = 0;
+  const pending = [];
+  for (const [from, to] of pairs) {
     const label = `docs/app-design-react/src/${from} ↔ frontend/src/${to}`;
-    total++;
+    const lead = leads.get(from);
+    leads.delete(from);
     try {
-      const source = readFileSync(new URL(from, prototype));
-      const copy = readFileSync(new URL(to, application));
-      if (source.equals(copy)) {
+      const source = readSource(from);
+      let copy;
+      try {
+        copy = readCopy(to);
+      } catch (error) {
+        if (error.code !== "ENOENT" || lead?.applicationSHA256 !== null) throw error;
+      }
+      if (copy && source.equals(copy)) {
         identical++;
+        if (lead) errors.push(`Remove the completed prototype lead: ${from}`);
+      } else if (
+        lead && digest(source) === lead.prototypeSHA256 &&
+        (copy ? digest(copy) : null) === lead.applicationSHA256
+      ) {
+        pending.push(`${label}: ${lead.reason}`);
       } else {
-        console.error(`Different source bytes: ${label}`);
+        errors.push(`Different source bytes: ${label}`);
       }
     } catch (error) {
-      console.error(`Cannot compare ${label}: ${error.code ?? error.message}`);
+      errors.push(`Cannot compare ${label}: ${error.code ?? error.message}`);
     }
   }
+
+  for (const from of leads.keys()) {
+    errors.push(`Prototype lead is not a registered pair: ${from}`);
+  }
+  return { errors, identical, pending };
 }
-console.log(`Byte-identical UI source pairs: ${identical}/${total}`);
-if (identical !== total) process.exitCode = 1;
+
+function unpairedSources(root, paired, label) {
+  const src = fileURLToPath(root);
+  return readdirSync(src, { recursive: true, withFileTypes: true })
+    .filter((entry) => !entry.isDirectory())
+    .map((entry) =>
+      `${relative(src, entry.parentPath)}/${entry.name}`
+        .replaceAll("\\", "/")
+        .replace(/^\//, ""),
+    )
+    .filter((path) =>
+      !/\.(?:test|spec|d)\./.test(path) &&
+      !/(?:^|\/)\.DS_Store$|\.md$/.test(path) &&
+      !/^(?:test|api\/generated)\//.test(path) &&
+      !paired.has(path),
+    )
+    .map((path) => `${label}/${path}`);
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  const receipts = JSON.parse(
+    readFileSync(new URL("./ui-parity-prototype-leads.json", import.meta.url), "utf8"),
+  );
+  const result = compareUiSources(
+    sourcePairs,
+    receipts,
+    (path) => readFileSync(new URL(path, prototype)),
+    (path) => readFileSync(new URL(path, application)),
+  );
+  const prototypeEntry = readFileSync(new URL("../index.html", prototype), "utf8");
+  const applicationEntry = readFileSync(new URL("../index.html", application), "utf8");
+  if (prototypeEntry
+    .replace("<title>Медиатека · стенд MeloTrove</title>", "<title>MeloTrove</title>")
+    .replace('src="/src/app/main.tsx"', 'src="/src/main.tsx"') !== applicationEntry) {
+    result.errors.push("Different application entry presentation: index.html");
+  }
+  for (const error of result.errors) console.error(error);
+  for (const lead of result.pending) console.log(`Prototype awaiting port: ${lead}`);
+  console.log(`Byte-identical UI source pairs: ${result.identical}/${sourcePairs.length}`);
+  const actualUnpaired = new Set([
+    ...unpairedSources(prototype, new Set(sourcePairs.map(([from]) => from)), "docs/app-design-react/src"),
+    ...unpairedSources(application, new Set(sourcePairs.map(([, to]) => to)), "frontend/src"),
+  ].sort());
+  const unpaired = new Set(
+    readFileSync(new URL("./ui-parity-unpaired.txt", import.meta.url), "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line && !line.startsWith("#")),
+  );
+  console.log(`Unpaired runtime source files (providers and outstanding ports): ${actualUnpaired.size}`);
+  if (process.argv.includes("--inventory")) {
+    for (const path of actualUnpaired) console.log(path);
+  }
+  const inventoryErrors = [
+    ...[...actualUnpaired].filter((path) => !unpaired.has(path))
+      .map((path) => `Unclassified runtime source: ${path}`),
+    ...[...unpaired].filter((path) => !actualUnpaired.has(path))
+      .map((path) => `Remove stale unpaired entry: ${path}`),
+  ];
+  for (const error of inventoryErrors) console.error(error);
+  if (result.errors.length > 0 || inventoryErrors.length > 0) process.exitCode = 1;
+}

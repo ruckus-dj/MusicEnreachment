@@ -272,6 +272,7 @@ export function LibraryCatalogRows({
 						state: "published",
 						container: published.container,
 						codec: published.codec,
+						matchingConfidence: published.matchingConfidence,
 						title: published.tags.TITLE?.join(", ") || track.title,
 					}
 				: { state: "not-published" };

@@ -131,6 +131,7 @@ export interface DemoSettings {
 	toolCatalog?: Record<ManagedToolPackage, string[]>;
 	runtimeSaved?: boolean;
 	sourceCleanupEnabled?: boolean;
+	publicationAutoCompleteAlbums?: boolean;
 	setupFailures?: Partial<Record<ManagedToolPackage, string>>;
 	outputChecked?: boolean;
 }
@@ -164,6 +165,7 @@ export const initialDemoSettings: DemoSettings = {
 	toolCatalog: availableToolReleases,
 	runtimeSaved: false,
 	sourceCleanupEnabled: false,
+	publicationAutoCompleteAlbums: false,
 };
 
 export type SettingsScreenProps = {
@@ -1199,6 +1201,12 @@ export function SettingsScreen({
 								dirty: false,
 								onChange: (sourceCleanupEnabled) =>
 									update({ sourceCleanupEnabled }),
+							},
+							albumCompletion: {
+								enabled: settings.publicationAutoCompleteAlbums ?? false,
+								dirty: false,
+								onChange: (publicationAutoCompleteAlbums) =>
+									update({ publicationAutoCompleteAlbums }),
 							},
 						}}
 					/>

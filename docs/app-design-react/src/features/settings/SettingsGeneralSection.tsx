@@ -43,6 +43,12 @@ const english = {
   sourceDeletionHelp:
     "Off by default. An original file is eligible for removal only after every segment assigned to it has been successfully published, including segments not queued yet. Active consumers and retained holds also block removal. Filesystem permission is required; working copies and manual safeguards are unchanged. Changing this setting does not delete existing files or start processing.",
   unsavedSourceDeletion: "The source deletion setting has unsaved changes.",
+  albumCompletionTitle: "Automatic publication",
+  autoCompleteAlbums: "Automatically publish complete albums",
+  albumCompletionHelp:
+    "Off by default. First publication starts automatically only when every track position in the edition reaches the matching threshold. Changing this setting does not publish previously matched albums.",
+  unsavedAlbumCompletion:
+    "The automatic publication setting has unsaved changes.",
   unsavedChanges: "There are unsaved changes.",
   publicationFormatLabel: "publication format",
   logLevelLabel: "log level",
@@ -87,6 +93,11 @@ const russian: SettingsGeneralCopy = {
   sourceDeletionHelp:
     "Выключено по умолчанию. Исходный файл можно удалить только после успешной публикации всех назначенных ему сегментов, включая ещё не поставленные в очередь. Активные потребители и сохранённые блокировки также запрещают удаление. Требуется разрешение файловой системы; рабочие копии и ручная защита не затрагиваются. Изменение настройки не удаляет существующие файлы и не запускает обработку.",
   unsavedSourceDeletion: "Есть несохранённая настройка удаления исходников.",
+  albumCompletionTitle: "Автопубликация",
+  autoCompleteAlbums: "Автоматически публиковать полные альбомы",
+  albumCompletionHelp:
+    "Выключено по умолчанию. Первая публикация запускается автоматически, только если каждая позиция издания достигает порога сопоставления. Включение не публикует уже сопоставленные альбомы.",
+  unsavedAlbumCompletion: "Есть несохранённая настройка автопубликации.",
   unsavedChanges: "Есть несохранённые изменения.",
   publicationFormatLabel: "формат публикации",
   logLevelLabel: "уровень журнала",
@@ -236,6 +247,12 @@ export interface SettingsGeneralCleanupModel {
   onChange: (enabled: boolean) => void;
 }
 
+export interface SettingsGeneralAlbumCompletionModel {
+  enabled: boolean;
+  dirty: boolean;
+  onChange: (enabled: boolean) => void;
+}
+
 export interface SettingsGeneralModel {
   locale: SettingsGeneralLocale;
   format: SettingsGeneralFormatModel;
@@ -244,6 +261,7 @@ export interface SettingsGeneralModel {
   sha256: SettingsGeneralSha256Model;
   logLevel: SettingsGeneralLogLevelModel;
   cleanup: SettingsGeneralCleanupModel;
+  albumCompletion: SettingsGeneralAlbumCompletionModel;
   failures?: readonly SettingsGeneralFailureModel[];
 }
 
@@ -468,33 +486,72 @@ export function SettingsGeneralSection({
             </Popover>
           </Select>
         </div>
-        <section
-          aria-labelledby="source-deletion-title"
-          className={sectionStyles.cleanup}
-        >
-          <h3 id="source-deletion-title" className={sectionStyles.cleanupTitle}>
-            {copy.sourceDeletionTitle}
-          </h3>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              aria-describedby="source-cleanup-help"
-              checked={model.cleanup.enabled}
-              onChange={(event) => model.cleanup.onChange(event.target.checked)}
-            />
-            {copy.allowSourceDeletion}
-          </label>
-          <p
-            id="source-cleanup-help"
-            className={sectionStyles.cleanupHelp}
-            role="note"
+        <div className="grid content-start gap-3">
+          <section
+            aria-labelledby="source-deletion-title"
+            className={sectionStyles.cleanup}
           >
-            {copy.sourceDeletionHelp}
-          </p>
-          {model.cleanup.dirty && (
-            <p className="m-0">{copy.unsavedSourceDeletion}</p>
-          )}
-        </section>
+            <h3
+              id="source-deletion-title"
+              className={sectionStyles.cleanupTitle}
+            >
+              {copy.sourceDeletionTitle}
+            </h3>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                aria-describedby="source-cleanup-help"
+                checked={model.cleanup.enabled}
+                onChange={(event) =>
+                  model.cleanup.onChange(event.target.checked)
+                }
+              />
+              {copy.allowSourceDeletion}
+            </label>
+            <p
+              id="source-cleanup-help"
+              className={sectionStyles.cleanupHelp}
+              role="note"
+            >
+              {copy.sourceDeletionHelp}
+            </p>
+            {model.cleanup.dirty && (
+              <p className="m-0">{copy.unsavedSourceDeletion}</p>
+            )}
+          </section>
+          <section
+            aria-labelledby="album-completion-title"
+            className={sectionStyles.cleanup}
+          >
+            <h3
+              id="album-completion-title"
+              className={sectionStyles.cleanupTitle}
+            >
+              {copy.albumCompletionTitle}
+            </h3>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                aria-describedby="album-completion-help"
+                checked={model.albumCompletion.enabled}
+                onChange={(event) =>
+                  model.albumCompletion.onChange(event.target.checked)
+                }
+              />
+              {copy.autoCompleteAlbums}
+            </label>
+            <p
+              id="album-completion-help"
+              className={sectionStyles.help}
+              role="note"
+            >
+              {copy.albumCompletionHelp}
+            </p>
+            {model.albumCompletion.dirty && (
+              <p className="m-0">{copy.unsavedAlbumCompletion}</p>
+            )}
+          </section>
+        </div>
       </div>
     </section>
   );

@@ -4,9 +4,15 @@ import {
   Modal as AriaModal,
   ModalOverlay as AriaModalOverlay,
 } from "react-aria-components";
-import type { MatchingRecheckAbandonmentPosition } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import type { Locale } from "../../i18n/locale";
+
+/** One previous publication path of the recheck being abandoned. */
+export interface MatchingRecheckAbandonPosition {
+  operationId: string;
+  relativePath: string;
+  committed: boolean;
+}
 
 interface MatchingRecheckAbandonCopy {
   title: string;
@@ -58,7 +64,7 @@ export function MatchingRecheckAbandonDialog({
   onCancel,
 }: {
   locale: Locale;
-  positions: MatchingRecheckAbandonmentPosition[];
+  positions: MatchingRecheckAbandonPosition[];
   busy: boolean;
   error?: string;
   onConfirm: () => void;
@@ -90,11 +96,11 @@ export function MatchingRecheckAbandonDialog({
           <ul className="m-0 grid max-h-[240px] list-none gap-1 overflow-auto p-0 text-xs">
             {positions.map((position) => (
               <li
-                key={position.operation_id}
+                key={position.operationId}
                 className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-[var(--line)] pb-1 last:border-b-0"
               >
                 <span className="min-w-0 [overflow-wrap:anywhere]">
-                  {position.relative_path}
+                  {position.relativePath}
                 </span>
                 <span
                   className={

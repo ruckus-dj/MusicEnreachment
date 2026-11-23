@@ -24,6 +24,12 @@ it("groups prototype sources and keeps Tailwind as the only CSS entry", () => {
 	const withoutConfiguration = entry
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.replace(/@theme(?:\s+inline)?\s*\{[^}]*\}/g, "")
+		// A block variant may wrap @slot in selectors or media conditions,
+		// but cannot contain declarations or handwritten component rules.
+		.replace(
+			/@custom-variant dark\s*\{\s*&:where\([^{};]+\)\s*\{\s*@slot;\s*\}\s*@media \(prefers-color-scheme: dark\)\s*\{\s*&:where\([^{};]+\)\s*\{\s*@slot;\s*\}\s*\}\s*\}/g,
+			"",
+		)
 		.replace(/@(import|source|custom-variant)[^;]*;/g, "");
 	expect(withoutConfiguration.trim()).toBe("");
 	for (const file of files.filter(
