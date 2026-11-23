@@ -139,6 +139,8 @@ frontend/src/components/DirectoryPicker.tsx
 frontend/src/components/themePreferenceConfig.ts
 frontend/src/features/incoming/IncomingGroupReviewScreen.tsx
 frontend/src/features/incoming/IncomingGroupsOverview.tsx
+frontend/src/features/incoming/IncomingReceiptPublication.tsx
+frontend/src/features/incoming/IncomingSavedMatchingResult.tsx
 frontend/src/features/incoming/IncomingOperationFollower.tsx
 frontend/src/features/incoming/IncomingTagEncodingReview.tsx
 frontend/src/features/incoming/LocalReleaseEditor.tsx
@@ -157,6 +159,7 @@ frontend/src/features/incoming/incomingMessages.ts
 frontend/src/features/incoming/incomingOverviewOrder.ts
 frontend/src/features/incoming/incomingStyles.ts
 frontend/src/features/incoming/localMatchingMessages.ts
+frontend/src/features/incoming/receiptPublicationAdmissions.ts
 frontend/src/features/incoming/savedAutomaticAssignments.ts
 frontend/src/features/library/AggregatePublicationPreview.tsx
 frontend/src/features/library/ArtistCreditRowsEditor.tsx

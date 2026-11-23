@@ -34,6 +34,8 @@ export const aggregateDispositions: readonly AggregateDisposition[] = [
 export type AggregatePositionStatus =
   | { kind: "disposition"; disposition: AggregateDisposition }
   | { kind: "loading" }
+  | { kind: "queued" }
+  | { kind: "operation"; label: string }
   | { kind: "not-prepared" };
 
 /**
@@ -82,8 +84,9 @@ export type AggregateInspectorPresentation =
       kind: "publication";
       details: PublicationPreviewDetailsState;
       fileChoice?: AggregateInspectorFileChoice;
+      fileLabel?: { caption: string; value: string };
       onSourceChoice?: (choice: PublicationPreviewSourceChoice | null) => void;
-      onRefresh: () => void;
+      onRefresh?: () => void;
     };
 
 export interface AggregatePublicationPreviewViewProps {
@@ -204,8 +207,15 @@ const styles = {
   actions: "flex flex-wrap gap-2",
 } as const;
 
-function statusLabel(status: AggregatePositionStatus, text: Text) {
+function statusLabel(
+  status: AggregatePositionStatus,
+  text: Text,
+  locale: AggregatePublicationPreviewLocale,
+) {
   if (status.kind === "loading") return text.loading;
+  if (status.kind === "queued")
+    return firstPublicationPreviewMessages[locale].queued;
+  if (status.kind === "operation") return status.label;
   if (status.kind === "not-prepared") return text.notPrepared;
   return text.dispositions[status.disposition];
 }
@@ -279,6 +289,11 @@ export function AggregatePublicationPreviewView({
   const inspectorContent =
     inspector.kind === "publication" ? (
       <>
+        {inspector.fileLabel ? (
+          <p className="wrap-anywhere">
+            {inspector.fileLabel.caption}: {inspector.fileLabel.value}
+          </p>
+        ) : null}
         {fileChoice ? (
           <fieldset className="space-y-2" disabled={fileChoice.disabled}>
             <legend className="font-medium">{fileChoice.legend}</legend>
@@ -364,7 +379,7 @@ export function AggregatePublicationPreviewView({
             <ul className={styles.positionsList}>
               {positions.map((position) => {
                 const isIncluded = included.has(position.id);
-                const status = statusLabel(position.status, text);
+                const status = statusLabel(position.status, text, locale);
                 const diagnostic = diagnosticLabel(
                   position.diagnostic,
                   text,

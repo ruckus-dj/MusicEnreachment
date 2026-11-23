@@ -9,6 +9,11 @@ export const firstPublicationPreviewMessages = {
     previewFailed:
       "Could not load the preview. Check your connection and try again.",
     confirmFailed: "Could not confirm the preview.",
+    admissionPending: "Sending publication confirmation…",
+    refreshFailed: "Could not read the publication operation.",
+    receiptAdmissionUncertain:
+      "The start result is unknown. Check Operations before taking further action. Repeat confirmation is disabled.",
+    sourceLocation: "Location",
     staleConfirm:
       "The preview is stale. Refresh state and request a new preview; confirmation was not retried.",
     unknownStart:
@@ -179,6 +184,11 @@ export const firstPublicationPreviewMessages = {
     previewFailed:
       "Не удалось загрузить предпросмотр. Проверьте соединение и повторите попытку.",
     confirmFailed: "Не удалось подтвердить предпросмотр.",
+    admissionPending: "Отправка подтверждения публикации…",
+    refreshFailed: "Не удалось получить состояние операции публикации.",
+    receiptAdmissionUncertain:
+      "Результат запуска неизвестен. Проверьте раздел «Операции» перед дальнейшими действиями. Повторное подтверждение недоступно.",
+    sourceLocation: "Расположение",
     staleConfirm:
       "Предпросмотр устарел. Обновите состояние и запросите новый предпросмотр; подтверждение не повторялось.",
     unknownStart:

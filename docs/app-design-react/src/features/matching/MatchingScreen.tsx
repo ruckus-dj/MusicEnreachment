@@ -38,6 +38,7 @@ import {
 	matchingInspectorPanel,
 } from "./MatchingWorkspaceLayout";
 import { saveMatchingLinks } from "./matchingLinks";
+import { matchingLinksCopy } from "./matchingLinksCopy";
 import { matchingMessage } from "./matchingMessages";
 
 export type MatchingScreenProps = {
@@ -90,6 +91,7 @@ export function MatchingScreen({
 		fileId: string;
 	}>();
 	const { locale } = useI18n();
+	const linkCopy = matchingLinksCopy[locale];
 	useLayoutEffect(() => {
 		if (!previewOpenSequence) return;
 		const heading = previewHeadingRef.current;
@@ -633,13 +635,15 @@ export function MatchingScreen({
 			{!preview && (
 				<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
 					<strong>
-						{matchingMessage(locale, "matchingDraftCount", {
-							count: Object.values(assignments).filter((item) =>
-								sourceIds(item).some(
-									(id) => activeFileIds.has(id) && usableFile(files[id]),
-								),
-							).length,
-						})}
+						{linkCopy.assignedFiles(
+							new Set(
+								Object.values(assignments)
+									.flatMap(sourceIds)
+									.filter(
+										(id) => activeFileIds.has(id) && usableFile(files[id]),
+									),
+							).size,
+						)}
 					</strong>
 					<span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
 						{matchingMessage(locale, "unassignedSummary", {
@@ -658,7 +662,7 @@ export function MatchingScreen({
 						}
 						onPress={openPreview}
 					>
-						{matchingMessage(locale, "previewMatchingLinks")}
+						{linkCopy.preview}
 					</Button>
 				</div>
 			)}
@@ -666,20 +670,18 @@ export function MatchingScreen({
 				<MatchingPreview
 					locale={locale}
 					headingRef={previewHeadingRef}
-					heading={matchingMessage(locale, "previewMatchingLinks")}
+					heading={linkCopy.preview}
 					releaseTitle={String(preview.target.title)}
 					summary={[
-						matchingMessage(locale, "matchingDraftCount", {
-							count: assignedFileIds.size,
-						}),
-						matchingMessage(locale, "previewRemainingFiles", {
-							count: fileOutcomes.filter((row) => !row.position).length,
-						}),
+						linkCopy.assignedFiles(assignedFileIds.size),
+						linkCopy.remainingFiles(
+							fileOutcomes.filter((row) => !row.position).length,
+						),
 					].join(" · ")}
 					rows={fileOutcomes}
 					notice={stale ? matchingMessage(locale, "stalePreview") : undefined}
 					primary={{
-						label: matchingMessage(locale, "saveMatchingLinks"),
+						label: linkCopy.save,
 						onPress: confirmLinks,
 						disabled: stale || !assignedFileIds.size,
 					}}

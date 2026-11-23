@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getGetIncomingGroupMatchingQueryKey } from "../../api/generated/client";
 import type {
   IncomingGroupsBody,
+  LibraryFirstPublicationPreviewResponse,
   MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
@@ -608,10 +609,10 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
     TITLE: ["Открытие"],
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    screen.getByRole("button", { name: "Предпросмотр назначений" }),
   );
   const previewRegion = await screen.findByRole("region", {
-    name: "Предпросмотр полного назначения",
+    name: "Предпросмотр назначений",
   });
   expect(
     within(previewRegion).getByRole("row", {
@@ -629,7 +630,7 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
       HttpResponse.json({ detail: "Conflict" }, { status: 409 }),
     ),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Явно подтвердить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить связи" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Данные оценки или группы изменились",
   );
@@ -638,7 +639,7 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
 
   expect(
-    await screen.findByRole("heading", { name: "Full assignment preview" }),
+    await screen.findByRole("heading", { name: "Preview assignments" }),
   ).toBeInTheDocument();
   expectAssigned("folder/01.flac", "Disc 1 · track 1 · Открытие", "en");
   expect(screen.getByLabelText("Title")).toHaveValue("Локальное название");
@@ -677,7 +678,7 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   ).toBeInTheDocument();
   expectAssigned("folder/01.flac", "Disc 1 · track 1 · Открытие", "en");
   expect(
-    screen.queryByRole("heading", { name: "Full assignment preview" }),
+    screen.queryByRole("heading", { name: "Preview assignments" }),
   ).not.toBeInTheDocument();
   const requestsBeforeSecondLocaleChange = { ...counts };
 
@@ -769,13 +770,61 @@ describe("incoming manual group review", () => {
       ),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+      screen.getByRole("button", { name: "Предпросмотр назначений" }),
     );
     await screen.findByRole("heading", {
-      name: "Предпросмотр полного назначения",
+      name: "Предпросмотр назначений",
     });
 
     const requestBodies: MatchingManualConfirmBody[] = [];
+    const releaseId = "a3da35e5-4aa4-4836-9b8b-eae918e1fccc";
+    const positionId = "9b9869bf-50b4-43db-87b7-0be6c4ec9d9c";
+    const source = {
+      file_member_id: ids.memberOne,
+      position_id: positionId,
+      track_source_id: "9f302b4d-e26b-4798-8c85-a6bcc5c3b2cc",
+      media_variant_id: "7d94800f-99bd-4caf-af42-52b38e1eb01b",
+    };
+    const publicationPath = `/api/library/releases/${releaseId}/positions/${positionId}/publication`;
+    const previewRequests: Record<string, string>[] = [];
+    const publicationRequests: unknown[] = [];
+    let finishPublicationRequest = () => {};
+    const publicationReply = new Promise<void>((resolve) => {
+      finishPublicationRequest = resolve;
+    });
+    const chosenSource = {
+      location_id: "f07413f2-ab38-4440-bb15-f43a6d6de158",
+      media_variant_id: source.media_variant_id,
+      stream_index: 0,
+      root_id: "fixture-root",
+      codec: "flac",
+      title: "",
+      language: "",
+      audio_stream_count: 1,
+      unsupported_audio_stream_count: 0,
+      requires_explicit_stream_selection: false,
+    };
+    const planned: LibraryFirstPublicationPreviewResponse = {
+      release_id: releaseId,
+      position_id: positionId,
+      mode: "ordinary",
+      epoch: "301fe18b-0650-4f41-b690-e3b44185a388",
+      context_digest: "a".repeat(64),
+      native_status: "checked",
+      metadata_revisions: {},
+      blockers: [],
+      warnings: [],
+      desired_tags: {},
+      selected_source: chosenSource,
+      source_candidates: [chosenSource],
+      transform: {
+        action: "copy",
+        bitrate: 0,
+        extension: "mka",
+        output_container: "mka",
+      },
+      resolved_path_components: ["Opening.mka"],
+    };
     const olderOrder = nextIncomingConfirmOrder();
     let failOnce = true;
     server.use(
@@ -789,11 +838,26 @@ describe("incoming manual group review", () => {
             failOnce = false;
             return HttpResponse.error();
           }
-          return HttpResponse.json(preview(1));
+          return HttpResponse.json({
+            ...preview(1),
+            local_release_id: releaseId,
+            confirmed_sources: [source],
+          });
         },
       ),
+      http.get(`${publicationPath}/preview`, ({ request }) => {
+        previewRequests.push(
+          Object.fromEntries(new URL(request.url).searchParams),
+        );
+        return HttpResponse.json(planned);
+      }),
+      http.post(publicationPath, async ({ request }) => {
+        publicationRequests.push(await request.json());
+        await publicationReply;
+        return HttpResponse.json({ id: "fixture-operation" }, { status: 202 });
+      }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Явно подтвердить" }));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить связи" }));
     await screen.findByRole("alert");
     server.use(
       http.get("/api/incoming-groups", () => {
@@ -821,7 +885,7 @@ describe("incoming manual group review", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Подтверждено · локальное издание",
+        name: "Связи сопоставления сохранены",
       }),
     ).toBeInTheDocument();
     await waitFor(() =>
@@ -833,20 +897,85 @@ describe("incoming manual group review", () => {
     expect(
       within(
         screen.getByRole("region", {
-          name: "Подтверждено · локальное издание",
+          name: "Остались во входящих",
         }),
-      ).getByText(/остаётся во входящих/),
-    ).toBeInTheDocument();
-    expect(
-      within(
-        screen.getByRole("region", {
-          name: "Подтверждено · локальное издание",
-        }),
-      ).getByText("folder/02.flac остаётся во входящих"),
+      ).getByText(/02\.flac$/),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Этой входящей группы больше нет в списке."),
     ).not.toBeInTheDocument();
+    expect(previewRequests).toEqual([]);
+    expect(publicationRequests).toEqual([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Проверить публикацию" }),
+    );
+    const publication = await screen.findByRole("region", {
+      name: "Публикация по сохранённым связям",
+    });
+    expect(
+      within(publication).queryByRole("radio", { name: "Принудительная" }),
+    ).not.toBeInTheDocument();
+    const confirmPublication = within(publication).getByRole("button", {
+      name: "Опубликовать готовые позиции",
+    });
+    await waitFor(() => expect(confirmPublication).toBeEnabled());
+    const proof = {
+      kind: "manual",
+      request_id: requestBodies[0].request_id,
+      track_source_id: source.track_source_id,
+    };
+    expect(previewRequests).toEqual([
+      {
+        workflow: "matching_receipt",
+        mode: "ordinary",
+        receipt_kind: proof.kind,
+        receipt_request_id: proof.request_id,
+        receipt_track_source_id: proof.track_source_id,
+      },
+    ]);
+    expect(publicationRequests).toEqual([]);
+    fireEvent.click(confirmPublication);
+    await waitFor(() =>
+      expect(publicationRequests).toEqual([
+        {
+          workflow: "matching_receipt",
+          mode: "ordinary",
+          preview_digest: planned.context_digest,
+          expected_epoch: planned.epoch,
+          location_id: chosenSource.location_id,
+          media_variant_id: chosenSource.media_variant_id,
+          stream_index: 0,
+          receipt: proof,
+        },
+      ]),
+    );
+    fireEvent.click(
+      within(publication.parentElement ?? document.body).getByRole("button", {
+        name: "К сохранённым связям",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Проверить публикацию" }),
+    );
+    const reopened = await screen.findByRole("region", {
+      name: "Публикация по сохранённым связям",
+    });
+    expect(
+      within(reopened).getByRole("button", {
+        name: "Опубликовать готовые позиции",
+      }),
+    ).toBeDisabled();
+    expect(previewRequests).toHaveLength(1);
+    finishPublicationRequest();
+    expect(
+      await within(reopened).findByText(
+        "Операция публикации поставлена в очередь.",
+      ),
+    ).toBeInTheDocument();
+    expect(publicationRequests).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "К сохранённым связям" }),
+    );
 
     // An older successful response that arrives after this request cannot
     // replace the saved result for the same origin.
@@ -871,14 +1000,16 @@ describe("incoming manual group review", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Подтверждено · локальное издание",
+        name: "Связи сопоставления сохранены",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("folder/02.flac остаётся во входящих"),
+      within(
+        screen.getByRole("region", { name: "Остались во входящих" }),
+      ).getByText(/02\.flac$/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Явно подтвердить" }),
+      screen.queryByRole("button", { name: "Сохранить связи" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
@@ -896,7 +1027,7 @@ describe("incoming manual group review", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
-        name: "Подтверждено · локальное издание",
+        name: "Связи сопоставления сохранены",
       }),
     ).not.toBeInTheDocument();
   });
@@ -957,10 +1088,10 @@ describe("incoming manual group review", () => {
     assignFromRail("folder/01.flac", repeatedPosition);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+      screen.getByRole("button", { name: "Предпросмотр назначений" }),
     );
     await screen.findByRole("heading", {
-      name: "Предпросмотр полного назначения",
+      name: "Предпросмотр назначений",
     });
     expect(previewBodies[0]).toMatchObject({
       expected_evaluation_revision: "evaluation-1",
@@ -986,20 +1117,20 @@ describe("incoming manual group review", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("heading", {
-          name: "Предпросмотр полного назначения",
+          name: "Предпросмотр назначений",
         }),
       ).not.toBeInTheDocument(),
     );
     expect(
-      screen.queryByRole("button", { name: "Явно подтвердить" }),
+      screen.queryByRole("button", { name: "Сохранить связи" }),
     ).not.toBeInTheDocument();
     expectAssigned("folder/01.flac", repeatedPosition);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+      screen.getByRole("button", { name: "Предпросмотр назначений" }),
     );
     await screen.findByRole("heading", {
-      name: "Предпросмотр полного назначения",
+      name: "Предпросмотр назначений",
     });
     expect(previewBodies).toHaveLength(2);
     expect(previewBodies[1]).toMatchObject({

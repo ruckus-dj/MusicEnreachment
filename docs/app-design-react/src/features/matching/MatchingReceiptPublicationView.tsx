@@ -320,6 +320,13 @@ export function MatchingReceiptPublicationView({
 				kind: "publication",
 				details: detailsFor(controller.selectedRow, files, text),
 				fileChoice,
+				fileLabel:
+					!fileChoice && controller.selectedRow.sourceName
+						? {
+								caption: matchingReceiptFileChoiceLabels(locale).legend,
+								value: controller.selectedRow.sourceName,
+							}
+						: undefined,
 				onRefresh: controller.refresh,
 			}
 		: { kind: "empty" };

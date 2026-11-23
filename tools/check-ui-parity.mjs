@@ -118,6 +118,7 @@ const pairs = [
       "manualSearchContract.ts",
       "matchingBoardMessages.ts",
       "matchingBoardStyles.ts",
+      "matchingLinksCopy.ts",
       "matchingSourcePath.ts",
       "scoring.ts",
       "sourceFileOrder.ts",

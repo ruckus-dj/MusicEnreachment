@@ -5,6 +5,7 @@ import {
 } from "../../api/generated/client";
 import type {
   FirstPublicationPreviewSource,
+  LibraryFirstPublicationAdmissionInputBody,
   LibraryFirstPublicationPreviewResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -16,16 +17,52 @@ export type SourceChoice = Pick<
   "location_id" | "media_variant_id" | "stream_index"
 >;
 
-type PreviewWorkflow = "first" | "comparison" | "retained_same_path";
+type PreviewWorkflow =
+  | "first"
+  | "comparison"
+  | "retained_same_path"
+  | "matching_receipt";
 type PublicationMode = "ordinary" | "forced";
+
+/**
+ * Exact confirmation receipt and association that scope a publication.
+ * `mediaVariantId` is never sent to the preview; it is the local proof that the
+ * returned source belongs to the confirmed association.
+ */
+export type PublicationMatchingReceipt = {
+  kind: "manual" | "local";
+  requestId: string;
+  trackSourceId: string;
+  mediaVariantId: string;
+};
+
+export type SubmitMatchingReceiptPublication = (
+  receipt: PublicationMatchingReceipt,
+  body: LibraryFirstPublicationAdmissionInputBody,
+) => Promise<
+  Awaited<ReturnType<typeof startLibraryFirstPublication>> | undefined
+>;
+
+/**
+ * A receipt-scoped preview is ordinary-only: a saved matching confirmation
+ * never authorizes a forced first publication or a retained same-path rewrite.
+ */
+export type PublicationPreviewPrepare =
+  | PublicationMode
+  | {
+      workflow: "matching_receipt";
+      mode: "ordinary";
+      receipt: PublicationMatchingReceipt;
+    };
 
 export type PublicationPreviewIdentity = {
   digest: string;
   epoch: string;
   generation?: string;
-  workflow: "first" | "retained_same_path";
+  workflow: "first" | "retained_same_path" | "matching_receipt";
   mode: PublicationMode;
   sourceChoice: string;
+  receipt?: PublicationMatchingReceipt;
   refreshToken?: number | string;
 };
 
@@ -40,6 +77,8 @@ export type PublicationPreviewState = {
   blockers: string[];
   confirmationCapabilityStatus?: string;
   confirmationCapabilityReasonCodes: string[];
+  receipt?: PublicationMatchingReceipt;
+  receiptAction?: "create" | "update" | "unchanged";
   inspection: {
     preview?: LibraryFirstPublicationPreviewResponse;
     workflow: PreviewWorkflow;
@@ -51,16 +90,104 @@ export type PublicationPreviewState = {
 };
 
 export type PublicationPreviewController = {
-  prepare: (mode: PublicationMode) => void;
+  prepare: (input: PublicationPreviewPrepare) => void;
   confirm: (expected: PublicationPreviewIdentity) => void;
   selectSource: (choice: SourceChoice | null) => void;
   refresh: () => void;
 };
 
+const zeroUUID = "00000000-0000-0000-0000-000000000000";
+
 function choiceKey(choice: SourceChoice | null) {
   return choice
     ? `${choice.location_id}:${choice.media_variant_id}:${choice.stream_index}`
     : "unresolved";
+}
+
+function validMatchingReceipt(receipt: PublicationMatchingReceipt) {
+  return (
+    (receipt.kind === "manual" || receipt.kind === "local") &&
+    receipt.requestId !== "" &&
+    receipt.requestId !== zeroUUID &&
+    receipt.trackSourceId !== "" &&
+    receipt.trackSourceId !== zeroUUID &&
+    receipt.mediaVariantId !== "" &&
+    receipt.mediaVariantId !== zeroUUID
+  );
+}
+
+function matchingReceiptKey(
+  receipt: PublicationMatchingReceipt | null | undefined,
+) {
+  return receipt
+    ? `${receipt.kind}:${receipt.requestId}:${receipt.trackSourceId}:${receipt.mediaVariantId}`
+    : "";
+}
+
+function matchingReceiptPreviewParams(
+  receipt: PublicationMatchingReceipt,
+  choice: SourceChoice | null,
+) {
+  return {
+    workflow: "matching_receipt",
+    receipt_kind: receipt.kind,
+    receipt_request_id: receipt.requestId,
+    receipt_track_source_id: receipt.trackSourceId,
+    mode: "ordinary",
+    ...(choice
+      ? {
+          location_id: choice.location_id,
+          media_variant_id: choice.media_variant_id,
+          stream_index: String(choice.stream_index),
+        }
+      : {}),
+  };
+}
+
+/**
+ * The server capability is the sole authority for the confirmation action.
+ * The FIRST branch has no capability and is a create; only the CURRENT
+ * receipt branch can produce update or unchanged.
+ */
+function receiptConfirmationAction(
+  preview: LibraryFirstPublicationPreviewResponse,
+): "create" | "update" | "unchanged" | undefined {
+  const capability = preview.confirmation_capability;
+  if (!capability) return preview.current_comparison ? undefined : "create";
+  if (capability.kind !== "matching_receipt_audio_upgrade") return undefined;
+  if (capability.status === "unchanged") return "unchanged";
+  if (capability.status !== "ready") return undefined;
+  return "update";
+}
+
+function receiptExpectedGeneration(
+  preview: LibraryFirstPublicationPreviewResponse,
+) {
+  const capability = preview.confirmation_capability;
+  if (capability?.kind !== "matching_receipt_audio_upgrade") return undefined;
+  if (capability.status !== "ready") return undefined;
+  if (
+    !capability.current_generation ||
+    capability.current_generation === zeroUUID
+  )
+    return undefined;
+  if (preview.current_comparison?.generation !== capability.current_generation)
+    return undefined;
+  return capability.current_generation;
+}
+
+function receiptProofMatches(
+  preview: LibraryFirstPublicationPreviewResponse,
+  receipt: PublicationMatchingReceipt | null | undefined,
+) {
+  return Boolean(
+    receipt &&
+      validMatchingReceipt(receipt) &&
+      preview.selected_source &&
+      preview.selected_source.media_variant_id === receipt.mediaVariantId &&
+      preview.context_digest &&
+      preview.epoch,
+  );
 }
 
 function sameChoice(
@@ -92,6 +219,7 @@ export function FirstPublicationPreview({
   onRefresh,
   onController,
   onStateChange,
+  onSubmitReceipt,
 }: {
   releaseId: string;
   positionId: string;
@@ -102,6 +230,7 @@ export function FirstPublicationPreview({
   onRefresh: () => void;
   onController?: (controller: PublicationPreviewController | null) => void;
   onStateChange?: (state: PublicationPreviewState) => void;
+  onSubmitReceipt?: SubmitMatchingReceiptPublication;
 }) {
   const { locale } = useI18n();
   const copy = firstPublicationPreviewMessages[locale];
@@ -110,6 +239,8 @@ export function FirstPublicationPreview({
   const [selectedChoice, setSelectedChoice] = useState<SourceChoice | null>(
     null,
   );
+  const [matchingReceipt, setMatchingReceipt] =
+    useState<PublicationMatchingReceipt | null>(null);
   const [mode, setMode] = useState<PublicationMode>("ordinary");
   const [workflow, setWorkflow] = useState<PreviewWorkflow>(
     comparisonOnly ? "comparison" : "first",
@@ -160,6 +291,7 @@ export function FirstPublicationPreview({
     choiceKey: "unresolved",
     mode: "ordinary",
     workflow: comparisonOnly ? "comparison" : "first",
+    receiptKey: "",
     refreshToken,
   });
   currentIdentity.current = {
@@ -168,6 +300,7 @@ export function FirstPublicationPreview({
     choiceKey: choiceKey(selectedChoice),
     mode,
     workflow,
+    receiptKey: matchingReceiptKey(matchingReceipt),
     refreshToken,
   };
 
@@ -178,9 +311,11 @@ export function FirstPublicationPreview({
       positionId,
       choiceKey: "unresolved",
       workflow: comparisonOnly ? "comparison" : "first",
+      receiptKey: "",
     };
     mounted.current = true;
     setSelectedChoice(null);
+    setMatchingReceipt(null);
     setWorkflow(comparisonOnly ? "comparison" : "first");
     setSourceCandidates([]);
     setPreview(undefined);
@@ -208,6 +343,7 @@ export function FirstPublicationPreview({
         choiceKey: string;
         mode: string;
         workflow: PreviewWorkflow;
+        receiptKey: string;
         refreshToken?: number | string;
       },
       requireToken = false,
@@ -220,6 +356,7 @@ export function FirstPublicationPreview({
         currentIdentity.current.choiceKey === requestIdentity.choiceKey &&
         currentIdentity.current.mode === requestIdentity.mode &&
         currentIdentity.current.workflow === requestIdentity.workflow &&
+        currentIdentity.current.receiptKey === requestIdentity.receiptKey &&
         (!requireToken ||
           Object.is(
             currentIdentity.current.refreshToken,
@@ -235,14 +372,40 @@ export function FirstPublicationPreview({
       choice: SourceChoice | null,
       requestMode = mode,
       requestWorkflow = workflow,
+      requestReceipt: PublicationMatchingReceipt | null = matchingReceipt,
     ) => {
+      const receipt =
+        requestWorkflow === "matching_receipt" ? requestReceipt : null;
+      if (
+        requestWorkflow === "matching_receipt" &&
+        (!receipt || !validMatchingReceipt(receipt))
+      ) {
+        ++requestSequence.current;
+        currentIdentity.current = {
+          releaseId,
+          positionId,
+          choiceKey: choiceKey(choice),
+          mode: "ordinary",
+          workflow: "matching_receipt",
+          receiptKey: "",
+          refreshToken,
+        };
+        setLoading(false);
+        setPreview(undefined);
+        setSourceCandidates([]);
+        setPreviewChoiceKey("");
+        setPreviewWorkflow(undefined);
+        setError(copy.sourceUnavailable);
+        return;
+      }
       const request = ++requestSequence.current;
       const requestIdentity = {
         releaseId,
         positionId,
         choiceKey: choiceKey(choice),
-        mode: requestMode,
+        mode: requestWorkflow === "matching_receipt" ? "ordinary" : requestMode,
         workflow: requestWorkflow,
+        receiptKey: matchingReceiptKey(receipt),
         refreshToken,
       };
       currentIdentity.current = requestIdentity;
@@ -255,16 +418,18 @@ export function FirstPublicationPreview({
         const response = await getLibraryFirstPublicationPreview(
           releaseId,
           positionId,
-          requestWorkflow === "retained_same_path"
-            ? { workflow: "retained_same_path", mode: requestMode }
-            : choice
-              ? {
-                  location_id: choice.location_id,
-                  media_variant_id: choice.media_variant_id,
-                  stream_index: String(choice.stream_index),
-                  mode: requestMode,
-                }
-              : { mode: requestMode },
+          requestWorkflow === "matching_receipt" && receipt
+            ? matchingReceiptPreviewParams(receipt, choice)
+            : requestWorkflow === "retained_same_path"
+              ? { workflow: "retained_same_path", mode: requestMode }
+              : choice
+                ? {
+                    location_id: choice.location_id,
+                    media_variant_id: choice.media_variant_id,
+                    stream_index: String(choice.stream_index),
+                    mode: requestMode,
+                  }
+                : { mode: requestMode },
           { cache: "no-store" },
         );
         if (!isCurrentRequest(request, requestIdentity, true)) return;
@@ -280,6 +445,21 @@ export function FirstPublicationPreview({
                     copy.requestFailed,
                   ),
           );
+          return;
+        }
+        if (
+          receipt &&
+          (response.data.release_id !== releaseId ||
+            response.data.position_id !== positionId ||
+            response.data.mode !== "ordinary" ||
+            (response.data.selected_source &&
+              response.data.selected_source.media_variant_id !==
+                receipt.mediaVariantId) ||
+            response.data.source_candidates?.some(
+              (source) => source.media_variant_id !== receipt.mediaVariantId,
+            ))
+        ) {
+          setError(copy.sourceUnavailable);
           return;
         }
         setPreview(response.data);
@@ -303,13 +483,14 @@ export function FirstPublicationPreview({
       positionId,
       mode,
       workflow,
+      matchingReceipt,
       refreshToken,
       isCurrentRequest,
     ],
   );
 
   const prepare = useCallback(
-    (requestedMode: PublicationMode) => {
+    (input: PublicationPreviewPrepare) => {
       if (
         confirmationPending.current ||
         admissionLocked.current ||
@@ -318,11 +499,30 @@ export function FirstPublicationPreview({
         admittedOperationID
       )
         return;
-      const nextWorkflow: PreviewWorkflow = comparisonOnly
-        ? "retained_same_path"
-        : "first";
-      const nextMode = nextWorkflow === "first" ? "ordinary" : requestedMode;
-      const nextChoice = nextWorkflow === "first" ? selectedChoice : null;
+      const receiptRequest = typeof input === "string" ? null : input;
+      if (
+        receiptRequest &&
+        (receiptRequest.mode !== "ordinary" ||
+          !validMatchingReceipt(receiptRequest.receipt))
+      )
+        return;
+      const requestedMode: PublicationMode =
+        typeof input === "string" ? input : "ordinary";
+      const nextWorkflow: PreviewWorkflow = receiptRequest
+        ? "matching_receipt"
+        : comparisonOnly
+          ? "retained_same_path"
+          : "first";
+      const nextMode =
+        receiptRequest || nextWorkflow === "first" ? "ordinary" : requestedMode;
+      const nextChoice =
+        nextWorkflow === "first" ||
+        (nextWorkflow === "matching_receipt" &&
+          matchingReceiptKey(receiptRequest?.receipt) ===
+            matchingReceiptKey(matchingReceipt))
+          ? selectedChoice
+          : null;
+      const nextReceipt = receiptRequest?.receipt ?? null;
       ++requestSequence.current;
       currentIdentity.current = {
         releaseId,
@@ -330,8 +530,10 @@ export function FirstPublicationPreview({
         choiceKey: choiceKey(nextChoice),
         mode: nextMode,
         workflow: nextWorkflow,
+        receiptKey: matchingReceiptKey(nextReceipt),
         refreshToken,
       };
+      setMatchingReceipt(nextReceipt);
       setMode(nextMode);
       setWorkflow(nextWorkflow);
       setSelectedChoice(nextChoice);
@@ -341,7 +543,7 @@ export function FirstPublicationPreview({
       setPreviewWorkflow(undefined);
       setLoading(false);
       setError("");
-      void loadPreview(nextChoice, nextMode, nextWorkflow);
+      void loadPreview(nextChoice, nextMode, nextWorkflow, nextReceipt);
     },
     [
       admittedOperationID,
@@ -349,6 +551,7 @@ export function FirstPublicationPreview({
       comparisonOnly,
       confirming,
       loadPreview,
+      matchingReceipt,
       positionId,
       refreshToken,
       releaseId,
@@ -378,7 +581,8 @@ export function FirstPublicationPreview({
     setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
-    if (hadPreviewRequest) void loadPreview(choice, mode, workflow);
+    if (hadPreviewRequest)
+      void loadPreview(choice, mode, workflow, matchingReceipt);
   }, [
     refreshToken,
     confirming,
@@ -387,6 +591,7 @@ export function FirstPublicationPreview({
     loading,
     preview,
     selectedChoice,
+    matchingReceipt,
     mode,
     workflow,
     loadPreview,
@@ -409,6 +614,7 @@ export function FirstPublicationPreview({
       choiceKey: nextKey,
       mode,
       workflow,
+      receiptKey: matchingReceiptKey(matchingReceipt),
       refreshToken,
     };
     setSelectedChoice(choice);
@@ -426,6 +632,7 @@ export function FirstPublicationPreview({
   function changeMode(nextMode: "ordinary" | "forced") {
     if (
       nextMode === mode ||
+      (workflow === "matching_receipt" && nextMode !== "ordinary") ||
       confirmationPending.current ||
       admissionLocked.current ||
       confirming ||
@@ -440,6 +647,7 @@ export function FirstPublicationPreview({
       choiceKey: choiceKey(selectedChoice),
       mode: nextMode,
       workflow,
+      receiptKey: matchingReceiptKey(matchingReceipt),
       refreshToken,
     };
     setMode(nextMode);
@@ -451,6 +659,9 @@ export function FirstPublicationPreview({
   }
 
   function changeWorkflow(nextWorkflow: PreviewWorkflow) {
+    // A receipt-scoped workflow requires an exact receipt; it is entered only
+    // through prepare(), never through the comparison workflow switch.
+    if (nextWorkflow === "matching_receipt") return;
     if (
       nextWorkflow === workflow ||
       confirmationPending.current ||
@@ -461,6 +672,7 @@ export function FirstPublicationPreview({
     )
       return;
     const nextChoice = selectedChoice;
+    const nextReceipt = null;
     ++requestSequence.current;
     currentIdentity.current = {
       releaseId,
@@ -468,8 +680,10 @@ export function FirstPublicationPreview({
       choiceKey: choiceKey(nextChoice),
       mode,
       workflow: nextWorkflow,
+      receiptKey: "",
       refreshToken,
     };
+    setMatchingReceipt(nextReceipt);
     setWorkflow(nextWorkflow);
     setSelectedChoice(nextChoice);
     setPreview(undefined);
@@ -478,7 +692,7 @@ export function FirstPublicationPreview({
     setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
-    void loadPreview(nextChoice, mode, nextWorkflow);
+    void loadPreview(nextChoice, mode, nextWorkflow, nextReceipt);
   }
 
   async function confirmPreview() {
@@ -493,12 +707,37 @@ export function FirstPublicationPreview({
       return;
     const request = ++requestSequence.current;
     const confirmedChoice = selectedChoice;
+    const confirmedReceipt =
+      workflow === "matching_receipt" ? matchingReceipt : null;
+    const confirmedAction =
+      workflow === "matching_receipt"
+        ? receiptConfirmationAction(preview)
+        : undefined;
+    const confirmedGeneration =
+      confirmedAction === "update"
+        ? receiptExpectedGeneration(preview)
+        : undefined;
+    if (workflow === "matching_receipt") {
+      // The receipt is the only source authority for this branch. Never fall
+      // back to the generic first/retained request when its proof is incomplete.
+      if (
+        !confirmedReceipt ||
+        !receiptProofMatches(preview, confirmedReceipt) ||
+        !preview.selected_source ||
+        mode !== "ordinary" ||
+        preview.mode !== "ordinary" ||
+        (confirmedAction !== "create" && confirmedAction !== "update") ||
+        (confirmedAction === "update" && !confirmedGeneration)
+      )
+        return;
+    }
     const requestIdentity = {
       releaseId,
       positionId,
       choiceKey: choiceKey(confirmedChoice),
       mode,
       workflow,
+      receiptKey: matchingReceiptKey(confirmedReceipt),
     };
     const confirmedPreview = preview;
     if (previewChoiceKey !== requestIdentity.choiceKey) return;
@@ -506,34 +745,56 @@ export function FirstPublicationPreview({
     setConfirming(true);
     setError("");
     try {
-      const retained = requestIdentity.workflow === "retained_same_path";
-      const body = retained
-        ? {
-            workflow: "retained_same_path",
-            mode,
-            preview_digest: confirmedPreview.context_digest,
-            expected_epoch: confirmedPreview.epoch,
-            expected_generation:
-              confirmedPreview.confirmation_capability?.current_generation,
-          }
-        : {
-            preview_digest: confirmedPreview.context_digest,
-            expected_epoch: confirmedPreview.epoch,
-            ...(confirmedChoice && confirmedPreview.selected_source
-              ? {
-                  location_id: confirmedPreview.selected_source.location_id,
-                  media_variant_id:
-                    confirmedPreview.selected_source.media_variant_id,
-                  stream_index: confirmedPreview.selected_source.stream_index,
-                }
-              : {}),
-          };
-      const response = await startLibraryFirstPublication(
-        releaseId,
-        positionId,
-        body,
-      );
-      if (!isCurrentRequest(request, requestIdentity)) return;
+      let body: LibraryFirstPublicationAdmissionInputBody;
+      if (requestIdentity.workflow === "retained_same_path") {
+        body = {
+          workflow: "retained_same_path",
+          mode,
+          preview_digest: confirmedPreview.context_digest,
+          expected_epoch: confirmedPreview.epoch,
+          expected_generation:
+            confirmedPreview.confirmation_capability?.current_generation,
+        };
+      } else if (requestIdentity.workflow === "matching_receipt") {
+        if (!confirmedReceipt || !confirmedPreview.selected_source) return;
+        body = {
+          workflow: "matching_receipt",
+          mode: "ordinary",
+          preview_digest: confirmedPreview.context_digest,
+          expected_epoch: confirmedPreview.epoch,
+          ...(confirmedAction === "update" && confirmedGeneration
+            ? { expected_generation: confirmedGeneration }
+            : {}),
+          receipt: {
+            kind: confirmedReceipt.kind,
+            request_id: confirmedReceipt.requestId,
+            track_source_id: confirmedReceipt.trackSourceId,
+          },
+          // Echo the server-selected triple exactly. A resolved selection is
+          // authoritative even when the host did not make an explicit choice,
+          // and stream index zero is a valid exact value.
+          location_id: confirmedPreview.selected_source.location_id,
+          media_variant_id: confirmedPreview.selected_source.media_variant_id,
+          stream_index: confirmedPreview.selected_source.stream_index,
+        };
+      } else {
+        body = {
+          preview_digest: confirmedPreview.context_digest,
+          expected_epoch: confirmedPreview.epoch,
+          ...(confirmedChoice && confirmedPreview.selected_source
+            ? {
+                location_id: confirmedPreview.selected_source.location_id,
+                media_variant_id:
+                  confirmedPreview.selected_source.media_variant_id,
+                stream_index: confirmedPreview.selected_source.stream_index,
+              }
+            : {}),
+        };
+      }
+      const response = confirmedReceipt
+        ? await onSubmitReceipt?.(confirmedReceipt, body)
+        : await startLibraryFirstPublication(releaseId, positionId, body);
+      if (!response || !isCurrentRequest(request, requestIdentity)) return;
       if (response.status === 202) {
         admissionLocked.current = true;
         setAdmittedOperationID(response.data.id);
@@ -547,7 +808,7 @@ export function FirstPublicationPreview({
         setPreview(undefined);
         setSourceCandidates([]);
         setError(confirmedChoice ? copy.sourceUnavailable : copy.staleConfirm);
-        onRefresh();
+        if (!confirmedReceipt) onRefresh();
         return;
       }
       admissionLocked.current = true;
@@ -587,12 +848,18 @@ export function FirstPublicationPreview({
     return {
       digest: preview.context_digest,
       epoch: preview.epoch,
-      ...(workflow === "retained_same_path"
+      ...(workflow === "retained_same_path" || workflow === "matching_receipt"
         ? { generation: preview.confirmation_capability?.current_generation }
         : {}),
       workflow,
       mode,
-      sourceChoice: previewChoiceKey,
+      sourceChoice:
+        workflow === "matching_receipt"
+          ? choiceKey(preview.selected_source ?? null)
+          : previewChoiceKey,
+      ...(workflow === "matching_receipt" && matchingReceipt
+        ? { receipt: matchingReceipt }
+        : {}),
       refreshToken,
     };
   }, [
@@ -601,6 +868,7 @@ export function FirstPublicationPreview({
     workflow,
     mode,
     previewChoiceKey,
+    matchingReceipt,
     refreshToken,
   ]);
 
@@ -640,17 +908,35 @@ export function FirstPublicationPreview({
         preview?.current_comparison?.generation &&
       preview?.mode === mode,
   );
+  const receiptAction =
+    workflow === "matching_receipt" && preview
+      ? receiptConfirmationAction(preview)
+      : undefined;
+  const receiptReady = Boolean(
+    onSubmitReceipt &&
+      preview &&
+      receiptProofMatches(preview, matchingReceipt) &&
+      preview.mode === "ordinary" &&
+      mode === "ordinary" &&
+      (!selectedChoice || choiceMatchesPreview) &&
+      (receiptAction === "create" ||
+        (receiptAction === "update" && receiptExpectedGeneration(preview))),
+  );
   const canConfirm = Boolean(
     (workflow === "retained_same_path"
       ? retainedReady
-      : !comparisonOnly && workflow === "first") &&
+      : workflow === "matching_receipt"
+        ? receiptReady
+        : !comparisonOnly && workflow === "first") &&
       preview &&
       previewWorkflow === workflow &&
       previewChoiceKey === choiceKey(selectedChoice) &&
       preview.blockers?.length === 0 &&
       (workflow === "retained_same_path" ||
         (preview.selected_source &&
-          (!needsExplicitChoice || choiceMatchesPreview) &&
+          (workflow === "matching_receipt" ||
+            !needsExplicitChoice ||
+            choiceMatchesPreview) &&
           preview.transform &&
           preview.resolved_path_components?.length)),
   );
@@ -667,6 +953,8 @@ export function FirstPublicationPreview({
       confirmationCapabilityStatus: preview?.confirmation_capability?.status,
       confirmationCapabilityReasonCodes:
         preview?.confirmation_capability?.reason_codes ?? [],
+      receipt: matchingReceipt ?? undefined,
+      receiptAction,
       inspection: {
         preview,
         workflow,
@@ -695,6 +983,8 @@ export function FirstPublicationPreview({
       preview?.confirmation_capability?.reason_codes,
       preview,
       workflow,
+      matchingReceipt,
+      receiptAction,
       sourceCandidates,
       selectedChoice,
       needsExplicitChoice,

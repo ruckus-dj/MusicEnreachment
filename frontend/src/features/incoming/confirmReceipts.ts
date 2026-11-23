@@ -1,5 +1,6 @@
 import { type QueryClient, useQuery } from "@tanstack/react-query";
 import type {
+  MatchingLocalAssignment,
   MatchingLocalPreview,
   MatchingManualPreview,
 } from "../../api/generated/client.schemas";
@@ -23,6 +24,7 @@ type LocalConfirmReceipt = {
   requestId: string;
   order: number;
   response: MatchingLocalPreview;
+  assignments?: readonly MatchingLocalAssignment[];
 };
 
 export type IncomingConfirmReceipt = ManualConfirmReceipt | LocalConfirmReceipt;

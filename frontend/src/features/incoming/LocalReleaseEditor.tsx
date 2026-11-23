@@ -82,6 +82,7 @@ export interface LocalMatchingProps {
     receipt: MatchingLocalPreview,
     order: number,
     requestId: string,
+    assignments: readonly Assignment[],
   ) => void | Promise<void>;
 }
 
@@ -617,6 +618,7 @@ export function useLocalMatching({
           response.data,
           pendingConfirmation.order,
           pendingConfirmation.body.request_id,
+          pendingConfirmation.body.assignments ?? [],
         );
       } catch (reason) {
         updateState(targetGroupID, (latest) => ({

@@ -23,6 +23,7 @@ export interface PublicationPreviewSource
 export type PublicationPreviewWorkflow =
   | "first"
   | "comparison"
+  | "matching_receipt"
   | "retained_same_path";
 
 export interface PublicationPreviewTransform {
@@ -121,7 +122,9 @@ export interface PublicationPreviewDetailsState {
   error: string;
   loading: boolean;
   admittedOperationID: string;
+  admittedOperationStatus?: string;
   admissionUncertain: boolean;
+  admissionUncertainStatus?: string;
   inspection: PublicationPreviewInspection;
 }
 
@@ -134,7 +137,6 @@ export interface PublicationPreviewDetailsViewProps {
   onRefresh?: () => void;
 }
 
-type Inspection = PublicationPreviewInspection;
 type PreviewCopy =
   (typeof firstPublicationPreviewMessages)[keyof typeof firstPublicationPreviewMessages];
 
@@ -157,11 +159,13 @@ function CandidateLabel({
   stream,
   channels,
   unsupportedStreams,
+  location,
 }: {
   candidate: PublicationPreviewSource;
   stream: string;
   channels: string;
   unsupportedStreams: string;
+  location?: string;
 }) {
   return (
     <>
@@ -169,6 +173,12 @@ function CandidateLabel({
       {candidate.stream_index}
       {candidate.language ? ` · ${candidate.language}` : ""}
       {candidate.channels ? ` · ${candidate.channels} ${channels}` : ""}
+      {location ? (
+        <span className="wrap-anywhere">
+          {" "}
+          · {location}: {candidate.location_id}
+        </span>
+      ) : null}
       {candidate.unsupported_audio_stream_count > 0
         ? ` · ${unsupportedStreams}: ${candidate.unsupported_audio_stream_count}`
         : ""}
@@ -194,15 +204,14 @@ function TagValues({
 
 function TagComparison({
   preview,
-  workflow,
+  firstPublication,
   copy,
 }: {
   preview: PublicationPreviewPlan;
-  workflow: Inspection["workflow"];
+  firstPublication: boolean;
   copy: PreviewCopy;
 }) {
   const differences = preview.current_comparison?.tag_differences ?? [];
-  const firstPublication = workflow === "first";
   const planned = Object.entries(preview.desired_tags ?? {});
   if (!firstPublication && differences.length === 0) {
     return <p>{copy.noTagDifferences}</p>;
@@ -467,7 +476,9 @@ export function PublicationPreviewDetailsView({
     error,
     loading,
     admittedOperationID,
+    admittedOperationStatus,
     admissionUncertain,
+    admissionUncertainStatus,
   } = state;
   const {
     preview,
@@ -477,6 +488,12 @@ export function PublicationPreviewDetailsView({
     needsExplicitChoice,
     sourceChoiceDisabled,
   } = inspection;
+  const firstPublication =
+    workflow === "first" ||
+    (workflow === "matching_receipt" && !preview?.current_comparison);
+  const showSourceLocation =
+    workflow === "matching_receipt" &&
+    new Set(sourceCandidates.map(({ location_id }) => location_id)).size > 1;
   const choiceKey = (choice: PublicationPreviewSourceChoice | null) =>
     choice
       ? `${choice.location_id}:${choice.media_variant_id}:${choice.stream_index}`
@@ -514,6 +531,9 @@ export function PublicationPreviewDetailsView({
                     stream={copy.stream}
                     channels={copy.channels}
                     unsupportedStreams={copy.unsupportedStreams}
+                    location={
+                      showSourceLocation ? copy.sourceLocation : undefined
+                    }
                   />
                 </label>
               );
@@ -535,7 +555,8 @@ export function PublicationPreviewDetailsView({
             )}
           <div>
             <h3 className="font-semibold">
-              {workflow === "comparison"
+              {workflow === "comparison" ||
+              (workflow === "matching_receipt" && !firstPublication)
                 ? copy.currentComparison
                 : workflow === "retained_same_path"
                   ? copy.retainedPlan
@@ -578,7 +599,7 @@ export function PublicationPreviewDetailsView({
                   ? preview.resolved_path_components.join("/")
                   : copy.namespaceUnconfirmed)}
             </p>
-            {workflow !== "first" && preview.current_comparison && (
+            {!firstPublication && preview.current_comparison && (
               <>
                 <p>
                   {copy.currentPath}:{" "}
@@ -661,33 +682,36 @@ export function PublicationPreviewDetailsView({
             aria-label={copy.tagDifferences}
           >
             <h4 className="font-medium">
-              {workflow === "first" ? copy.plannedTags : copy.tagDifferences}
+              {firstPublication ? copy.plannedTags : copy.tagDifferences}
             </h4>
-            <TagComparison preview={preview} workflow={workflow} copy={copy} />
+            <TagComparison
+              preview={preview}
+              firstPublication={firstPublication}
+              copy={copy}
+            />
           </section>
           <CoverDetails preview={preview} copy={copy} />
           <LyricsDetails preview={preview} copy={copy} />
-          {workflow !== "first" &&
-            preview.current_comparison?.audio_evidence && (
-              <p>
-                {copy.audioAuthorityStatus}:{" "}
-                {preview.current_comparison.audio_evidence
-                  .source_authority_status === "present"
-                  ? copy.audioAuthorityPresent
+          {!firstPublication && preview.current_comparison?.audio_evidence && (
+            <p>
+              {copy.audioAuthorityStatus}:{" "}
+              {preview.current_comparison.audio_evidence
+                .source_authority_status === "present"
+                ? copy.audioAuthorityPresent
+                : preview.current_comparison.audio_evidence
+                      .source_authority_status === "stale"
+                  ? copy.audioAuthorityStale
                   : preview.current_comparison.audio_evidence
-                        .source_authority_status === "stale"
-                    ? copy.audioAuthorityStale
-                    : preview.current_comparison.audio_evidence
-                          .source_authority_status === "missing"
-                      ? copy.audioAuthorityMissing
-                      : copy.audioAuthorityUnknown}
-              </p>
-            )}
+                        .source_authority_status === "missing"
+                    ? copy.audioAuthorityMissing
+                    : copy.audioAuthorityUnknown}
+            </p>
+          )}
           {workflow !== "first" &&
             preview.showAudioComparisonBasis !== false && (
               <p>{copy.audioComparisonBasis}</p>
             )}
-          {workflow !== "first" && <p>{copy.readOnlyBoundary}</p>}
+          {!firstPublication && <p>{copy.readOnlyBoundary}</p>}
           {preview.native_status !== undefined && (
             <p>
               {copy.namespaceCheck}: {preview.native_status}.{" "}
@@ -698,8 +722,12 @@ export function PublicationPreviewDetailsView({
           )}
         </div>
       )}
-      {admittedOperationID && <p role="status">{copy.queued}.</p>}
-      {admissionUncertain && <p role="status">{copy.unknownStart}</p>}
+      {admittedOperationID && (
+        <p role="status">{admittedOperationStatus ?? copy.queued}.</p>
+      )}
+      {admissionUncertain && (
+        <p role="status">{admissionUncertainStatus ?? copy.unknownStart}</p>
+      )}
       {onRefresh && (error || admittedOperationID || admissionUncertain) && (
         <button type="button" onClick={onRefresh}>
           {copy.refreshPublication}

@@ -307,6 +307,14 @@ in frontend/.
   stacks: ordinary template-copy creation and admin-pool waits require different
   diagnosis from application locks. Rerun only failed CI jobs when supported by
   that evidence; retain all gates and timeouts.
+- On Windows, a package-level `PASS` followed by `supervisor did not respond
+  to shutdown` is still a failed integration gate. Inspect the shutdown
+  checkpoint and supervisor log before attributing it to an application test;
+  do not ignore a cleanup failure or report the full matrix as green.
+- When changing a frozen matching capture, update the strict decoder's
+  on-wire struct, not just its decoded value. An applied group can be absent
+  from active review while its original evaluation and Local album evidence
+  remain intact.
 
 ### Owner-directed test scope
 
