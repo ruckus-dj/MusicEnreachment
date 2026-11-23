@@ -31,7 +31,7 @@ import (
 
 func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 	for _, scenario := range []firstPublicationTemplateScenario{
-		{name: "flat", template: "Track.{EXT}", expectedPath: "Track.flac"},
+		{name: "flat from matching receipt", template: "Track.{EXT}", expectedPath: "Track.flac", fromMatchingReceipt: true},
 		{name: "default nested", defaultLayout: true},
 		{name: "custom nested", template: "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}", expectedPath: "literal/shared/preparation fixture/Published track.flac"},
 	} {
@@ -42,13 +42,45 @@ func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 }
 
 type firstPublicationTemplateScenario struct {
-	name          string
-	template      string
-	defaultLayout bool
-	expectedPath  string
+	name                string
+	template            string
+	defaultLayout       bool
+	expectedPath        string
+	fromMatchingReceipt bool
 }
 
 type explicitFirstPublicationAuthority struct{}
+
+func seedFirstPublicationMatchingReceipt(t *testing.T, ctx context.Context, db *bun.DB, releaseID, positionID, trackID, variantID, workID uuid.UUID) *persistence.MatchingReceiptPublicationSource {
+	t.Helper()
+	groupID, requestID := uuid.New(), uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO incoming_group(id,manual,revision) VALUES (?,true,'confirmed-first-publication')`, groupID).Exec(ctx); err != nil {
+		t.Fatalf("seed confirmed incoming group: %v", err)
+	}
+	var associationID uuid.UUID
+	if err := db.NewRaw(`UPDATE track_source SET selected=false WHERE track_id=? AND media_variant_id=? RETURNING id`, trackID, variantID).Scan(ctx, &associationID); err != nil {
+		t.Fatalf("retain an unselected confirmed source: %v", err)
+	}
+	encoded, err := json.Marshal(struct {
+		LocalReleaseID   uuid.UUID                             `json:"local_release_id"`
+		ConfirmedSources []persistence.MatchingConfirmedSource `json:"confirmed_sources"`
+	}{
+		LocalReleaseID: releaseID,
+		ConfirmedSources: []persistence.MatchingConfirmedSource{{
+			FileMemberID: workID, PositionID: positionID, TrackSourceID: associationID, MediaVariantID: variantID,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO local_matching_receipt(request_id,group_id,intent_hash,preview_digest,response)
+		VALUES (?,?,?,?,?::jsonb)`, requestID, groupID, strings.Repeat("a", 64), strings.Repeat("b", 64), string(encoded)).Exec(ctx); err != nil {
+		t.Fatalf("seed saved matching receipt: %v", err)
+	}
+	return &persistence.MatchingReceiptPublicationSource{
+		Kind: persistence.MatchingReceiptKindLocal, RequestID: requestID, TrackSourceID: associationID,
+	}
+}
 
 type sourceEncoderTagFixture struct{}
 
@@ -389,11 +421,29 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 					scenario.beforeAdmission(ctx, db, manager, releaseID)
 				}
 			}
-			preview, err := publications.PreviewFirst(ctx, releaseID, positionID)
+			var receipt *persistence.MatchingReceiptPublicationSource
+			var preview FirstPublicationPreview
+			if templateScenario.fromMatchingReceipt {
+				receipt = seedFirstPublicationMatchingReceipt(t, ctx, db, releaseID, positionID, trackID, variantID, workID)
+				preview, err = publications.PreviewFirstFromMatchingReceipt(ctx, releaseID, positionID, *receipt, nil)
+				expectedAuthorityMode = "manual"
+			} else {
+				preview, err = publications.PreviewFirst(ctx, releaseID, positionID)
+			}
 			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
 				t.Fatalf("first publication preview = %+v, %v", preview, err)
 			}
 			var sourceChoice *FirstPublicationSourceChoice
+			if receipt != nil {
+				if preview.SelectedSource.AssociationID != receipt.TrackSourceID {
+					t.Fatalf("receipt preview chose an unrelated association: %+v", preview.SelectedSource)
+				}
+				sourceChoice = &FirstPublicationSourceChoice{
+					LocationID:     preview.SelectedSource.LocationID,
+					MediaVariantID: preview.SelectedSource.MediaVariantID,
+					StreamIndex:    preview.SelectedSource.StreamIndex,
+				}
+			}
 			for _, option := range confirmation {
 				if _, explicit := option.(explicitFirstPublicationAuthority); explicit {
 					choice := FirstPublicationSourceChoice{LocationID: preview.SelectedSource.LocationID, MediaVariantID: preview.SelectedSource.MediaVariantID, StreamIndex: preview.SelectedSource.StreamIndex}
@@ -416,7 +466,9 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 				}
 				target = strings.Join(preview.PathComponents, "/")
 			}
-			admittedID, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch, SourceChoice: sourceChoice})
+			admittedID, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{
+				PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch, SourceChoice: sourceChoice, Receipt: receipt,
+			})
 			if err != nil {
 				t.Fatalf("confirm first publication: %v", err)
 			}

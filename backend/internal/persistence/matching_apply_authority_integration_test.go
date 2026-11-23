@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -155,6 +156,42 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 		!slices.Equal(receipt.OmittedMemberIDs, []uuid.UUID{fixture.memberB}) {
 		t.Fatalf("manual receipt = %+v; want one exact link and the omitted member", receipt)
 	}
+	receiptSource := persistence.MatchingReceiptPublicationSource{
+		Kind: persistence.MatchingReceiptKindManual, RequestID: requestID, TrackSourceID: associationID,
+	}
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, receiptSource); err != nil {
+		t.Fatalf("read manual receipt publication source: %v", err)
+	}
+	malformed := receiptSource
+	malformed.RequestID = uuid.New()
+	malformedRow, err := db.NewRaw(`INSERT INTO manual_matching_receipt(request_id,group_id,local_release_id,intent_hash,preview_digest,response)
+		SELECT ?,group_id,local_release_id,intent_hash,preview_digest,response #- '{confirmed_sources,0,file_member_id}'
+		FROM manual_matching_receipt WHERE request_id=?`,
+		malformed.RequestID, requestID).Exec(ctx)
+	if err != nil {
+		t.Fatalf("seed malformed copy of saved receipt: %v", err)
+	}
+	if rows, err := malformedRow.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("seeded %d malformed receipts, err=%v; want one", rows, err)
+	}
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, malformed); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("malformed manual receipt = %v; want publication admission conflict", err)
+	}
+	foreignRelease := receipt.LocalReleaseID
+	foreignRelease[0] ^= 0xff
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, foreignRelease, positionID, sourceID, receiptSource); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("manual selector with foreign release = %v; want publication admission conflict", err)
+	}
+	foreignSource := receiptSource
+	foreignSource.TrackSourceID = uuid.New()
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, foreignSource); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("foreign manual track source selector = %v; want publication admission conflict", err)
+	}
+	wrongKind := receiptSource
+	wrongKind.Kind = persistence.MatchingReceiptKindLocal
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, wrongKind); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("Local selector for manual receipt = %v; want publication admission conflict", err)
+	}
 	var authority persistence.IncomingGroupMatchingAuthority
 	if err := db.NewRaw(`SELECT group_id,mode,revision FROM incoming_group_matching_authority WHERE group_id=?`, fixture.group.ID).Scan(ctx, &authority); err != nil {
 		t.Fatal(err)
@@ -164,6 +201,28 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	}
 	if _, err := candidates.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{sourceID}, uuid.New()); err != nil {
 		t.Fatalf("unlink manual association: %v", err)
+	}
+	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, receiptSource); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("unlinked manual association = %v; want publication admission conflict", err)
+	}
+	replacementSource := receiptSource
+	replacementSource.TrackSourceID = uuid.New()
+	replacementRow, err := db.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata)
+		SELECT ?,track_id,?,false,true,'manual','{}'::jsonb FROM release_track WHERE id=?`,
+		replacementSource.TrackSourceID, sourceID, positionID).Exec(ctx)
+	if err != nil {
+		t.Fatalf("reattach the same variant with a new association: %v", err)
+	}
+	if rows, err := replacementRow.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("reattached %d associations, err=%v; want one", rows, err)
+	}
+	for _, selector := range []persistence.MatchingReceiptPublicationSource{receiptSource, replacementSource} {
+		if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, selector); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+			t.Fatalf("saved receipt after reattachment = %v; want publication admission conflict", err)
+		}
+	}
+	if _, err := db.NewRaw(`DELETE FROM track_source WHERE id=?`, replacementSource.TrackSourceID).Exec(ctx); err != nil {
+		t.Fatalf("remove replacement association before stale job delivery: %v", err)
 	}
 	replayed, err := candidates.ConfirmMatchingManual(ctx, fixture.group.ID, header.EvaluationRevision, fixture.releaseID, assignments, preview.PreviewDigest, requestID)
 	if err != nil || !slices.Equal(replayed.ConfirmedSources, receipt.ConfirmedSources) {

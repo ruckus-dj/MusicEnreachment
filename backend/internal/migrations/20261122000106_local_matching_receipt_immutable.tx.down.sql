@@ -1,0 +1,2 @@
+DROP TRIGGER local_matching_receipt_immutable ON public.local_matching_receipt;
+DROP FUNCTION public.reject_local_matching_receipt_mutation();

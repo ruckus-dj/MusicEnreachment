@@ -534,6 +534,17 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	if confirmedSource.FileMemberID != fixture.memberA || confirmedSource.PositionID != expectedPositionID || confirmedSource.TrackSourceID != expectedTrackSourceID || confirmedSource.MediaVariantID != expectedVariantID {
 		t.Fatalf("confirmed source = %+v, want member=%s position=%s association=%s variant=%s", confirmedSource, fixture.memberA, expectedPositionID, expectedTrackSourceID, expectedVariantID)
 	}
+	receiptSource := persistence.MatchingReceiptPublicationSource{
+		Kind: persistence.MatchingReceiptKindLocal, RequestID: requestID, TrackSourceID: confirmedSource.TrackSourceID,
+	}
+	if err := repository.ReadMatchingReceiptPublicationSource(ctx, *confirmed.LocalReleaseID, confirmedSource.PositionID, confirmedSource.MediaVariantID, receiptSource); err != nil {
+		t.Fatalf("read local receipt publication source: %v", err)
+	}
+	wrongRelease := *confirmed.LocalReleaseID
+	wrongRelease[0] ^= 0xff
+	if err := repository.ReadMatchingReceiptPublicationSource(ctx, wrongRelease, confirmedSource.PositionID, confirmedSource.MediaVariantID, receiptSource); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("local selector with foreign release = %v; want publication admission conflict", err)
+	}
 	const expectedGenreID = "00000000-0000-4000-8000-000000000099"
 	const expectedGenreName = "Expected Local Genre"
 	if _, err := db.NewRaw(`UPDATE provider_release SET metadata=jsonb_set(metadata,'{genres}',?::jsonb,true) WHERE id=? AND provider_id=(SELECT id FROM provider WHERE code='local')`,

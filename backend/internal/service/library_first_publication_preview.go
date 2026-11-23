@@ -171,13 +171,29 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 // an already captured context snapshot, settings, and tool selection. Bulk
 // callers capture those inputs once and plan each position independently.
 func (service *LibraryPublications) previewFirstCaptured(ctx context.Context, contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
+	return service.previewFirstCapturedWithReceipt(ctx, contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, nil)
+}
+
+// previewFirstCapturedWithReceipt is the receipt-scoped variant. A receipt
+// selects one exact association and is valid only for an ordinary first
+// publication: it never authorizes a rewrite of CURRENT.
+func (service *LibraryPublications) previewFirstCapturedWithReceipt(ctx context.Context, contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, receipt *persistence.MatchingReceiptPublicationSource) (FirstPublicationPreview, error) {
 	if mode != firstPublicationPreviewModeOrdinary && mode != firstPublicationPreviewModeForced {
 		return FirstPublicationPreview{}, errors.New("first publication preview mode is invalid")
 	}
 	if contextSnapshot == nil || contextSnapshot.Library == nil {
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
 	}
-	preview, err := buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
+	if receipt != nil && contextSnapshot.Library.Current != nil {
+		return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
+	}
+	var preview FirstPublicationPreview
+	var err error
+	if receipt != nil {
+		preview, err = buildFirstPublicationPreviewFromMatchingReceipt(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice)
+	} else {
+		preview, err = buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
+	}
 	if err != nil {
 		return preview, err
 	}
@@ -236,6 +252,15 @@ func (service *LibraryPublications) previewFirstCaptured(ctx context.Context, co
 	}
 	if current != nil {
 		preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, contextSnapshot)
+	}
+	if receipt != nil {
+		variantID, err := matchingReceiptVariantID(contextSnapshot, receipt.TrackSourceID)
+		if err != nil {
+			return FirstPublicationPreview{}, err
+		}
+		if err := foldFirstPublicationReceiptDigest(&preview, *receipt, variantID); err != nil {
+			return FirstPublicationPreview{}, err
+		}
 	}
 	return preview, nil
 }
@@ -309,6 +334,18 @@ func buildFirstPublicationRepublishPreviewSelectedMode(contextSnapshot *persiste
 }
 
 func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, allowExistingCurrent bool) (FirstPublicationPreview, error) {
+	return buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, allowExistingCurrent, false)
+}
+
+// buildFirstPublicationPreviewFromMatchingReceipt plans only the association
+// authorized by a matching receipt. It never falls back to a global automatic
+// source choice; callers must supply an explicit stream or let the sole eligible
+// stream be resolved by the preview entry point.
+func buildFirstPublicationPreviewFromMatchingReceipt(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
+	return buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary, false, true)
+}
+
+func buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, allowExistingCurrent, matchingReceiptScoped bool) (FirstPublicationPreview, error) {
 	format, pathTemplate := runtimeSettings.PublicationFormat, runtimeSettings.PublicationPathTemplate
 	if contextSnapshot == nil || contextSnapshot.Library == nil {
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
@@ -316,7 +353,7 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 	library := contextSnapshot.Library
 	automaticChoice := choice == nil
 	automaticReason := ""
-	if automaticChoice {
+	if automaticChoice && !matchingReceiptScoped {
 		selected, reason, err := automaticFirstSourceChoiceWithReason(contextSnapshot, publication.AudioPublicationFormat(format))
 		if err == nil {
 			choice = &selected
@@ -338,7 +375,7 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 		Mode:         mode,
 	}
 	addArtistMetadataRevisions(preview.MetadataRevisions, contextSnapshot.ArtistMetadataRevisions)
-	if automaticChoice && choice == nil {
+	if automaticChoice && choice == nil && !matchingReceiptScoped {
 		preview.Blockers = append(preview.Blockers, contextSnapshot.DefaultSourceBlockers...)
 		switch automaticReason {
 		case "manual_stream_selection":
@@ -379,7 +416,7 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 		if source == nil {
 			return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
 		}
-	} else {
+	} else if !matchingReceiptScoped {
 		selectedSources := make([]*persistence.FirstPublicationSource, 0, len(contextSnapshot.Sources))
 		for i := range contextSnapshot.Sources {
 			if contextSnapshot.Sources[i].Selected {
@@ -390,7 +427,9 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 			source = selectedSources[0]
 		}
 	}
-	if source == nil {
+	if source == nil && matchingReceiptScoped && len(contextSnapshot.Sources) == 0 {
+		preview.Blockers = append(preview.Blockers, "the confirmed source is unavailable")
+	} else if source == nil {
 		preview.Blockers = append(preview.Blockers, "explicit source and audio stream selection is required")
 	} else {
 		preview.SelectedSource = &FirstPublicationPreviewSource{

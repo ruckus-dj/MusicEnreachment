@@ -21,6 +21,7 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - 20261122000003_matching_local_recheck_publication.tx.up.sql - Local recheck batch membership and different-path recovery proof
 - 20261122000104_direct_folder_grouping_refresh.tx.up.sql - one-time regrouping for the direct-folder analysis gate
 - 20261122000105_automatic_local_album.tx.up.sql - automatic album authorization from a successful Local outage apply
+- 20261122000106_local_matching_receipt_immutable.tx.up.sql - INSERT-only guard for Local matching receipts
 - backend/cmd/migrate/main.go - rollback CLI (down migrations only; up is startup-only)
 
 ## CONVENTIONS

@@ -58,6 +58,11 @@ type FirstPublicationAdmission struct {
 	SourceSelection       *FirstPublicationSourceSelection
 	DiscographyArtistMBID string
 	AutomaticAlbum        *PublicationAutoAlbumRequest
+	// Receipt optionally binds an explicit ordinary first publication to the
+	// exact association recorded by a saved matching confirmation. When present,
+	// the receipt and live association are re-proven inside the admission
+	// transaction before namespace planning or source selection.
+	Receipt *MatchingReceiptPublicationSource
 }
 
 type firstPublicationAdmissionHook struct {
@@ -67,6 +72,7 @@ type firstPublicationAdmissionHook struct {
 	coverInput            *PublicationAttemptCoverInput
 	discographyArtistMBID string
 	automaticAlbum        *PublicationAutoAlbumRequest
+	receipt               *MatchingReceiptPublicationSource
 }
 
 // AdmitFirstPublicationFromPreview binds native namespace planning to this same
@@ -111,13 +117,31 @@ func (repository *SetupManagerRepository) admitFirstPublicationFromPreview(ctx c
 	if automaticSelection && first.SourceSelection == nil {
 		return uuid.Nil, fmt.Errorf("admit first publication: automatic source selection witness is required")
 	}
+	if first.Receipt != nil {
+		if automaticSelection || first.AutomaticAlbum != nil || first.SourceSelection == nil ||
+			frozen.SourceAuthorityMode != "manual" || request.Source == nil ||
+			!validMatchingReceiptPublicationSource(*first.Receipt) ||
+			first.SourceSelection.AssociationID != first.Receipt.TrackSourceID {
+			return uuid.Nil, fmt.Errorf("admit first publication: invalid matching receipt admission: %w", ErrPublicationAdmissionConflict)
+		}
+	}
 	var selection *FirstPublicationSourceSelection
 	if first.SourceSelection != nil {
 		copySelection := cloneFirstPublicationSourceSelection(*first.SourceSelection)
 		selection = &copySelection
 	}
-	request.firstAdmission = &firstPublicationAdmissionHook{digest: first.PreviewDigest, prepare: first.PrepareFirst, sourceSelection: selection, discographyArtistMBID: first.DiscographyArtistMBID, automaticAlbum: first.AutomaticAlbum}
+	var receipt *MatchingReceiptPublicationSource
+	if first.Receipt != nil {
+		copyReceipt := *first.Receipt
+		receipt = &copyReceipt
+	}
+	request.firstAdmission = &firstPublicationAdmissionHook{digest: first.PreviewDigest, prepare: first.PrepareFirst, sourceSelection: selection, discographyArtistMBID: first.DiscographyArtistMBID, automaticAlbum: first.AutomaticAlbum, receipt: receipt}
 	return repository.AdmitPublication(ctx, request, client)
+}
+
+func validMatchingReceiptPublicationSource(receipt MatchingReceiptPublicationSource) bool {
+	return receipt.RequestID != uuid.Nil && receipt.TrackSourceID != uuid.Nil &&
+		(receipt.Kind == MatchingReceiptKindManual || receipt.Kind == MatchingReceiptKindLocal)
 }
 
 func cloneFirstPublicationSourceSelection(selection FirstPublicationSourceSelection) FirstPublicationSourceSelection {
@@ -244,6 +268,14 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	}
 	if err := lockFirstPublicationAdmissionReadGuards(ctx, tx, hook.sourceSelection != nil, "admit first publication"); err != nil {
 		return nil, err
+	}
+	if hook.receipt != nil {
+		if request.Source == nil {
+			return nil, fmt.Errorf("admit first publication: matching receipt requires an explicit source: %w", ErrPublicationAdmissionConflict)
+		}
+		if err := readMatchingReceiptPublicationSource(ctx, tx, request.ExpectedReleaseID, request.PositionID, request.Source.MediaVariantID, *hook.receipt); err != nil {
+			return nil, err
+		}
 	}
 	if hook.automaticAlbum != nil {
 		if err := validatePublicationAutoAlbum(ctx, tx, request, hook.automaticAlbum); err != nil {

@@ -15,11 +15,14 @@ import (
 
 // FirstPublicationConfirmation binds an admission to the preview the user
 // confirmed. A preview is not itself an authorization: all its inputs are
-// checked again under the admission transaction's database guards.
+// checked again under the admission transaction's database guards. Receipt is
+// optional and, when present, restricts ordinary first publication to the exact
+// association and variant recorded by the saved matching confirmation.
 type FirstPublicationConfirmation struct {
 	PreviewDigest string
 	ExpectedEpoch uuid.UUID
 	SourceChoice  *FirstPublicationSourceChoice
+	Receipt       *persistence.MatchingReceiptPublicationSource
 }
 
 var ErrPublicationArtistDiscography = errors.New("complete release artist discography is unavailable")
@@ -34,7 +37,7 @@ type firstPublicationAdmissionRepository interface {
 // transaction callback reconstructs the preview from its authoritative
 // snapshot before it permits namespace reservation or publication admission.
 func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, positionID uuid.UUID, confirmation FirstPublicationConfirmation) (uuid.UUID, error) {
-	return service.admitFirst(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice, nil)
+	return service.admitFirstWithReceipt(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice, confirmation.Receipt, nil)
 }
 
 func automaticFirstSourceChoice(snapshot *persistence.LibraryFirstPublicationContext, format publication.AudioPublicationFormat) (FirstPublicationSourceChoice, error) {
@@ -85,10 +88,22 @@ func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPubl
 }
 
 func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice, album *persistence.PublicationAutoAlbumRequest) (uuid.UUID, error) {
+	return service.admitFirstWithReceipt(ctx, releaseID, positionID, previewDigest, expectedEpoch, sourceChoice, nil, album)
+}
+
+func (service *LibraryPublications) admitFirstWithReceipt(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice, receipt *persistence.MatchingReceiptPublicationSource, album *persistence.PublicationAutoAlbumRequest) (uuid.UUID, error) {
 	if service == nil || service.repository == nil || service.settings == nil || service.river == nil ||
 		releaseID == uuid.Nil || positionID == uuid.Nil || expectedEpoch == uuid.Nil ||
 		album == nil && !validFirstPublicationPreviewDigest(previewDigest) {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	hasReceipt := receipt != nil
+	var receiptValue persistence.MatchingReceiptPublicationSource
+	if hasReceipt {
+		receiptValue = *receipt
+		if album != nil || sourceChoice == nil || !validMatchingReceiptPublicationSource(receiptValue) {
+			return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+		}
 	}
 	repository, ok := service.repository.(firstPublicationAdmissionRepository)
 	if !ok {
@@ -111,6 +126,16 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != expectedEpoch {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
+	var receiptVariantID uuid.UUID
+	if hasReceipt {
+		if snapshot.Library.Current != nil {
+			return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+		}
+		snapshot, receiptVariantID, err = scopeFirstPublicationSnapshotToMatchingReceipt(snapshot, receiptValue)
+		if err != nil {
+			return uuid.Nil, err
+		}
+	}
 	selectedTools, err := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("select verified publication tools: %w", err)
@@ -123,7 +148,12 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		}
 		sourceChoice = &choice
 	}
-	preview, err := buildFirstPublicationPreviewSelected(snapshot, runtimeSettings, selectedTools, releaseID, positionID, sourceChoice)
+	var preview FirstPublicationPreview
+	if hasReceipt {
+		preview, err = buildFirstPublicationPreviewFromMatchingReceipt(snapshot, runtimeSettings, selectedTools, releaseID, positionID, sourceChoice)
+	} else {
+		preview, err = buildFirstPublicationPreviewSelected(snapshot, runtimeSettings, selectedTools, releaseID, positionID, sourceChoice)
+	}
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("plan first publication: %w", err)
 	}
@@ -133,6 +163,9 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	initialManifest, err := finalizeFirstPublicationNamespace(ctx, snapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview)
 	if err == nil && album != nil {
 		previewDigest = preview.ContextDigest
+	}
+	if err == nil && hasReceipt {
+		err = foldFirstPublicationReceiptDigest(&preview, receiptValue, receiptVariantID)
 	}
 	if err != nil || preview.ContextDigest != previewDigest {
 		if ctx.Err() != nil {
@@ -151,6 +184,9 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		}
 	}
 	if selected == nil {
+		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	if hasReceipt && selected.AssociationID != receiptValue.TrackSourceID {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
 	var discographyArtist string
@@ -209,6 +245,18 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 				actual.CandidateGeneration != candidateID || actual.ExpectedReleaseID != releaseID || actual.PositionID != positionID || actual.Source == nil {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
+			var transactionReceiptVariantID uuid.UUID
+			if hasReceipt {
+				if authoritative.Context.Library.Current != nil {
+					return nil, persistence.ErrPublicationAdmissionConflict
+				}
+				scopedContext, scopedVariantID, scopeErr := scopeFirstPublicationSnapshotToMatchingReceipt(authoritative.Context, receiptValue)
+				if scopeErr != nil {
+					return nil, scopeErr
+				}
+				authoritative.Context = scopedContext
+				transactionReceiptVariantID = scopedVariantID
+			}
 			if service.artistDiscography != nil {
 				freshArtist, err := firstPublicationDiscographyArtist(authoritative.Context)
 				if err != nil || freshArtist != discographyArtist {
@@ -241,7 +289,12 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 				}
 				choice = &freshChoice
 			}
-			transactionPreview, err := buildFirstPublicationPreviewSelected(authoritative.Context, transactionSettings, transactionTools, releaseID, positionID, choice)
+			var transactionPreview FirstPublicationPreview
+			if hasReceipt {
+				transactionPreview, err = buildFirstPublicationPreviewFromMatchingReceipt(authoritative.Context, transactionSettings, transactionTools, releaseID, positionID, choice)
+			} else {
+				transactionPreview, err = buildFirstPublicationPreviewSelected(authoritative.Context, transactionSettings, transactionTools, releaseID, positionID, choice)
+			}
 			if err != nil || len(transactionPreview.Blockers) != 0 ||
 				transactionPreview.SelectedSource == nil || transactionPreview.Transform == nil || !reflect.DeepEqual(transactionTools, actual.Tools) {
 				return nil, persistence.ErrPublicationAdmissionConflict
@@ -257,7 +310,13 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			if transactionSource == nil {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
+			if hasReceipt && transactionSource.AssociationID != receiptValue.TrackSourceID {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
 			transactionManifest, err := finalizeFirstPublicationNamespace(ctx, authoritative.Context, transactionSettings.OutputDirectory, transactionSettings.PublicationPathTemplate, &transactionPreview)
+			if err == nil && hasReceipt {
+				err = foldFirstPublicationReceiptDigest(&transactionPreview, receiptValue, transactionReceiptVariantID)
+			}
 			if err != nil || transactionPreview.ContextDigest != previewDigest {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
@@ -285,6 +344,9 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			}
 			return transactionManifest, nil
 		},
+	}
+	if hasReceipt {
+		first.Receipt = &receiptValue
 	}
 	if album != nil {
 		albumRepository, ok := service.repository.(interface {

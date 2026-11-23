@@ -29,6 +29,13 @@ func TestLocalMatchingReceiptCurrentSchemaWithPostgreSQL(t *testing.T) {
 	if !tableExists(t, database, "local_matching_receipt") {
 		t.Fatal("current schema is missing local_matching_receipt")
 	}
+	if _, err := database.NewRaw(`UPDATE local_matching_receipt
+		SET response='{"tampered":true}'::jsonb WHERE request_id=?`, requestID).Exec(ctx); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("update current local matching receipt: %v; want an immutability rejection", err)
+	}
+	if _, err := database.NewRaw(`DELETE FROM local_matching_receipt WHERE request_id=?`, requestID).Exec(ctx); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("delete current local matching receipt: %v; want an immutability rejection", err)
+	}
 	var gotGroup uuid.UUID
 	var gotIntentHash, gotPreviewDigest, gotResponse string
 	if err := database.NewRaw(`SELECT group_id,intent_hash,preview_digest,response::text
