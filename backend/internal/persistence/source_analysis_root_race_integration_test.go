@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
@@ -23,12 +22,6 @@ type analysisRaceFixture struct {
 	location       persistence.SourceLocation
 	work           *persistence.SourceAnalysisWork
 	installationID uuid.UUID
-}
-
-func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
-	t.Helper()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	return newAnalysisRaceFixtureWithDB(t, database, path)
 }
 
 func newAnalysisRaceFixtureWithDB(t *testing.T, database *bun.DB, path string) analysisRaceFixture {

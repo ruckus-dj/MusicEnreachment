@@ -126,15 +126,6 @@ func runToolsMoveEnqueueRefusesAnalysisCommittedUnderLock(t *testing.T, database
 	}
 }
 
-// runOperationLockRace holds the operation table lock in one transaction while
-// the action runs in another. The holder commits only after the query barrier
-// proved the action's transaction reached the same lock, so an implementation
-// that dropped the lock could not pass by running the action after the holder.
-func runOperationLockRace(t *testing.T, ctx context.Context, database *bun.DB, insert func(context.Context, bun.Tx) error, action func(context.Context) error) error {
-	t.Helper()
-	return runQueryRace(t, ctx, database, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE", "LOCK TABLE operation", insert, action)
-}
-
 // runQueryRace arms a query barrier before the action and blocks the action's
 // transaction on the holder's lock until the barrier proves the action reached
 // the guarded statement. The holder commits only then, so the action observes

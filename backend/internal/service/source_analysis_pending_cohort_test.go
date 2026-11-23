@@ -42,9 +42,6 @@ func TestRetainedRecoveryKeepsExactIntentAndAdmitsOneStepAtATime(t *testing.T) {
 	if len(group) != 2 {
 		t.Fatalf("recovery group = %+v; want only the two owned tuples", group)
 	}
-	if _, ok := retainedRecoveryBatchSnapshot(group); ok {
-		t.Fatal("multiple retained steps were combined into a batch; they must be separately admitted")
-	}
 	for _, intent := range group {
 		if intent.Snapshot.TargetWorkID == nil || *intent.Snapshot.TargetWorkID != workID || intent.Snapshot.TargetStep == nil || *intent.Snapshot.TargetStep != intent.Step.Step {
 			t.Errorf("retained intent lost exact tuple identity: %+v", intent)
@@ -86,9 +83,6 @@ func TestRetainedRecoverySingletonAndExplicitRerunStaySingleStep(t *testing.T) {
 	)
 	if got := retainedRecoveryOwner(ordinary); got != owner {
 		t.Fatalf("owner = %s, want %s", got, owner)
-	}
-	if _, ok := retainedRecoveryBatchSnapshot([]retainedSourceAnalysisIntent{ordinary}); ok {
-		t.Fatal("singleton recovery was widened to a batch")
 	}
 	rerun := ordinary
 	run := true

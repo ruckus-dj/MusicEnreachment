@@ -142,16 +142,3 @@ func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) 
 		t.Fatalf("retry record = %+v, want queued attempt 2 with its new River job", retried)
 	}
 }
-
-func mustActiveFFmpegID(t *testing.T, ctx context.Context, repository *persistence.SettingsRepository) uuid.UUID {
-	t.Helper()
-	value, ok, err := repository.Get(ctx, settings.ActiveFFmpegInstallationKey)
-	if err != nil || !ok {
-		t.Fatalf("read active ffmpeg installation: present=%v err=%v", ok, err)
-	}
-	id, err := uuid.Parse(value)
-	if err != nil {
-		t.Fatalf("parse active ffmpeg installation: %v", err)
-	}
-	return id
-}

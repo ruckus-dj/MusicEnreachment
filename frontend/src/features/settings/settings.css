@@ -25,15 +25,13 @@
 }
 
 .settings-screen .settings-panel h2,
-.settings-screen .settings-panel h3,
-.settings-screen .setup-tool h3 {
+.settings-screen .settings-panel h3 {
   font-size: 14px;
   line-height: 20px;
   font-weight: 600;
 }
 
-.settings-screen .settings-panel,
-.settings-screen .setup-tool {
+.settings-screen .settings-panel {
   min-width: 0;
   margin: 8px 0;
   padding: 10px;

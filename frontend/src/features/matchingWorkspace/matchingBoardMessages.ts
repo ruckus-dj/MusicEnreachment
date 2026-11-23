@@ -98,5 +98,3 @@ const ru: typeof en = {
 };
 
 export const matchingBoardMessages = { en, ru };
-
-export type MatchingBoardMessages = typeof en;

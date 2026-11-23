@@ -184,11 +184,6 @@ type c07CompletionPause struct {
 	once   sync.Once
 }
 
-func pauseC07Completion(t *testing.T, db *bun.DB) *c07CompletionGate {
-	t.Helper()
-	return pauseC07Query(t, db, "musicbrainz_verified_at")
-}
-
 func pauseC07Query(t *testing.T, db *bun.DB, needle string) *c07CompletionGate {
 	t.Helper()
 	gate := &c07CompletionGate{entered: make(chan struct{}), release: make(chan struct{})}
@@ -234,18 +229,6 @@ func awaitAnyPostgresLockWait(t *testing.T, ctx context.Context, db *bun.DB) {
 			t.Fatalf("competing operation did not wait on PostgreSQL: %v", ctx.Err())
 		case <-ticker.C:
 		}
-	}
-}
-
-func c07AwaitValue[T any](t *testing.T, result <-chan T, what string) T {
-	t.Helper()
-	select {
-	case value := <-result:
-		return value
-	case <-time.After(analysisRaceTimeout):
-		var zero T
-		t.Fatalf("timed out waiting for %s", what)
-		return zero
 	}
 }
 

@@ -644,26 +644,6 @@ func columnExists(t *testing.T, database *bun.DB, table, column string) bool {
 	return count == 1
 }
 
-func indexExists(t *testing.T, database *bun.DB, name string) bool {
-	t.Helper()
-	var count int
-	if err := database.NewRaw("SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname = ?", name).
-		Scan(context.Background(), &count); err != nil {
-		t.Fatalf("read index %s: %v", name, err)
-	}
-	return count == 1
-}
-
-func constraintDefinition(t *testing.T, database *bun.DB, name string) string {
-	t.Helper()
-	var definition string
-	if err := database.NewRaw("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ?", name).
-		Scan(context.Background(), &definition); err != nil {
-		t.Fatalf("read constraint %s: %v", name, err)
-	}
-	return definition
-}
-
 func requirePostgresCheckViolation(t *testing.T, err error) {
 	t.Helper()
 	var pgErr *pgconn.PgError

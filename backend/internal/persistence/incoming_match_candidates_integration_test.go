@@ -72,39 +72,6 @@ func matchingApplyEvidence(t *testing.T, fixture *incomingMatchFixture, trackID 
 	return encoded
 }
 
-func assertMatchingPublicationStillRunning(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, parentID uuid.UUID, jobID int64, groupID uuid.UUID) {
-	t.Helper()
-	parent, err := repository.GetOperation(ctx, parentID)
-	if err != nil || parent.State != "running" {
-		t.Fatalf("rejected publication parent = %+v err=%v, want running", parent, err)
-	}
-	stored, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, groupID)
-	if err != nil || stored != nil || len(candidates) != 0 {
-		t.Fatalf("rejected publication changed evaluated result: header=%+v candidates=%+v err=%v", stored, candidates, err)
-	}
-	var state string
-	var consumed bool
-	if err := db.NewRaw(`SELECT run.state, delivery.consumed_at IS NOT NULL FROM matching_run run JOIN matching_delivery delivery ON delivery.run_id=run.id WHERE run.id=? AND delivery.river_job_id=?`, parentID, jobID).Scan(ctx, &state, &consumed); err != nil || state != "running" || consumed {
-		t.Fatalf("rejected publication run/delivery state=%q consumed=%v err=%v, want running/unconsumed", state, consumed, err)
-	}
-}
-
-func assertMatchingPublicationWaiting(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, parentID, groupID uuid.UUID) {
-	t.Helper()
-	parent, err := repository.GetOperation(ctx, parentID)
-	if err != nil || parent.State != "running" || parent.Stage != "waiting_provider" {
-		t.Fatalf("waiting parent = %+v err=%v", parent, err)
-	}
-	var state string
-	if err := db.NewRaw(`SELECT state FROM matching_run WHERE id=?`, parentID).Scan(ctx, &state); err != nil || state != "waiting_provider" {
-		t.Fatalf("waiting run state=%q err=%v", state, err)
-	}
-	stored, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, groupID)
-	if err != nil || stored != nil || len(candidates) != 0 {
-		t.Fatalf("waiting publication changed candidates: header=%+v candidates=%+v err=%v", stored, candidates, err)
-	}
-}
-
 func mustIncomingMatchResult(t *testing.T, ctx context.Context, repository *persistence.IncomingMatchCandidateRepository, groupID uuid.UUID) (*persistence.IncomingMatchEvaluationHeader, []persistence.IncomingMatchCandidate) {
 	t.Helper()
 	header, candidates, err := repository.Get(ctx, groupID)

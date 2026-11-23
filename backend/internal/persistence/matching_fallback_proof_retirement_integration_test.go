@@ -198,25 +198,6 @@ func completeFallbackParentDelivery(t *testing.T, ctx context.Context, db *bun.D
 	}
 }
 
-func fallbackRetirementEligibilityFacts(t *testing.T, ctx context.Context, db *bun.DB, runID uuid.UUID, cutoff time.Time) []byte {
-	t.Helper()
-	var facts []byte
-	query := `SELECT jsonb_build_object(
-		'parent_ready', EXISTS (SELECT 1 FROM matching_run run JOIN operation parent ON parent.id=run.operation_id WHERE run.id=? AND parent.kind='matching_evaluation_v1' AND parent.state='succeeded' AND parent.finished_at < ?),
-		'acquisition_ready', EXISTS (SELECT 1 FROM matching_acquisition WHERE run_id=? AND intent_version=3),
-		'run_succeeded', EXISTS (SELECT 1 FROM matching_run WHERE id=? AND state='succeeded'),
-		'current_generation_owner', EXISTS (SELECT 1 FROM incoming_matching_generation WHERE current_run_id=?),
-		'live_evaluation', EXISTS (SELECT 1 FROM incoming_match_evaluation WHERE target_run_id=? OR frozen_run_id=?),
-		'live_apply', EXISTS (SELECT 1 FROM matching_apply_request request JOIN operation child ON child.id=request.apply_operation_id LEFT JOIN river_job job ON job.id=child.river_job_id WHERE request.parent_run_id=? AND (child.state <> 'succeeded' OR child.finished_at IS NULL OR child.finished_at >= ? OR job.state IN ('available','pending','running','retryable','scheduled'))),
-		'live_dependency', EXISTS (SELECT 1 FROM matching_provider_dependency dependency JOIN operation child ON child.id=dependency.request_id LEFT JOIN river_job job ON job.id=child.river_job_id WHERE dependency.parent_run_id=? AND (dependency.terminal_outcome IS NULL OR child.state NOT IN ('succeeded','failed') OR child.finished_at IS NULL OR child.finished_at >= ? OR child.state IN ('queued','running') OR job.state IN ('available','pending','running','retryable','scheduled'))),
-		'live_parent_job', EXISTS (SELECT 1 FROM matching_run run JOIN operation parent ON parent.id=run.operation_id JOIN river_job job ON job.id=parent.river_job_id WHERE run.id=? AND job.state IN ('available','pending','running','retryable','scheduled')),
-		'unconsumed_delivery', EXISTS (SELECT 1 FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL))`
-	if err := db.NewRaw(query, runID, cutoff, runID, runID, runID, runID, runID, runID, cutoff, runID, cutoff, runID, runID).Scan(ctx, &facts); err != nil {
-		t.Fatalf("read fallback retirement eligibility facts: %v", err)
-	}
-	return facts
-}
-
 func ageFallbackProviderDependencies(t *testing.T, ctx context.Context, db *bun.DB, parentID uuid.UUID, finishedAt time.Time) {
 	t.Helper()
 	if _, err := db.NewRaw(`UPDATE operation SET finished_at=?,updated_at=? WHERE id IN

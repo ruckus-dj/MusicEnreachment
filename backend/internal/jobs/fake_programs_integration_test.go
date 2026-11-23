@@ -8,12 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
-	"testing"
 	"time"
 
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -79,23 +76,4 @@ func copyFakeExecutable(source, target string, config any) error {
 		return err
 	}
 	return os.WriteFile(target+".json", encoded, 0o644)
-}
-
-func configureAnalysisProbe(t *testing.T, executablePath, fail string) {
-	t.Helper()
-	configuration := analysisProbeConfig{LogPath: filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(executablePath))), "probe-log"), Fail: fail}
-	for _, name := range tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS) {
-		path := filepath.Join(filepath.Dir(executablePath), name+".json")
-		if err := writeFakeConfig(path, configuration); err != nil {
-			t.Fatalf("configure fake %s: %v", name, err)
-		}
-	}
-}
-
-func writeFakeConfig(path string, config any) error {
-	encoded, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, encoded, 0o644)
 }

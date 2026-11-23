@@ -283,12 +283,6 @@ func retainedRecoveryGroup(intents []retainedSourceAnalysisIntent, owner uuid.UU
 	return group
 }
 
-func retainedRecoveryBatchSnapshot(group []retainedSourceAnalysisIntent) (persistence.SourceAnalysisOperationSnapshot, bool) {
-	// Retained work is re-admitted one step at a time using current tools and
-	// settings. Grouping it would accidentally copy historical execution config.
-	return persistence.SourceAnalysisOperationSnapshot{}, false
-}
-
 func (s *SourceAnalysisOperations) retainedToolAvailable(ctx context.Context, snapshot persistence.SourceAnalysisOperationSnapshot, step persistence.SourceStepName) (bool, error) {
 	_, err := s.selectedTools(ctx, step)
 	if errors.Is(err, ErrSourceAnalysisToolUnavailable) {

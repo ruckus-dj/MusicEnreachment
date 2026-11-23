@@ -308,12 +308,6 @@ func (catalog *dispatchCatalog) setResolveError(err error) {
 	catalog.resolveError = err
 }
 
-func (catalog *dispatchCatalog) clearBarriers() {
-	catalog.mu.Lock()
-	defer catalog.mu.Unlock()
-	catalog.resolveGate, catalog.downloadGate, catalog.checksumGate = nil, nil, nil
-}
-
 func (catalog *dispatchCatalog) setReleaseIdentity(identity string) {
 	catalog.mu.Lock()
 	defer catalog.mu.Unlock()
@@ -358,10 +352,6 @@ func (runner *dispatchRunner) Run(ctx context.Context, executable string, args .
 type dispatchBarrier struct {
 	entered chan struct{}
 	once    sync.Once
-}
-
-func newDispatchBarrier() *dispatchBarrier {
-	return &dispatchBarrier{entered: make(chan struct{})}
 }
 
 func (barrier *dispatchBarrier) pause(ctx context.Context) error {
@@ -466,12 +456,6 @@ func (repository *riverBoundaryRepository) FinishToolsRootMove(ctx context.Conte
 	return nil
 }
 
-func (repository *riverBoundaryRepository) clearBarriers() {
-	repository.stage, repository.stageGate = "", nil
-	repository.readyGate, repository.successGate = nil, nil
-	repository.moveCommit, repository.moveFinished = nil, nil
-}
-
 type dispatchRiverSession struct {
 	client       *river.Client[*sql.Tx]
 	listenerPool *pgxpool.Pool
@@ -508,20 +492,6 @@ func (session *dispatchRiverSession) start(t *testing.T, ctx context.Context) {
 	session.started = true
 }
 
-func (session *dispatchRiverSession) stopAndCancel(t *testing.T, ctx context.Context) {
-	t.Helper()
-	if session.stopped || !session.started {
-		return
-	}
-	err := session.client.StopAndCancel(ctx)
-	session.stopped = true
-	session.started = false
-	session.listenerPool.Close()
-	if err != nil {
-		t.Fatalf("cancel active River delivery: %v", err)
-	}
-}
-
 func (session *dispatchRiverSession) close(t *testing.T) {
 	t.Helper()
 	if session.stopped {
@@ -538,46 +508,6 @@ func (session *dispatchRiverSession) close(t *testing.T) {
 	session.listenerPool.Close()
 }
 
-func awaitDispatchBarrier(t *testing.T, ctx context.Context, barrier *dispatchBarrier, events <-chan *river.Event,
-	jobID int64, repository *persistence.SetupManagerRepository, operationID uuid.UUID) {
-	t.Helper()
-	for {
-		select {
-		case <-barrier.entered:
-			return
-		case event := <-events:
-			if event == nil || event.Job == nil || event.Job.ID != jobID {
-				continue
-			}
-			operation, err := repository.GetOperation(ctx, operationID)
-			state, stage := operationStateStage(operation)
-			t.Fatalf("River job completed before interruption barrier: operation=%s/%s lookup error=%v", state, stage, err)
-		case <-ctx.Done():
-			diagnosticCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			operation, err := repository.GetOperation(diagnosticCtx, operationID)
-			state, stage := operationStateStage(operation)
-			t.Fatalf("interruption barrier was not reached: operation=%s/%s lookup error=%v deadline=%v",
-				state, stage, err, ctx.Err())
-		}
-	}
-}
-
-func newDispatchCatalog(t *testing.T, release string) *dispatchCatalog {
-	t.Helper()
-	archive := dispatchZipWithExecutable(t, "fpcalc", []byte("test executable "+release))
-	checksum := sha256String(archive)
-	return &dispatchCatalog{
-		release: tools.Release{
-			Identity: release,
-			Artifacts: []tools.Artifact{{
-				Name: "fpcalc.zip", ChecksumSHA256: checksum,
-			}},
-		},
-		archive: archive, checksum: checksum,
-	}
-}
-
 func startDispatchRiver(t *testing.T, databaseURL string, database *bun.DB,
 	worker river.Worker[service.OperationJobArgs]) (*river.Client[*sql.Tx], *pgxpool.Pool) {
 	t.Helper()
@@ -588,18 +518,6 @@ func startDispatchRiver(t *testing.T, databaseURL string, database *bun.DB,
 		t.Fatalf("start River worker client with production dispatcher: %v", err)
 	}
 	return client, listenerPool
-}
-
-type postWorkBarrier struct {
-	*InstallationWorker
-	gate *dispatchBarrier
-}
-
-func (worker *postWorkBarrier) Work(ctx context.Context, job *river.Job[service.OperationJobArgs]) error {
-	if err := worker.InstallationWorker.Work(ctx, job); err != nil {
-		return err
-	}
-	return worker.gate.pause(ctx)
 }
 
 func stopRiverClient(t *testing.T, client *river.Client[*sql.Tx]) {

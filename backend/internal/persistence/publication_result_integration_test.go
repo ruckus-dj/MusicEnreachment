@@ -23,46 +23,6 @@ func publicationResultForFixture(f publicationExecutionFixture) PublicationResul
 	}
 }
 
-func alignManualPublicationResultTarget(t *testing.T, ctx context.Context, f publicationExecutionFixture, observation *PublicationStageObservation) {
-	t.Helper()
-	seedManualPublicationResultChoice(t, ctx, f)
-	observation.RelativePath = scopePublicationPath("root/final.flac", f.namespaceScope)
-	nodes := scopePublicationManifest([]PublicationNamespaceNode{{NodeKind: "file", RelativePath: "root/final.flac"}}, f.namespaceScope)
-	raw, err := json.Marshal(struct {
-		Version int                        `json:"version"`
-		Nodes   []PublicationNamespaceNode `json:"nodes"`
-	}{Version: 1, Nodes: nodes})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE track_publication_attempt SET namespace_manifest=?::jsonb WHERE operation_id=?`, string(raw), f.guard.OperationID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func seedManualPublicationResultChoice(t *testing.T, ctx context.Context, f publicationExecutionFixture) {
-	t.Helper()
-	attempt, err := NewSetupManagerRepository(f.db).ReadPublicationAttempt(ctx, f.guard.OperationID)
-	if err != nil || attempt == nil {
-		t.Fatalf("read manual fixture attempt: %v", err)
-	}
-	input, err := DecodePublicationInputs(attempt.FrozenInputs)
-	if err != nil || input.ManualLyrics == nil {
-		t.Fatalf("read manual fixture choice: %v", err)
-	}
-	manual := input.ManualLyrics
-	input.Format = "source"
-	if _, err := f.db.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(input)), f.guard.OperationID); err != nil {
-		t.Fatal(err)
-	}
-	envelope := map[string]any{"version": 1, "scope": "position", "desired": map[string]any{
-		"synced_lyrics": map[string]any{"state": manual.State, "value": manual.Value, "authority": "manual", "provenance": map[string]any{"kind": "manual"}},
-	}}
-	if _, err := f.db.ExecContext(ctx, `UPDATE release_track SET metadata_revision=?,metadata=jsonb_set(metadata,'{local_metadata}',?::jsonb,true) WHERE id=?`, manual.ExpectedMetadataRevision, string(mustJSON(envelope)), f.guard.ExpectedPositionID); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func preparePublicationResultFixture(t *testing.T) publicationExecutionFixture {
 	t.Helper()
 	return preparePublicationResultFixtureFromExecution(t, newPublicationExecutionFixture(t), "")
@@ -164,24 +124,6 @@ func startPublicationReconciliationForResult(t *testing.T, ctx context.Context, 
 		t.Fatalf("claim reconciliation=%s err=%v", outcome, err)
 	}
 	return guard, inserter
-}
-
-func assertReconciliationWake(t *testing.T, ctx context.Context, db *bun.DB, epoch, position uuid.UUID, requested, dirty int) {
-	t.Helper()
-	var generation, dirtyCount int
-	var pending int
-	if err := db.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &generation); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &dirtyCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state='pending'`, epoch, position).Scan(ctx, &pending); err != nil {
-		t.Fatal(err)
-	}
-	if generation != requested || dirtyCount != dirty || pending != 1 {
-		t.Fatalf("wake generation=%d dirty=%d pending=%d; want %d/%d/1", generation, dirtyCount, pending, requested, dirty)
-	}
 }
 
 func TestCommitPublicationResultSQLFailureRollsBackAllStatePostgreSQL(t *testing.T) {

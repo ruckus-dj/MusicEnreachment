@@ -4,13 +4,13 @@ package persistence_test
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"reflect"
+
 	"testing"
 )
 
@@ -70,53 +70,6 @@ func TestApplyCurrentMatchingEvaluationRollsBackIntermediateWritesPostgreSQL(t *
 			t.Fatalf("failed apply changed candidates: before=%+v after=%+v", candidates, afterCandidates)
 		}
 	}
-}
-
-func assertMatchingApplyExistingAndNewAssociation(t *testing.T, ctx context.Context, db *bun.DB, provider, oldTrackID, variantID uuid.UUID, oldPolicy string, oldMetadata json.RawMessage) {
-	t.Helper()
-	var rows []struct {
-		TrackID  uuid.UUID       `bun:"track_id"`
-		Selected bool            `bun:"selected"`
-		Method   string          `bun:"decision_method"`
-		Policy   *string         `bun:"policy_version"`
-		Metadata json.RawMessage `bun:"metadata"`
-	}
-	if err := db.NewRaw(`SELECT track_id,selected,decision_method,policy_version,metadata FROM track_source WHERE media_variant_id=? ORDER BY track_id`, variantID).Scan(ctx, &rows); err != nil {
-		t.Fatalf("read resulting source associations: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("variant associations = %+v, want preserved old and new automatic target", rows)
-	}
-	oldFound, newFound := false, false
-	for _, row := range rows {
-		if row.TrackID == oldTrackID {
-			oldFound = true
-			if !row.Selected || row.Method != "automatic" || row.Policy == nil || *row.Policy != oldPolicy || !matchingApplyJSONEqual(row.Metadata, oldMetadata) {
-				t.Errorf("preexisting association changed: %+v", row)
-			}
-		} else {
-			var mappedProvider uuid.UUID
-			if err := db.NewRaw(`SELECT provider_id FROM provider_local_track WHERE local_track_id=?`, row.TrackID).Scan(ctx, &mappedProvider); err != nil || mappedProvider != provider {
-				t.Fatalf("new target track %s provider=%s err=%v", row.TrackID, mappedProvider, err)
-			}
-			newFound = true
-			if row.Selected || row.Method != "automatic" || row.Policy == nil || *row.Policy != "matching-rapidfuzz-v1" {
-				t.Errorf("new target association has wrong decision: %+v", row)
-			}
-		}
-	}
-	if !oldFound || !newFound {
-		t.Fatalf("missing preserved/new relationship: %+v", rows)
-	}
-	var total int
-	if err := db.NewRaw(`SELECT count(*) FROM track_source ts JOIN provider_local_track plt ON plt.local_track_id=ts.track_id WHERE plt.provider_id=?`, provider).Scan(ctx, &total); err != nil || total != 2 {
-		t.Fatalf("provider track-source count=%d err=%v, want 2 (one target attachment per distinct source variant)", total, err)
-	}
-}
-
-func matchingApplyJSONEqual(left, right json.RawMessage) bool {
-	var leftValue, rightValue any
-	return json.Unmarshal(left, &leftValue) == nil && json.Unmarshal(right, &rightValue) == nil && reflect.DeepEqual(leftValue, rightValue)
 }
 
 type matchingApplyCounts struct {

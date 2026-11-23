@@ -102,11 +102,6 @@ func initializeRiver(t *testing.T, _ context.Context, db *bun.DB) {
 	}
 }
 
-func insertCleanupAcceptanceArtifact(t *testing.T, ctx context.Context, db *bun.DB, state string) uuid.UUID {
-	t.Helper()
-	return insertCleanupAcceptanceArtifactAtRoot(t, ctx, db, state, "/cleanup-acceptance/"+uuid.NewString())
-}
-
 func insertCleanupAcceptanceArtifactAtRoot(t *testing.T, ctx context.Context, db *bun.DB, state, rootPath string) uuid.UUID {
 	t.Helper()
 	rootID, locationID, workID, creatorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()

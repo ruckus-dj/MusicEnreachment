@@ -198,25 +198,12 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id=?", operation.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source enumeration: remove applied candidates: %w", err)
 		}
-		rootUpdate := tx.NewUpdate().Model((*SourceRoot)(nil)).Set("scan_generation=?", generation).
+		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).Set("scan_generation=?", generation).
 			Set("inventory_path=?", root.ConfiguredPath).Set("last_applied_operation_id=?", operation.ID).
-			Set("updated_at=now()").Where("id=?", root.ID)
-		if rootUnavailable {
-			rootUpdate.Set("status=?", SourceRootStatusUnavailable).Set("safe_error=?", SourceEnumerationRootUnavailableReason)
-		} else {
-			rootUpdate.Set("last_successful_scan_at=now()").Set("status=?", SourceRootStatusAvailable).Set("safe_error=NULL")
-		}
-		if _, err := rootUpdate.Exec(ctx); err != nil {
+			Set("updated_at=now()").Set("last_successful_scan_at=now()").
+			Set("status=?", SourceRootStatusAvailable).Set("safe_error=NULL").
+			Where("id=?", root.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source enumeration: update root inventory: %w", err)
-		}
-		if len(apply.Scopes) > 0 {
-			failure := apply.FailureSafeError
-			operation.SafeError = &failure
-			operation.Stage = "traversing"
-			operation.UpdatedAt = time.Now().UTC()
-			if _, err := tx.NewUpdate().Model(operation).Column("safe_error", "stage", "updated_at").WherePK().Exec(ctx); err != nil {
-				return fmt.Errorf("apply source enumeration: record unreadable-scope outcome: %w", err)
-			}
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("apply source enumeration: %w", err)

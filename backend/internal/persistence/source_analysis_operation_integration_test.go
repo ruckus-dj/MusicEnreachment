@@ -560,12 +560,6 @@ type normalizedAnalysisFixture struct {
 	work       *persistence.SourceAnalysisWork
 }
 
-func newNormalizedWorkOperation(t *testing.T, path string, shaEnabled bool, steps []persistence.SourceAnalysisStepInput) normalizedAnalysisFixture {
-	t.Helper()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	return normalizedWorkOperationWithDatabase(t, database, path, shaEnabled, steps)
-}
-
 func normalizedWorkOperationWithDatabase(t *testing.T, database *bun.DB, path string, shaEnabled bool, steps []persistence.SourceAnalysisStepInput) normalizedAnalysisFixture {
 	t.Helper()
 	ctx := context.Background()

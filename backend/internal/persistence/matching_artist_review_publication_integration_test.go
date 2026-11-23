@@ -156,52 +156,6 @@ func (artistReviewCachedProvider) PrepareOperation(context.Context, string, stri
 	return nil, fmt.Errorf("unexpected provider browse preparation")
 }
 
-func automaticArtistReviewOwnershipState(t *testing.T, ctx context.Context, db *bun.DB, operationID uuid.UUID) string {
-	t.Helper()
-	var state struct {
-		OperationState            string `bun:"operation_state"`
-		OperationStage            string `bun:"operation_stage"`
-		RunState                  string `bun:"run_state"`
-		AcquisitionPhase          string `bun:"acquisition_phase"`
-		PhaseName                 string `bun:"phase_name"`
-		Reason                    string `bun:"reason"`
-		ProvenanceCount           int    `bun:"provenance_count"`
-		CurrentRun                bool   `bun:"current_run"`
-		JobBinding                bool   `bun:"job_binding"`
-		GenerationMatch           bool   `bun:"generation_match"`
-		RequestedMatch            bool   `bun:"requested_match"`
-		AuthorityRevision         int64  `bun:"authority_revision"`
-		CapturedAuthorityRevision int64  `bun:"captured_authority_revision"`
-		DependencyReady           bool   `bun:"dependency_ready"`
-		DeliveryConsumed          bool   `bun:"delivery_consumed"`
-	}
-	err := db.NewRaw(`SELECT operation.state AS operation_state,operation.stage AS operation_stage,run.state AS run_state,
-		acquisition.current_phase AS acquisition_phase,phase.phase AS phase_name,phase.output->>'reason' AS reason,
-		jsonb_array_length(phase.response_provenance) AS provenance_count,
-		generation.current_run_id=run.id AS current_run,
-		run.current_river_job_id=operation.river_job_id AS job_binding,
-		generation.high_water=target.target_generation AS generation_match,
-		(target.reconciliation_generation IS NULL OR generation.requested_generation=target.reconciliation_generation) AS requested_match,
-		evaluation.matching_authority_revision AS authority_revision,
-		(target.target_capture->>'authority_revision')::bigint AS captured_authority_revision,
-		EXISTS (SELECT 1 FROM matching_provider_dependency dependency WHERE dependency.parent_run_id=run.id AND dependency.terminal_outcome='succeeded') AS dependency_ready,
-		EXISTS (SELECT 1 FROM matching_delivery delivery WHERE delivery.run_id=run.id AND delivery.river_job_id=run.current_river_job_id AND delivery.consumed_at IS NOT NULL) AS delivery_consumed
-		FROM matching_run run JOIN operation ON operation.id=run.operation_id
-		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
-		JOIN matching_acquisition_phase phase ON phase.run_id=run.id AND phase.revision=acquisition.revision
-		JOIN matching_run_target target ON target.run_id=run.id
-		JOIN incoming_match_evaluation evaluation ON evaluation.group_id=target.group_id
-		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
-		WHERE operation.id=?`, operationID).Scan(ctx, &state)
-	if err != nil {
-		t.Fatalf("read bounded automatic artist ownership diagnostics: %v", err)
-	}
-	return fmt.Sprintf("op=%s/%s run=%s phase=%s/%s reason=%s provenance=%d current=%t job=%t generation=%t request=%t authority=%d/%d dependency=%t consumed=%t",
-		state.OperationState, state.OperationStage, state.RunState, state.AcquisitionPhase, state.PhaseName, state.Reason,
-		state.ProvenanceCount, state.CurrentRun, state.JobBinding, state.GenerationMatch, state.RequestedMatch,
-		state.AuthorityRevision, state.CapturedAuthorityRevision, state.DependencyReady, state.DeliveryConsumed)
-}
-
 type automaticArtistReviewDelivery struct {
 	ctx         context.Context
 	db          *bun.DB
@@ -357,14 +311,4 @@ func prepareAutomaticArtistDelivery(t *testing.T, payload json.RawMessage, outag
 		admission: admission, jobID: jobID, claim: claim,
 		acquisition: service.NewMatchingAcquisitionService(repository, artistReviewCachedProvider{cache: cache, sourceID: sourceFixture.source}, client),
 	}
-}
-
-func readAutomaticArtistAcquisitionCursor(t *testing.T, run *automaticArtistReviewDelivery) (string, int64) {
-	t.Helper()
-	var phase string
-	var revision int64
-	if err := run.db.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, run.admission.OriginalRunID).Scan(run.ctx, &phase, &revision); err != nil {
-		t.Fatalf("read matching acquisition cursor: %v", err)
-	}
-	return phase, revision
 }

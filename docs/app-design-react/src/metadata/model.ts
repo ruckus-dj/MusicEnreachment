@@ -1,4 +1,3 @@
-import { fieldByKey } from "./registry";
 import type { MetadataValues } from "./projection";
 
 export interface MetadataCredit {
@@ -121,8 +120,4 @@ export function writeMetadataWorks(
 		work: works.map((work) => work.title),
 		musicbrainz_workid: works.map((work) => work.mbid ?? ""),
 	};
-}
-
-export function knownMetadataKey(key: string): boolean {
-	return fieldByKey(key) !== undefined;
 }

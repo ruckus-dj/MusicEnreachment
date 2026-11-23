@@ -254,30 +254,3 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 		t.Fatalf("output admission after recovery: %v", err)
 	}
 }
-
-func runtimeSettingsSnapshot(t *testing.T, ctx context.Context, database *bun.DB) map[string]string {
-	t.Helper()
-	var rows []AppSetting
-	if err := database.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.In([]string{
-		"tools_directory", "output_directory", "output_case_sensitive", "output_unicode_normalization", "publication_format",
-	})).Scan(ctx); err != nil {
-		t.Fatal(err)
-	}
-	values := make(map[string]string, len(rows))
-	for _, row := range rows {
-		values[row.Name] = row.Value
-	}
-	return values
-}
-
-func equalStringMaps(first, second map[string]string) bool {
-	if len(first) != len(second) {
-		return false
-	}
-	for key, value := range first {
-		if second[key] != value {
-			return false
-		}
-	}
-	return true
-}

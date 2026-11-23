@@ -201,16 +201,6 @@ export function getDraft(
 	return group.drafts[key];
 }
 
-export function getCurrentDraft(
-	state: IncomingState,
-	files: IncomingFiles,
-	providers: IncomingReleases = providerReleases,
-	releases: IncomingReleases = originalReleases,
-) {
-	const group = state.groups.find((item) => item.id === state.groupId);
-	return group ? getDraft(group, files, providers, releases) : {};
-}
-
 export function assignFile(
 	group: IncomingGroup,
 	targetId: string,

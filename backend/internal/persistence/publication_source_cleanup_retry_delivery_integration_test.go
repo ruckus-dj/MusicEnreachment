@@ -12,11 +12,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func admittedRunningCleanupRetry(t *testing.T) (context.Context, publicationExecutionFixture, *SetupManagerRepository, uuid.UUID, PublicationSourceCleanupDeliveryGuard) {
-	t.Helper()
-	return admittedRunningCleanupRetryWithDatabase(t, nil, "")
-}
-
 func admittedRunningCleanupRetryWithDatabase(t *testing.T, db *bun.DB, scope string) (context.Context, publicationExecutionFixture, *SetupManagerRepository, uuid.UUID, PublicationSourceCleanupDeliveryGuard) {
 	t.Helper()
 	ctx, fixture, repository, _, originalID := failedPublicationSourceCleanupForRetryWithDatabase(t, db, scope)

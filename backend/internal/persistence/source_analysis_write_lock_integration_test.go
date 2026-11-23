@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+
 	"github.com/uptrace/bun"
 )
 
@@ -81,12 +81,6 @@ func runSourceAnalysisFailureSerializesOnItsOperationRow(t *testing.T, database 
 	if linked.MediaVariantID == nil || *linked.MediaVariantID != previousVariantID {
 		t.Fatalf("previous variant link = %v, want the unchanged %s", linked.MediaVariantID, previousVariantID)
 	}
-}
-
-func newWriteLockAnalysisFixture(t *testing.T, ctx context.Context) (normalizedAnalysisFixture, *persistence.Operation, uuid.UUID) {
-	t.Helper()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	return newWriteLockAnalysisFixtureWithDB(t, ctx, database, mustFixturePath(t, t.TempDir()))
 }
 
 func newWriteLockAnalysisFixtureWithDB(t *testing.T, ctx context.Context, database *bun.DB, path string) (normalizedAnalysisFixture, *persistence.Operation, uuid.UUID) {

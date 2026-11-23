@@ -4,7 +4,6 @@ package service_test
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"runtime"
 	"testing"
@@ -138,28 +137,3 @@ func establishAnalysisStartInventory(t *testing.T, ctx context.Context, database
 }
 
 func boolPointer(value bool) *bool { return &value }
-
-func readAnalysisStartJob(t *testing.T, ctx context.Context, database *bun.DB, id int64) (string, map[string]any) {
-	t.Helper()
-	var job struct {
-		Kind string `bun:"kind"`
-		Args string `bun:"args"`
-	}
-	if err := database.NewRaw("SELECT kind, args::text AS args FROM river_job WHERE id = ?", id).Scan(ctx, &job); err != nil {
-		t.Fatalf("read River job %d: %v", id, err)
-	}
-	args := map[string]any{}
-	if err := json.Unmarshal([]byte(job.Args), &args); err != nil {
-		t.Fatalf("decode River args %s: %v", job.Args, err)
-	}
-	return job.Kind, args
-}
-
-func countAnalysisStartRows(t *testing.T, ctx context.Context, database *bun.DB, query string, args ...any) int {
-	t.Helper()
-	var count int
-	if err := database.NewRaw(query, args...).Scan(ctx, &count); err != nil {
-		t.Fatalf("count rows (%s): %v", query, err)
-	}
-	return count
-}

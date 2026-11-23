@@ -12,12 +12,6 @@ import (
 
 // This fixture attaches a source snapshot to the publication attempt with valid
 // inventory identities, so source ownership is tested independently of nullability.
-func pubSourceProtectionHold(t *testing.T) (*SourceInventoryRepository, uuid.UUID, uuid.UUID, uuid.UUID) {
-	t.Helper()
-	f := newPublicationExecutionFixture(t)
-	return pubSourceProtectionHoldWithFixture(t, f)
-}
-
 func pubSourceProtectionHoldWithFixture(t *testing.T, f publicationExecutionFixture) (*SourceInventoryRepository, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()

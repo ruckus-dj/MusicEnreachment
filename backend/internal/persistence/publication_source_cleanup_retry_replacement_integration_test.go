@@ -408,11 +408,6 @@ func jsonUnmarshalRetryArgs(value any, target *publicationSourceCleanupRetryJobA
 	return json.Unmarshal(encoded, target)
 }
 
-func returnFailedRetryForReplacement(t *testing.T) retryResolutionFixture {
-	t.Helper()
-	return returnFailedRetryForReplacementWithDatabase(t, nil, "")
-}
-
 func returnFailedRetryForReplacementWithDatabase(t *testing.T, db *bun.DB, scope string) retryResolutionFixture {
 	t.Helper()
 	var f retryResolutionFixture

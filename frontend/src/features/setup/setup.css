@@ -20,9 +20,6 @@
 .setup-shell #diagnostic-title { font-size: 20px; line-height: 26px; font-weight: 650; }
 .setup-shell h2, .setup-shell h3 { font-size: 14px; line-height: 20px; font-weight: 600; }
 .setup-shell .setup-panel { background: var(--setup-surface); border: 1px solid var(--setup-line); border-radius: 5px; padding: 10px; }
-.setup-shell .setup-stepper { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
-.setup-shell .setup-stepper li { padding: 6px 10px; border-bottom: 2px solid var(--setup-line); color: var(--setup-muted); }
-.setup-shell .setup-stepper li[aria-current="step"] { border-color: var(--setup-accent); color: var(--setup-accent); font-weight: 600; }
 .setup-shell button:not(.ui-button) { min-height: 28px; padding: 4px 8px; background: var(--setup-surface); color: var(--setup-ink); border: 1px solid var(--setup-control); border-radius: 4px; }
 .setup-shell button:not(.ui-button):hover { background: var(--setup-raised); border-color: var(--setup-accent); }
 .setup-shell button:not(.ui-button):disabled { background: var(--setup-raised); color: var(--setup-muted); border-color: var(--setup-line); }
@@ -39,24 +36,13 @@
 .setup-shell .react-aria-RadioButton[data-focus-visible], .setup-shell .react-aria-CheckboxButton[data-focus-visible] { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
 .setup-shell :focus-visible { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
 .setup-shell [role="alert"] { background: var(--setup-error-soft); color: var(--setup-error); border-left: 3px solid var(--setup-error); padding: 8px 10px; margin: 8px 0; }
-.setup-shell .setup-tool { border: 1px solid var(--setup-line); background: var(--setup-raised); border-radius: 5px; padding: 8px; margin: 8px 0; }
-.setup-shell .setup-tool .react-aria-Label { display: block; }
 .setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
 @media (max-width: 599px) { .setup-shell button:not(.ui-button), .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
 
-.setup-shell .setup-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 12px; }
 .setup-shell .setup-help { color: var(--setup-muted); }
 .setup-shell .setup-help h2 { color: var(--setup-ink); margin-bottom: 12px; }
-.setup-shell .setup-summary { margin: 12px 0; }
-.setup-shell .setup-summary > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; border-bottom: 1px solid var(--setup-line); padding: 6px 0; }
-.setup-shell .setup-summary dt { color: var(--setup-muted); }
-.setup-shell .setup-summary dd { overflow-wrap: anywhere; }
-@media (max-width: 699px) { .setup-shell .setup-layout { grid-template-columns: minmax(0, 1fr); } }
 
-.setup-shell .setup-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 20px; }
 .setup-shell .setup-metadata { display: grid; align-content: start; gap: 10px; }
 .setup-shell .setup-metadata > button, .setup-shell .setup-metadata > .react-aria-CheckboxField, .setup-shell .setup-metadata > .react-aria-RadioGroup { justify-self: start; }
 .setup-shell .setup-metadata .react-aria-TextField { width: 100%; }
 .setup-shell .setup-metadata .react-aria-TextField input { width: 100%; }
-.setup-shell .setup-metadata > .setup-navigation { justify-self: stretch; margin-top: 10px; }
-@media (max-width: 599px) { .setup-shell .setup-navigation { gap: 6px; } }

@@ -44,35 +44,6 @@ export interface MetadataValidationIssue {
 	values?: Record<string, string>;
 }
 
-export function metadataIssueMessage(
-	issue: MetadataIssue,
-	locale: Locale,
-): string {
-	if (!issue.code) return issue.message;
-	const values = issue.values
-		? {
-				...issue.values,
-				actual: issue.values.actual
-					? metadataMessage(
-							locale,
-							`scope.${issue.values.actual}` as `scope.${MetadataScope}`,
-						)
-					: "",
-				expected: issue.values.expected
-					? metadataMessage(
-							locale,
-							`scope.${issue.values.expected}` as `scope.${MetadataScope}`,
-						)
-					: "",
-			}
-		: undefined;
-	return metadataMessage(
-		locale,
-		`error.${issue.code}` as `error.${MetadataIssueCode}`,
-		values,
-	);
-}
-
 export function metadataValidationMessage(
 	issue: MetadataValidationIssue,
 	locale: Locale,

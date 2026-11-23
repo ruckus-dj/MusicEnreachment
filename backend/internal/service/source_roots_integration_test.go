@@ -25,18 +25,6 @@ type sourceRootsIntegration struct {
 	output    string
 }
 
-type sourceRootDeleteBarrier struct {
-	service.SourceRootRepository
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (repository *sourceRootDeleteBarrier) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
-	close(repository.entered)
-	<-repository.release
-	return repository.SourceRootRepository.DeleteSourceRoot(ctx, id, confirmedPath, confirmedLocations)
-}
-
 func newSourceRootsIntegration(t *testing.T) sourceRootsIntegration {
 	t.Helper()
 	database := testpostgres.OpenMigratedWithRiver(t)
@@ -183,29 +171,6 @@ func waitForRootRowLockWait(t *testing.T, ctx context.Context, database *bun.DB,
 	}
 }
 
-func holdActiveScan(ctx context.Context, database *bun.DB, rootID uuid.UUID, locked chan struct{}, release chan struct{}) error {
-	transaction, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if _, err := transaction.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
-		_ = transaction.Rollback()
-		return err
-	}
-	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: "scan_source", State: "running", Stage: "traversing",
-		InputSnapshot:      []byte(`{"source_root_id":"` + rootID.String() + `"}`),
-		TargetSourceRootID: &rootID,
-	}
-	if err := persistence.NewSetupManagerRepository(database).CreateOperationWith(ctx, transaction, operation); err != nil {
-		_ = transaction.Rollback()
-		return err
-	}
-	close(locked)
-	<-release
-	return transaction.Commit()
-}
-
 func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -245,35 +210,6 @@ func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
 		stored, err := os.ReadFile(path)
 		if err != nil || string(stored) != contents {
 			t.Fatalf("file %q after the root deletion = %q, %v; want %q kept", path, stored, err, contents)
-		}
-	}
-}
-
-// The inverse of the edit-before-delete case: deletion must get the operation
-// table lock before a competing root PATCH or scan inventory apply. Once deletion
-// commits, the waiting writer must observe the missing root, never recreate it.
-
-func waitForBlockedWriter(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID) {
-	t.Helper()
-	// pg_stat_activity is a database-side barrier, not a sleep: the query returns
-	// only once another backend is actively waiting on the operation-table lock.
-	for {
-		var waiting bool
-		err := database.NewRaw(`SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity
-			WHERE datname = current_database() AND pid <> pg_backend_pid()
-			  AND wait_event_type = 'Lock'
-		)`).Scan(ctx, &waiting)
-		if err == nil && waiting {
-			return
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("writer did not block on operation lock for root %s: %v", rootID, ctx.Err())
-		}
-		// Repeated database observation is bounded by context deadline; no
-		// scheduling-dependent sleep is used.
-		if _, err := database.ExecContext(ctx, "SELECT 1"); err != nil {
-			t.Fatalf("observe blocked writer: %v", err)
 		}
 	}
 }
