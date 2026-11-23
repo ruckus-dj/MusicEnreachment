@@ -1,8 +1,7 @@
 import { type Key, useEffect, useRef, useState } from "react";
-import { DirectoryPicker } from "../../components/DirectoryPicker";
 import type { BrowseDirectory } from "../../components/DirectoryPickerView";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import { Button, Dialog, Heading, Modal } from "../../components/ui";
+import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { settingsMessages } from "../../i18n/namespaces/settings";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
@@ -39,7 +38,7 @@ import {
 } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
 import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
-import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
+import { SettingsToolsMoveReviewDialog } from "./SettingsToolsMoveReviewDialog";
 import {
 	SettingsToolsCatalogSummary,
 	SettingsToolsRootHeader,
@@ -199,7 +198,6 @@ function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
 	};
 }
 
-type PickerTarget = "tools";
 type FolderDraftField =
 	| "publicationTemplate"
 	| "workDirectory"
@@ -233,7 +231,6 @@ export function SettingsScreen({
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
 	const toolCatalog = useToolCatalogDemoProvider();
-	const [picker, setPicker] = useState<PickerTarget | null>(null);
 	const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
 	const [confirming, setConfirming] = useState<{
@@ -244,10 +241,14 @@ export function SettingsScreen({
 		OutputResetFeedback | undefined
 	>();
 	const [movePlan, setMovePlan] = useState<
-		(ReturnType<typeof movePreflightDemo> & { sourceDirectory: string }) | null
+		| (ReturnType<typeof movePreflightDemo> & {
+				sourceDirectory: string;
+				removeOld: boolean;
+		  })
+		| null
 	>(null);
-	const [moveConflictsAcknowledged, setMoveConflictsAcknowledged] =
-		useState(false);
+	const [removeOld, setRemoveOld] = useState(false);
+	const moveOpener = useRef<HTMLElement | null>(null);
 	const [installPlan, setInstallPlan] = useState<{
 		preflight: ReturnType<typeof installPreflightDemo>;
 		opener: HTMLElement | null;
@@ -1059,7 +1060,7 @@ export function SettingsScreen({
 		setInstallPlan(null);
 		setNotice("");
 	};
-	const requestMove = () => {
+	const requestMove = (opener: Element) => {
 		if (!isAbsoluteDemoServerPath(moveCandidate.trim())) {
 			setNotice("invalidPath");
 			return;
@@ -1075,11 +1076,12 @@ export function SettingsScreen({
 			setNotice("pathOverlap");
 			return;
 		}
+		moveOpener.current = opener instanceof HTMLElement ? opener : null;
 		setMovePlan({
 			...movePreflightDemo(moveCandidate, managedCount),
 			sourceDirectory: settings.toolsPath,
+			removeOld,
 		});
-		setMoveConflictsAcknowledged(false);
 	};
 	const confirmMove = () => {
 		if (!movePlan || !isAbsoluteDemoServerPath(moveCandidate.trim())) {
@@ -1096,17 +1098,16 @@ export function SettingsScreen({
 			])
 		) {
 			setMovePlan(null);
-			setMoveConflictsAcknowledged(false);
 			setNotice("pathOverlap");
 			return;
 		}
 		if (
 			platformMismatch ||
-			freshPlan.token !== movePlan.token ||
-			(movePlan.conflicts.length > 0 && !moveConflictsAcknowledged)
+			settings.toolsPath !== movePlan.sourceDirectory ||
+			removeOld !== movePlan.removeOld ||
+			freshPlan.token !== movePlan.token
 		) {
 			setMovePlan(null);
-			setMoveConflictsAcknowledged(false);
 			setNotice(platformMismatch ? "conflicts" : "staleMove");
 			return;
 		}
@@ -1273,7 +1274,7 @@ export function SettingsScreen({
 						}}
 					/>
 				</SettingsTabPanel>
-				<SettingsTabPanel id="tools" className={`${styles.panel} grid gap-4`}>
+				<SettingsTabPanel id="tools" className="grid gap-4">
 					<SettingsToolsRootHeader
 						locale={locale}
 						savedDirectory={settings.toolsPath}
@@ -1298,25 +1299,30 @@ export function SettingsScreen({
 							locale={locale}
 							packages={managedPackages}
 						/>
-						<section className="grid max-w-2xl gap-2 border-t border-[var(--line)] pt-3">
-							<h3>{copy.moveRoot}</h3>
-							<SettingsToolsMoveEditor
-								locale={locale}
-								destination={{
-									kind: "editable",
-									value: moveCandidate,
-									onChange: (value) => {
-										updateDraft({ toolsPathCandidate: value });
-										setMovePlan(null);
-									},
-									onBrowse: () => setPicker("tools"),
-								}}
-								preflight={{
-									disabled: platformMismatch,
-									onPress: requestMove,
-								}}
-							/>
-						</section>
+						<SettingsToolsMoveEditor
+							locale={locale}
+							destination={{
+								value: moveCandidate,
+								onChange: (value) => {
+									updateDraft({ toolsPathCandidate: value });
+									setMovePlan(null);
+									setNotice("");
+								},
+								browse: browseDirectory ?? inactiveDirectoryBrowse,
+								resolveInitialPath: resolveDirectoryPath,
+							}}
+							removeOld={{
+								checked: removeOld,
+								onChange: (value) => {
+									setRemoveOld(value);
+									setMovePlan(null);
+								},
+							}}
+							preflight={{
+								disabled: platformMismatch,
+								onPress: requestMove,
+							}}
+						/>
 					</section>
 				</SettingsTabPanel>
 				<SettingsTabPanel id="providers">
@@ -1474,18 +1480,6 @@ export function SettingsScreen({
 					}}
 				/>
 			)}
-			{picker === "tools" && (
-				<DirectoryPicker
-					key={picker}
-					initialPath={settings.toolsPath}
-					onClose={() => setPicker(null)}
-					onChoose={(path) => {
-						updateDraft({ toolsPathCandidate: path });
-						setPicker(null);
-						setNotice("");
-					}}
-				/>
-			)}
 			{outputResetDialog}
 			{installPlan && (
 				<SettingsToolInstallDialog
@@ -1501,30 +1495,19 @@ export function SettingsScreen({
 				/>
 			)}
 			{movePlan && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => !open && setMovePlan(null)}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">{copy.moveRoot}</Heading>
-						<SettingsToolsMoveReview
-							locale={locale}
-							sourceDirectory={movePlan.sourceDirectory}
-							destinationDirectory={movePlan.path}
-							managedCount={movePlan.managedCount}
-							conflicts={movePlan.conflicts}
-							acknowledgement={{
-								checked: moveConflictsAcknowledged,
-								onChange: setMoveConflictsAcknowledged,
-							}}
-							busy={false}
-							confirmDisabled={platformMismatch}
-							onConfirm={confirmMove}
-							onDismiss={() => setMovePlan(null)}
-						/>
-					</Dialog>
-				</Modal>
+				<SettingsToolsMoveReviewDialog
+					returnFocusTo={moveOpener.current}
+					locale={locale}
+					sourceDirectory={movePlan.sourceDirectory}
+					destinationDirectory={movePlan.path}
+					removeOld={movePlan.removeOld}
+					managedCount={movePlan.managedCount}
+					conflicts={movePlan.conflicts}
+					busy={false}
+					confirmDisabled={platformMismatch}
+					onConfirm={confirmMove}
+					onDismiss={() => setMovePlan(null)}
+				/>
 			)}
 		</SettingsPageFrame>
 	);

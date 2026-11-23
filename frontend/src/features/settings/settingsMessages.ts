@@ -119,7 +119,6 @@ const english = {
     "The current saved value for “{label}” is {value}. Confirm to replace it with this draft. If another conflict occurs, you will need to confirm again.",
   replaceSaved: "Replace saved value",
   cancel: "Cancel",
-  moveToolsTitle: "Move tools directory",
   waitForRunningOperations:
     "Wait for running operations to finish before changing the publication directory.",
   errorSavingDraft:
@@ -259,7 +258,6 @@ const russian: Record<SettingsMessageKey, string> = {
     "Для «{label}» сейчас сохранено {value}. Подтвердите замену этим черновиком. При новом конфликте потребуется подтвердить ещё раз.",
   replaceSaved: "Заменить сохранённое значение",
   cancel: "Отмена",
-  moveToolsTitle: "Перенос каталога инструментов",
   waitForRunningOperations:
     "Дождитесь завершения выполняющихся операций, прежде чем менять каталог публикации.",
   errorSavingDraft:

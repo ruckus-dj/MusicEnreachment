@@ -1,45 +1,40 @@
-import type { Ref } from "react";
+import { type Ref, useState } from "react";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPathFieldView } from "../../components/DirectoryPathFieldView";
-import type { BrowseDirectory } from "../../components/DirectoryPickerView";
+import {
+  type BrowseDirectory,
+  DirectoryPickerView,
+} from "../../components/DirectoryPickerView";
 
 // Controlled move controls; the caller owns the draft, mode, and preflight.
 const messages = {
   en: {
+    title: "Move tools directory",
     newDirectory: "New tools directory",
     removeOld: "Remove old managed files after a successful move",
     chooseFolder: "Choose folder",
     checkMove: "Check move",
-    cancel: "Cancel",
   },
   ru: {
+    title: "Перенести каталог инструментов",
     newDirectory: "Новый каталог инструментов",
     removeOld: "Удалить прежние управляемые файлы после успешного переноса",
     chooseFolder: "Выбрать папку",
     checkMove: "Проверить перенос",
-    cancel: "Отмена",
   },
 } as const;
 
-export type SettingsToolsMoveDestination =
-  | {
-      /** Read-only path plus the shared directory picker. */
-      kind: "picker";
-      value: string;
-      onSelect: (path: string) => void;
-      browse: BrowseDirectory;
-    }
-  | {
-      /** Editable path plus a caller-provided browse action. */
-      kind: "editable";
-      value: string;
-      onChange: (value: string) => void;
-      onBrowse: () => void;
-    };
+export function settingsToolsMoveTitle(locale: keyof typeof messages) {
+  return messages[locale].title;
+}
 
 export type SettingsToolsMoveEditorProps = {
   locale: "en" | "ru";
-  destination: SettingsToolsMoveDestination;
+  destination: {
+    value: string;
+    onChange: (value: string) => void;
+    browse: BrowseDirectory;
+    resolveInitialPath?: (value: string) => string;
+  };
   /** Omit when the remove-old option does not apply. */
   removeOld?: {
     checked: boolean;
@@ -50,13 +45,11 @@ export type SettingsToolsMoveEditorProps = {
   /** Focus target for the alert; the host focuses it when the error appears. */
   errorRef?: Ref<HTMLParagraphElement>;
   /**
-   * Pre-review actions. Omit after a successful preflight so the review body
-   * owns the next action row.
+   * Preflight is separate from confirmation of the frozen review.
    */
-  preflight?: {
+  preflight: {
     disabled: boolean;
-    onPress: () => void;
-    onCancel?: () => void;
+    onPress: (trigger: Element) => void;
   };
 };
 
@@ -82,45 +75,46 @@ export function SettingsToolsMoveEditor({
   preflight,
 }: SettingsToolsMoveEditorProps) {
   const copy = messages[locale];
+  const [browseFrom, setBrowseFrom] = useState<string>();
 
   return (
-    <div className={editorClass}>
-      {destination.kind === "picker" ? (
-        <DirectoryPathFieldView
-          id={fieldId}
-          label={copy.newDirectory}
-          value={destination.value}
-          onSelect={destination.onSelect}
-          browse={destination.browse}
-          locale={locale}
-        />
-      ) : (
-        <div className="grid min-w-0 gap-1">
-          <label className="font-semibold" htmlFor={fieldId}>
-            {copy.newDirectory}
-          </label>
-          <div className={browseRowClass}>
-            <input
-              className={inputClass}
-              id={fieldId}
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              value={destination.value}
-              onChange={(event) =>
-                destination.onChange(event.currentTarget.value)
-              }
-            />
-            <AppButton
-              className="flex-none"
-              type="button"
-              onPress={destination.onBrowse}
-            >
-              {copy.chooseFolder}
-            </AppButton>
-          </div>
+    <section
+      aria-labelledby="settings-tools-move-title"
+      className={`${editorClass} max-w-2xl border-t border-[var(--line)] pt-3`}
+    >
+      <h3 id="settings-tools-move-title" className="m-0 font-semibold">
+        {copy.title}
+      </h3>
+      <div className="grid min-w-0 gap-1">
+        <label className="font-semibold" htmlFor={fieldId}>
+          {copy.newDirectory}
+        </label>
+        <div className={browseRowClass}>
+          <input
+            className={inputClass}
+            id={fieldId}
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={destination.value}
+            onChange={(event) =>
+              destination.onChange(event.currentTarget.value)
+            }
+          />
+          <AppButton
+            className="flex-none"
+            type="button"
+            onPress={() =>
+              setBrowseFrom(
+                destination.resolveInitialPath?.(destination.value) ??
+                  destination.value,
+              )
+            }
+          >
+            {copy.chooseFolder}
+          </AppButton>
         </div>
-      )}
+      </div>
       {removeOld && (
         <label className={checkboxRowClass}>
           <input
@@ -139,26 +133,25 @@ export function SettingsToolsMoveEditor({
           {error}
         </p>
       )}
-      {preflight && (
-        <div className={actionsClass}>
-          <AppButton
-            isDisabled={preflight.disabled}
-            type="button"
-            onPress={preflight.onPress}
-          >
-            {copy.checkMove}
-          </AppButton>
-          {preflight.onCancel && (
-            <AppButton
-              isDisabled={preflight.disabled}
-              type="button"
-              onPress={preflight.onCancel}
-            >
-              {copy.cancel}
-            </AppButton>
-          )}
-        </div>
+      <div className={actionsClass}>
+        <AppButton
+          isDisabled={preflight.disabled}
+          type="button"
+          onPress={(event) => preflight.onPress(event.target)}
+        >
+          {copy.checkMove}
+        </AppButton>
+      </div>
+      {browseFrom !== undefined && (
+        <DirectoryPickerView
+          open
+          initialPath={browseFrom}
+          locale={locale}
+          browse={destination.browse}
+          onSelect={destination.onChange}
+          onClose={() => setBrowseFrom(undefined)}
+        />
       )}
-    </div>
+    </section>
   );
 }

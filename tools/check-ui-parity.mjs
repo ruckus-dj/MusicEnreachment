@@ -44,6 +44,7 @@ const pairs = [
       "SettingsTabs.tsx",
       "SettingsToolInstallDialog.tsx",
       "SettingsToolsMoveReview.tsx",
+      "SettingsToolsMoveReviewDialog.tsx",
       "SettingsToolsMoveEditor.tsx",
       "SettingsToolsOverview.tsx",
     ],

@@ -13,7 +13,6 @@ const messages = {
     conflictCount: "Conflicts:",
     conflictsToConfirm: "Conflicts to confirm",
     noConflicts: "No conflicts.",
-    acknowledgeConflicts: "I acknowledge the listed conflicts.",
     confirmMove: "Confirm move",
     cancel: "Cancel",
   },
@@ -27,7 +26,6 @@ const messages = {
     conflictCount: "Конфликтов:",
     conflictsToConfirm: "Конфликты для подтверждения",
     noConflicts: "Конфликтов нет.",
-    acknowledgeConflicts: "Я подтверждаю перечисленные конфликты.",
     confirmMove: "Подтвердить перенос",
     cancel: "Отмена",
   },
@@ -39,14 +37,9 @@ export type SettingsToolsMoveReviewProps = {
   sourceDirectory: string;
   /** Frozen preflight evidence; never the live input draft. */
   destinationDirectory: string;
-  /** Omit when the frozen preflight recorded no such option. */
-  removeOld?: boolean;
+  removeOld: boolean;
   managedCount: number;
   conflicts: readonly string[];
-  acknowledgement?: {
-    checked: boolean;
-    onChange: (checked: boolean) => void;
-  };
   busy?: boolean;
   confirmDisabled?: boolean;
   onConfirm: () => void;
@@ -64,8 +57,6 @@ const headingClass = "m-0 text-sm font-semibold";
 const listClass = "my-1 list-disc pl-5";
 const itemClass = "wrap-anywhere";
 const paragraphClass = "m-0 wrap-anywhere";
-const acknowledgeClass = "flex cursor-pointer items-start gap-2";
-const checkboxClass = "mt-0.5 size-4 flex-none accent-[var(--accent)]";
 const actionsClass = "flex flex-wrap justify-end gap-2";
 
 function ReviewFact({
@@ -90,20 +81,12 @@ export function SettingsToolsMoveReview({
   removeOld,
   managedCount,
   conflicts,
-  acknowledgement,
   busy = false,
   confirmDisabled = false,
   onConfirm,
   onDismiss,
 }: SettingsToolsMoveReviewProps) {
   const copy = messages[locale];
-  const conflictAcknowledgement = conflicts.length
-    ? acknowledgement
-    : undefined;
-  const confirmationBlocked =
-    busy ||
-    confirmDisabled ||
-    (conflictAcknowledgement !== undefined && !conflictAcknowledgement.checked);
 
   return (
     <div className={reviewClass}>
@@ -114,11 +97,9 @@ export function SettingsToolsMoveReview({
         <ReviewFact label={copy.destinationDirectory}>
           <code className={codeClass}>{destinationDirectory}</code>
         </ReviewFact>
-        {removeOld !== undefined && (
-          <ReviewFact label={copy.removeOldFiles}>
-            {removeOld ? copy.yes : copy.no}
-          </ReviewFact>
-        )}
+        <ReviewFact label={copy.removeOldFiles}>
+          {removeOld ? copy.yes : copy.no}
+        </ReviewFact>
         <ReviewFact label={copy.managedFileCount}>{managedCount}</ReviewFact>
         <ReviewFact label={copy.conflictCount}>{conflicts.length}</ReviewFact>
       </dl>
@@ -136,23 +117,9 @@ export function SettingsToolsMoveReview({
           <p className={paragraphClass}>{copy.noConflicts}</p>
         )}
       </section>
-      {conflictAcknowledgement && (
-        <label className={acknowledgeClass}>
-          <input
-            type="checkbox"
-            className={checkboxClass}
-            checked={conflictAcknowledgement.checked}
-            disabled={busy}
-            onChange={(event) =>
-              conflictAcknowledgement.onChange(event.currentTarget.checked)
-            }
-          />
-          <span>{copy.acknowledgeConflicts}</span>
-        </label>
-      )}
       <div className={actionsClass}>
         <AppButton
-          isDisabled={confirmationBlocked}
+          isDisabled={busy || confirmDisabled}
           data-settings-move-confirm=""
           onPress={onConfirm}
         >

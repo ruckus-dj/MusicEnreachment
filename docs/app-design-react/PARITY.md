@@ -76,7 +76,7 @@ source channel, а fixture макета такого происхождения 
 | Собственный каталог: списки, карточки записей и поля форм артиста и композиции | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/` |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: каркас страницы, заголовок и подзаголовок | `features/settings/SettingsPageFrame.tsx` | Тот же путь |
-| Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки и поля переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx` | Те же пути |
+| Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки, поля и подтверждение переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx`, `SettingsToolsMoveReviewDialog.tsx` | Те же пути |
 | Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
 | Первый запуск: порядок шагов, каркас мастера, поля папок, карточки инструментов, формат публикации, MusicBrainz и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupSummaryView.tsx` | Те же пути |
@@ -87,9 +87,6 @@ source channel, а fixture макета такого происхождения 
 
 ### Где ещё есть расхождения
 
-- **Настройки инструментов.** Поля переноса в приложении находятся в диалоге,
-  в макете — на вкладке. Подтверждение загрузки в обеих копиях открывается
-  только при конфликтах. Проверку и целевые пути поставляет провайдер.
 - **Первый запуск.** Порядок шагов общий. Часть композиции провайдеров и
   вывод ошибок проверки остаются в разных контроллерах.
 - **Источники.** У приложения есть отдельный файловый инспектор. Действия с

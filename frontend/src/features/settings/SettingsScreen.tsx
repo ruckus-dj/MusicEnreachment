@@ -74,7 +74,7 @@ import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
 import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
-import { SettingsToolsMoveReview } from "./SettingsToolsMoveReview";
+import { SettingsToolsMoveReviewDialog } from "./SettingsToolsMoveReviewDialog";
 import {
   SettingsToolsCatalogSummary,
   SettingsToolsRootHeader,
@@ -571,7 +571,6 @@ export function SettingsScreen() {
     Partial<Record<Kind, string>>
   >({});
   const [installDialog, setInstallDialog] = useState<InstallPlan>();
-  const [moveDialog, setMoveDialog] = useState(false);
   const [outputDialog, setOutputDialog] = useState(false);
   const [moveDirectory, setMoveDirectory] = useState(
     () => restoredSettingsDraft?.toolsDirectoryCandidate?.value ?? "",
@@ -613,7 +612,6 @@ export function SettingsScreen() {
   const mountedRef = useRef(true);
   const mountGeneration = useRef(0);
   const screenLoadGeneration = useRef(0);
-  const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingTabFocusTarget = useRef<HTMLElement | null>(null);
   const dialogFocusRestorePending = useRef(false);
@@ -631,6 +629,9 @@ export function SettingsScreen() {
   const moveSessionRevision = useRef(0);
   const moveRequestRevision = useRef(0);
   const movePendingRequest = useRef(0);
+  const admittedMoves = useRef(
+    new Map<string, { directory: string; inputRevision: number }>(),
+  );
   const installSessionRevision = useRef(0);
   const installRequestRevision = useRef(0);
   const installPendingRequest = useRef(0);
@@ -1034,23 +1035,12 @@ export function SettingsScreen() {
     void loadScreen();
   }, [loadScreen]);
   useEffect(() => {
-    if (error && !installDialog && !moveDialog) alert.current?.focus();
-  }, [error, installDialog, moveDialog]);
+    if (error && !installDialog && !movePlan) alert.current?.focus();
+  }, [error, installDialog, movePlan]);
   useLayoutEffect(() => {
-    if (moveDialogError && moveDialogRef.current?.open)
+    if (moveDialogError && activeSettingsTab === "tools" && !navigationAttempt)
       moveDialogAlert.current?.focus();
-  }, [moveDialogError]);
-  useLayoutEffect(() => {
-    const dialog = moveDialogRef.current;
-    if (!movePlan || effectiveBusy || !dialog?.open || moveDialogError) return;
-    if (
-      document.activeElement === document.body ||
-      document.activeElement === dialog
-    )
-      dialog
-        .querySelector<HTMLElement>("[data-settings-move-confirm]")
-        ?.focus();
-  }, [effectiveBusy, moveDialogError, movePlan]);
+  }, [activeSettingsTab, moveDialogError, navigationAttempt]);
   useLayoutEffect(() => {
     const target = pendingTabFocusTarget.current;
     if (!target) return;
@@ -1065,7 +1055,7 @@ export function SettingsScreen() {
     if (
       dialogFocusRestorePending.current &&
       !installDialog &&
-      !moveDialog &&
+      !movePlan &&
       !outputDialog &&
       !effectiveBusy
     ) {
@@ -1075,13 +1065,10 @@ export function SettingsScreen() {
   }, [
     effectiveBusy,
     installDialog,
-    moveDialog,
+    movePlan,
     outputDialog,
     restoreDialogFocus,
   ]);
-  useLayoutEffect(() => {
-    if (moveDialog) showSettingsDialog(moveDialogRef.current);
-  }, [moveDialog]);
   useLayoutEffect(() => {
     if (navigationAttempt || !navigationFocusRestorePending.current) return;
     navigationFocusRestorePending.current = false;
@@ -2488,7 +2475,9 @@ export function SettingsScreen() {
     }
   }
 
-  async function saveEligibleTextDrafts(): Promise<SettingsSaveOutcome> {
+  async function saveEligibleTextDrafts(
+    attempt: HashAttempt,
+  ): Promise<SettingsSaveOutcome> {
     if (isEffectivelyBusy())
       return {
         status: "failed",
@@ -2509,17 +2498,11 @@ export function SettingsScreen() {
       moveDirectoryBaseline.current !== undefined &&
       moveDirectoryRef.current !== moveDirectoryBaseline.current
     ) {
-      dialogReturnFocusRef.current =
-        navigationDialogRef.current?.querySelector(
+      const opener =
+        navigationDialogRef.current?.querySelector<HTMLButtonElement>(
           "button[data-settings-navigation-save]",
         ) ?? heading.current;
-      setError("");
-      setMoveDialogError("");
-      moveSessionRevision.current += 1;
-      moveInputRevision.current += 1;
-      setMovePlan(undefined);
-      setMoveDialog(true);
-      return { status: "confirmation_pending", group: "toolsDirectory" };
+      return preflightMove(opener, attempt);
     }
 
     const textSaves: Array<[boolean, () => Promise<SettingsSaveOutcome>]> = [
@@ -2604,7 +2587,7 @@ export function SettingsScreen() {
 
   async function saveDraftAndLeave(attempt: HashAttempt) {
     setNavigationError("");
-    const outcome = await saveEligibleTextDrafts();
+    const outcome = await saveEligibleTextDrafts(attempt);
     if (latestNavigationAttempt.current?.id !== attempt.id) return;
     if (outcome.status === "saved" && !hasUnsavedSettingsTextDrafts()) {
       resolveNavigation(attempt, "leave");
@@ -2638,43 +2621,6 @@ export function SettingsScreen() {
     moveStartRevision.current += 1;
     setMoveDialogError("");
     setBusy(false);
-    const dialog = moveDialogRef.current;
-    if (dialog?.open) dialog.close();
-    else {
-      setMoveDialog(false);
-    }
-  }
-  function onDialogKeyDown(
-    event: React.KeyboardEvent<HTMLDialogElement>,
-    close: () => void,
-  ) {
-    if (
-      event.target instanceof Element &&
-      event.target.closest("dialog") !== event.currentTarget
-    )
-      return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const controls = event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
-    );
-    if (controls.length === 0) return;
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    } else if (!event.currentTarget.contains(document.activeElement)) {
-      event.preventDefault();
-      (event.shiftKey ? last : first).focus();
-    }
   }
   const loadCatalogNow = () => {
     void requestCatalog();
@@ -2825,7 +2771,18 @@ export function SettingsScreen() {
       setBusy(false);
     }
   }
-  async function preflightMove() {
+  async function preflightMove(
+    opener: HTMLElement | null,
+    attempt?: HashAttempt,
+  ): Promise<SettingsSaveOutcome> {
+    const group = "toolsDirectory";
+    if (!platformReady || isEffectivelyBusy()) {
+      return {
+        status: "failed",
+        group,
+        message: settingsNotice("waitForRequest"),
+      };
+    }
     if (
       "toolsDirectory" in conflictValues &&
       !Object.hasOwn(authorizedConflictExpected.current, "toolsDirectory")
@@ -2833,39 +2790,48 @@ export function SettingsScreen() {
       const current = state?.settings.tools_directory;
       if (current !== undefined)
         confirmConflictingSave("toolsDirectory", current, () => {
-          void preflightMove();
+          void preflightMove(opener, attempt).then((outcome) => {
+            if (attempt && latestNavigationAttempt.current?.id === attempt.id)
+              setNavigationError(
+                outcome.message || settingsNotice("saveLeaveConfirmation"),
+              );
+          });
         });
-      return;
+      return { status: "confirmation_pending", group };
     }
     const directory = moveDirectoryRef.current;
     const removeOldFiles = removeOldRef.current;
     const inputRevision = moveInputRevision.current;
     const sessionRevision = moveSessionRevision.current;
     const requestRevision = ++moveRequestRevision.current;
+    const originHash = window.location.hash;
+    const ownsReview = () =>
+      mountedRef.current &&
+      requestRevision === moveRequestRevision.current &&
+      inputRevision === moveInputRevision.current &&
+      sessionRevision === moveSessionRevision.current &&
+      (attempt
+        ? latestNavigationAttempt.current?.id === attempt.id
+        : !latestNavigationAttempt.current &&
+          window.location.hash === originHash);
     movePendingRequest.current = requestRevision;
     const sourceDirectory = state?.settings.tools_directory || "";
     setBusy(true);
     setError("");
     setMoveDialogError("");
     try {
-      const response = await acceptSettingsWrite(
-        await preflightToolsRootMove({
-          expected_tools_directory: expectedForSave(
-            "toolsDirectory",
-            moveDirectoryBaseline.current ?? sourceDirectory,
-          ),
-          new_tools_directory: directory,
-          remove_old_files: removeOldFiles,
-        }),
-        200,
-      );
-      if (
-        requestRevision !== moveRequestRevision.current ||
-        inputRevision !== moveInputRevision.current ||
-        sessionRevision !== moveSessionRevision.current ||
-        !moveDialog
-      )
-        return;
+      const preflight = await preflightToolsRootMove({
+        expected_tools_directory: expectedForSave(
+          "toolsDirectory",
+          moveDirectoryBaseline.current ?? sourceDirectory,
+        ),
+        new_tools_directory: directory,
+        remove_old_files: removeOldFiles,
+      });
+      if (!ownsReview()) return { status: "failed", group };
+      const response = await acceptSettingsWrite(preflight, 200);
+      if (!ownsReview()) return { status: "failed", group };
+      dialogReturnFocusRef.current = opener;
       setMovePlan({
         directory,
         removeOld: removeOldFiles,
@@ -2878,16 +2844,17 @@ export function SettingsScreen() {
           conflicts: [...(response.data.conflicts || [])],
         },
       });
+      return { status: "confirmation_pending", group };
     } catch (reason) {
+      if (!ownsReview()) return { status: "failed", group };
+      const detail = message(reason);
       if (reason instanceof SettingsConflictError) invalidateMovePlan();
-      if (
-        (reason instanceof SettingsConflictError ||
-          requestRevision === moveRequestRevision.current) &&
-        inputRevision === moveInputRevision.current &&
-        sessionRevision === moveSessionRevision.current &&
-        moveDialog
-      )
-        setMoveDialogError(message(reason));
+      if (!attempt) setMoveDialogError(detail);
+      return {
+        status: reason instanceof SettingsConflictError ? "conflict" : "failed",
+        group,
+        message: detail,
+      };
     } finally {
       if (movePendingRequest.current === requestRevision) {
         movePendingRequest.current = 0;
@@ -2896,6 +2863,7 @@ export function SettingsScreen() {
     }
   }
   async function confirmMove() {
+    if (!platformReady || isEffectivelyBusy()) return;
     if (
       !movePlan ||
       movePlan.sourceDirectory !== state?.settings.tools_directory ||
@@ -2921,10 +2889,15 @@ export function SettingsScreen() {
         }),
         200,
       );
+      admittedMoves.current.set(response.data.id, {
+        directory: confirmedPlan.directory,
+        inputRevision: confirmedPlan.inputRevision,
+      });
       setOperations((previous) => [
         ...previous.filter((item) => item.id !== response.data.id),
         response.data,
       ]);
+      if (response.data.state === "succeeded") void onOperation(response.data);
       if (
         sessionRevision !== moveSessionRevision.current ||
         startRevision !== moveStartRevision.current
@@ -2938,7 +2911,13 @@ export function SettingsScreen() {
         startRevision === moveStartRevision.current
       ) {
         invalidateMovePlan();
-        setMoveDialogError(message(reason));
+        const detail = message(reason);
+        if (latestNavigationAttempt.current) {
+          setNavigationError(detail);
+          dialogFocusRestorePending.current = true;
+        } else {
+          setMoveDialogError(detail);
+        }
       }
     } finally {
       if (
@@ -2955,14 +2934,36 @@ export function SettingsScreen() {
       );
       if (snapshot.state === "succeeded") {
         try {
-          await Promise.all([refreshState(), refreshInstallations()]);
+          const move = admittedMoves.current.get(snapshot.id);
+          await Promise.all([
+            refreshState((fresh) => {
+              const savedDirectory = fresh.settings.tools_directory;
+              if (
+                move &&
+                move.inputRevision === moveInputRevision.current &&
+                move.directory === moveDirectoryRef.current &&
+                move.directory === savedDirectory
+              ) {
+                setMoveDirectoryBaseline(savedDirectory);
+              }
+            }),
+            refreshInstallations(),
+          ]);
+          admittedMoves.current.delete(snapshot.id);
           await refreshOperations();
         } catch (reason) {
           setError(message(reason));
         }
+      } else if (snapshot.state === "failed") {
+        admittedMoves.current.delete(snapshot.id);
       }
     },
-    [refreshInstallations, refreshOperations, refreshState],
+    [
+      refreshInstallations,
+      refreshOperations,
+      refreshState,
+      setMoveDirectoryBaseline,
+    ],
   );
 
   const platformReady = Boolean(
@@ -3309,7 +3310,7 @@ export function SettingsScreen() {
                 }}
               />
             </SettingsTabPanel>
-            <SettingsTabPanel id="tools" forceMount>
+            <SettingsTabPanel id="tools" className="grid gap-4" forceMount>
               {operations.map((operation) =>
                 operation.state === "queued" ||
                 operation.state === "running" ? (
@@ -3324,18 +3325,6 @@ export function SettingsScreen() {
                 locale={locale}
                 savedDirectory={state.settings.tools_directory}
                 operationsHref={operations.length ? "#/operations" : undefined}
-                move={{
-                  disabled: !platformReady || effectiveBusy,
-                  onPress: (opener) => {
-                    dialogReturnFocusRef.current = opener;
-                    setError("");
-                    setMoveDialogError("");
-                    moveSessionRevision.current += 1;
-                    moveInputRevision.current += 1;
-                    setMovePlan(undefined);
-                    setMoveDialog(true);
-                  },
-                }}
               />
               <section aria-labelledby="managed-title" className="grid gap-3">
                 <GitHubTokenForm
@@ -3445,6 +3434,35 @@ export function SettingsScreen() {
                       };
                     },
                   )}
+                />
+                <SettingsToolsMoveEditor
+                  locale={locale}
+                  destination={{
+                    value: moveDirectory,
+                    onChange: (directory) => {
+                      setMoveDialogError("");
+                      setMoveDirectoryValue(directory);
+                    },
+                    browse: browseServerDirectory,
+                  }}
+                  removeOld={{
+                    checked: removeOld,
+                    onChange: setRemoveOldValue,
+                  }}
+                  error={
+                    moveDialogError
+                      ? feedbackText(moveDialogError, locale)
+                      : undefined
+                  }
+                  errorRef={moveDialogAlert}
+                  preflight={{
+                    disabled: !platformReady || effectiveBusy,
+                    onPress: (opener) => {
+                      void preflightMove(
+                        opener instanceof HTMLElement ? opener : null,
+                      );
+                    },
+                  }}
                 />
               </section>
             </SettingsTabPanel>
@@ -3631,75 +3649,22 @@ export function SettingsScreen() {
           onDismiss={closeInstallDialog}
         />
       )}
-      {moveDialog && (
-        <dialog
-          ref={moveDialogRef}
-          aria-modal="true"
-          aria-labelledby="move-dialog-title"
-          className="settings-dialog"
-          onClose={() => {
-            dialogFocusRestorePending.current = true;
-            setMoveDialog(false);
-            setMoveDialogError("");
-          }}
-          onKeyDown={(event) => onDialogKeyDown(event, closeMoveDialog)}
-          onCancel={(event) => {
-            event.preventDefault();
-            closeMoveDialog();
-          }}
-        >
-          <h2 id="move-dialog-title">{t("moveToolsTitle")}</h2>
-          <SettingsToolsMoveEditor
-            locale={locale}
-            destination={{
-              kind: "picker",
-              value: moveDirectory,
-              onSelect: setMoveDirectoryValue,
-              browse: browseServerDirectory,
-            }}
-            removeOld={{ checked: removeOld, onChange: setRemoveOldValue }}
-            error={
-              moveDialogError
-                ? feedbackText(moveDialogError, locale)
-                : undefined
-            }
-            errorRef={moveDialogAlert}
-            preflight={
-              movePlan
-                ? undefined
-                : {
-                    disabled: effectiveBusy,
-                    onPress: () => void preflightMove(),
-                    onCancel: closeMoveDialog,
-                  }
-            }
-          />
-          {movePlan && (
-            <SettingsToolsMoveReview
-              locale={locale}
-              sourceDirectory={movePlan.sourceDirectory}
-              destinationDirectory={movePlan.directory}
-              removeOld={movePlan.removeOld}
-              managedCount={movePlan.plan.managed_file_count}
-              conflicts={movePlan.plan.conflicts || []}
-              busy={effectiveBusy}
-              onConfirm={() => void confirmMove()}
-              onDismiss={closeMoveDialog}
-            />
-          )}
-        </dialog>
+      {movePlan && (
+        <SettingsToolsMoveReviewDialog
+          locale={locale}
+          sourceDirectory={movePlan.sourceDirectory}
+          destinationDirectory={movePlan.directory}
+          removeOld={movePlan.removeOld}
+          managedCount={movePlan.plan.managed_file_count}
+          conflicts={movePlan.plan.conflicts || []}
+          busy={effectiveBusy}
+          confirmDisabled={!platformReady}
+          onConfirm={() => void confirmMove()}
+          onDismiss={closeMoveDialog}
+        />
       )}
     </SettingsPageFrame>
   );
-}
-
-function showSettingsDialog(dialog: HTMLDialogElement | null) {
-  if (!dialog || dialog.open) return;
-  dialog.showModal();
-  const firstControl = dialog.querySelector<HTMLElement>(
-    "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
-  );
-  firstControl?.focus();
 }
 
 // Follows only tool operations for automatic settings refresh; progress,

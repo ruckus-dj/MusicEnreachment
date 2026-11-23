@@ -98,22 +98,6 @@
   border-left: 3px solid var(--settings-error);
 }
 
-.settings-dialog {
-  position: fixed;
-  inset: 50% auto auto 50%;
-  transform: translate(-50%, -50%);
-  z-index: 10;
-  width: min(92vw, 620px);
-  max-height: 85dvh;
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--settings-line);
-  border-radius: 5px;
-  color: var(--settings-ink);
-  background: var(--settings-surface);
-  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 50%);
-}
-
 /* The operation row is a fieldset so its implicit group role carries the
    operation name; neutralize the user-agent box to keep the previous layout. */
 .settings-screen .setup-operation {

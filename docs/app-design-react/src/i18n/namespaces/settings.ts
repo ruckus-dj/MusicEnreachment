@@ -18,7 +18,6 @@ export const settingsMessages = createNamespace({
 			"Shared directory for audio working copies. It cannot be changed while work is active or copies are retained.",
 		toolsRoot: "Tools directory",
 		newRoot: "New tools directory",
-		moveRoot: "Move tools directory",
 		preflight: "Check move requirements",
 		confirmMove: "Move directory",
 		conflicts: "The check found conflicts. Resolve them before continuing.",
@@ -141,7 +140,6 @@ export const settingsMessages = createNamespace({
 			"Общая папка рабочих копий аудио. Изменение недоступно при активной работе или сохранённых копиях.",
 		toolsRoot: "Каталог инструментов",
 		newRoot: "Новый каталог инструментов",
-		moveRoot: "Перенести каталог инструментов",
 		preflight: "Проверить возможность переноса",
 		confirmMove: "Выполнить перенос",
 		conflicts:

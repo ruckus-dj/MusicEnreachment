@@ -127,6 +127,112 @@ class TestEventSource extends EventTarget {
     TestEventSource.instances.push(this);
   }
 }
+it("checks an inline tools move and confirms only the latest frozen preflight", async () => {
+  common();
+  let finishOldCheck = () => {};
+  const oldCheck = new Promise<void>((resolve) => {
+    finishOldCheck = resolve;
+  });
+  const preflights = vi.fn();
+  const move = vi.fn();
+  const queuedMove = { ...operation, kind: "move_tools_root" };
+  let finished = false;
+  server.use(
+    http.get("/api/settings", () =>
+      json({
+        ...settings,
+        settings: {
+          ...settings.settings,
+          tools_directory: finished ? "/srv/current-tools" : "/srv/tools",
+        },
+      }),
+    ),
+    http.get(`/api/operations/${queuedMove.id}`, () =>
+      json(
+        finished
+          ? {
+              ...queuedMove,
+              state: "succeeded",
+              updated_at: "2026-01-01T00:02:00Z",
+            }
+          : queuedMove,
+      ),
+    ),
+    http.post("/api/tools/move/preflight", async ({ request }) => {
+      const body = await request.json();
+      preflights(body);
+      if (preflights.mock.calls.length === 1) {
+        await oldCheck;
+        return json({
+          preflight_token: "old",
+          managed_file_count: 1,
+          conflicts: [],
+        });
+      }
+      return json({
+        preflight_token: "current",
+        managed_file_count: 1,
+        conflicts: ["/srv/current-tools/ffmpeg"],
+      });
+    }),
+    http.post("/api/tools/move", async ({ request }) => {
+      move(await request.json());
+      return json(queuedMove);
+    }),
+  );
+  render(<SettingsScreen />);
+  await selectSettingsTab("Инструменты");
+  const destination = screen.getByRole("textbox", {
+    name: "Новый каталог инструментов",
+  });
+  const check = screen.getByRole("button", { name: "Проверить перенос" });
+  fireEvent.change(destination, { target: { value: "/srv/old-tools" } });
+  fireEvent.click(check);
+  try {
+    await waitFor(() => expect(preflights).toHaveBeenCalledTimes(1));
+    fireEvent.change(destination, { target: { value: "/srv/current-tools" } });
+    fireEvent.click(check);
+    const review = await screen.findByRole("dialog", {
+      name: "Перенести каталог инструментов",
+    });
+    expect(within(review).queryByRole("textbox")).toBeNull();
+    expect(within(review).getByText("/srv/current-tools/ffmpeg")).toBeVisible();
+    expect(preflights).toHaveBeenLastCalledWith({
+      expected_tools_directory: "/srv/tools",
+      new_tools_directory: "/srv/current-tools",
+      remove_old_files: false,
+    });
+    expect(move).not.toHaveBeenCalled();
+    const staleResponse = nextResponseFor("/api/tools/move/preflight", "POST");
+    await act(async () => {
+      finishOldCheck();
+      await staleResponse;
+    });
+    const firstMoveSnapshot = nextResponseFor(
+      `/api/operations/${queuedMove.id}`,
+    );
+    fireEvent.click(
+      within(review).getByRole("button", { name: "Подтвердить перенос" }),
+    );
+    await waitFor(() =>
+      expect(move).toHaveBeenCalledExactlyOnceWith({
+        preflight_token: "current",
+        confirmed_conflicts: ["/srv/current-tools/ffmpeg"],
+      }),
+    );
+    await firstMoveSnapshot;
+    expect(
+      readSettingsDraft(sessionStorage)?.toolsDirectoryCandidate?.value,
+    ).toBe("/srv/current-tools");
+    const stream = TestEventSource.instances[0];
+    expect(stream).toBeDefined();
+    finished = true;
+    act(() => stream.dispatchEvent(new Event("operation-changed")));
+    await waitFor(() => expect(readSettingsDraft(sessionStorage)).toBeNull());
+  } finally {
+    finishOldCheck();
+  }
+});
 function common({
   installed = [activeFF, inactiveFF, activeFP],
   operations = [] as unknown[],

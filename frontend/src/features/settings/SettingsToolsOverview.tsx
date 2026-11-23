@@ -8,7 +8,6 @@ import { AppButton } from "../../components/AppButton";
 const messages = {
   en: {
     toolsDirectory: "Tools directory",
-    moveToolsDirectory: "Move tools directory",
     managedTools: "Managed tools",
     lastCatalogCheck: "Last successful catalog check:",
     catalogNotChecked: "Catalog has not been checked yet.",
@@ -20,7 +19,6 @@ const messages = {
   },
   ru: {
     toolsDirectory: "Каталог инструментов",
-    moveToolsDirectory: "Перенести каталог",
     managedTools: "Управляемые инструменты",
     lastCatalogCheck: "Последняя успешная проверка каталога:",
     catalogNotChecked: "Каталог ещё не проверялся.",
@@ -45,12 +43,6 @@ export type SettingsToolsRootHeaderProps = {
   /** Persisted tools root; never the pending move candidate. */
   savedDirectory: string;
   operationsHref?: string;
-  /** Omit when the host has no move workflow. */
-  move?: {
-    disabled: boolean;
-    /** Receives the pressed control so the host can restore focus on close. */
-    onPress: (opener: HTMLElement) => void;
-  };
 };
 
 export type SettingsToolsCatalogSummaryProps = {
@@ -72,7 +64,6 @@ export function SettingsToolsRootHeader({
   locale,
   savedDirectory,
   operationsHref,
-  move,
 }: SettingsToolsRootHeaderProps) {
   const copy = messages[locale];
   return (
@@ -96,14 +87,6 @@ export function SettingsToolsRootHeader({
           {copy.toolsDirectory}:{" "}
           <code className={codeClass}>{savedDirectory}</code>
         </p>
-        {move && (
-          <AppButton
-            isDisabled={move.disabled}
-            onPress={(event) => move.onPress(event.target as HTMLElement)}
-          >
-            {copy.moveToolsDirectory}
-          </AppButton>
-        )}
       </section>
     </>
   );
