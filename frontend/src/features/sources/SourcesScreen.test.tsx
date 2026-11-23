@@ -136,21 +136,57 @@ it("distinguishes an unchecked file from a failed audio check", async () => {
   expect(failed).toHaveTextContent("Could not read audio.");
 });
 
-it("shows the original source path when selecting and confirming a copy", async () => {
+it("confirms a batch of source paths and shows per-copy cleanup results", async () => {
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventTarget {
+      close() {}
+    },
+  );
   const sourcePath = "music/Альбом/01. Песня.mp3";
   const artifactId = "ecb4e7c4-1d4d-481f-9cc3-3295325db30d";
+  const retryPath = "other/Album/02.flac";
+  const retryId = "e9094fd2-eef2-4011-b820-3124b44f51ca";
+  const submitted: unknown[] = [];
+  const queued = {
+    id: "copy-cleanup-op",
+    kind: "cleanup_source_analysis_artifacts",
+    state: "queued",
+    stage: "queued",
+    bytes_completed: 0,
+    updated_at: "2026-11-23T17:00:00Z",
+    created_at: "2026-11-23T17:00:00Z",
+  };
   server.use(
     http.get("/api/sources", () => json([])),
     http.get("/api/source-analysis/artifacts/cleanup", () =>
       HttpResponse.json({
-        count: 1,
+        count: 2,
         candidates: [
           {
             artifact_id: artifactId,
             source_relative_path: sourcePath,
             state: "cleanup_eligible",
           },
+          {
+            artifact_id: retryId,
+            source_relative_path: retryPath,
+            state: "cleanup_failed",
+          },
         ],
+      }),
+    ),
+    http.post("/api/source-analysis/artifacts/cleanup", async ({ request }) => {
+      submitted.push(await request.json());
+      return HttpResponse.json(queued, { status: 202 });
+    }),
+    http.get("/api/operations/copy-cleanup-op", () =>
+      HttpResponse.json({
+        ...queued,
+        state: "failed",
+        stage: "finished",
+        updated_at: "2026-11-23T17:00:01Z",
+        cleanup_results: [{ artifact_id: artifactId, state: "succeeded" }],
       }),
     ),
   );
@@ -169,13 +205,31 @@ it("shows the original source path when selecting and confirming a copy", async 
     }),
   );
   fireEvent.click(
-    screen.getByRole("button", { name: "Очистить выбранные (1)" }),
+    screen.getByRole("checkbox", {
+      name: `${retryPath} — Предыдущая очистка не удалась`,
+    }),
   );
-  const dialog = screen.getByRole("dialog", {
+  fireEvent.click(
+    screen.getByRole("button", { name: "Очистить выбранные (2)" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
     name: "Очистить выбранные копии?",
   });
   expect(dialog).toHaveTextContent(sourcePath);
+  expect(dialog).toHaveTextContent(retryPath);
   expect(dialog).not.toHaveTextContent(artifactId);
+  expect(submitted).toHaveLength(0);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Подтвердить очистку" }),
+  );
+  const outcomes = await screen.findByRole("list", {
+    name: "Результаты очистки",
+  });
+  expect(within(outcomes).getByText(/Очищена/)).toHaveTextContent(artifactId);
+  expect(
+    within(outcomes).getByText(/Результат очистки не получен/),
+  ).toHaveTextContent(retryId);
+  expect(submitted).toEqual([{ artifact_ids: [artifactId, retryId] }]);
 });
 
 it("confirms the path and inventory count shown in the source removal dialog", async () => {

@@ -3,13 +3,10 @@ import { DirectoryPicker } from "../../components/DirectoryPicker";
 import { formStyles as styles } from "../../components/styles/formStyles";
 import {
 	Button,
-	Dialog,
-	Heading,
 	Input,
 	Label,
 	ListBox,
 	ListBoxItem,
-	Modal,
 	Popover,
 	Radio,
 	RadioGroup,
@@ -21,7 +18,8 @@ import type { SourceScanDemoProvider } from "../../fixtures/useSourceScanDemoPro
 import { type Locale, useI18n } from "../../i18n";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
 import type { SourceFiles } from "../library/catalogData";
-import { retainedCopyLabel } from "./retainedCopyPath";
+import { SourceArtifactCleanupView } from "./SourceArtifactCleanupView";
+import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
 import { SourceInspectorView } from "./SourceInspectorView";
 import { SourceInventoryView } from "./SourceInventoryView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
@@ -35,10 +33,7 @@ import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
 	blockStagedSourceQueue,
 	canRemoveSourceRoot,
-	eligibleSourceCopies,
 	processSourceQueue,
-	type RetainedSourceCopy,
-	removeEligibleCopy,
 	removeRootProcessingState,
 	retryCancelledSourceFile,
 	retrySourceStep,
@@ -146,10 +141,6 @@ export function SourcesScreen({
 		values?: Record<string, string | number>,
 	) => setNotice({ key, values });
 	const [removal, setRemoval] = useState<RootRemoval | null>(null);
-	const [copyRemoval, setCopyRemoval] = useState<{
-		id: string;
-		path: string;
-	} | null>(null);
 	const root = selectedRootId
 		? roots.find((item) => item.id === selectedRootId)
 		: undefined;
@@ -160,12 +151,16 @@ export function SourcesScreen({
 	const rootFiles = root
 		? processing.files.filter((file) => file.rootId === root.id)
 		: [];
-	const rootCopies = root
-		? processing.copies.filter((copy) => copy.rootId === root.id)
-		: [];
 
 	const updateRoots = onRoots;
 	const updateProcessing = onProcessingState;
+	const cleanup = useSourceArtifactCleanupDemoProvider({
+		locale,
+		roots,
+		files,
+		processing,
+		updateProcessing,
+	});
 	const hasActiveRootWork = (rootId: string) =>
 		scans.active(rootId) || !canRemoveSourceRoot(processing, rootId);
 	const statusLabel = (status: string) => {
@@ -184,9 +179,6 @@ export function SourcesScreen({
 		if (step.status === "queued" && !step.attempts) return m("audioNotChecked");
 		return statusLabel(step.status);
 	};
-	const copyPathLabel = (copy: RetainedSourceCopy) =>
-		retainedCopyLabel(copy, processing, roots, files) ??
-		m("copyPathUnavailable");
 	const requestRootRemoval = (root: SourceRoot) => {
 		if (hasActiveRootWork(root.id)) {
 			notify("rootActive");
@@ -516,38 +508,6 @@ export function SourcesScreen({
 									))}
 								</ul>
 							)}
-							<h3>{m("retainedCopies")}</h3>
-							<p>{m("copyOwnership")}</p>
-							{rootCopies.length === 0 ? (
-								<p>{m("noCopies")}</p>
-							) : (
-								<ul className="m-0 grid gap-2 pl-5">
-									{rootCopies.map((copy) => {
-										const copyPath = copyPathLabel(copy);
-										const eligible = eligibleSourceCopies(processing).some(
-											(item) => item.id === copy.id,
-										);
-										return (
-											<li key={copy.id}>
-												<code className="wrap-anywhere">{copyPath}</code> ·{" "}
-												{eligible ? m("copyEligible") : m("copyProtected")}
-												{eligible && (
-													<Button
-														aria-label={m("copyActionLabel", {
-															path: copyPath,
-														})}
-														onPress={() =>
-															setCopyRemoval({ id: copy.id, path: copyPath })
-														}
-													>
-														{m("removeCopy")}
-													</Button>
-												)}
-											</li>
-										);
-									})}
-								</ul>
-							)}
 						</section>
 						<p>{m("unavailablePublications")}</p>
 					</>
@@ -691,6 +651,7 @@ export function SourcesScreen({
 							if (source) startScan(source);
 						}}
 					/>
+					<SourceArtifactCleanupView {...cleanup} />
 					<p>{m("unavailablePublications")}</p>
 					<p>
 						{m("workDirectory")}: {workDirectory || "—"} ·{" "}
@@ -708,42 +669,6 @@ export function SourcesScreen({
 					}}
 				/>
 			)}
-			<Modal
-				isOpen={Boolean(copyRemoval)}
-				onOpenChange={(open) => {
-					if (!open) setCopyRemoval(null);
-				}}
-				isDismissable
-			>
-				<Dialog aria-label={m("copyDialogLabel")}>
-					<Heading slot="title" className="wrap-anywhere">
-						{m("copyConfirmTitle", { path: copyRemoval?.path ?? "" })}
-					</Heading>
-					<p>{m("copyOwnership")}</p>
-					<p>{m("copyConfirmRecheck")}</p>
-					<Button onPress={() => setCopyRemoval(null)}>{m("cancel")}</Button>
-					<Button
-						onPress={() => {
-							if (!copyRemoval) return;
-							if (
-								eligibleSourceCopies(processing).some(
-									(copy) => copy.id === copyRemoval.id,
-								)
-							) {
-								updateProcessing(
-									removeEligibleCopy(processing, copyRemoval.id),
-								);
-								notify("copyRemoved");
-							} else {
-								notify("copyProtected");
-							}
-							setCopyRemoval(null);
-						}}
-					>
-						{m("removeCopy")}
-					</Button>
-				</Dialog>
-			</Modal>
 			{removal && (
 				<SourceRootRemovalDialog
 					locale={locale}

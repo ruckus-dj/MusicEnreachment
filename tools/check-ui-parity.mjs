@@ -32,6 +32,7 @@ const pairs = [
     "features/sources",
     [
       "SourceAnalysisSteps.tsx",
+      "SourceArtifactCleanupView.tsx",
       "SourceInspectorView.tsx",
       "SourceInventoryView.tsx",
       "SourceRootHeadingView.tsx",

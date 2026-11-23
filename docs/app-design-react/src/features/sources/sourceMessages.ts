@@ -80,21 +80,11 @@ export const sourcesMessages = createNamespace({
 		retry: "Retry",
 		retryCancelled: "Retry cancelled work",
 		retryStep: "Retry {step}",
-		retainedCopies: "Retained work copies",
-		copyOwnership:
-			"These copies belong to the application. Removing a copy never changes the original source or current publications.",
-		noCopies: "No retained work copies.",
-		copyProtected: "Protected until processing succeeds",
-		copyEligible: "Eligible for cleanup",
 		copyPathUnavailable: "Source path unavailable",
-		copyActionLabel: "Remove retained copy {path}",
-		copyDialogLabel: "Remove retained copy confirmation",
-		copyConfirmTitle: "Remove retained copy {path}?",
-		copyConfirmRecheck:
-			"Cleanup eligibility is checked again before confirmation. The original source and current publications are not changed.",
-		removeCopy: "Remove retained copy",
-		copyRemoved:
-			"The application-owned work copy was removed from the prototype state.",
+		cleanupSelectionStale:
+			"The selected copies are no longer all eligible. Refresh the selection and choose again.",
+		cleanupCopyFailed: "The temporary copy could not be cleaned up.",
+		cleanupBatchFailed: "One or more temporary copies could not be cleaned up.",
 		removeRoot: "Remove source",
 		rootRemoved: "Source removed from the prototype inventory.",
 		rootActive:
@@ -194,20 +184,12 @@ export const sourcesMessages = createNamespace({
 		retry: "Повторить",
 		retryCancelled: "Повторить отменённую обработку",
 		retryStep: "Повторить: {step}",
-		retainedCopies: "Сохранённые рабочие копии",
-		copyOwnership:
-			"Эти копии принадлежат приложению. Их удаление не меняет исходники и текущие публикации.",
-		noCopies: "Сохранённых рабочих копий нет.",
-		copyProtected: "Защищена до успешного завершения обработки",
-		copyEligible: "Можно очистить",
 		copyPathUnavailable: "Путь в источнике недоступен",
-		copyActionLabel: "Удалить рабочую копию {path}",
-		copyDialogLabel: "Подтверждение удаления рабочей копии",
-		copyConfirmTitle: "Удалить рабочую копию {path}?",
-		copyConfirmRecheck:
-			"Перед подтверждением право на очистку проверяется повторно. Исходный файл и текущие публикации не изменяются.",
-		removeCopy: "Удалить рабочую копию",
-		copyRemoved: "Рабочая копия приложения удалена из состояния макета.",
+		cleanupSelectionStale:
+			"Выбранные копии больше не все доступны для очистки. Обновите подборку и выберите заново.",
+		cleanupCopyFailed: "Не удалось очистить временную копию.",
+		cleanupBatchFailed:
+			"Не удалось очистить одну или несколько временных копий.",
 		removeRoot: "Удалить источник",
 		rootRemoved: "Источник удалён из инвентаря макета.",
 		rootActive:

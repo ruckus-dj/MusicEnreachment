@@ -32,6 +32,7 @@ export function useSourceArtifactCleanup() {
   >([]);
   const [batchCount, setBatchCount] = useState<number>();
   const [selected, setSelected] = useState<string[]>([]);
+  const [submitted, setSubmitted] = useState<string[]>([]);
   const [operation, setOperation] = useState<OperationResponse>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -148,6 +149,7 @@ export function useSourceArtifactCleanup() {
         throw requestFailure(response);
       }
       wasPending.current = true;
+      setSubmitted([...ids]);
       operationSnapshot.current = response.data;
       setOperation(response.data);
     } catch (reason) {
@@ -169,6 +171,7 @@ export function useSourceArtifactCleanup() {
     candidates,
     batchCount,
     selected,
+    submitted,
     operation,
     results,
     loading,

@@ -195,22 +195,6 @@
   text-decoration: underline;
 }
 
-.sources-dialog {
-  position: fixed;
-  inset: 50% auto auto 50%;
-  transform: translate(-50%, -50%);
-  z-index: 10;
-  width: min(92vw, 560px);
-  max-height: 85dvh;
-  overflow: auto;
-  padding: 12px;
-  color: var(--sources-ink);
-  background: var(--sources-surface);
-  border: 1px solid var(--sources-line);
-  border-radius: 5px;
-  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 50%);
-}
-
 @media (max-width: 899px) {
   .sources-summary > div {
     grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);

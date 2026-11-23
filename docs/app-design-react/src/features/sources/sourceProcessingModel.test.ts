@@ -9,7 +9,6 @@ import {
 	eligibleSourceCopies,
 	initialSourceProcessingState,
 	processSourceQueue,
-	removeEligibleCopy,
 	removeRootProcessingState,
 	retrySourceStep,
 	sourceProcessingLocks,
@@ -164,7 +163,7 @@ it("preserves staged processing intent without locking Settings when a work dire
 	expect(resumed.files.every((file) => file.status === "failed")).toBe(true);
 });
 
-it("removes only eligible app-owned copies and clears only a removed root's processing state", () => {
+it("marks only app-owned copies with completed owners as eligible and clears only a removed root's processing state", () => {
 	const staged = processSourceQueue(
 		createSourceScan(
 			initialSourceProcessingState,
@@ -175,16 +174,16 @@ it("removes only eligible app-owned copies and clears only a removed root's proc
 		"root-inbox",
 	);
 	const first = staged.files[0];
-	const copyId = first?.copyId;
-	if (!first || !copyId) throw new Error("Missing staged work-copy fixture");
-	expect(removeEligibleCopy(staged, copyId)).toBe(staged);
+	if (!first) throw new Error("Missing staged work-copy fixture");
+	expect(eligibleSourceCopies(staged)).toEqual([]);
 	const completed = processSourceQueue(
 		retrySourceStep(staged, first.id, "fingerprint"),
 		"root-inbox",
 	);
-	const removedCopy = removeEligibleCopy(completed, copyId);
-	expect(removedCopy.copies).toHaveLength(completed.copies.length - 1);
-	expect(removedCopy.files).toEqual(completed.files);
+	expect(
+		eligibleSourceCopies(completed).map((copy) => copy.ownerFileId),
+	).toEqual([first.id]);
+	expect(completed.copies).toHaveLength(staged.copies.length);
 
 	const otherRoot = createSourceScan(
 		completed,

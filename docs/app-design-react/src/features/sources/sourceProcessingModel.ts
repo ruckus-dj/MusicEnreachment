@@ -239,20 +239,6 @@ export function retrySourceStep(
 	return changed ? { ...state, files } : state;
 }
 
-export function removeEligibleCopy(
-	state: SourceProcessingState,
-	copyId: string,
-): SourceProcessingState {
-	const copy = state.copies.find((item) => item.id === copyId);
-	if (!copy) return state;
-	const owner = state.files.find((file) => file.id === copy.ownerFileId);
-	if (!owner || owner.status !== "completed") return state;
-	return {
-		...state,
-		copies: state.copies.filter((item) => item.id !== copyId),
-	};
-}
-
 export function removeRootProcessingState(
 	state: SourceProcessingState,
 	rootId: string,

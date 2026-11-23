@@ -70,6 +70,7 @@ source channel, а fixture макета такого происхождения 
 | Источники: список, заголовок корня, сканирование и таблица инвентаря | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
 | Источники: инспектор файла, этапы анализа и технический результат | `features/sources/SourceInspectorView.tsx`, `SourceAnalysisSteps.tsx`, `SourceTechnicalResult.tsx`, `sourceInspectorMessages.ts`, `sourceInspectorModel.ts` | Те же пути |
 | Источники: подтверждение удаления корня | `features/sources/SourceRootRemovalDialog.tsx` | Тот же путь |
+| Источники: пакетный выбор, подтверждение и результаты очистки временных копий | `features/sources/SourceArtifactCleanupView.tsx` | Тот же путь |
 | Операции: список, фильтры, поиск, пагинация, раскрытие и подтверждение прерывания перепубликаций | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts`, `MatchingRecheckAbandonDialog.tsx` | Те же пути |
 | Входящие: обзор групп и действия с файлами | `features/incoming/IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx`, `components/AppButton.tsx` | Те же пути |
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
@@ -106,8 +107,9 @@ source channel, а fixture макета такого происхождения 
   подставляет отсутствующие измерения, отпечатки и исходный вывод ffprobe.
   Диалог удаления корня использует одинаковое представление; приложение
   подтверждает путь и число записей через сервер, макет проверяет свои
-  демонстрационные данные. Каркас каталога и действия с временными копиями
-  ещё различаются.
+  демонстрационные данные. Очистка временных копий представлена общим списком:
+  провайдер приложения получает допустимые записи и результаты от сервера;
+  макет меняет только свои данные. Каркас карточки каталога ещё различается.
 - **Медиатека, входящие и публикация.** Общие строки и части рабочих областей
   уже перенесены. В композиции маршрутов, редакторах структурированных метаданных,
   диалогах и каталогах переводов остаются разные реализации. Перед копированием

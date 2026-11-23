@@ -87,6 +87,7 @@ docs/app-design-react/src/features/setup/setupToolsLifecycle.ts
 docs/app-design-react/src/features/setup/useSetupGenreCatalogDemoProvider.ts
 docs/app-design-react/src/features/sources/SourcesScreen.tsx
 docs/app-design-react/src/features/sources/retainedCopyPath.ts
+docs/app-design-react/src/features/sources/sourceArtifactCleanupDemoProvider.ts
 docs/app-design-react/src/features/sources/sourceDemoRoute.ts
 docs/app-design-react/src/features/sources/sourceInspectorDemoProvider.ts
 docs/app-design-react/src/features/sources/sourceInventory.ts
