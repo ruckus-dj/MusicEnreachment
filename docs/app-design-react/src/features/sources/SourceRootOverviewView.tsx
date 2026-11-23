@@ -15,7 +15,7 @@ export type SourceRootOverviewViewProps = {
 	name: string;
 	path: string;
 	mode: "in_place" | "staged";
-	modeControl?: ReactNode;
+	modeNote?: ReactNode;
 	availability: SourceRootOverviewTone;
 	availabilityNote?: string;
 	lastScan: { label: string; dateTime?: string };
@@ -84,7 +84,7 @@ export function SourceRootOverviewView({
 	name,
 	path,
 	mode,
-	modeControl,
+	modeNote,
 	availability,
 	availabilityNote,
 	lastScan,
@@ -99,7 +99,16 @@ export function SourceRootOverviewView({
 			label: text.path,
 			value: <code className="[overflow-wrap:anywhere]">{path}</code>,
 		},
-		{ key: "mode", label: text.mode, value: modeControl ?? text[mode] },
+		{
+			key: "mode",
+			label: text.mode,
+			value: (
+				<>
+					{text[mode]}
+					{modeNote && <span className={note}>{modeNote}</span>}
+				</>
+			),
+		},
 		{
 			key: "availability",
 			label: text.availability,

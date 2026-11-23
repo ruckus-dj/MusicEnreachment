@@ -71,21 +71,38 @@ func (fixture *sourceRootRepositoryFixture) ListSourceRoots(context.Context) ([]
 	return roots, nil
 }
 
-func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, root *persistence.SourceRoot) error {
-	for index, stored := range fixture.roots {
-		if stored.ID == root.ID {
-			if fixture.busy && (stored.ConfiguredPath != root.ConfiguredPath || stored.Enabled != root.Enabled) {
-				return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
-			}
-			fixture.updated++
-			if root.ProcessingMode == "" {
-				root.ProcessingMode = stored.ProcessingMode
-			}
-			fixture.roots[index] = root
-			return nil
+func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
+	for _, stored := range fixture.roots {
+		if stored.ID != patch.ID {
+			continue
 		}
+		if stored.ScanGeneration != patch.ExpectedScanGeneration {
+			return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root changed since it was read")
+		}
+		result := persistence.SourceRootUpdateResult{EnabledBefore: stored.Enabled}
+		displayNameChanged := patch.DisplayName != nil && *patch.DisplayName != stored.DisplayName
+		configuredPathChanged := patch.ConfiguredPath != nil && *patch.ConfiguredPath != stored.ConfiguredPath
+		processingModeChanged := patch.ProcessingMode != nil && *patch.ProcessingMode != stored.ProcessingMode
+		enabledChanged := patch.Enabled != nil && *patch.Enabled != stored.Enabled
+		if fixture.busy && (configuredPathChanged || enabledChanged) {
+			return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
+		}
+		if displayNameChanged {
+			stored.DisplayName = *patch.DisplayName
+		}
+		if configuredPathChanged {
+			stored.ConfiguredPath = *patch.ConfiguredPath
+		}
+		if processingModeChanged {
+			stored.ProcessingMode = *patch.ProcessingMode
+		}
+		if enabledChanged {
+			stored.Enabled = *patch.Enabled
+		}
+		fixture.updated++
+		return result, nil
 	}
-	return fmt.Errorf("update source root: root does not exist")
+	return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root does not exist")
 }
 
 func (fixture *sourceRootRepositoryFixture) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {
@@ -552,11 +569,11 @@ type modeChangingSourceRootRepository struct {
 	*sourceRootRepositoryFixture
 }
 
-func (repository modeChangingSourceRootRepository) UpdateSourceRoot(ctx context.Context, root *persistence.SourceRoot) error {
+func (repository modeChangingSourceRootRepository) UpdateSourceRoot(ctx context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
 	// Simulate a mode edit that commits after the service read but before this
 	// unrelated edit reaches the repository.
 	repository.roots[0].ProcessingMode = service.SourceProcessingModeStaged
-	return repository.sourceRootRepositoryFixture.UpdateSourceRoot(ctx, root)
+	return repository.sourceRootRepositoryFixture.UpdateSourceRoot(ctx, patch)
 }
 
 func TestNameOnlyEditPreservesConcurrentProcessingModeChange(t *testing.T) {

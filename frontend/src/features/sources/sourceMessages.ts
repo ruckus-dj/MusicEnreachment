@@ -9,11 +9,9 @@ const en = {
   retryLoad: "Retry loading",
   sourcesLoadError: "Could not load sources.",
   name: "Source name",
-  serverPath: "Server path",
   processingMode: "Processing mode",
   inPlace: "In place",
   staged: "Staged copy",
-  invalidEdit: "Enter a source name and an absolute server path.",
   cancel: "Cancel",
   connectedSources: "Connected sources",
   noneRegistered: "No sources are registered.",
@@ -41,17 +39,7 @@ const en = {
   serverDirectory: "Server directory",
   availabilityLabel: "Availability",
   lastSuccessfulScan: "Last successful scan",
-  editTitle: "Name, path, and mode",
   sourceName: "Source name",
-  modeChange:
-    "Mode changes apply only to future processing and do not rerun analysis of the current inventory.",
-  pathChange:
-    "The path belongs to the server, not this computer. Changing it does not delete the inventory: previous records remain visible as belonging to the previous path until a scan of the new path succeeds.",
-  saveSource: "Save source",
-  sourceSaved: "Source saved.",
-  sourceSavedStale:
-    "Source saved. The inventory still belongs to the previous path {path} and will be replaced after a successful scan of the new path.",
-  editSource: "Edit source",
   loadingLocations: "Loading source…",
   inspectorPath: "File path",
   inspector: "File inspector",
@@ -189,6 +177,8 @@ const en = {
   readUnavailable: "Could not read the source.",
   createUnavailable: "Could not register the source.",
   editUnavailable: "Could not update the source.",
+  sourceEditConflict:
+    "The source is busy or changed while saving. Check its state and try again.",
   deleteUnavailable: "Could not delete the source.",
   sourceConflict:
     "The source is used by an active scan. Path changes, disabling, and deletion were rejected; retry after the scan completes.",
@@ -236,11 +226,9 @@ const ru: Record<keyof typeof en, string> = {
   retryLoad: "Повторить загрузку",
   sourcesLoadError: "Не удалось загрузить источники.",
   name: "Имя каталога",
-  serverPath: "Путь на сервере",
   processingMode: "Режим обработки",
   inPlace: "На месте",
   staged: "Через рабочую копию",
-  invalidEdit: "Укажите имя каталога и абсолютный путь на сервере.",
   cancel: "Отмена",
   connectedSources: "Подключённые каталоги",
   noneRegistered: "Ни один каталог не зарегистрирован.",
@@ -268,14 +256,7 @@ const ru: Record<keyof typeof en, string> = {
   serverDirectory: "Путь на сервере",
   availabilityLabel: "Доступность",
   lastSuccessfulScan: "Последнее успешное сканирование",
-  editTitle: "Имя, путь и режим",
   sourceName: "Имя каталога",
-  modeChange:
-    "Смена режима влияет только на будущую обработку и не запускает повторный анализ текущего инвентаря.",
-  pathChange:
-    "Путь принадлежит серверу, а не этому компьютеру. Смена пути не удаляет инвентарь: прежние записи остаются видимыми как относящиеся к прежнему пути, пока новое сканирование не завершится успешно.",
-  saveSource: "Сохранить каталог",
-  editSource: "Изменить каталог",
   loadingLocations: "Загрузка каталога…",
   inspectorPath: "Путь к файлу",
   inspector: "Инспектор файла",
@@ -366,9 +347,6 @@ const ru: Record<keyof typeof en, string> = {
   sourceTags: "Исходные теги",
   noSourceTags: "Исходные теги отсутствуют.",
   rawFfprobe: "Исходный JSON ffprobe",
-  sourceSaved: "Каталог сохранён.",
-  sourceSavedStale:
-    "Каталог сохранён. Инвентарь относится к прежнему пути {path} и заменится после успешного сканирования нового пути.",
   artifactPreparation: "Подготовка",
   artifactAcquiring: "Получение артефакта",
   artifactReady: "Готов",
@@ -430,6 +408,8 @@ const ru: Record<keyof typeof en, string> = {
   readUnavailable: "Не удалось прочитать каталог.",
   createUnavailable: "Не удалось зарегистрировать каталог.",
   editUnavailable: "Не удалось обновить каталог.",
+  sourceEditConflict:
+    "Источник занят или изменился во время сохранения. Проверьте его состояние и повторите попытку.",
   deleteUnavailable: "Не удалось удалить каталог.",
   sourceConflict:
     "Каталог участвует в активном сканировании. Изменение пути, отключение и удаление отклонены сервером: повторите после завершения сканирования.",
@@ -456,11 +436,6 @@ const ru: Record<keyof typeof en, string> = {
 };
 
 export type SourceMessageKey = keyof typeof en;
-export type SourceMessage = {
-  key: SourceMessageKey;
-  values?: Record<string, string | number>;
-};
-
 export function sourceMessage(
   locale: Locale,
   key: SourceMessageKey,

@@ -16,8 +16,6 @@ export const sourcesMessages = createNamespace({
 		availabilityColumn: "Availability",
 		checkedColumn: "Last checked",
 		actionsColumn: "Actions",
-		modeFor: "Processing mode: {name}",
-		futureMode: "Changes apply to future processing.",
 		workDirectory: "Shared work directory",
 		configure: "Configure",
 		configureInSettings: "Configure in Settings",
@@ -66,6 +64,8 @@ export const sourcesMessages = createNamespace({
 		rootRemoved: "Source removed from the prototype inventory.",
 		rootActive:
 			"Removal blocked: this source has queued or running processing. Wait for it to finish, then try again.",
+		pathScanActive:
+			"The folder cannot be changed while this source is being scanned.",
 		rootChanged:
 			"Confirmation is out of date because this source inventory changed. Review the current source and try again.",
 		unavailablePublications:
@@ -93,8 +93,6 @@ export const sourcesMessages = createNamespace({
 		availabilityColumn: "Доступность",
 		checkedColumn: "Последняя проверка",
 		actionsColumn: "Действия",
-		modeFor: "Режим обработки: {name}",
-		futureMode: "Изменение влияет на будущую обработку.",
 		workDirectory: "Общая рабочая папка",
 		configure: "Настроить",
 		configureInSettings: "Настроить в Настройках",
@@ -146,6 +144,8 @@ export const sourcesMessages = createNamespace({
 		rootRemoved: "Источник удалён из инвентаря макета.",
 		rootActive:
 			"Удаление заблокировано: для этого источника есть записи в очереди или выполняется обработка. Дождитесь завершения и повторите попытку.",
+		pathScanActive:
+			"Каталог нельзя изменить, пока выполняется сканирование источника.",
 		rootChanged:
 			"Подтверждение устарело: инвентарь источника изменился. Проверьте текущее состояние и повторите попытку.",
 		unavailablePublications:

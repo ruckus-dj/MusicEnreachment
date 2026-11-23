@@ -110,6 +110,25 @@ type SourceScanUnavailable struct {
 	ExpectedJobID   int64
 }
 
+// SourceRootPatch is one explicit edit of a source root. A nil field keeps the
+// value stored in the locked row, so a patch built from an earlier read cannot
+// restore a field that edit omitted. ExpectedScanGeneration is the generation
+// the caller read; the update is refused if a scan apply advanced it.
+type SourceRootPatch struct {
+	ID                     uuid.UUID
+	ExpectedScanGeneration int64
+	DisplayName            *string
+	ConfiguredPath         *string
+	ProcessingMode         *string
+	Enabled                *bool
+}
+
+// SourceRootUpdateResult reports the locked state before the patch was applied,
+// so a caller reacts to an actual transition instead of its pre-lock read.
+type SourceRootUpdateResult struct {
+	EnabledBefore bool
+}
+
 type SourceInventoryRepository struct {
 	db bun.IDB
 }
@@ -182,27 +201,33 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 	return roots, nil
 }
 
-// UpdateSourceRoot edits the operator-owned fields of a root: its display name,
-// processing mode, enabled flag and configured path. The caller passes the values it read;
-// the edit is refused when another writer advanced the root's generation between
-// that read and this call, which is the value every scan apply moves. The row is
-// locked for the read, the comparison and the write, so an edit racing a scan
-// apply loses instead of resurrecting a generation the apply already advanced;
-// a competing path is rejected by the schema's unique constraint.
+// UpdateSourceRoot applies one explicit patch to the operator-owned fields of a
+// root: its display name, processing mode, enabled flag and configured path. A
+// nil field is never written, so an edit that omits the configured path cannot
+// restore a path another writer changed. The patch carries the generation the
+// caller read; the edit is refused when another writer advanced the root's
+// generation between that read and this call, which is the value every scan
+// apply moves. The row is locked for the read, the comparison and the write, so
+// an edit racing a scan apply loses instead of resurrecting a generation the
+// apply already advanced; a competing path is rejected by the schema's unique
+// constraint.
+//
+// Guards are evaluated against the locked row and only when the patch actually
+// changes the guarded field: a configured_path or enabled change refuses while a
+// scan of the root is queued or running, because the path the running scan
+// carries is the one it would publish and a disabled root must not keep a scan
+// it no longer owns. A processing-mode change is serialized without blocking
+// queued work, which reads the current mode at execution. A display-name change
+// is unrelated to queued work.
 //
 // Changing configured_path deliberately leaves inventory_path, scan_generation
 // and locations alone: the previous inventory stays readable but reports Stale()
 // until a successful scan of the new path replaces it, which is what keeps the
-// old files from being attributed to the new path.
-//
-// A configured_path or enabled change is refused with ErrSourceRootActiveScan
-// while a scan of the root is queued or running: the path the running scan
-// carries is the one it would publish, and a disabled root must not keep a scan
-// it no longer owns. A processing-mode change is serialized without blocking
-// queued work, which reads the current mode at execution. The operation source-root
-// lock makes the check atomic against a scan or analysis starting.
-func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
-	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+// old files from being attributed to the new path. The update invalidates the
+// incoming grouping because the operator-visible root set changed.
+func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, patch SourceRootPatch) (SourceRootUpdateResult, error) {
+	result := SourceRootUpdateResult{}
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
 			return err
 		}
@@ -210,17 +235,22 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 			return fmt.Errorf("update source root: lock fingerprint mutations: %w", err)
 		}
 		current := new(SourceRoot)
-		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", cas.ID).Scan(ctx, current); err != nil {
+		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", patch.ID).Scan(ctx, current); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("update source root: root does not exist")
 			}
 			return fmt.Errorf("update source root: lock source root: %w", err)
 		}
-		if current.ScanGeneration != cas.ScanGeneration {
+		result.EnabledBefore = current.Enabled
+		if current.ScanGeneration != patch.ExpectedScanGeneration {
 			return fmt.Errorf("update source root: root changed since it was read")
 		}
-		if cas.ConfiguredPath != current.ConfiguredPath || cas.Enabled != current.Enabled {
-			active, err := activeSourceScan(ctx, tx, cas.ID)
+		displayNameChanged := patch.DisplayName != nil && *patch.DisplayName != current.DisplayName
+		configuredPathChanged := patch.ConfiguredPath != nil && *patch.ConfiguredPath != current.ConfiguredPath
+		processingModeChanged := patch.ProcessingMode != nil && *patch.ProcessingMode != current.ProcessingMode
+		enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
+		if configuredPathChanged || enabledChanged {
+			active, err := activeSourceScan(ctx, tx, patch.ID)
 			if err != nil {
 				return fmt.Errorf("update source root: check active scan: %w", err)
 			}
@@ -228,8 +258,8 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
 			}
 		}
-		if cas.ConfiguredPath != current.ConfiguredPath {
-			if err := validateSourceRootAgainstWorkDirectory(ctx, tx, cas.ConfiguredPath); err != nil {
+		if configuredPathChanged {
+			if err := validateSourceRootAgainstWorkDirectory(ctx, tx, *patch.ConfiguredPath); err != nil {
 				return err
 			}
 			held, err := sourceHoldExists(ctx, tx, current.ID, uuid.Nil, uuid.Nil)
@@ -240,16 +270,23 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
 			}
 		}
-		update := tx.NewUpdate().Model((*SourceRoot)(nil)).
-			Set("display_name = ?", cas.DisplayName).
-			Set("configured_path = ?", cas.ConfiguredPath).
-			Set("enabled = ?", cas.Enabled).
-			Set("updated_at = now()").
-			Where("id = ?", cas.ID)
-		if cas.ProcessingMode != "" {
-			update = update.Set("processing_mode = ?", cas.ProcessingMode)
+		if !displayNameChanged && !configuredPathChanged && !processingModeChanged && !enabledChanged {
+			return nil
 		}
-		if _, err := update.Exec(ctx); err != nil {
+		update := tx.NewUpdate().Model((*SourceRoot)(nil)).Where("id = ?", patch.ID)
+		if displayNameChanged {
+			update = update.Set("display_name = ?", *patch.DisplayName)
+		}
+		if configuredPathChanged {
+			update = update.Set("configured_path = ?", *patch.ConfiguredPath)
+		}
+		if processingModeChanged {
+			update = update.Set("processing_mode = ?", *patch.ProcessingMode)
+		}
+		if enabledChanged {
+			update = update.Set("enabled = ?", *patch.Enabled)
+		}
+		if _, err := update.Set("updated_at = now()").Exec(ctx); err != nil {
 			return fmt.Errorf("update source root: %w", err)
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
@@ -257,6 +294,10 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 		}
 		return nil
 	})
+	if err != nil {
+		return SourceRootUpdateResult{}, err
+	}
+	return result, nil
 }
 
 // DeleteSourceRoot removes a root and every one of its locations in one

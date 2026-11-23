@@ -6,7 +6,10 @@ import type {
 	SourceInspectorStepStatus,
 	SourceInspectorViewProps,
 } from "./sourceInspectorModel";
-import { rootLocations } from "./sourceInventory";
+import {
+	inventoryPathStale,
+	retainedInventoryLocations,
+} from "./sourceInventory";
 import { sourceMessage } from "./sourceMessages";
 import {
 	processSourceQueue,
@@ -40,9 +43,12 @@ export function sourceInspectorDemoProvider({
 	workDirectory: string;
 	scanning: boolean;
 }): SourceInspectorViewProps {
-	const location = root?.lastSuccessfulScanAt
-		? rootLocations(files, rootId).find((item) => item.id === locationId)
+	const location = root
+		? retainedInventoryLocations(files, root).find(
+				(item) => item.id === locationId,
+			)
 		: undefined;
+	const stale = root ? inventoryPathStale(root) : false;
 	const fileId = `${rootId}:${locationId}`;
 	const work = location
 		? processing.files.find((item) => item.id === fileId)
@@ -55,6 +61,7 @@ export function sourceInspectorDemoProvider({
 		root?.available === true &&
 		!scanning &&
 		!pending &&
+		!stale &&
 		(root.mode !== "staged" || !!workDirectory);
 	const steps: Partial<
 		Record<SourceInspectorStepName, SourceInspectorStepStatus>
@@ -83,7 +90,10 @@ export function sourceInspectorDemoProvider({
 	const copy = work?.copyId
 		? processing.copies.find((item) => item.id === work.copyId)
 		: undefined;
-	const prefix = root ? `${root.path.replace(/\/+$/, "")}/` : undefined;
+	const inventoryPath = root?.inventoryPath ?? root?.path;
+	const prefix = inventoryPath
+		? `${inventoryPath.replace(/\/+$/, "")}/`
+		: undefined;
 	const relativePath =
 		prefix && location?.path.startsWith(prefix)
 			? location.path.slice(prefix.length)
@@ -96,7 +106,7 @@ export function sourceInspectorDemoProvider({
 			root && location
 				? {
 						relativePath,
-						inventoryPath: relativePath === undefined ? undefined : root.path,
+						inventoryPath,
 						sizeBytes: location.size,
 						modifiedAt:
 							location.mtime && Number.isFinite(Date.parse(location.mtime))
@@ -109,7 +119,7 @@ export function sourceInspectorDemoProvider({
 									? "available"
 									: "unavailable",
 						enabled: true,
-						stale: false,
+						stale,
 					}
 				: undefined,
 		steps,

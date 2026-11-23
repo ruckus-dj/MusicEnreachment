@@ -1,13 +1,6 @@
-import { useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import {
-	Button,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	Select,
-	SelectValue,
-} from "../../components/ui";
+import { Button } from "../../components/ui";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -27,14 +20,22 @@ import {
 	type SourceRegistrationErrorKey,
 	useSourceRegistrationFocus,
 } from "./SourceRegistrationView";
+import { SourceRootDetailView } from "./SourceRootDetailView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
-import { SourceRootOverviewView } from "./SourceRootOverviewView";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
+import {
+	SourceRootSettingsView,
+	type SourceRootChange,
+} from "./SourceRootSettingsView";
 import { SourceScanPanel } from "./SourceScanPanel";
 import { demoSourceLocationHref } from "./sourceDemoRoute";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
-import { rootLocations } from "./sourceInventory";
+import {
+	inventoryPathStale,
+	retainedInventoryLocations,
+	rootLocations,
+} from "./sourceInventory";
 import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
 	blockStagedSourceQueue,
@@ -59,6 +60,11 @@ export interface SourceRoot {
 	lastSuccessfulScanAt?: string;
 	/** Inventory generation recorded by that same scan. */
 	inventoryCount?: number;
+	/** Folder whose successful scan produced the current inventory. */
+	inventoryPath?: string;
+	/** The retained inventory covers only locations inside that scanned folder. */
+	fixturePath?: string;
+	/** The inventory still belongs to a previous folder until the next scan. */
 }
 export const initialSourceRoots: SourceRoot[] = [
 	{
@@ -118,7 +124,7 @@ export function SourcesScreen({
 	onProcessingState,
 }: {
 	roots: SourceRoot[];
-	onRoots: (roots: SourceRoot[]) => void;
+	onRoots: Dispatch<SetStateAction<SourceRoot[]>>;
 	files: SourceFiles;
 	onRemove: (rootId: string) => void;
 	selectedRootId?: string;
@@ -144,6 +150,15 @@ export function SourcesScreen({
 		key: SourceMessageKey;
 		values?: Record<string, string | number>;
 	} | null>(null);
+	const [settingsError, setSettingsError] = useState<{
+		rootId: string;
+		key: "pathScanActive" | "pathOverlap";
+	} | null>(null);
+	useEffect(() => {
+		setSettingsError((current) =>
+			current && current.rootId !== selectedRootId ? null : current,
+		);
+	}, [selectedRootId]);
 	const notify = (
 		key: SourceMessageKey,
 		values?: Record<string, string | number>,
@@ -153,9 +168,14 @@ export function SourcesScreen({
 		? roots.find((item) => item.id === selectedRootId)
 		: undefined;
 	const demoScanState = root ? scans.states[root.id] : undefined;
-	const inventoryLocations = root?.lastSuccessfulScanAt
-		? rootLocations(files, root.id)
+	const inventoryLocations = root
+		? retainedInventoryLocations(files, root)
 		: [];
+	const retryableInventory = new Set(
+		root && !scans.active(root.id) && !inventoryPathStale(root)
+			? inventoryLocations.map((location) => `${root.id}:${location.id}`)
+			: [],
+	);
 	const rootFiles = root
 		? processing.files.filter((file) => file.rootId === root.id)
 		: [];
@@ -233,6 +253,47 @@ export function SourcesScreen({
 		// or invents scan results.
 		window.location.hash = `sources/${encodeURIComponent(id)}`;
 	};
+	const saveRoot = async (change: SourceRootChange): Promise<boolean> => {
+		if (!root) return false;
+		setSettingsError(null);
+		if (change.field === "path") {
+			if (scans.active(root.id)) {
+				setSettingsError({ rootId: root.id, key: "pathScanActive" });
+				return false;
+			}
+			if (
+				overlapsAnyDemoPath(change.value, [
+					workDirectory,
+					toolsPath,
+					currentOutput,
+				])
+			) {
+				setSettingsError({
+					rootId: root.id,
+					key: "pathOverlap",
+				});
+				return false;
+			}
+		}
+		updateRoots((current) =>
+			current.map((item) => {
+				if (item.id !== root.id) return item;
+				switch (change.field) {
+					case "name":
+						return { ...item, name: change.value };
+					case "mode":
+						return { ...item, mode: change.value };
+					case "path":
+						return {
+							...item,
+							path: change.value,
+							fixturePath: item.fixturePath ?? item.path,
+						};
+				}
+			}),
+		);
+		return true;
+	};
 
 	const scanLabel = root?.lastSuccessfulScanAt
 		? scanDate(locale, root.lastSuccessfulScanAt)
@@ -296,133 +357,127 @@ export function SourcesScreen({
 		<section className={styles.page}>
 			{selectedRootId ? (
 				root ? (
-					<>
-						<SourceRootHeadingView
-							title={root.name}
-							path={root.path}
-							back={{ href: "#sources", label: m("backToSources") }}
-							incoming={
-								root.available === true
-									? { href: "#review", label: m("reviewGroups") }
-									: undefined
-							}
-						/>
-						{noticeNode}
-						<SourceScanPanel
-							locale={locale}
-							state={
-								demoScanState?.kind === "fixtureFailure"
-									? { kind: "failed", message: m("scanFailedFixture") }
-									: (demoScanState ?? { kind: "idle" })
-							}
-							onStart={() => startScan(root)}
-							onRetry={() => startScan(root)}
-							startDisabled={root.available === false}
-						/>
-						{inventoryLocations.length > 0 && (
-							<SourceInventoryView
-								locale={locale}
-								rows={inventoryLocations.map((location) => {
-									const observed = rootFiles.find(
-										(item) => item.id === `${root.id}:${location.id}`,
-									);
-									const step = observed?.steps.find(
-										(item) => item.id === "audio_inspection",
-									);
-									const modified = location.mtime
-										? new Date(location.mtime)
-										: null;
-									return {
-										id: location.id,
-										path: location.path,
-										href: demoSourceLocationHref(root.id, location.id),
-										size:
-											location.size === undefined
-												? "—"
-												: new Intl.NumberFormat(locale, {
-														style: "unit",
-														unit: "byte",
-													}).format(location.size),
-										modified:
-											modified && Number.isFinite(modified.getTime())
-												? new Intl.DateTimeFormat(locale, {
-														dateStyle: "short",
-														timeStyle: "short",
-													}).format(modified)
-												: undefined,
-										status: step ? audioStepLabel(step) : m("audioNotChecked"),
-										statusCode:
-											step?.status === "failed" ? "probe_error" : undefined,
-									};
-								})}
+					<SourceRootDetailView
+						locale={locale}
+						heading={
+							<SourceRootHeadingView
+								title={root.name}
+								path={root.path}
+								back={{ href: "#sources", label: m("backToSources") }}
+								incoming={
+									root.available === true
+										? { href: "#review", label: m("reviewGroups") }
+										: undefined
+								}
 							/>
-						)}
-						<SourceRootOverviewView
-							locale={locale}
-							name={root.name}
-							path={root.path}
-							mode={root.mode}
-							modeControl={
-								<>
-									<Select
-										selectedKey={root.mode}
-										aria-label={m("modeFor", { name: root.name })}
-										onSelectionChange={(key) => {
-											const next = String(key) as Mode;
-											updateRoots(
-												roots.map((item) =>
-													item.id === root.id ? { ...item, mode: next } : item,
-												),
-											);
-										}}
-									>
-										<Button>
-											<SelectValue />
-										</Button>
-										<Popover>
-											<ListBox>
-												<ListBoxItem id="in_place">
-													{sourceRegistrationMessages[locale].inPlace}
-												</ListBoxItem>
-												<ListBoxItem id="staged">
-													{sourceRegistrationMessages[locale].staged}
-												</ListBoxItem>
-											</ListBox>
-										</Popover>
-									</Select>
-									<p className="my-1 text-xs text-[var(--muted)]">
-										{m("futureMode")}
-									</p>
-									{root.mode === "staged" && (
-										<p className="my-1 text-xs text-[var(--muted)]">
-											{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-											<a href="#settings">{m("configure")}</a>
-										</p>
-									)}
-								</>
-							}
-							availability={
+						}
+						status={noticeNode}
+						scan={
+							<SourceScanPanel
+								locale={locale}
+								state={
+									demoScanState?.kind === "fixtureFailure"
+										? { kind: "failed", message: m("scanFailedFixture") }
+										: (demoScanState ?? { kind: "idle" })
+								}
+								onStart={() => startScan(root)}
+								onRetry={() => startScan(root)}
+								startDisabled={root.available === false}
+							/>
+						}
+						inventory={
+							inventoryLocations.length > 0 ? (
+								<SourceInventoryView
+									locale={locale}
+									rows={inventoryLocations.map((location) => {
+										const observed = rootFiles.find(
+											(item) => item.id === `${root.id}:${location.id}`,
+										);
+										const step = observed?.steps.find(
+											(item) => item.id === "audio_inspection",
+										);
+										const modified = location.mtime
+											? new Date(location.mtime)
+											: null;
+										return {
+											id: location.id,
+											path: location.path,
+											href: demoSourceLocationHref(root.id, location.id),
+											size:
+												location.size === undefined
+													? "—"
+													: new Intl.NumberFormat(locale, {
+															style: "unit",
+															unit: "byte",
+														}).format(location.size),
+											modified:
+												modified && Number.isFinite(modified.getTime())
+													? new Intl.DateTimeFormat(locale, {
+															dateStyle: "short",
+															timeStyle: "short",
+														}).format(modified)
+													: undefined,
+											status: step
+												? audioStepLabel(step)
+												: m("audioNotChecked"),
+											statusCode:
+												step?.status === "failed" ? "probe_error" : undefined,
+										};
+									})}
+								/>
+							) : undefined
+						}
+						overview={{
+							name: root.name,
+							path: root.path,
+							mode: root.mode,
+							modeNote:
+								root.mode === "staged" ? (
+									<>
+										{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+										<a href="#settings">{m("configure")}</a>
+									</>
+								) : undefined,
+							availability:
 								root.available === true
 									? "available"
 									: root.available === false
 										? "unavailable"
-										: "unknown"
-							}
-							availabilityNote={
-								root.available === false ? m("checkUnavailable") : undefined
-							}
-							lastScan={{
+										: "unknown",
+							availabilityNote:
+								root.available === false ? m("checkUnavailable") : undefined,
+							lastScan: {
 								label: scanLabel,
 								dateTime: root.lastSuccessfulScanAt,
-							}}
-							inventory={{
+							},
+							inventory: {
 								label: inventoryLabel,
+								path: root.inventoryPath,
+								stale: inventoryPathStale(root),
 								notes:
 									root.lastSuccessfulScanAt && root.inventoryCount === 0
 										? [m("noInventory")]
 										: undefined,
-							}}
-							onRemove={() => requestRootRemoval(root)}
+							},
+							onRemove: () => requestRootRemoval(root),
+						}}
+					>
+						<SourceRootSettingsView
+							key={root.id}
+							locale={locale}
+							name={root.name}
+							path={root.path}
+							mode={root.mode}
+							browse={browseDemoDirectory}
+							resolveInitialPath={demoDirectoryStart}
+							error={
+								settingsError?.rootId === root.id
+									? settingsError.key === "pathOverlap"
+										? sourceRegistrationMessage(locale, "pathOverlap")
+										: m(settingsError.key)
+									: undefined
+							}
+							onSave={saveRoot}
 						/>
 						<section
 							className={styles.panel}
@@ -451,6 +506,7 @@ export function SourcesScreen({
 											)}
 											{file.blockedReason === "output_reset" && (
 												<Button
+													isDisabled={!retryableInventory.has(file.id)}
 													onPress={() => {
 														const retried = retryCancelledSourceFile(
 															processing,
@@ -464,7 +520,7 @@ export function SourcesScreen({
 															return;
 														}
 														updateProcessing(
-															processSourceQueue(retried, file.rootId),
+															processSourceQueue(retried, file.rootId, file.id),
 														);
 													}}
 												>
@@ -481,6 +537,7 @@ export function SourcesScreen({
 														{step.error && <p role="alert">{m(step.error)}</p>}
 														{step.status === "failed" && (
 															<Button
+																isDisabled={!retryableInventory.has(file.id)}
 																aria-label={m("retryStep", {
 																	step:
 																		step.id === "audio_inspection"
@@ -507,7 +564,11 @@ export function SourcesScreen({
 																		return;
 																	}
 																	updateProcessing(
-																		processSourceQueue(retried, file.rootId),
+																		processSourceQueue(
+																			retried,
+																			file.rootId,
+																			file.id,
+																		),
 																	);
 																}}
 															>
@@ -523,7 +584,7 @@ export function SourcesScreen({
 							)}
 						</section>
 						<p>{m("unavailablePublications")}</p>
-					</>
+					</SourceRootDetailView>
 				) : (
 					<>
 						<header className={styles.pageHeader}>

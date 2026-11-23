@@ -95,6 +95,88 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("autosaves each source choice without submitting the name draft", async () => {
+  localStorage.setItem("melotrove-language", "en");
+  window.location.hash = "/sources/root-1";
+  const path = "/srv/new inbox ";
+  const newName = "Renamed source";
+  const writes: unknown[] = [];
+  let current = root();
+  let rejectPath = true;
+  let scans = 0;
+  server.use(
+    http.get("/api/sources/root-1", () => HttpResponse.json(current)),
+    locationsHandler([]),
+    http.patch("/api/sources/root-1", async ({ request }) => {
+      const patch = (await request.json()) as Partial<SourceRootResponse>;
+      writes.push(patch);
+      if (patch.configured_path && rejectPath) {
+        rejectPath = false;
+        return HttpResponse.json({}, { status: 409 });
+      }
+      current = { ...current, ...patch };
+      current.stale = current.inventory_path !== current.configured_path;
+      return HttpResponse.json(current);
+    }),
+    http.post("/api/sources/root-1/scan", () => {
+      scans += 1;
+      return HttpResponse.json({}, { status: 409 });
+    }),
+  );
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+
+  const settings = within(
+    await screen.findByRole("region", { name: "Source settings" }),
+  );
+  const name = settings.getByRole("textbox", { name: "Source name" });
+  const save = () => settings.getByRole("button", { name: "Save" });
+  const directory = settings.getByRole("textbox", { name: "Server directory" });
+  expect(
+    settings.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(name, { target: { value: ` ${newName} ` } });
+  fireEvent.blur(name);
+  expect(save()).toBeEnabled();
+  fireEvent.click(settings.getByRole("radio", { name: "Using a work copy" }));
+  const overview = within(screen.getByRole("region", { name: "Source" }));
+  expect(await overview.findByText("Using a work copy")).toBeInTheDocument();
+  expect(writes).toEqual([{ processing_mode: "staged" }]);
+
+  await selectDirectoryPath("Server directory", path);
+  expect(await settings.findByRole("alert")).toHaveTextContent(
+    "The source is busy",
+  );
+  expect(directory).toHaveValue("/srv/inbox");
+  expect(name).toHaveValue(` ${newName} `);
+  await selectDirectoryPath("Server directory", path);
+  expect(
+    await overview.findByText(/This is the previous path/),
+  ).toBeInTheDocument();
+  expect(directory).toHaveValue(path);
+  expect(name).toHaveValue(` ${newName} `);
+
+  fireEvent.click(save());
+  expect(
+    await screen.findByRole("heading", { level: 1, name: newName }),
+  ).toBeInTheDocument();
+  expect(
+    settings.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(writes).toEqual([
+    { processing_mode: "staged" },
+    { configured_path: path },
+    { configured_path: path },
+    { display_name: newName },
+  ]);
+  expect(scans).toBe(0);
+});
+
 it("distinguishes an unchecked file from a failed audio check", async () => {
   const file = {
     size_bytes: 42,

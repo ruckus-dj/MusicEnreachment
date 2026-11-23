@@ -32,9 +32,13 @@ function operationState(
 
 export type SourceScanControlProps = {
   root: SourceRootResponse;
+  admissionDisabled?: boolean;
 };
 
-export function SourceScanControl({ root }: SourceScanControlProps) {
+export function SourceScanControl({
+  root,
+  admissionDisabled,
+}: SourceScanControlProps) {
   const { locale } = useI18n();
   const {
     operation,
@@ -78,7 +82,7 @@ export function SourceScanControl({ root }: SourceScanControlProps) {
         onStart={() => void start(root.id)}
         onRetry={() => void retry(root.id)}
         onRecheck={discoveryFailure ? () => void discover() : undefined}
-        startDisabled={!root.enabled}
+        startDisabled={!root.enabled || admissionDisabled}
       />
       {!root.enabled && (
         <p className="sources-note">{sourceMessage(locale, "disabledScan")}</p>

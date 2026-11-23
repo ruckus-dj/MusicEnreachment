@@ -91,23 +91,29 @@ func (repository *sourceAPIRepository) ListSourceRoots(context.Context) ([]persi
 	return roots, nil
 }
 
-func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, root *persistence.SourceRoot) error {
+func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
 	if repository.busy {
-		return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
+		return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
 	}
-	for index, stored := range repository.roots {
-		if stored.ID == root.ID {
-			// The production repository treats an empty processing mode as
-			// "leave it unchanged"; mirror that here so an edit that omits the
-			// mode keeps the stored one instead of clearing it.
-			if root.ProcessingMode == "" {
-				root.ProcessingMode = stored.ProcessingMode
+	for _, stored := range repository.roots {
+		if stored.ID == patch.ID {
+			result := persistence.SourceRootUpdateResult{EnabledBefore: stored.Enabled}
+			if patch.DisplayName != nil {
+				stored.DisplayName = *patch.DisplayName
 			}
-			repository.roots[index] = root
-			return nil
+			if patch.ConfiguredPath != nil {
+				stored.ConfiguredPath = *patch.ConfiguredPath
+			}
+			if patch.ProcessingMode != nil {
+				stored.ProcessingMode = *patch.ProcessingMode
+			}
+			if patch.Enabled != nil {
+				stored.Enabled = *patch.Enabled
+			}
+			return result, nil
 		}
 	}
-	return fmt.Errorf("update source root: root does not exist")
+	return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root does not exist")
 }
 
 func (repository *sourceAPIRepository) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {

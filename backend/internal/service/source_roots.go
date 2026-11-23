@@ -40,7 +40,7 @@ type SourceRootRepository interface {
 	CreateSourceRoot(context.Context, *persistence.SourceRoot) error
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
 	ListSourceRoots(context.Context) ([]persistence.SourceRoot, error)
-	UpdateSourceRoot(context.Context, *persistence.SourceRoot) error
+	UpdateSourceRoot(context.Context, persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error)
 	DeleteSourceRoot(context.Context, uuid.UUID, string, int64) error
 	CountSourceLocations(context.Context, uuid.UUID) (int64, error)
 }
@@ -173,43 +173,45 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 	if err != nil {
 		return SourceRoot{}, fmt.Errorf("read source root: %w", err)
 	}
-	updated := *current
-	// The repository treats an empty mode as "do not change it". Do not pass
-	// the mode from this earlier read for edits that did not request a mode
-	// change: a concurrent explicit mode edit must not be overwritten.
-	if edit.ProcessingMode == nil {
-		updated.ProcessingMode = ""
-	}
+	patch := persistence.SourceRootPatch{ID: id, ExpectedScanGeneration: current.ScanGeneration}
 	if edit.DisplayName != nil {
 		name, err := sourceRootDisplayName(*edit.DisplayName)
 		if err != nil {
 			return SourceRoot{}, err
 		}
-		updated.DisplayName = name
+		patch.DisplayName = &name
 	}
 	if edit.ConfiguredPath != nil && *edit.ConfiguredPath != current.ConfiguredPath {
 		path, err := s.ValidateSourcePath(ctx, *edit.ConfiguredPath, &current.ID)
 		if err != nil {
 			return SourceRoot{}, fmt.Errorf("source root path: %w", err)
 		}
-		updated.ConfiguredPath = path
+		// An explicit path that normalizes to the stored one is a no-op, not a
+		// write. Do not let it reach the locked row: a concurrent path change
+		// would otherwise be restored to the value this caller read pre-lock.
+		if path != current.ConfiguredPath {
+			patch.ConfiguredPath = &path
+		}
 	}
 	if edit.Enabled != nil {
-		updated.Enabled = *edit.Enabled
+		enabled := *edit.Enabled
+		patch.Enabled = &enabled
 	}
 	if edit.ProcessingMode != nil {
 		if err := validateSourceProcessingMode(*edit.ProcessingMode); err != nil {
 			return SourceRoot{}, err
 		}
-		updated.ProcessingMode = *edit.ProcessingMode
+		mode := *edit.ProcessingMode
+		patch.ProcessingMode = &mode
 	}
-	if err := s.repository.UpdateSourceRoot(ctx, &updated); err != nil {
+	result, err := s.repository.UpdateSourceRoot(ctx, patch)
+	if err != nil {
 		if errors.Is(err, persistence.ErrSourceRootActiveScan) {
 			return SourceRoot{}, fmt.Errorf("edit source root: %w", ErrSourceRootBusy)
 		}
 		return SourceRoot{}, fmt.Errorf("edit source root: %w", err)
 	}
-	if !current.Enabled && updated.Enabled && s.pending != nil {
+	if patch.Enabled != nil && *patch.Enabled && !result.EnabledBefore && s.pending != nil {
 		if _, err := s.pending.AdmitPending(context.WithoutCancel(ctx), id); err != nil {
 			slog.WarnContext(ctx, "pending source analysis admission failed after source root enabled", "root", id, "cause", err)
 		}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SourceFiles } from "../features/library/catalogData";
 import type { SourceScanState } from "../features/sources/SourceScanPanel";
-import { rootLocations } from "../features/sources/sourceInventory";
+import { scanScopeLocations } from "../features/sources/sourceInventory";
 import {
 	blockStagedSourceQueue,
 	createSourceScan,
@@ -74,7 +74,11 @@ export function useSourceScanDemoProvider({
 				return;
 			}
 			const at = new Date().toISOString();
-			const count = rootLocations(files, root.id).length;
+			const admitted = scanScopeLocations(files, root);
+			const admittedLocationIds = new Set(
+				admitted.map((location) => location.id),
+			);
+			const count = admitted.length;
 			updateRoots((current) =>
 				current.map((item) =>
 					item.id === root.id
@@ -82,16 +86,28 @@ export function useSourceScanDemoProvider({
 								...item,
 								available: true,
 								inventoryCount: count,
+								inventoryPath: root.path,
 								lastSuccessfulScanAt: at,
 							}
 						: item,
 				),
 			);
 			updateProcessing((current) => {
-				const scanned = createSourceScan(current, root.id, root.mode, files);
+				const scanned = createSourceScan(
+					current,
+					root.id,
+					root.mode,
+					files,
+					admittedLocationIds,
+				);
 				return root.mode === "staged" && !workDirectory
 					? blockStagedSourceQueue(scanned, root.id)
-					: processSourceQueue(scanned, root.id);
+					: processSourceQueue(
+							scanned,
+							root.id,
+							undefined,
+							new Set(admitted.map((location) => `${root.id}:${location.id}`)),
+						);
 			});
 			report({ kind: "succeeded" });
 		});

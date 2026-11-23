@@ -27,6 +27,7 @@ import {
   message,
   renderSourceError,
   sourceFailure,
+  sourceSettingsMutationKey,
 } from "./sourcesApi";
 import "./sources.css";
 import {
@@ -77,6 +78,9 @@ type RegistrationError =
 function SourceListScreen() {
   const { locale } = useI18n();
   const scans = useSourceScans();
+  const pendingSettings = useIsMutating({
+    mutationKey: sourceSettingsMutationKey,
+  });
   const t = (
     key: Parameters<typeof sourceMessage>[1],
     values?: Record<string, string | number>,
@@ -123,9 +127,12 @@ function SourceListScreen() {
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A scan revision explicitly requests an authoritative reread.
   useEffect(() => {
+    // Returning from the detail screen during a PATCH must not leave this
+    // independently rendered list showing the pre-write source settings.
+    if (pendingSettings) return;
     void load();
     return () => loadRequest.current?.abort();
-  }, [load, scans.revision]);
+  }, [load, scans.revision, pendingSettings]);
 
   async function register() {
     if (registering.current) return;
@@ -328,3 +335,5 @@ function SourceListScreen() {
     </section>
   );
 }
+
+import { useIsMutating } from "@tanstack/react-query";

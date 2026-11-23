@@ -68,6 +68,7 @@ export function renderSourceError(error: SourceError, locale: Locale): string {
 }
 
 export type SourceAction = "list" | "read" | "create" | "edit" | "delete";
+export const sourceSettingsMutationKey = ["source-settings"] as const;
 
 export function message(reason: unknown): SourceError {
   if (reason instanceof SourceRequestError) return reason.sourceError;

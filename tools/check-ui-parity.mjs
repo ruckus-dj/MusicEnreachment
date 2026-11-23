@@ -36,6 +36,8 @@ const pairs = [
       "SourceInspectorView.tsx",
       "SourceInventoryView.tsx",
       "SourceRegistrationView.tsx",
+      "SourceRootDetailView.tsx",
+      "SourceRootSettingsView.tsx",
       "SourceRootHeadingView.tsx",
       "SourceRootList.tsx",
       "SourceRootOverviewView.tsx",

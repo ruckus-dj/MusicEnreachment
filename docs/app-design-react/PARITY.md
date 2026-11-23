@@ -70,6 +70,8 @@ source channel, а fixture макета такого происхождения 
 | Источники: список, заголовок корня, сканирование и таблица инвентаря | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
 | Источники: форма регистрации каталога | `features/sources/SourceRegistrationView.tsx` | Тот же путь |
 | Источники: инспектор файла, этапы анализа и технический результат | `features/sources/SourceInspectorView.tsx`, `SourceAnalysisSteps.tsx`, `SourceTechnicalResult.tsx`, `sourceInspectorMessages.ts`, `sourceInspectorModel.ts` | Те же пути |
+| Источники: порядок секций карточки корня | `features/sources/SourceRootDetailView.tsx` | Тот же путь |
+| Источники: редактирование имени, пути и режима | `features/sources/SourceRootSettingsView.tsx` | Тот же путь |
 | Источники: сводка корня, действие и подтверждение удаления | `features/sources/SourceRootOverviewView.tsx`, `SourceRootRemovalDialog.tsx` | Те же пути |
 | Источники: пакетный выбор, подтверждение и результаты очистки временных копий | `features/sources/SourceArtifactCleanupView.tsx` | Тот же путь |
 | Операции: список, фильтры, поиск, пагинация, раскрытие и подтверждение прерывания перепубликаций | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts`, `MatchingRecheckAbandonDialog.tsx` | Те же пути |
@@ -114,8 +116,8 @@ source channel, а fixture макета такого происхождения 
   макет меняет только свои данные. Сводка корня общая, в том числе показ
   прежнего пути инвентаря при наличии серверных данных. Форму регистрации
   каталогов используют обе сборки; проверка и открытие нового каталога
-  выполняются провайдерами. Каркас карточки,
-  редактирование пути и режима, панель обработки ещё различаются.
+  выполняются провайдерами. Порядок секций и панель редактирования карточки
+  общие; показ обработки файлов и часть стилей инвентаря ещё различаются.
 - **Медиатека, входящие и публикация.** Общие строки и части рабочих областей
   уже перенесены. В композиции маршрутов, редакторах структурированных метаданных,
   диалогах и каталогах переводов остаются разные реализации. Перед копированием

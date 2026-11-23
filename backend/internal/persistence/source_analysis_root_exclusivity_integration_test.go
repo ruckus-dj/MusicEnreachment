@@ -50,20 +50,39 @@ func runSourceAnalysisEnqueueRootExclusivity(t *testing.T, database *bun.DB) {
 		t.Fatalf("scan start with an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
 
-	renamed := *root
-	renamed.DisplayName = "Renamed"
-	if err := inventory.UpdateSourceRoot(ctx, &renamed); err != nil {
+	renamed := "Renamed"
+	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, DisplayName: &renamed,
+	}); err != nil {
 		t.Fatalf("display-name edit with an active analysis = %v, want it accepted", err)
 	}
-	disabled := *root
-	disabled.Enabled = false
-	if err := inventory.UpdateSourceRoot(ctx, &disabled); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+	disabled := false
+	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, Enabled: &disabled,
+	}); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("disable with an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
-	moved := *root
-	moved.ConfiguredPath = root.ConfiguredPath + "-moved"
-	if err := inventory.UpdateSourceRoot(ctx, &moved); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+	moved := root.ConfiguredPath + "-moved"
+	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, ConfiguredPath: &moved,
+	}); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("path change with an active analysis = %v, want ErrSourceRootActiveScan", err)
+	}
+	// Both patches were built from the same pre-edit snapshot. The mode patch
+	// writes only its mode, so the sibling display-name edit survives even
+	// though the patch still carries the old generation and no name.
+	staged := service.SourceProcessingModeStaged
+	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, ProcessingMode: &staged,
+	}); err != nil {
+		t.Fatalf("mode edit after a sibling display-name edit = %v, want it accepted", err)
+	}
+	persisted, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read root after sibling edits: %v", err)
+	}
+	if persisted.DisplayName != renamed || persisted.ProcessingMode != staged {
+		t.Fatalf("root after sibling edits = %+v, want name %q and mode %q", persisted, renamed, staged)
 	}
 	if err := deleteInventoryRoot(ctx, inventory, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("delete with an active analysis = %v, want ErrSourceRootActiveScan", err)

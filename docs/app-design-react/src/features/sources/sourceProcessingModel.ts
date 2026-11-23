@@ -55,10 +55,15 @@ export function createSourceScan(
 	rootId: string,
 	mode: "in_place" | "staged",
 	files: SourceFiles,
+	admittedLocationIds?: ReadonlySet<string>,
 ): SourceProcessingState {
 	const candidates = Object.values(files).flatMap((file) =>
 		(file.locations ?? [])
-			.filter((location) => location.rootId === rootId)
+			.filter(
+				(location) =>
+					location.rootId === rootId &&
+					(!admittedLocationIds || admittedLocationIds.has(location.id)),
+			)
 			.map((location) => ({ file, location })),
 	);
 	const nextFiles = candidates.map(({ file, location }) => {
@@ -118,11 +123,13 @@ export function processSourceQueue(
 	state: SourceProcessingState,
 	rootId?: string,
 	fileId?: string,
+	eligibleFileIds?: ReadonlySet<string>,
 ): SourceProcessingState {
 	const files = state.files.map((file) => {
 		if (
 			(rootId !== undefined && file.rootId !== rootId) ||
 			(fileId !== undefined && file.id !== fileId) ||
+			(eligibleFileIds !== undefined && !eligibleFileIds.has(file.id)) ||
 			(file.status !== "queued" && file.status !== "failed") ||
 			file.blockedReason === "output_reset" ||
 			!file.steps.some((step) => step.status === "queued")
