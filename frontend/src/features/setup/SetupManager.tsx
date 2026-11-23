@@ -1,11 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import {
-  Label,
-  RadioButton,
-  RadioField,
-  RadioGroup,
-} from "react-aria-components";
-import {
   checkSetupPaths,
   completeSetup,
   getSetupState,
@@ -20,9 +14,10 @@ import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
+import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
-import { SetupPlatformStep, SetupWizard } from "./SetupWizard";
+import { SetupPlatformStep, SetupWizard, setupSteps } from "./SetupWizard";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -34,31 +29,31 @@ import {
 import "./setup.css";
 
 const stepKey = "melotrove.setup.step";
-const steps = [
-  "platform",
-  "directories",
-  "tools",
-  "publication",
-  "metadata",
-  "summary",
-] as const;
-const stepCount = steps.length;
 function earliest(state: SetupStateBody) {
   const s = state.settings;
-  if (!s.tools_directory && !s.output_directory) return 0;
-  if (!s.tools_directory || !s.output_directory) return 1;
+  if (!s.tools_directory) return 0;
   if (!s.active_ffmpeg_installation_id || !s.active_fpcalc_installation_id)
+    return 1;
+  if (
+    !s.output_directory ||
+    !knownFormat(s.publication_format) ||
+    !s.musicbrainz_verified_at
+  )
     return 2;
-  if (!s.publication_format) return 3;
-  if (!s.musicbrainz_verified_at) return 4;
-  return 5;
+  return 3;
 }
 function restoredStep(state: SetupStateBody) {
-  const stored = window.localStorage.getItem(stepKey);
-  const step = stored === null ? NaN : Number(stored);
-  return Number.isInteger(step) && step >= 0 && step < stepCount
-    ? Math.min(step, earliest(state))
-    : earliest(state);
+  const readyStep = earliest(state);
+  try {
+    const stored = window.localStorage.getItem(stepKey);
+    const step = (setupSteps as readonly string[]).indexOf(stored ?? "");
+    if (step >= 0) return Math.min(step, readyStep);
+  } catch {
+    // Persisting a navigation hint is optional; server readiness is not.
+  }
+  // Verified MusicBrainz plus saved output does not prove that the later
+  // LRCLIB write succeeded. Without a hint, revisit Publication.
+  return Math.min(readyStep, 2);
 }
 function knownFormat(
   value: string,
@@ -96,6 +91,7 @@ export function SetupManager({
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [notice, setNotice] = useState<SetupFeedback | null>(null);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
+  const actionInFlight = useRef(false);
   const metadataAction = useRef<SetupMetadataAction | null>(null);
   const [metadataBusy, setMetadataBusy] = useState(false);
   const updateToolsBlocked = useCallback((blocked: boolean) => {
@@ -105,40 +101,40 @@ export function SetupManager({
     setError(null);
     setNotice(null);
     setStep(next);
-    window.localStorage.setItem(stepKey, String(next));
+    try {
+      window.localStorage.setItem(stepKey, setupSteps[next]);
+    } catch {
+      // The current step is still available for this page session.
+    }
   }
   async function refresh() {
     const response = await getSetupState({ cache: "no-store" });
     if (response.status !== 200) throw setupHttpError(response);
     setState(response.data);
-    setToolsDirectory(response.data.settings.tools_directory);
-    setOutputDirectory(response.data.settings.output_directory);
-    const freshFormat = knownFormat(response.data.settings.publication_format);
-    if (freshFormat) setFormat(freshFormat);
-    setRemoveSources(response.data.settings.publication_remove_sources);
     return response.data;
   }
   async function advance() {
+    if (
+      actionInFlight.current ||
+      (step === 2 &&
+        (!metadataAction.current || metadataAction.current.isBusy()))
+    )
+      return;
+    actionInFlight.current = true;
     setPending(true);
     setError(null);
     setNotice(null);
     try {
-      if (step === 1) {
-        if (!toolsDirectory || !outputDirectory)
-          throw setupMessage("directoryRequired");
-        const checked = await checkSetupPaths({
-          tools_directory: toolsDirectory,
-          output_directory: outputDirectory,
-        });
-        if (checked.status !== 200) throw setupHttpError(checked);
+      if (step === 0) {
+        if (!toolsDirectory) throw setupMessage("toolsDirectoryRequired");
         const saved = await saveSetupRuntime({
           tools_directory: toolsDirectory,
-          output_directory: outputDirectory,
         });
         if (saved.status !== 204) throw setupHttpError(saved);
-        await refresh();
+        const fresh = await refresh();
+        setToolsDirectory(fresh.settings.tools_directory);
       }
-      if (step === 2) {
+      if (step === 1) {
         const fresh = await refresh();
         if (
           !fresh.settings.active_ffmpeg_installation_id ||
@@ -146,16 +142,25 @@ export function SetupManager({
         )
           throw setupMessage("activateTools");
       }
-      if (step === 3) {
+      if (step === 2) {
+        if (!outputDirectory) throw setupMessage("outputDirectoryRequired");
         if (!format) throw setupMessage("chooseFormat");
+        const checked = await checkSetupPaths({
+          tools_directory: state.settings.tools_directory,
+          output_directory: outputDirectory,
+        });
+        if (checked.status !== 200) throw setupHttpError(checked);
         const saved = await saveSetupRuntime({
+          output_directory: outputDirectory,
           publication_format: format,
           publication_remove_sources: removeSources,
         });
         if (saved.status !== 204) throw setupHttpError(saved);
-        await refresh();
+        const fresh = await refresh();
+        setOutputDirectory(fresh.settings.output_directory);
+        if (!(await metadataAction.current?.continue())) return;
       }
-      if (step === 5) {
+      if (step === 3) {
         const fresh = await refresh();
         if (!fresh.configuration_health.healthy) {
           const problems = fresh.configuration_health.problems;
@@ -164,7 +169,11 @@ export function SetupManager({
         }
         const completed = await completeSetup();
         if (completed.status !== 204) throw setupHttpError(completed);
-        window.localStorage.removeItem(stepKey);
+        try {
+          window.localStorage.removeItem(stepKey);
+        } catch {
+          // Setup completed on the server even if storage is unavailable.
+        }
         onCompleted();
         return;
       }
@@ -172,35 +181,38 @@ export function SetupManager({
     } catch (reason) {
       setError(setupFeedback(reason, "unknownError"));
     } finally {
+      actionInFlight.current = false;
       setPending(false);
     }
   }
   const stepHelp = [
-    messages.platformHelp,
-    messages.directoryHelpDetails,
+    messages.toolsDirectoryHelp,
     messages.toolsHelp,
-    messages.publicationHelp,
-    messages.metadataHelp,
+    `${messages.publicationHelp} ${messages.metadataHelp}`,
     messages.summaryHelp,
   ][step];
   return (
     <SetupWizard
       locale={locale}
-      steps={steps}
       step={step}
       help={stepHelp}
       error={error ? setupFeedbackText(error, locale) : undefined}
       notice={notice ? setupFeedbackText(notice, locale) : undefined}
       pending={pending}
       onBack={() => {
-        if (pending || (step === 4 && metadataAction.current?.isBusy())) return;
+        if (pending || (step === 2 && metadataAction.current?.isBusy())) return;
         navigate(step - 1);
       }}
       onNext={() => {
-        if (step === 4) metadataAction.current?.continue();
-        else void advance();
+        void advance();
       }}
-      nextDisabled={pending || metadataBusy || (step === 2 && toolsBlocked)}
+      nextDisabled={
+        !state.platform.supported ||
+        state.platform.diagnostic ||
+        pending ||
+        metadataBusy ||
+        (step === 1 && toolsBlocked)
+      }
       backDisabled={pending || metadataBusy}
     >
       {step === 0 && (
@@ -212,19 +224,18 @@ export function SetupManager({
           reason={state.platform.reason}
         />
       )}
-      {step === 1 && (
+      {step === 0 && (
         <SetupDirectoryStepBody
-          kind="server"
+          kind="tools"
+          selected={
+            toolsDirectory !== "" &&
+            toolsDirectory === state.settings.tools_directory
+          }
           fields={[
             {
               kind: "tools",
               value: toolsDirectory,
               onSelect: setToolsDirectory,
-            },
-            {
-              kind: "output",
-              value: outputDirectory,
-              onSelect: setOutputDirectory,
             },
           ]}
           locale={locale}
@@ -232,7 +243,7 @@ export function SetupManager({
           disabled={pending}
         />
       )}
-      {step === 2 && (
+      {step === 1 && (
         <SetupTools
           onBlockedChange={updateToolsBlocked}
           hasGitHubToken={state.settings.has_github_token}
@@ -241,53 +252,39 @@ export function SetupManager({
           }}
         />
       )}
-      {step === 3 && (
-        <div>
-          <RadioGroup
-            isDisabled={pending}
-            value={format}
-            onChange={(value) => {
-              if (value === "source" || value === "mka" || value === "m4a")
-                setFormat(value);
-            }}
-          >
-            <Label>{messages.format}</Label>
-            <RadioField value="source">
-              <RadioButton>{messages.sourceFormat}</RadioButton>
-            </RadioField>
-            <RadioField value="mka">
-              <RadioButton>{messages.mkaRemux}</RadioButton>
-            </RadioField>
-            <RadioField value="m4a">
-              <RadioButton>M4A</RadioButton>
-            </RadioField>
-          </RadioGroup>
-          <label className="mt-4 flex items-start gap-2">
-            <input
-              type="checkbox"
-              checked={removeSources}
-              disabled={pending}
-              onChange={(event) => setRemoveSources(event.target.checked)}
-            />
-            <span>
-              <span className="block">{messages.removeSources}</span>
-              <span className="block text-sm">
-                {messages.preserveSourcesDescription}
-              </span>
-            </span>
-          </label>
+      {step === 2 && (
+        <div className="grid gap-3">
+          <SetupDirectoryStepBody
+            kind="output"
+            fields={[
+              {
+                kind: "output",
+                value: outputDirectory,
+                onSelect: setOutputDirectory,
+              },
+            ]}
+            locale={locale}
+            browse={browseServerDirectory}
+            disabled={pending}
+          />
+          <SetupPublicationOptions
+            locale={locale}
+            format={format}
+            removeSources={removeSources}
+            disabled={pending}
+            onFormat={setFormat}
+            onRemoveSources={setRemoveSources}
+          />
+          <SetupMetadata
+            state={state}
+            refresh={refresh}
+            disabled={pending}
+            onBusyChange={setMetadataBusy}
+            actionRef={metadataAction}
+          />
         </div>
       )}
-      {step === 4 && (
-        <SetupMetadata
-          state={state}
-          refresh={refresh}
-          onContinue={() => navigate(5)}
-          onBusyChange={setMetadataBusy}
-          actionRef={metadataAction}
-        />
-      )}
-      {step === 5 && (
+      {step === 3 && (
         <div>
           <SetupSummary key={summaryRefreshToken} state={state} />
           <AppButton

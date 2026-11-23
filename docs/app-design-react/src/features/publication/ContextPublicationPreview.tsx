@@ -94,7 +94,7 @@ export function ContextPublicationPreview({
 			</section>
 		);
 
-	const rows = planRows(plan, files, releases, providers, artists);
+	const rows = planRows(plan, files, releases, providers, artists, destination);
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
 	);
@@ -228,7 +228,7 @@ export function ContextPublicationPreview({
 					(!row.previous ||
 						plan.force ||
 						row.previous.sourceId !== row.file.id ||
-						row.previous.codec !== row.file.codec),
+						row.previous.codec !== row.outputCodec),
 			);
 			return {
 				id: String(row.targetTrack.id),

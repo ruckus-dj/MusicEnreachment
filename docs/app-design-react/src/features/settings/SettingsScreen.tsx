@@ -30,6 +30,7 @@ import {
 	type OutputResetFeedback,
 	SettingsOutputResetDialog,
 } from "./SettingsOutputResetDialog";
+import { SettingsPageFrame } from "./SettingsPageFrame";
 import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import {
 	type SettingsTabKey,
@@ -66,6 +67,7 @@ import {
 	type ManagedToolPackage,
 	movePreflightDemo,
 } from "./ToolLifecycleDemo";
+import { useToolCatalogDemoProvider } from "./useToolCatalogDemoProvider";
 
 const readSettingsTab = (hash: string): SettingsTabKey => {
 	const [path, query = ""] = hash.replace(/^#/, "").split("?");
@@ -110,7 +112,7 @@ export interface DemoSettings {
 	outputCandidate: string;
 	outputDemoExecution: "idle" | "queued" | "running" | "claimed";
 	currentOutput?: string;
-	publicationFormat?: "" | "original" | "mka";
+	publicationFormat?: "" | "original" | "mka" | "m4a";
 	musicBrainzMode?: "" | "public" | "self-hosted";
 	musicBrainzURL?: string;
 	musicBrainzThrottle?: boolean;
@@ -226,6 +228,7 @@ export function SettingsScreen({
 }: SettingsScreenProps) {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
+	const toolCatalog = useToolCatalogDemoProvider();
 	const [picker, setPicker] = useState<PickerTarget | null>(null);
 	const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
@@ -1108,17 +1111,7 @@ export function SettingsScreen({
 							: "";
 
 	return (
-		<section className={styles.page} aria-labelledby="settings-title">
-			<header
-				className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
-			>
-				<div>
-					<h1 className={styles.pageTitle} id="settings-title">
-						{copy.title}
-					</h1>
-					<p className={styles.pageDescription}>{copy.subtitle}</p>
-				</div>
-			</header>
+		<SettingsPageFrame locale={locale}>
 			{noticeText && (
 				<p className={styles.formNotice} role="status" aria-live="polite">
 					{noticeText}
@@ -1154,12 +1147,16 @@ export function SettingsScreen({
 							locale,
 							format: {
 								value:
-									settings.publicationFormat === "original" ? "source" : "mka",
-								choices: ["mka", "source"],
+									settings.publicationFormat === "original"
+										? "source"
+										: settings.publicationFormat || "mka",
+								choices: ["source", "mka", "m4a"],
 								onChange: (publicationFormat) =>
 									update({
 										publicationFormat:
-											publicationFormat === "source" ? "original" : "mka",
+											publicationFormat === "source"
+												? "original"
+												: publicationFormat,
 									}),
 							},
 							concurrency: {
@@ -1257,7 +1254,14 @@ export function SettingsScreen({
 								update({ hasGitHubToken })
 							}
 						/>
-						<SettingsToolsCatalogSummary locale={locale} />
+						<SettingsToolsCatalogSummary
+							locale={locale}
+							refresh={{
+								checkedAt: toolCatalog.checkedAt,
+								busy: toolCatalog.busy,
+								onRefresh: toolCatalog.refresh,
+							}}
+						/>
 						<SettingsManagedPackageCards
 							locale={locale}
 							packages={managedPackages}
@@ -1494,6 +1498,6 @@ export function SettingsScreen({
 					</Dialog>
 				</Modal>
 			)}
-		</section>
+		</SettingsPageFrame>
 	);
 }

@@ -22,10 +22,7 @@ import {
 } from "../library/catalogData";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
-import {
-	MatchingPreview,
-	type MatchingPreviewRow,
-} from "./MatchingPreview";
+import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
 import { MatchingBoard, MatchingEvidenceInspector } from "./";
 import {
@@ -324,7 +321,7 @@ export function MatchingScreen({
 	};
 	const preview = state.plan?.groupId === group.id ? state.plan : null;
 	const previewRows = preview
-		? planRows(preview, files, releases, providers, artists)
+		? planRows(preview, files, releases, providers, artists, destination)
 		: [];
 	const metadataIssues = (row: (typeof previewRows)[number]) => {
 		if (!preview) return [];

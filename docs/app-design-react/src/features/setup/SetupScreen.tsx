@@ -23,6 +23,7 @@ import {
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
+import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummaryView } from "./SetupSummaryView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
 import { SetupWizard } from "./SetupWizard";
@@ -33,7 +34,6 @@ import {
 	setupToolStateAfterAttempt,
 } from "./setupToolsLifecycle";
 
-const stepKeys = ["directories", "tools", "publication", "summary"] as const;
 type NoticeKey =
 	| "missingPath"
 	| "missingTools"
@@ -76,6 +76,10 @@ export function SetupScreen({
 	);
 	const platformMismatch = settings.platformMismatch ?? false;
 	const outputPath = settings.outputCandidate;
+	const format =
+		settings.publicationFormat === "original"
+			? "source"
+			: (settings.publicationFormat ?? "");
 	const musicBrainzMode = settings.musicBrainzMode ?? "";
 	const musicBrainzURL = settings.musicBrainzURL ?? "";
 	const providerReady = isValidMusicBrainzConfiguration({
@@ -84,6 +88,7 @@ export function SetupScreen({
 	});
 	const publicationReady = Boolean(
 		outputPath &&
+			format &&
 			settings.outputChecked &&
 			providerReady &&
 			settings.musicBrainzVerified &&
@@ -182,7 +187,7 @@ export function SetupScreen({
 				setNotice("invalidProvider");
 				return;
 			}
-			if (!validOutput || !validProvider) {
+			if (!validOutput || !validProvider || !format) {
 				setNotice("missingPublication");
 				return;
 			}
@@ -223,7 +228,7 @@ export function SetupScreen({
 			: step === 1
 				? toolsReady
 				: step === 2
-					? Boolean(outputPath && musicBrainzMode)
+					? Boolean(outputPath && musicBrainzMode && format)
 					: settings.pathChecked && toolsReady && publicationReady;
 	const noticeText = notice ? copy[notice] : "";
 
@@ -231,7 +236,6 @@ export function SetupScreen({
 		<>
 			<SetupWizard
 				locale={locale}
-				steps={stepKeys}
 				step={step}
 				error={platformMismatch ? copy.conflicts : undefined}
 				notice={noticeText || undefined}
@@ -332,6 +336,19 @@ export function SetupScreen({
 							browse={browseDemoDirectory}
 							resolveInitialPath={demoDirectoryStart}
 						/>
+						<SetupPublicationOptions
+							locale={locale}
+							format={format}
+							removeSources={settings.sourceCleanupEnabled ?? false}
+							onFormat={(value) =>
+								update({
+									publicationFormat: value === "source" ? "original" : value,
+								})
+							}
+							onRemoveSources={(sourceCleanupEnabled) =>
+								update({ sourceCleanupEnabled })
+							}
+						/>
 						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
 							<SetupMusicBrainzFields
 								locale={locale}
@@ -381,12 +398,7 @@ export function SetupScreen({
 						values={{
 							publication: {
 								directory: outputPath,
-								format:
-									settings.publicationFormat === "mka"
-										? "mka"
-										: settings.publicationFormat === "original"
-											? "source"
-											: undefined,
+								format: format || undefined,
 								removeSources: settings.sourceCleanupEnabled,
 							},
 							tools: {

@@ -24,25 +24,21 @@ const footerClassName =
 const pendingClassName = "my-2 text-[var(--muted)]";
 
 type Locale = "en" | "ru";
-export type SetupStep =
-  | "platform"
-  | "directories"
-  | "tools"
-  | "publication"
-  | "metadata"
-  | "summary";
-
+export const setupSteps = [
+  "directories",
+  "tools",
+  "publication",
+  "summary",
+] as const;
 const messages = {
   en: {
     title: "First run",
     subtitle: "Library configuration and connected services",
     stepsLabel: "Setup steps",
     step: {
-      platform: "Platform",
       directories: "Directories",
       tools: "Tools",
       publication: "Publication",
-      metadata: "Metadata providers",
       summary: "Summary",
     },
     back: "Back",
@@ -59,11 +55,9 @@ const messages = {
     subtitle: "Параметры библиотеки и её подключений",
     stepsLabel: "Шаги настройки",
     step: {
-      platform: "Платформа",
       directories: "Каталоги",
       tools: "Инструменты",
       publication: "Публикация",
-      metadata: "Провайдеры метаданных",
       summary: "Итог",
     },
     back: "Назад",
@@ -79,7 +73,6 @@ const messages = {
 
 export interface SetupWizardProps {
   locale: Locale;
-  steps: readonly SetupStep[];
   step: number;
   help?: string;
   children: ReactNode;
@@ -94,7 +87,6 @@ export interface SetupWizardProps {
 
 export function SetupWizard({
   locale,
-  steps,
   step,
   help,
   children,
@@ -106,6 +98,7 @@ export function SetupWizard({
   nextDisabled,
   backDisabled,
 }: SetupWizardProps) {
+  const steps = setupSteps;
   const copy = messages[locale];
   const headingRef = useRef<HTMLHeadingElement>(null);
   const alertRef = useRef<HTMLParagraphElement>(null);

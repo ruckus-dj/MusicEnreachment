@@ -300,6 +300,7 @@ export type PlanRow = {
 	assignment?: Assignment;
 	track?: OriginalTrack;
 	file?: SourceFile;
+	outputCodec?: string;
 	provider: ReturnType<typeof findProviderTrack>;
 	nextTags: TagMap;
 	previous?: NonNullable<OriginalTrack["published"]>;
@@ -392,6 +393,7 @@ export function planRows(
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
 	artists?: CatalogArtist[],
+	destination: PublicationDestination = fixturePublicationDestination,
 ): PlanRow[] {
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
@@ -425,17 +427,21 @@ export function planRows(
 			selectedSourceId(assignment),
 		);
 		const previous = track?.published ?? undefined;
+		const outputCodec = file
+			? demoOutputCodec(file.codec, destination.format)
+			: undefined;
 		const unchanged =
 			previous &&
 			file &&
 			previous.sourceId === file.id &&
-			previous.codec === file.codec &&
+			previous.codec === outputCodec &&
 			JSON.stringify(previous.tags) === JSON.stringify(nextTags);
 		return {
 			targetTrack,
 			assignment,
 			track,
 			file,
+			outputCodec,
 			provider,
 			nextTags,
 			previous,
@@ -448,8 +454,9 @@ export function planRows(
 							? "Заменить"
 							: "Создать",
 			downgrade: Boolean(
-				previous?.codec === "FLAC" &&
-					file?.codec === "MP3" &&
+				demoIsLosslessCodec(previous?.codec) &&
+					file &&
+					!demoIsLosslessCodec(file.codec) &&
 					assignment?.included,
 			),
 		};
@@ -458,6 +465,8 @@ export function planRows(
 
 import {
 	choosePublicationOutput,
+	demoIsLosslessCodec,
+	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "../publication/publicationOutput";
@@ -473,7 +482,7 @@ export function applyPlan(
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
 	if (plan.mode === "local" && !release) return 0;
-	const rows = planRows(plan, files, releases, providers, artists);
+	const rows = planRows(plan, files, releases, providers, artists, destination);
 	const hasApplicableRow = rows.some((row) => {
 		if (
 			!row.assignment?.included ||
@@ -583,12 +592,12 @@ export function applyPlan(
 			!published ||
 			plan.force ||
 			published.sourceId !== row.file.id ||
-			published.codec !== row.file.codec;
+			published.codec !== demoOutputCodec(row.file.codec, destination.format);
 		track.published = {
 			tags: structuredClone(row.nextTags),
 			coverHash: track.coverHash ?? null,
 			lyrics: track.lyrics ?? null,
-			codec: row.file.codec,
+			codec: demoOutputCodec(row.file.codec, destination.format),
 			container:
 				rebuildSource || !published ? output.container : published.container,
 			sourceId: row.file.id,

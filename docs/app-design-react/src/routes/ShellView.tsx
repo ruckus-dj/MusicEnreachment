@@ -31,6 +31,14 @@ export interface ShellViewProps {
 	children: ReactNode;
 }
 
+export function ShellContent({ children }: { children: ReactNode }) {
+	return (
+		<div className="min-w-0 p-2.5 [&>:first-child]:mt-0 min-[600px]:p-3">
+			{children}
+		</div>
+	);
+}
+
 /**
  * Portable shell presentation: navigation, chrome and keyboard skip target.
  * Copy, controls, counts, links and footer identity come from the caller.

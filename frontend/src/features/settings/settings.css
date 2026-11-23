@@ -11,17 +11,6 @@
   --settings-error: var(--error);
   --settings-error-soft: var(--error-soft);
   color: var(--settings-ink);
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-.settings-screen h1 {
-  font-size: 20px;
-  line-height: 26px;
-  font-weight: 650;
-}
-
-.settings-screen h1[tabindex="-1"]:focus {
-  outline: none;
 }
 
 .settings-screen .settings-panel h2,

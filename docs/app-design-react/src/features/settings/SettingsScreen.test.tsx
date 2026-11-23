@@ -1,4 +1,5 @@
 import {
+	act,
 	fireEvent,
 	render,
 	screen,
@@ -9,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
 import { readSettingsDraft, resetSettingsDraftMemory } from "./settingsDraft";
+import { demoToolCatalogRefreshDelayMs } from "./useToolCatalogDemoProvider";
 
 beforeEach(() => {
 	localStorage.clear();
@@ -231,6 +233,57 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		expect(
 			readSettingsDraft(window.sessionStorage)?.value.toolsPathCandidate,
 		).toBe("/var/lib/melotrove/tools-next");
+	});
+
+	it("records a manual tool catalog check without changing demo installations", () => {
+		localStorage.setItem("music-design-v2-language", locale);
+		vi.useFakeTimers();
+		try {
+			const onSettings = vi.fn();
+			render(
+				<I18nProvider>
+					<SettingsScreen
+						settings={initialDemoSettings}
+						onSettings={onSettings}
+					/>
+				</I18nProvider>,
+			);
+			fireEvent.click(screen.getByRole("tab", { name: /tools|инструменты/i }));
+			const summary = screen.getByRole("region", {
+				name: /managed tools|управляемые инструменты/i,
+			});
+			expect(
+				within(summary).getByText(
+					/catalog has not been checked yet|каталог ещё не проверялся/i,
+				),
+			).toBeInTheDocument();
+			fireEvent.click(
+				within(summary).getByRole("button", {
+					name: /refresh catalog|обновить каталог/i,
+				}),
+			);
+			expect(
+				within(summary).getByRole("button", {
+					name: /refreshing catalog|обновление каталога/i,
+				}),
+			).toBeDisabled();
+			act(() => {
+				vi.advanceTimersByTime(demoToolCatalogRefreshDelayMs);
+			});
+			expect(
+				within(summary).getByText(
+					/last successful catalog check|последняя успешная проверка каталога/i,
+				),
+			).toBeInTheDocument();
+			expect(
+				within(summary).queryByRole("button", {
+					name: /refreshing catalog|обновление каталога/i,
+				}),
+			).not.toBeInTheDocument();
+			expect(onSettings).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("shows a field-level MusicBrainz error and focuses the invalid URL", async () => {

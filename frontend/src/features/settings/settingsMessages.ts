@@ -8,7 +8,6 @@ const english = {
   conflictWorkDirectory: "work directory",
   conflictToolsDirectory: "tools directory",
   conflictOutputDirectory: "publication directory",
-  pageTitle: "Settings",
   requestFailed: "The request could not be completed.",
   httpError: "The server returned HTTP {status}.",
   settingsConflictRefreshFailed:
@@ -77,8 +76,6 @@ const english = {
   operationError: "Operation error:",
   configurationHealth: "Configuration health",
   versionLabel: "Version {kind}",
-  pageDescription:
-    "After setup, configuration issues are shown here and do not return the application to the setup wizard.",
   requestInProgress: "Request in progress…",
   draftMemoryWarning:
     "The settings draft is stored only in this page's memory and cannot be restored after the page is closed.",
@@ -219,9 +216,6 @@ const russian: Record<SettingsMessageKey, string> = {
   operationError: "Ошибка операции:",
   configurationHealth: "Состояние конфигурации",
   versionLabel: "Версия {kind}",
-  pageTitle: "Настройки",
-  pageDescription:
-    "После завершения первичной настройки проблемы конфигурации отображаются здесь и не возвращают приложение в мастер настройки.",
   requestInProgress: "Выполняется запрос…",
   draftMemoryWarning:
     "Черновик настроек сохранён только в памяти этой страницы; после её закрытия восстановить изменения не удастся.",

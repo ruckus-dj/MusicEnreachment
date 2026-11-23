@@ -43,7 +43,7 @@ import { appShellMessages } from "../i18n/appShellMessages";
 import { useI18n } from "../i18n/I18nProvider";
 import { shell } from "../i18n/namespaces/shell";
 import { useHashLocation } from "../navigation/hashLocation";
-import { type ShellNavigationItem, ShellView } from "./ShellView";
+import { ShellContent, type ShellNavigationItem, ShellView } from "./ShellView";
 
 type ShellError = { message: string } | { fallback: true };
 
@@ -61,7 +61,6 @@ type Route =
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
 
-const shellContentClass = "min-w-0 p-2.5 [&>:first-child]:mt-0 min-[600px]:p-3";
 const skipLinkClass =
   "fixed left-3 top-[-80px] z-[200] border-0 bg-[var(--surface)] p-2 focus:top-2";
 const rootLandingActionClass =
@@ -357,7 +356,7 @@ function ProductShell({
         }}
         footerText={`v${packageMetadata.version}`}
       >
-        <div className={shellContentClass}>{children}</div>
+        <ShellContent>{children}</ShellContent>
       </ShellView>
     </div>
   );

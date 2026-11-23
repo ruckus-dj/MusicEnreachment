@@ -6,19 +6,12 @@ const english = {
   outputDirectory: "Output directory",
   directoryHelp:
     "These paths belong to the server, not this computer. The output directory must be empty.",
-  directoryRequired: "Enter both server directories.",
-  format: "Publication format",
+  toolsDirectoryRequired: "Choose the tools directory.",
+  outputDirectoryRequired: "Choose the output directory.",
   whatWillHappen: "What will happen",
-  sourceFormat: "Source format",
-  mkaRemux: "MKA remux",
-  removeSources: "Remove source files after successful publication",
-  preserveSourcesDescription:
-    "When disabled, source files are kept. They are removed only after successful publication, never after a failure.",
   updateCheck: "Refresh check",
-  platformHelp:
-    "The server determines its platform; it does not change with the browser. Check the OS and architecture before setup.",
-  directoryHelpDetails:
-    "Choose permanent directories inside the server or container. The publication directory must be empty; the tools directory is retained across restarts.",
+  toolsDirectoryHelp:
+    "Choose a permanent directory inside the server or container. It is retained across restarts and validated on Continue.",
   toolsHelp:
     "FFmpeg includes ffmpeg and ffprobe in one package. Choose a version for each package; the first verified version is activated automatically.",
   publicationHelp:
@@ -37,9 +30,7 @@ const english = {
   requestInProgress: "Request in progress…",
   metadataTitle: "Metadata providers",
   lrclibEnabled: "LRCLIB enabled",
-  checkMusicBrainz: "Check MusicBrainz",
   musicBrainzUnavailable: "MusicBrainz is unavailable.",
-  musicBrainzVerified: "MusicBrainz has been checked.",
   musicBrainzChanged: "Configuration changed. Check MusicBrainz again.",
   musicBrainzCheckedAt: "Checked: ",
   musicBrainzNotChecked: "Connection has not been checked yet.",
@@ -145,19 +136,12 @@ const russian: SetupMessages = {
   outputDirectory: "Каталог публикации",
   directoryHelp:
     "Пути относятся к серверу, а не к этому компьютеру. Каталог публикации должен быть пустым.",
-  directoryRequired: "Укажите оба каталога сервера.",
-  format: "Формат публикации",
+  toolsDirectoryRequired: "Выберите каталог инструментов.",
+  outputDirectoryRequired: "Выберите каталог публикации.",
   whatWillHappen: "Что будет происходить",
-  sourceFormat: "Исходный формат",
-  mkaRemux: "Перепаковка в MKA",
-  removeSources: "Удалять исходники после успешной публикации",
-  preserveSourcesDescription:
-    "Если флажок снят, исходники останутся. Они удаляются только после успешной публикации, не при ошибке.",
   updateCheck: "Обновить проверку",
-  platformHelp:
-    "Платформа определяется сервером и не меняется в браузере. Проверьте ОС и архитектуру перед настройкой.",
-  directoryHelpDetails:
-    "Укажите постоянные каталоги внутри сервера или контейнера. Каталог публикации должен быть пустым; путь к инструментам сохраняется между перезапусками.",
+  toolsDirectoryHelp:
+    "Укажите постоянный каталог внутри сервера или контейнера. Путь сохраняется между перезапусками и проверяется при продолжении.",
   toolsHelp:
     "FFmpeg включает ffmpeg и ffprobe в одном пакете. Выберите версию каждого пакета; первая успешно проверенная версия активируется автоматически.",
   publicationHelp:
@@ -176,9 +160,7 @@ const russian: SetupMessages = {
   requestInProgress: "Выполняется запрос…",
   metadataTitle: "Провайдеры метаданных",
   lrclibEnabled: "LRCLIB включён",
-  checkMusicBrainz: "Проверить MusicBrainz",
   musicBrainzUnavailable: "MusicBrainz недоступен.",
-  musicBrainzVerified: "MusicBrainz проверен.",
   musicBrainzChanged: "Конфигурация изменена. Проверьте MusicBrainz снова.",
   musicBrainzCheckedAt: "Проверено: ",
   musicBrainzNotChecked: "Соединение ещё не проверено.",

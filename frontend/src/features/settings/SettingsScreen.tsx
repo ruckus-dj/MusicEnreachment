@@ -69,6 +69,7 @@ import {
   SettingsManagedPackageCards,
 } from "./SettingsManagedPackageCards";
 import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
+import { SettingsPageFrame } from "./SettingsPageFrame";
 import { SettingsProvidersSection } from "./SettingsProvidersSection";
 import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
@@ -3157,14 +3158,7 @@ export function SettingsScreen() {
     setActiveConflicts((previous) => ({ ...previous, [group]: false }));
   }
   return (
-    <section
-      aria-labelledby="settings-title"
-      className="settings-screen mx-auto max-w-5xl py-3"
-    >
-      <h1 ref={heading} tabIndex={-1} id="settings-title">
-        {t("pageTitle")}
-      </h1>
-      <p className="setup-help">{t("pageDescription")}</p>
+    <SettingsPageFrame locale={locale} headingRef={heading}>
       {effectiveBusy && <p role="status">{t("requestInProgress")}</p>}
       {draftStorageWarning && <p role="status">{t("draftMemoryWarning")}</p>}
       {!initialLoadComplete && !loadError && (
@@ -3695,7 +3689,7 @@ export function SettingsScreen() {
           )}
         </dialog>
       )}
-    </section>
+    </SettingsPageFrame>
   );
 }
 

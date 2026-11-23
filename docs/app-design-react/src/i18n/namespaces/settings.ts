@@ -3,8 +3,6 @@ import { createNamespace } from "../createNamespace";
 export const settingsMessages = createNamespace({
 	en: {
 		tabFolders: "Folders",
-		title: "Settings",
-		subtitle: "Library configuration and connected services",
 		output: "Publication directory",
 		currentOutput: "Current directory",
 		newOutput: "New directory",
@@ -127,8 +125,6 @@ export const settingsMessages = createNamespace({
 	},
 	ru: {
 		tabFolders: "Папки",
-		title: "Настройки",
-		subtitle: "Параметры библиотеки и её подключений",
 		output: "Каталог публикации",
 		currentOutput: "Текущий каталог",
 		newOutput: "Новый каталог",

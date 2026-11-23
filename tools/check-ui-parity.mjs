@@ -39,6 +39,7 @@ const pairs = [
       "SettingsLeaveDialog.tsx",
       "SettingsManagedPackageCards.tsx",
       "SettingsOutputResetDialog.tsx",
+      "SettingsPageFrame.tsx",
       "SettingsProvidersSection.tsx",
       "SettingsTabs.tsx",
       "SettingsToolInstallDialog.tsx",
@@ -47,7 +48,7 @@ const pairs = [
       "SettingsToolsOverview.tsx",
     ],
   ],
-  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupMusicBrainzFields.tsx", "SetupSummaryView.tsx", "SetupToolCardsView.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
+  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupMusicBrainzFields.tsx", "SetupPublicationOptions.tsx", "SetupSummaryView.tsx", "SetupToolCardsView.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
   ["features/tools", "features/tools", ["GitHubTokenFormView.tsx", "toolMessages.ts"]],
   [
     "features/library",

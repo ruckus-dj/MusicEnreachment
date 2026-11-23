@@ -126,6 +126,7 @@ import {
 } from "../fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "../fixtures/useSourceScanDemoProvider";
 import { useI18n } from "../i18n";
+import { ShellContent } from "../routes/ShellView";
 
 const subscribeRoute = (listener: () => void) => {
 	let observedHash = window.location.hash;
@@ -1204,7 +1205,7 @@ export function CatalogDemo({
 		);
 	if (routeName === "settings")
 		return (
-			<section className={screenLayout}>
+			<ShellContent>
 				<SettingsScreen
 					settings={settings}
 					sourceRoots={sourceRoots.map((root) => root.path)}
@@ -1239,7 +1240,7 @@ export function CatalogDemo({
 						}));
 					}}
 				/>
-			</section>
+			</ShellContent>
 		);
 	if (route === "setup")
 		return (

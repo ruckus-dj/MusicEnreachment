@@ -179,7 +179,7 @@ it("replaces only audio measurement tags on an automatic quality upgrade", () =>
 	expect(track.published?.tags.TITLE).toEqual(track.metadataBaseline?.TITLE);
 });
 
-it("preserves an identical current publication and its complete metadata", () => {
+it("preserves identical current M4A audio and metadata after source conversion", () => {
 	const { state, files, releases } = fresh();
 	const plan = makePlan(state, files, releases)!;
 	const target = plan.target.tracks[0];
@@ -189,12 +189,19 @@ it("preserves an identical current publication and its complete metadata", () =>
 		...track.published,
 		tags: providerTags(plan.target, target),
 		sourceId: "north-f1",
-		codec: "FLAC",
+		codec: "ALAC",
+		container: "M4A",
 	};
 	plan.assignments = { [target.id]: plan.assignments[target.id] };
 	const before = structuredClone(track.published);
-	expect(planRows(plan, files, releases)[0].action).toBe("Без изменений");
-	expect(applyPlan(plan, files, releases)).toBe(0);
+	const destination = { outputDirectory: "/srv/music", format: "m4a" } as const;
+	expect(
+		planRows(plan, files, releases, undefined, undefined, destination)[0]
+			.action,
+	).toBe("Без изменений");
+	expect(
+		applyPlan(plan, files, releases, undefined, false, undefined, destination),
+	).toBe(0);
 	expect(track.published).toEqual(before);
 	expect(track.published.tags.MUSICBRAINZ_TRACKID).toEqual(
 		before.tags.MUSICBRAINZ_TRACKID,

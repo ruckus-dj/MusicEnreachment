@@ -10,6 +10,8 @@ import {
 } from "../library/catalogData";
 import {
 	choosePublicationOutput,
+	demoIsLosslessCodec,
+	demoOutputCodec,
 	type PublicationDestination,
 } from "./publicationOutput";
 
@@ -136,7 +138,7 @@ function planPosition(
 		...current,
 		path,
 		container: target.container,
-		codec: source.codec,
+		codec: demoOutputCodec(source.codec, catalog.destination.format),
 		sourceId: source.id,
 		tags: effectivePublicationTags(
 			release,
@@ -151,7 +153,7 @@ function planPosition(
 	const unchanged =
 		mode === "ordinary" &&
 		current?.sourceId === source.id &&
-		current.codec === source.codec &&
+		current.codec === output.codec &&
 		!metadataChanged(release, track, catalog.artists) &&
 		canonical(current.tags) === canonical(output.tags) &&
 		(current.coverHash ?? null) === output.coverHash &&
@@ -165,7 +167,8 @@ function planPosition(
 			? currentSource?.bitrate
 			: undefined;
 	const downgrade =
-		(current?.codec === "FLAC" && source.codec === "MP3") ||
+		(demoIsLosslessCodec(current?.codec) &&
+			!demoIsLosslessCodec(source.codec)) ||
 		(current?.codec === "MP3" &&
 			source.codec === "MP3" &&
 			Boolean(

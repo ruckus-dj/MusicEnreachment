@@ -211,6 +211,7 @@ export const originalProviders: OriginalRelease[] =
 
 import {
 	choosePublicationOutput,
+	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "../publication/publicationOutput";
@@ -241,7 +242,7 @@ export function applyMetadataPreview(
 						tags,
 						coverHash,
 						lyrics,
-						codec: file?.codec ?? "",
+						codec: file ? demoOutputCodec(file.codec, destination.format) : "",
 						container: choosePublicationOutput(file!, {
 							...destination,
 							artist: originalArtistName(release.artistId, artists),

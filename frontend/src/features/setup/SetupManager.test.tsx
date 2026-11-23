@@ -63,7 +63,6 @@ const installed = {
   active_ffmpeg_installation_id: "ff-id",
   active_fpcalc_installation_id: "fp-id",
 };
-const published = { ...installed, publication_format: "source" };
 class TestEventSource extends EventTarget {
   static instances: TestEventSource[] = [];
   static onCreated: (() => void) | undefined;
@@ -140,14 +139,15 @@ function LocaleSwitch() {
 }
 
 describe("SetupManager", () => {
-  it("changes setup language without reloading or losing directory values", () => {
+  it("preserves the tools directory across language changes and saves it before output is set", async () => {
     const current = state({
       tools_directory: "/srv/tools",
-      output_directory: "/srv/output",
     });
     const requests = vi.fn();
+    const saved = vi.fn();
+    const checked = vi.fn();
     localStorage.setItem("melotrove-language", "ru");
-    localStorage.setItem("melotrove.setup.step", "1");
+    localStorage.setItem("melotrove.setup.step", "directories");
     server.use(
       http.get("/api/setup", () => {
         requests();
@@ -156,6 +156,14 @@ describe("SetupManager", () => {
       http.get("/api/tools/installations", () => {
         requests();
         return HttpResponse.json({ installations: [] });
+      }),
+      http.put("/api/setup/runtime", async ({ request }) => {
+        saved(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post("/api/setup/paths/check", () => {
+        checked();
+        return new HttpResponse(null, { status: 400 });
       }),
     );
 
@@ -177,9 +185,15 @@ describe("SetupManager", () => {
     );
     expect(toolsDirectory).toHaveValue("/srv/tools");
     expect(
-      screen.getByRole("textbox", { name: "Output directory" }),
-    ).toHaveValue("/srv/output");
+      screen.queryByRole("textbox", { name: "Output directory" }),
+    ).toBeNull();
     expect(requests).not.toHaveBeenCalled();
+    await click("Continue");
+    await waitFor(() => expect(heading("Tools")).toBeVisible());
+    expect(saved).toHaveBeenCalledExactlyOnceWith({
+      tools_directory: "/srv/tools",
+    });
+    expect(checked).not.toHaveBeenCalled();
   });
 
   it("discovers tool operations through the scoped selector", async () => {
@@ -189,7 +203,7 @@ describe("SetupManager", () => {
       return HttpResponse.json({ operations: [] });
     });
     server.use(http.get("/api/operations", operations));
-    localStorage.setItem("melotrove.setup.step", "2");
+    localStorage.setItem("melotrove.setup.step", "tools");
 
     renderSetup(state(paths));
 
@@ -200,32 +214,45 @@ describe("SetupManager", () => {
   it("requires an explicit format and submits the current publication settings", async () => {
     let current = state(installed);
     const lrclib = vi.fn();
+    let providerAvailable = false;
     let acceptLrclib = () => {};
     const held = new Promise<void>((resolve) => {
       acceptLrclib = resolve;
     });
-    const saved = vi.fn((_body: unknown) => {
-      current = state(published);
+    const saved = vi.fn((body: Partial<SetupStateBody["settings"]>) => {
+      current = state({ ...current.settings, ...body });
       return new HttpResponse(null, { status: 204 });
     });
+    const checkedPaths = vi.fn();
+    const checkedProvider = vi.fn();
     server.use(
       http.get("/api/setup", () => HttpResponse.json(current)),
       http.put("/api/setup/runtime", async ({ request }) =>
-        saved(await request.json()),
+        saved((await request.json()) as Partial<SetupStateBody["settings"]>),
       ),
+      http.post("/api/setup/paths/check", async ({ request }) => {
+        checkedPaths(await request.json());
+        return HttpResponse.json(paths);
+      }),
       http.put(
         "/api/setup/musicbrainz",
         () => new HttpResponse(null, { status: 204 }),
       ),
       http.post("/api/setup/check-musicbrainz", () => {
+        checkedProvider();
+        if (!providerAvailable)
+          return HttpResponse.json({
+            success: false,
+            error: "service unavailable",
+          });
         current = state({
-          ...published,
+          ...current.settings,
           musicbrainz_verified_at: "2026-11-20T12:00:00Z",
         });
         return HttpResponse.json({ success: true });
       }),
-      http.put("/api/setup/lrclib", async () => {
-        lrclib();
+      http.put("/api/setup/lrclib", async ({ request }) => {
+        lrclib(await request.json());
         await held;
         return new HttpResponse(null, { status: 204 });
       }),
@@ -236,23 +263,28 @@ describe("SetupManager", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("Выберите формат"),
     );
     expect(saved).not.toHaveBeenCalled();
+    expect(checkedPaths).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "Исходный формат" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "LRCLIB включён" }));
     await click("Продолжить");
-    await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
-    expect(saved).toHaveBeenCalledWith({
-      publication_format: "source",
-      publication_remove_sources: false,
-    });
-    await click("Продолжить");
-    await screen.findByRole("alert");
-    expect(lrclib).not.toHaveBeenCalled();
-    await click("Проверить MusicBrainz");
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Продолжить" })).toBeEnabled(),
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "service unavailable",
     );
+    expect(heading("Публикация")).toBeVisible();
+    expect(lrclib).not.toHaveBeenCalled();
+    providerAvailable = true;
     await click("Продолжить");
     try {
-      await waitFor(() => expect(lrclib).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(lrclib).toHaveBeenCalledExactlyOnceWith({ enabled: false }),
+      );
+      expect(checkedPaths).toHaveBeenLastCalledWith(paths);
+      expect(saved).toHaveBeenLastCalledWith({
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        publication_remove_sources: false,
+      });
+      expect(checkedProvider).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("button", { name: "Назад" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Продолжить" })).toBeDisabled();
     } finally {
