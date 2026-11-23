@@ -85,7 +85,6 @@ export const sourcesMessages = createNamespace({
 			"The selected copies are no longer all eligible. Refresh the selection and choose again.",
 		cleanupCopyFailed: "The temporary copy could not be cleaned up.",
 		cleanupBatchFailed: "One or more temporary copies could not be cleaned up.",
-		removeRoot: "Remove source",
 		rootRemoved: "Source removed from the prototype inventory.",
 		rootActive:
 			"Removal blocked: this source has queued or running processing. Wait for it to finish, then try again.",
@@ -93,10 +92,8 @@ export const sourcesMessages = createNamespace({
 			"Confirmation is out of date because this source inventory changed. Review the current source and try again.",
 		unavailablePublications:
 			"An unavailable source does not remove existing managed publications.",
-		rootActionLabel: "Remove source {name}",
 		backToSources: "Back to sources",
 		sourceNotFound: "Source not found",
-		sourceSummary: "Source",
 		lastSuccessfulScan: "Last successful scan",
 		inventory: "Inventory",
 		neverScanned: "Not scanned yet",
@@ -190,7 +187,6 @@ export const sourcesMessages = createNamespace({
 		cleanupCopyFailed: "Не удалось очистить временную копию.",
 		cleanupBatchFailed:
 			"Не удалось очистить одну или несколько временных копий.",
-		removeRoot: "Удалить источник",
 		rootRemoved: "Источник удалён из инвентаря макета.",
 		rootActive:
 			"Удаление заблокировано: для этого источника есть записи в очереди или выполняется обработка. Дождитесь завершения и повторите попытку.",
@@ -198,10 +194,8 @@ export const sourcesMessages = createNamespace({
 			"Подтверждение устарело: инвентарь источника изменился. Проверьте текущее состояние и повторите попытку.",
 		unavailablePublications:
 			"Недоступность источника не удаляет существующие управляемые публикации.",
-		rootActionLabel: "Удалить источник {name}",
 		backToSources: "К списку источников",
 		sourceNotFound: "Источник не найден",
-		sourceSummary: "Источник",
 		lastSuccessfulScan: "Последнее успешное сканирование",
 		inventory: "Инвентарь",
 		neverScanned: "Ещё не сканировался",

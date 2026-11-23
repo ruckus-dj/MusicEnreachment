@@ -266,7 +266,7 @@ it("confirms the path and inventory count shown in the source removal dialog", a
   );
 
   const trigger = await screen.findByRole("button", {
-    name: "Удалить каталог",
+    name: "Удалить источник Входящие",
   });
   trigger.focus();
   fireEvent.click(trigger);

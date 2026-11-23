@@ -12,6 +12,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
 import { SourceLocations } from "./SourceLocations";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
+import { SourceRootOverviewView } from "./SourceRootOverviewView";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import { SourceScanControl } from "./SourceScanControl";
 import { type SourceMessage, sourceMessage } from "./sourceMessages";
@@ -23,7 +24,6 @@ import {
   renderSourceError,
   sourceError,
   sourceFailure,
-  statusLabel,
 } from "./sourcesApi";
 import "./sources.css";
 
@@ -205,6 +205,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     >
       <SourceRootHeadingView
         title={root ? root.display_name : t("sourceTitle")}
+        path={root?.configured_path}
         headingRef={heading}
         headingId="source-title"
         back={{ label: t("backToSources"), onPress: backToList }}
@@ -224,55 +225,34 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       )}
       {root && (
         <>
-          <section
-            aria-labelledby="source-summary-title"
-            className="sources-panel"
-          >
-            <h2 id="source-summary-title">{t("sourceSummary")}</h2>
-            <dl className="sources-summary">
-              <div>
-                <dt>{t("serverPath")}</dt>
-                <dd>
-                  <code>{root.configured_path}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>{t("availabilityLabel")}</dt>
-                <dd>
-                  <span className="sources-chip" data-status={root.status}>
-                    {statusLabel(root.status, locale)}
-                  </span>
-                  {root.status === "unavailable" && root.safe_error && (
-                    <span className="sources-note">{root.safe_error}</span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>{t("enabled")}</dt>
-                <dd>{root.enabled ? t("yesNewScans") : t("noNewScans")}</dd>
-              </div>
-              <div>
-                <dt>{t("lastSuccessfulScan")}</dt>
-                <dd>{lastScanLabel(root, locale)}</dd>
-              </div>
-              <div>
-                <dt>{t("inventory")}</dt>
-                <dd>{inventoryLabel(root, locale)}</dd>
-              </div>
-              {root.inventory_path && (
-                <div>
-                  <dt>{t("inventoryPath")}</dt>
-                  <dd>
-                    <code>{root.inventory_path}</code>
-                    {root.stale && (
-                      <span className="sources-note">{t("previousPath")}</span>
-                    )}
-                  </dd>
-                </div>
-              )}
-            </dl>
-            <p className="sources-help">{t("sourceReadOnly")}</p>
-          </section>
+          <SourceRootOverviewView
+            locale={locale}
+            titleId="source-summary-title"
+            name={root.display_name}
+            path={root.configured_path}
+            mode={root.processing_mode}
+            availability={root.status}
+            availabilityNote={
+              root.status === "unavailable" ? root.safe_error : undefined
+            }
+            lastScan={{
+              label: lastScanLabel(root, locale),
+              dateTime: root.last_successful_scan_at,
+            }}
+            inventory={{
+              label: inventoryLabel(root, locale),
+              path: root.inventory_path,
+              stale: root.stale,
+            }}
+            onRemove={() => {
+              setDeleteError(null);
+              setRemoval({
+                sourceId,
+                path: root.configured_path,
+                locationCount: root.location_count,
+              });
+            }}
+          />
           <SourceScanControl root={root} />
           <SourceLocations
             sourceId={sourceId}
@@ -343,25 +323,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             ) : (
               <AppButton onPress={openEdit}>{t("editSource")}</AppButton>
             )}
-          </section>
-          <section
-            aria-labelledby="source-delete-title"
-            className="sources-panel sources-danger"
-          >
-            <h2 id="source-delete-title">{t("deleteTitle")}</h2>
-            <p>{t("deleteExplanation")}</p>
-            <AppButton
-              onPress={() => {
-                setDeleteError(null);
-                setRemoval({
-                  sourceId,
-                  path: root.configured_path,
-                  locationCount: root.location_count,
-                });
-              }}
-            >
-              {t("deleteSource")}
-            </AppButton>
           </section>
         </>
       )}

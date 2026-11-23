@@ -24,6 +24,7 @@ import { SourceInspectorView } from "./SourceInspectorView";
 import { SourceInventoryView } from "./SourceInventoryView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import { SourceRootOverviewView } from "./SourceRootOverviewView";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import { SourceScanPanel } from "./SourceScanPanel";
 import { demoSourceLocationHref } from "./sourceDemoRoute";
@@ -228,13 +229,6 @@ export function SourcesScreen({
 		href: `#sources/${encodeURIComponent(item.id)}`,
 	}));
 
-	const availabilityLabel = (item: SourceRoot) =>
-		item.available === null
-			? m("notChecked")
-			: item.available
-				? m("available")
-				: m("unavailable");
-
 	const noticeNode = notice ? (
 		<p className={styles.formNotice} role="status">
 			{m(notice.key, notice.values)}
@@ -324,19 +318,13 @@ export function SourcesScreen({
 								})}
 							/>
 						)}
-						<section className={styles.panel}>
-							<h2>{m("sourceSummary")}</h2>
-							<dl className="m-0 grid grid-cols-[minmax(130px,.3fr)_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs max-[600px]:grid-cols-1">
-								<dt className="text-[var(--muted)]">{m("nameColumn")}</dt>
-								<dd className="m-0 min-w-0 [overflow-wrap:anywhere]">
-									{root.name}
-								</dd>
-								<dt className="text-[var(--muted)]">{m("pathColumn")}</dt>
-								<dd className="m-0 min-w-0">
-									<code className="[overflow-wrap:anywhere]">{root.path}</code>
-								</dd>
-								<dt className="text-[var(--muted)]">{m("modeColumn")}</dt>
-								<dd className="m-0 min-w-0">
+						<SourceRootOverviewView
+							locale={locale}
+							name={root.name}
+							path={root.path}
+							mode={root.mode}
+							modeControl={
+								<>
 									<Select
 										selectedKey={root.mode}
 										aria-label={m("modeFor", { name: root.name })}
@@ -368,49 +356,31 @@ export function SourcesScreen({
 											<a href="#settings">{m("configure")}</a>
 										</p>
 									)}
-								</dd>
-								<dt className="text-[var(--muted)]">
-									{m("availabilityColumn")}
-								</dt>
-								<dd className="m-0 min-w-0">
-									{availabilityLabel(root)}
-									{root.available === false && (
-										<p className="my-1 text-xs text-[var(--muted)]">
-											{m("checkUnavailable")}
-										</p>
-									)}
-								</dd>
-								<dt className="text-[var(--muted)]">
-									{m("lastSuccessfulScan")}
-								</dt>
-								<dd className="m-0 min-w-0">
-									{root.lastSuccessfulScanAt ? (
-										<time dateTime={root.lastSuccessfulScanAt}>
-											{scanLabel}
-										</time>
-									) : (
-										scanLabel
-									)}
-								</dd>
-								<dt className="text-[var(--muted)]">{m("inventory")}</dt>
-								<dd className="m-0 min-w-0">
-									{inventoryLabel}
-									{root.lastSuccessfulScanAt && root.inventoryCount === 0 && (
-										<span className="mt-1 block text-xs text-[var(--muted)]">
-											{m("noInventory")}
-										</span>
-									)}
-								</dd>
-							</dl>
-							<div className={styles.objectActions}>
-								<Button
-									aria-label={m("rootActionLabel", { name: root.name })}
-									onPress={() => requestRootRemoval(root)}
-								>
-									{m("removeRoot")}
-								</Button>
-							</div>
-						</section>
+								</>
+							}
+							availability={
+								root.available === true
+									? "available"
+									: root.available === false
+										? "unavailable"
+										: "unknown"
+							}
+							availabilityNote={
+								root.available === false ? m("checkUnavailable") : undefined
+							}
+							lastScan={{
+								label: scanLabel,
+								dateTime: root.lastSuccessfulScanAt,
+							}}
+							inventory={{
+								label: inventoryLabel,
+								notes:
+									root.lastSuccessfulScanAt && root.inventoryCount === 0
+										? [m("noInventory")]
+										: undefined,
+							}}
+							onRemove={() => requestRootRemoval(root)}
+						/>
 						<section
 							className={styles.panel}
 							aria-labelledby="source-processing-title"

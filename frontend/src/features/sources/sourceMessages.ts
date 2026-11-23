@@ -46,17 +46,9 @@ const en = {
   openManualScan: "Open source to scan manually",
   backToSources: "Back to sources",
   sourceTitle: "Source",
-  sourceSummary: "Source",
   serverDirectory: "Server directory",
   availabilityLabel: "Availability",
-  yesNewScans: "Yes: new scans are allowed.",
-  noNewScans: "No: new scans are not allowed.",
   lastSuccessfulScan: "Last successful scan",
-  inventoryPath: "Inventory path",
-  previousPath:
-    "This is the previous path. The inventory will be replaced after a successful scan of the current path.",
-  sourceReadOnly:
-    "The directory belongs to the server: MeloTrove reads it but does not write to it.",
   editTitle: "Name, path, and mode",
   sourceName: "Source name",
   modeChange:
@@ -68,10 +60,6 @@ const en = {
   sourceSavedStale:
     "Source saved. The inventory still belongs to the previous path {path} and will be replaced after a successful scan of the new path.",
   editSource: "Edit source",
-  deleteTitle: "Delete source",
-  deleteExplanation:
-    "Deleting also removes its inventory, application-owned analysis copies, and completed failed jobs that cannot be retried. Source files, library objects, current publications, and files in output are not affected. The server rejects deletion while jobs are queued or running.",
-  deleteSource: "Delete source",
   loadingLocations: "Loading source…",
   inspectorPath: "File path",
   inspector: "File inspector",
@@ -293,17 +281,9 @@ const ru: Record<keyof typeof en, string> = {
   openManualScan: "Открыть каталог для ручного сканирования",
   backToSources: "К списку каталогов",
   sourceTitle: "Каталог источника",
-  sourceSummary: "Каталог",
   serverDirectory: "Путь на сервере",
   availabilityLabel: "Доступность",
-  yesNewScans: "Да: новые сканирования разрешены.",
-  noNewScans: "Нет: новые сканирования запрещены.",
   lastSuccessfulScan: "Последнее успешное сканирование",
-  inventoryPath: "Путь инвентаря",
-  previousPath:
-    "Это прежний путь: инвентарь заменится после успешного сканирования текущего пути.",
-  sourceReadOnly:
-    "Каталог принадлежит серверу: MeloTrove читает его и ничего в него не записывает.",
   editTitle: "Имя, путь и режим",
   sourceName: "Имя каталога",
   modeChange:
@@ -312,10 +292,6 @@ const ru: Record<keyof typeof en, string> = {
     "Путь принадлежит серверу, а не этому компьютеру. Смена пути не удаляет инвентарь: прежние записи остаются видимыми как относящиеся к прежнему пути, пока новое сканирование не завершится успешно.",
   saveSource: "Сохранить каталог",
   editSource: "Изменить каталог",
-  deleteTitle: "Удаление каталога",
-  deleteExplanation:
-    "Вместе с инвентарём удаляются сохранённые копии анализа, принадлежащие приложению, и завершённые неудачные задания этого каталога без возможности повтора. Исходные файлы, объекты медиатеки, текущие публикации и файлы в output не затрагиваются. Пока задания ждут запуска или выполняются, сервер отклоняет удаление.",
-  deleteSource: "Удалить каталог",
   loadingLocations: "Загрузка каталога…",
   inspectorPath: "Путь к файлу",
   inspector: "Инспектор файла",

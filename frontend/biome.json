@@ -28,6 +28,7 @@
         "src/features/own-catalog/OwnCatalogPagination.tsx",
         "src/features/settings/SettingsTabs.tsx",
         "src/features/sources/SourceRootList.tsx",
+        "src/features/sources/SourceRootOverviewView.tsx",
         "src/features/sources/SourceScanPanel.tsx",
         "src/routes/ShellView.tsx"
       ],

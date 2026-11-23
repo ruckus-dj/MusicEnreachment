@@ -38,10 +38,6 @@
   background: var(--sources-surface);
 }
 
-.sources-screen .sources-danger {
-  border-color: var(--sources-warning);
-}
-
 .sources-screen .sources-help,
 .sources-screen .sources-note {
   color: var(--sources-muted);
@@ -136,54 +132,6 @@
   margin: 8px 0;
 }
 
-.sources-chip {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  color: var(--sources-muted);
-  background: var(--sources-raised);
-  font-size: 11px;
-}
-
-.sources-chip[data-status="available"],
-.sources-chip[data-status="audio"] {
-  color: var(--sources-accent);
-  background: var(--sources-accent-soft);
-}
-
-.sources-chip[data-status="unavailable"],
-.sources-chip[data-status="probe_error"] {
-  color: var(--sources-error);
-  background: var(--sources-error-soft);
-}
-
-.sources-chip[data-status="no_audio"] {
-  color: var(--sources-warning);
-  background: var(--sources-warning-soft);
-}
-
-.sources-summary > div {
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
-  gap: 10px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--sources-line);
-}
-
-.sources-summary > div:last-child {
-  border-bottom: 0;
-}
-
-.sources-summary dt {
-  color: var(--sources-muted);
-}
-
-.sources-summary dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 .sources-screen a {
   color: var(--sources-accent);
   text-decoration: none;
@@ -195,18 +143,7 @@
   text-decoration: underline;
 }
 
-@media (max-width: 899px) {
-  .sources-summary > div {
-    grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
-  }
-}
-
 @media (max-width: 599px) {
-  .sources-summary > div {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-  }
-
   .sources-screen button,
   .sources-screen input:not([type="checkbox"]),
   .sources-screen select {
