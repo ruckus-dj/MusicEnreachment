@@ -69,6 +69,7 @@ source channel, а fixture макета такого происхождения 
 | Базовая локализация и предпочтение темы | `i18n/{I18nProvider.tsx,createNamespace.ts,locale.ts,translator.ts,types.ts,namespaces/shell.ts}`, `components/themePreference.ts` | Те же пути |
 | Источники: список, заголовок корня, сканирование и таблица инвентаря | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
 | Источники: инспектор файла, этапы анализа и технический результат | `features/sources/SourceInspectorView.tsx`, `SourceAnalysisSteps.tsx`, `SourceTechnicalResult.tsx`, `sourceInspectorMessages.ts`, `sourceInspectorModel.ts` | Те же пути |
+| Источники: подтверждение удаления корня | `features/sources/SourceRootRemovalDialog.tsx` | Тот же путь |
 | Операции: список, фильтры, поиск, пагинация, раскрытие и подтверждение прерывания перепубликаций | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts`, `MatchingRecheckAbandonDialog.tsx` | Те же пути |
 | Входящие: обзор групп и действия с файлами | `features/incoming/IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx`, `components/AppButton.tsx` | Те же пути |
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
@@ -101,7 +102,10 @@ source channel, а fixture макета такого происхождения 
 - **Источники.** Инспектор открывается из инвентаря в обеих сборках.
   Провайдер макета использует состояние демонстрационного анализа и не
   подставляет отсутствующие измерения, отпечатки и исходный вывод ffprobe.
-  Каркас экрана каталога и действия с временными копиями ещё различаются.
+  Диалог удаления корня использует одинаковое представление; приложение
+  подтверждает путь и число записей через сервер, макет проверяет свои
+  демонстрационные данные. Каркас каталога и действия с временными копиями
+  ещё различаются.
 - **Медиатека, входящие и публикация.** Общие строки и части рабочих областей
   уже перенесены. В композиции маршрутов, редакторах структурированных метаданных,
   диалогах и каталогах переводов остаются разные реализации. Перед копированием

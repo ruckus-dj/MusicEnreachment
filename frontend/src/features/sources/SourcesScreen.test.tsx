@@ -178,6 +178,63 @@ it("shows the original source path when selecting and confirming a copy", async 
   expect(dialog).not.toHaveTextContent(artifactId);
 });
 
+it("confirms the path and inventory count shown in the source removal dialog", async () => {
+  const deletes: unknown[] = [];
+  server.use(
+    http.get("/api/sources/root-1", () =>
+      HttpResponse.json(root({ location_count: 1 })),
+    ),
+    locationsHandler([
+      {
+        id: "first-location",
+        relative_path: "01.flac",
+        size_bytes: 42,
+        mtime: "2026-09-26T10:20:00Z",
+        has_result: false,
+        probe_status: "not_analyzed",
+      },
+    ]),
+    http.delete("/api/sources/root-1", async ({ request }) => {
+      deletes.push(await request.json());
+      return HttpResponse.json(
+        { status: 409, detail: "source scope changed" },
+        { status: 409 },
+      );
+    }),
+  );
+  window.location.hash = "/sources/root-1";
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider>
+        <SourcesScreen />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+
+  const trigger = await screen.findByRole("button", {
+    name: "Удалить каталог",
+  });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Подтверждение удаления источника",
+  });
+  expect(dialog).toHaveTextContent("/srv/inbox");
+  expect(dialog).toHaveTextContent("Записей о файлах в инвентаре: 1.");
+  expect(deletes).toHaveLength(0);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Подтвердить удаление" }),
+  );
+  const error = await within(dialog).findByRole("alert");
+  expect(error).toHaveFocus();
+  expect(deletes).toEqual([
+    { confirmed_path: "/srv/inbox", confirmed_location_count: 1 },
+  ]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
 describe("source root creation", () => {
   it("registers a server path without scanning and reloads the list", async () => {
     const registered = root({

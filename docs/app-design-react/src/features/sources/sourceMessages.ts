@@ -101,17 +101,9 @@ export const sourcesMessages = createNamespace({
 			"Removal blocked: this source has queued or running processing. Wait for it to finish, then try again.",
 		rootChanged:
 			"Confirmation is out of date because this source inventory changed. Review the current source and try again.",
-		rootConfirmTitle: "Remove source {path}?",
-		rootConfirmCount: "File records in inventory: {count}.",
-		rootConfirmScope:
-			"This removes this source's inventory, failed work and retained application-owned copies. Queued or running work must finish first. Host originals, library objects and current publications remain untouched.",
-		rootConfirmRecheck:
-			"Before confirmation, the source inventory and any active processing are checked again. The prototype does not access the real filesystem.",
-		confirm: "Confirm removal",
 		unavailablePublications:
 			"An unavailable source does not remove existing managed publications.",
 		rootActionLabel: "Remove source {name}",
-		deleteDialogLabel: "Remove source confirmation",
 		backToSources: "Back to sources",
 		sourceNotFound: "Source not found",
 		sourceSummary: "Source",
@@ -222,17 +214,9 @@ export const sourcesMessages = createNamespace({
 			"Удаление заблокировано: для этого источника есть записи в очереди или выполняется обработка. Дождитесь завершения и повторите попытку.",
 		rootChanged:
 			"Подтверждение устарело: инвентарь источника изменился. Проверьте текущее состояние и повторите попытку.",
-		rootConfirmTitle: "Удалить источник {path}?",
-		rootConfirmCount: "Записей о файлах в инвентаре: {count}.",
-		rootConfirmScope:
-			"Удаляются инвентарь источника, неудачные задания и сохранённые копии приложения. Задания в очереди или выполняющиеся должны завершиться. Исходные файлы на сервере, объекты медиатеки и текущие публикации не затрагиваются.",
-		rootConfirmRecheck:
-			"Перед подтверждением инвентарь и активная обработка будут проверены повторно. Макет не обращается к реальной файловой системе.",
-		confirm: "Подтвердить удаление",
 		unavailablePublications:
 			"Недоступность источника не удаляет существующие управляемые публикации.",
 		rootActionLabel: "Удалить источник {name}",
-		deleteDialogLabel: "Подтверждение удаления источника",
 		backToSources: "К списку источников",
 		sourceNotFound: "Источник не найден",
 		sourceSummary: "Источник",

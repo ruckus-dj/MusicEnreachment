@@ -26,6 +26,7 @@ import { SourceInspectorView } from "./SourceInspectorView";
 import { SourceInventoryView } from "./SourceInventoryView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import { SourceScanPanel } from "./SourceScanPanel";
 import { demoSourceLocationHref } from "./sourceDemoRoute";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
@@ -743,54 +744,34 @@ export function SourcesScreen({
 					</Button>
 				</Dialog>
 			</Modal>
-			<Modal
-				isOpen={Boolean(removal)}
-				onOpenChange={(open) => {
-					if (!open) setRemoval(null);
-				}}
-				isDismissable
-			>
-				<Dialog aria-label={m("deleteDialogLabel")}>
-					<Heading slot="title">
-						{m("rootConfirmTitle", { path: removal?.path ?? "" })}
-					</Heading>
-					<p>
-						<code>{removal?.path}</code>
-						<br />
-						{m("rootConfirmCount", { count: removal?.locations.length ?? 0 })}
-					</p>
-					<p>{m("rootConfirmScope")}</p>
-					<p>{m("rootConfirmRecheck")}</p>
-					<Button onPress={() => setRemoval(null)}>{m("cancel")}</Button>
-					<Button
-						onPress={() => {
-							if (!removal) return;
-							if (hasActiveRootWork(removal.id)) {
-								notify("rootActive");
-								setRemoval(null);
-								return;
-							}
-							const currentLocations = rootLocations(files, removal.id)
-								.map((location) => location.id)
-								.sort();
-							if (currentLocations.join("|") !== removal.locations.join("|")) {
-								notify("rootChanged");
-								setRemoval(null);
-								return;
-							}
-							updateProcessing(
-								removeRootProcessingState(processing, removal.id),
-							);
-							onRemove(removal.id);
-							notify("rootRemoved");
+			{removal && (
+				<SourceRootRemovalDialog
+					locale={locale}
+					path={removal.path}
+					count={removal.locations.length}
+					onCancel={() => setRemoval(null)}
+					onConfirm={() => {
+						if (hasActiveRootWork(removal.id)) {
+							notify("rootActive");
 							setRemoval(null);
-							window.location.hash = "sources";
-						}}
-					>
-						{m("confirm")}
-					</Button>
-				</Dialog>
-			</Modal>
+							return;
+						}
+						const currentLocations = rootLocations(files, removal.id)
+							.map((location) => location.id)
+							.sort();
+						if (currentLocations.join("|") !== removal.locations.join("|")) {
+							notify("rootChanged");
+							setRemoval(null);
+							return;
+						}
+						updateProcessing(removeRootProcessingState(processing, removal.id));
+						onRemove(removal.id);
+						notify("rootRemoved");
+						setRemoval(null);
+						window.location.hash = "sources";
+					}}
+				/>
+			)}
 		</section>
 	);
 }

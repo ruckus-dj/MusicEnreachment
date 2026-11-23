@@ -72,12 +72,6 @@ const en = {
   deleteExplanation:
     "Deleting also removes its inventory, application-owned analysis copies, and completed failed jobs that cannot be retried. Source files, library objects, current publications, and files in output are not affected. The server rejects deletion while jobs are queued or running.",
   deleteSource: "Delete source",
-  deleteConfirmTitle: "Delete the inventory for “{name}”?",
-  deleteConfirmBody:
-    "This deletes {count} inventory records at the server path {path}, as well as saved analysis copies and completed failed jobs that cannot be retried.",
-  sourceFilesRemain:
-    "Source files remain in place: MeloTrove deletes only its own records and copies. Library objects, current publications, and files in output are not affected.",
-  confirmDelete: "Confirm deletion",
   loadingLocations: "Loading source…",
   inspectorPath: "File path",
   inspector: "File inspector",
@@ -356,12 +350,6 @@ const ru: Record<keyof typeof en, string> = {
   deleteExplanation:
     "Вместе с инвентарём удаляются сохранённые копии анализа, принадлежащие приложению, и завершённые неудачные задания этого каталога без возможности повтора. Исходные файлы, объекты медиатеки, текущие публикации и файлы в output не затрагиваются. Пока задания ждут запуска или выполняются, сервер отклоняет удаление.",
   deleteSource: "Удалить каталог",
-  deleteConfirmTitle: "Удалить инвентарь каталога «{name}»?",
-  deleteConfirmBody:
-    "Будут удалены записи инвентаря: {count} по серверному пути {path}, а также сохранённые копии анализа и завершённые неудачные задания без возможности повтора.",
-  sourceFilesRemain:
-    "Исходные файлы каталога остаются на месте: MeloTrove удаляет только собственные записи и копии. Объекты медиатеки, текущие публикации и файлы в output не затрагиваются.",
-  confirmDelete: "Подтвердить удаление",
   loadingLocations: "Загрузка каталога…",
   inspectorPath: "Путь к файлу",
   inspector: "Инспектор файла",

@@ -1,11 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteSource,
   getSource,
@@ -18,11 +12,11 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
 import { SourceLocations } from "./SourceLocations";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
+import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import { SourceScanControl } from "./SourceScanControl";
 import { type SourceMessage, sourceMessage } from "./sourceMessages";
 import { useSourceScans } from "./sourceScans";
 import {
-  fileCount,
   inventoryLabel,
   lastScanLabel,
   message,
@@ -59,7 +53,11 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     path: "",
     processingMode: "in_place",
   });
-  const [deleting, setDeleting] = useState(false);
+  const [removal, setRemoval] = useState<{
+    sourceId: string;
+    path: string;
+    locationCount: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReturnType<typeof message> | null>(null);
   const [formError, setFormError] = useState<ReturnType<typeof message> | null>(
@@ -72,9 +70,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const formAlert = useRef<HTMLParagraphElement>(null);
-  const deleteAlert = useRef<HTMLParagraphElement>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const dialogTrigger = useRef<HTMLElement | null>(null);
 
   const applyRoot = useCallback((next: SourceRootResponse) => {
     setRoot(next);
@@ -129,13 +124,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     if (formError) formAlert.current?.focus();
   }, [formError]);
-  useEffect(() => {
-    if (deleteError) deleteAlert.current?.focus();
-  }, [deleteError]);
-  useLayoutEffect(() => {
-    if (deleting) showDialog(dialog.current);
-  }, [deleting]);
-
   function backToList() {
     window.location.hash = "/sources";
   }
@@ -185,34 +173,23 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     }
   }
 
-  function restoreTrigger() {
-    const trigger = dialogTrigger.current;
-    dialogTrigger.current = null;
-    trigger?.focus();
-  }
-
   function closeDelete() {
     setDeleteError(null);
-    if (dialog.current?.open) dialog.current.close();
-    else {
-      setDeleting(false);
-      restoreTrigger();
-    }
+    setRemoval(null);
   }
 
   async function confirmDelete() {
-    if (!root) return;
+    if (!removal || busy) return;
     setBusy(true);
     setDeleteError(null);
     try {
-      const response = await deleteSource(sourceId, {
-        confirmed_path: root.configured_path,
-        confirmed_location_count: root.location_count,
+      const response = await deleteSource(removal.sourceId, {
+        confirmed_path: removal.path,
+        confirmed_location_count: removal.locationCount,
       });
       if (response.status !== 204) throw sourceFailure("delete", response);
       refreshIncomingGroupCount();
-      setDeleting(false);
-      dialogTrigger.current = null;
+      setRemoval(null);
       backToList();
     } catch (reason) {
       setDeleteError(message(reason));
@@ -374,10 +351,13 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             <h2 id="source-delete-title">{t("deleteTitle")}</h2>
             <p>{t("deleteExplanation")}</p>
             <AppButton
-              onPress={(event) => {
-                dialogTrigger.current = event.target as HTMLElement;
+              onPress={() => {
                 setDeleteError(null);
-                setDeleting(true);
+                setRemoval({
+                  sourceId,
+                  path: root.configured_path,
+                  locationCount: root.location_count,
+                });
               }}
             >
               {t("deleteSource")}
@@ -385,56 +365,19 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
           </section>
         </>
       )}
-      {deleting && root && (
-        <dialog
-          ref={dialog}
-          aria-modal="true"
-          aria-labelledby="source-delete-dialog-title"
-          className="sources-dialog"
-          onClose={() => {
-            setDeleting(false);
-            restoreTrigger();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeDelete();
-            }
-          }}
-          onCancel={(event) => {
-            event.preventDefault();
-            closeDelete();
-          }}
-        >
-          <h2 id="source-delete-dialog-title">
-            {t("deleteConfirmTitle", { name: root.display_name })}
-          </h2>
-          <p>
-            {t("deleteConfirmBody", {
-              count: fileCount(root.location_count, locale),
-              path: root.configured_path,
-            })}
-          </p>
-          <p>{t("sourceFilesRemain")}</p>
-          {deleteError && (
-            <p ref={deleteAlert} tabIndex={-1} role="alert">
-              {renderSourceError(deleteError, locale)}
-            </p>
-          )}
-          <AppButton onPress={closeDelete}>{t("cancel")}</AppButton>
-          <AppButton isDisabled={busy} onPress={() => void confirmDelete()}>
-            {t("confirmDelete")}
-          </AppButton>
-        </dialog>
+      {removal && (
+        <SourceRootRemovalDialog
+          locale={locale}
+          path={removal.path}
+          count={removal.locationCount}
+          busy={busy}
+          error={
+            deleteError ? renderSourceError(deleteError, locale) : undefined
+          }
+          onCancel={closeDelete}
+          onConfirm={() => void confirmDelete()}
+        />
       )}
     </section>
   );
-}
-
-function showDialog(element: HTMLDialogElement | null) {
-  if (!element || element.open) return;
-  element.showModal();
-  element
-    .querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")
-    ?.focus();
 }
