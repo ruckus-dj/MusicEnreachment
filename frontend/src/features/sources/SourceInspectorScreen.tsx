@@ -85,17 +85,20 @@ export function SourceInspectorScreen({
     stale: detail.root.stale,
     safeError: detail.root.safe_error,
   };
-  const artifact = detail && {
-    state: detail.staged_artifact.state,
-    requestedSteps: detail.staged_artifact.requested_steps ?? [],
-    requestedStepsKnown: detail.staged_artifact.requested_steps_known === true,
-    reusedFromOtherOperation:
-      !!detail.staged_artifact.creator_operation_id &&
-      !!detail.staged_artifact.borrower_operation_id &&
-      detail.staged_artifact.creator_operation_id !==
-        detail.staged_artifact.borrower_operation_id,
-    safeError: detail.staged_artifact.safe_error,
-  };
+  const stagedArtifact = detail?.staged_artifact;
+  const artifact = stagedArtifact
+    ? {
+        state: stagedArtifact.state ?? "unknown",
+        requestedSteps: stagedArtifact.requested_steps ?? [],
+        requestedStepsKnown: stagedArtifact.requested_steps_known === true,
+        reusedFromOtherOperation:
+          !!stagedArtifact.creator_operation_id &&
+          !!stagedArtifact.borrower_operation_id &&
+          stagedArtifact.creator_operation_id !==
+            stagedArtifact.borrower_operation_id,
+        safeError: stagedArtifact.safe_error,
+      }
+    : undefined;
 
   return (
     <SourceInspectorView

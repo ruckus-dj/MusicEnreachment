@@ -84,6 +84,10 @@ export function sourceInspectorDemoProvider({
 		? processing.copies.find((item) => item.id === work.copyId)
 		: undefined;
 	const prefix = root ? `${root.path.replace(/\/+$/, "")}/` : undefined;
+	const relativePath =
+		prefix && location?.path.startsWith(prefix)
+			? location.path.slice(prefix.length)
+			: undefined;
 	return {
 		locale,
 		sourcesHref: "#sources",
@@ -91,13 +95,13 @@ export function sourceInspectorDemoProvider({
 		file:
 			root && location
 				? {
-						relativePath:
-							prefix && location.path.startsWith(prefix)
-								? location.path.slice(prefix.length)
-								: undefined,
-						inventoryPath: root.path,
+						relativePath,
+						inventoryPath: relativePath === undefined ? undefined : root.path,
 						sizeBytes: location.size,
-						modifiedAt: location.mtime,
+						modifiedAt:
+							location.mtime && Number.isFinite(Date.parse(location.mtime))
+								? location.mtime
+								: undefined,
 						availability:
 							root.available === null
 								? "unknown"

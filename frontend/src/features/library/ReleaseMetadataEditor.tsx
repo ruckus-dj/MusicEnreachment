@@ -1640,7 +1640,7 @@ function LibraryScopedMetadataEditorSession({
               </div>
             )}
             <ProviderGenreBaselineRow
-              baseline={providerGenreBaseline}
+              baseline={providerGenreBaseline ?? null}
               locale={locale}
             />
           </section>

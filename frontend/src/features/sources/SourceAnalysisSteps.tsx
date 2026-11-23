@@ -126,7 +126,9 @@ export function SourceAnalysisSteps({
           const successful = hasSuccess || (name === "metadata" && !!metadata);
           return (
             <li key={name} className={stepPanel} aria-label={label}>
-              <h3 className={heading}>{label}</h3>
+              <h3 tabIndex={-1} className={heading}>
+                {label}
+              </h3>
               <p className="m-0">
                 {t("state")}: {t(stateMessages[step.state])}
               </p>
@@ -197,24 +199,30 @@ export function SourceAnalysisSteps({
                 </>
               )}
               {step.state === "failed" && retryAvailable[name] && (
-                <AppButton isDisabled={busy} onPress={() => onRetry(name)}>
+                <AppButton
+                  isDisabled={busy}
+                  onPress={(event) => {
+                    event.target.closest("li")?.querySelector("h3")?.focus();
+                    onRetry(name);
+                  }}
+                >
                   {t("retryStep", { step: label })}
                 </AppButton>
               )}
               {name === "fingerprint" && (
                 <AppButton
                   isDisabled={busy || !fingerprintRerunAvailable}
-                  onPress={onRerunFingerprint}
+                  onPress={(event) => {
+                    event.target.closest("li")?.querySelector("h3")?.focus();
+                    onRerunFingerprint();
+                  }}
                 >
                   {t("rerunFingerprint")}
                 </AppButton>
               )}
-              {!successful &&
-                step.state !== "failed" &&
-                step.state !== "skipped" &&
-                step.state !== "not_requested" && (
-                  <p className={note}>{t("noSuccessfulStep")}</p>
-                )}
+              {!successful && step.state === "succeeded" && (
+                <p className={note}>{t("noSuccessfulStep")}</p>
+              )}
             </li>
           );
         })}

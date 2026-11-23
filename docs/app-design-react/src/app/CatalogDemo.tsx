@@ -974,24 +974,6 @@ export function CatalogDemo({
 				</section>
 			);
 		const identity = recordingIdentity(track);
-		const recordingPositions = identity
-			? releases.flatMap((candidateRelease) =>
-					candidateRelease.tracks
-						.filter((candidate) => recordingIdentity(candidate) === identity)
-						.map((candidate) => ({
-							release: candidateRelease,
-							track: candidate,
-						})),
-				)
-			: [{ release, track }];
-		const recordingImpact =
-			new Set(recordingPositions.map(({ track: position }) => position.id))
-				.size > 1
-				? recordingPositions.map(
-						({ release: positionRelease, track: position }) =>
-							`${positionRelease.title} · ${position.position} · ${position.title}`,
-					)
-				: [];
 		return (
 			<section className={screenLayout}>
 				<TrackScreen
@@ -1002,7 +984,6 @@ export function CatalogDemo({
 					track={track}
 					genresLoaded={settings.genresLoaded}
 					onLoadGenres={loadGenres}
-					recordingImpact={recordingImpact}
 					onRecordingChange={(updateTrack) =>
 						setReleases((previous) =>
 							previous.map((item) => ({

@@ -52,7 +52,6 @@ export function TrackScreen({
 	onRecordingChange,
 	genresLoaded = true,
 	onLoadGenres,
-	recordingImpact,
 	onQueueDeletion,
 	files = originalFiles,
 	artists,
@@ -70,7 +69,6 @@ export function TrackScreen({
 	) => void;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
-	recordingImpact?: string[];
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
@@ -146,7 +144,6 @@ export function TrackScreen({
 					onLoadGenres={onLoadGenres}
 					onMutate={onMutate ?? (() => undefined)}
 					onRecordingChange={onRecordingChange}
-					recordingImpact={recordingImpact}
 				/>
 			)}
 			<div className={catalogueStyles.objectColumns}>

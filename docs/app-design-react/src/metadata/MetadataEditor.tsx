@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Heading, Modal } from "../components/ui";
+import { Button } from "../components/ui";
 import { MetadataCardActions } from "../features/library/MetadataCardActions";
 import {
 	type MetadataFieldDescriptor,
@@ -68,7 +68,6 @@ export interface MetadataEditorProps {
 	providerGenreBaseline?: { genres: GenreReference[] } | null;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
-	impact?: string[];
 	readOnly?: boolean;
 	editing?: boolean;
 	hideActions?: boolean;
@@ -185,7 +184,6 @@ export function MetadataEditor({
 	providerGenreBaseline,
 	genresLoaded = true,
 	onLoadGenres,
-	impact = [],
 	readOnly = false,
 	editing: controlledEditing,
 	hideActions = false,
@@ -215,11 +213,6 @@ export function MetadataEditor({
 		| { kind: "external"; message: string }
 	>();
 	const [saving, setSaving] = useState(false);
-	const [confirm, setConfirm] = useState(false);
-	const [pending, setPending] = useState<{
-		values: MetadataValues;
-		details?: SaveDetails;
-	}>();
 	const [addedRoles, setAddedRoles] = useState<string[]>([]);
 	useEffect(() => {
 		if (!editing) setAddedRoles([]);
@@ -333,8 +326,6 @@ export function MetadataEditor({
 	const cancel = () => {
 		if (controlled) return;
 		setInternalEditing(false);
-		setConfirm(false);
-		setPending(undefined);
 		setError(undefined);
 		setDraft({});
 		setDirty(new Set());
@@ -355,8 +346,6 @@ export function MetadataEditor({
 			if (details) await onSave(next, details);
 			else await onSave(next);
 			setInternalEditing(false);
-			setConfirm(false);
-			setPending(undefined);
 			setDraft({});
 			setDirty(new Set());
 			setDraftCredits([]);
@@ -365,8 +354,6 @@ export function MetadataEditor({
 			setDraftExtras({});
 			setDirtyExtras(new Set());
 		} catch (reason) {
-			setConfirm(false);
-			setPending(undefined);
 			setError(
 				reason instanceof Error
 					? { kind: "external", message: reason.message }
@@ -433,18 +420,8 @@ export function MetadataEditor({
 			details.extraValues = Object.fromEntries(
 				[...dirtyExtras].map((key) => [key, draftExtras[key] ?? ""]),
 			);
-		const doSave = () =>
-			void complete(update, Object.keys(details).length ? details : undefined);
-		if (impact.length > 1) {
-			setPending({
-				values: update,
-				details: Object.keys(details).length ? details : undefined,
-			});
-			setConfirm(true);
-		} else doSave();
+		void complete(update, Object.keys(details).length ? details : undefined);
 	};
-	const confirmSave = () =>
-		pending && void complete(pending.values, pending.details);
 	const foreignFields = Object.keys(values).filter((key) => {
 		const field = fieldByKey(key);
 		return field && field.scope !== scope && values[key]?.some(Boolean);
@@ -603,7 +580,7 @@ export function MetadataEditor({
 			aria-label={label}
 			className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
 			onKeyDown={(event) => {
-				if (!controlled && editing && event.key === "Escape" && !confirm) {
+				if (!controlled && editing && !saving && event.key === "Escape") {
 					event.preventDefault();
 					event.stopPropagation();
 					cancel();
@@ -1294,41 +1271,6 @@ export function MetadataEditor({
 				<p role="alert" className="m-0 text-sm text-[var(--error)]">
 					{displayedError}
 				</p>
-			)}
-			{confirm && (
-				<Modal
-					isOpen
-					isDismissable
-					onOpenChange={(open) => {
-						if (!open) {
-							setConfirm(false);
-							setPending(undefined);
-						}
-					}}
-				>
-					<Dialog aria-label={m("label.confirmImpact")} className="grid gap-3">
-						<Heading slot="title">{m("label.affected")}</Heading>
-						<ul className="m-0 list-disc pl-5">
-							{impact.map((position) => (
-								<li key={position}>{position}</li>
-							))}
-						</ul>
-						<div className="flex gap-2">
-							<Button isDisabled={saving} onPress={confirmSave}>
-								{m("action.confirmSave")}
-							</Button>
-							<Button
-								isDisabled={saving}
-								onPress={() => {
-									setConfirm(false);
-									setPending(undefined);
-								}}
-							>
-								{m("action.returnEdit")}
-							</Button>
-						</div>
-					</Dialog>
-				</Modal>
 			)}
 		</section>
 	);

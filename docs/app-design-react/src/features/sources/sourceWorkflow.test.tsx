@@ -240,6 +240,9 @@ it("registers without scanning, opens its route, and scans only on explicit star
 		screen.getByRole("button", { name: /Retry step .*fingerprint/i }),
 	);
 	expect(
+		screen.getByRole("heading", { name: "Acoustic fingerprint" }),
+	).toHaveFocus();
+	expect(
 		lastProcessing()?.files[0].steps.find((step) => step.id === "fingerprint")
 			?.status,
 	).toBe("succeeded");

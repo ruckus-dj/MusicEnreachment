@@ -199,24 +199,26 @@ export function SourceInspectorView(props: SourceInspectorViewProps) {
               </p>
             )}
           </section>
-          <section className={panel} aria-labelledby="analysis-title">
-            <h2 id="analysis-title" className={heading}>
-              {t("technicalAnalysis")}
-            </h2>
-            {busy && <p role="status">{t("requestRunning")}</p>}
-            {pending && (
-              <p role="status">
-                {operationState === "queued"
-                  ? t("queuedStep")
-                  : operationStage === "applying"
-                    ? t("savingStep")
-                    : t("runningStep")}
-              </p>
-            )}
-            {streamInterrupted && pending && (
-              <p role="status">{t("streamInterrupted")}</p>
-            )}
-          </section>
+          {(pending || busy) && (
+            <section className={panel} aria-labelledby="analysis-title">
+              <h2 id="analysis-title" className={heading}>
+                {t("technicalAnalysis")}
+              </h2>
+              {busy && <p role="status">{t("requestRunning")}</p>}
+              {pending && (
+                <p role="status">
+                  {operationState === "queued"
+                    ? t("queuedStep")
+                    : operationStage === "applying"
+                      ? t("savingStep")
+                      : t("runningStep")}
+                </p>
+              )}
+              {streamInterrupted && pending && (
+                <p role="status">{t("streamInterrupted")}</p>
+              )}
+            </section>
+          )}
           <StagedArtifactStatus locale={locale} artifact={artifact} />
           <SourceAnalysisSteps
             locale={locale}

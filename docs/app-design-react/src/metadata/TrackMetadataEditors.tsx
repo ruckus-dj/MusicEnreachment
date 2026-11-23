@@ -1,7 +1,11 @@
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-import type { CatalogArtist, OriginalTrack, SourceFiles } from "../features/library/catalogData";
+import type {
+	CatalogArtist,
+	OriginalTrack,
+	SourceFiles,
+} from "../features/library/catalogData";
 import { originalProviders } from "../features/library/catalogData";
 import { useI18n } from "../i18n/I18nProvider";
 import { metadataEditorMessages } from "./editorMessages";
@@ -70,7 +74,6 @@ export function TrackMetadataEditors({
 	onLoadGenres,
 	onMutate,
 	onRecordingChange,
-	recordingImpact = [],
 }: {
 	track: OriginalTrack;
 	artists: CatalogArtist[];
@@ -81,7 +84,6 @@ export function TrackMetadataEditors({
 	onRecordingChange?: (
 		update: (current: OriginalTrack) => OriginalTrack,
 	) => void;
-	recordingImpact?: string[];
 }) {
 	const { locale } = useI18n();
 	const m = (
@@ -149,7 +151,6 @@ export function TrackMetadataEditors({
 				}
 				genresLoaded={genresLoaded}
 				onLoadGenres={onLoadGenres}
-				impact={recordingImpact}
 				extraFields={recordingExtras}
 				onSave={(values, details) => {
 					const title = values.title?.[0] ?? "";

@@ -132,6 +132,9 @@ it("keeps release basics visible and editable outside closed metadata groups", a
   const editButton = within(release).getByRole("button", { name: "Изменить" });
   await waitFor(() => expect(editButton).toBeEnabled());
   expect(within(release).getByText("Original title")).toBeInTheDocument();
+  expect(
+    within(release).getByText("Данные о жанрах MusicBrainz недоступны."),
+  ).toBeInTheDocument();
   expect(within(release).getByText("2020")).toBeInTheDocument();
   const titleLabel = within(release).getByText("Название", { selector: "dt" });
   expect(titleLabel.closest("details")).toBeNull();
