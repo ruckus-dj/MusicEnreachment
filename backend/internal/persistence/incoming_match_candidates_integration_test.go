@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -514,6 +515,25 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE track_id=(SELECT local_track_id FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?) AND media_variant_id IN (SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?)`, created.Tracks[0].ID, fixture.memberA).Scan(ctx, &associated); err != nil || associated == 0 {
 		t.Fatalf("confirmed source association count=%d err=%v", associated, err)
 	}
+	// The confirmation response must name the exact release position and the
+	// actual association for the attached variant.
+	var expectedVariantID, expectedPositionID, expectedTrackSourceID uuid.UUID
+	if err := db.NewRaw(`SELECT identity.media_variant_id, position.id, source.id
+		FROM provider_local_track link
+		JOIN release_track position ON position.release_id=? AND position.track_id=link.local_track_id AND position.medium=0 AND position.position=0
+		JOIN source_work_variant_identity identity ON identity.work_id=?
+		JOIN track_source source ON source.track_id=link.local_track_id AND source.media_variant_id=identity.media_variant_id
+		WHERE link.provider_id=(SELECT id FROM provider WHERE code='local') AND link.provider_track_id=?`,
+		*confirmed.LocalReleaseID, fixture.memberA, created.Tracks[0].ID).Scan(ctx, &expectedVariantID, &expectedPositionID, &expectedTrackSourceID); err != nil {
+		t.Fatalf("read expected confirmed source: %v", err)
+	}
+	if len(confirmed.ConfirmedSources) != 1 {
+		t.Fatalf("confirmed sources = %+v, want one attached variant", confirmed.ConfirmedSources)
+	}
+	confirmedSource := confirmed.ConfirmedSources[0]
+	if confirmedSource.FileMemberID != fixture.memberA || confirmedSource.PositionID != expectedPositionID || confirmedSource.TrackSourceID != expectedTrackSourceID || confirmedSource.MediaVariantID != expectedVariantID {
+		t.Fatalf("confirmed source = %+v, want member=%s position=%s association=%s variant=%s", confirmedSource, fixture.memberA, expectedPositionID, expectedTrackSourceID, expectedVariantID)
+	}
 	const expectedGenreID = "00000000-0000-4000-8000-000000000099"
 	const expectedGenreName = "Expected Local Genre"
 	if _, err := db.NewRaw(`UPDATE provider_release SET metadata=jsonb_set(metadata,'{genres}',?::jsonb,true) WHERE id=? AND provider_id=(SELECT id FROM provider WHERE code='local')`,
@@ -545,5 +565,28 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	}
 	if replayed.LocalReleaseID == nil || *replayed.LocalReleaseID != *confirmed.LocalReleaseID || countsAfterReplay != countsBeforeReplay {
 		t.Fatalf("receipt replay changed materialization: confirmed=%+v replayed=%+v counts=%d/%d", confirmed.LocalReleaseID, replayed.LocalReleaseID, countsBeforeReplay, countsAfterReplay)
+	}
+	if !slices.Equal(confirmed.ConfirmedSources, replayed.ConfirmedSources) {
+		t.Fatalf("receipt replay changed confirmed sources: %+v/%+v", confirmed.ConfirmedSources, replayed.ConfirmedSources)
+	}
+
+	// The Local catalog can reorder a track independently of an already bound
+	// library position. A fresh confirmation must retain the actual association.
+	updated, err := catalog.Update(ctx, "release", created.ID, service.LocalProviderItem{
+		Title: created.Title, ReleaseGroupTitle: created.ReleaseGroupTitle, Credits: created.Credits,
+		Tracks: []service.LocalProviderTrack{{RecordingID: recordingID}, created.Tracks[0]},
+	})
+	if err != nil || len(updated.Tracks) != 2 || updated.Tracks[1].ID != created.Tracks[0].ID || updated.Tracks[1].Position != 1 {
+		t.Fatalf("reorder provider track: tracks=%+v err=%v", updated.Tracks, err)
+	}
+	intent.ExpectedAuthorityRevision = confirmed.AuthorityRevision
+	reorderedPreview, err := matching.Preview(ctx, fixture.group.ID, intent)
+	if err != nil {
+		t.Fatalf("preview reordered Local release: %v", err)
+	}
+	reordered, err := matching.Confirm(ctx, fixture.group.ID, intent, reorderedPreview.PreviewDigest, uuid.New())
+	if err != nil || !slices.Equal(reordered.ConfirmedSources, confirmed.ConfirmedSources) {
+		t.Fatalf("confirm reordered Local release: sources=%+v err=%v; want original library position and association %+v",
+			reordered.ConfirmedSources, err, confirmed.ConfirmedSources)
 	}
 }

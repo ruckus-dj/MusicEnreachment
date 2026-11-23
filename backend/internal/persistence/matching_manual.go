@@ -65,6 +65,10 @@ type MatchingManualPreview struct {
 	PreviewDigest      string                      `json:"preview_digest"`
 	Members            []MatchingManualMember      `json:"members"`
 	OmittedMemberIDs   []uuid.UUID                 `json:"omitted_member_ids"`
+	// ConfirmedSources is set only on a confirmation response, where it records
+	// the exact associations materialized by that transaction. Previews and
+	// receipt replays keep it absent or identical to the stored response.
+	ConfirmedSources []MatchingConfirmedSource `json:"confirmed_sources,omitempty"`
 }
 
 type manualProposal struct {
@@ -193,7 +197,8 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 		}
 		var touchedTrackIDs []uuid.UUID
 		state.touchedTrackIDs = &touchedTrackIDs
-		if err := materializeManualMatching(ctx, tx, state, result, explicitAssignments); err != nil {
+		var confirmedLinks []manualConfirmedLink
+		if err := materializeManualMatching(ctx, tx, state, result, explicitAssignments, &confirmedLinks); err != nil {
 			return err
 		}
 		if _, err := promoteIncomingGroupMatchingManual(ctx, tx, groupID); err != nil {
@@ -204,6 +209,10 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 			return fmt.Errorf("confirm manual matching: read local release mapping: %w", err)
 		}
 		result.LocalReleaseID = localReleaseID
+		result.ConfirmedSources, err = resolveManualConfirmedSources(ctx, tx, localReleaseID, confirmedLinks)
+		if err != nil {
+			return fmt.Errorf("confirm manual matching: capture confirmed sources: %w", err)
+		}
 		positions, err := manualMatchingPublicationPositions(ctx, tx, localReleaseID, touchedTrackIDs)
 		if err != nil {
 			return err
@@ -926,9 +935,45 @@ func readManualCurrentState(ctx context.Context, tx bun.Tx, providerID, releaseI
 	return state, nil
 }
 
-func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment) error {
+// manualConfirmedLink identifies one association whose exact IDs are resolved
+// after it is attached in the confirmation transaction.
+type manualConfirmedLink struct {
+	FileMemberID   uuid.UUID
+	LocalTrackID   uuid.UUID
+	MediaVariantID uuid.UUID
+}
+
+// resolveManualConfirmedSources reads every attached association back by its
+// exact release position and media variant. The result is sorted so a receipt
+// response is deterministic regardless of assignment input order.
+func resolveManualConfirmedSources(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, links []manualConfirmedLink) ([]MatchingConfirmedSource, error) {
+	if len(links) == 0 {
+		return nil, nil
+	}
+	result := make([]MatchingConfirmedSource, 0, len(links))
+	for _, link := range links {
+		source, err := readMatchingConfirmedSource(ctx, tx, link.FileMemberID, releaseID, link.LocalTrackID, link.MediaVariantID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, source)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.FileMemberID != right.FileMemberID {
+			return left.FileMemberID.String() < right.FileMemberID.String()
+		}
+		if left.MediaVariantID != right.MediaVariantID {
+			return left.MediaVariantID.String() < right.MediaVariantID.String()
+		}
+		return left.PositionID.String() < right.PositionID.String()
+	})
+	return result, nil
+}
+
+func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment, confirmed *[]manualConfirmedLink) error {
 	if state.frozen != nil {
-		return materializeFrozenManualMatching(ctx, tx, state, preview, assignments)
+		return materializeFrozenManualMatching(ctx, tx, state, preview, assignments, confirmed)
 	}
 	localReleaseID, created, err := ensureLocalRelease(ctx, tx, state.fence.ProviderID, preview.ProviderReleaseID, state.release.Name, materializationAuthority{method: "manual"})
 	if err != nil {
@@ -1060,12 +1105,18 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 			if err := attachTrackSource(ctx, tx, localTrackID, variantID, materializationAuthority{method: "manual"}, metadataResultID); err != nil {
 				return err
 			}
+			if confirmed != nil {
+				*confirmed = append(*confirmed, manualConfirmedLink{
+					FileMemberID: assignment.FileMemberID, LocalTrackID: localTrackID,
+					MediaVariantID: variantID,
+				})
+			}
 		}
 	}
 	return nil
 }
 
-func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment) error {
+func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment, confirmed *[]manualConfirmedLink) error {
 	if state.frozen == nil || state.seal == nil {
 		return ErrIncomingMatchConflict
 	}
@@ -1195,6 +1246,12 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 		for _, variant := range variants {
 			if err := attachTrackSource(ctx, tx, localTrackID, variant, materializationAuthority{method: "manual"}, metadataResultID); err != nil {
 				return err
+			}
+			if confirmed != nil {
+				*confirmed = append(*confirmed, manualConfirmedLink{
+					FileMemberID: assignment.FileMemberID, LocalTrackID: localTrackID,
+					MediaVariantID: variant,
+				})
 			}
 		}
 	}

@@ -49,18 +49,19 @@ type MatchingLocalSource struct {
 	CurrentLocalTrackIDs []uuid.UUID `json:"current_local_track_ids"`
 }
 type MatchingLocalPreview struct {
-	GroupID              uuid.UUID             `json:"group_id"`
-	GroupRevision        string                `json:"group_revision"`
-	AuthorityRevision    int64                 `json:"authority_revision"`
-	ProviderReleaseID    uuid.UUID             `json:"provider_release_id"`
-	LocalReleaseID       *uuid.UUID            `json:"local_release_id,omitempty"`
-	ReleaseTitle         string                `json:"release_title"`
-	ReleaseArtists       []MatchingLocalArtist `json:"release_artists"`
-	Tracks               []MatchingLocalTrack  `json:"tracks"`
-	Sources              []MatchingLocalSource `json:"sources"`
-	OmittedFileMemberIDs []uuid.UUID           `json:"omitted_file_member_ids"`
-	PreviewDigest        string                `json:"preview_digest"`
-	LocalCatalog         *MatchingLocalRelease `json:"local_catalog,omitempty"`
+	GroupID              uuid.UUID                 `json:"group_id"`
+	GroupRevision        string                    `json:"group_revision"`
+	AuthorityRevision    int64                     `json:"authority_revision"`
+	ProviderReleaseID    uuid.UUID                 `json:"provider_release_id"`
+	LocalReleaseID       *uuid.UUID                `json:"local_release_id,omitempty"`
+	ReleaseTitle         string                    `json:"release_title"`
+	ReleaseArtists       []MatchingLocalArtist     `json:"release_artists"`
+	Tracks               []MatchingLocalTrack      `json:"tracks"`
+	Sources              []MatchingLocalSource     `json:"sources"`
+	OmittedFileMemberIDs []uuid.UUID               `json:"omitted_file_member_ids"`
+	ConfirmedSources     []MatchingConfirmedSource `json:"confirmed_sources,omitempty"`
+	PreviewDigest        string                    `json:"preview_digest"`
+	LocalCatalog         *MatchingLocalRelease     `json:"local_catalog,omitempty"`
 }
 
 type MatchingLocalRelease struct {
@@ -167,7 +168,8 @@ func matchingLocalResult(value persistence.MatchingLocalPreview) MatchingLocalPr
 	result := MatchingLocalPreview{GroupID: value.GroupID, GroupRevision: value.GroupRevision, AuthorityRevision: value.AuthorityRevision,
 		ProviderReleaseID: value.ProviderReleaseID, ReleaseTitle: value.ReleaseTitle, PreviewDigest: value.PreviewDigest, LocalReleaseID: value.LocalReleaseID,
 		OmittedFileMemberIDs: append([]uuid.UUID(nil), value.OmittedFileMemberIDs...), Sources: make([]MatchingLocalSource, 0, len(value.Sources)),
-		ReleaseArtists: make([]MatchingLocalArtist, 0, len(value.ReleaseArtists)), Tracks: make([]MatchingLocalTrack, 0, len(value.Tracks))}
+		ReleaseArtists: make([]MatchingLocalArtist, 0, len(value.ReleaseArtists)), Tracks: make([]MatchingLocalTrack, 0, len(value.Tracks)),
+		ConfirmedSources: matchingConfirmedSources(value.ConfirmedSources)}
 	for _, artist := range value.ReleaseArtists {
 		result.ReleaseArtists = append(result.ReleaseArtists, MatchingLocalArtist{Name: artist.Name})
 	}

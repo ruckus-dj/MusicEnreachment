@@ -1679,6 +1679,13 @@ export interface ManualReleaseSelectionOutputBody {
   operation_id: string;
 }
 
+export interface MatchingConfirmedSource {
+  file_member_id: string;
+  media_variant_id: string;
+  position_id: string;
+  track_source_id: string;
+}
+
 export interface MatchingLocalArtist {
   name: string;
 }
@@ -1745,6 +1752,8 @@ export interface MatchingLocalPreview {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   authority_revision: number;
+  /** @nullable */
+  confirmed_sources?: MatchingConfirmedSource[] | null;
   group_id: string;
   group_revision: string;
   local_catalog?: MatchingLocalRelease;
@@ -1838,6 +1847,8 @@ export interface MatchingReviewRelease {
 export interface MatchingManualPreview {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @nullable */
+  confirmed_sources?: MatchingConfirmedSource[] | null;
   evaluation_revision: string;
   group_id: string;
   local_release_id?: string;

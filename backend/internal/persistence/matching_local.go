@@ -83,6 +83,10 @@ type MatchingLocalPreview struct {
 	PreviewDigest        string                    `json:"preview_digest"`
 	LocalReleaseID       *uuid.UUID                `json:"local_release_id,omitempty"`
 	LocalCatalog         *MatchingLocalRelease     `json:"local_catalog,omitempty"`
+	// ConfirmedSources is set only on a confirmation response, where it records
+	// the exact associations materialized by that transaction. Previews and
+	// receipt replays keep it absent or identical to the stored response.
+	ConfirmedSources []MatchingConfirmedSource `json:"confirmed_sources,omitempty"`
 }
 
 type MatchingLocalRelease struct {
@@ -175,6 +179,11 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingLocal(ctx con
 			return err
 		}
 		result.LocalReleaseID = &localReleaseID
+		confirmedSources, err := matchingLocalConfirmedSources(ctx, tx, localReleaseID, result, intent)
+		if err != nil {
+			return fmt.Errorf("confirm local matching: capture confirmed sources: %w", err)
+		}
+		result.ConfirmedSources = confirmedSources
 		authorityRevision, err := promoteIncomingGroupMatchingManual(ctx, tx, groupID)
 		if err != nil {
 			return err
@@ -231,6 +240,28 @@ func matchingLocalPublicationPositions(ctx context.Context, tx bun.Tx, releaseID
 		return nil, fmt.Errorf("read local matching publication positions: %w", err)
 	}
 	return positions, nil
+}
+
+// matchingLocalConfirmedSources reads every association attached by this manual
+// confirmation back through its exact release position. Reused and promoted
+// links are read the same way as newly inserted ones; automation materialization
+// keeps its own metadata-preserving branch.
+func matchingLocalConfirmedSources(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, preview MatchingLocalPreview, intent MatchingLocalIntent) ([]MatchingConfirmedSource, error) {
+	var result []MatchingConfirmedSource
+	for _, assignment := range intent.Assignments {
+		var localTrackID uuid.UUID
+		if err := tx.NewRaw(`SELECT local_track_id FROM provider_local_track WHERE provider_id=? AND provider_track_id=?`, localProviderID, assignment.ProviderTrackID).Scan(ctx, &localTrackID); err != nil {
+			return nil, fmt.Errorf("read local matching track mapping: %w", err)
+		}
+		for _, variantID := range previewSourceIDs(preview.Sources, assignment.FileMemberID) {
+			source, err := readMatchingConfirmedSource(ctx, tx, assignment.FileMemberID, releaseID, localTrackID, variantID)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, source)
+		}
+	}
+	return result, nil
 }
 
 func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, intent MatchingLocalIntent, locking bool) (MatchingLocalPreview, error) {

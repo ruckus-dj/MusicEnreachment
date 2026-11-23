@@ -34,15 +34,32 @@ type MatchingManualMember struct {
 	Assignment   *MatchingManualAssignment `json:"assignment,omitempty"`
 }
 
+// MatchingConfirmedSource identifies the exact library link saved by confirmation.
+type MatchingConfirmedSource struct {
+	FileMemberID   uuid.UUID `json:"file_member_id"`
+	PositionID     uuid.UUID `json:"position_id"`
+	TrackSourceID  uuid.UUID `json:"track_source_id"`
+	MediaVariantID uuid.UUID `json:"media_variant_id"`
+}
+
+func matchingConfirmedSources(sources []persistence.MatchingConfirmedSource) []MatchingConfirmedSource {
+	result := make([]MatchingConfirmedSource, len(sources))
+	for i, source := range sources {
+		result[i] = MatchingConfirmedSource(source)
+	}
+	return result
+}
+
 type MatchingManualPreview struct {
-	GroupID            uuid.UUID              `json:"group_id"`
-	EvaluationRevision string                 `json:"evaluation_revision"`
-	ProviderReleaseID  uuid.UUID              `json:"provider_release_id"`
-	SelectedRelease    MatchingReviewRelease  `json:"selected_release"`
-	LocalReleaseID     uuid.UUID              `json:"local_release_id,omitempty"`
-	PreviewDigest      string                 `json:"preview_digest"`
-	Members            []MatchingManualMember `json:"members"`
-	OmittedMemberIDs   []uuid.UUID            `json:"omitted_member_ids"`
+	GroupID            uuid.UUID                 `json:"group_id"`
+	EvaluationRevision string                    `json:"evaluation_revision"`
+	ProviderReleaseID  uuid.UUID                 `json:"provider_release_id"`
+	SelectedRelease    MatchingReviewRelease     `json:"selected_release"`
+	LocalReleaseID     uuid.UUID                 `json:"local_release_id,omitempty"`
+	PreviewDigest      string                    `json:"preview_digest"`
+	Members            []MatchingManualMember    `json:"members"`
+	OmittedMemberIDs   []uuid.UUID               `json:"omitted_member_ids"`
+	ConfirmedSources   []MatchingConfirmedSource `json:"confirmed_sources,omitempty"`
 }
 
 type MatchingManualService struct{ repository matchingManualRepository }
@@ -151,7 +168,8 @@ func matchingManualResult(value persistence.MatchingManualPreview) MatchingManua
 	result := MatchingManualPreview{GroupID: value.GroupID, EvaluationRevision: value.EvaluationRevision,
 		ProviderReleaseID: value.ProviderReleaseID, LocalReleaseID: value.LocalReleaseID,
 		PreviewDigest: value.PreviewDigest, Members: make([]MatchingManualMember, 0, len(value.Members)),
-		OmittedMemberIDs: append([]uuid.UUID{}, value.OmittedMemberIDs...)}
+		OmittedMemberIDs: append([]uuid.UUID{}, value.OmittedMemberIDs...),
+		ConfirmedSources: matchingConfirmedSources(value.ConfirmedSources)}
 	result.SelectedRelease = MatchingReviewRelease{
 		ProviderReleaseID: value.SelectedRelease.ProviderReleaseID,
 		ReleaseID:         value.SelectedRelease.ReleaseID,

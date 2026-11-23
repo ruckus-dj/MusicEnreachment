@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -126,7 +127,9 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	if err != nil {
 		t.Fatalf("preview manual confirmation: %v", err)
 	}
-	if _, err := candidates.ConfirmMatchingManual(ctx, fixture.group.ID, header.EvaluationRevision, fixture.releaseID, assignments, preview.PreviewDigest, uuid.New()); err != nil {
+	requestID := uuid.New()
+	receipt, err := candidates.ConfirmMatchingManual(ctx, fixture.group.ID, header.EvaluationRevision, fixture.releaseID, assignments, preview.PreviewDigest, requestID)
+	if err != nil {
 		t.Fatalf("confirm manual assignment: %v", err)
 	}
 	var groupRevision string
@@ -137,6 +140,21 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, fixture.workA).Scan(ctx, &sourceID); err != nil {
 		t.Fatal(err)
 	}
+	var positionID, associationID uuid.UUID
+	if err := db.NewRaw(`SELECT rt.id, ts.id
+		FROM release_track rt JOIN track_source ts ON ts.track_id=rt.track_id
+		WHERE rt.release_id=? AND rt.medium=0 AND rt.position=0 AND ts.media_variant_id=?`,
+		receipt.LocalReleaseID, sourceID).Scan(ctx, &positionID, &associationID); err != nil {
+		t.Fatalf("read confirmed position and source: %v", err)
+	}
+	expected := persistence.MatchingConfirmedSource{
+		FileMemberID: fixture.memberA, PositionID: positionID,
+		TrackSourceID: associationID, MediaVariantID: sourceID,
+	}
+	if !slices.Equal(receipt.ConfirmedSources, []persistence.MatchingConfirmedSource{expected}) ||
+		!slices.Equal(receipt.OmittedMemberIDs, []uuid.UUID{fixture.memberB}) {
+		t.Fatalf("manual receipt = %+v; want one exact link and the omitted member", receipt)
+	}
 	var authority persistence.IncomingGroupMatchingAuthority
 	if err := db.NewRaw(`SELECT group_id,mode,revision FROM incoming_group_matching_authority WHERE group_id=?`, fixture.group.ID).Scan(ctx, &authority); err != nil {
 		t.Fatal(err)
@@ -146,6 +164,10 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	}
 	if _, err := candidates.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{sourceID}, uuid.New()); err != nil {
 		t.Fatalf("unlink manual association: %v", err)
+	}
+	replayed, err := candidates.ConfirmMatchingManual(ctx, fixture.group.ID, header.EvaluationRevision, fixture.releaseID, assignments, preview.PreviewDigest, requestID)
+	if err != nil || !slices.Equal(replayed.ConfirmedSources, receipt.ConfirmedSources) {
+		t.Fatalf("replay after unlink = %+v, err=%v; want the original receipt", replayed, err)
 	}
 
 	beforeCounts := matchingApplyPersistedCounts(t, ctx, db, fixture.provider)
