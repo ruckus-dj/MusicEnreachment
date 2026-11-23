@@ -794,6 +794,12 @@ export interface LibraryDeletionPreviewResponse {
   title: string;
 }
 
+export interface LibraryMatchingReceiptBody {
+  kind: string;
+  request_id: string;
+  track_source_id: string;
+}
+
 export interface LibraryFirstPublicationAdmissionInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -808,6 +814,7 @@ export interface LibraryFirstPublicationAdmissionInputBody {
      * @pattern ^[0-9a-fA-F]{64}$
      */
   preview_digest: string;
+  receipt?: LibraryMatchingReceiptBody;
   /** @minimum 0 */
   stream_index?: number;
   workflow?: string;
@@ -2724,6 +2731,9 @@ location_id?: string;
 media_variant_id?: string;
 stream_index?: string;
 mode?: string;
+receipt_kind?: string;
+receipt_request_id?: string;
+receipt_track_source_id?: string;
 };
 
 export type ListLibrarySourceVariantsParams = {

@@ -17,14 +17,16 @@ import (
 
 // PrepareAudioUpgrade builds a private candidate from frozen new audio while
 // carrying forward only the exact metadata and artwork observed on CURRENT.
+// currentInspectionPath is a private snapshot the caller copied from a verified
+// CURRENT handle; the live published path is never reopened here.
 func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	ctx context.Context,
 	input persistence.PublicationInputs,
-	newAudioPath, currentPath, tempDir, outputPath string,
+	newAudioPath, currentInspectionPath, tempDir, outputPath string,
 ) (PublicationSimplePreparationResult, error) {
 	if input.Version != persistence.PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil ||
 		input.Audio == nil ||
-		inputPathInvalid(newAudioPath) || inputPathInvalid(currentPath) || inputPathInvalid(tempDir) || inputPathInvalid(outputPath) ||
+		inputPathInvalid(newAudioPath) || inputPathInvalid(currentInspectionPath) || inputPathInvalid(tempDir) || inputPathInvalid(outputPath) ||
 		preparation.Commands == nil || preparation.Validator == nil || preparation.Metadata == nil || preparation.MetadataReader == nil || preparation.FFmpegPath == "" || preparation.CoverInput != nil {
 		return PublicationSimplePreparationResult{}, errors.New("audio-upgrade preparation dependencies or input are incomplete")
 	}
@@ -46,10 +48,7 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	if err := os.MkdirAll(tempDir, 0o700); err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("create publication temporary directory: %w", err)
 	}
-	privateCurrent := filepath.Join(tempDir, "current-inspection"+filepath.Ext(current.RelativePath))
-	if err := copyCurrentPublication(currentPath, privateCurrent); err != nil {
-		return PublicationSimplePreparationResult{}, err
-	}
+	privateCurrent := currentInspectionPath
 	request := metadata.ReadRequest{CoverInspection: true, LimitSourceCover: false}
 	capture, err := preparation.MetadataReader.Read(ctx, privateCurrent, request)
 	if err != nil {
@@ -77,7 +76,11 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	if input.Format == publication.AudioFormatM4A && sourceFacts.Lossless != nil && *sourceFacts.Lossless && sourceFacts.Codec != "alac" && preparation.FFprobePath == "" {
 		return PublicationSimplePreparationResult{}, errors.New("ALAC preservation proof requires pinned ffprobe")
 	}
-	privateSource := filepath.Join(tempDir, "new-audio."+string(sourceFacts.Container))
+	inputDir, err := os.MkdirTemp(tempDir, ".new-audio-")
+	if err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("create private audio-upgrade input directory: %w", err)
+	}
+	privateSource := filepath.Join(inputDir, "source."+string(sourceFacts.Container))
 	if err := copyCurrentPublication(newAudioPath, privateSource); err != nil {
 		return PublicationSimplePreparationResult{}, err
 	}

@@ -16,27 +16,32 @@ import (
 )
 
 type libraryPublicationHTTPFake struct {
-	view                  service.LibraryPublicationView
-	readErr               error
-	applyErr              error
-	operationID           uuid.UUID
-	readCalls             int
-	applyCalls            int
-	readReleaseID         uuid.UUID
-	readPositionID        uuid.UUID
-	applyReleaseID        uuid.UUID
-	applyPositionID       uuid.UUID
-	applyRequest          service.LibraryPublicationApplyManualLyricsRequest
-	preview               service.FirstPublicationPreview
-	previewErr            error
-	previewCalls          int
-	selectedPreviewCalls  int
-	selectedPreviewChoice *service.FirstPublicationSourceChoice
-	admitErr              error
-	admitCalls            int
-	admitRequest          service.FirstPublicationConfirmation
-	admitReleaseID        uuid.UUID
-	admitPositionID       uuid.UUID
+	view                         service.LibraryPublicationView
+	readErr                      error
+	applyErr                     error
+	operationID                  uuid.UUID
+	readCalls                    int
+	applyCalls                   int
+	readReleaseID                uuid.UUID
+	readPositionID               uuid.UUID
+	applyReleaseID               uuid.UUID
+	applyPositionID              uuid.UUID
+	applyRequest                 service.LibraryPublicationApplyManualLyricsRequest
+	preview                      service.FirstPublicationPreview
+	previewErr                   error
+	previewCalls                 int
+	selectedPreviewCalls         int
+	selectedPreviewChoice        *service.FirstPublicationSourceChoice
+	admitErr                     error
+	admitCalls                   int
+	admitRequest                 service.FirstPublicationConfirmation
+	admitReleaseID               uuid.UUID
+	admitPositionID              uuid.UUID
+	matchingReceiptPreviewCalls  int
+	matchingReceiptPreviewSource persistence.MatchingReceiptPublicationSource
+	matchingReceiptPreviewChoice *service.FirstPublicationSourceChoice
+	matchingReceiptAdmitCalls    int
+	matchingReceiptAdmitRequest  service.FirstPublicationConfirmation
 }
 
 type libraryPublicationOperationSnapshotRepository struct {
@@ -74,6 +79,19 @@ func (fake *libraryPublicationHTTPFake) PreviewFirstSelected(_ context.Context, 
 func (fake *libraryPublicationHTTPFake) AdmitFirst(_ context.Context, releaseID, positionID uuid.UUID, request service.FirstPublicationConfirmation) (uuid.UUID, error) {
 	fake.admitCalls++
 	fake.admitReleaseID, fake.admitPositionID, fake.admitRequest = releaseID, positionID, request
+	return fake.operationID, fake.admitErr
+}
+
+func (fake *libraryPublicationHTTPFake) PreviewFromMatchingReceipt(_ context.Context, _, _ uuid.UUID, receipt persistence.MatchingReceiptPublicationSource, choice *service.FirstPublicationSourceChoice) (service.FirstPublicationPreview, error) {
+	fake.matchingReceiptPreviewCalls++
+	fake.matchingReceiptPreviewSource = receipt
+	fake.matchingReceiptPreviewChoice = choice
+	return fake.preview, fake.previewErr
+}
+
+func (fake *libraryPublicationHTTPFake) AdmitFromMatchingReceipt(_ context.Context, _, _ uuid.UUID, confirmation service.FirstPublicationConfirmation) (uuid.UUID, error) {
+	fake.matchingReceiptAdmitCalls++
+	fake.matchingReceiptAdmitRequest = confirmation
 	return fake.operationID, fake.admitErr
 }
 

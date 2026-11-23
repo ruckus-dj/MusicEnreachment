@@ -141,6 +141,21 @@ func (repository *SetupManagerRepository) RetryPublicationOperationAndEnqueue(ct
 				return fmt.Errorf("retry publication: lock source hold: %w", err)
 			}
 		}
+		var receiptMarker *uuid.UUID
+		if version == PublicationAudioUpgradeInputsVersion {
+			retryInput, err := DecodePublicationInputs(attempt.FrozenInputs)
+			if err != nil {
+				return fmt.Errorf("retry publication: decode audio-upgrade inputs: %w", err)
+			}
+			receiptMarker = publicationReceiptTrackSourceID(retryInput)
+		}
+		if receiptMarker == nil {
+			if held != nil && (held.ReceiptTrackSourceID != nil || held.ReceiptTrackID != nil) {
+				return errors.New("retry publication: ordinary input retains a receipt source pin")
+			}
+		} else if held == nil || held.ReceiptTrackSourceID == nil || *held.ReceiptTrackSourceID != *receiptMarker || held.ReceiptTrackID == nil {
+			return errors.New("retry publication: source hold does not match the frozen receipt pin")
+		}
 		if operation.RiverJobID == nil {
 			return errors.New("retry publication: failed operation has no registered River job")
 		}

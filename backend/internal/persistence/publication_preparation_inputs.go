@@ -112,6 +112,9 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 			if !automaticAudioUpgradeCurrent(current, authority, decoded, guard.Epoch) {
 				return nil
 			}
+			if err := validateReceiptPublicationDeliverySource(ctx, tx, guard, decoded); err != nil {
+				return err
+			}
 		}
 		if manualLyricsFLAC {
 			if !validManualLyricsRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {

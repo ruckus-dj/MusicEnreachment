@@ -28,6 +28,21 @@ func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position 
 	return validateSelectedPublicationMetadata(ctx, tx, position, source.WorkID, frozen)
 }
 
+// validateAndLockReceiptPublicationSource is the receipt-scoped variant used by a
+// version-2 audio upgrade that froze the exact track_source association recorded
+// by a matching confirmation. It applies the ordinary root, work, path, cleanup,
+// canonical-variant and probe evidence, then pins that exact association instead
+// of requiring the global selection bit. This path never updates track_source.
+func validateAndLockReceiptPublicationSource(ctx context.Context, tx bun.IDB, position uuid.UUID, source PublicationSourceSelection, frozen PublicationAudioInput, trackSourceID uuid.UUID) error {
+	if err := validateAndLockPublicationSourceIdentity(ctx, tx, source, frozen); err != nil {
+		return err
+	}
+	if err := validateReceiptPublicationSource(ctx, tx, position, source.WorkID, frozen.MediaVariantID, trackSourceID); err != nil {
+		return err
+	}
+	return validateReceiptPublicationMetadata(ctx, tx, position, source.WorkID, frozen, trackSourceID)
+}
+
 func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, source PublicationSourceSelection, frozen PublicationAudioInput) error {
 	var root SourceRoot
 	if err := tx.NewSelect().Model(&root).Where("id=?", source.RootID).For("UPDATE").Scan(ctx); err != nil {
@@ -81,8 +96,44 @@ func validateSelectedPublicationSource(ctx context.Context, tx bun.IDB, position
 	return nil
 }
 
+func validateReceiptPublicationSource(ctx context.Context, tx bun.IDB, position, workID, mediaVariantID, trackSourceID uuid.UUID) error {
+	if trackSourceID == uuid.Nil {
+		return fmt.Errorf("admit publication: receipt association is required: %w", ErrPublicationAdmissionConflict)
+	}
+	var authorized bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_track position JOIN track_source association ON association.track_id=position.track_id JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.id=? AND association.compatible IS TRUE)`, position, workID, mediaVariantID, trackSourceID).Scan(ctx, &authorized); err != nil {
+		return fmt.Errorf("admit publication: verify receipt track source association: %w", err)
+	}
+	if !authorized {
+		return fmt.Errorf("receipt source association is no longer compatible for this position: %w", ErrPublicationAdmissionConflict)
+	}
+	return nil
+}
+
 func validateSelectedPublicationMetadata(ctx context.Context, tx bun.IDB, position, workID uuid.UUID, frozen PublicationAudioInput) error {
+	return validatePublicationAssociationMetadata(ctx, tx, position, workID, frozen, nil)
+}
+
+func validateReceiptPublicationMetadata(ctx context.Context, tx bun.IDB, position, workID uuid.UUID, frozen PublicationAudioInput, trackSourceID uuid.UUID) error {
+	if trackSourceID == uuid.Nil {
+		return fmt.Errorf("admit publication: receipt association is required: %w", ErrPublicationAdmissionConflict)
+	}
+	return validatePublicationAssociationMetadata(ctx, tx, position, workID, frozen, &trackSourceID)
+}
+
+// validatePublicationAssociationMetadata binds the frozen metadata witness to one
+// track_source row. The selected scope preserves the ordinary and automatic
+// contract; a receipt scope pins the exact frozen association regardless of the
+// global selection bit.
+func validatePublicationAssociationMetadata(ctx context.Context, tx bun.IDB, position, workID uuid.UUID, frozen PublicationAudioInput, receiptTrackSourceID *uuid.UUID) error {
 	if frozen.AnalysedMetadata != nil {
+		scope, label := "association.selected=true", "selected"
+		args := []any{position, workID, frozen.MediaVariantID}
+		if receiptTrackSourceID != nil {
+			scope = "association.id=? AND association.compatible IS TRUE"
+			label = "receipt"
+			args = append(args, *receiptTrackSourceID)
+		}
 		var observed struct {
 			ID              uuid.UUID       `bun:"id,type:uuid"`
 			Tags            json.RawMessage `bun:"observed_tags,type:jsonb"`
@@ -93,21 +144,21 @@ func validateSelectedPublicationMetadata(ctx context.Context, tx bun.IDB, positi
 			FROM release_track position JOIN track_source association ON association.track_id=position.track_id
 			JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id
 			JOIN media_metadata_result result ON result.id=association.source_metadata_result_id
-			WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true
-			FOR UPDATE OF association,result`, position, workID, frozen.MediaVariantID).Scan(ctx, &observed); err != nil {
-			return fmt.Errorf("admit publication: lock selected source metadata: %w", err)
+			WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND `+scope+`
+			FOR UPDATE OF association,result`, args...).Scan(ctx, &observed); err != nil {
+			return fmt.Errorf("admit publication: lock %s source metadata: %w", label, err)
 		}
 		var tags map[string][]string
 		if json.Unmarshal(observed.Tags, &tags) != nil || tags == nil || observed.ID != frozen.AnalysedMetadata.MetadataResultID || observed.WinningResultID != frozen.AnalysedMetadata.WinningResultID || !reflect.DeepEqual(tags, frozen.AnalysedMetadata.Tags) {
-			return fmt.Errorf("admit publication: selected source metadata changed: %w", ErrPublicationAdmissionConflict)
+			return fmt.Errorf("admit publication: %s source metadata changed: %w", label, ErrPublicationAdmissionConflict)
 		}
 		var probeJSON string
 		if err := tx.NewRaw(`SELECT variant.ffprobe_json::text FROM source_analysis_step step JOIN media_variant variant ON variant.id=step.success_probe_variant_id WHERE step.work_id=? AND step.step='probe' AND step.state='succeeded' AND step.success_probe_variant_id=?`, workID, frozen.ProbeResultID).Scan(ctx, &probeJSON); err != nil {
-			return fmt.Errorf("admit publication: read selected probe duration: %w", err)
+			return fmt.Errorf("admit publication: read %s probe duration: %w", label, err)
 		}
 		duration, err := exactStoredMetadataDuration(json.RawMessage(probeJSON))
 		if err != nil || !reflect.DeepEqual(duration, frozen.AnalysedMetadata.DurationSeconds) {
-			return fmt.Errorf("admit publication: selected source metadata duration changed: %w", ErrPublicationAdmissionConflict)
+			return fmt.Errorf("admit publication: %s source metadata duration changed: %w", label, ErrPublicationAdmissionConflict)
 		}
 	}
 	return nil
@@ -357,6 +408,59 @@ func publicationCodecLossless(codec, sampleFormat string) (bool, bool) {
 	}
 }
 
+// publicationReceiptTrackSourceID exposes the frozen exact-association marker of
+// a receipt-scoped version-2 audio upgrade. Ordinary, automatic and non-upgrade
+// inputs carry nil, so existing paths keep using the selected-association guards.
+func publicationReceiptTrackSourceID(input PublicationInputs) *uuid.UUID {
+	if input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil {
+		return nil
+	}
+	return input.AudioUpgrade.ReceiptTrackSourceID
+}
+
+func validateReceiptPublicationDeliverySource(ctx context.Context, tx bun.IDB, guard PublicationDeliveryGuard, input PublicationInputs) error {
+	trackSource := publicationReceiptTrackSourceID(input)
+	if trackSource == nil {
+		return nil
+	}
+	if input.Audio == nil {
+		return ErrPublicationAdmissionConflict
+	}
+	if err := validateReceiptPublicationSource(ctx, tx, guard.ExpectedPositionID, input.Audio.WorkID, input.Audio.MediaVariantID, *trackSource); err != nil {
+		return err
+	}
+	return validateReceiptPublicationHoldPin(ctx, tx, guard, *input.Audio, *trackSource)
+}
+
+// validateReceiptPublicationHoldPin proves that the operation still retains the
+// exact compatible track_source association recorded in its source hold. The
+// composite foreign key already binds the row to that association; this check
+// additionally binds it to the operation and position the delivery is committing.
+func validateReceiptPublicationHoldPin(ctx context.Context, tx bun.IDB, guard PublicationDeliveryGuard, audio PublicationAudioInput, trackSourceID uuid.UUID) error {
+	var pinned bool
+	if err := tx.NewRaw(`SELECT EXISTS(
+		SELECT 1
+		FROM publication_source_hold hold
+		JOIN release_track position ON position.id=?
+		JOIN track_source association ON association.id=hold.receipt_track_source_id
+		WHERE hold.operation_id=?
+		  AND hold.receipt_track_source_id=?
+		  AND hold.application_attempt=? AND hold.river_job_id=? AND hold.epoch=?
+		  AND hold.work_id=? AND hold.source_location_id=? AND hold.media_variant_id=?
+		  AND hold.receipt_track_id=position.track_id
+		  AND association.track_id=hold.receipt_track_id
+		  AND association.media_variant_id=hold.media_variant_id
+		  AND association.compatible IS TRUE
+	)`, guard.ExpectedPositionID, guard.OperationID, trackSourceID, guard.ApplicationAttempt, guard.RiverJobID,
+		guard.Epoch, audio.WorkID, audio.LocationID, audio.MediaVariantID).Scan(ctx, &pinned); err != nil {
+		return fmt.Errorf("validate receipt publication hold pin: %w", err)
+	}
+	if !pinned {
+		return fmt.Errorf("validate receipt publication hold pin: durable association pin changed: %w", ErrPublicationAdmissionConflict)
+	}
+	return nil
+}
+
 // CheckPublicationSourceHoldForDelivery validates a source hold before any
 // epoch/output locks are taken. A false result means the delivery is stale.
 func (repository *SetupManagerRepository) CheckPublicationSourceHoldForDelivery(ctx context.Context, guard PublicationDeliveryGuard, holdUUID uuid.UUID) (PublicationSourceHold, bool, error) {
@@ -402,7 +506,18 @@ func (repository *SetupManagerRepository) CheckPublicationSourceHoldForDelivery(
 		if err := validateAndLockPublicationSourceIdentity(ctx, tx, source, *input.Audio); err != nil {
 			return err
 		}
-		if err := validateSelectedPublicationSource(ctx, tx, publicationAttempt.PositionID, source.WorkID, source.MediaVariantID); err != nil {
+		if trackSourceID := publicationReceiptTrackSourceID(input); trackSourceID != nil {
+			// Delivery mirrors the selected path: re-prove the frozen source
+			// identity and its live association, not the admission-time metadata
+			// binding. A later canonical metadata refresh must not invalidate a
+			// frozen delivery.
+			if err := validateReceiptPublicationSource(ctx, tx, publicationAttempt.PositionID, source.WorkID, source.MediaVariantID, *trackSourceID); err != nil {
+				return err
+			}
+			if err := validateReceiptPublicationHoldPin(ctx, tx, guard, *input.Audio, *trackSourceID); err != nil {
+				return err
+			}
+		} else if err := validateSelectedPublicationSource(ctx, tx, publicationAttempt.PositionID, source.WorkID, source.MediaVariantID); err != nil {
 			return err
 		}
 		_, _, _, guarded, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication source hold")

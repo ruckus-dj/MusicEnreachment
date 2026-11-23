@@ -43,6 +43,10 @@ func (executor *PublicationExecutor) recoverInterruptedAudioUpgrade(
 	if err != nil {
 		return false, err
 	}
+	plannedTarget, err := audioUpgradeTargetRelativePath(input.AudioUpgrade.Current.RelativePath, input.Format, inputAudioFacts(input).AudioSourceFacts())
+	if err != nil || target.RelativePath != plannedTarget {
+		return false, errors.New("interrupted audio-upgrade target differs from the planned destination")
+	}
 	if !publicationTargetIsExactlyReserved(target, nodes) {
 		return false, errors.New("interrupted audio-upgrade target is not exactly reserved by its frozen namespace")
 	}
@@ -92,7 +96,7 @@ func (executor *PublicationExecutor) recoverInterruptedAudioUpgrade(
 	}
 
 	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
-	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
+	toolPair, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
 	if err != nil || !validTools {
 		return false, errors.Join(err, errors.New("pinned publication tools are unavailable"))
 	}
@@ -155,6 +159,12 @@ func (executor *PublicationExecutor) recoverInterruptedAudioUpgrade(
 	if comparison != publication.QualityBetter {
 		return false, nil
 	}
+	if input.AudioUpgrade.ReceiptTrackSourceID != nil {
+		matches, err := executor.matchInterruptedReceiptAudio(ctx, guard, input, commands, toolPair.FFmpeg, tempDir, inspectionPath)
+		if err != nil || !matches {
+			return false, errors.Join(err, errors.New("interrupted audio-upgrade target does not prove the confirmed source"))
+		}
+	}
 	if commands.QuiescenceUnknown() {
 		return false, errors.New("publication command quiescence is unknown")
 	}
@@ -211,4 +221,33 @@ func (executor *PublicationExecutor) recoverInterruptedAudioUpgrade(
 		return false, errors.Join(err, errors.New("recovered audio-upgrade result was not committed"))
 	}
 	return true, nil
+}
+
+// A coincidentally better file with the same tags is not evidence of an
+// interrupted install. Rebuild the audio-only transform privately from the
+// held selection and compare its encoded packets to the inspected target.
+func (executor *PublicationExecutor) matchInterruptedReceiptAudio(ctx context.Context, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs, commands *simplePublicationTrackingRunner, ffmpeg, tempDir, inspection string) (bool, error) {
+	if _, err := executor.openSimpleAudioSource(ctx, guard, *input.Audio); err != nil {
+		return false, err
+	}
+	privateSource := filepath.Join(tempDir, simplePublicationPrivateInputName)
+	if err := copyHeldPublicationSource(ctx, input.Audio, privateSource); err != nil {
+		return false, err
+	}
+	facts := inputAudioFacts(input).AudioSourceFacts()
+	transform, err := publication.PlanAudioTransform(input.Format, facts)
+	if err != nil {
+		return false, err
+	}
+	expected := filepath.Join(tempDir, "expected."+transform.Extension)
+	runner := commands.PublicationCommandRunner()
+	if err := buildSimpleAudioCandidate(ctx, runner, ffmpeg, input.Format, facts, privateSource, expected); err != nil {
+		return false, fmt.Errorf("prove interrupted audio-upgrade candidate source: %w", err)
+	}
+	expectedDigest, err := publicationEncodedAudioSHA256(ctx, runner, ffmpeg, expected, transform.OutputContainer)
+	if err != nil {
+		return false, err
+	}
+	actualDigest, err := publicationEncodedAudioSHA256(ctx, runner, ffmpeg, inspection, transform.OutputContainer)
+	return err == nil && actualDigest == expectedDigest, err
 }

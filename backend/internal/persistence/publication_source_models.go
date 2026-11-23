@@ -25,4 +25,9 @@ type PublicationSourceHold struct {
 	RelativePath       string    `bun:"relative_path"`
 	SizeBytes          int64     `bun:"size_bytes"`
 	Mtime              time.Time `bun:"mtime"`
+	// ReceiptTrackSourceID and ReceiptTrackID are the optional durable pin of
+	// the exact compatible track_source association a receipt-scoped audio
+	// upgrade was admitted from. Ordinary holds leave both NULL.
+	ReceiptTrackSourceID *uuid.UUID `bun:"receipt_track_source_id,type:uuid,nullzero"`
+	ReceiptTrackID       *uuid.UUID `bun:"receipt_track_id,type:uuid,nullzero"`
 }

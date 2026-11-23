@@ -14,11 +14,14 @@ import (
 
 type LibraryFirstPublicationPreviewInput struct {
 	LibraryPublicationInput
-	Workflow       string `query:"workflow"`
-	LocationID     string `query:"location_id"`
-	MediaVariantID string `query:"media_variant_id"`
-	StreamIndex    string `query:"stream_index"`
-	Mode           string `query:"mode"`
+	Workflow             string `query:"workflow"`
+	LocationID           string `query:"location_id"`
+	MediaVariantID       string `query:"media_variant_id"`
+	StreamIndex          string `query:"stream_index"`
+	Mode                 string `query:"mode"`
+	ReceiptKind          string `query:"receipt_kind"`
+	ReceiptRequestID     string `query:"receipt_request_id"`
+	ReceiptTrackSourceID string `query:"receipt_track_source_id"`
 }
 
 type LibraryFirstPublicationPreviewOutput struct {
@@ -52,6 +55,10 @@ type LibraryFirstPublicationPreviewResponse struct {
 
 type libraryPublicationPreviewModeService interface {
 	PreviewFirstSelectedMode(context.Context, uuid.UUID, uuid.UUID, *service.FirstPublicationSourceChoice, string) (service.FirstPublicationPreview, error)
+}
+
+type libraryMatchingReceiptPreviewService interface {
+	PreviewFromMatchingReceipt(context.Context, uuid.UUID, uuid.UUID, persistence.MatchingReceiptPublicationSource, *service.FirstPublicationSourceChoice) (service.FirstPublicationPreview, error)
 }
 
 type librarySourceRepublishPreviewService interface {
@@ -139,11 +146,39 @@ func registerLibraryFirstPublicationPreview(api huma.API, dependencies Dependenc
 		if dependencies.LibraryPublications == nil {
 			return nil, huma.Error503ServiceUnavailable("library publication service is unavailable")
 		}
-		if input.Workflow != "" && input.Workflow != "first" && input.Workflow != "retained_same_path" {
-			return nil, huma.Error400BadRequest("workflow must be first or retained_same_path")
+		if input.Workflow != "" && input.Workflow != "first" && input.Workflow != "retained_same_path" && input.Workflow != "matching_receipt" {
+			return nil, huma.Error400BadRequest("workflow must be first, retained_same_path, or matching_receipt")
+		}
+		receipt, receiptErr := matchingReceiptSourceFromQuery(input.ReceiptKind, input.ReceiptRequestID, input.ReceiptTrackSourceID)
+		if receiptErr != nil {
+			return nil, huma.Error400BadRequest(receiptErr.Error())
+		}
+		if input.Workflow != "matching_receipt" && receipt != nil {
+			return nil, huma.Error400BadRequest("matching receipt is only accepted with the matching_receipt workflow")
 		}
 		if input.Workflow == "first" && input.Mode == "forced" {
 			return nil, huma.Error400BadRequest("forced mode is not available for the first workflow")
+		}
+		if input.Workflow == "matching_receipt" {
+			if input.Mode != "" && input.Mode != "ordinary" {
+				return nil, huma.Error400BadRequest("matching_receipt workflow only supports ordinary mode")
+			}
+			if receipt == nil {
+				return nil, huma.Error400BadRequest("matching_receipt workflow requires receipt_kind, receipt_request_id, and receipt_track_source_id")
+			}
+			choice, choiceErr := previewSourceChoiceFromQuery(input.LocationID, input.MediaVariantID, input.StreamIndex)
+			if choiceErr != nil {
+				return nil, huma.Error400BadRequest("source selection requires location_id, media_variant_id, and stream_index")
+			}
+			receiptService, ok := dependencies.LibraryPublications.(libraryMatchingReceiptPreviewService)
+			if !ok {
+				return nil, huma.Error503ServiceUnavailable("matching receipt publication preview is unavailable")
+			}
+			preview, err := receiptService.PreviewFromMatchingReceipt(ctx, input.ReleaseID, input.PositionID, *receipt, choice)
+			if err != nil {
+				return nil, firstPublicationPreviewError(err)
+			}
+			return &LibraryFirstPublicationPreviewOutput{Body: libraryFirstPublicationPreviewResponse(preview)}, nil
 		}
 		if input.Workflow == "retained_same_path" {
 			if input.LocationID != "" || input.MediaVariantID != "" || input.StreamIndex != "" {
@@ -226,6 +261,25 @@ func previewSourceChoiceFromQuery(locationID, variantID, streamIndex string) (*s
 		return nil, errors.New("invalid source selection")
 	}
 	return &service.FirstPublicationSourceChoice{LocationID: location, MediaVariantID: variant, StreamIndex: index}, nil
+}
+
+// matchingReceiptSourceFromQuery parses the optional matching receipt selector.
+// It returns nil when no receipt fields are supplied so callers can reject a
+// receipt on workflows that do not accept one. A supplied selector must be
+// complete: a known kind and both nonzero UUIDs.
+func matchingReceiptSourceFromQuery(kind, requestIDRaw, trackSourceIDRaw string) (*persistence.MatchingReceiptPublicationSource, error) {
+	if kind == "" && requestIDRaw == "" && trackSourceIDRaw == "" {
+		return nil, nil
+	}
+	if kind != persistence.MatchingReceiptKindManual && kind != persistence.MatchingReceiptKindLocal {
+		return nil, errors.New("receipt_kind must be manual or local")
+	}
+	requestID, requestErr := uuid.Parse(requestIDRaw)
+	trackSourceID, sourceErr := uuid.Parse(trackSourceIDRaw)
+	if requestErr != nil || sourceErr != nil || requestID == uuid.Nil || trackSourceID == uuid.Nil {
+		return nil, errors.New("receipt_request_id and receipt_track_source_id must be nonzero UUIDs")
+	}
+	return &persistence.MatchingReceiptPublicationSource{Kind: kind, RequestID: requestID, TrackSourceID: trackSourceID}, nil
 }
 
 func previewSourceChoice(locationID, variantID *uuid.UUID, streamIndex *int) (*service.FirstPublicationSourceChoice, error) {

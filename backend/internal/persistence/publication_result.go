@@ -116,7 +116,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 		if sourceRepublish && input.IntentKind != attempt.IntentKind {
 			return errors.New("commit publication result: source-republish intent differs from attempt")
 		}
-		if (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !providerTags && !sourceRepublish) || input.IntentKind != attempt.IntentKind {
+		if (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAudioUpgradeExecution(input) && !providerTags && !sourceRepublish) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
 		member, err := lockPublicationMatchingRecheckMemberTx(ctx, tx, attempt)
@@ -130,6 +130,14 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 		}
 		if sourceRepublish && (result.PreservedAudioSHA256 != "" || result.InitialLyrics != nil || result.CoverEmbedding != nil) {
 			return errors.New("commit publication result: source-republish projections must be derived from frozen inputs and actual output")
+		}
+		if input.AudioUpgrade != nil {
+			if result.InitialLyrics != nil || result.CoverEmbedding != nil {
+				return errors.New("commit publication result: audio upgrade must retain current cover and lyrics evidence")
+			}
+			if err := validateReceiptPublicationDeliverySource(ctx, tx, guard, input); err != nil {
+				return err
+			}
 		}
 		if sourceRepublish && result.SourceRepublishOptionalResult == nil {
 			return errors.New("commit publication result: source-republish optional result receipt is required")
@@ -201,7 +209,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 					return fmt.Errorf("commit publication result: source-republish CURRENT or baseline authority changed: %w", ErrPublicationAdmissionConflict)
 				}
 			}
-			if validAutomaticAudioUpgrade(input) {
+			if validAudioUpgradeExecution(input) {
 				var authority PositionSourceAuthority
 				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 					if errors.Is(err, sql.ErrNoRows) {
@@ -209,7 +217,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 					}
 					return fmt.Errorf("commit publication result: read current source authority: %w", err)
 				}
-				if !automaticAudioUpgradeCurrent(current, authority, input, attempt.Epoch) {
+				if !audioUpgradeCurrent(current, authority, input, attempt.Epoch) {
 					return nil
 				}
 			}
@@ -268,11 +276,11 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 				return fmt.Errorf("commit publication result: validate source-republish result: %w", err)
 			}
 		}
-		if validAutomaticAudioUpgrade(input) {
+		if validAudioUpgradeExecution(input) {
 			var beforeMetadata, afterMetadata PublicationCommitMetadata
 			if previous == nil || strictMetadata(previous.ActualMetadata, &beforeMetadata) != nil || strictMetadata(observation.ActualMetadata, &afterMetadata) != nil ||
 				!sameJSONValue(mustPublicationJSON(beforeMetadata.Tags), mustPublicationJSON(input.AudioUpgrade.Current.Tags)) ||
-				!sameJSONValue(mustPublicationJSON(afterMetadata.Tags), mustPublicationJSON(input.AudioUpgrade.Current.Tags)) {
+				!sameJSONValue(mustPublicationJSON(afterMetadata.Tags), mustPublicationJSON(input.DesiredTags)) {
 				return nil
 			}
 			beforeAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
@@ -408,7 +416,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 				if !updated {
 					return fmt.Errorf("commit publication result: source-republish authority revision changed: %w", ErrPublicationAdmissionConflict)
 				}
-			} else if validAutomaticAudioUpgrade(input) {
+			} else if validAudioUpgradeExecution(input) {
 				var authority PositionSourceAuthority
 				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 					return fmt.Errorf("commit publication result: lock source authority for audio upgrade: %w", err)
@@ -432,7 +440,7 @@ func (repository *SetupManagerRepository) commitPublicationResultTx(ctx context.
 			} else if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
 				return err
 			}
-			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input) || providerTags || plainTagOnlyRewrite(input)) && previous != nil {
+			if (input.ManualCover != nil || validAudioUpgradeExecution(input) || providerTags || plainTagOnlyRewrite(input)) && previous != nil {
 				if err := carryManualLyricsReceiptForCoverRewriteTx(ctx, tx, attempt, *previous, publication, assets); err != nil {
 					return err
 				}

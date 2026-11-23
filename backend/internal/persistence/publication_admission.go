@@ -69,6 +69,11 @@ type PublicationAdmission struct {
 	// matchingRecheckCoverInput freezes the destination cover receipt for a
 	// matching-recheck install. Generic admission cannot set it.
 	matchingRecheckCoverInput *PublicationAttemptCoverInput
+	// matchingReceiptAudioUpgrade is the private capability for a version-2 audio
+	// upgrade bound to one saved matching confirmation. Only the typed entrypoint
+	// can set it; generic and automatic admission reject a receipt marker without
+	// this capability.
+	matchingReceiptAudioUpgrade *matchingReceiptAudioUpgradeHook
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -106,6 +111,15 @@ func (request *PublicationAdmission) prepareAdmission(client RiverInserter) (Pub
 	if request.firstAdmission != nil && request.matchingRecheckCoverInput != nil {
 		return PublicationInputs{}, fmt.Errorf("admit publication: first publication and matching recheck cover receipt conflict: %w", ErrPublicationAdmissionConflict)
 	}
+	// A receipt-bound upgrade is a typed single-transaction admission. It never
+	// consumes or acknowledges a reconciliation delivery.
+	if request.matchingReceiptAudioUpgrade != nil && request.reconciliationGuard != nil {
+		return PublicationInputs{}, fmt.Errorf("admit publication: receipt audio upgrade and reconciliation delivery conflict: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.matchingReceiptAudioUpgrade != nil && (request.firstAdmission != nil || request.sourceRepublishAdmission != nil ||
+		request.matchingRecheckCoverInput != nil || request.namespaceAdoption != nil || request.namespacePredecessor != nil) {
+		return PublicationInputs{}, fmt.Errorf("admit publication: receipt audio upgrade conflicts with another admission capability: %w", ErrPublicationAdmissionConflict)
+	}
 	if request.reconciliationGuard != nil {
 		guard := *request.reconciliationGuard
 		request.reconciliationGuard = &guard
@@ -142,6 +156,22 @@ func (request *PublicationAdmission) prepareAdmission(client RiverInserter) (Pub
 	}
 	if request.validatedAudioUpgrade && (input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || request.IntentKind != "audio") {
 		return PublicationInputs{}, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
+	}
+	// A receipt-scoped audio upgrade is not creatable through generic or automatic
+	// admission. Only the typed entrypoint sets the private capability together
+	// with the exact receipt, expected authority, CURRENT claim, output root and
+	// canonical source digest it proved outside this transaction.
+	if request.matchingReceiptAudioUpgrade != nil {
+		hook := request.matchingReceiptAudioUpgrade
+		if !request.validatedAudioUpgrade || input.AudioUpgrade == nil || input.AudioUpgrade.ReceiptTrackSourceID == nil ||
+			*input.AudioUpgrade.ReceiptTrackSourceID != hook.receipt.TrackSourceID ||
+			!validMatchingReceiptPublicationSource(hook.receipt) || hook.currentClaimID == uuid.Nil ||
+			hook.outputRoot == "" || hook.expectedAuthority.PositionID != request.PositionID ||
+			hook.expectedAuthority.Revision == uuid.Nil || hook.expectedAuthority.PublicationEpoch != request.ExpectedEpoch {
+			return PublicationInputs{}, fmt.Errorf("admit publication: invalid typed receipt audio upgrade: %w", ErrPublicationAdmissionConflict)
+		}
+	} else if input.AudioUpgrade != nil && input.AudioUpgrade.ReceiptTrackSourceID != nil {
+		return PublicationInputs{}, fmt.Errorf("admit publication: receipt-scoped audio upgrade requires typed admission: %w", ErrPublicationAdmissionConflict)
 	}
 	if request.firstAdmission == nil && request.sourceRepublishAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" &&
 		!request.matchingRecheckInstall() {
@@ -366,7 +396,9 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	if request.Source != nil {
 		var err error
-		if request.validatedAudioUpgrade || request.firstAdmission != nil && request.firstAdmission.sourceSelection != nil {
+		if receiptTrackSourceID := publicationReceiptTrackSourceID(input); receiptTrackSourceID != nil {
+			err = validateAndLockReceiptPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio, *receiptTrackSourceID)
+		} else if request.validatedAudioUpgrade || request.firstAdmission != nil && request.firstAdmission.sourceSelection != nil {
 			err = validateAndLockPublicationSourceIdentity(ctx, tx, *request.Source, *input.Audio)
 		} else {
 			err = validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio)
@@ -422,8 +454,8 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 			}
 		}
 	}
-	var position, releaseID uuid.UUID
-	if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {
+	var position, releaseID, positionTrackID uuid.UUID
+	if err := tx.NewRaw(`SELECT id,release_id,track_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID, &positionTrackID); err != nil {
 		if err == sql.ErrNoRows {
 			return uuid.Nil, fmt.Errorf("admit publication: position no longer exists: %w", ErrPublicationAdmissionConflict)
 		}
@@ -482,7 +514,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	} else if err != sql.ErrNoRows {
 		return uuid.Nil, fmt.Errorf("admit publication: check active attempt: %w", err)
 	}
-	if request.validatedAudioUpgrade {
+	if request.validatedAudioUpgrade && request.matchingReceiptAudioUpgrade == nil {
 		sourceSelectionTrackID, sourceSelectionChanged, err = repository.applyAutomaticAudioUpgradeSourceSelection(ctx, tx, request, input)
 		if err != nil {
 			return uuid.Nil, err
@@ -553,7 +585,14 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		if source.HoldUUID == uuid.Nil {
 			return uuid.Nil, fmt.Errorf("admit publication: source hold UUID is required")
 		}
-		if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime).Exec(ctx); err != nil {
+		// Only a typed version-2 receipt marker carries the durable exact
+		// association pin; ordinary automatic admission leaves both columns NULL.
+		var receiptTrackSourceID, receiptTrackID *uuid.UUID
+		if marker := publicationReceiptTrackSourceID(input); marker != nil {
+			receiptTrackSourceID = marker
+			receiptTrackID = &positionTrackID
+		}
+		if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime,receipt_track_source_id,receipt_track_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime, receiptTrackSourceID, receiptTrackID).Exec(ctx); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: create source hold: %w", err)
 		}
 	}

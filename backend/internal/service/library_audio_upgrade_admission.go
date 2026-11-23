@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ import (
 type automaticAudioUpgradeAdmissionRepository interface {
 	firstPublicationContextReader
 	ReadPositionSourceAuthority(context.Context, uuid.UUID) (*persistence.PositionSourceAuthority, error)
+	ReadReceiptBoundTrackSourceIDs(context.Context, uuid.UUID) (map[uuid.UUID]struct{}, error)
 	AdmitAutomaticAudioUpgradeFromReconciliation(context.Context, persistence.PublicationAdmission, persistence.PublicationReconciliationDeliveryGuard, persistence.RiverInserter) (uuid.UUID, error)
 }
 
@@ -75,6 +77,14 @@ func (service *LibraryPublications) admitAutomaticAudioUpgrade(
 		return uuid.Nil, fmt.Errorf("read automatic audio-upgrade planning settings: %w", err)
 	}
 	format := publication.AudioPublicationFormat(runtimeSettings.PublicationFormat)
+	receiptBound, err := repository.ReadReceiptBoundTrackSourceIDs(ctx, positionID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	firstSnapshot.Sources = slices.DeleteFunc(firstSnapshot.Sources, func(source persistence.FirstPublicationSource) bool {
+		_, heldForConfirmation := receiptBound[source.AssociationID]
+		return heldForConfirmation
+	})
 	choice, err := automaticAudioUpgradeSourceChoice(firstSnapshot, current.Audio.Facts, format)
 	if err != nil {
 		return uuid.Nil, err
@@ -240,6 +250,10 @@ func automaticAudioUpgradeNamespace(
 	claims []persistence.PublicationNamespaceClaim,
 	_ []persistence.LibraryPublicationNamespaceNode,
 ) ([]persistence.PublicationNamespaceNode, error) {
+	return planAudioUpgradeNamespace(ctx, outputRoot, positionID, targetRelative, claims, nil, "", nil)
+}
+
+func planAudioUpgradeNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, targetRelative string, claims []persistence.PublicationNamespaceClaim, currentNodes []persistence.LibraryPublicationNamespaceNode, currentPath string, currentClaimID *uuid.UUID) ([]persistence.PublicationNamespaceNode, error) {
 	if outputRoot == "" || positionID == uuid.Nil || targetRelative == "" {
 		return nil, persistence.ErrPublicationAdmissionConflict
 	}
@@ -257,6 +271,11 @@ func automaticAudioUpgradeNamespace(
 			if claim.RelativePath != directory || kind != "directory" || claim.DirectoryScopeKey == nil || *claim.DirectoryScopeKey == "" {
 				continue
 			}
+			if currentClaimID != nil && !slices.ContainsFunc(currentNodes, func(node persistence.LibraryPublicationNamespaceNode) bool {
+				return node.Claim.ID == claim.ID
+			}) {
+				continue
+			}
 			scope, found = *claim.DirectoryScopeKey, true
 			break
 		}
@@ -268,7 +287,13 @@ func automaticAudioUpgradeNamespace(
 		})
 	}
 	candidates = append(candidates, publication.NamespaceCandidate{RelativePath: targetRelative, NodeKind: "file", PositionID: positionID})
-	manifest, err := planExactTargetPublicationNamespace(ctx, outputRoot, positionID, candidates, claims)
+	var manifest []persistence.PublicationNamespaceNode
+	var err error
+	if currentClaimID != nil {
+		manifest, err = planCurrentComparisonNamespace(ctx, outputRoot, positionID, candidates, claims, currentPath, currentClaimID)
+	} else {
+		manifest, err = planExactTargetPublicationNamespace(ctx, outputRoot, positionID, candidates, claims)
+	}
 	if err != nil {
 		return nil, err
 	}

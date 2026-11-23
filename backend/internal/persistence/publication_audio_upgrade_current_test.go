@@ -20,7 +20,7 @@ func TestAutomaticAudioUpgradeCurrentRequiresExactWitness(t *testing.T) {
 	}
 	authority := PositionSourceAuthority{PositionID: positionID, Mode: "automatic", Revision: input.AudioUpgrade.SourceAuthorityRevision,
 		PublicationEpoch: epoch, PublicationGeneration: w.Generation}
-	if !automaticAudioUpgradeCurrent(current, authority, input, epoch) {
+	if !automaticAudioUpgradeCurrent(current, authority, input, epoch) || !audioUpgradeCurrent(current, authority, input, epoch) {
 		t.Fatal("exact CURRENT witness rejected")
 	}
 
@@ -75,10 +75,28 @@ func TestAutomaticAudioUpgradeCurrentRequiresExactWitness(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			c, a, i, e := current, authority, input.Clone(), epoch
 			test.change(&c, &a, &i, &e)
-			if automaticAudioUpgradeCurrent(c, a, i, e) {
+			if audioUpgradeCurrent(c, a, i, e) {
 				t.Fatal("changed CURRENT witness accepted")
 			}
 		})
+	}
+
+	receipt := input.Clone()
+	marker := uuid.New()
+	receipt.AudioUpgrade.ReceiptTrackSourceID = &marker
+	receipt.SourceAuthorityMode = "manual"
+	manualAuthority := authority
+	manualAuthority.Mode = "manual"
+	if !audioUpgradeCurrent(current, manualAuthority, receipt, epoch) {
+		t.Fatal("receipt upgrade with frozen manual authority rejected")
+	}
+	manualAuthority.Mode = "automatic"
+	if audioUpgradeCurrent(current, manualAuthority, receipt, epoch) {
+		t.Fatal("receipt upgrade accepted an authority mode other than its frozen mode")
+	}
+	receipt.SourceAuthorityMode = "automatic"
+	if !audioUpgradeCurrent(current, authority, receipt, epoch) {
+		t.Fatal("receipt upgrade with frozen automatic authority rejected")
 	}
 }
 

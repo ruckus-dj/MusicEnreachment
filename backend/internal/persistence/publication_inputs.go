@@ -227,8 +227,8 @@ func (input PublicationInputs) Validate() error {
 		}
 	}
 	if input.Version == PublicationAudioUpgradeInputsVersion {
-		if input.IntentKind != "audio" || input.Audio == nil || input.Rewrite != nil || input.AudioUpgrade == nil || input.SourceAuthorityMode != "automatic" || input.InitialLyrics != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil {
-			return errors.New("version 2 publication inputs require an exclusive automatic audio upgrade")
+		if input.IntentKind != "audio" || input.Audio == nil || input.Rewrite != nil || input.AudioUpgrade == nil || !audioUpgradeAuthorityModeAllowed(input) || input.InitialLyrics != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil {
+			return errors.New("version 2 publication inputs require an exclusive audio upgrade with an admitted source authority mode")
 		}
 		if err := input.AudioUpgrade.Validate(); err != nil {
 			return fmt.Errorf("invalid publication audio upgrade: %w", err)
@@ -368,7 +368,7 @@ func (input PublicationInputs) SupportsExecution() bool {
 		return validProviderTagRewrite(input)
 	}
 	if input.Version == PublicationAudioUpgradeInputsVersion {
-		return validAutomaticAudioUpgrade(input)
+		return validAudioUpgradeExecution(input)
 	}
 	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion && input.ManualLyrics == nil && (input.AutomaticLyricsRetry == nil || input.IntentKind == "rewrite" && input.Rewrite != nil)
 }
@@ -524,6 +524,10 @@ func (input PublicationInputs) Clone() PublicationInputs {
 	if input.AudioUpgrade != nil {
 		upgrade := *input.AudioUpgrade
 		upgrade.Current = clonePublicationCurrentWitness(upgrade.Current)
+		if upgrade.ReceiptTrackSourceID != nil {
+			receipt := *upgrade.ReceiptTrackSourceID
+			upgrade.ReceiptTrackSourceID = &receipt
+		}
 		clone.AudioUpgrade = &upgrade
 	}
 	if input.ProviderTags != nil {

@@ -18,11 +18,15 @@ import (
 // checked again under the admission transaction's database guards. Receipt is
 // optional and, when present, restricts ordinary first publication to the exact
 // association and variant recorded by the saved matching confirmation.
+// ExpectedGeneration marks a confirmed CURRENT audio replacement: nil means
+// FIRST publication, a non-nil value must equal the exact CURRENT generation and
+// never falls back to FIRST or to another generation.
 type FirstPublicationConfirmation struct {
-	PreviewDigest string
-	ExpectedEpoch uuid.UUID
-	SourceChoice  *FirstPublicationSourceChoice
-	Receipt       *persistence.MatchingReceiptPublicationSource
+	PreviewDigest      string
+	ExpectedEpoch      uuid.UUID
+	ExpectedGeneration *uuid.UUID
+	SourceChoice       *FirstPublicationSourceChoice
+	Receipt            *persistence.MatchingReceiptPublicationSource
 }
 
 var ErrPublicationArtistDiscography = errors.New("complete release artist discography is unavailable")

@@ -262,6 +262,18 @@ func matchingRecheckPredecessorCanRetireTx(
 	if len(allowed) == 0 {
 		return false, nil
 	}
+	// A receipt-scoped publication retains its exact association in the source
+	// hold. Never erase that association to make room for a Local move; the
+	// composite pin foreign key would reject the delete anyway, but a definitive
+	// no-retirement is the intended admission outcome.
+	var pinned bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM publication_source_hold
+		WHERE receipt_track_source_id IN (?))`, bun.List(allowed)).Scan(ctx, &pinned); err != nil {
+		return false, fmt.Errorf("check matching predecessor receipt pin: %w", err)
+	}
+	if pinned {
+		return false, nil
+	}
 	for _, id := range allowed {
 		shared, err := matchingLocalRecheckTransferAssociationSharedTx(ctx, tx, member.RecheckID, id)
 		if err != nil || shared {

@@ -277,6 +277,17 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			return err
 		}
 	}
+	// A quiescent redelivery or a manual retry of an audio upgrade may already
+	// have installed its better candidate before the result transaction failed.
+	// Inspect and adopt that exact target before rebuilding it from scratch.
+	retryAudioUpgrade := input.AudioUpgrade != nil && (claim == persistence.PublicationDeliveryReprepare ||
+		attempt.Phase != "queued" || guard.ApplicationAttempt > 1 || guard.RiverAttempt > 1)
+	if retryAudioUpgrade && claim != persistence.PublicationDeliveryInterrupted {
+		recovered, err := executor.recoverInterruptedAudioUpgrade(ctx, attempt, input, guard, outputPath, root, commands)
+		if err != nil || recovered {
+			return err
+		}
+	}
 	allowSourceRepublishReprepare := claim == persistence.PublicationDeliveryReprepare || guard.ApplicationAttempt > 1
 	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare, authorizedObservedSourceRepublishTarget, matchingMove, retryMatchingMove)
 }

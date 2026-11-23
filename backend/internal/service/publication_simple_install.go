@@ -89,16 +89,23 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if !ok {
 		return errors.New("native publication destination mutation is unavailable")
 	}
+	tempDir, err := os.MkdirTemp(filepath.Dir(targetAbsolute), ".publication-delivery-")
+	if err != nil {
+		return fmt.Errorf("create publication candidate directory: %w", err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, removeSimplePublicationTempDir(tempDir, commands))
+	}()
 	inputPath := targetAbsolute
-	currentPathForPreparation := ""
+	currentInspectionPath := ""
+	audioUpgradeSamePath := input.AudioUpgrade != nil && input.AudioUpgrade.Current.RelativePath == manifest.RelativePath
 	if input.Audio != nil {
 		inputPath, err = executor.openSimpleAudioSource(ctx, guard, *input.Audio)
 		if err != nil {
 			return err
 		}
 		if input.AudioUpgrade != nil {
-			currentPath := filepath.Join(outputRoot, filepath.FromSlash(input.AudioUpgrade.Current.RelativePath))
-			if !filepath.IsAbs(currentPath) || filepath.Clean(currentPath) != currentPath {
+			if currentAbsolute := filepath.Join(outputRoot, filepath.FromSlash(input.AudioUpgrade.Current.RelativePath)); !filepath.IsAbs(currentAbsolute) || filepath.Clean(currentAbsolute) != currentAbsolute {
 				return errors.New("audio-upgrade current path is invalid")
 			}
 			currentParent, parentErr := openPublicationTargetParent(ctx, root, input.AudioUpgrade.Current.RelativePath, nodes)
@@ -116,21 +123,18 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			if openErr != nil {
 				return fmt.Errorf("open current audio-upgrade publication: %w", openErr)
 			}
-			currentInfo, statErr := currentFile.Stat(ctx)
-			if statErr != nil {
-				_ = currentFile.Close()
-				return fmt.Errorf("inspect current audio-upgrade publication: %w", statErr)
+			// Copy through the verified handle: the preparation reader must never
+			// reopen the live CURRENT path after the identity check.
+			inspectionDir, dirErr := os.MkdirTemp(tempDir, ".current-inspection-")
+			if dirErr != nil {
+				return errors.Join(dirErr, currentFile.Close())
 			}
-			if !currentInfo.Mode().IsRegular() {
-				_ = currentFile.Close()
-				return errors.New("current audio-upgrade publication is not a regular file")
+			currentInspectionPath = filepath.Join(inspectionDir, "current"+path.Ext(input.AudioUpgrade.Current.RelativePath))
+			copyErr := copyFrozenAudioUpgradeInspection(ctx, currentFile, input.AudioUpgrade.Current.Ownership, currentInspectionPath)
+			closeErr := currentFile.Close()
+			if err := errors.Join(copyErr, closeErr); err != nil {
+				return err
 			}
-			if closeErr := currentFile.Close(); closeErr != nil {
-				return fmt.Errorf("close current audio-upgrade publication: %w", closeErr)
-			}
-			// The preparation reader works on a private copy. The handle-relative open
-			// above pins and rejects links for the live CURRENT path.
-			currentPathForPreparation = currentPath
 		}
 	} else {
 		currentFile, openErr := mutation.OpenExistingRegular(ctx, targetName)
@@ -141,13 +145,6 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			return err
 		}
 	}
-	tempDir, err := os.MkdirTemp(filepath.Dir(targetAbsolute), ".publication-delivery-")
-	if err != nil {
-		return fmt.Errorf("create publication candidate directory: %w", err)
-	}
-	defer func() {
-		resultErr = errors.Join(resultErr, removeSimplePublicationTempDir(tempDir, commands))
-	}()
 	tempName := filepath.Base(targetAbsolute)
 	candidatePath := filepath.Join(tempDir, tempName)
 	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
@@ -217,7 +214,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	} else if input.ProviderTags != nil {
 		prepared, err = preparation.PrepareProviderTags(ctx, input, targetAbsolute, tempDir, candidatePath)
 	} else if input.AudioUpgrade != nil {
-		prepared, err = preparation.PrepareAudioUpgrade(ctx, input, inputPath, currentPathForPreparation, tempDir, candidatePath)
+		prepared, err = preparation.PrepareAudioUpgrade(ctx, input, inputPath, currentInspectionPath, tempDir, candidatePath)
 	} else {
 		prepared, err = preparation.Prepare(ctx, input, inputPath, tempDir, candidatePath)
 	}
@@ -297,6 +294,18 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			_ = currentFile.Close()
 			return statErr
 		}
+		if input.AudioUpgrade != nil {
+			if !audioUpgradeSamePath {
+				_ = currentFile.Close()
+				return errors.Join(persistence.ErrPublicationAdmissionConflict, errors.New("audio-upgrade destination exists at an unexpected different extension"))
+			}
+			verified, verifyErr := verifyAudioUpgradePredecessor(ctx, currentFile, currentInfo, input.AudioUpgrade.Current.Ownership)
+			if verifyErr != nil {
+				_ = currentFile.Close()
+				return verifyErr
+			}
+			currentInfo = verified
+		}
 		if matchingMove != nil {
 			return errors.Join(persistence.ErrPublicationAdmissionConflict, currentFile.Close())
 		}
@@ -342,10 +351,22 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if !replaceAllowed {
 			return persistence.ErrPublicationAdmissionConflict
 		}
+		if input.AudioUpgrade != nil {
+			// Compare CURRENT again immediately before the namespace mutation so a
+			// replacement between preparation and installation cannot be adopted.
+			verified, verifyErr := reopenFrozenAudioUpgradePredecessor(ctx, mutation, targetName, input.AudioUpgrade.Current.Ownership)
+			if verifyErr != nil {
+				return verifyErr
+			}
+			currentInfo = verified
+		}
 		if err := replacer.AtomicReplaceExisting(ctx, candidateRoot, tempName, candidateInfo, targetName, currentInfo); err != nil {
 			return fmt.Errorf("atomically replace current publication: %w", err)
 		}
 	} else if errors.Is(currentErr, fs.ErrNotExist) || errors.Is(currentErr, os.ErrNotExist) {
+		if audioUpgradeSamePath {
+			return fmt.Errorf("audio-upgrade CURRENT disappeared before replacement: %w", persistence.ErrPublicationAdmissionConflict)
+		}
 		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
 			return err
 		}
@@ -364,6 +385,26 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, manifest.RelativePath)
 			if err != nil || !replaceAllowed {
 				return errors.Join(err, errors.New("source-republish namespace replacement authority is unavailable"))
+			}
+		}
+		var audioUpgradePredecessor fs.FileInfo
+		if input.AudioUpgrade != nil && !audioUpgradeSamePath {
+			// An extension change installs a new name without replacing it. The old
+			// predecessor must still be the exact frozen CURRENT, and an existing
+			// different-extension destination is never silently overwritten.
+			var verifyErr error
+			audioUpgradePredecessor, verifyErr = verifyFrozenAudioUpgradePredecessorPath(ctx, root, input.AudioUpgrade.Current.RelativePath, nodes, input.AudioUpgrade.Current.Ownership)
+			if verifyErr != nil {
+				return verifyErr
+			}
+			replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, manifest.RelativePath)
+			if err != nil || !replaceAllowed {
+				return errors.Join(err, errors.New("audio-upgrade namespace replacement authority is unavailable"))
+			}
+		}
+		if audioUpgradePredecessor != nil {
+			if err := verifyFrozenAudioUpgradePredecessorIdentity(ctx, root, input.AudioUpgrade.Current.RelativePath, nodes, audioUpgradePredecessor); err != nil {
+				return err
 			}
 		}
 		if err := mutation.RenameNoReplace(ctx, candidateRoot, tempName, targetParent, targetName); err != nil {
@@ -794,6 +835,153 @@ func audioUpgradeTargetRelativePath(currentRelative string, format publication.A
 		return "", errors.New("audio-upgrade target extension is invalid")
 	}
 	return strings.TrimSuffix(currentRelative, path.Ext(currentRelative)) + "." + plan.Extension, nil
+}
+
+// copyFrozenAudioUpgradeInspection copies CURRENT through the already-opened,
+// no-follow handle. Size, modification time and digest must match the frozen
+// witness, and the source must not change during the copy; the private snapshot
+// is the only CURRENT bytes the preparation reader sees.
+func copyFrozenAudioUpgradeInspection(ctx context.Context, file sourcefs.RegularFile, ownership persistence.PublicationFileIdentity, destination string) (resultErr error) {
+	if file == nil || ownership.SizeBytes == nil || *ownership.SizeBytes < 0 || ownership.MTime == nil || len(ownership.SHA256) != 2*sha256.Size {
+		return errors.New("current audio-upgrade publication witness is incomplete")
+	}
+	before, err := file.Stat(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect current audio-upgrade publication: %w", err)
+	}
+	if !before.Mode().IsRegular() || before.Size() != *ownership.SizeBytes || before.ModTime().UnixMicro() != *ownership.MTime {
+		return errors.New("current audio-upgrade publication changed before inspection copy")
+	}
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create current audio-upgrade inspection copy: %w", err)
+	}
+	hash := sha256.New()
+	copyErr := file.Borrow(ctx, func(native *os.File) error {
+		written, err := io.CopyN(io.MultiWriter(output, hash), inspectionContextReader{ctx: ctx, reader: native}, before.Size())
+		if err != nil {
+			return err
+		}
+		if written != before.Size() {
+			return io.ErrUnexpectedEOF
+		}
+		var extra [1]byte
+		n, err := native.Read(extra[:])
+		if n != 0 {
+			return errors.New("current audio-upgrade publication grew during inspection copy")
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		return ctx.Err()
+	})
+	after, statErr := file.Stat(ctx)
+	if copyErr == nil && statErr == nil {
+		switch {
+		case !os.SameFile(before, after) || before.Size() != after.Size() || before.ModTime().UnixMicro() != after.ModTime().UnixMicro():
+			copyErr = errors.New("current audio-upgrade publication changed during inspection copy")
+		case hex.EncodeToString(hash.Sum(nil)) != ownership.SHA256:
+			copyErr = errors.New("current audio-upgrade publication does not match the frozen witness")
+		}
+	}
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if err := errors.Join(copyErr, statErr, syncErr, closeErr); err != nil {
+		_ = os.Remove(destination)
+		return fmt.Errorf("copy current audio-upgrade publication: %w", err)
+	}
+	return nil
+}
+
+// verifyAudioUpgradePredecessor requires an open CURRENT publication to be the
+// exact frozen witness. The digest is read through the handle and the identity
+// is re-read afterwards, so a concurrent replacement or rewrite is rejected
+// rather than transformed or installed over.
+func verifyAudioUpgradePredecessor(ctx context.Context, file sourcefs.RegularFile, before fs.FileInfo, ownership persistence.PublicationFileIdentity) (fs.FileInfo, error) {
+	if before == nil || !before.Mode().IsRegular() || ownership.SizeBytes == nil || *ownership.SizeBytes < 0 || ownership.MTime == nil {
+		return nil, errors.New("current audio-upgrade publication witness is incomplete")
+	}
+	if before.Size() != *ownership.SizeBytes || before.ModTime().UnixMicro() != *ownership.MTime {
+		return nil, errors.New("current audio-upgrade publication changed before replacement")
+	}
+	digest, err := digestRegular(ctx, file)
+	if err != nil {
+		return nil, fmt.Errorf("hash current audio-upgrade publication: %w", err)
+	}
+	after, err := file.Stat(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("inspect current audio-upgrade publication: %w", err)
+	}
+	if !os.SameFile(before, after) || before.Size() != after.Size() || before.ModTime().UnixMicro() != after.ModTime().UnixMicro() || digest != ownership.SHA256 {
+		return nil, errors.New("current audio-upgrade publication changed before replacement")
+	}
+	return after, nil
+}
+
+// reopenFrozenAudioUpgradePredecessor reopens the predecessor through the pinned
+// parent and verifies the frozen witness again immediately before a namespace
+// mutation.
+func reopenFrozenAudioUpgradePredecessor(ctx context.Context, mutation sourcefs.OutputMutation, name string, ownership persistence.PublicationFileIdentity) (fs.FileInfo, error) {
+	file, err := mutation.OpenExistingRegular(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("reopen current audio-upgrade publication: %w", err)
+	}
+	info, statErr := file.Stat(ctx)
+	if statErr != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("inspect current audio-upgrade publication: %w", statErr)
+	}
+	verified, verifyErr := verifyAudioUpgradePredecessor(ctx, file, info, ownership)
+	closeErr := file.Close()
+	return verified, errors.Join(verifyErr, closeErr)
+}
+
+// verifyFrozenAudioUpgradePredecessorPath opens the CURRENT predecessor by its
+// frozen relative path and requires the exact witness. It is used when the
+// upgrade installs a different extension and therefore does not replace the
+// predecessor name.
+func verifyFrozenAudioUpgradePredecessorPath(ctx context.Context, root sourcefs.OutputDirectory, relativePath string, nodes []persistence.PublicationNamespaceNode, ownership persistence.PublicationFileIdentity) (fs.FileInfo, error) {
+	parent, err := openPublicationTargetParent(ctx, root, relativePath, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("open current audio-upgrade parent: %w", err)
+	}
+	if parent != root {
+		defer func() { _ = parent.Close() }()
+	}
+	mutation, ok := parent.(sourcefs.OutputMutation)
+	if !ok {
+		return nil, errors.New("native current publication inspection is unavailable")
+	}
+	return reopenFrozenAudioUpgradePredecessor(ctx, mutation, path.Base(relativePath), ownership)
+}
+
+// verifyFrozenAudioUpgradePredecessorIdentity checks that the predecessor is
+// still the object verified immediately before a different-extension install.
+func verifyFrozenAudioUpgradePredecessorIdentity(ctx context.Context, root sourcefs.OutputDirectory, relativePath string, nodes []persistence.PublicationNamespaceNode, expected fs.FileInfo) error {
+	parent, err := openPublicationTargetParent(ctx, root, relativePath, nodes)
+	if err != nil {
+		return fmt.Errorf("open current audio-upgrade parent: %w", err)
+	}
+	if parent != root {
+		defer func() { _ = parent.Close() }()
+	}
+	mutation, ok := parent.(sourcefs.OutputMutation)
+	if !ok {
+		return errors.New("native current publication inspection is unavailable")
+	}
+	file, err := mutation.OpenExistingRegular(ctx, path.Base(relativePath))
+	if err != nil {
+		return fmt.Errorf("reopen current audio-upgrade publication: %w", err)
+	}
+	info, statErr := file.Stat(ctx)
+	closeErr := file.Close()
+	if err := errors.Join(statErr, closeErr); err != nil {
+		return fmt.Errorf("inspect current audio-upgrade publication: %w", err)
+	}
+	if expected == nil || !os.SameFile(expected, info) || expected.Size() != info.Size() || expected.ModTime().UnixMicro() != info.ModTime().UnixMicro() {
+		return errors.New("current audio-upgrade publication changed before installation")
+	}
+	return nil
 }
 
 func digestRegular(ctx context.Context, file sourcefs.RegularFile) (string, error) {

@@ -29,7 +29,7 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !validProviderTagRewrite(input) && !validSourceRepublishPreparation(input)) || input.IntentKind != attempt.IntentKind {
+		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAudioUpgradeExecution(input) && !validProviderTagRewrite(input) && !validSourceRepublishPreparation(input)) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
 		if validProviderTagRewrite(input) {
@@ -79,7 +79,10 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 			current = coverCurrent
 			return nil
 		}
-		if validAutomaticAudioUpgrade(input) {
+		if validAudioUpgradeExecution(input) {
+			if err := validateReceiptPublicationDeliverySource(ctx, tx, guard, input); err != nil {
+				return err
+			}
 			var publication TrackPublication
 			if err := tx.NewSelect().Model(&publication).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -94,7 +97,7 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 				}
 				return fmt.Errorf("check publication result freshness: read current source authority: %w", err)
 			}
-			current = automaticAudioUpgradeCurrent(publication, authority, input, attempt.Epoch)
+			current = audioUpgradeCurrent(publication, authority, input, attempt.Epoch)
 			return nil
 		}
 		if input.ManualLyrics != nil {

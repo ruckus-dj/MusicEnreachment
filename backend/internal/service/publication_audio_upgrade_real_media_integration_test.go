@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"os"
@@ -34,6 +35,21 @@ import (
 )
 
 const audioUpgradeCrashChildExitCode = 73
+
+var errReceiptUpgradeResultInterrupted = errors.New("receipt upgrade result commit interrupted")
+
+type interruptedReceiptUpgradeResultRepository struct {
+	*persistence.SetupManagerRepository
+	interrupt bool
+}
+
+func (repository *interruptedReceiptUpgradeResultRepository) CommitPublicationResult(ctx context.Context, guard persistence.PublicationDeliveryGuard, result persistence.PublicationResult) (bool, error) {
+	if repository.interrupt {
+		repository.interrupt = false
+		return false, errReceiptUpgradeResultInterrupted
+	}
+	return repository.SetupManagerRepository.CommitPublicationResult(ctx, guard, result)
+}
 
 type publicationRecoveryCallbackCounts struct {
 	AudioTranscodes int `json:"audio_transcodes"`
@@ -643,7 +659,7 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			oldCurrent := currentContext.Current
 			if err := settingsRepo.SetMany(ctx, map[string]string{
 				settings.PublicationFormatKey:       string(publication.AudioFormatMKA),
-				settings.PublicationPathTemplateKey: "Moved/Track.{EXT}",
+				settings.PublicationPathTemplateKey: "Moved/current-inspection.{EXT}",
 			}); err != nil {
 				t.Fatalf("configure changed-path Matroska republish: %v", err)
 			}
@@ -686,7 +702,7 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			if err != nil || newContext == nil || newContext.Current == nil {
 				t.Fatalf("read republished CURRENT: %+v, %v", newContext, err)
 			}
-			if newContext.Current.Record.RelativePath != "Moved/Track.mka" || newContext.Current.Record.Generation == committedGeneration {
+			if newContext.Current.Record.RelativePath != "Moved/current-inspection.mka" || newContext.Current.Record.Generation == committedGeneration {
 				t.Fatalf("republished CURRENT path/generation = %q/%s", newContext.Current.Record.RelativePath, newContext.Current.Record.Generation)
 			}
 			newPath := filepath.Join(output, filepath.FromSlash(newContext.Current.Record.RelativePath))
@@ -714,6 +730,119 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			var cleanupCount int
 			if err := db.NewRaw(`SELECT count(*) FROM obsolete_publication_output_cleanup WHERE position_id=? AND relative_path=? AND generation=?`, positionID, oldCurrent.Record.RelativePath, committedGeneration).Scan(ctx, &cleanupCount); err != nil || cleanupCount != 1 {
 				t.Fatalf("old CURRENT cleanup authority count=%d err=%v", cleanupCount, err)
+			}
+
+			// A manual matching result is a separate authority from the
+			// reconciliation that produced our earlier CURRENT.
+			beforeReceipt := newContext.Current
+			beforeAuthority, err := repository.ReadPositionSourceAuthority(ctx, positionID)
+			if err != nil || beforeAuthority == nil {
+				t.Fatalf("read source authority before matching-receipt upgrade: %+v, %v", beforeAuthority, err)
+			}
+			beforeArtwork, err := metadata.ReadArtworkSnapshot(ctx, newPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiptVariant, receiptLocation, receiptWork := uuid.New(), uuid.New(), uuid.New()
+			const receiptRelative = "confirmed-96k.flac"
+			receiptNative := filepath.Join(configured, receiptRelative)
+			if err := generateSineFLAC(ctx, managedFFmpeg, receiptNative, 96000, 24); err != nil {
+				t.Fatal(err)
+			}
+			probe, err := probeRealFile(ctx, managedFFprobe, receiptNative)
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture, err := (metadata.Reader{}).Read(ctx, receiptNative, metadata.ReadRequest{Properties: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(receiptNative)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := insertRealSourceFacts(ctx, db, rootID, configured, inventory, receiptRelative, receiptVariant, receiptLocation,
+				receiptWork, scanOperation, info.Size(), sourceScanMtime(info.ModTime()), string(probe), ffprobeBanner, capture); err != nil {
+				t.Fatalf("insert confirmed source evidence: %v", err)
+			}
+			if _, err := db.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata)
+				VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, uuid.New(), fixtureTrackID, receiptVariant).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			receipt := seedFirstPublicationMatchingReceipt(t, ctx, db, fixtureReleaseID, positionID, fixtureTrackID, receiptVariant, receiptWork)
+			bound, err := repository.ReadReceiptBoundTrackSourceIDs(ctx, positionID)
+			if _, excluded := bound[receipt.TrackSourceID]; err != nil || !excluded {
+				t.Fatalf("manual confirmation must be excluded from automatic quality reconciliation: %v, %v", bound, err)
+			}
+			preview, err := republishService.PreviewFromMatchingReceipt(ctx, fixtureReleaseID, positionID, *receipt, nil)
+			if err != nil || preview.ConfirmationCapability == nil || preview.ConfirmationCapability.Status != "ready" ||
+				len(preview.SourceCandidates) != 1 || preview.SelectedSource == nil || preview.SelectedSource.AssociationID != receipt.TrackSourceID ||
+				preview.SelectedSource.LocationID != receiptLocation || preview.SelectedSource.MediaVariantID != receiptVariant {
+				t.Fatalf("preview confirmed higher-quality source: %+v, %v", preview, err)
+			}
+			op, err := republishService.AdmitFromMatchingReceipt(ctx, fixtureReleaseID, positionID, FirstPublicationConfirmation{
+				ExpectedEpoch: preview.Epoch, ExpectedGeneration: &beforeReceipt.Record.Generation, PreviewDigest: preview.ContextDigest, Receipt: receipt,
+				SourceChoice: &FirstPublicationSourceChoice{LocationID: receiptLocation, MediaVariantID: receiptVariant, StreamIndex: preview.SelectedSource.StreamIndex},
+			})
+			if err != nil {
+				t.Fatalf("admit confirmed higher-quality source: %v", err)
+			}
+			if _, err := db.NewRaw(`DELETE FROM track_source WHERE id=?`, receipt.TrackSourceID).Exec(ctx); err == nil ||
+				!strings.Contains(err.Error(), "publication_source_hold_receipt_pin_fkey") {
+				t.Fatalf("expected the exact receipt pin foreign key to reject deletion: %v", err)
+			}
+			receiptOp, err := repository.GetOperation(ctx, op)
+			if err != nil || receiptOp == nil || receiptOp.RiverJobID == nil {
+				t.Fatalf("read receipt upgrade operation: %+v, %v", receiptOp, err)
+			}
+			if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, *receiptOp.RiverJobID).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			interrupted := &interruptedReceiptUpgradeResultRepository{SetupManagerRepository: repository, interrupt: true}
+			receiptExecutor := newPublicationExecutor(interrupted, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), commands)
+			if err := receiptExecutor.ExecutePublicationDelivery(ctx, op, *receiptOp.RiverJobID, 1); !errors.Is(err, errReceiptUpgradeResultInterrupted) {
+				t.Fatalf("interrupt receipt publication after native replacement: %v", err)
+			}
+			installedBeforeRetry, err := os.ReadFile(newPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=2,attempted_at=now() WHERE id=?`, *receiptOp.RiverJobID).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := receiptExecutor.ExecutePublicationDelivery(ctx, op, *receiptOp.RiverJobID, 2); err != nil {
+				t.Fatalf("recover installed matching-receipt audio: %v", err)
+			}
+			if installedAfterRetry, err := os.ReadFile(newPath); err != nil || !reflect.DeepEqual(installedAfterRetry, installedBeforeRetry) {
+				t.Fatalf("receipt recovery mutated its installed artifact: %v", err)
+			}
+			settled, err := repository.ReadLibraryPublicationContext(ctx, fixtureReleaseID, positionID)
+			if err != nil || settled == nil || settled.Current == nil ||
+				settled.Current.Record.Generation == beforeReceipt.Record.Generation || settled.Current.Record.RelativePath != beforeReceipt.Record.RelativePath ||
+				publication.CompareQuality(audioUpgradeQualityCandidate(settled.Current.Audio.Facts), audioUpgradeQualityCandidate(beforeReceipt.Audio.Facts)) != publication.QualityBetter ||
+				!reflect.DeepEqual(settled.Current.Metadata.Tags, beforeReceipt.Metadata.Tags) || !reflect.DeepEqual(settled.Current.Assets, beforeReceipt.Assets) {
+				t.Fatalf("settled confirmed upgrade must retain CURRENT metadata and improve audio: %+v, %v", settled, err)
+			}
+			afterAuthority, err := repository.ReadPositionSourceAuthority(ctx, positionID)
+			if err != nil || afterAuthority == nil || afterAuthority.Revision == beforeAuthority.Revision || afterAuthority.Mode != beforeAuthority.Mode ||
+				afterAuthority.SourceLocationID != receiptLocation || afterAuthority.MediaVariantID != receiptVariant {
+				t.Fatalf("settled authority must retain mode and bind the confirmed source: %+v, %v", afterAuthority, err)
+			}
+			afterArtwork, err := metadata.ReadArtworkSnapshot(ctx, newPath)
+			if err != nil || !sameArtworkSnapshot(afterArtwork, beforeArtwork) {
+				t.Fatalf("confirmed upgrade changed embedded artwork: %v", err)
+			}
+			var selected bool
+			if err := db.NewRaw(`SELECT selected FROM track_source WHERE id=?`, receipt.TrackSourceID).Scan(ctx, &selected); err != nil || selected {
+				t.Fatalf("confirmed upgrade changed global track-source selection: %v, %v", selected, err)
+			}
+			var held bool
+			if err := db.NewRaw(`SELECT EXISTS(SELECT 1 FROM publication_source_hold WHERE operation_id=?)`, op).Scan(ctx, &held); err != nil || held {
+				t.Fatalf("settled receipt retained its source hold: %v, %v", held, err)
+			}
+			unchanged, err := republishService.PreviewFromMatchingReceipt(ctx, fixtureReleaseID, positionID, *receipt, nil)
+			if err != nil || unchanged.ConfirmationCapability == nil || unchanged.ConfirmationCapability.Status != "unchanged" {
+				t.Fatalf("the same saved source must leave CURRENT unchanged: %+v, %v", unchanged, err)
 			}
 		},
 	}

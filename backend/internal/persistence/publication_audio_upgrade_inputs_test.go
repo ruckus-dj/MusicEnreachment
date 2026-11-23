@@ -95,6 +95,15 @@ func TestPublicationAudioUpgradeInputsRejectVersionDiscriminantsAndInvalidWitnes
 		{"rewrite discriminator", func(input *PublicationInputs) { input.IntentKind = "rewrite" }},
 		{"missing current generation", func(input *PublicationInputs) { input.AudioUpgrade.Current.Generation = uuid.Nil }},
 		{"missing source authority revision", func(input *PublicationInputs) { input.AudioUpgrade.SourceAuthorityRevision = uuid.Nil }},
+		{"nil receipt track source", func(input *PublicationInputs) {
+			nilID := uuid.Nil
+			input.AudioUpgrade.ReceiptTrackSourceID = &nilID
+		}},
+		{"receipt without authority mode", func(input *PublicationInputs) {
+			marker := uuid.New()
+			input.AudioUpgrade.ReceiptTrackSourceID = &marker
+			input.SourceAuthorityMode = ""
+		}},
 		{"missing ownership evidence", func(input *PublicationInputs) { input.AudioUpgrade.Current.Ownership.SizeBytes = nil }},
 		{"missing ownership digest", func(input *PublicationInputs) { input.AudioUpgrade.Current.Ownership.SHA256 = "" }},
 		{"changed desired tags", func(input *PublicationInputs) { input.DesiredTags["title"][0] = "Pending metadata" }},
@@ -117,6 +126,8 @@ func TestPublicationAudioUpgradeInputsRejectVersionDiscriminantsAndInvalidWitnes
 
 func TestPublicationAudioUpgradeCloneDetachesWitness(t *testing.T) {
 	input := publicationAudioUpgradeFixture(t)
+	marker := uuid.New()
+	input.AudioUpgrade.ReceiptTrackSourceID = &marker
 	clone := input.Clone()
 	current := &clone.AudioUpgrade.Current
 	*current.Ownership.SizeBytes = 1
@@ -125,7 +136,39 @@ func TestPublicationAudioUpgradeCloneDetachesWitness(t *testing.T) {
 	current.Tags["title"][0] = "Changed"
 	current.ArtworkInventory[0].Description = "Changed"
 	current.Tags["new"] = []string{}
-	if *input.AudioUpgrade.Current.Ownership.SizeBytes != 4096 || *input.AudioUpgrade.Current.AudioFacts.Channels != 2 || *input.AudioUpgrade.Current.Assets.Cover.SizeBytes != 2048 || input.AudioUpgrade.Current.Tags["title"][0] != "Current" || input.AudioUpgrade.Current.Tags["new"] != nil || input.AudioUpgrade.Current.ArtworkInventory[0].Description != "" {
+	*clone.AudioUpgrade.ReceiptTrackSourceID = uuid.New()
+	if *input.AudioUpgrade.Current.Ownership.SizeBytes != 4096 || *input.AudioUpgrade.Current.AudioFacts.Channels != 2 || *input.AudioUpgrade.Current.Assets.Cover.SizeBytes != 2048 || input.AudioUpgrade.Current.Tags["title"][0] != "Current" || input.AudioUpgrade.Current.Tags["new"] != nil || input.AudioUpgrade.Current.ArtworkInventory[0].Description != "" || *input.AudioUpgrade.ReceiptTrackSourceID != marker {
 		t.Fatal("audio upgrade clone shares mutable witness data")
+	}
+}
+
+func TestPublicationAudioUpgradeReceiptMarkerPreservesFrozenAuthorityMode(t *testing.T) {
+	input := publicationAudioUpgradeFixture(t)
+	marker := uuid.New()
+	input.AudioUpgrade.ReceiptTrackSourceID = &marker
+	for _, mode := range []string{"manual", "automatic"} {
+		t.Run(mode, func(t *testing.T) {
+			candidate := input.Clone()
+			candidate.SourceAuthorityMode = mode
+			if err := candidate.Validate(); err != nil {
+				t.Fatalf("receipt audio upgrade with %s authority rejected: %v", mode, err)
+			}
+			if !candidate.SupportsExecution() || !validAudioUpgradeExecution(candidate) {
+				t.Fatal("receipt audio upgrade is not executable")
+			}
+			if validAutomaticAudioUpgrade(candidate) {
+				t.Fatal("receipt audio upgrade advertised as an ordinary automatic upgrade")
+			}
+		})
+	}
+	manual := input.Clone()
+	manual.SourceAuthorityMode = ""
+	if err := manual.Validate(); err == nil {
+		t.Fatal("receipt audio upgrade without an authority mode was accepted")
+	}
+	ordinary := publicationAudioUpgradeFixture(t)
+	ordinary.SourceAuthorityMode = "manual"
+	if validAudioUpgradeExecution(ordinary) {
+		t.Fatal("marker-free audio upgrade accepted a manual authority mode")
 	}
 }

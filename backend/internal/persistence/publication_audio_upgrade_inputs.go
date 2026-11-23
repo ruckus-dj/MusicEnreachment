@@ -9,10 +9,15 @@ import (
 )
 
 // PublicationAudioUpgradeInput freezes the CURRENT artifact witness required
-// to upgrade its audio without acquiring lyrics authority or source identity.
+// to replace its audio while preserving lyrics and artwork.
+// ReceiptTrackSourceID marks an explicit matching-receipt upgrade bound to that
+// exact confirmation association. A nil marker is the ordinary reconciliation
+// upgrade and remains automatic-only; a present marker preserves whichever live
+// source-authority mode typed receipt admission confirmed.
 type PublicationAudioUpgradeInput struct {
 	Current                 PublicationCurrentWitness `json:"current"`
 	SourceAuthorityRevision uuid.UUID                 `json:"source_authority_revision"`
+	ReceiptTrackSourceID    *uuid.UUID                `json:"receipt_track_source_id,omitempty"`
 }
 
 // PublicationCurrentWitness is neutral factual evidence about the selected
@@ -41,6 +46,9 @@ type PublicationArtworkWitness struct {
 func (input PublicationAudioUpgradeInput) Validate() error {
 	if input.SourceAuthorityRevision == uuid.Nil {
 		return errors.New("audio upgrade source authority revision is required")
+	}
+	if input.ReceiptTrackSourceID != nil && *input.ReceiptTrackSourceID == uuid.Nil {
+		return errors.New("audio upgrade receipt track source must be a valid association")
 	}
 	if err := input.Current.Validate(); err != nil {
 		return fmt.Errorf("invalid current publication witness: %w", err)

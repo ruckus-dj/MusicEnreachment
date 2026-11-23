@@ -178,11 +178,15 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 		// would roll back partial deletes too, but doing this as a separate pass
 		// makes the all-or-nothing intent explicit and avoids needless writes.
 		for _, sourceID := range canonicalIDs {
-			var exists bool
-			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM track_source WHERE media_variant_id=? AND decision_method='manual')`, sourceID).Scan(ctx, &exists); err != nil {
+			var exists, pinned bool
+			if err := tx.NewRaw(`SELECT
+				EXISTS(SELECT 1 FROM track_source WHERE media_variant_id=? AND decision_method='manual'),
+				EXISTS(SELECT 1 FROM track_source source
+					JOIN publication_source_hold hold ON hold.receipt_track_source_id=source.id
+					WHERE source.media_variant_id=? AND source.decision_method='manual')`, sourceID, sourceID).Scan(ctx, &exists, &pinned); err != nil {
 				return fmt.Errorf("unlink matching: inspect source association: %w", err)
 			}
-			if !exists {
+			if !exists || pinned {
 				return ErrIncomingMatchConflict
 			}
 			if err := rejectCleanupOwnedSourceVariant(ctx, tx, sourceID); err != nil {

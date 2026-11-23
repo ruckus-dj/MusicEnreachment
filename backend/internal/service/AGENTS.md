@@ -99,6 +99,12 @@ it need not create a `pending` event. Assert retained dirty scope, live delivery
 ownership and absence of a false ACK rather than an invented state. Metadata-only
 provider changes are no-op reconciliation, not accepted-graph parking or automatic
 CURRENT rewrites; AUDIO quality evaluation remains independent.
+Receipt-scoped audio upgrades pin the exact association until settlement.
+Inspect CURRENT from a verified handle, and keep inspection/input files away from
+the candidate basename, which the operator can choose. An interrupted CURRENT
+upgrade from a receipt must prove the installed audio comes from the held source;
+quality, tags and artwork alone do not prove that association. Test a same-process
+River retry after the candidate actually reaches the destination.
 
 For MusicBrainz matching, presence and zero-based track coordinates come from
 the accepted `provider_source_release_track` projection, not the provider-wide
