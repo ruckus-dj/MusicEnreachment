@@ -102,7 +102,7 @@ func TestManualLookupCacheReuseRunsProviderWorkerAndSealsExactResponsePostgreSQL
 	plan := persistence.ManualMatchingRunPlan{
 		GroupingEpoch: state.Revision, PolicyVersion: service.MatchingPolicyVersion,
 		Plan:          json.RawMessage(`{"schema_version":1,"mode":"manual_review"}`),
-		GroupContext:  json.RawMessage(`{"group_id":"` + group.ID.String() + `","revision":"` + group.Revision + `"}`),
+		GroupContext:  manualGroupContext(t, group),
 		SourceContext: json.RawMessage(`{"provider_id":"` + source.ProviderID.String() + `","provider_source_id":"` + source.ID.String() + `","endpoint":"` + source.Endpoint + `","configuration_identity":"` + identity + `"}`),
 	}
 	riverInserter := &manualCacheReuseRiverInserter{}

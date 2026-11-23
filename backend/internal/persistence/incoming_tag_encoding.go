@@ -173,29 +173,25 @@ func loadIncomingTagEncodingGroup(ctx context.Context, database bun.IDB, groupID
 		return IncomingTagEncodingGroup{}, fmt.Errorf("read incoming group for tag encoding: %w", err)
 	}
 
-	var memberRows []struct {
-		VariantID uuid.UUID `bun:"variant_id"`
-		Ready     bool      `bun:"ready"`
+	activity, err := ReadIncomingMembershipActivity(ctx, database, groupID)
+	if err != nil {
+		return IncomingTagEncodingGroup{}, err
 	}
-	if err := database.NewRaw(`SELECT variant_id, ready FROM incoming_group_member WHERE group_id=? ORDER BY variant_id`, groupID).Scan(ctx, &memberRows); err != nil {
-		return IncomingTagEncodingGroup{}, fmt.Errorf("read incoming group members for tag encoding: %w", err)
-	}
-	memberIDs := make([]uuid.UUID, 0, len(memberRows))
-	memberSet := make(map[uuid.UUID]struct{}, len(memberRows))
-	for _, row := range memberRows {
-		if !row.Ready {
-			continue
-		}
-		memberIDs = append(memberIDs, row.VariantID)
-		memberSet[row.VariantID] = struct{}{}
+	memberIDs := activity.ActiveReady
+	memberSet := make(map[uuid.UUID]struct{}, len(memberIDs))
+	for _, member := range memberIDs {
+		memberSet[member] = struct{}{}
 	}
 	if len(memberIDs) == 0 {
 		return IncomingTagEncodingGroup{}, ErrIncomingTagEncodingUnavailable
 	}
+	groupRevision = IncomingActiveRevision(groupRevision, activity.ReadyCount, memberIDs)
 
-	var locationIDs []uuid.UUID
-	if err := database.NewRaw(`SELECT DISTINCT location_id FROM incoming_group_member_location WHERE group_id=? ORDER BY location_id`, groupID).Scan(ctx, &locationIDs); err != nil {
-		return IncomingTagEncodingGroup{}, fmt.Errorf("read incoming group locations for tag encoding: %w", err)
+	locationIDs := make([]uuid.UUID, 0, len(activity.ActiveLocations))
+	for _, location := range activity.ActiveLocations {
+		if _, ready := memberSet[location.VariantID]; ready {
+			locationIDs = append(locationIDs, location.LocationID)
+		}
 	}
 	if len(locationIDs) == 0 {
 		return IncomingTagEncodingGroup{}, ErrIncomingTagEncodingConflict

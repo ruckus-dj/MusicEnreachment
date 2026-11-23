@@ -126,11 +126,12 @@ func (capture *fallbackCapture) UnmarshalJSON(raw []byte) error {
 		AnalysisInputs []analysisInput                              `json:"analysis_inputs"`
 	}
 	var persisted struct {
-		SchemaVersion     int       `json:"schema_version"`
-		GroupID           uuid.UUID `json:"group_id"`
-		GroupRevision     string    `json:"group_revision"`
-		AuthorityRevision int64     `json:"authority_revision"`
-		Members           []member  `json:"members"`
+		SchemaVersion       int       `json:"schema_version"`
+		GroupID             uuid.UUID `json:"group_id"`
+		GroupRevision       string    `json:"group_revision"`
+		ActiveGroupRevision string    `json:"active_group_revision,omitempty"`
+		AuthorityRevision   int64     `json:"authority_revision"`
+		Members             []member  `json:"members"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()

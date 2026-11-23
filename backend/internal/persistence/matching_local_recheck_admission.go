@@ -168,10 +168,6 @@ func (repository *IncomingMatchCandidateRepository) ApplyAutomaticLocalFallback(
 		if outageRunID == uuid.Nil || outageRunID != commit.OutageRunID {
 			return fmt.Errorf("apply automatic Local fallback: MusicBrainz outage evidence changed: %w", ErrIncomingMatchConflict)
 		}
-		captures, err := RecheckMatchingLayoutTargetTx(ctx, tx, commit.GroupID, MatchingLayoutPolicyVersion, commit.LayoutTarget)
-		if err != nil {
-			return fmt.Errorf("apply automatic Local fallback: recheck layout target: %w", err)
-		}
 		groupRevision, authorityRevision, err := automaticLocalFallbackTargetRevisions(commit.LayoutTarget)
 		if err != nil {
 			return err
@@ -204,6 +200,21 @@ func (repository *IncomingMatchCandidateRepository) ApplyAutomaticLocalFallback(
 		}
 		if generation.ReconciledGeneration >= commit.ObservedRequestGeneration {
 			return fmt.Errorf("apply automatic Local fallback: generation was already acknowledged: %w", ErrIncomingMatchConflict)
+		}
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, commit.GroupID)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: read target activity: %w", err)
+		}
+		memberIDs := make([]uuid.UUID, 0, len(intent.Assignments))
+		for _, assignment := range intent.Assignments {
+			memberIDs = append(memberIDs, assignment.FileMemberID)
+		}
+		if err := requireActiveIncomingMembers(activity, memberIDs); err != nil {
+			return fmt.Errorf("apply automatic Local fallback: %w", err)
+		}
+		captures, err := RecheckMatchingLayoutTargetTx(ctx, tx, commit.GroupID, MatchingLayoutPolicyVersion, commit.LayoutTarget)
+		if err != nil {
+			return fmt.Errorf("apply automatic Local fallback: recheck layout target: %w", err)
 		}
 		if err := ValidateMatchingLocalLayoutEvidenceTx(ctx, tx, commit.HeaderDigest, commit.ReleaseIDs, commit.LayoutDigest); err != nil {
 			return err
@@ -352,7 +363,11 @@ func automaticLocalFallbackTargetRevisions(layoutTarget json.RawMessage) (string
 		evidence.Target.GroupRevision == "" || evidence.Target.AuthorityRevision < 0 {
 		return "", 0, fmt.Errorf("apply automatic Local fallback: layout target is invalid: %w", ErrIncomingMatchConflict)
 	}
-	return evidence.Target.GroupRevision, evidence.Target.AuthorityRevision, nil
+	revision := evidence.Target.ActiveGroupRevision
+	if revision == "" {
+		revision = evidence.Target.GroupRevision
+	}
+	return revision, evidence.Target.AuthorityRevision, nil
 }
 
 func automaticLocalFallbackDecisionDigest(layoutTarget json.RawMessage, providerReleaseID uuid.UUID, assignments []MatchingLocalAssignment) (string, error) {

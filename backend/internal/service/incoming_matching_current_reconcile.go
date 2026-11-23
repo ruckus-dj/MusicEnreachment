@@ -14,6 +14,21 @@ type incomingMatchingCurrentRequestRepository interface {
 	ReadPendingCurrentRequests(context.Context) ([]persistence.IncomingMatchingCurrentRequest, error)
 	AcknowledgeCurrentRequest(context.Context, uuid.UUID, int64) error
 	AcknowledgeRemovedCurrentGroup(context.Context, uuid.UUID, int64) (bool, error)
+	CurrentGroupHasActiveMembership(context.Context, uuid.UUID) (bool, error)
+	AcknowledgeRemovedActiveCurrentGroup(context.Context, uuid.UUID, int64) (bool, error)
+}
+
+// acknowledgeInactiveCurrentTarget settles the observed generation when the
+// exact automatic target no longer has an active ready member. Only the
+// coalesced generation changes: the raw group and revision, publication album
+// receipts, and every queued run targeting a disjoint group survive unchanged.
+// A false result keeps the generation pending instead of inventing an ACK.
+func (service *IncomingMatchingReconciliation) acknowledgeInactiveCurrentTarget(ctx context.Context, groupID uuid.UUID, observedGeneration int64) (bool, error) {
+	acknowledged, err := service.currentRequests.AcknowledgeRemovedActiveCurrentGroup(ctx, groupID, observedGeneration)
+	if err != nil {
+		return false, fmt.Errorf("acknowledge removed active current incoming group %s: %w", groupID, err)
+	}
+	return acknowledged, nil
 }
 
 // ReconcileCurrent consumes coalesced generations from the persisted current
@@ -88,6 +103,25 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 			// until an explicit return-to-automatic action issues a new request.
 			continue
 		}
+		active, err := service.currentRequests.CurrentGroupHasActiveMembership(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("check active current incoming membership for group %s: %w", groupID, err)
+		}
+		if !active {
+			// The raw group still exists but every persisted member already has a
+			// live source link. Settle only the observed generation so a later
+			// membership request is not hidden by this one.
+			acknowledged, err := service.acknowledgeInactiveCurrentTarget(ctx, groupID, request.RequestedGeneration)
+			if err != nil {
+				return err
+			}
+			if acknowledged {
+				delete(deferredGroups, groupID)
+				continue
+			}
+			deferred = true
+			continue
+		}
 		if len(group.Group.UnreadyMembers) > 0 {
 			deferred = true
 			continue
@@ -107,6 +141,18 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 			if err := service.admitFallback(ctx, fallback, delivery, request.RequestedGeneration); err != nil {
 				if errors.Is(err, ErrIncomingMatchingReconciliationDeferred) {
 					return err
+				}
+				if errors.Is(err, persistence.ErrIncomingMatchingTargetInactive) {
+					acknowledged, ackErr := service.acknowledgeInactiveCurrentTarget(ctx, groupID, request.RequestedGeneration)
+					if ackErr != nil {
+						return ackErr
+					}
+					if acknowledged {
+						delete(deferredGroups, groupID)
+						continue
+					}
+					deferred = true
+					continue
 				}
 				return fmt.Errorf("admit current automatic fallback matching for group %s: %w", groupID, err)
 			}
@@ -135,6 +181,18 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 			RequestGeneration: request.RequestedGeneration,
 		}
 		if _, err := service.admissions.AdmitAutomaticArtistMatchingRun(ctx, service.river, admission); err != nil {
+			if errors.Is(err, persistence.ErrIncomingMatchingTargetInactive) {
+				acknowledged, ackErr := service.acknowledgeInactiveCurrentTarget(ctx, groupID, request.RequestedGeneration)
+				if ackErr != nil {
+					return ackErr
+				}
+				if acknowledged {
+					delete(deferredGroups, groupID)
+					continue
+				}
+				deferred = true
+				continue
+			}
 			return fmt.Errorf("admit current automatic artist matching for group %s: %w", groupID, err)
 		}
 		if err := service.currentRequests.AcknowledgeCurrentRequest(ctx, groupID, request.RequestedGeneration); err != nil {

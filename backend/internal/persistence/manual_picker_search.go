@@ -61,14 +61,11 @@ func (repository *SetupManagerRepository) AdmitManualPickerSearch(ctx context.Co
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		var currentRevision string
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? AND EXISTS (SELECT 1 FROM incoming_group_member WHERE group_id=incoming_group.id) FOR SHARE`, input.GroupID).Scan(ctx, &currentRevision); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
-			}
+		activeFence, err := readIncomingActiveGroupFence(ctx, tx, input.GroupID, false)
+		if err != nil {
 			return err
 		}
-		if currentRevision != input.GroupRevision {
+		if activeFence.ActiveRevision != input.GroupRevision || len(activeIncomingGroupMemberIDs(activeFence)) == 0 {
 			return ErrIncomingMatchConflict
 		}
 		if input.Operation.ProviderSourceID == nil || input.Operation.ProviderConfigurationIdentity == nil || input.Operation.ProviderCacheKey == nil {

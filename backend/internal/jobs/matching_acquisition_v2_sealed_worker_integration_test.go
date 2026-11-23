@@ -601,9 +601,9 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		FROM incoming_match_evaluation WHERE group_id=?`, group.ID, group.ID).Scan(ctx, &refreshed); err != nil {
 		t.Fatalf("read refreshed artist review: %v", err)
 	}
-	newHeader, newCandidates, err := persistence.NewIncomingMatchCandidateRepository(database).Get(ctx, group.ID)
-	if err != nil || newHeader == nil || refreshed.Revision == header.EvaluationRevision || !refreshed.ReviewOnly || refreshed.ApplyCount != 1 || len(newCandidates) != 0 {
-		t.Fatalf("refreshed artist review=%+v candidates=%d err=%v; want empty review without new apply work", refreshed, len(newCandidates), err)
+	review, err := persistence.NewIncomingMatchCandidateRepository(database).GetReviewSnapshot(ctx, group.ID)
+	if err != nil || review == nil || review.Header != nil || refreshed.Revision != header.EvaluationRevision || refreshed.ReviewOnly || refreshed.ApplyCount != 1 {
+		t.Fatalf("dormant artist review=%+v refreshed=%+v err=%v; want hidden review, preserved evaluation evidence and no new apply work", review, refreshed, err)
 	}
 	if _, err := database.NewRaw(`UPDATE matching_run SET immutable_plan=jsonb_set(immutable_plan,'{schema_version}','99'::jsonb) WHERE id=?`, parentID).Exec(ctx); err != nil {
 		t.Fatalf("corrupt completed run plan version for negative fence check: %v", err)

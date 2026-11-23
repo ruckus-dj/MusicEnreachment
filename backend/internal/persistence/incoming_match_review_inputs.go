@@ -40,13 +40,26 @@ func (repository *IncomingMatchCandidateRepository) ReadMatchingReviewInputs(
 		if err != nil {
 			return fmt.Errorf("read matching review inputs: read evaluation header: %w", err)
 		}
-		locationIDs := make([]uuid.UUID, 0)
-		if err := tx.NewRaw(`SELECT member_location.location_id
-			FROM incoming_group_member_location member_location
-			JOIN incoming_group_member member ON member.group_id=member_location.group_id AND member.variant_id=member_location.variant_id
-			WHERE member_location.group_id=? AND member.ready
-			ORDER BY member_location.location_id`, groupID).Scan(ctx, &locationIDs); err != nil {
-			return fmt.Errorf("read matching review inputs: read member locations: %w", err)
+		var evaluatedMembers []uuid.UUID
+		if err := tx.NewRaw(`SELECT file_member_id FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &evaluatedMembers); err != nil {
+			return fmt.Errorf("read matching review inputs: read evaluated members: %w", err)
+		}
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		if requireActiveIncomingMembers(activity, evaluatedMembers) != nil {
+			return ErrIncomingMatchConflict
+		}
+		ready := make(map[uuid.UUID]bool, len(activity.ActiveReady))
+		for _, member := range activity.ActiveReady {
+			ready[member] = true
+		}
+		locationIDs := make([]uuid.UUID, 0, len(activity.ActiveLocations))
+		for _, location := range activity.ActiveLocations {
+			if ready[location.VariantID] {
+				locationIDs = append(locationIDs, location.LocationID)
+			}
 		}
 		captures = make([]IncomingGroupingCapture, 0)
 		if len(locationIDs) == 0 {

@@ -54,7 +54,7 @@ type matchingLayoutTargetCapture struct {
 // calculation and returns its canonical evidence, ready captures, and effective
 // pair threshold.
 func CaptureMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, policyVersion string) (json.RawMessage, []IncomingGroupingCapture, float64, error) {
-	evidence, captures, err := lockAndCaptureMatchingLayoutTarget(ctx, tx, groupID, policyVersion)
+	evidence, captures, err := lockAndCaptureMatchingLayoutTarget(ctx, tx, groupID, policyVersion, nil)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -76,13 +76,17 @@ func CaptureMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 // lockAndCaptureMatchingLayoutTarget captures a current automatic grouping
 // target under the canonical source-mutation and settings locks, then the
 // grouping, group, and authority locks. It passes only captures belonging to
-// READY members to the caller while retaining every member in the evidence.
+// READY members to the caller while retaining every captured member in the
+// evidence.
+//
+// New work uses the live READY subset. A historical recheck uses the saved
+// scope, independently of links created by a successful apply.
 //
 // The caller owns any output-admission gate required by its surrounding work;
 // this helper deliberately never acquires one, so it cannot invert that gate's
 // order. The shared tools gate prevents settings writers from changing the
 // threshold, including inserting its first row.
-func lockAndCaptureMatchingLayoutTarget(ctx context.Context, tx bun.Tx, groupID uuid.UUID, policyVersion string) (matchingLayoutTargetEvidence, []IncomingGroupingCapture, error) {
+func lockAndCaptureMatchingLayoutTarget(ctx context.Context, tx bun.Tx, groupID uuid.UUID, policyVersion string, saved *automaticArtistTargetCapture) (matchingLayoutTargetEvidence, []IncomingGroupingCapture, error) {
 	var evidence matchingLayoutTargetEvidence
 	if groupID == uuid.Nil || strings.TrimSpace(policyVersion) == "" {
 		return evidence, nil, fmt.Errorf("lock matching layout target: group and policy version are required")
@@ -128,7 +132,31 @@ func lockAndCaptureMatchingLayoutTarget(ctx context.Context, tx bun.Tx, groupID 
 	if err != nil {
 		return evidence, nil, fmt.Errorf("lock matching layout target: require automatic authority: %w", err)
 	}
-	target, err := captureAutomaticArtistTarget(ctx, tx, groupID, group.Revision, authorityRevision)
+	var members []uuid.UUID
+	var readyCount int
+	switch {
+	case saved == nil:
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+		if err != nil {
+			return evidence, nil, err
+		}
+		if err := requireActiveIncomingMembers(activity, activity.ActiveReady); err != nil {
+			return evidence, nil, err
+		}
+		members, readyCount = activity.ActiveReady, activity.ReadyCount
+	case saved.ActiveGroupRevision != "":
+		members = make([]uuid.UUID, 0, len(saved.Members))
+		for _, member := range saved.Members {
+			members = append(members, member.VariantID)
+		}
+		if len(members) == 0 {
+			return evidence, nil, ErrIncomingMatchConflict
+		}
+		if err := tx.NewRaw(`SELECT count(*) FROM incoming_group_member WHERE group_id=? AND ready=true`, groupID).Scan(ctx, &readyCount); err != nil {
+			return evidence, nil, fmt.Errorf("read matching layout ready count: %w", err)
+		}
+	}
+	target, err := captureAutomaticArtistTarget(ctx, tx, groupID, group.Revision, authorityRevision, members, readyCount)
 	if err != nil {
 		return evidence, nil, err
 	}
@@ -173,16 +201,15 @@ func RecheckMatchingLayoutTargetTx(ctx context.Context, tx bun.Tx, groupID uuid.
 	if _, _, err := DecodeMatchingLayoutTarget(expectedCanonical, groupID, policyVersion); err != nil {
 		return nil, err
 	}
-	current, readyCaptures, err := lockAndCaptureMatchingLayoutTarget(ctx, tx, groupID, policyVersion)
-	if err != nil {
-		return nil, err
-	}
 	var stored matchingLayoutTargetEvidence
 	if err := json.Unmarshal(expectedCanonical, &stored); err != nil {
 		return nil, err
 	}
-	// The grouping epoch authenticates admission, not changes to other groups.
-	// The current snapshot is already refreshed and checks this exact target.
+	current, readyCaptures, err := lockAndCaptureMatchingLayoutTarget(ctx, tx, groupID, policyVersion, &stored.Target)
+	if err != nil {
+		return nil, err
+	}
+	// The epoch authenticates admission, not changes to disjoint groups.
 	current.GroupingRevision = stored.GroupingRevision
 	encoded, err := json.Marshal(current)
 	if err != nil {

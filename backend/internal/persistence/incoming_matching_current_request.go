@@ -92,6 +92,18 @@ func wakeCurrentIncomingMatchingReconciliationWith(ctx context.Context, tx bun.I
 	return nil
 }
 
+// CurrentGroupHasActiveMembership reports whether the raw persisted group still
+// has any member whose canonical media identity is unlinked. A removed group and
+// an all-dormant group both report false; the caller distinguishes them through
+// the raw grouping projection before choosing the removal acknowledgement.
+func (repository *SourceInventoryRepository) CurrentGroupHasActiveMembership(ctx context.Context, groupID uuid.UUID) (bool, error) {
+	activity, err := ReadIncomingMembershipActivity(ctx, repository.db, groupID)
+	if err != nil {
+		return false, err
+	}
+	return len(activity.ActiveMembers) > 0, nil
+}
+
 // ReadPendingCurrentRequests returns the current obligations, never a frozen
 // source-event snapshot.
 func (repository *SourceInventoryRepository) ReadPendingCurrentRequests(ctx context.Context) ([]IncomingMatchingCurrentRequest, error) {
@@ -179,6 +191,67 @@ func (repository *SourceInventoryRepository) AcknowledgeRemovedCurrentGroup(ctx 
 		count, err := result.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("acknowledge removed current incoming group: count acknowledged requests: %w", err)
+		}
+		acknowledged = count == 1
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return acknowledged, nil
+}
+
+// AcknowledgeRemovedActiveCurrentGroup acknowledges an observed request when a
+// fresh, locked grouping projection still contains the raw group but none of its
+// persisted membership remains active. It deliberately changes only the observed
+// coalesced generation: the raw group and revision, publication album receipts,
+// and every queued matching run or disjoint target survive unchanged.
+func (repository *SourceInventoryRepository) AcknowledgeRemovedActiveCurrentGroup(ctx context.Context, groupID uuid.UUID, observedGeneration int64) (bool, error) {
+	if repository == nil || groupID == uuid.Nil || observedGeneration < 1 {
+		return false, fmt.Errorf("acknowledge removed active current incoming group: valid group and generation are required")
+	}
+	var acknowledged bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: lock output gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: lock source mutation gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: lock provider configuration: %w", err)
+		}
+		var needsRefresh bool
+		if err := tx.NewRaw(`SELECT needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &needsRefresh); err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: lock grouping state: %w", err)
+		}
+		if needsRefresh {
+			return nil
+		}
+		var exists bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM incoming_group WHERE id=?)`, groupID).Scan(ctx, &exists); err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: check current grouping: %w", err)
+		}
+		if !exists {
+			return nil
+		}
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+		if err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: read membership activity: %w", err)
+		}
+		if len(activity.ActiveMembers) > 0 {
+			return nil
+		}
+		result, err := tx.NewRaw(`UPDATE incoming_matching_generation
+				SET reconciled_generation=GREATEST(reconciled_generation, ?), updated_at=now()
+				WHERE group_id=? AND requested_generation >= ? AND reconciled_generation < ?`,
+			observedGeneration, groupID, observedGeneration, observedGeneration).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("acknowledge removed active current incoming group: count acknowledged requests: %w", err)
 		}
 		acknowledged = count == 1
 		return nil

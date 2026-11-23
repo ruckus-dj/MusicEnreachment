@@ -47,11 +47,15 @@ type AutomaticArtistMatchingAdmissionResult struct {
 }
 
 type automaticArtistTargetCapture struct {
-	SchemaVersion     int                           `json:"schema_version"`
-	GroupID           uuid.UUID                     `json:"group_id"`
-	GroupRevision     string                        `json:"group_revision"`
-	AuthorityRevision int64                         `json:"authority_revision"`
-	Members           []automaticArtistTargetMember `json:"members"`
+	SchemaVersion int       `json:"schema_version"`
+	GroupID       uuid.UUID `json:"group_id"`
+	GroupRevision string    `json:"group_revision"`
+	// ActiveGroupRevision is the frozen active-ready revision. It is present only
+	// when the capture retains the exact active-ready subset; raw full captures
+	// leave it empty so historical evidence keeps its original shape.
+	ActiveGroupRevision string                        `json:"active_group_revision,omitempty"`
+	AuthorityRevision   int64                         `json:"authority_revision"`
+	Members             []automaticArtistTargetMember `json:"members"`
 }
 
 type automaticArtistTargetMember struct {
@@ -151,18 +155,31 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		var group struct {
 			Revision string `bun:"revision"`
 		}
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &group); err != nil || group.Revision != admission.ExpectedGroupRevision {
+		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &group); err != nil {
 			return ErrIncomingMatchConflict
 		}
 		authorityRevision, err := requireAutomaticMatchingAuthority(ctx, tx, admission.GroupID)
 		if err != nil {
 			return err
 		}
-		capture, err := captureAutomaticArtistTarget(ctx, tx, admission.GroupID, group.Revision, authorityRevision)
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, admission.GroupID)
+		if err != nil {
+			return fmt.Errorf("automatic artist matching admission: read target activity: %w", err)
+		}
+		if err := requireActiveIncomingMembers(activity, activity.ActiveReady); err != nil {
+			return fmt.Errorf("automatic artist matching admission: %w", err)
+		}
+		// The admission fence binds the exact active-ready subset. The raw group
+		// revision stays in the capture and matching_run_target for seals and
+		// historical Local album/recheck evidence.
+		if IncomingActiveRevision(group.Revision, activity.ReadyCount, activity.ActiveReady) != admission.ExpectedGroupRevision {
+			return ErrIncomingMatchConflict
+		}
+		capture, err := captureAutomaticArtistTarget(ctx, tx, admission.GroupID, group.Revision, authorityRevision, activity.ActiveReady, activity.ReadyCount)
 		if err != nil {
 			return err
 		}
-		metadataCapture, err := captureMatchingAdmissionMetadata(ctx, tx, []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}})
+		metadataCapture, err := captureMatchingAdmissionMetadata(ctx, tx, []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, activity.ActiveReady)
 		if err != nil {
 			return err
 		}
@@ -382,18 +399,58 @@ func validateAutomaticArtistEventFence(ctx context.Context, tx bun.Tx, admission
 	return nil
 }
 
-func captureAutomaticArtistTarget(ctx context.Context, tx bun.Tx, groupID uuid.UUID, revision string, authorityRevision int64) (automaticArtistTargetCapture, error) {
+// captureAutomaticArtistTarget captures persisted target membership. A nil
+// activeMembers keeps the raw full membership used by historical layout
+// evidence. A non-nil set captures exactly those active-ready members, verifies
+// their exact identity, and freezes the computed active revision. The raw
+// revision stays in GroupRevision for seals and historical recheck evidence.
+func captureAutomaticArtistTarget(ctx context.Context, tx bun.Tx, groupID uuid.UUID, revision string, authorityRevision int64, activeMembers []uuid.UUID, readyCount int) (automaticArtistTargetCapture, error) {
 	capture := automaticArtistTargetCapture{SchemaVersion: 2, GroupID: groupID, GroupRevision: revision, AuthorityRevision: authorityRevision, Members: make([]automaticArtistTargetMember, 0)}
+	var expectedMembers map[uuid.UUID]bool
+	if activeMembers != nil {
+		expectedMembers = make(map[uuid.UUID]bool, len(activeMembers))
+		for _, member := range activeMembers {
+			if member == uuid.Nil || expectedMembers[member] {
+				return capture, fmt.Errorf("automatic artist matching target membership is invalid: %w", ErrIncomingMatchConflict)
+			}
+			expectedMembers[member] = true
+		}
+		capture.ActiveGroupRevision = IncomingActiveRevision(revision, readyCount, activeMembers)
+	}
 	var members []struct {
 		ID    uuid.UUID `bun:"variant_id"`
 		Ready bool      `bun:"ready"`
 	}
-	if err := tx.NewRaw(`SELECT variant_id,ready FROM incoming_group_member WHERE group_id=? ORDER BY variant_id FOR SHARE`, groupID).Scan(ctx, &members); err != nil {
+	memberQuery := `SELECT variant_id,ready FROM incoming_group_member WHERE group_id=?`
+	memberArgs := []any{groupID}
+	if activeMembers != nil {
+		memberQuery += ` AND variant_id IN (?)`
+		memberArgs = append(memberArgs, bun.List(activeMembers))
+	}
+	memberQuery += ` ORDER BY variant_id FOR SHARE`
+	if err := tx.NewRaw(memberQuery, memberArgs...).Scan(ctx, &members); err != nil {
 		return capture, err
 	}
+	if expectedMembers != nil {
+		if len(members) != len(expectedMembers) {
+			return capture, fmt.Errorf("automatic artist matching target membership changed: %w", ErrIncomingMatchConflict)
+		}
+		for _, member := range members {
+			if !expectedMembers[member.ID] || !member.Ready {
+				return capture, fmt.Errorf("automatic artist matching target membership changed: %w", ErrIncomingMatchConflict)
+			}
+		}
+	}
 	var locations []IncomingGroupingMemberLocation
-	if err := tx.NewRaw(`SELECT variant_id, source_root_id AS root_id, work_id, location_id, configured_path, inventory_path, relative_path, size_bytes, mtime
-		FROM incoming_group_member_location WHERE group_id=? ORDER BY variant_id, source_root_id, relative_path`, groupID).Scan(ctx, &locations); err != nil {
+	locationQuery := `SELECT variant_id, source_root_id AS root_id, work_id, location_id, configured_path, inventory_path, relative_path, size_bytes, mtime
+		FROM incoming_group_member_location WHERE group_id=?`
+	locationArgs := []any{groupID}
+	if activeMembers != nil {
+		locationQuery += ` AND variant_id IN (?)`
+		locationArgs = append(locationArgs, bun.List(activeMembers))
+	}
+	locationQuery += ` ORDER BY variant_id, source_root_id, relative_path`
+	if err := tx.NewRaw(locationQuery, locationArgs...).Scan(ctx, &locations); err != nil {
 		return capture, fmt.Errorf("load automatic artist target locations: %w", err)
 	}
 	locationIDs := make([]uuid.UUID, 0, len(locations))

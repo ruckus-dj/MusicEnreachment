@@ -103,6 +103,11 @@ func (service *IncomingMatchingReconciliation) Reconcile(ctx context.Context, de
 		}
 		admission.ParentArgs = MatchingEvaluationOperationArgs{OperationID: admission.Parent.ID}
 		if _, err := service.admissions.AdmitAutomaticArtistMatchingRun(ctx, service.river, admission); err != nil {
+			if errors.Is(err, persistence.ErrIncomingMatchingTargetInactive) {
+				// The target acquired live links after this snapshot was read;
+				// there is no automatic work left for it in this event.
+				continue
+			}
 			return fmt.Errorf("admit automatic artist matching for group %s: %w", target.GroupID, err)
 		}
 	}
@@ -110,16 +115,22 @@ func (service *IncomingMatchingReconciliation) Reconcile(ctx context.Context, de
 	if err != nil {
 		return fmt.Errorf("plan incoming matching fallback reconciliation: %w", err)
 	}
-	fallbackReady := make(map[uuid.UUID]struct{}, len(fallbacks))
+	settled := make(map[uuid.UUID]struct{}, len(fallbacks))
 	for _, target := range fallbacks {
 		if err := service.admitFallback(ctx, target, delivery, 0); err != nil {
+			if errors.Is(err, persistence.ErrIncomingMatchingTargetInactive) {
+				// Same post-planning dormancy: the target is finished for this
+				// event, so it must not keep the delivery retrying.
+				settled[target.GroupID] = struct{}{}
+				continue
+			}
 			return fmt.Errorf("admit automatic fallback matching for group %s: %w", target.GroupID, err)
 		}
-		fallbackReady[target.GroupID] = struct{}{}
+		settled[target.GroupID] = struct{}{}
 	}
 	deferred := false
 	for _, groupID := range plan.DeferredGroupIDs {
-		if _, ok := fallbackReady[groupID]; !ok {
+		if _, ok := settled[groupID]; !ok {
 			deferred = true
 			break
 		}

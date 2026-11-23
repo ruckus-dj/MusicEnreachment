@@ -582,7 +582,8 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	}
 
 	// The Local catalog can reorder a track independently of an already bound
-	// library position. A fresh confirmation must retain the actual association.
+	// library position. A fresh confirmation can use the remaining active
+	// member, but must still identify the bound library position.
 	updated, err := catalog.Update(ctx, "release", created.ID, service.LocalProviderItem{
 		Title: created.Title, ReleaseGroupTitle: created.ReleaseGroupTitle, Credits: created.Credits,
 		Tracks: []service.LocalProviderTrack{{RecordingID: recordingID}, created.Tracks[0]},
@@ -591,13 +592,23 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 		t.Fatalf("reorder provider track: tracks=%+v err=%v", updated.Tracks, err)
 	}
 	intent.ExpectedAuthorityRevision = confirmed.AuthorityRevision
+	remaining, err := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db)).Snapshot(ctx)
+	if err != nil || len(remaining.Groups) != 1 {
+		t.Fatalf("read remaining Local matching scope: groups=%+v err=%v", remaining.Groups, err)
+	}
+	intent.ExpectedGroupRevision = remaining.Groups[0].Revision
+	intent.Assignments = slices.Clone(intent.Assignments)
+	intent.Assignments[0].FileMemberID = fixture.memberB
 	reorderedPreview, err := matching.Preview(ctx, fixture.group.ID, intent)
 	if err != nil {
 		t.Fatalf("preview reordered Local release: %v", err)
 	}
 	reordered, err := matching.Confirm(ctx, fixture.group.ID, intent, reorderedPreview.PreviewDigest, uuid.New())
-	if err != nil || !slices.Equal(reordered.ConfirmedSources, confirmed.ConfirmedSources) {
-		t.Fatalf("confirm reordered Local release: sources=%+v err=%v; want original library position and association %+v",
-			reordered.ConfirmedSources, err, confirmed.ConfirmedSources)
+	if err != nil || len(reordered.ConfirmedSources) != 1 ||
+		reordered.ConfirmedSources[0].FileMemberID != fixture.memberB ||
+		reordered.ConfirmedSources[0].PositionID != confirmedSource.PositionID ||
+		reordered.ConfirmedSources[0].TrackSourceID == confirmedSource.TrackSourceID {
+		t.Fatalf("confirm reordered Local release: sources=%+v err=%v; want the remaining member linked to position %s",
+			reordered.ConfirmedSources, err, confirmedSource.PositionID)
 	}
 }

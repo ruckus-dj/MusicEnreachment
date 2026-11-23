@@ -266,14 +266,8 @@ func matchingLocalConfirmedSources(ctx context.Context, tx bun.Tx, releaseID uui
 
 func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, intent MatchingLocalIntent, locking bool) (MatchingLocalPreview, error) {
 	var result MatchingLocalPreview
-	var group struct {
-		Revision string `bun:"revision"`
-	}
-	query := `SELECT revision FROM incoming_group WHERE id=?`
-	if locking {
-		query += ` FOR UPDATE`
-	}
-	if err := tx.NewRaw(query, groupID).Scan(ctx, &group.Revision); err != nil || group.Revision != intent.ExpectedGroupRevision {
+	fence, err := readIncomingActiveGroupFence(ctx, tx, groupID, locking)
+	if err != nil || fence.ActiveRevision != intent.ExpectedGroupRevision {
 		return result, ErrIncomingMatchConflict
 	}
 	var needsRefresh bool
@@ -287,8 +281,8 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 	if authority.Revision != intent.ExpectedAuthorityRevision {
 		return result, ErrIncomingMatchConflict
 	}
-	var memberIDs []uuid.UUID
-	if err := tx.NewRaw(`SELECT variant_id FROM incoming_group_member WHERE group_id=? ORDER BY variant_id`, groupID).Scan(ctx, &memberIDs); err != nil || len(memberIDs) == 0 {
+	memberIDs := activeIncomingGroupMemberIDs(fence)
+	if len(memberIDs) == 0 {
 		return result, ErrIncomingMatchConflict
 	}
 	groupSnapshots, err := loadIncomingGroupingGroups(ctx, tx)
@@ -305,11 +299,12 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 	if currentGroup == nil {
 		return result, ErrIncomingMatchConflict
 	}
+	activeGroup := activeIncomingGroupingGroup(*currentGroup, fence)
 	captures, err := loadIncomingGroupingCaptures(ctx, tx)
 	if err != nil {
 		return result, err
 	}
-	groupCaptures, err := validateMatchingLocalCaptures(*currentGroup, captures)
+	groupCaptures, err := validateMatchingLocalCaptures(activeGroup, captures)
 	if err != nil {
 		return result, err
 	}
@@ -317,7 +312,7 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 	if err != nil || release == nil {
 		return result, ErrIncomingMatchConflict
 	}
-	result = MatchingLocalPreview{GroupID: groupID, GroupRevision: group.Revision, AuthorityRevision: authority.Revision,
+	result = MatchingLocalPreview{GroupID: groupID, GroupRevision: fence.ActiveRevision, AuthorityRevision: authority.Revision,
 		ProviderReleaseID: intent.ProviderReleaseID, ReleaseTitle: release.Title, ReleaseArtists: release.Artists, Tracks: release.Tracks, Assignments: intent.Assignments,
 		Sources: make([]MatchingLocalSource, 0, len(memberIDs)), OmittedFileMemberIDs: make([]uuid.UUID, 0), LocalCatalog: release}
 	if err := validateMatchingProviderTarget(intent, *release); err != nil {
@@ -402,7 +397,7 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 		Captures        []IncomingGroupingCapture
 		Catalog         *MatchingLocalRelease
 		LinkedReleaseID *uuid.UUID
-	}{groupID, group.Revision, authority.Revision, intentJSON, result.Sources, groupCaptures, result.LocalCatalog, result.LocalReleaseID})
+	}{groupID, fence.ActiveRevision, authority.Revision, intentJSON, result.Sources, groupCaptures, result.LocalCatalog, result.LocalReleaseID})
 	if err != nil {
 		return result, err
 	}

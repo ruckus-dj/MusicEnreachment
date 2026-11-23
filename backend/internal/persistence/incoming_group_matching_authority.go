@@ -142,14 +142,8 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 		if authority.Mode != "manual" || authority.Revision != expectedAuthorityRevision {
 			return ErrIncomingMatchConflict
 		}
-		var groupRevision string
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &groupRevision); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
-			}
-			return fmt.Errorf("unlink matching: read current group: %w", err)
-		}
-		if groupRevision != expectedGroupRevision {
+		fence, err := readIncomingActiveGroupFence(ctx, tx, groupID, true)
+		if err != nil || fence.ActiveRevision != expectedGroupRevision {
 			return ErrIncomingMatchConflict
 		}
 		var memberWorkIDs []uuid.UUID
@@ -200,7 +194,7 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 			}
 			removed = append(removed, sourceID)
 		}
-		result = IncomingGroupUnlinkResult{GroupID: groupID, Mode: "manual", AuthorityRevision: authority.Revision + 1, GroupRevision: groupRevision, RemovedSourceIDs: removed}
+		result = IncomingGroupUnlinkResult{GroupID: groupID, Mode: "manual", AuthorityRevision: authority.Revision + 1, GroupRevision: fence.ActiveRevision, RemovedSourceIDs: removed}
 		if _, err := tx.NewRaw(`UPDATE incoming_group_matching_authority SET revision=?,updated_at=now() WHERE group_id=? AND revision=? AND mode='manual'`, result.AuthorityRevision, groupID, authority.Revision).Exec(ctx); err != nil {
 			return fmt.Errorf("unlink matching: advance authority revision: %w", err)
 		}
@@ -268,17 +262,11 @@ func (repository *IncomingMatchCandidateRepository) ReturnIncomingGroupMatchingT
 		if authority.Mode != "manual" || authority.Revision != expectedAuthorityRevision {
 			return ErrIncomingMatchConflict
 		}
-		var groupRevision string
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &groupRevision); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
-			}
-			return fmt.Errorf("return automatic matching: read group revision: %w", err)
-		}
-		if groupRevision != expectedGroupRevision {
+		fence, err := readIncomingActiveGroupFence(ctx, tx, groupID, true)
+		if err != nil || fence.ActiveRevision != expectedGroupRevision {
 			return ErrIncomingMatchConflict
 		}
-		result = IncomingGroupReturnAutomaticResult{GroupID: groupID, Mode: "automatic", AuthorityRevision: authority.Revision + 1, GroupRevision: groupRevision}
+		result = IncomingGroupReturnAutomaticResult{GroupID: groupID, Mode: "automatic", AuthorityRevision: authority.Revision + 1, GroupRevision: fence.ActiveRevision}
 		if _, err := tx.NewRaw(`UPDATE incoming_group_matching_authority SET mode='automatic',revision=?,updated_at=now() WHERE group_id=? AND mode='manual' AND revision=?`, result.AuthorityRevision, groupID, authority.Revision).Exec(ctx); err != nil {
 			return fmt.Errorf("return automatic matching: advance authority revision: %w", err)
 		}

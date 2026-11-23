@@ -286,10 +286,10 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 	if err := tx.NewRaw(`SELECT revision, needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &state); err != nil {
 		return fmt.Errorf("%s: lock grouping state: %w", operation, err)
 	}
-	if state.NeedsRefresh || evaluation.TargetFenceVersion != 2 && state.Revision != evaluation.ExpectedGroupingEpoch {
+	if state.NeedsRefresh || manualContext == nil && evaluation.TargetFenceVersion != 2 && state.Revision != evaluation.ExpectedGroupingEpoch {
 		return ErrIncomingMatchConflict
 	}
-	if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
+	if err := validateCurrentMatchGroups(ctx, tx, evaluation, manualContext != nil); err != nil {
 		return err
 	}
 	if evaluation.TargetFenceVersion == 2 {
@@ -677,26 +677,15 @@ func jsonObject(data json.RawMessage) bool {
 	return len(data) > 0 && json.Unmarshal(data, &value) == nil && value != nil
 }
 
-func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, activeFence bool) error {
+	if activeFence || evaluation.TargetFenceVersion == 2 {
+		return validateActiveCurrentMatchGroups(ctx, tx, evaluation)
+	}
 	var currentGroups []struct {
 		ID       uuid.UUID `bun:"id"`
 		Revision string    `bun:"revision"`
 	}
-	query := `SELECT id, revision FROM incoming_group ORDER BY id FOR SHARE`
-	if evaluation.TargetFenceVersion == 2 {
-		query = `SELECT id, revision FROM incoming_group WHERE id IN (?) ORDER BY id FOR SHARE`
-	}
-	var err error
-	if evaluation.TargetFenceVersion == 2 {
-		ids := make([]uuid.UUID, 0, len(evaluation.Groups))
-		for _, group := range evaluation.Groups {
-			ids = append(ids, group.GroupID)
-		}
-		err = tx.NewRaw(query, bun.List(ids)).Scan(ctx, &currentGroups)
-	} else {
-		err = tx.NewRaw(query).Scan(ctx, &currentGroups)
-	}
-	if err != nil {
+	if err := tx.NewRaw(`SELECT id, revision FROM incoming_group ORDER BY id FOR SHARE`).Scan(ctx, &currentGroups); err != nil {
 		return fmt.Errorf("replace incoming matches: lock current groups: %w", err)
 	}
 	identities := make([]struct {
@@ -727,7 +716,7 @@ func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation Incom
 		return fmt.Errorf("replace incoming matches: encode current groups revision: %w", err)
 	}
 	revision := sha256.Sum256(encoded)
-	if evaluation.ExpectedGroupsRevision == "" || evaluation.TargetFenceVersion != 2 && hex.EncodeToString(revision[:]) != evaluation.ExpectedGroupsRevision {
+	if evaluation.ExpectedGroupsRevision == "" || hex.EncodeToString(revision[:]) != evaluation.ExpectedGroupsRevision {
 		return ErrIncomingMatchConflict
 	}
 	for _, expected := range evaluation.Groups {
@@ -777,6 +766,58 @@ func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation Incom
 			if !matched {
 				return ErrIncomingMatchConflict
 			}
+		}
+	}
+	return nil
+}
+
+func validateActiveCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+	// Both scoped evaluators use the exact ready active membership. Sealed
+	// automatic results carry the raw revision; manual release review carries
+	// the active revision it received from the Incoming screen.
+	if len(evaluation.Groups) != 1 {
+		return ErrIncomingMatchConflict
+	}
+	expected := evaluation.Groups[0]
+	fence, err := readIncomingActiveGroupFence(ctx, tx, expected.GroupID, true)
+	if err != nil {
+		return err
+	}
+	revision := fence.ActiveRevision
+	if evaluation.TargetFenceVersion == 2 {
+		revision = fence.RawRevision
+	}
+	if revision != expected.GroupRevision {
+		return ErrIncomingMatchConflict
+	}
+	members := append([]IncomingMatchMemberFence(nil), expected.Members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].FileMemberID.String() < members[j].FileMemberID.String() })
+	if len(members) != len(fence.ActiveMembers) {
+		return ErrIncomingMatchConflict
+	}
+	for i, member := range members {
+		if member.FileMemberID != fence.ActiveMembers[i] {
+			return ErrIncomingMatchConflict
+		}
+	}
+	captures, err := loadIncomingGroupingCaptures(ctx, tx)
+	if err != nil {
+		return err
+	}
+	byVariant := make(map[uuid.UUID][]IncomingGroupingCapture, len(captures))
+	for _, capture := range captures {
+		byVariant[capture.VariantID] = append(byVariant[capture.VariantID], capture)
+	}
+	for _, member := range expected.Members {
+		matched := false
+		for _, capture := range byVariant[member.FileMemberID] {
+			if capture.Ready && capture.WorkID == member.WorkID && equalOptionalBytes(capture.SourceSHA256, member.SourceSHA256) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return ErrIncomingMatchConflict
 		}
 	}
 	return nil
@@ -1062,10 +1103,27 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 		if err != nil {
 			return fmt.Errorf("get incoming match review: %w", err)
 		}
-		result.Header = &header
-		result.Members = make([]uuid.UUID, 0)
-		if err := tx.NewRaw(`SELECT file_member_id FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &result.Members); err != nil {
-			return fmt.Errorf("get incoming match review members: %w", err)
+		var rawRevision string
+		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=?`, groupID).Scan(ctx, &rawRevision); errors.Is(err, sql.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("get incoming match review group revision: %w", err)
+		}
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		result.Members = activity.ActiveReady
+		active := incomingActiveGroupFence{
+			RawRevision: rawRevision, ActiveRevision: IncomingActiveRevision(rawRevision, activity.ReadyCount, activity.ActiveReady),
+			ActiveMembers: activity.ActiveReady,
+		}
+		current, err := incomingEvaluationMatchesActiveMembers(ctx, tx, header, active)
+		if err != nil {
+			return err
+		}
+		if current {
+			result.Header = &header
 		}
 		return nil
 	})

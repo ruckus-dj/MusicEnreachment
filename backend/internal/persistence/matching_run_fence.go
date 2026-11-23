@@ -21,9 +21,14 @@ type MatchingRunFenceSnapshot struct {
 	Version       int
 	GroupID       uuid.UUID
 	GroupRevision string
-	Capture       json.RawMessage
-	CaptureDigest string
-	LayoutTarget  json.RawMessage
+	// ActiveGroupRevision is the frozen active-ready revision captured at
+	// admission. GroupRevision remains the raw incoming_group revision used by
+	// seals and historical layout evidence. It is tagged for the sealed-authority
+	// document so a legacy payload without the field keeps its original digest.
+	ActiveGroupRevision string `json:"active_group_revision,omitempty"`
+	Capture             json.RawMessage
+	CaptureDigest       string
+	LayoutTarget        json.RawMessage
 }
 
 func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Context, runID uuid.UUID) (MatchingRunFenceSnapshot, bool, error) {
@@ -114,9 +119,18 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 	if err != nil || !equalDigest(digest[:], targets[0].Digest) || hex.EncodeToString(digest[:]) != plan.TargetCaptureDigest {
 		return result, false, fmt.Errorf("read matching run fence: target capture digest changed")
 	}
+	activeGroupRevision := targets[0].Revision
+	var frozen struct {
+		SchemaVersion       int    `json:"schema_version"`
+		ActiveGroupRevision string `json:"active_group_revision"`
+	}
+	if json.Unmarshal(canonicalCapture, &frozen) == nil && frozen.SchemaVersion == 2 && frozen.ActiveGroupRevision != "" {
+		activeGroupRevision = frozen.ActiveGroupRevision
+	}
 	result = MatchingRunFenceSnapshot{
 		Version: 2, GroupID: targets[0].GroupID, GroupRevision: targets[0].Revision,
-		Capture: canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:]), LayoutTarget: intent.LayoutTarget,
+		ActiveGroupRevision: activeGroupRevision,
+		Capture:             canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:]), LayoutTarget: intent.LayoutTarget,
 	}
 	return result, true, nil
 }
@@ -277,7 +291,16 @@ func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, run
 	if manualContinuation {
 		captureAuthorityRevision = original.AuthorityRevision
 	}
-	current, err := captureAutomaticArtistTarget(ctx, tx, target.GroupID, group.Revision, captureAuthorityRevision)
+	// Live recapture requires the exact active-ready member identity while the
+	// capture keeps the raw group revision for its historical shape.
+	activity, err := ReadIncomingMembershipActivity(ctx, tx, target.GroupID)
+	if err != nil {
+		return fmt.Errorf("validate matching target fence: read target activity: %w", err)
+	}
+	if len(activity.ActiveReady) == 0 {
+		return ErrIncomingMatchConflict
+	}
+	current, err := captureAutomaticArtistTarget(ctx, tx, target.GroupID, group.Revision, captureAuthorityRevision, activity.ActiveReady, activity.ReadyCount)
 	if err != nil {
 		return fmt.Errorf("validate matching target fence: capture current target: %w", err)
 	}

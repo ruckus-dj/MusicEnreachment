@@ -57,10 +57,11 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		return nil, errors.New("manual matching release lookup does not match selected release")
 	}
 	var capturedGroup struct {
-		GroupID  uuid.UUID `json:"group_id"`
-		Revision string    `json:"revision"`
+		GroupID  uuid.UUID   `json:"group_id"`
+		Revision string      `json:"revision"`
+		Members  []uuid.UUID `json:"members"`
 	}
-	if json.Unmarshal(plan.GroupContext, &capturedGroup) != nil || capturedGroup.GroupID != groupID || capturedGroup.Revision != expectedGroupRevision {
+	if json.Unmarshal(plan.GroupContext, &capturedGroup) != nil || capturedGroup.GroupID != groupID || capturedGroup.Revision != expectedGroupRevision || len(capturedGroup.Members) == 0 {
 		return nil, ErrIncomingMatchConflict
 	}
 	var args struct {
@@ -143,18 +144,6 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
 			return err
 		}
-		var evaluation IncomingMatchEvaluationHeader
-		evaluationErr := tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at FROM incoming_match_evaluation WHERE group_id=? FOR SHARE`, groupID).Scan(ctx, &evaluation)
-		if expectedEvaluationRevision == nil {
-			if !errors.Is(evaluationErr, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
-			}
-		} else if evaluationErr != nil || evaluation.EvaluationRevision != *expectedEvaluationRevision || evaluation.GroupRevision != expectedGroupRevision || evaluation.GroupingEpoch != plan.GroupingEpoch || evaluation.PolicyVersion != plan.PolicyVersion {
-			return ErrIncomingMatchConflict
-		}
-		if expectedEvaluationRevision != nil && evaluation.GroupRevision != expectedGroupRevision {
-			return ErrIncomingMatchConflict
-		}
 		var grouping struct {
 			Revision     int64 `bun:"revision"`
 			NeedsRefresh bool  `bun:"needs_refresh"`
@@ -162,8 +151,22 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if err := tx.NewRaw(`SELECT revision,needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &grouping); err != nil || grouping.Revision != plan.GroupingEpoch || grouping.NeedsRefresh {
 			return ErrIncomingMatchConflict
 		}
-		var actualGroupRevision string
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &actualGroupRevision); err != nil || actualGroupRevision != expectedGroupRevision {
+		activeFence, err := readIncomingActiveGroupFence(ctx, tx, groupID, true)
+		if err != nil {
+			return err
+		}
+		if activeFence.ActiveRevision != expectedGroupRevision {
+			return ErrIncomingMatchConflict
+		}
+		if err := requireActiveIncomingMembers(IncomingMembershipActivity{ActiveReady: activeFence.ActiveMembers}, capturedGroup.Members); err != nil {
+			return ErrIncomingMatchConflict
+		}
+		evaluation, err := readManualAdmissionEvaluation(ctx, tx, groupID, activeFence, expectedEvaluationRevision)
+		if err != nil {
+			return err
+		}
+		if expectedEvaluationRevision != nil &&
+			(evaluation.GroupingEpoch != plan.GroupingEpoch || evaluation.PolicyVersion != plan.PolicyVersion) {
 			return ErrIncomingMatchConflict
 		}
 		var fence IncomingMatchProviderFence
@@ -208,7 +211,7 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if operation.ProviderSourceID == nil || *operation.ProviderSourceID != fence.ProviderSourceID || operation.ProviderID == nil || *operation.ProviderID != fence.ProviderID || operation.ProviderConfigurationIdentity == nil || *operation.ProviderConfigurationIdentity != fence.ConfigurationIdentity || operation.ProviderEndpoint != fence.Endpoint || *operation.ProviderCacheKey != "release-lookup:"+strings.ToLower(selectedReleaseMBID.String()) {
 			return errors.New("manual matching lookup provider fence is invalid")
 		}
-		captured, err := currentManualMatchingMembers(ctx, tx, groupID)
+		captured, err := currentManualMatchingMembers(ctx, tx, groupID, activeFence.ActiveMembers)
 		if err != nil {
 			return err
 		}
@@ -266,7 +269,7 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if err := tx.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1,current_run_id=?,updated_at=now() WHERE group_id=? RETURNING high_water`, parentID, groupID).Scan(ctx, &generation); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision) VALUES(?,?,?,?,?)`, parentID, groupID, expectedGroupRevision, generation, authority.Revision).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision) VALUES(?,?,?,?,?)`, parentID, groupID, activeFence.RawRevision, generation, authority.Revision).Exec(ctx); err != nil {
 			return err
 		}
 		if err := repository.createOperationAndEnqueueTx(ctx, tx, operation, client, child.Args, nil); err != nil {
@@ -292,10 +295,6 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 }
 
 func validateManualAdmissionCurrentState(ctx context.Context, tx bun.Tx, groupID uuid.UUID, expectedGroupRevision string, expectedEvaluationRevision *string, groupingEpoch int64, runID uuid.UUID) error {
-	var currentGroupRevision string
-	if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR SHARE`, groupID).Scan(ctx, &currentGroupRevision); err != nil || currentGroupRevision != expectedGroupRevision {
-		return ErrIncomingMatchConflict
-	}
 	var grouping struct {
 		Revision     int64 `bun:"revision"`
 		NeedsRefresh bool  `bun:"needs_refresh"`
@@ -303,16 +302,17 @@ func validateManualAdmissionCurrentState(ctx context.Context, tx bun.Tx, groupID
 	if err := tx.NewRaw(`SELECT revision,needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &grouping); err != nil || grouping.Revision != groupingEpoch || grouping.NeedsRefresh {
 		return ErrIncomingMatchConflict
 	}
-	var currentEvaluation string
-	evaluationErr := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR SHARE`, groupID).Scan(ctx, &currentEvaluation)
-	if expectedEvaluationRevision == nil {
-		if !errors.Is(evaluationErr, sql.ErrNoRows) {
-			return ErrIncomingMatchConflict
-		}
-	} else if evaluationErr != nil || currentEvaluation != *expectedEvaluationRevision {
+	activeFence, err := readIncomingActiveGroupFence(ctx, tx, groupID, false)
+	if err != nil {
+		return err
+	}
+	if activeFence.ActiveRevision != expectedGroupRevision {
 		return ErrIncomingMatchConflict
 	}
-	current, err := currentManualMatchingMembers(ctx, tx, groupID)
+	if _, err := readManualAdmissionEvaluation(ctx, tx, groupID, activeFence, expectedEvaluationRevision); err != nil {
+		return err
+	}
+	current, err := currentManualMatchingMembers(ctx, tx, groupID, activeFence.ActiveMembers)
 	if err != nil {
 		return err
 	}
@@ -327,7 +327,44 @@ func validateManualAdmissionCurrentState(ctx context.Context, tx bun.Tx, groupID
 	return nil
 }
 
-func currentManualMatchingMembers(ctx context.Context, tx bun.Tx, groupID uuid.UUID) ([]IncomingMatchMemberFence, error) {
+func readManualAdmissionEvaluation(ctx context.Context, tx bun.Tx, groupID uuid.UUID, fence incomingActiveGroupFence, expectedRevision *string) (IncomingMatchEvaluationHeader, error) {
+	var evaluation IncomingMatchEvaluationHeader
+	err := tx.NewRaw(`SELECT group_id,evaluation_revision,group_revision,grouping_epoch,policy_version,provider_id,
+		provider_source_id,provider_configuration_identity,provider_endpoint,provider_fences,matching_authority_mode,
+		frozen_authority_version FROM incoming_match_evaluation WHERE group_id=? FOR SHARE`, groupID).Scan(ctx, &evaluation)
+	if errors.Is(err, sql.ErrNoRows) && expectedRevision == nil {
+		return evaluation, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return evaluation, ErrIncomingMatchConflict
+	}
+	if err != nil {
+		return evaluation, fmt.Errorf("read manual admission evaluation: %w", err)
+	}
+	current, err := incomingEvaluationMatchesActiveMembers(ctx, tx, evaluation, fence)
+	if err != nil {
+		return evaluation, err
+	}
+	if expectedRevision == nil && current || expectedRevision != nil && (!current || evaluation.EvaluationRevision != *expectedRevision) {
+		return evaluation, ErrIncomingMatchConflict
+	}
+	return evaluation, nil
+}
+
+// currentManualMatchingMembers resolves the exact active ready scope captured by
+// the admission fence. Persisted member rows supply readiness and the existing
+// work/SHA fence; members hidden as dormant are never part of this scope.
+func currentManualMatchingMembers(ctx context.Context, tx bun.Tx, groupID uuid.UUID, activeMembers []uuid.UUID) ([]IncomingMatchMemberFence, error) {
+	active := make(map[uuid.UUID]bool, len(activeMembers))
+	for _, memberID := range activeMembers {
+		if memberID == uuid.Nil {
+			return nil, ErrIncomingMatchConflict
+		}
+		active[memberID] = true
+	}
+	if len(active) == 0 || len(active) != len(activeMembers) {
+		return nil, ErrIncomingMatchConflict
+	}
 	var members []struct {
 		FileMemberID uuid.UUID `bun:"variant_id"`
 		Ready        bool      `bun:"ready"`
@@ -343,8 +380,11 @@ func currentManualMatchingMembers(ctx context.Context, tx bun.Tx, groupID uuid.U
 	for _, capture := range captures {
 		byMember[capture.VariantID] = append(byMember[capture.VariantID], capture)
 	}
-	result := make([]IncomingMatchMemberFence, 0, len(members))
+	result := make([]IncomingMatchMemberFence, 0, len(active))
 	for _, member := range members {
+		if !active[member.FileMemberID] {
+			continue
+		}
 		if !member.Ready {
 			return nil, ErrIncomingMatchConflict
 		}
@@ -363,6 +403,10 @@ func currentManualMatchingMembers(ctx context.Context, tx bun.Tx, groupID uuid.U
 			return nil, ErrIncomingMatchConflict
 		}
 		result = append(result, IncomingMatchMemberFence{FileMemberID: member.FileMemberID, WorkID: current.WorkID, SourceSHA256: append([]byte(nil), current.SourceSHA256...)})
+		delete(active, member.FileMemberID)
+	}
+	if len(active) != 0 {
+		return nil, ErrIncomingMatchConflict
 	}
 	return result, nil
 }

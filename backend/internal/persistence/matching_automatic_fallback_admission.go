@@ -140,18 +140,31 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 		var group struct {
 			Revision string `bun:"revision"`
 		}
-		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &group); err != nil || group.Revision != admission.ExpectedGroupRevision {
+		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &group); err != nil {
 			return ErrIncomingMatchConflict
 		}
 		authorityRevision, err := requireAutomaticMatchingAuthority(ctx, tx, admission.GroupID)
 		if err != nil {
 			return err
 		}
-		capture, err := captureAutomaticArtistTarget(ctx, tx, admission.GroupID, group.Revision, authorityRevision)
+		activity, err := ReadIncomingMembershipActivity(ctx, tx, admission.GroupID)
+		if err != nil {
+			return fmt.Errorf("automatic fallback matching admission: read target activity: %w", err)
+		}
+		if err := requireActiveIncomingMembers(activity, activity.ActiveReady); err != nil {
+			return fmt.Errorf("automatic fallback matching admission: %w", err)
+		}
+		// The admission fence binds the exact active-ready subset. The raw group
+		// revision stays in the capture and matching_run_target for seals and
+		// historical Local album/recheck evidence.
+		if IncomingActiveRevision(group.Revision, activity.ReadyCount, activity.ActiveReady) != admission.ExpectedGroupRevision {
+			return ErrIncomingMatchConflict
+		}
+		capture, err := captureAutomaticArtistTarget(ctx, tx, admission.GroupID, group.Revision, authorityRevision, activity.ActiveReady, activity.ReadyCount)
 		if err != nil {
 			return err
 		}
-		metadata, err := captureMatchingAdmissionMetadata(ctx, tx, []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}})
+		metadata, err := captureMatchingAdmissionMetadata(ctx, tx, []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, activity.ActiveReady)
 		if err != nil {
 			return err
 		}

@@ -555,6 +555,17 @@ func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualT
 	if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &currentGroupRevision); err != nil || currentGroupRevision != state.header.GroupRevision {
 		return result, state, ErrIncomingMatchConflict
 	}
+	activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+	if err != nil {
+		return result, state, err
+	}
+	memberIDs := make([]uuid.UUID, 0, len(group.Members))
+	for _, member := range group.Members {
+		memberIDs = append(memberIDs, member.FileMemberID)
+	}
+	if requireActiveIncomingMembers(activity, memberIDs) != nil {
+		return result, state, ErrIncomingMatchConflict
+	}
 	locationIDs, err := currentManualMemberLocationIDs(ctx, tx, group.Members)
 	if err != nil || len(locationIDs) == 0 {
 		return result, state, ErrIncomingMatchConflict

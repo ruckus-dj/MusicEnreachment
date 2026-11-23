@@ -133,9 +133,20 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	if err != nil {
 		t.Fatalf("confirm manual assignment: %v", err)
 	}
-	var groupRevision string
-	if err := db.NewRaw(`SELECT revision FROM incoming_group WHERE id=?`, fixture.group.ID).Scan(ctx, &groupRevision); err != nil {
-		t.Fatal(err)
+	grouping := persistence.NewIncomingGroupingRepository(db)
+	groups := service.NewIncomingGroups(grouping)
+	active, err := groups.Snapshot(ctx)
+	if err != nil || active.Epoch != fixture.groupingEpoch || len(active.Groups) != 1 ||
+		active.Groups[0].ID != fixture.group.ID || !slices.Equal(active.Groups[0].Members, []uuid.UUID{fixture.memberB}) ||
+		active.Groups[0].Revision == fixture.group.Revision {
+		t.Fatalf("Incoming after saving one link = %+v err=%v; want only the unmatched member in the original group", active.Groups, err)
+	}
+	raw, err := grouping.List(ctx)
+	if err != nil || len(raw) != 1 || !slices.Equal(raw[0].Members, fixture.group.Members) || raw[0].Revision != fixture.group.Revision {
+		t.Fatalf("raw grouping after saving one link = %+v err=%v; want the unchanged partition", raw, err)
+	}
+	if count, err := groups.Count(ctx); err != nil || count != len(active.Groups) {
+		t.Fatalf("Incoming count = %d err=%v; want %d visible group", count, err, len(active.Groups))
 	}
 	var sourceID uuid.UUID
 	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, fixture.workA).Scan(ctx, &sourceID); err != nil {
@@ -199,8 +210,13 @@ func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) 
 	if authority.Mode != "manual" || authority.Revision != 1 {
 		t.Fatalf("manual authority after confirmation = %+v", authority)
 	}
-	if _, err := candidates.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{sourceID}, uuid.New()); err != nil {
+	if _, err := candidates.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, active.Groups[0].Revision, authority.Revision, []uuid.UUID{sourceID}, uuid.New()); err != nil {
 		t.Fatalf("unlink manual association: %v", err)
+	}
+	restored, err := groups.Snapshot(ctx)
+	if err != nil || len(restored.Groups) != 1 || restored.Groups[0].ID != fixture.group.ID ||
+		!slices.Equal(restored.Groups[0].Members, fixture.group.Members) || restored.Groups[0].Revision != fixture.group.Revision {
+		t.Fatalf("Incoming after unlink = %+v err=%v; want both original members again", restored.Groups, err)
 	}
 	if err := setup.ReadMatchingReceiptPublicationSource(ctx, receipt.LocalReleaseID, positionID, sourceID, receiptSource); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
 		t.Fatalf("unlinked manual association = %v; want publication admission conflict", err)

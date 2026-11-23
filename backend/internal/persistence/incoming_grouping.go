@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -85,6 +86,12 @@ type IncomingGroupingCapture struct {
 	FingerprintCalculatedAt       *time.Time
 	FingerprintParserVersion      *int
 	Ready                         bool
+	// Linked reports that this capture's canonical media identity (the work's
+	// source_work_variant_identity anchor) has a live track_source association.
+	// It is informational: generic capture readers never filter on it. Incoming
+	// grouping uses it to hide dormant membership from the active projection
+	// while retaining the raw persisted group and its exact location fences.
+	Linked bool `bun:"linked" json:"-"`
 	// NonAudioAnalysisSettled is true only for the current location of a work
 	// whose probe succeeded as 'no_audio' with no step still in flight or failed.
 	// Audio captures are never classified here; consumers combine it with the
@@ -135,9 +142,18 @@ func (repository *IncomingGroupingRepository) State(ctx context.Context) (Incomi
 
 // ReadVisibleCount only trusts the materialized groups while their state is
 // current. The flag and count are read in one statement, in the same snapshot.
+// A group counts only when it has a ready member that is still active: a member
+// whose canonical media identity already has a live track_source association is
+// dormant and does not make its group visible.
 func (repository *IncomingGroupingRepository) ReadVisibleCount(ctx context.Context) (count int, current bool, err error) {
 	err = repository.db.NewRaw(`SELECT CASE WHEN needs_refresh THEN 0 ELSE (
-		SELECT count(DISTINCT group_id) FROM incoming_group_member WHERE ready IS TRUE
+		SELECT count(DISTINCT member.group_id) FROM incoming_group_member member
+		WHERE member.ready IS TRUE AND NOT EXISTS (
+			SELECT 1 FROM incoming_group_member_location location
+			JOIN source_work_variant_identity identity ON identity.work_id=location.work_id
+			JOIN track_source link ON link.media_variant_id=identity.media_variant_id
+			WHERE location.group_id=member.group_id AND location.variant_id=member.variant_id
+		)
 	) END, NOT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &count, &current)
 	if err != nil {
 		return 0, false, fmt.Errorf("read visible incoming group count: %w", err)
@@ -185,39 +201,57 @@ func (repository *IncomingGroupingRepository) CurrentCaptures(ctx context.Contex
 // captures, and authority. It never reads source paths or derives authority from
 // the group's manual-correction bit.
 func (repository *IncomingGroupingRepository) MatchingReconcileSnapshot(ctx context.Context) (IncomingMatchingReconcileSnapshot, error) {
-	groups, err := loadIncomingGroupingGroups(ctx, repository.db)
-	if err != nil {
-		return IncomingMatchingReconcileSnapshot{}, err
-	}
-	captures, err := loadIncomingGroupingCaptures(ctx, repository.db)
-	if err != nil {
-		return IncomingMatchingReconcileSnapshot{}, err
-	}
-	var rows []IncomingGroupMatchingAuthority
-	if err := repository.db.NewRaw(`SELECT group_id, mode, revision FROM incoming_group_matching_authority ORDER BY group_id`).Scan(ctx, &rows); err != nil {
-		return IncomingMatchingReconcileSnapshot{}, fmt.Errorf("load incoming group matching authority: %w", err)
-	}
-	authorities := make(map[uuid.UUID]IncomingGroupMatchingAuthority, len(rows))
-	for _, authority := range rows {
-		authorities[authority.GroupID] = authority
-	}
-	byVariant := make(map[uuid.UUID][]IncomingGroupingCapture)
-	for _, capture := range captures {
-		byVariant[capture.VariantID] = append(byVariant[capture.VariantID], capture)
-	}
-	snapshot := IncomingMatchingReconcileSnapshot{Groups: make([]IncomingMatchingReconcileGroup, 0, len(groups))}
-	for _, group := range groups {
-		authority, ok := authorities[group.ID]
-		if !ok {
-			authority = IncomingGroupMatchingAuthority{GroupID: group.ID, Mode: "automatic"}
+	var snapshot IncomingMatchingReconcileSnapshot
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		groups, err := loadIncomingGroupingGroups(ctx, tx)
+		if err != nil {
+			return err
 		}
-		memberCaptures := make(map[uuid.UUID][]IncomingGroupingCapture, len(group.Members)+len(group.UnreadyMembers))
-		for _, variantID := range append(append([]uuid.UUID(nil), group.Members...), group.UnreadyMembers...) {
-			memberCaptures[variantID] = append([]IncomingGroupingCapture(nil), byVariant[variantID]...)
+		captures, err := loadIncomingGroupingCaptures(ctx, tx)
+		if err != nil {
+			return err
 		}
-		snapshot.Groups = append(snapshot.Groups, IncomingMatchingReconcileGroup{Group: group, Authority: authority, MemberCaptures: memberCaptures})
-	}
-	return snapshot, nil
+		var rows []IncomingGroupMatchingAuthority
+		if err := tx.NewRaw(`SELECT group_id, mode, revision FROM incoming_group_matching_authority ORDER BY group_id`).Scan(ctx, &rows); err != nil {
+			return fmt.Errorf("load incoming group matching authority: %w", err)
+		}
+		authorities := make(map[uuid.UUID]IncomingGroupMatchingAuthority, len(rows))
+		for _, authority := range rows {
+			authorities[authority.GroupID] = authority
+		}
+		byLocation := make(map[uuid.UUID]IncomingGroupingCapture, len(captures))
+		dormant := make(map[uuid.UUID]bool)
+		for _, capture := range captures {
+			byLocation[capture.LocationID] = capture
+			if capture.Linked {
+				dormant[capture.VariantID] = true
+			}
+		}
+		snapshot.Groups = make([]IncomingMatchingReconcileGroup, 0, len(groups))
+		for _, group := range groups {
+			authority, ok := authorities[group.ID]
+			if !ok {
+				authority = IncomingGroupMatchingAuthority{GroupID: group.ID, Mode: "automatic"}
+			}
+			readyCount := len(group.Members)
+			group.Members = slices.DeleteFunc(group.Members, func(id uuid.UUID) bool { return dormant[id] })
+			group.UnreadyMembers = slices.DeleteFunc(group.UnreadyMembers, func(id uuid.UUID) bool { return dormant[id] })
+			group.Locations = slices.DeleteFunc(group.Locations, func(location IncomingGroupingMemberLocation) bool {
+				return dormant[location.VariantID]
+			})
+			group.Revision = IncomingActiveRevision(group.Revision, readyCount, group.Members)
+			memberCaptures := make(map[uuid.UUID][]IncomingGroupingCapture, len(group.Members)+len(group.UnreadyMembers))
+			for _, location := range group.Locations {
+				capture, ok := byLocation[location.LocationID]
+				if ok && capture.VariantID == location.VariantID {
+					memberCaptures[location.VariantID] = append(memberCaptures[location.VariantID], capture)
+				}
+			}
+			snapshot.Groups = append(snapshot.Groups, IncomingMatchingReconcileGroup{Group: group, Authority: authority, MemberCaptures: memberCaptures})
+		}
+		return nil
+	})
+	return snapshot, err
 }
 
 func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]IncomingGroupingCapture, error) {
@@ -231,6 +265,7 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 	query := `
 		SELECT COALESCE(sha.success_sha_variant_id, work.id, location.id) AS variant_id,
 			work_identity.media_variant_id AS media_variant_id,
+			EXISTS (SELECT 1 FROM track_source link WHERE link.media_variant_id=work_identity.media_variant_id) AS linked,
 			COALESCE(work.id, location.id) AS work_id, metadata.success_metadata_result_id AS capture_analysis_id,
 			root.id AS root_id, root.enabled AS root_enabled, root.status AS root_status,
 			(root.inventory_path IS NOT NULL AND root.inventory_path<>root.configured_path) AS root_stale,

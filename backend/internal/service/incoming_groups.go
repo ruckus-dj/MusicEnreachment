@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"time"
 
@@ -104,11 +105,13 @@ func buildIncomingSnapshot(epoch int64, captures []persistence.IncomingGroupingC
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
-	current, err := reconcileIncomingGroups(view, persisted)
+	current, err := reconcileActiveIncomingGroups(view, persisted)
 	if err != nil {
 		return IncomingGroupingSnapshot{}, err
 	}
-	return IncomingGroupingSnapshot{Epoch: epoch, Groups: visibleIncomingGroups(current), Files: view.Files}, nil
+	groups := visibleIncomingGroups(current)
+	files := slices.DeleteFunc(view.Files, func(file IncomingFile) bool { return view.Dormant[file.VariantID] })
+	return IncomingGroupingSnapshot{Epoch: epoch, Groups: groups, Files: files}, nil
 }
 
 // Refresh recomputes automatic groups from persisted current inventory and
@@ -189,7 +192,7 @@ func (groups *IncomingGroups) Confirm(ctx context.Context, epoch int64, draft In
 		if err != nil {
 			return nil, err
 		}
-		current, err := reconcileIncomingGroups(view, persisted)
+		current, err := reconcileActiveIncomingGroups(view, persisted)
 		if err != nil {
 			return nil, err
 		}
@@ -216,6 +219,7 @@ func (groups *IncomingGroups) Confirm(ctx context.Context, epoch int64, draft In
 			return nil, err
 		}
 		confirmed = retainUnreadyMembers(current, confirmed)
+		confirmed = retainDormantMembers(persisted, view, confirmed)
 		return persistableIncomingGroups(confirmed, view.Locations, view.Files)
 	})
 }
@@ -229,7 +233,7 @@ func (groups *IncomingGroups) ConfirmActions(ctx context.Context, epoch int64, b
 		if err != nil {
 			return nil, err
 		}
-		current, err := reconcileIncomingGroups(view, persisted)
+		current, err := reconcileActiveIncomingGroups(view, persisted)
 		if err != nil {
 			return nil, err
 		}
@@ -253,6 +257,7 @@ func (groups *IncomingGroups) ConfirmActions(ctx context.Context, epoch int64, b
 			return nil, err
 		}
 		confirmed = retainUnreadyMembers(current, confirmed)
+		confirmed = retainDormantMembers(persisted, view, confirmed)
 		return persistableIncomingGroups(confirmed, view.Locations, view.Files)
 	})
 }
@@ -262,6 +267,10 @@ type incomingCaptureView struct {
 	Locations map[uuid.UUID][]IncomingLocation
 	Ready     map[uuid.UUID]bool
 	Blocked   map[uuid.UUID]bool
+	// Dormant marks members whose canonical media identity already has a live
+	// track_source association. The raw partition keeps them and their exact
+	// location fences; only the active read projection hides them.
+	Dormant map[uuid.UUID]bool
 }
 
 type incomingAnalysisFolder struct {
@@ -273,12 +282,16 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 	filesByID := make(map[uuid.UUID]*IncomingFile)
 	locations := make(map[uuid.UUID][]IncomingLocation)
 	ready := make(map[uuid.UUID]bool)
+	dormant := make(map[uuid.UUID]bool)
 	pendingFolders := make(map[incomingAnalysisFolder]bool)
 	currentFolders := make(map[uuid.UUID][]incomingAnalysisFolder)
 	for _, capture := range captures {
 		technicalIdentity, err := incomingTechnicalIdentity(capture)
 		if err != nil {
 			return incomingCaptureView{}, err
+		}
+		if capture.Linked {
+			dormant[capture.VariantID] = true
 		}
 		location := IncomingLocation{
 			RootID: capture.RootID, WorkID: capture.WorkID, LocationID: capture.LocationID,
@@ -334,7 +347,53 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 			}
 		}
 	}
-	return incomingCaptureView{Files: files, Locations: locations, Ready: ready, Blocked: blocked}, nil
+	return incomingCaptureView{Files: files, Locations: locations, Ready: ready, Blocked: blocked, Dormant: dormant}, nil
+}
+
+// Membership is projected after applying the same grouping and folder
+// readiness rules as refresh. A saved link must not synthesize a new group ID
+// or bypass a readiness block that the persisted matching target still sees.
+func reconcileActiveIncomingGroups(view incomingCaptureView, persisted []persistence.IncomingGroupingGroup) ([]IncomingGroup, error) {
+	current, err := reconcileIncomingGroups(view, persisted)
+	if err != nil || len(view.Dormant) == 0 {
+		return current, err
+	}
+	isDormant := func(member uuid.UUID) bool { return view.Dormant[member] }
+	for i := range current {
+		group := &current[i]
+		readyCount := len(group.Members)
+		group.Members = slices.DeleteFunc(group.Members, isDormant)
+		group.UnreadyMembers = slices.DeleteFunc(group.UnreadyMembers, isDormant)
+		group.Revision = persistence.IncomingActiveRevision(group.Revision, readyCount, group.Members)
+	}
+	trimIncomingDiagnostics(current)
+	return current, nil
+}
+
+// trimIncomingDiagnostics keeps only diagnostics belonging to the group's
+// current members, so a dormant member does not leak through a manual group's
+// stored diagnostics.
+func trimIncomingDiagnostics(groups []IncomingGroup) {
+	for i := range groups {
+		members := make(map[uuid.UUID]bool, len(groups[i].Members)+len(groups[i].UnreadyMembers))
+		for _, member := range groups[i].Members {
+			members[member] = true
+		}
+		for _, member := range groups[i].UnreadyMembers {
+			members[member] = true
+		}
+		kept := groups[i].Diagnostics[:0]
+		for _, diagnostic := range groups[i].Diagnostics {
+			if members[diagnostic.VariantID] {
+				kept = append(kept, diagnostic)
+			}
+		}
+		if len(kept) == 0 {
+			groups[i].Diagnostics = nil
+		} else {
+			groups[i].Diagnostics = kept
+		}
+	}
 }
 
 // incomingTagDisplay projects the saved automatic tag-encoding corrections onto
@@ -480,6 +539,10 @@ func reconcileIncomingGroups(view incomingCaptureView, persisted []persistence.I
 		}
 		if len(kept) > 0 && !blocked {
 			group.Members = kept
+			group.Revision, err = incomingGroupRevision(kept, filesByID)
+			if err != nil {
+				return nil, err
+			}
 			filtered = append(filtered, group)
 		}
 	}
@@ -518,6 +581,78 @@ func retainUnreadyMembers(previous, proposed []IncomingGroup) []IncomingGroup {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID.String() < result[j].ID.String() })
 	return result
+}
+
+// retainDormantMembers re-attaches raw membership hidden by a live
+// track_source association to the group that owns it. A confirmed draft only
+// edits active membership, so dormant members must never be deleted or moved
+// merely because their association exists. When the active part of a group was
+// reassigned or merged, its dormant members retain the original group identity
+// and become invisible until their source identity is unlinked again.
+func retainDormantMembers(raw []persistence.IncomingGroupingGroup, view incomingCaptureView, confirmed []IncomingGroup) []IncomingGroup {
+	if len(view.Dormant) == 0 {
+		return confirmed
+	}
+	byID := make(map[uuid.UUID]IncomingGroup, len(confirmed))
+	order := make([]uuid.UUID, 0, len(confirmed))
+	for _, group := range confirmed {
+		byID[group.ID] = group
+		order = append(order, group.ID)
+	}
+	for _, prior := range raw {
+		var ready, unready []uuid.UUID
+		for _, member := range prior.Members {
+			if view.Dormant[member] && hasSurvivingLocation(member, prior.Locations, view.Locations[member]) {
+				ready = append(ready, member)
+			}
+		}
+		for _, member := range prior.UnreadyMembers {
+			if view.Dormant[member] && hasSurvivingLocation(member, prior.Locations, view.Locations[member]) {
+				unready = append(unready, member)
+			}
+		}
+		if len(ready) == 0 && len(unready) == 0 {
+			continue
+		}
+		var priorDiagnostics []IncomingGroupingDiagnostic
+		_ = json.Unmarshal(prior.Diagnostics, &priorDiagnostics)
+		diagnostics := dormantIncomingDiagnostics(priorDiagnostics, view.Dormant)
+		group, exists := byID[prior.ID]
+		if exists {
+			group.Members = uniqueUUIDs(append(append([]uuid.UUID(nil), group.Members...), ready...))
+			group.UnreadyMembers = uniqueUUIDs(append(append([]uuid.UUID(nil), group.UnreadyMembers...), unready...))
+			sort.Slice(group.Members, func(i, j int) bool { return group.Members[i].String() < group.Members[j].String() })
+			sort.Slice(group.UnreadyMembers, func(i, j int) bool { return group.UnreadyMembers[i].String() < group.UnreadyMembers[j].String() })
+			group.Diagnostics = append(group.Diagnostics, diagnostics...)
+			byID[prior.ID] = group
+			continue
+		}
+		byID[prior.ID] = IncomingGroup{
+			ID:             prior.ID,
+			Revision:       prior.Revision,
+			Manual:         prior.Manual,
+			Members:        ready,
+			UnreadyMembers: unready,
+			Diagnostics:    diagnostics,
+		}
+		order = append(order, prior.ID)
+	}
+	result := make([]IncomingGroup, 0, len(byID))
+	for _, id := range order {
+		result = append(result, byID[id])
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID.String() < result[j].ID.String() })
+	return result
+}
+
+func dormantIncomingDiagnostics(diagnostics []IncomingGroupingDiagnostic, dormant map[uuid.UUID]bool) []IncomingGroupingDiagnostic {
+	var kept []IncomingGroupingDiagnostic
+	for _, diagnostic := range diagnostics {
+		if dormant[diagnostic.VariantID] {
+			kept = append(kept, diagnostic)
+		}
+	}
+	return kept
 }
 
 func hasSurvivingLocation(member uuid.UUID, old []persistence.IncomingGroupingMemberLocation, current []IncomingLocation) bool {

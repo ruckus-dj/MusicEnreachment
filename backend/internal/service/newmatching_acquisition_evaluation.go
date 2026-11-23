@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -82,10 +83,27 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 	}
 	groups, err := requestedMatchingGroups(grouping.Groups, input.GroupIDs)
 	if err != nil {
+		if fence != nil {
+			return prepared, ErrMatchingEvaluationDeferred
+		}
 		return prepared, err
 	}
-	if fence != nil && (len(groups) != 1 || groups[0].Revision != fence.GroupRevision) {
-		return prepared, ErrMatchingEvaluationDeferred
+	if fence != nil {
+		activeRevision := fence.ActiveGroupRevision
+		if activeRevision == "" {
+			activeRevision = fence.GroupRevision
+		}
+		if len(groups) != 1 || groups[0].Revision != activeRevision {
+			return prepared, ErrMatchingEvaluationDeferred
+		}
+		// Scoring uses the visible members, but the sealed result continues
+		// to identify the raw grouping revision recorded by admission.
+		grouping.Groups = slices.Clone(grouping.Groups)
+		for i := range grouping.Groups {
+			if grouping.Groups[i].ID == fence.GroupID {
+				grouping.Groups[i].Revision = fence.GroupRevision
+			}
+		}
 	}
 	for _, group := range groups {
 		if len(group.UnreadyMembers) != 0 {

@@ -113,6 +113,17 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "apply matching evaluation"); err != nil {
 		return err
 	}
+	activity, err := ReadIncomingMembershipActivity(ctx, tx, groupID)
+	if err != nil {
+		return fmt.Errorf("apply matching evaluation: read target activity: %w", err)
+	}
+	memberIDs := make([]uuid.UUID, 0, len(group.Members))
+	for _, member := range group.Members {
+		memberIDs = append(memberIDs, member.FileMemberID)
+	}
+	if err := requireActiveIncomingMembers(activity, memberIDs); err != nil {
+		return fmt.Errorf("apply matching evaluation: %w", ErrIncomingMatchConflict)
+	}
 	if header.MatchingAuthorityMode != "automatic" {
 		return fmt.Errorf("apply matching evaluation: persisted evaluation authority is not automatic: %w", ErrIncomingMatchConflict)
 	}
@@ -1384,6 +1395,17 @@ func (repository *SetupManagerRepository) applyFrozenMatchingOperationTx(
 			return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The original matching run is no longer current; review this group manually.")
 		}
 		return false, fmt.Errorf("apply matching operation: revalidate frozen target capture: %w", err)
+	}
+	activity, err := ReadIncomingMembershipActivity(ctx, tx, request.GroupID)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: read target activity: %w", err)
+	}
+	memberIDs := make([]uuid.UUID, 0, len(snapshot.Assignments))
+	for _, assignment := range snapshot.Assignments {
+		memberIDs = append(memberIDs, assignment.FileMemberID)
+	}
+	if err := requireActiveIncomingMembers(activity, memberIDs); err != nil {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching target is no longer active; review this group manually.")
 	}
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT matching_apply_materialization`); err != nil {
 		return false, fmt.Errorf("apply matching operation: create schema-2 savepoint: %w", err)

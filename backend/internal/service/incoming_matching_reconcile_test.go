@@ -56,10 +56,13 @@ type reconcileAdmissionStub struct {
 }
 
 type reconcileCurrentRequestsStub struct {
-	requests            []persistence.IncomingMatchingCurrentRequest
-	acked               []persistence.IncomingMatchingCurrentRequest
-	removedAck          []persistence.IncomingMatchingCurrentRequest
-	removedAcknowledged bool
+	requests             []persistence.IncomingMatchingCurrentRequest
+	acked                []persistence.IncomingMatchingCurrentRequest
+	removedAck           []persistence.IncomingMatchingCurrentRequest
+	removedAcknowledged  bool
+	inactiveGroup        bool
+	inactiveAck          []persistence.IncomingMatchingCurrentRequest
+	inactiveAcknowledged bool
 }
 
 func (stub *reconcileCurrentRequestsStub) ReadPendingCurrentRequests(context.Context) ([]persistence.IncomingMatchingCurrentRequest, error) {
@@ -74,6 +77,15 @@ func (stub *reconcileCurrentRequestsStub) AcknowledgeCurrentRequest(_ context.Co
 func (stub *reconcileCurrentRequestsStub) AcknowledgeRemovedCurrentGroup(_ context.Context, groupID uuid.UUID, generation int64) (bool, error) {
 	stub.removedAck = append(stub.removedAck, persistence.IncomingMatchingCurrentRequest{GroupID: groupID, RequestedGeneration: generation})
 	return stub.removedAcknowledged, nil
+}
+
+func (stub *reconcileCurrentRequestsStub) CurrentGroupHasActiveMembership(context.Context, uuid.UUID) (bool, error) {
+	return !stub.inactiveGroup, nil
+}
+
+func (stub *reconcileCurrentRequestsStub) AcknowledgeRemovedActiveCurrentGroup(_ context.Context, groupID uuid.UUID, generation int64) (bool, error) {
+	stub.inactiveAck = append(stub.inactiveAck, persistence.IncomingMatchingCurrentRequest{GroupID: groupID, RequestedGeneration: generation})
+	return stub.inactiveAcknowledged, nil
 }
 
 func (stub *reconcileAdmissionStub) AdmitAutomaticArtistMatchingRun(_ context.Context, _ persistence.RiverInserter, admission persistence.AutomaticArtistMatchingAdmission) (persistence.AutomaticArtistMatchingAdmissionResult, error) {

@@ -60,7 +60,7 @@ func TestManualLookupCacheReuseCapturesExactResponseBeforeSettlementPostgres(t *
 	plan := persistence.ManualMatchingRunPlan{
 		GroupingEpoch: state.Revision, PolicyVersion: service.MatchingPolicyVersion,
 		Plan:         json.RawMessage(`{"schema_version":1,"mode":"manual_review"}`),
-		GroupContext: json.RawMessage(`{"group_id":"` + group.ID.String() + `","revision":"` + group.Revision + `"}`),
+		GroupContext: manualGroupContext(t, group),
 		SourceContext: json.RawMessage(fmt.Sprintf(`{"provider_id":%q,"provider_source_id":%q,"endpoint":%q,"configuration_identity":%q}`,
 			source.ProviderID, source.ID, source.Endpoint, source.ConfigurationIdentity)),
 	}
@@ -130,4 +130,17 @@ func TestManualLookupCacheReuseCapturesExactResponseBeforeSettlementPostgres(t *
 	if err != nil || !exists || snapshot.Pending || snapshot.RunID != parent.ID || snapshot.AcceptedPayloadSHA256 == "" {
 		t.Fatalf("manual lookup snapshot=%+v exists=%t err=%v", snapshot, exists, err)
 	}
+}
+
+func manualGroupContext(t *testing.T, group persistence.IncomingGroupingGroup) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(struct {
+		GroupID  uuid.UUID   `json:"group_id"`
+		Revision string      `json:"revision"`
+		Members  []uuid.UUID `json:"members"`
+	}{group.ID, group.Revision, group.Members})
+	if err != nil {
+		t.Fatalf("encode manual matching group context: %v", err)
+	}
+	return encoded
 }
