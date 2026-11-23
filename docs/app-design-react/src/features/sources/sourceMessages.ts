@@ -6,31 +6,9 @@ export const sourcesMessages = createNamespace({
 		title: "Sources",
 		description:
 			"Choose server directories and their processing mode. Analysis does not modify originals; source deletion is a separate setting and requires filesystem permission. Files are not uploaded by drag and drop.",
-		addSource: "Add source",
-		newSource: "New source",
-		name: "Source name",
-		namePlaceholder: "For example, Music library",
-		serverDirectory: "Server directory",
-		chooseFolder: "Choose folder",
-		onlyDirectory: "Choose a directory; files are not uploaded.",
-		processingMode: "Processing mode · choose explicitly",
-		inPlace: "In place",
-		inPlaceHelp: "Analysis reads the original file without modifying it.",
-		staged: "Using a work copy",
-		stagedHelp:
-			"Processing uses an application-owned audio copy in the shared server work directory. The directory is required for processing, not for adding or scanning a source.",
-		sourcePolicy: "Analysis does not modify originals.",
-		nameRequired: "Enter a source name.",
-		modeRequired:
-			"Choose a processing mode explicitly: In place or Using a work copy.",
-		pathOverlap:
-			"This source directory overlaps the shared work, tools, or publication directory.",
 		sourceAdded:
 			"Source added to the prototype. No server directory was opened or scanned; a work directory is required only before staged processing.",
-		cancel: "Cancel",
 		connectedFolders: "Connected directories",
-		sourceTableHelp:
-			"Analysis leaves original files unchanged. Mode changes apply to future processing.",
 		nameColumn: "Name",
 		pathColumn: "Path",
 		modeColumn: "Processing mode",
@@ -105,31 +83,9 @@ export const sourcesMessages = createNamespace({
 		title: "Источники",
 		description:
 			"Выберите серверные каталоги и режим их обработки. Анализ не изменяет исходники; удаление — отдельная настройка, требующая разрешения файловой системы. Файлы не загружаются перетаскиванием.",
-		addSource: "Добавить источник",
-		newSource: "Новый источник",
-		name: "Имя источника",
-		namePlaceholder: "Например, Музыкальная библиотека",
-		serverDirectory: "Каталог на сервере",
-		chooseFolder: "Выбрать папку",
-		onlyDirectory: "Выберите каталог; файлы не загружаются.",
-		processingMode: "Режим обработки · выберите явно",
-		inPlace: "На месте",
-		inPlaceHelp: "Анализ читает исходный файл, не изменяя его.",
-		staged: "Через рабочую копию",
-		stagedHelp:
-			"Для обработки используется принадлежащая приложению рабочая копия аудио в общей рабочей папке сервера. Папка требуется для обработки, но не для добавления или сканирования источника.",
-		sourcePolicy: "Анализ не изменяет исходники.",
-		nameRequired: "Укажите имя источника.",
-		modeRequired:
-			"Явно выберите режим обработки: «На месте» или «Через рабочую копию».",
-		pathOverlap:
-			"Каталог источника пересекается с общей рабочей папкой, каталогом инструментов или каталогом публикации.",
 		sourceAdded:
 			"Источник добавлен в макет. Серверный каталог не открывался и не сканировался; рабочая папка требуется только перед обработкой через копию.",
-		cancel: "Отмена",
 		connectedFolders: "Подключённые каталоги",
-		sourceTableHelp:
-			"Анализ не изменяет исходные файлы. Изменение режима применяется к будущей обработке.",
 		nameColumn: "Имя",
 		pathColumn: "Путь",
 		modeColumn: "Режим обработки",

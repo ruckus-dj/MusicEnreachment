@@ -120,6 +120,9 @@ Retaining completed search results must not retain an active SSE subscription:
 disable terminal followers while preserving their snapshots and result queries.
 Follower test fixtures must return the admitted operation ID and explicitly emit
 SSE wake-ups; do not rely on former polling or accept mismatched snapshot IDs.
+In jsdom tests that now admit a real operation, stub `EventSource` with an
+`EventTarget` that implements `close()` and keep the REST snapshot handler for
+the admitted ID. Otherwise the follower fails before it can read the result.
 
 Operation followers share one reference-counted `/api/operations/events`
 transport: one persistent stream per row can exhaust HTTP/1 browser connections

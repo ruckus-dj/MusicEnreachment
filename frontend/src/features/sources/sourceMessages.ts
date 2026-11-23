@@ -8,21 +8,13 @@ const en = {
   requestRunning: "Request in progress…",
   retryLoad: "Retry loading",
   sourcesLoadError: "Could not load sources.",
-  createTitle: "New source",
   name: "Source name",
   serverPath: "Server path",
   processingMode: "Processing mode",
-  chooseMode: "Choose a mode",
   inPlace: "In place",
   staged: "Staged copy",
-  sourcePolicy:
-    "The path belongs to the server, not this computer. MeloTrove does not create or write to the source directory; the browser does not upload files.",
-  invalidCreate:
-    "Enter a source name, an absolute server path, and a processing mode.",
   invalidEdit: "Enter a source name and an absolute server path.",
-  register: "Register source",
   cancel: "Cancel",
-  addSource: "Add source",
   connectedSources: "Connected sources",
   noneRegistered: "No sources are registered.",
   sourceCaption:
@@ -243,21 +235,13 @@ const ru: Record<keyof typeof en, string> = {
   requestRunning: "Выполняется запрос…",
   retryLoad: "Повторить загрузку",
   sourcesLoadError: "Не удалось загрузить источники.",
-  createTitle: "Новый каталог",
   name: "Имя каталога",
   serverPath: "Путь на сервере",
   processingMode: "Режим обработки",
-  chooseMode: "Выберите режим",
   inPlace: "На месте",
   staged: "Через рабочую копию",
-  sourcePolicy:
-    "Путь принадлежит серверу, а не этому компьютеру. MeloTrove ничего не создаёт и не записывает в каталог источника; браузер не передаёт файлы.",
-  invalidCreate:
-    "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
   invalidEdit: "Укажите имя каталога и абсолютный путь на сервере.",
-  register: "Зарегистрировать каталог",
   cancel: "Отмена",
-  addSource: "Добавить каталог",
   connectedSources: "Подключённые каталоги",
   noneRegistered: "Ни один каталог не зарегистрирован.",
   sourceCaption:

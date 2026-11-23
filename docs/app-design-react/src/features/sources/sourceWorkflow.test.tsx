@@ -115,10 +115,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 
 	// Registration: create a source and submit.
 	fireEvent.click(screen.getByRole("button", { name: "Add source" }));
-	const form = screen
-		.getByRole("heading", { name: "New source" })
-		.closest("section");
-	if (!form) throw new Error("Missing registration form");
+	const form = screen.getByRole("form", { name: "New source" });
 	fireEvent.change(within(form).getByLabelText("Source name"), {
 		target: { value: "Новый источник" },
 	});

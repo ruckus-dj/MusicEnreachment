@@ -68,6 +68,7 @@ source channel, а fixture макета такого происхождения 
 | Глобальные токены, типографика, фокус и цветовая схема | `app/tailwind.css`, `index.html` | `styles/index.css`, `index.html` (отличаются только заголовок и точка входа) |
 | Базовая локализация и предпочтение темы | `i18n/{I18nProvider.tsx,createNamespace.ts,locale.ts,translator.ts,types.ts,namespaces/shell.ts}`, `components/themePreference.ts` | Те же пути |
 | Источники: список, заголовок корня, сканирование и таблица инвентаря | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
+| Источники: форма регистрации каталога | `features/sources/SourceRegistrationView.tsx` | Тот же путь |
 | Источники: инспектор файла, этапы анализа и технический результат | `features/sources/SourceInspectorView.tsx`, `SourceAnalysisSteps.tsx`, `SourceTechnicalResult.tsx`, `sourceInspectorMessages.ts`, `sourceInspectorModel.ts` | Те же пути |
 | Источники: сводка корня, действие и подтверждение удаления | `features/sources/SourceRootOverviewView.tsx`, `SourceRootRemovalDialog.tsx` | Те же пути |
 | Источники: пакетный выбор, подтверждение и результаты очистки временных копий | `features/sources/SourceArtifactCleanupView.tsx` | Тот же путь |
@@ -110,7 +111,9 @@ source channel, а fixture макета такого происхождения 
   демонстрационные данные. Очистка временных копий представлена общим списком:
   провайдер приложения получает допустимые записи и результаты от сервера;
   макет меняет только свои данные. Сводка корня общая, в том числе показ
-  прежнего пути инвентаря при наличии серверных данных. Каркас карточки,
+  прежнего пути инвентаря при наличии серверных данных. Форму регистрации
+  каталогов используют обе сборки; проверка и открытие нового каталога
+  выполняются провайдерами. Каркас карточки,
   редактирование пути и режима, панель обработки ещё различаются.
 - **Медиатека, входящие и публикация.** Общие строки и части рабочих областей
   уже перенесены. В композиции маршрутов, редакторах структурированных метаданных,

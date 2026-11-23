@@ -1,19 +1,17 @@
 import { useState } from "react";
-import { DirectoryPicker } from "../../components/DirectoryPicker";
 import { formStyles as styles } from "../../components/styles/formStyles";
 import {
 	Button,
-	Input,
-	Label,
 	ListBox,
 	ListBoxItem,
 	Popover,
-	Radio,
-	RadioGroup,
 	Select,
 	SelectValue,
-	TextField,
 } from "../../components/ui";
+import {
+	browseDemoDirectory,
+	demoDirectoryStart,
+} from "../../fixtures/directoryBrowseDemo";
 import type { SourceScanDemoProvider } from "../../fixtures/useSourceScanDemoProvider";
 import { type Locale, useI18n } from "../../i18n";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
@@ -22,6 +20,13 @@ import { SourceArtifactCleanupView } from "./SourceArtifactCleanupView";
 import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
 import { SourceInspectorView } from "./SourceInspectorView";
 import { SourceInventoryView } from "./SourceInventoryView";
+import {
+	SourceRegistrationView,
+	sourceRegistrationMessage,
+	sourceRegistrationMessages,
+	type SourceRegistrationErrorKey,
+	useSourceRegistrationFocus,
+} from "./SourceRegistrationView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
 import { SourceRootOverviewView } from "./SourceRootOverviewView";
@@ -129,10 +134,12 @@ export function SourcesScreen({
 	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
 		sourceMessage(locale, key, values);
 	const [adding, setAdding] = useState(false);
+	const registrationFocus = useSourceRegistrationFocus(adding);
 	const [name, setName] = useState("");
 	const [path, setPath] = useState("/mnt/music");
 	const [mode, setMode] = useState<Mode | "">("");
-	const [picker, setPicker] = useState(false);
+	const [registrationError, setRegistrationError] =
+		useState<SourceRegistrationErrorKey | null>(null);
 	const [notice, setNotice] = useState<{
 		key: SourceMessageKey;
 		values?: Record<string, string | number>;
@@ -194,6 +201,38 @@ export function SourcesScreen({
 		});
 	};
 	const startScan = (root: SourceRoot) => scans.start(root);
+	const register = () => {
+		if (!name.trim()) {
+			setRegistrationError("nameRequired");
+			return;
+		}
+		if (!mode) {
+			setRegistrationError("modeRequired");
+			return;
+		}
+		if (overlapsAnyDemoPath(path, [workDirectory, toolsPath, currentOutput])) {
+			setRegistrationError("pathOverlap");
+			return;
+		}
+		const id = `root-${crypto.randomUUID()}`;
+		updateRoots([
+			...roots,
+			{
+				id,
+				name: name.trim(),
+				path,
+				mode,
+				available: null,
+				checked: "—",
+			},
+		]);
+		setAdding(false);
+		setRegistrationError(null);
+		notify("sourceAdded");
+		// Registration only opens the root. Registering never scans, processes,
+		// or invents scan results.
+		window.location.hash = `sources/${encodeURIComponent(id)}`;
+	};
 
 	const scanLabel = root?.lastSuccessfulScanAt
 		? scanDate(locale, root.lastSuccessfulScanAt)
@@ -342,8 +381,12 @@ export function SourcesScreen({
 										</Button>
 										<Popover>
 											<ListBox>
-												<ListBoxItem id="in_place">{m("inPlace")}</ListBoxItem>
-												<ListBoxItem id="staged">{m("staged")}</ListBoxItem>
+												<ListBoxItem id="in_place">
+													{sourceRegistrationMessages[locale].inPlace}
+												</ListBoxItem>
+												<ListBoxItem id="staged">
+													{sourceRegistrationMessages[locale].staged}
+												</ListBoxItem>
 											</ListBox>
 										</Popover>
 									</Select>
@@ -507,111 +550,50 @@ export function SourcesScreen({
 							<h1 className={styles.pageTitle}>{m("title")}</h1>
 							<p className={styles.pageDescription}>{m("description")}</p>
 						</div>
-						<div className={styles.objectActions}>
-							<Button
-								onPress={() => {
-									setAdding(true);
-									setName("");
-									setPath("/mnt/music");
-									setMode("");
-								}}
-							>
-								{m("addSource")}
-							</Button>
-						</div>
+						{!adding && (
+							<div className={styles.objectActions}>
+								<Button
+									id={registrationFocus.triggerId}
+									onPress={() => {
+										setAdding(true);
+										setName("");
+										setPath("/mnt/music");
+										setMode("");
+										setRegistrationError(null);
+									}}
+								>
+									{sourceRegistrationMessages[locale].addSource}
+								</Button>
+							</div>
+						)}
 					</header>
 					{noticeNode}
 					{adding && (
-						<section className={styles.panel}>
-							<h2>{m("newSource")}</h2>
-							<TextField
-								className={`${styles.searchField} max-w-none`}
-								value={name}
-								onChange={setName}
-							>
-								<Label>{m("name")}</Label>
-								<Input placeholder={m("namePlaceholder")} />
-							</TextField>
-							<TextField
-								className={`${styles.searchField} max-w-none`}
-								value={path}
-								isReadOnly
-							>
-								<Label>{m("serverDirectory")}</Label>
-								<Input />
-							</TextField>
-							<Button onPress={() => setPicker(true)}>
-								{m("chooseFolder")}
-							</Button>
-							<p>{m("onlyDirectory")}</p>
-							<RadioGroup
-								className="my-3 grid gap-1"
-								aria-label={m("processingMode")}
-								value={mode}
-								onChange={(value) => setMode(value as Mode)}
-							>
-								<Radio className={styles.modeChoice} value="in_place">
-									{m("inPlace")}
-								</Radio>
-								<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-									{m("inPlaceHelp")}
-								</p>
-								<Radio className={styles.modeChoice} value="staged">
-									{m("staged")}
-								</Radio>
-								<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-									{m("stagedHelp")}
-								</p>
-							</RadioGroup>
-							<p>{m("sourcePolicy")}</p>
-							<div className={styles.objectActions}>
-								<Button
-									onPress={() => {
-										if (!name.trim()) {
-											notify("nameRequired");
-											return;
-										}
-										if (!mode) {
-											notify("modeRequired");
-											return;
-										}
-										if (
-											overlapsAnyDemoPath(path, [
-												workDirectory,
-												toolsPath,
-												currentOutput,
-											])
-										) {
-											notify("pathOverlap");
-											return;
-										}
-										const id = `root-${crypto.randomUUID()}`;
-										updateRoots([
-											...roots,
-											{
-												id,
-												name: name.trim(),
-												path,
-												mode,
-												available: null,
-												checked: "—",
-											},
-										]);
-										setAdding(false);
-										notify("sourceAdded");
-										// Registration only opens the root. Registering never
-										// scans, processes, or invents scan results.
-										window.location.hash = `sources/${encodeURIComponent(id)}`;
-									}}
-								>
-									{m("addSource")}
-								</Button>
-								<Button onPress={() => setAdding(false)}>{m("cancel")}</Button>
-							</div>
-						</section>
+						<SourceRegistrationView
+							locale={locale}
+							name={name}
+							path={path}
+							mode={mode}
+							error={
+								registrationError
+									? sourceRegistrationMessage(locale, registrationError)
+									: undefined
+							}
+							browse={browseDemoDirectory}
+							resolveInitialPath={demoDirectoryStart}
+							onNameChange={setName}
+							onPathChange={setPath}
+							onModeChange={setMode}
+							onSubmit={register}
+							onCancel={() => {
+								registrationFocus.restoreOnClose();
+								setAdding(false);
+								setRegistrationError(null);
+							}}
+						/>
 					)}
 					<p className="my-2 text-xs text-[var(--muted)]">
-						{m("sourceTableHelp")}
+						{sourceRegistrationMessages[locale].sourceTableHelp}
 					</p>
 					<SourceRootList
 						rows={rows}
@@ -628,16 +610,6 @@ export function SourcesScreen({
 						<a href="#settings">{m("configureInSettings")}</a>
 					</p>
 				</>
-			)}
-			{picker && (
-				<DirectoryPicker
-					initialPath={path}
-					onClose={() => setPicker(false)}
-					onChoose={(value) => {
-						setPath(value);
-						setPicker(false);
-					}}
-				/>
 			)}
 			{removal && (
 				<SourceRootRemovalDialog

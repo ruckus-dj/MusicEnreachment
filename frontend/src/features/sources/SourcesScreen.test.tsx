@@ -294,7 +294,7 @@ describe("source root creation", () => {
     const registered = root({
       id: "root-disk",
       display_name: "Диск",
-      configured_path: "/srv/disk",
+      configured_path: "/srv/disk ",
       processing_mode: "staged",
       status: "unknown",
       scan_generation: 0,
@@ -322,7 +322,7 @@ describe("source root creation", () => {
       http.post("/api/sources", async ({ request }) => {
         expect(await request.json()).toEqual({
           display_name: "Диск",
-          configured_path: "/srv/disk",
+          configured_path: "/srv/disk ",
           processing_mode: "staged",
         });
         created.push(registered);
@@ -344,10 +344,11 @@ describe("source root creation", () => {
       await screen.findByText("Ни один каталог не зарегистрирован."),
     ).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
+    expect(screen.getByLabelText("Имя источника")).toHaveFocus();
     fireEvent.change(screen.getByLabelText("Имя источника"), {
       target: { value: "Диск" },
     });
-    await selectDirectoryPath("Каталог на сервере", "/srv/disk");
+    await selectDirectoryPath("Каталог на сервере", "/srv/disk ");
     const staged = screen.getByRole("radio", { name: "Через рабочую копию" });
     expect(staged).not.toBeChecked();
     expect(screen.getByRole("radio", { name: "На месте" })).not.toBeChecked();
@@ -396,6 +397,8 @@ describe("source root creation", () => {
       "Choose a server directory.",
     );
     expect(sourceListRequests).toBe(requestsBeforeLocaleChange);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add source" })).toHaveFocus();
   });
 });
 

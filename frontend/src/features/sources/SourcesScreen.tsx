@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Radio, RadioGroup } from "react-aria-components";
 import { createSource, listSources } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
+import {
+  type SourceRegistrationErrorKey,
+  SourceRegistrationView,
+  sourceRegistrationMessage,
+  sourceRegistrationMessages,
+  useSourceRegistrationFocus,
+} from "./SourceRegistrationView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
 import { sourceMessage } from "./sourceMessages";
 import { SourceScansProvider, useSourceScans } from "./sourceScans";
@@ -61,70 +67,15 @@ function SourcesView({ route }: { route: SourcesRoute }) {
   }
 }
 
-// Registration copy follows the approved prototype wording. It stays local to
-// this screen because the approved directory list already owns its own copy.
-const registrationCopy = {
-  en: {
-    newSource: "New source",
-    name: "Source name",
-    namePlaceholder: "For example, Music library",
-    serverDirectory: "Server directory",
-    onlyDirectory: "Choose a directory; files are not uploaded.",
-    processingMode: "Processing mode · choose explicitly",
-    inPlace: "In place",
-    inPlaceHelp: "Analysis reads the original file without modifying it.",
-    staged: "Using a work copy",
-    stagedHelp:
-      "Processing uses an application-owned audio copy in the shared server work directory. The directory is required for processing, not for adding or scanning a source.",
-    sourcePolicy: "Analysis does not modify originals.",
-    nameRequired: "Enter a source name.",
-    directoryRequired: "Choose a server directory.",
-    modeRequired:
-      "Choose a processing mode explicitly: In place or Using a work copy.",
-    sourceTableHelp:
-      "Analysis leaves original files unchanged. Mode changes apply to future processing.",
-    addSource: "Add source",
-    cancel: "Cancel",
-  },
-  ru: {
-    newSource: "Новый источник",
-    name: "Имя источника",
-    namePlaceholder: "Например, Музыкальная библиотека",
-    serverDirectory: "Каталог на сервере",
-    onlyDirectory: "Выберите каталог; файлы не загружаются.",
-    processingMode: "Режим обработки · выберите явно",
-    inPlace: "На месте",
-    inPlaceHelp: "Анализ читает исходный файл, не изменяя его.",
-    staged: "Через рабочую копию",
-    stagedHelp:
-      "Для обработки используется принадлежащая приложению рабочая копия аудио в общей рабочей папке сервера. Папка требуется для обработки, но не для добавления или сканирования источника.",
-    sourcePolicy: "Анализ не изменяет исходники.",
-    nameRequired: "Укажите имя источника.",
-    directoryRequired: "Выберите каталог на сервере.",
-    modeRequired:
-      "Явно выберите режим обработки: «На месте» или «Через рабочую копию».",
-    sourceTableHelp:
-      "Анализ не изменяет исходные файлы. Изменение режима применяется к будущей обработке.",
-    addSource: "Добавить источник",
-    cancel: "Отмена",
-  },
-} as const;
-
-const modeChoice =
-  "sources-inline group inline-flex min-h-8 cursor-pointer items-center gap-[7px] rounded-md border border-[var(--line)] px-3 py-[10px] text-xs data-[selected]:border-[var(--accent)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
-const modeHelp = "m-0 ml-[25px] text-[11px] text-[var(--muted)]";
-const radioIndicator =
-  "size-4 flex-none rounded-full border border-[var(--control)] bg-[var(--surface)] group-data-[selected]:border-[5px] group-data-[selected]:border-[var(--accent)]";
-
+// Registration requires an explicit mode. The path belongs to the server and
+// is chosen through the shared directory field; registration never probes,
+// scans, or invents a scan result.
 type RegistrationError =
-  | ReturnType<typeof message>
-  | "nameRequired"
-  | "directoryRequired"
-  | "modeRequired";
+  | SourceRegistrationErrorKey
+  | ReturnType<typeof message>;
 
 function SourceListScreen() {
   const { locale } = useI18n();
-  const copy = registrationCopy[locale];
   const scans = useSourceScans();
   const t = (
     key: Parameters<typeof sourceMessage>[1],
@@ -132,6 +83,7 @@ function SourceListScreen() {
   ) => sourceMessage(locale, key, values);
   const [sources, setSources] = useState<SourceRootResponse[]>();
   const [creating, setCreating] = useState(false);
+  const registrationFocus = useSourceRegistrationFocus(creating);
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [processingMode, setProcessingMode] = useState<
@@ -143,7 +95,6 @@ function SourceListScreen() {
   const [saving, setSaving] = useState(false);
   const registering = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
-  const formAlert = useRef<HTMLParagraphElement>(null);
   const loadRequest = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -175,9 +126,6 @@ function SourceListScreen() {
     void load();
     return () => loadRequest.current?.abort();
   }, [load, scans.revision]);
-  useEffect(() => {
-    if (formError) formAlert.current?.focus();
-  }, [formError]);
 
   async function register() {
     if (registering.current) return;
@@ -199,7 +147,7 @@ function SourceListScreen() {
     try {
       const response = await createSource({
         display_name: name.trim(),
-        configured_path: path.trim(),
+        configured_path: path,
         processing_mode: processingMode,
       });
       if (response.status !== 200) throw sourceFailure("create", response);
@@ -219,6 +167,7 @@ function SourceListScreen() {
   }
 
   function cancelCreate() {
+    registrationFocus.restoreOnClose();
     setCreating(false);
     setFormError(null);
     setName("");
@@ -280,6 +229,12 @@ function SourceListScreen() {
         : { kind: "loading" as const }
       : undefined;
 
+  const registrationError = formError
+    ? typeof formError === "string"
+      ? sourceRegistrationMessage(locale, formError)
+      : renderSourceError(formError, locale)
+    : undefined;
+
   return (
     <section
       aria-labelledby="sources-title"
@@ -297,82 +252,31 @@ function SourceListScreen() {
         </div>
         {!creating && (
           <AppButton
+            id={registrationFocus.triggerId}
             onPress={() => {
               setFormError(null);
               setCreating(true);
             }}
           >
-            {copy.addSource}
+            {sourceRegistrationMessages[locale].addSource}
           </AppButton>
         )}
       </header>
       {creating && (
-        <form
-          aria-labelledby="source-create-title"
-          className="mb-4 grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void register();
-          }}
-        >
-          <h2 id="source-create-title" className="m-0 text-sm font-semibold">
-            {copy.newSource}
-          </h2>
-          <label className="grid min-w-0 gap-1 text-xs font-semibold">
-            {copy.name}
-            <input
-              value={name}
-              placeholder={copy.namePlaceholder}
-              disabled={saving}
-              onChange={(event) => setName(event.target.value)}
-              className="min-h-8 min-w-0 w-full rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
-            />
-          </label>
-          <DirectoryPathField
-            id="source-create-path"
-            label={copy.serverDirectory}
-            value={path}
-            onSelect={setPath}
-            disabled={saving}
-            description={copy.onlyDirectory}
-          />
-          <RadioGroup
-            className="grid gap-1"
-            aria-label={copy.processingMode}
-            value={processingMode}
-            isDisabled={saving}
-            onChange={(value) =>
-              setProcessingMode(value as typeof processingMode)
-            }
-          >
-            <Radio className={modeChoice} value="in_place">
-              <span aria-hidden="true" className={radioIndicator} />
-              {copy.inPlace}
-            </Radio>
-            <p className={modeHelp}>{copy.inPlaceHelp}</p>
-            <Radio className={modeChoice} value="staged">
-              <span aria-hidden="true" className={radioIndicator} />
-              {copy.staged}
-            </Radio>
-            <p className={modeHelp}>{copy.stagedHelp}</p>
-          </RadioGroup>
-          <p className="m-0 text-xs text-[var(--muted)]">{copy.sourcePolicy}</p>
-          {formError && (
-            <p ref={formAlert} tabIndex={-1} role="alert" className="m-0">
-              {typeof formError === "string"
-                ? copy[formError]
-                : renderSourceError(formError, locale)}
-            </p>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <AppButton type="submit" isDisabled={saving}>
-              {copy.addSource}
-            </AppButton>
-            <AppButton onPress={cancelCreate} isDisabled={saving}>
-              {copy.cancel}
-            </AppButton>
-          </div>
-        </form>
+        <SourceRegistrationView
+          locale={locale}
+          name={name}
+          path={path}
+          mode={processingMode}
+          saving={saving}
+          error={registrationError}
+          browse={browseServerDirectory}
+          onNameChange={setName}
+          onPathChange={setPath}
+          onModeChange={setProcessingMode}
+          onSubmit={() => void register()}
+          onCancel={cancelCreate}
+        />
       )}
       {busy && sources && (
         <p role="status" className="m-0 text-xs text-[var(--muted)]">
@@ -406,7 +310,7 @@ function SourceListScreen() {
       )}
       {sources && (
         <p className="my-2 text-xs text-[var(--muted)]">
-          {copy.sourceTableHelp}
+          {sourceRegistrationMessages[locale].sourceTableHelp}
         </p>
       )}
       <fieldset
