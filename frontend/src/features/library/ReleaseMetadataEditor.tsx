@@ -268,9 +268,6 @@ const copy = {
     moveWorkUp: (index: number) => `Move work up ${index}`,
     moveWorkDown: (index: number) => `Move work down ${index}`,
     removeWork: (index: number) => `Remove work ${index}`,
-    movementName: "Movement name",
-    movementNumber: "Movement number",
-    movementCount: "Movement total",
     contributorName: "Contributor name",
     contributorRole: "Role",
     contributorInstrument: "Instrument",
@@ -381,9 +378,6 @@ const copy = {
     moveWorkUp: (index: number) => `Переместить произведение вверх ${index}`,
     moveWorkDown: (index: number) => `Переместить произведение вниз ${index}`,
     removeWork: (index: number) => `Удалить произведение ${index}`,
-    movementName: "Название части",
-    movementNumber: "Номер части",
-    movementCount: "Всего частей",
     contributorName: "Имя участника",
     contributorRole: "Роль",
     contributorInstrument: "Инструмент",
@@ -1486,9 +1480,6 @@ function LibraryScopedMetadataEditorSession({
               emptyValueLabel={text.emptyValue}
               workNameLabel={text.workName}
               workMBIDLabel={text.workMBID}
-              movementNameLabel={text.movementName}
-              movementNumberLabel={text.movementNumber}
-              movementCountLabel={text.movementCount}
               addWorkLabel={text.addWork}
               moveWorkUpLabel={text.moveWorkUp}
               moveWorkDownLabel={text.moveWorkDown}
@@ -1503,6 +1494,7 @@ function LibraryScopedMetadataEditorSession({
           ) : (
             <StructuredMetadataField
               kind="movement"
+              locale={locale}
               label={label}
               state={field.state}
               value={field.value as MetadataMovementDraft}
@@ -1516,9 +1508,6 @@ function LibraryScopedMetadataEditorSession({
               emptyValueLabel={text.emptyValue}
               workNameLabel={text.workName}
               workMBIDLabel={text.workMBID}
-              movementNameLabel={text.movementName}
-              movementNumberLabel={text.movementNumber}
-              movementCountLabel={text.movementCount}
               addWorkLabel={text.addWork}
               moveWorkUpLabel={text.moveWorkUp}
               moveWorkDownLabel={text.moveWorkDown}

@@ -6,6 +6,7 @@ import {
 	MetadataFieldGroup,
 	MetadataFieldsGrid,
 } from "../features/library/MetadataFieldPresentation";
+import { MovementFieldsView } from "../features/library/MovementFieldsView";
 import { ProviderGenreBaselineRow } from "../features/library/ProviderGenreBaselineRow";
 import { useI18n } from "../i18n";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
@@ -1198,11 +1199,23 @@ export function MetadataEditor({
 								<h3 className="m-0 text-sm font-semibold">
 									{groupHeading("movement")}
 								</h3>
-								<MetadataFieldsGrid
-									columns={3}
-									fields={fields
-										.filter((field) => field.group === "movement")
-										.map((field) => simpleFieldDescriptor(field, !editing))}
+								<MovementFieldsView
+									locale={locale}
+									value={{
+										name: rows(current, "movementname")[0] ?? "",
+										count: rows(current, "movementtotal")[0] ?? "",
+										number: rows(current, "movement")[0] ?? "",
+									}}
+									editing={editing}
+									disabled={saving}
+									onChange={(key, value) => {
+										const tags = {
+											name: "movementname",
+											count: "movementtotal",
+											number: "movement",
+										} as const;
+										setValue(tags[key], value ? [value] : []);
+									}}
 								/>
 							</section>
 						)}

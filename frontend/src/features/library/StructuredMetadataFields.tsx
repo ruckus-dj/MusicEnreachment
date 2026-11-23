@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { AppButton } from "../../components/AppButton";
+import { MovementFieldsView } from "./MovementFieldsView";
 
 let nextMetadataDraftRowKey = 0;
 
@@ -70,9 +71,6 @@ type StructuredMetadataFieldProps = {
   emptyValueLabel: string;
   workNameLabel: string;
   workMBIDLabel: string;
-  movementNameLabel: string;
-  movementNumberLabel: string;
-  movementCountLabel: string;
   addWorkLabel: string;
   moveWorkUpLabel: (index: number) => string;
   moveWorkDownLabel: (index: number) => string;
@@ -86,6 +84,7 @@ type StructuredMetadataFieldProps = {
     }
   | {
       kind: "movement";
+      locale: "en" | "ru";
       value: MetadataMovementDraft;
       onValueChange: (value: MetadataMovementDraft) => void;
     }
@@ -245,48 +244,16 @@ export function StructuredMetadataField(props: StructuredMetadataFieldProps) {
           ) : null}
         </div>
       ) : (
-        <div className="grid min-w-0 gap-2 sm:grid-cols-3">
-          {(
-            [
-              ["name", props.movementNameLabel],
-              ["number", props.movementNumberLabel],
-              ["count", props.movementCountLabel],
-            ] as const
-          ).map(([key, label]) => (
-            <div
-              key={key}
-              className="grid min-w-0 gap-1 text-xs text-[var(--muted)]"
-            >
-              {props.editing ? (
-                <>
-                  <label htmlFor={`${controlPrefix}-movement-${key}`}>
-                    {label}
-                  </label>
-                  <input
-                    id={`${controlPrefix}-movement-${key}`}
-                    className={inputClassName}
-                    inputMode={key === "name" ? undefined : "numeric"}
-                    value={props.value[key]}
-                    disabled={props.saving}
-                    onChange={(event) =>
-                      props.onValueChange({
-                        ...props.value,
-                        [key]: event.currentTarget.value,
-                      })
-                    }
-                  />
-                </>
-              ) : (
-                <>
-                  <span>{label}</span>
-                  <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
-                    {props.value[key] || props.emptyValueLabel}
-                  </span>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
+        <MovementFieldsView
+          locale={props.locale}
+          value={props.value}
+          editing={props.editing}
+          disabled={props.saving}
+          emptyValueLabel={props.emptyValueLabel}
+          onChange={(key, value) =>
+            props.onValueChange({ ...props.value, [key]: value })
+          }
+        />
       )}
     </div>
   );
