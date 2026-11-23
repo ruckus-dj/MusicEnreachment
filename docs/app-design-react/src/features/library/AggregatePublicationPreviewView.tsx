@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { type Ref, useEffect, useId, useRef, useState } from "react";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
 import {
   type PublicationPreviewDetailsState,
@@ -56,6 +56,21 @@ export interface AggregatePositionView {
 }
 
 /**
+ * Optional exact source-file choice shown above the publication details. The
+ * aggregate release workflow uses the audio-stream choice in
+ * `PublicationPreviewDetailsView`; a saved matching result chooses among its
+ * exact linked files instead and supplies localized copy here.
+ */
+export interface AggregateInspectorFileChoice {
+  legend: string;
+  emptyLabel: string;
+  options: readonly { id: string; label: string }[];
+  selectedId: string | null;
+  disabled?: boolean;
+  onSelect: (id: string | null) => void;
+}
+
+/**
  * Selected-position inspector. Publication details are a portable inspection
  * model owned by `PublicationPreviewDetailsView`; the aggregate view only
  * places them in the desktop panel or the mobile dialog.
@@ -66,13 +81,15 @@ export type AggregateInspectorPresentation =
   | {
       kind: "publication";
       details: PublicationPreviewDetailsState;
+      fileChoice?: AggregateInspectorFileChoice;
       onSourceChoice?: (choice: PublicationPreviewSourceChoice | null) => void;
       onRefresh: () => void;
     };
 
 export interface AggregatePublicationPreviewViewProps {
   locale: AggregatePublicationPreviewLocale;
-  mode: AggregatePublicationMode;
+  /** REQUIRED only when `onModeChange` is supplied. */
+  mode?: AggregatePublicationMode;
   counts: Readonly<Record<AggregateDisposition, number>>;
   positions: readonly AggregatePositionView[];
   included: ReadonlySet<string>;
@@ -83,7 +100,12 @@ export interface AggregatePublicationPreviewViewProps {
   canConfirm: boolean;
   preparing: boolean;
   inspector: AggregateInspectorPresentation;
-  onModeChange: (mode: AggregatePublicationMode) => void;
+  title?: string;
+  headingRef?: Ref<HTMLHeadingElement>;
+  prepareLabel?: string;
+  confirmLabel?: string;
+  /** Omit to hide the CURRENT republish mode selector. */
+  onModeChange?: (mode: AggregatePublicationMode) => void;
   onToggleInclude: (positionId: string) => void;
   onSelectPosition: (positionId: string) => void;
   onPrepare: () => void;
@@ -205,7 +227,7 @@ function diagnosticLabel(
 
 export function AggregatePublicationPreviewView({
   locale,
-  mode,
+  mode = "ordinary",
   counts,
   positions,
   included,
@@ -214,6 +236,10 @@ export function AggregatePublicationPreviewView({
   canConfirm,
   preparing,
   inspector,
+  title,
+  headingRef,
+  prepareLabel,
+  confirmLabel,
   onModeChange,
   onToggleInclude,
   onSelectPosition,
@@ -222,6 +248,7 @@ export function AggregatePublicationPreviewView({
 }: AggregatePublicationPreviewViewProps) {
   const text = copy[locale];
   const modeName = useId();
+  const fileChoiceName = useId();
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const mobileDialog = useRef<HTMLDialogElement>(null);
   const selectedPosition =
@@ -247,15 +274,44 @@ export function AggregatePublicationPreviewView({
     if (isNarrow) setMobileInspectorOpen(true);
   }
 
+  const fileChoice =
+    inspector.kind === "publication" ? inspector.fileChoice : undefined;
   const inspectorContent =
     inspector.kind === "publication" ? (
-      <PublicationPreviewDetailsView
-        locale={locale}
-        state={inspector.details}
-        sourceGroupName={`aggregate-publication-source-${selectedPosition?.id ?? "none"}`}
-        onSourceChoice={inspector.onSourceChoice}
-        onRefresh={inspector.onRefresh}
-      />
+      <>
+        {fileChoice ? (
+          <fieldset className="space-y-2" disabled={fileChoice.disabled}>
+            <legend className="font-medium">{fileChoice.legend}</legend>
+            <label className="block">
+              <input
+                type="radio"
+                name={fileChoiceName}
+                checked={fileChoice.selectedId === null}
+                onChange={() => fileChoice.onSelect(null)}
+              />{" "}
+              {fileChoice.emptyLabel}
+            </label>
+            {fileChoice.options.map((option) => (
+              <label className="block" key={option.id}>
+                <input
+                  type="radio"
+                  name={fileChoiceName}
+                  checked={fileChoice.selectedId === option.id}
+                  onChange={() => fileChoice.onSelect(option.id)}
+                />{" "}
+                <span className="wrap-anywhere">{option.label}</span>
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        <PublicationPreviewDetailsView
+          locale={locale}
+          state={inspector.details}
+          sourceGroupName={`aggregate-publication-source-${selectedPosition?.id ?? "none"}`}
+          onSourceChoice={inspector.onSourceChoice}
+          onRefresh={inspector.onRefresh}
+        />
+      </>
     ) : (
       <p>
         {inspector.kind === "not-prepared" ? text.notPrepared : text.noPosition}
@@ -263,8 +319,10 @@ export function AggregatePublicationPreviewView({
     );
 
   return (
-    <section className={styles.root} aria-label={text.title}>
-      <h2 className={styles.title}>{text.title}</h2>
+    <section className={styles.root} aria-label={title ?? text.title}>
+      <h2 className={styles.title} ref={headingRef} tabIndex={-1}>
+        {title ?? text.title}
+      </h2>
       <p role="note">{text.independentAdmissions}</p>
       <dl className={styles.summary}>
         {aggregateDispositions.map((disposition) => (
@@ -274,27 +332,29 @@ export function AggregatePublicationPreviewView({
           </div>
         ))}
       </dl>
-      <fieldset className={styles.modes}>
-        <legend className={styles.modesLegend}>{text.modeLegend}</legend>
-        <label>
-          <input
-            type="radio"
-            name={modeName}
-            checked={mode === "ordinary"}
-            onChange={() => onModeChange("ordinary")}
-          />{" "}
-          {text.ordinary}
-        </label>
-        <label>
-          <input
-            type="radio"
-            name={modeName}
-            checked={mode === "forced"}
-            onChange={() => onModeChange("forced")}
-          />{" "}
-          {text.forced}
-        </label>
-      </fieldset>
+      {onModeChange ? (
+        <fieldset className={styles.modes}>
+          <legend className={styles.modesLegend}>{text.modeLegend}</legend>
+          <label>
+            <input
+              type="radio"
+              name={modeName}
+              checked={mode === "ordinary"}
+              onChange={() => onModeChange("ordinary")}
+            />{" "}
+            {text.ordinary}
+          </label>
+          <label>
+            <input
+              type="radio"
+              name={modeName}
+              checked={mode === "forced"}
+              onChange={() => onModeChange("forced")}
+            />{" "}
+            {text.forced}
+          </label>
+        </fieldset>
+      ) : null}
       {!positions.length ? (
         <p>{text.none}</p>
       ) : (
@@ -387,10 +447,10 @@ export function AggregatePublicationPreviewView({
           disabled={!canPrepare || preparing}
           onClick={onPrepare}
         >
-          {text.prepare}
+          {prepareLabel ?? text.prepare}
         </button>
         <button type="button" disabled={!canConfirm} onClick={onConfirm}>
-          {text.confirm}
+          {confirmLabel ?? text.confirm}
         </button>
       </div>
     </section>

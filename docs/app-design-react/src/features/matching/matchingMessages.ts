@@ -87,6 +87,9 @@ export const matchingMessages = createNamespace({
 		linkRecording: "Link recording",
 		inspectorTitle: "Inspector · {track}",
 		selectedForPublicationCount: "{count} positions selected for publication",
+		matchingDraftCount: "Assigned files: {count}",
+		previewMatchingLinks: "Preview assignments",
+		saveMatchingLinks: "Save matching links",
 		unassignedSummary:
 			"{empty} empty positions do not block publication. {files} files will remain unassigned in incoming.",
 		publicationPreview: "Publication preview",
@@ -237,6 +240,9 @@ export const matchingMessages = createNamespace({
 		linkRecording: "Связать композицию",
 		inspectorTitle: "Инспектор · {track}",
 		selectedForPublicationCount: "Выбрано позиций для публикации: {count}",
+		matchingDraftCount: "Назначено файлов: {count}",
+		previewMatchingLinks: "Предпросмотр назначений",
+		saveMatchingLinks: "Сохранить связи",
 		unassignedSummary:
 			"Пустые позиции: {empty}; они не блокируют публикацию. Во входящих останутся неразмеченными файлов: {files}.",
 		publicationPreview: "Предпросмотр публикации",

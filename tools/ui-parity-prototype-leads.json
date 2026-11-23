@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "from": "features/library/AggregatePublicationPreviewView.tsx",
+    "reason": "The saved matching preview reuses this inspector without forced mode; the live receipt provider is not wired yet.",
+    "prototypeSHA256": "12c78722041823736000178d2f6e9aa88280a0cbfc40e6a40a77290f04eea49b",
+    "applicationSHA256": "303ea8e82820b77ce49c4dc3bf841fbb824c388b221a974dd6f729c61c184bb1"
+  },
+  {
+    "from": "features/matching/MatchingLinkResultView.tsx",
+    "reason": "The saved-links result is implemented in the prototype before the live provider port.",
+    "prototypeSHA256": "b884af0e3a5d671405f9d0317cd27c37f1c1e9ee268e201a906fcc37bb9d7a6c",
+    "applicationSHA256": null
+  },
+  {
+    "from": "features/matching/MatchingReceiptPublicationFrame.tsx",
+    "reason": "The ordinary-only receipt publication frame is awaiting the live provider port.",
+    "prototypeSHA256": "574e1524f111279f3a191eb91458b029bd76521dc81250ed69bae76fd6cfd766",
+    "applicationSHA256": null
+  }
+]

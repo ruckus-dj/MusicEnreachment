@@ -1,26 +1,12 @@
 import type { FormEvent } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
-import {
-	dialogFooter,
-	surfacePanel,
-} from "../../components/styles/matchingStyles";
-import {
-	Button,
-	Checkbox,
-	Dialog,
-	Heading,
-	Input,
-	Modal,
-	Radio,
-	RadioGroup,
-	TextField,
-} from "../../components/ui";
+import { surfacePanel } from "../../components/styles/matchingStyles";
+import { Button, Input, TextField } from "../../components/ui";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
 import { useI18n } from "../../i18n";
 import { formatUiNotice, type UiNotice } from "../../infrastructure/uiNotice";
 import {
 	type Assignment,
-	applyPlan,
 	artistName,
 	assignFile,
 	createIncomingState,
@@ -32,23 +18,16 @@ import {
 	type IncomingState,
 	incomingFixtures,
 	normalized,
-	planRows,
 	providerReleases,
 	selectedSourceId,
 	sourceIds,
 	unassignFile,
 	usableFile,
 } from "../incoming/incomingModel";
-import {
-	type CatalogArtist,
-	publicationMetadataIssueMessages,
-	publicationSortTagCollisions,
-} from "../library/catalogData";
-import type { PublicationInspection } from "../publication/PublicationInspector";
-import { PublicationInspector } from "../publication/PublicationInspector";
-import { publicationMessage } from "../publication/publicationMessages";
-import { metadataSnapshotDiff } from "../publication/publicationMetadataDiff";
+import type { CatalogArtist } from "../library/catalogData";
 import { MatchingBoard, MatchingEvidenceInspector } from "./";
+import { MatchingLinkResultView } from "./MatchingLinkResultView";
+import { MatchingReceiptPublicationView } from "./MatchingReceiptPublicationView";
 import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
 import { MatchingReviewSearchView } from "./MatchingReviewSearchView";
@@ -58,7 +37,8 @@ import {
 	matchingInspectorContent,
 	matchingInspectorPanel,
 } from "./MatchingWorkspaceLayout";
-import { matchingAction, matchingMessage } from "./matchingMessages";
+import { saveMatchingLinks } from "./matchingLinks";
+import { matchingMessage } from "./matchingMessages";
 
 export type MatchingScreenProps = {
 	destination?: import("../publication/publicationOutput").PublicationDestination;
@@ -92,9 +72,14 @@ export function MatchingScreen({
 	prepareReleaseId,
 }: MatchingScreenProps) {
 	const [localState, setLocalState] = useState(createIncomingState);
-	const [confirming, setConfirming] = useState(false);
 	const [previewOpenSequence, setPreviewOpenSequence] = useState(0);
+	const [dismissedReceiptId, setDismissedReceiptId] = useState("");
+	const [publicationReceiptId, setPublicationReceiptId] = useState("");
+	const [focusReceiptId, setFocusReceiptId] = useState("");
 	const previewHeadingRef = useRef<HTMLHeadingElement>(null);
+	const receiptHeadingRef = useRef<HTMLHeadingElement>(null);
+	const publicationButtonRef = useRef<HTMLButtonElement>(null);
+	const restorePublicationFocus = useRef(false);
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
@@ -118,11 +103,23 @@ export function MatchingScreen({
 			block: "start",
 		});
 	}, [previewOpenSequence]);
+	useLayoutEffect(() => {
+		if (!focusReceiptId) return;
+		receiptHeadingRef.current?.focus();
+	}, [focusReceiptId]);
+	useLayoutEffect(() => {
+		if (!publicationReceiptId && restorePublicationFocus.current) {
+			restorePublicationFocus.current = false;
+			publicationButtonRef.current?.focus();
+		}
+	}, [publicationReceiptId]);
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
 	const providers = givenProviders ?? providerReleases;
 	const artists = givenArtists ?? incomingFixtures.artists;
+	const setReleases = (next: IncomingReleases) =>
+		givenReleases ? onReleases?.(next) : setLocalReleases(next);
 	const musicBrainzEditions = providers.filter(
 		(release) => release.provider !== "Local",
 	);
@@ -137,6 +134,71 @@ export function MatchingScreen({
 	);
 	const activeGroupId = groupId ?? state.groupId;
 	const group = state.groups.find((item) => item.id === activeGroupId);
+	const receipt = state.receipts
+		.filter((item) => item.groupId === activeGroupId)
+		.at(-1);
+	if (receipt && dismissedReceiptId !== receipt.id) {
+		return (
+			<section
+				data-matching-screen
+				className="mx-auto w-full max-w-[1800px] space-y-4 px-[clamp(14px,2vw,30px)] py-5 text-[var(--ink)] max-[800px]:px-3"
+			>
+				<header>
+					<a href="#review">{matchingMessage(locale, "backToIncoming")}</a>
+					<h1 className="mt-1 text-[clamp(22px,2vw,30px)] tracking-[-.025em]">
+						{matchingMessage(locale, "matchingTitle", {
+							group: receipt.groupTitle,
+						})}
+					</h1>
+				</header>
+				{publicationReceiptId === receipt.id ? (
+					<MatchingReceiptPublicationView
+						key={receipt.id}
+						locale={locale}
+						receipt={receipt}
+						releases={releases}
+						files={files}
+						artists={artists}
+						savedReceipts={state.receipts}
+						destination={destination}
+						onReleases={setReleases}
+						onBack={() => {
+							restorePublicationFocus.current = true;
+							setPublicationReceiptId("");
+						}}
+					/>
+				) : (
+					<MatchingLinkResultView
+						locale={locale}
+						releaseTitle={receipt.releaseTitle}
+						links={receipt.positions.flatMap((position) =>
+							position.sourceIds.map((sourceId) => ({
+								key: `${position.trackId}:${sourceId}`,
+								source: files[sourceId]?.name ?? sourceId,
+								positionId: position.trackId,
+								position: `${position.displayedNumber ?? position.position} · ${position.title}`,
+							})),
+						)}
+						remaining={receipt.remainingFileIds.map((id, index) => ({
+							key: id,
+							name: receipt.remainingFileNames[index] ?? id,
+						}))}
+						headingRef={receiptHeadingRef}
+						publicationButtonRef={publicationButtonRef}
+						publicationDisabled={
+							!receipt.positions.some((position) => position.sourceIds.length)
+						}
+						onOpenPublication={() => setPublicationReceiptId(receipt.id)}
+						onContinue={
+							group?.fileIds.length
+								? () => setDismissedReceiptId(receipt.id)
+								: undefined
+						}
+					/>
+				)}
+			</section>
+		);
+	}
 	if (!group)
 		return (
 			<section className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
@@ -164,8 +226,6 @@ export function MatchingScreen({
 		state.noticeDescriptor = null;
 		state.uiNotice = notice;
 	};
-	const setReleases = (next: IncomingReleases) =>
-		givenReleases ? onReleases?.(next) : setLocalReleases(next);
 	const clearPreview = () => {
 		state.plan = null;
 		state.confirmDowngrade = false;
@@ -278,16 +338,6 @@ export function MatchingScreen({
 		clearPreview();
 		commitState();
 	};
-	const sourceSelection = (trackId: string, fileId: string) => {
-		const item = assignments[trackId];
-		if (!item) return;
-		item.selectedSourceId = fileId;
-		const selected = files[fileId];
-		item.method = item.sourceMeta[fileId]?.method ?? item.method;
-		item.confidence = selected?.confidence ?? null;
-		clearPreview();
-		commitState();
-	};
 	const openPreview = () => {
 		state.plan = {
 			mode: group.mode,
@@ -302,174 +352,45 @@ export function MatchingScreen({
 		commitState();
 	};
 	const preview = state.plan?.groupId === group.id ? state.plan : null;
-	const previewRows = preview
-		? planRows(preview, files, releases, providers, artists, destination)
-		: [];
-	const metadataIssues = (row: (typeof previewRows)[number]) => {
-		if (!preview) return [];
-		const local = releases.find(
-			(release) => release.id === preview.localReleaseId,
-		);
-		return publicationMetadataIssueMessages(
-			preview.mode === "local" ? (local ?? preview.target) : preview.target,
-			row.track ?? row.targetTrack,
-			locale,
-			selectedSourceId(row.assignment),
-		);
-	};
-	const effectiveMetadata = (row: (typeof previewRows)[number]) =>
-		metadataSnapshotDiff(
-			row.previous?.tags ?? {},
-			row.nextTags,
-			{
-				coverHash: row.previous?.coverHash ?? null,
-				lyrics: row.previous?.lyrics ?? null,
-			},
-			{
-				coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
-				lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
-			},
-		);
-	const inspectionItems: PublicationInspection[] = previewRows.map((row) => {
-		const issues = metadataIssues(row);
-		const metadataRelease =
-			preview?.mode === "local"
-				? (releases.find((release) => release.id === preview.localReleaseId) ??
-					preview.target)
-				: (preview?.target ?? target);
-		const sortCollisions = publicationSortTagCollisions(
-			metadataRelease,
-			preview?.mode === "local"
-				? (row.track ?? row.targetTrack)
-				: row.targetTrack,
-			artists,
-		);
-		const sortCollisionNotices = [
-			...(sortCollisions.recording
-				? [publicationMessage(locale, "recordingSortCollision")]
-				: []),
-			...(sortCollisions.release
-				? [publicationMessage(locale, "releaseSortCollision")]
-				: []),
-		];
-		const invalidMetadata = Boolean(
-			row.assignment?.included && row.file && issues.length,
-		);
-		const included = Boolean(row.assignment?.included && row.file);
-		const baseReason = invalidMetadata
-			? matchingMessage(locale, "invalidMetadata", {
-					issues: issues.join("; "),
-				})
-			: !row.assignment?.included
-				? matchingMessage(locale, "notIncluded")
-				: !row.file
-					? matchingMessage(locale, "noFile")
-					: "";
-		const reason = [baseReason, ...sortCollisionNotices]
-			.filter(Boolean)
-			.join(" · ");
-		return {
-			id: String(row.targetTrack.id),
-			position: String(row.targetTrack.position),
-			title: String(row.targetTrack.title),
-			context: row.provider?.release.title,
-			action:
-				(invalidMetadata
-					? matchingMessage(locale, "unprocessed")
-					: matchingAction(locale, row.action)) +
-				(row.downgrade ? ` · ${matchingMessage(locale, "downgrade")}` : ""),
-			reason,
-			source: row.file?.name ?? matchingMessage(locale, "noFile"),
-			groups: effectiveMetadata(row),
-			included,
-			includeDisabled: !row.file,
-			includeLabel: matchingMessage(locale, "ariaIncludeTrack", {
-				track: String(row.targetTrack.title),
-			}),
-			onInclude: (checked) => {
-				if (row.assignment) row.assignment.included = checked;
-				commitState();
-			},
-		};
-	});
-	const activeRows = previewRows.filter(
-		(row) => row.assignment?.included && row.file,
-	);
-	const changedRows = activeRows.filter(
-		(row) => row.action !== "Без изменений" && !metadataIssues(row).length,
-	);
-	const canApplyPlan = Boolean(existingRelease || changedRows.length);
-	const linkedRows = previewRows.filter((row) => {
-		if (!canApplyPlan) return false;
-		if (row.assignment?.included && row.file && metadataIssues(row).length)
-			return false;
-		const persisted = new Set(
-			(row.track?.sourceIds as string[] | undefined) ??
-				(row.track?.sourceId ? [String(row.track.sourceId)] : []),
-		);
-		return sourceIds(row.assignment).some(
-			(id) => usableFile(files[id]) && !persisted.has(id),
-		);
-	});
 	const stale = Boolean(
 		preview && preview.inventoryVersion !== state.inventoryVersion,
 	);
-	const hasDowngrade = changedRows.some((row) => row.downgrade);
-	const assignedFileIds = new Set<string>();
-	const fileOutcomes: MatchingPreviewRow[] = previewRows.flatMap((row) => {
-		if (!canApplyPlan) return [];
-		if (row.assignment?.included && row.file && metadataIssues(row).length)
-			return [];
-		return sourceIds(row.assignment).flatMap((id) => {
-			if (!usableFile(files[id])) return [];
-			assignedFileIds.add(id);
-			return [
-				{
-					key: `${row.targetTrack.id}:${id}`,
-					source: files[id].name,
-					position: `${row.targetTrack.position} · ${row.targetTrack.title}`,
-				},
-			];
-		});
+	const activeFileIds = new Set(group.fileIds);
+	const fileOutcomes: MatchingPreviewRow[] = (
+		preview?.target.tracks ?? []
+	).flatMap((track) => {
+		const ids = sourceIds(preview?.assignments[String(track.id)]);
+		return ids.flatMap((id) =>
+			activeFileIds.has(id) && usableFile(files[id])
+				? [
+						{
+							key: id,
+							source: files[id].name,
+							position: `${track.displayedNumber ?? track.position} · ${track.title}`,
+						},
+					]
+				: [],
+		);
 	});
+	const assignedFileIds = new Set(fileOutcomes.map((row) => row.key));
 	for (const id of group.fileIds) {
 		if (!assignedFileIds.has(id) && files[id])
 			fileOutcomes.push({ key: id, source: files[id].name });
 	}
-	const confirmPublish = () => {
-		if (!preview || stale || (hasDowngrade && !state.confirmDowngrade)) return;
-		setConfirming(false);
-		if (preview.inventoryVersion !== state.inventoryVersion) {
-			setNotice({ namespace: "matching", id: "candidateChangeNotice" });
-			commitState();
-			return;
-		}
+	const confirmLinks = () => {
+		if (!preview || stale) return;
 		const nextReleases = structuredClone(releases);
-		const changed = applyPlan(
+		const result = saveMatchingLinks(
 			preview,
+			group,
+			state,
 			files,
 			nextReleases,
 			providers,
-			false,
-			artists,
-			destination,
 		);
-		setNotice(
-			changed
-				? {
-						namespace: "matching",
-						id: "planPublished",
-						params: { count: changed, linkedCount: linkedRows.length },
-					}
-				: {
-						namespace: "matching",
-						id: "linksSavedFilesUnchanged",
-						params: { count: linkedRows.length },
-					},
-		);
+		if (!result) return;
 		setReleases(nextReleases);
-		state.plan = null;
-		state.confirmDowngrade = false;
+		setFocusReceiptId(result.receipt.id);
 		commitState();
 	};
 	const bindRecording = (recordingId: string) => {
@@ -610,68 +531,20 @@ export function MatchingScreen({
 					renderPositionMeta={({ position }) => {
 						const trackId = position.track_id;
 						const track = tracks.find((item) => String(item.id) === trackId);
-						const item = assignments[trackId];
-						const ids = sourceIds(item);
-						const currentId = selectedSourceId(item);
-						const file = files[currentId ?? ""];
-						if (!track) return null;
+						if (!track || group.mode !== "local") return null;
 						return (
 							<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-								{item ? (
-									<Checkbox
-										aria-label={matchingMessage(locale, "ariaPublishTrack", {
-											track: String(track.title),
-										})}
-										isSelected={Boolean(item.included && usableFile(file))}
-										isDisabled={!usableFile(file)}
-										onChange={(checked) => {
-											item.included = checked;
-											clearPreview();
-											commitState();
-										}}
-									>
-										<span className="checkbox" aria-hidden="true">
-											{item.included && usableFile(file) ? "✓" : ""}
-										</span>
-									</Checkbox>
-								) : null}
-								{ids.length ? (
-									<RadioGroup
-										className="min-w-0"
-										aria-label={matchingMessage(locale, "ariaTrackSource", {
-											track: String(track.title),
-										})}
-										value={currentId ?? ""}
-										onChange={(value) => sourceSelection(trackId, value)}
-									>
-										{ids.map((sourceId) => (
-											<div
-												key={sourceId}
-												className="flex min-w-0 items-center gap-1"
-											>
-												<Radio value={sourceId}>
-													<span className="indicator" aria-hidden="true" />
-													<span className="truncate text-[10px]">
-														{files[sourceId]?.name ?? sourceId}
-													</span>
-												</Radio>
-											</div>
-										))}
-									</RadioGroup>
-								) : null}
-								{group.mode === "local" ? (
-									<Button
-										onPress={() => {
-											state.recordingTarget = trackId;
-											state.recordingQuery = String(track.title);
-											state.recordingResults = allProviderTracks;
-											setRecordingQuery(String(track.title));
-											commitState();
-										}}
-									>
-										{matchingMessage(locale, "recordingSearch")}
-									</Button>
-								) : null}
+								<Button
+									onPress={() => {
+										state.recordingTarget = trackId;
+										state.recordingQuery = String(track.title);
+										state.recordingResults = allProviderTracks;
+										setRecordingQuery(String(track.title));
+										commitState();
+									}}
+								>
+									{matchingMessage(locale, "recordingSearch")}
+								</Button>
 							</div>
 						);
 					}}
@@ -760,11 +633,11 @@ export function MatchingScreen({
 			{!preview && (
 				<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
 					<strong>
-						{matchingMessage(locale, "selectedForPublicationCount", {
-							count: Object.values(assignments).filter(
-								(item) =>
-									item.included &&
-									usableFile(files[selectedSourceId(item) ?? ""]),
+						{matchingMessage(locale, "matchingDraftCount", {
+							count: Object.values(assignments).filter((item) =>
+								sourceIds(item).some(
+									(id) => activeFileIds.has(id) && usableFile(files[id]),
+								),
 							).length,
 						})}
 					</strong>
@@ -777,15 +650,15 @@ export function MatchingScreen({
 					<Button
 						className="demo-button max-[520px]:w-full"
 						isDisabled={
-							!Object.values(assignments).some(
-								(item) =>
-									item.included &&
-									usableFile(files[selectedSourceId(item) ?? ""]),
+							!Object.values(assignments).some((item) =>
+								sourceIds(item).some(
+									(id) => activeFileIds.has(id) && usableFile(files[id]),
+								),
 							)
 						}
 						onPress={openPreview}
 					>
-						{matchingMessage(locale, "publicationPreview")}
+						{matchingMessage(locale, "previewMatchingLinks")}
 					</Button>
 				</div>
 			)}
@@ -793,34 +666,22 @@ export function MatchingScreen({
 				<MatchingPreview
 					locale={locale}
 					headingRef={previewHeadingRef}
-					heading={matchingMessage(locale, "previewTitle", {
-						title: String(preview.target.title),
-					})}
+					heading={matchingMessage(locale, "previewMatchingLinks")}
+					releaseTitle={String(preview.target.title)}
 					summary={[
-						matchingMessage(locale, "previewSelected", {
-							selected: activeRows.length,
-							total: previewRows.length,
-						}),
-						matchingMessage(locale, "previewChanges", {
-							count: changedRows.length,
-						}),
-						matchingMessage(locale, "previewLinked", {
-							count: linkedRows.length,
+						matchingMessage(locale, "matchingDraftCount", {
+							count: assignedFileIds.size,
 						}),
 						matchingMessage(locale, "previewRemainingFiles", {
 							count: fileOutcomes.filter((row) => !row.position).length,
 						}),
-						matchingMessage(locale, "previewFormat"),
 					].join(" · ")}
 					rows={fileOutcomes}
 					notice={stale ? matchingMessage(locale, "stalePreview") : undefined}
 					primary={{
-						label: matchingMessage(locale, "confirmPublish"),
-						onPress: () => setConfirming(true),
-						disabled:
-							stale ||
-							(!changedRows.length && !linkedRows.length) ||
-							(hasDowngrade && !state.confirmDowngrade),
+						label: matchingMessage(locale, "saveMatchingLinks"),
+						onPress: confirmLinks,
+						disabled: stale || !assignedFileIds.size,
 					}}
 					secondary={{
 						label: matchingMessage(locale, "returnToObject"),
@@ -829,55 +690,8 @@ export function MatchingScreen({
 							commitState();
 						},
 					}}
-				>
-					<p>{matchingMessage(locale, "previewDescription")}</p>
-					<PublicationInspector items={inspectionItems} locale={locale} />
-					{hasDowngrade && (
-						<Checkbox
-							isSelected={state.confirmDowngrade}
-							onChange={(checked) => {
-								state.confirmDowngrade = checked;
-								commitState();
-							}}
-						>
-							<span className="checkbox" />
-							{matchingMessage(locale, "confirmDowngrade")}
-						</Checkbox>
-					)}
-				</MatchingPreview>
+				/>
 			)}
-			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog
-					aria-labelledby="incoming-confirm-title"
-					className="grid gap-2.5"
-				>
-					<Heading slot="title" id="incoming-confirm-title">
-						{changedRows.length
-							? matchingMessage(locale, "confirmPublishCount", {
-									count: changedRows.length,
-								})
-							: matchingMessage(locale, "confirmLinksCount", {
-									count: linkedRows.length,
-								})}
-					</Heading>
-					<p>{matchingMessage(locale, "unchangedOnConfirm")}</p>
-					{stale && (
-						<p role="alert">{matchingMessage(locale, "stalePreview")}</p>
-					)}
-					<div className={dialogFooter}>
-						<Button onPress={() => setConfirming(false)}>
-							{matchingMessage(locale, "cancel")}
-						</Button>
-						<Button
-							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-							isDisabled={stale || (hasDowngrade && !state.confirmDowngrade)}
-							onPress={confirmPublish}
-						>
-							{matchingMessage(locale, "confirm")}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
 		</section>
 	);
 }

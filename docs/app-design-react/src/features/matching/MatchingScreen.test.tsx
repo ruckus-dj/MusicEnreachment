@@ -51,6 +51,40 @@ function MatchingHarness({
 	);
 }
 
+function LinkSaveHarness({
+	initialReleases,
+	onReleases,
+}: {
+	initialReleases: IncomingReleases;
+	onReleases?: (releases: IncomingReleases) => void;
+}) {
+	const [state, setState] = useState(createIncomingState);
+	const [releases, setReleases] = useState(initialReleases);
+	return (
+		<MatchingScreen
+			state={state}
+			onState={setState}
+			releases={releases}
+			onReleases={(next) => {
+				setReleases(next);
+				onReleases?.(next);
+			}}
+		/>
+	);
+}
+
+function publishedSnapshot(releases: IncomingReleases) {
+	return JSON.stringify(
+		releases.map((release) => ({
+			id: release.id,
+			tracks: release.tracks.map((track) => ({
+				id: track.id,
+				published: track.published,
+			})),
+		})),
+	);
+}
+
 function LocaleSwitch() {
 	const { setPreference } = useI18n();
 	return (
@@ -145,7 +179,7 @@ beforeEach(() => {
 	window.localStorage.setItem("music-design-v2-language", "ru");
 });
 
-it("uses the compact publication inspector and scrolls its heading into focus on each open", () => {
+it("opens the link preview without replacing the selected pair inspector and focuses its heading on each open", () => {
 	const scrollIntoView = vi.fn();
 	Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
 		configurable: true,
@@ -157,37 +191,49 @@ it("uses the compact publication inspector and scrolls its heading into focus on
 	);
 
 	const { container } = render(<MatchingHarness />);
+	const inspector = screen.getByRole("region", {
+		name: "Доказательства текущей оценки",
+	});
 	const openPreview = () =>
 		fireEvent.click(
-			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+			screen.getByRole("button", { name: "Предпросмотр назначений" }),
 		);
-	expect(
-		screen.getByText(/Выбрано позиций для публикации:/),
-	).toBeInTheDocument();
+	expect(screen.getByText(/Назначено файлов: 7/)).toBeInTheDocument();
 	openPreview();
 	expect(container.querySelector(".matching-commit")).not.toBeInTheDocument();
+	expect(
+		screen.getByRole("region", { name: "Доказательства текущей оценки" }),
+	).toBe(inspector);
 
-	const heading = screen.getByRole("heading", { name: /Предпросмотр:/ });
+	const heading = screen.getByRole("heading", {
+		name: "Предпросмотр назначений",
+	});
 	expect(heading).toHaveFocus();
 	expect(scrollIntoView).toHaveBeenLastCalledWith({
 		behavior: "auto",
 		block: "start",
 	});
 	expect(
-		screen.getByRole("region", { name: "Сравнить метаданные" }),
+		screen.queryByRole("region", { name: "Сравнить метаданные" }),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("checkbox", { name: /Включить/ }),
+	).not.toBeInTheDocument();
+	expect(
+		within(
+			screen.getByRole("region", { name: "Предпросмотр назначений" }),
+		).getByText(/Назначено файлов: 7/),
 	).toBeInTheDocument();
 	expect(
-		screen.getAllByRole("checkbox", { name: /Включить/ }).length,
-	).toBeGreaterThan(0);
-	expect(screen.getByText(/^Выбрано: \d+ \/ \d+/)).toBeInTheDocument();
-	expect(
-		screen.queryByText(/^\d+ Выбрано позиций для публикации:/),
-	).not.toBeInTheDocument();
+		screen.getByText(/Во входящих останутся файлы: 2/),
+	).toBeInTheDocument();
 
 	fireEvent.click(screen.getByRole("button", { name: "Вернуться к объекту" }));
 	expect(container.querySelector(".matching-commit")).toBeInTheDocument();
 	openPreview();
-	expect(screen.getByRole("heading", { name: /Предпросмотр:/ })).toHaveFocus();
+	expect(
+		screen.getByRole("heading", { name: "Предпросмотр назначений" }),
+	).toHaveFocus();
 	expect(scrollIntoView).toHaveBeenCalledTimes(2);
 });
 
@@ -249,9 +295,11 @@ it("does not move focus back to the preview after a locale change", () => {
 		</I18nProvider>,
 	);
 	fireEvent.click(
-		screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		screen.getByRole("button", { name: "Предпросмотр назначений" }),
 	);
-	const heading = screen.getByRole("heading", { name: /Предпросмотр:/ });
+	const heading = screen.getByRole("heading", {
+		name: "Предпросмотр назначений",
+	});
 	const switchLocale = screen.getByRole("button", { name: "Switch locale" });
 	switchLocale.focus();
 	fireEvent.click(switchLocale);
@@ -261,101 +309,92 @@ it("does not move focus back to the preview after a locale change", () => {
 	expect(scrollIntoView).toHaveBeenCalledTimes(1);
 });
 
-it("keeps stale plans blocked and retains the final confirmation step", () => {
+it("blocks saving a stale link preview without a confirmation dialog", () => {
 	render(<MatchingHarness />);
 	const openPreview = () =>
 		fireEvent.click(
-			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+			screen.getByRole("button", { name: "Предпросмотр назначений" }),
 		);
 	openPreview();
 
-	const previewConfirm = screen.getByRole("button", {
-		name: "Подтвердить публикацию",
-	});
-	expect(previewConfirm).toBeEnabled();
-	fireEvent.click(previewConfirm);
-	const dialog = screen.getByRole("dialog");
-	fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-	expect(dialog).not.toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Сохранить связи" })).toBeEnabled();
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
 	fireEvent.click(screen.getByRole("button", { name: "Change inventory" }));
 	expect(screen.getByRole("alert")).toHaveTextContent("Предпросмотр устарел");
 	expect(
-		screen.getByRole("button", { name: "Подтвердить публикацию" }),
+		screen.getByRole("button", { name: "Сохранить связи" }),
 	).toBeDisabled();
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
 	fireEvent.click(screen.getByRole("button", { name: "Вернуться к объекту" }));
 	openPreview();
-	fireEvent.click(
-		screen.getByRole("button", { name: "Подтвердить публикацию" }),
-	);
-	const finalDialog = screen.getByRole("dialog");
-	fireEvent.click(
-		within(finalDialog).getByRole("button", { name: "Подтвердить" }),
-	);
+	fireEvent.click(screen.getByRole("button", { name: "Сохранить связи" }));
 	expect(
-		screen.queryByRole("heading", { name: /Предпросмотр:/ }),
+		screen.getByRole("heading", { name: "Связи сопоставления сохранены" }),
+	).toHaveFocus();
+	expect(
+		screen.queryByRole("heading", { name: "Предпросмотр назначений" }),
 	).not.toBeInTheDocument();
 });
 
-it("shows reactive, nonblocking localized sort-collision notices in the matching preview", () => {
-	const providers = structuredClone(incomingFixtures.providerReleases);
-	const release = providers.find((item) => item.id === "p-north");
-	if (!release) throw new Error("Missing provider release fixture");
-	release.credits = [
-		{ artistId: "mira", credit: "Mira credit", joinPhrase: " & " },
-		{ artistId: "arden", credit: "Arden credit", joinPhrase: "" },
-	];
-	release.tracks = release.tracks.map((track) => ({
-		...track,
-		recordingCredits: [
-			{ artistId: "mira", creditName: "Mira credit", joinPhrase: " & " },
-			{ artistId: "arden", creditName: "Arden credit", joinPhrase: "" },
-		],
-	}));
-	const artists: CatalogArtist[] = [
-		{ id: "mira", name: "Shared sort" },
-		{ id: "arden", name: "Shared sort" },
-	];
+it("saves only matching links and leaves published objects byte-identical", () => {
+	const initialReleases = structuredClone(incomingFixtures.releases);
+	const publishedBefore = publishedSnapshot(initialReleases);
+	let savedReleases: IncomingReleases | undefined;
 
 	render(
-		<I18nProvider>
-			<LocaleSwitch />
-			<MatchingHarness artists={artists} providers={providers} />
-		</I18nProvider>,
+		<LinkSaveHarness
+			initialReleases={initialReleases}
+			onReleases={(next) => {
+				savedReleases = next;
+			}}
+		/>,
 	);
 	fireEvent.click(
-		screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		screen.getByRole("button", { name: "Предпросмотр назначений" }),
 	);
 	expect(
-		screen.getByText(
-			"Сортировочные теги исполнителей композиции пропущены: у разных артистов совпало имя сортировки.",
-			{ exact: false },
-		),
-	).toBeInTheDocument();
-	expect(
-		screen.getByText(
-			"Сортировочные теги исполнителей издания пропущены: у разных артистов совпало имя сортировки.",
-			{ exact: false },
-		),
-	).toBeInTheDocument();
-	const confirm = screen.getByRole("button", {
-		name: "Подтвердить публикацию",
-	});
-	expect(confirm).toBeEnabled();
+		screen.queryByRole("region", { name: "Сравнить метаданные" }),
+	).not.toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Сохранить связи" }));
 
-	fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
 	expect(
-		screen.getByText(
-			"Recording artist sort tags are omitted because different artists resolve to the same sort name.",
-			{ exact: false },
-		),
+		screen.getByRole("heading", { name: "Связи сопоставления сохранены" }),
+	).toHaveFocus();
+	const remaining = screen.getByRole("region", {
+		name: "Остались во входящих",
+	});
+	expect(
+		within(remaining).getByText("session fragment.flac"),
 	).toBeInTheDocument();
 	expect(
-		screen.getByText(
-			"Release artist sort tags are omitted because different artists resolve to the same sort name.",
-			{ exact: false },
-		),
+		within(remaining).getByText("03 - Northbound (live?).flac"),
 	).toBeInTheDocument();
-	expect(confirm).toBeEnabled();
+	expect(publishedSnapshot(savedReleases ?? [])).toBe(publishedBefore);
+
+	fireEvent.click(screen.getByRole("button", { name: "Проверить публикацию" }));
+	expect(
+		screen.getByRole("heading", { name: "Публикация по сохранённым связям" }),
+	).toHaveFocus();
+	expect(
+		screen.queryByRole("radio", { name: "Принудительная" }),
+	).not.toBeInTheDocument();
+	expect(publishedSnapshot(savedReleases ?? [])).toBe(publishedBefore);
+	fireEvent.click(screen.getByRole("button", { name: "К сохранённым связям" }));
+	expect(
+		screen.getByRole("button", { name: "Проверить публикацию" }),
+	).toHaveFocus();
+
+	fireEvent.click(
+		screen.getByRole("button", { name: "Продолжить сопоставление" }),
+	);
+	expect(
+		screen.getByRole("button", { name: "Выбрать session fragment.flac" }),
+	).toBeInTheDocument();
+	expect(
+		screen.getByRole("button", {
+			name: "Выбрать 03 - Northbound (live?).flac",
+		}),
+	).toBeInTheDocument();
 });

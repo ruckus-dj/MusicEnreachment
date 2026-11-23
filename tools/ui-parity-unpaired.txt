@@ -52,9 +52,13 @@ docs/app-design-react/src/features/local-catalog/localCatalogModel.ts
 docs/app-design-react/src/features/local-catalog/localProviderMessages.ts
 docs/app-design-react/src/features/local-catalog/localProviderModel.ts
 docs/app-design-react/src/features/matching/MatchingReleasePreparation.tsx
+docs/app-design-react/src/features/matching/MatchingReceiptPublicationView.tsx
 docs/app-design-react/src/features/matching/MatchingScreen.tsx
 docs/app-design-react/src/features/matching/MatchingSearchPicker.tsx
 docs/app-design-react/src/features/matching/matchingMessages.ts
+docs/app-design-react/src/features/matching/matchingLinks.ts
+docs/app-design-react/src/features/matching/matchingReceiptPublication.ts
+docs/app-design-react/src/features/matching/matchingReceiptPublicationController.ts
 docs/app-design-react/src/features/matching/matchingSearch.ts
 docs/app-design-react/src/features/matching/matchingSearchPickerMessages.ts
 docs/app-design-react/src/features/operations/OperationsScreen.tsx

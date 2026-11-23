@@ -54,6 +54,31 @@ export type IncomingGroup = {
 	reason: IncomingReason | string;
 	drafts: Record<string, Record<string, Assignment>>;
 };
+/** One exact position included in a saved matching result. */
+export type MatchingLinkReceiptPosition = {
+	trackId: string;
+	title: string;
+	position: number;
+	displayedNumber?: string;
+	sourceIds: string[];
+	selectedSourceId: string | null;
+	included: boolean;
+};
+/**
+ * Saved result of an explicit link save. The receipt is domain state owned by
+ * the data provider; presentation code only maps it to a typed view.
+ */
+export type MatchingLinkReceipt = {
+	id: string;
+	groupId: string;
+	groupTitle: string;
+	releaseId: string;
+	releaseTitle: string;
+	providerReleaseId: string | null;
+	positions: MatchingLinkReceiptPosition[];
+	remainingFileIds: string[];
+	remainingFileNames: string[];
+};
 export type IncomingState = {
 	groups: IncomingGroup[];
 	groupId: string;
@@ -70,6 +95,7 @@ export type IncomingState = {
 	inventoryVersion: number;
 	plan: IncomingPlan | null;
 	confirmDowngrade: boolean;
+	receipts: MatchingLinkReceipt[];
 };
 
 const fixtures = fixtureData as unknown as {
@@ -134,6 +160,7 @@ export function createIncomingState(): IncomingState {
 		inventoryVersion: 0,
 		plan: null,
 		confirmDowngrade: false,
+		receipts: [],
 	};
 }
 
