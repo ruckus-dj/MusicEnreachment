@@ -856,6 +856,7 @@ describe("incoming manual group review", () => {
         order: olderOrder,
         groupId: ids.group,
         releaseId: ids.releaseOne,
+        requestId: "older-matching-request",
         response: { ...preview(1), omitted_member_ids: [] },
         omittedFileLabels: {},
       });

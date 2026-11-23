@@ -9,6 +9,7 @@ type ManualConfirmReceipt = {
   groupId: string;
   /** Provider release identity the confirmation was validated against. */
   releaseId: string;
+  requestId: string;
   order: number;
   response: MatchingManualPreview;
   omittedFileLabels: Record<string, string>;
@@ -19,6 +20,7 @@ type LocalConfirmReceipt = {
   groupId: string;
   /** Local provider release identity the confirmation was validated against. */
   releaseId: string;
+  requestId: string;
   order: number;
   response: MatchingLocalPreview;
 };

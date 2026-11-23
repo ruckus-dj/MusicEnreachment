@@ -81,6 +81,7 @@ export interface LocalMatchingProps {
   onConfirmed?: (
     receipt: MatchingLocalPreview,
     order: number,
+    requestId: string,
   ) => void | Promise<void>;
 }
 
@@ -612,7 +613,11 @@ export function useLocalMatching({
         notice: { key: "confirmed" },
       }));
       try {
-        await onConfirmed?.(response.data, pendingConfirmation.order);
+        await onConfirmed?.(
+          response.data,
+          pendingConfirmation.order,
+          pendingConfirmation.body.request_id,
+        );
       } catch (reason) {
         updateState(targetGroupID, (latest) => ({
           ...latest,

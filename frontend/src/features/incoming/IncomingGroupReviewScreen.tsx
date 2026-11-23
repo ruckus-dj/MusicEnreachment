@@ -579,12 +579,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     files,
     authorityRevision: review?.authority_revision,
     preferredReleaseId: preferredLocalReleaseId,
-    onConfirmed: async (result, order) => {
+    onConfirmed: async (result, order, requestId) => {
       saveIncomingConfirmReceipt(queryClient, {
         kind: "local",
         order,
         groupId: result.group_id,
         releaseId: result.provider_release_id,
+        requestId,
         response: result,
       });
       if (
@@ -937,6 +938,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         order: preserved.order,
         groupId: preserved.groupId,
         releaseId: preserved.body.provider_release_id,
+        requestId: preserved.body.request_id,
         response: response.data,
         omittedFileLabels: Object.fromEntries(
           (response.data.omitted_member_ids ?? []).map((memberId) => [

@@ -82,6 +82,49 @@ func seedFirstPublicationMatchingReceipt(t *testing.T, ctx context.Context, db *
 	}
 }
 
+func seedCompetingFirstPublicationSource(t *testing.T, ctx context.Context, db *bun.DB, trackID, sourceWorkID uuid.UUID, root string, content []byte, mtime time.Time) {
+	t.Helper()
+	const relative = "competing.flac"
+	native := filepath.Join(root, relative)
+	if err := os.WriteFile(native, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(native, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	variant, location, work := uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, stmt := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO media_variant (id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count)
+				SELECT ?,v.size_bytes,v.analysis_policy_version,v.ffprobe_version,v.ffprobe_json,v.observed_tags,v.inspected_at,v.applied_operation_id,v.audio_stream_count
+				FROM media_variant v JOIN source_work_variant_identity i ON i.media_variant_id=v.id WHERE i.work_id=?`, []any{variant, sourceWorkID}},
+			{`INSERT INTO source_location (id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id)
+				SELECT ?,w.source_root_id,?,w.size_bytes,w.mtime,l.last_seen_scan_generation,'audio',?
+				FROM source_analysis_work w JOIN source_location l ON l.id=w.current_location_id WHERE w.id=?`, []any{location, relative, variant, sourceWorkID}},
+			{`INSERT INTO source_analysis_work (id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id,current_location_id)
+				SELECT ?,?,source_root_id,configured_path,inventory_path,?,size_bytes,mtime,false,origin_scan_operation_id,? FROM source_analysis_work WHERE id=?`,
+				[]any{work, location, relative, location, sourceWorkID}},
+			{`INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, []any{work, variant}},
+			{`INSERT INTO source_analysis_step(work_id,step,state,success_probe_variant_id,success_reuse_origin) VALUES (?,'probe','succeeded',?,'executed')`, []any{work, variant}},
+			{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, []any{uuid.New(), trackID, variant}},
+		} {
+			result, err := tx.NewRaw(stmt.query, stmt.args...).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if n, err := result.RowsAffected(); err != nil || n != 1 {
+				return fmt.Errorf("expected one fixture row, got %d (error %v)", n, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed competing linked source: %v", err)
+	}
+}
+
 type sourceEncoderTagFixture struct{}
 
 // publicationDeliveryScenario lets lifecycle regressions drive more than one
@@ -425,6 +468,11 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			var preview FirstPublicationPreview
 			if templateScenario.fromMatchingReceipt {
 				receipt = seedFirstPublicationMatchingReceipt(t, ctx, db, releaseID, positionID, trackID, variantID, workID)
+				seedCompetingFirstPublicationSource(t, ctx, db, trackID, workID, sourceRoot, sourceBytes, oldMTime)
+				snapshot, readErr := manager.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
+				if readErr != nil || snapshot == nil || len(snapshot.Sources) != 2 {
+					t.Fatalf("both linked sources must be eligible for preview: %+v, %v", snapshot, readErr)
+				}
 				preview, err = publications.PreviewFirstFromMatchingReceipt(ctx, releaseID, positionID, *receipt, nil)
 				expectedAuthorityMode = "manual"
 			} else {
@@ -435,13 +483,34 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			}
 			var sourceChoice *FirstPublicationSourceChoice
 			if receipt != nil {
-				if preview.SelectedSource.AssociationID != receipt.TrackSourceID {
-					t.Fatalf("receipt preview chose an unrelated association: %+v", preview.SelectedSource)
+				if preview.SelectedSource.AssociationID != receipt.TrackSourceID || len(preview.SourceCandidates) != 1 ||
+					preview.SourceCandidates[0].AssociationID != receipt.TrackSourceID {
+					t.Fatalf("receipt preview exposed an unrelated association: %+v", preview.SourceCandidates)
 				}
 				sourceChoice = &FirstPublicationSourceChoice{
 					LocationID:     preview.SelectedSource.LocationID,
 					MediaVariantID: preview.SelectedSource.MediaVariantID,
 					StreamIndex:    preview.SelectedSource.StreamIndex,
+				}
+				substitute := *receipt
+				substitute.RequestID = uuid.New()
+				copied, err := db.NewRaw(`INSERT INTO local_matching_receipt(request_id,group_id,intent_hash,preview_digest,response)
+					SELECT ?,group_id,intent_hash,preview_digest,response FROM local_matching_receipt WHERE request_id=?`,
+					substitute.RequestID, receipt.RequestID).Exec(ctx)
+				if err != nil {
+					t.Fatalf("seed a second valid receipt: %v", err)
+				}
+				if n, err := copied.RowsAffected(); err != nil || n != 1 {
+					t.Fatalf("copied %d receipts, err=%v; want one", n, err)
+				}
+				other, err := publications.PreviewFirstFromMatchingReceipt(ctx, releaseID, positionID, substitute, nil)
+				if err != nil || len(other.Blockers) != 0 || other.ContextDigest == preview.ContextDigest {
+					t.Fatalf("a second valid receipt must produce a distinct preview digest: %+v, %v", other, err)
+				}
+				if _, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{
+					PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch, SourceChoice: sourceChoice, Receipt: &substitute,
+				}); !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+					t.Fatalf("admit a substituted receipt with the original digest: %v; want conflict", err)
 				}
 			}
 			for _, option := range confirmation {
