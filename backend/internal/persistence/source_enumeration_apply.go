@@ -146,16 +146,14 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			if unchanged {
 				status, safeError, mediaVariant = current.ProbeStatus, current.SafeError, current.MediaVariantID
 			}
-			if _, err := tx.NewRaw(`INSERT INTO source_location (id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,safe_error,media_variant_id)
+			var locationID uuid.UUID
+			if err := tx.NewRaw(`INSERT INTO source_location (id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,safe_error,media_variant_id)
 				VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (source_root_id,relative_path) DO UPDATE SET
 				size_bytes=EXCLUDED.size_bytes,mtime=EXCLUDED.mtime,last_seen_scan_generation=EXCLUDED.last_seen_scan_generation,
-				probe_status=EXCLUDED.probe_status,safe_error=EXCLUDED.safe_error,media_variant_id=EXCLUDED.media_variant_id,updated_at=now()`,
-				current.ID, root.ID, candidate.RelativePath, candidate.SizeBytes, sourceAnalysisMtime(candidate.Mtime), generation, status, safeError, mediaVariant).Exec(ctx); err != nil {
+				probe_status=EXCLUDED.probe_status,safe_error=EXCLUDED.safe_error,media_variant_id=EXCLUDED.media_variant_id,updated_at=now()
+				RETURNING id`,
+				current.ID, root.ID, candidate.RelativePath, candidate.SizeBytes, sourceAnalysisMtime(candidate.Mtime), generation, status, safeError, mediaVariant).Scan(ctx, &locationID); err != nil {
 				return fmt.Errorf("apply source enumeration: upsert location %q: %w", candidate.RelativePath, err)
-			}
-			var locationID uuid.UUID
-			if err := tx.NewRaw(`SELECT id FROM source_location WHERE source_root_id=? AND relative_path=?`, root.ID, candidate.RelativePath).Scan(ctx, &locationID); err != nil {
-				return fmt.Errorf("apply source enumeration: resolve location %q: %w", candidate.RelativePath, err)
 			}
 			if _, err := tx.NewRaw(`DELETE FROM source_cleanup_completion WHERE source_root_id=? AND (relative_path=? OR source_location_id=?)`, root.ID, candidate.RelativePath, locationID).Exec(ctx); err != nil {
 				return fmt.Errorf("apply source enumeration: invalidate cleanup completion for %q: %w", candidate.RelativePath, err)
@@ -228,19 +226,22 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 }
 
 func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationID uuid.UUID) ([]uuid.UUID, error) {
-	locations := make([]SourceLocation, 0)
-	if err := tx.NewSelect().Model(&locations).Where("source_root_id=?", rootID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
+	var locations []struct {
+		ID           uuid.UUID `bun:"id"`
+		RelativePath string    `bun:"relative_path"`
+	}
+	if err := tx.NewRaw(`SELECT location.id, location.relative_path
+		FROM source_location location
+		WHERE location.source_root_id=?
+		AND NOT EXISTS (
+			SELECT 1 FROM source_scan_candidate candidate
+			WHERE candidate.operation_id=? AND candidate.relative_path=location.relative_path
+		)
+		ORDER BY location.relative_path FOR UPDATE OF location`, rootID, operationID).Scan(ctx, &locations); err != nil {
 		return nil, err
 	}
 	missingVariantIDs := make([]uuid.UUID, 0)
 	for _, location := range locations {
-		var exists bool
-		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM source_scan_candidate WHERE operation_id=? AND relative_path=?)`, operationID, location.RelativePath).Scan(ctx, &exists); err != nil {
-			return nil, err
-		}
-		if exists {
-			continue
-		}
 		held, err := sourceHoldExists(ctx, tx, rootID, location.ID, uuid.Nil)
 		if err != nil {
 			return nil, err

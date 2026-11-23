@@ -280,6 +280,26 @@ func TestApplySourceEnumerationCleansAssociationsOnlyForVariantsWithoutLocations
 	}
 	setOperationState(t, ctx, database, first.ID, "succeeded")
 
+	foreignRoot := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-association-cleanup-foreign")
+	foreignSeed := newSourceScanOperation(t, ctx, database, foreignRoot, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, foreignSeed.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate(paths[0], 5, mtime),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(foreignSeed, foreignRoot, nil)); err != nil {
+		t.Fatalf("apply foreign enumeration: %v", err)
+	}
+	setOperationState(t, ctx, database, foreignSeed.ID, "succeeded")
+	foreignLocation := readLocation(t, ctx, database, foreignRoot.ID, paths[0])
+	foreignLive := newSourceScanOperation(t, ctx, database, foreignRoot, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, foreignLive.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate(paths[0], 5, mtime),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	survivor := readLocation(t, ctx, database, root.ID, paths[3])
+
 	second := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
 		enumerationCandidate(paths[3], 5, mtime),
@@ -298,6 +318,13 @@ func TestApplySourceEnumerationCleansAssociationsOnlyForVariantsWithoutLocations
 	if _, err := readLocationResult(ctx, database, root.ID, paths[1]); err == nil {
 		t.Fatal("genuinely missing digestless location was retained")
 	}
+	if foreignAfter := readLocation(t, ctx, database, foreignRoot.ID, paths[0]); foreignAfter.ID != foreignLocation.ID {
+		t.Fatalf("foreign location %q identity changed: %s -> %s", paths[0], foreignLocation.ID, foreignAfter.ID)
+	}
+	if survivorAfter := readLocation(t, ctx, database, root.ID, paths[3]); survivorAfter.ID != survivor.ID {
+		t.Fatalf("surviving location %q identity changed: %s -> %s", paths[3], survivor.ID, survivorAfter.ID)
+	}
+	assertCandidateCount(t, ctx, database, foreignLive.ID, 1)
 }
 
 func TestApplySourceEnumerationChangedFileDoesNotInheritVariantOrCleanItsAssociationPostgreSQL(t *testing.T) {
