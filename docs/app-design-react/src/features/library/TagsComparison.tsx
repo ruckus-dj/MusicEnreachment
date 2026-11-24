@@ -10,17 +10,15 @@ import {
 import { useI18n } from "../../i18n/I18nProvider";
 import {
 	comparisonControls,
-	comparisonDifference,
 	comparisonNote,
-	comparisonRow,
-	comparisonRowHeading,
 	metadataPanel,
 	objectActions,
-	previewTable,
-	previewTableCell,
-	previewTableHeading,
-	previewTableWrap,
 } from "../../components/styles/matchingStyles";
+import {
+	libraryTagComparisonCopy,
+	LibraryTagComparisonTable,
+	LibraryTagDifferencesControl,
+} from "./LibraryTagComparisonTable";
 import { metadataFieldLabel, navidromeFields } from "../../metadata/registry";
 import {
 	formatTrackMessage,
@@ -226,7 +224,7 @@ export function TagsComparison({
 							if (value) onSelectFile?.(track.id, value);
 						}}
 					>
-						<Label>{trackMessage(locale, "sourceFile")}</Label>
+						<Label>{libraryTagComparisonCopy[locale].source}</Label>
 						<Button>
 							<SelectValue />
 							<span aria-hidden="true">⌄</span>
@@ -275,57 +273,32 @@ export function TagsComparison({
 					{trackMessage(locale, "allFields")}
 				</Checkbox>
 			)}
-			<div className={previewTableWrap}>
-				<table className={`${previewTable} min-w-[720px]`}>
-					<thead>
-						<tr>
-							{[
-								trackMessage(locale, "field"),
-								trackMessage(locale, "sourceFile"),
-								trackMessage(locale, "providerCache"),
-								trackMessage(locale, "localLibrary"),
-								trackMessage(locale, "currentPublicationColumn"),
-							].map((heading) => (
-								<th className={previewTableHeading} scope="col" key={heading}>
-									{heading}
-								</th>
-							))}
-						</tr>
-					</thead>
-					<tbody>
-						{rows.map(({ key, label, values, different }) => (
-							<tr className={comparisonRow} key={key}>
-								<th
-									scope="row"
-									className={`${comparisonRowHeading} ${different ? comparisonDifference : ""}`}
-								>
-									{label} · {key}
-								</th>
-								{values.map((value, index) => (
-									<td className={previewTableCell} key={`${key}:${index}`}>
-										{value === null ? (
-											<span className="block text-[11px] text-[var(--muted)]">
-												{index === 1
-													? trackMessage(locale, "noProviderLink")
-													: trackMessage(locale, "notPublished")}
-											</span>
-										) : value.length ? (
-											value.map((item, itemIndex) => (
-												<span key={`${itemIndex}:${item}`}>
-													{itemIndex > 0 && <br />}
-													{item}
-												</span>
-											))
-										) : (
-											"—"
-										)}
-									</td>
-								))}
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
+			<LibraryTagComparisonTable
+				fieldLabel={libraryTagComparisonCopy[locale].field}
+				columns={[
+					{
+						id: "source",
+						label: libraryTagComparisonCopy[locale].source,
+						unavailable: trackMessage(locale, "notPublished"),
+					},
+					{
+						id: "provider",
+						label: trackMessage(locale, "providerCache"),
+						unavailable: trackMessage(locale, "noProviderLink"),
+					},
+					{
+						id: "local",
+						label: trackMessage(locale, "localLibrary"),
+						unavailable: trackMessage(locale, "notPublished"),
+					},
+					{
+						id: "publication",
+						label: libraryTagComparisonCopy[locale].current,
+						unavailable: trackMessage(locale, "notPublished"),
+					},
+				]}
+				rows={rows}
+			/>
 			<p className={comparisonNote}>
 				{file?.path ?? trackMessage(locale, "noSourceSelected")}
 				<br />
@@ -337,10 +310,11 @@ export function TagsComparison({
 					: trackMessage(locale, "publicationAbsentNote")}
 			</p>
 			<div className={objectActions}>
-				<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
-					<span className="checkbox" />
-					{trackMessage(locale, "onlyDifferences")}
-				</Checkbox>
+				<LibraryTagDifferencesControl
+					locale={locale}
+					selected={differencesOnly}
+					onChange={setDifferencesOnly}
+				/>
 				{onPreview && (
 					<Button onPress={() => onPreview([track.id])}>
 						{trackMessage(locale, "previewPublication")}

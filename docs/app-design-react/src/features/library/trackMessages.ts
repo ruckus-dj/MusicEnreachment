@@ -38,7 +38,6 @@ export const trackMessages = createNamespace({
 		path: "Path",
 		localChangesHelp:
 			"Local metadata is compared with the last successful publication.",
-		compareFileAndPublication: "Compare source and publication tags",
 		fileChanged: "Changed outside the application",
 		fileMissing: "Missing",
 		publicationRootUnavailable:
@@ -52,7 +51,6 @@ export const trackMessages = createNamespace({
 		noPositions: "No positions to compare.",
 		position: "Position",
 		comparisonPosition: "Position to compare",
-		sourceFile: "Source file",
 		comparisonSourceFile: "Source file to compare",
 		noSourceSelected: "No source selected",
 		tagsFor: "Tag comparison for {scope}",
@@ -60,15 +58,12 @@ export const trackMessages = createNamespace({
 		scopeRelease: "Release",
 		scopeTrack: "Track",
 		allFields: "All fields",
-		field: "Field",
 		providerCache: "Provider · cached",
 		localLibrary: "Local library",
-		currentPublicationColumn: "Current publication",
 		noProviderLink: "No linked provider data",
 		notPublished: "Not published",
 		publicationAbsentNote:
 			"No publication exists; the empty column is not replaced with current metadata.",
-		onlyDifferences: "Differences only",
 		publicationPath: "Publication: {path} · read {readAt}",
 		fixedFile: "Comparing file",
 	},
@@ -107,7 +102,6 @@ export const trackMessages = createNamespace({
 		path: "Путь",
 		localChangesHelp:
 			"Локальные метаданные сравниваются с последней успешной публикацией.",
-		compareFileAndPublication: "Сравнить теги источника и публикации",
 		fileChanged: "Изменён вне приложения",
 		fileMissing: "Отсутствует",
 		publicationRootUnavailable:
@@ -121,7 +115,6 @@ export const trackMessages = createNamespace({
 		noPositions: "Позиции для сравнения отсутствуют.",
 		position: "Позиция",
 		comparisonPosition: "Позиция сравнения",
-		sourceFile: "Исходный файл",
 		comparisonSourceFile: "Исходный файл для сравнения",
 		noSourceSelected: "Исходник не выбран",
 		tagsFor: "Сравнение тегов: {scope}",
@@ -129,15 +122,12 @@ export const trackMessages = createNamespace({
 		scopeRelease: "Альбом",
 		scopeTrack: "Трек",
 		allFields: "Все поля",
-		field: "Поле",
 		providerCache: "Провайдер · кэш",
 		localLibrary: "Локальная медиатека",
-		currentPublicationColumn: "Сейчас в публикации",
 		noProviderLink: "Нет данных связанного провайдера",
 		notPublished: "Не опубликован",
 		publicationAbsentNote:
 			"Публикации нет; пустая колонка не подменяется текущими метаданными.",
-		onlyDifferences: "Только отличия",
 		publicationPath: "Публикация: {path} · прочитано {readAt}",
 		fixedFile: "Сравниваемый файл",
 	},

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
 import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -27,6 +27,7 @@ import {
 } from "./LibraryPositionHeadingView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
+import { LibraryPositionTagsDisclosure } from "./LibraryPositionTagsDisclosure";
 import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
 import {
 	LibraryPositionPreviewButton,
@@ -76,7 +77,7 @@ export function TrackScreen({
 }) {
 	const { locale } = useI18n();
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
-	const tagComparisonRef = useRef<HTMLDetailsElement>(null);
+	const [tagComparisonOpen, setTagComparisonOpen] = useState(false);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const inspectedFileId =
@@ -85,7 +86,7 @@ export function TrackScreen({
 			: track.sourceId;
 	const inspectSource = (id: string) => {
 		setInspectionFileId(id);
-		if (tagComparisonRef.current) tagComparisonRef.current.open = true;
+		setTagComparisonOpen(true);
 	};
 	const provider = originalProviders.find((item) =>
 		item.tracks.some((candidate) => candidate.id === track.providerTrackId),
@@ -168,7 +169,9 @@ export function TrackScreen({
 						})}
 						choice={{ value: track.sourceId ?? "", onChange: onSource }}
 						inspection={{
-							value: inspectedFileId ?? undefined,
+							value: tagComparisonOpen
+								? (inspectedFileId ?? undefined)
+								: undefined,
 							onChange: inspectSource,
 						}}
 					/>
@@ -311,13 +314,11 @@ export function TrackScreen({
 					</LibraryPositionTechnicalDetailsView>
 				}
 			/>
-			<details
-				ref={tagComparisonRef}
-				className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
+			<LibraryPositionTagsDisclosure
+				locale={locale}
+				open={tagComparisonOpen}
+				onOpenChange={setTagComparisonOpen}
 			>
-				<summary className="cursor-pointer font-semibold">
-					{trackMessage(locale, "compareFileAndPublication")}
-				</summary>
 				<TagsComparison
 					releases={[release]}
 					artists={artists}
@@ -328,7 +329,7 @@ export function TrackScreen({
 					onPreview={onMetadataPreview}
 					fixedContext
 				/>
-			</details>
+			</LibraryPositionTagsDisclosure>
 		</section>
 	);
 }

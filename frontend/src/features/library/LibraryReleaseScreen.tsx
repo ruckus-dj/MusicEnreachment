@@ -42,6 +42,8 @@ import {
   libraryPositionPageClassName,
   libraryPositionTitleId,
 } from "./LibraryPositionHeadingView";
+import { LibraryPositionTagEvidence } from "./LibraryPositionTagEvidence";
+import { LibraryPositionTagsDisclosure } from "./LibraryPositionTagsDisclosure";
 import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
 import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
 import {
@@ -149,6 +151,19 @@ export function LibraryReleaseScreen({
   const [release, setRelease] = useState<LibraryReleaseDetailResponse>();
   const [loadedReleaseID, setLoadedReleaseID] = useState("");
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
+  const [tagInspection, setTagInspection] = useState<{
+    releaseId: string;
+    positionId: string;
+    variantId?: string;
+    open: boolean;
+  }>();
+  useEffect(() => {
+    setTagInspection((current) =>
+      current?.releaseId === releaseId && current.positionId === positionId
+        ? current
+        : undefined,
+    );
+  }, [releaseId, positionId]);
   const [selectedCover, setSelectedCover] = useState<{
     scope: typeof scope.current;
     releaseID: string;
@@ -1680,6 +1695,15 @@ export function LibraryReleaseScreen({
         const hasCurrentPublication = publication
           ? Boolean(publication.current_generation || publication.current_path)
           : Boolean(track.publication?.generation);
+        const inspection =
+          showWorkspace &&
+          tagInspection?.releaseId === releaseId &&
+          tagInspection.positionId === track.id
+            ? tagInspection
+            : undefined;
+        const inspectedSource = (track.sources ?? []).find(
+          (source) => source.media_variant_id === inspection?.variantId,
+        );
         const currentDeletionIdentity =
           publication?.current_generation ??
           publication?.current_path ??
@@ -1746,7 +1770,23 @@ export function LibraryReleaseScreen({
               <LibraryPositionWorkspace
                 locale={locale}
                 sources={
-                  showWorkspace ? <PositionSources track={track} /> : undefined
+                  showWorkspace ? (
+                    <PositionSources
+                      track={track}
+                      inspection={{
+                        value: inspection?.open
+                          ? inspectedSource?.media_variant_id
+                          : undefined,
+                        onChange: (variantId) =>
+                          setTagInspection({
+                            releaseId,
+                            positionId: track.id,
+                            variantId,
+                            open: true,
+                          }),
+                      }}
+                    />
+                  ) : undefined
                 }
                 editors={
                   showWorkspace ? (
@@ -2117,6 +2157,41 @@ export function LibraryReleaseScreen({
                   ) : undefined
                 }
               />
+              {showWorkspace && (
+                <LibraryPositionTagsDisclosure
+                  locale={locale}
+                  open={inspection?.open ?? false}
+                  onOpenChange={(open) => {
+                    if (open === (inspection?.open ?? false)) return;
+                    setTagInspection({
+                      releaseId,
+                      positionId: track.id,
+                      variantId: inspection?.variantId,
+                      open,
+                    });
+                  }}
+                >
+                  <LibraryPositionTagEvidence
+                    key={inspectedSource?.media_variant_id}
+                    locale={locale}
+                    open={inspection?.open ?? false}
+                    source={inspectedSource}
+                    current={
+                      currentTags
+                        ? { state: "saved", tags: currentTags }
+                        : position?.readError
+                          ? { state: "unavailable" }
+                          : !publication
+                            ? { state: "loading" }
+                            : {
+                                state: hasCurrentPublication
+                                  ? "unavailable"
+                                  : "absent",
+                              }
+                    }
+                  />
+                </LibraryPositionTagsDisclosure>
+              )}
             </article>
             {!positionId && position?.readError ? (
               <div className="library-release-position-read-error" role="alert">

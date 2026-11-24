@@ -171,6 +171,7 @@ frontend/src/features/library/LibraryAlbumRows.tsx
 frontend/src/features/library/LibraryArtistMetadataCard.tsx
 frontend/src/features/library/LibraryArtistScreen.tsx
 frontend/src/features/library/LibraryDeletionControl.tsx
+frontend/src/features/library/LibraryPositionTagEvidence.tsx
 frontend/src/features/library/LibraryReleaseFacts.tsx
 frontend/src/features/library/LibraryReleaseScreen.tsx
 frontend/src/features/library/LibraryScreen.tsx

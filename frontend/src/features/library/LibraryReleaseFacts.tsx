@@ -231,8 +231,10 @@ function probeStatusLabel(status: string, locale: "en" | "ru") {
 
 export function PositionSources({
   track,
+  inspection,
 }: {
   track: LibraryReleaseTrackResponse;
+  inspection?: { value?: string; onChange: (variantId: string) => void };
 }) {
   const { locale } = useI18n();
   const copy =
@@ -261,6 +263,7 @@ export function PositionSources({
     <LibraryPositionSourcesView
       locale={locale}
       position={positionNumber(track)}
+      inspection={inspection}
       sources={(track.sources ?? []).map((source, index) => ({
         id: source.media_variant_id,
         label: String(index + 1),
