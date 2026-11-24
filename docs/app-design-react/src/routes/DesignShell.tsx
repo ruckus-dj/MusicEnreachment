@@ -39,7 +39,6 @@ export function DesignShell({
 		"tags",
 		"create-release",
 		"publication-preview",
-		"publications",
 		"publication-list",
 	].includes(route)
 		? "library"

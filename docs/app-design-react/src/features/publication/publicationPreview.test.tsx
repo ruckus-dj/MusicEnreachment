@@ -9,15 +9,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
 	originalArtists,
 	originalFiles,
-	originalProviders,
 	originalReleases,
 } from "../library/catalogData";
 import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import {
 	createIncomingState,
-	incomingFixtures,
-	makePlan,
 	makeReleasePlan,
 	providerReleases,
 } from "../incoming/incomingModel";
@@ -143,7 +140,6 @@ it("localizes the publication reason before adding artist warnings", () => {
 				onPlan={vi.fn()}
 				onReleases={vi.fn()}
 				onSuccess={vi.fn()}
-				onBack={vi.fn()}
 			/>
 		</I18nProvider>,
 	);
@@ -184,40 +180,6 @@ it("bulk metadata preview renders the shared publication flow and current facts"
 	).toBeTruthy();
 });
 
-it("incoming match preview also uses the shared publication confirmation", () => {
-	const state = createIncomingState();
-	state.groupId = "north";
-	const plan = makePlan(
-		state,
-		incomingFixtures.files,
-		incomingFixtures.releases,
-	);
-	if (!plan) throw new Error("Missing incoming plan fixture");
-	const { container } = render(
-		<ContextPublicationPreview
-			plan={plan}
-			files={incomingFixtures.files}
-			releases={incomingFixtures.releases}
-			providers={originalProviders}
-			artists={originalArtists}
-			inventoryVersion={state.inventoryVersion}
-			confirmDowngrade={false}
-			onPlan={vi.fn()}
-			onReleases={vi.fn()}
-			onSuccess={vi.fn()}
-			onBack={vi.fn()}
-		/>,
-	);
-
-	expect(screen.getByRole("heading", { name: /Предпросмотр:/ })).toBeTruthy();
-	expect(
-		screen.getByRole("button", {
-			name: publicationMessage("ru", "confirmPublication"),
-		}),
-	).toBeTruthy();
-	expect(container.querySelector("[aria-label^='Предпросмотр:']")).toBeTruthy();
-});
-
 it("compares one CURRENT read-only and confirms an explicit republish without a dialog", () => {
 	const state = createIncomingState();
 	const plan = makeReleasePlan(
@@ -244,7 +206,6 @@ it("compares one CURRENT read-only and confirms an explicit republish without a 
 			onPlan={vi.fn()}
 			onReleases={onReleases}
 			onSuccess={vi.fn()}
-			onBack={vi.fn()}
 		/>
 	);
 	const { container, rerender } = render(view(false));
@@ -257,16 +218,9 @@ it("compares one CURRENT read-only and confirms an explicit republish without a 
 
 	rerender(view(true));
 	expect(
-		screen.getByRole("heading", {
-			name: publicationMessage("ru", "contextTitle").replace(
-				"{title}",
-				release.title,
-			),
-		}),
-	).toBeTruthy();
-	expect(container.querySelector("[aria-label^='Предпросмотр:']")).toBeTruthy();
+		screen.getByRole("region", { name: copy.section }),
+	).toBeInTheDocument();
 	expect(container.textContent).toContain("/current-publication-root/");
-	expect(container.textContent).toContain("MKA");
 	expect(container.textContent).not.toContain(
 		`${publishedTrack.published!.codec} → MKA`,
 	);
@@ -286,6 +240,11 @@ it("compares one CURRENT read-only and confirms an explicit republish without a 
 	expect(screen.getByRole("alert")).toHaveTextContent(
 		publicationMessage("ru", "stalePreview"),
 	);
+
+	changedTrack.published!.readAt = publishedTrack.published!.readAt;
+	changedTrack.title = "Renamed after preview";
+	rerender(view(true, fixturePublicationDestination, changed));
+	expect(confirm).toBeDisabled();
 
 	rerender(view(true, fixturePublicationDestination));
 	expect(confirm).toBeEnabled();

@@ -5,6 +5,7 @@ import { Button, TabPanel, Tabs } from "../components/ui";
 import { IncomingScreen } from "../features/incoming/IncomingScreen";
 import {
 	createIncomingState,
+	type IncomingPlan,
 	makeReleasePlan,
 } from "../features/incoming/incomingModel";
 import {
@@ -127,6 +128,7 @@ import {
 } from "../fixtures/useOperationsDemoProvider";
 import { useSourceScanDemoProvider } from "../fixtures/useSourceScanDemoProvider";
 import { useI18n } from "../i18n";
+import { formatUiNotice, type UiNotice } from "../infrastructure/uiNotice";
 import { ShellContent } from "../routes/ShellView";
 
 const subscribeRoute = (listener: () => void) => {
@@ -370,8 +372,19 @@ export function CatalogDemo({
 		positions: LibrarySelectionPreviewPosition[];
 		state: LibrarySelectionPreviewState;
 	} | null>(null);
+	const [positionPreview, setPositionPreview] = useState<{
+		plan: IncomingPlan;
+		confirmDowngrade: boolean;
+	} | null>(null);
+	const [positionNotice, setPositionNotice] = useState<{
+		releaseId: string;
+		positionId: string;
+		notice: UiNotice;
+	} | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
+		setPositionPreview(null);
+		setPositionNotice(null);
 	}, [route]);
 	const [preview, setPreview] = useState(false);
 	const [previewMode, setPreviewMode] =
@@ -756,17 +769,16 @@ export function CatalogDemo({
 		);
 		return true;
 	};
-	const openContextPublication = (
+	const openPositionPreview = (
 		release: (typeof releases)[number],
-		trackId: string | null = null,
+		trackId: string,
 		force = false,
 	) => {
-		setIncoming((current) => ({
-			...current,
-			plan: { ...makeReleasePlan(current, release, files, trackId), force },
+		setPositionNotice(null);
+		setPositionPreview({
+			plan: { ...makeReleasePlan(incoming, release, files, trackId), force },
 			confirmDowngrade: false,
-		}));
-		window.location.hash = "publications";
+		});
 	};
 	const selectionPreviewDialog = selectionPreview && (
 		<LibrarySelectionPreviewView
@@ -810,43 +822,6 @@ export function CatalogDemo({
 						<a href="#library">{msg("goToLibrary")}</a>
 					</>
 				)}
-			</section>
-		);
-	if (route === "publications")
-		return (
-			<section className={screenLayout}>
-				<ContextPublicationPreview
-					destination={publicationDestination}
-					plan={incoming.plan}
-					files={files}
-					releases={releases}
-					providers={providers}
-					artists={providerArtists}
-					inventoryVersion={incoming.inventoryVersion}
-					confirmDowngrade={incoming.confirmDowngrade}
-					onPlan={(plan, confirmDowngrade) =>
-						setIncoming((current) => ({
-							...current,
-							plan,
-							confirmDowngrade: confirmDowngrade ?? current.confirmDowngrade,
-						}))
-					}
-					onReleases={setImportedReleases}
-					onSuccess={(notice) => {
-						setIncoming((current) => ({
-							...current,
-							notice: "",
-							noticeDescriptor: null,
-							uiNotice: notice,
-						}));
-						window.location.hash = "review";
-					}}
-					onBack={() => {
-						window.location.hash = incoming.plan?.localReleaseId
-							? `release/${incoming.plan.localReleaseId}`
-							: "library";
-					}}
-				/>
 			</section>
 		);
 	if (route.startsWith("artist/")) {
@@ -975,12 +950,66 @@ export function CatalogDemo({
 				</section>
 			);
 		const identity = recordingIdentity(track);
+		const activePositionPreview =
+			positionPreview &&
+			positionPreview.plan.positionId === track.id &&
+			positionPreview.plan.localReleaseId === release.id
+				? positionPreview
+				: null;
+		const activePositionNotice =
+			positionNotice &&
+			positionNotice.releaseId === release.id &&
+			positionNotice.positionId === track.id
+				? positionNotice.notice
+				: null;
+		const publicationPreview =
+			activePositionPreview || activePositionNotice ? (
+				<>
+					{activePositionNotice && (
+						<p role="status">{formatUiNotice(locale, activePositionNotice)}</p>
+					)}
+					{activePositionPreview && (
+						<ContextPublicationPreview
+							destination={publicationDestination}
+							plan={activePositionPreview.plan}
+							files={files}
+							releases={releases}
+							providers={providers}
+							artists={providerArtists}
+							inventoryVersion={incoming.inventoryVersion}
+							confirmDowngrade={activePositionPreview.confirmDowngrade}
+							onPlan={(plan, confirmDowngrade) => {
+								setPositionPreview((current) =>
+									current?.plan === activePositionPreview.plan
+										? plan
+											? {
+													plan,
+													confirmDowngrade:
+														confirmDowngrade ?? current.confirmDowngrade,
+												}
+											: null
+										: current,
+								);
+							}}
+							onReleases={setImportedReleases}
+							onSuccess={(notice) => {
+								setPositionNotice({
+									releaseId: release.id,
+									positionId: track.id,
+									notice,
+								});
+							}}
+						/>
+					)}
+				</>
+			) : undefined;
 		return (
 			<section className={screenLayout}>
 				<TrackScreen
 					files={files}
 					providers={providers}
 					artists={artists}
+					publicationPreview={publicationPreview}
 					onQueueDeletion={queueDeletion}
 					release={release}
 					track={track}
@@ -1012,10 +1041,10 @@ export function CatalogDemo({
 						)
 					}
 					onPreview={() => {
-						openContextPublication(release, track.id);
+						openPositionPreview(release, track.id);
 					}}
 					onRepublish={() => {
-						openContextPublication(release, track.id, true);
+						openPositionPreview(release, track.id, true);
 					}}
 					onAudioUpgrade={() => {
 						openPreview([track.id], "audioUpgrade");

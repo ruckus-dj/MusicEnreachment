@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Button } from "../../components/ui";
+import { Checkbox } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { demoPathInside } from "../../infrastructure/demoPathValidation";
 import type { UiNotice } from "../../infrastructure/uiNotice";
@@ -19,42 +18,27 @@ import {
 	originalArtistName,
 	publicationMetadataIssueMessages,
 } from "../library/catalogData";
+import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
+import { LibraryPositionConfirmButton } from "../library/LibraryPositionWorkspace";
+import { PublicationPreviewDetailsView } from "../library/PublicationPreviewDetailsView";
 import { individualPublicationDetails } from "./individualPublicationDetails";
-import { PublicationFlow } from "./PublicationFlow";
-import type { PublicationInspection } from "./PublicationInspector";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
 	formatPublicationMessage,
 	publicationMessage,
 } from "./publicationMessages";
-import { metadataSnapshotDiff } from "./publicationMetadataDiff";
 import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
+	type PublicationDestination,
 } from "./publicationOutput";
 
-const actionMessage = {
-	Создать: "create",
-	Обновить: "update",
-	"Без изменений": "unchangedAction",
-	"Невозможно обработать": "unprocessable",
-	Пропустить: "skip",
-} as const;
-
-function displayReason(locale: "en" | "ru", reason: string) {
-	if (reason.startsWith("Некорректные метаданные:"))
-		return formatPublicationMessage(locale, "invalidMetadata", {
-			fields: reason.slice("Некорректные метаданные: ".length),
-		});
-	const keys = {
-		"Позиция исключена из плана": "positionExcluded",
-		"Файл не выбран": "fileNotSelected",
-		"Источник и эффективные теги совпадают с публикацией": "sourceAndTagsSame",
-		"Будут обновлены выбранные метаданные и аудио": "selectedMetadataAndAudio",
-		"Новая публикация из выбранного источника": "newPublicationSelectedSource",
-	} as const;
-	const key = keys[reason as keyof typeof keys];
-	return key ? publicationMessage(locale, key) : reason;
+function capturePosition(release: OriginalRelease, positionId: string) {
+	const { tracks, ...releaseFields } = release;
+	return JSON.stringify([
+		releaseFields,
+		tracks.find((track) => track.id === positionId),
+	]);
 }
 
 export function ContextPublicationPreview({
@@ -69,10 +53,9 @@ export function ContextPublicationPreview({
 	onPlan,
 	onReleases,
 	onSuccess,
-	onBack,
 }: {
-	destination?: import("./publicationOutput").PublicationDestination;
-	plan: IncomingPlan | null;
+	destination?: PublicationDestination;
+	plan: IncomingPlan;
 	files: IncomingFiles;
 	releases: IncomingReleases;
 	providers: IncomingReleases;
@@ -82,291 +65,122 @@ export function ContextPublicationPreview({
 	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
 	onReleases: (releases: OriginalRelease[]) => void;
 	onSuccess: (notice: UiNotice) => void;
-	onBack: () => void;
 }) {
 	const { locale } = useI18n();
-	const [error, setError] = useState("");
-	if (!plan)
-		return (
-			<section>
-				<h1>{publicationMessage(locale, "noPlanTitle")}</h1>
-				<p>{publicationMessage(locale, "noSavedPlan")}</p>
-				<a href="#library">{publicationMessage(locale, "toLibrary")}</a>
-			</section>
-		);
+	const copy = firstPublicationPreviewMessages[locale];
+	const positionId = plan.positionId;
+	if (!positionId || plan.mode !== "local" || plan.groupId) return null;
 
-	const singlePosition = plan.positionId !== undefined;
-	const rows = planRows(
+	const release = releases.find((item) => item.id === plan.localReleaseId);
+	const row = planRows(
 		plan,
 		files,
 		releases,
 		providers,
 		artists,
 		destination,
-	).filter((row) => !singlePosition || row.targetTrack.id === plan.positionId);
-	const current = singlePosition && Boolean(rows[0]?.previous);
-	const readOnlyPosition = current && !plan.force;
-	const capturedPosition = singlePosition
-		? plan.target.tracks.find((track) => track.id === plan.positionId)
-		: undefined;
-	const livePosition = rows[0]?.track;
+	).find((item) => item.targetTrack.id === positionId);
+	const track = row?.track;
+	const current = row?.previous;
+	const readOnly = Boolean(current && !plan.force);
 	const positionChanged =
-		singlePosition &&
-		(!capturedPosition ||
-			livePosition?.id !== capturedPosition.id ||
-			livePosition.sourceId !== capturedPosition.sourceId ||
-			JSON.stringify(livePosition.published) !==
-				JSON.stringify(capturedPosition.published));
-	const currentOutsideOutput =
-		singlePosition &&
-		Boolean(
-			plan.force &&
-				rows[0]?.previous &&
-				!demoPathInside(destination.outputDirectory, rows[0].previous.path),
-		);
-	const existing = releases.find(
-		(release) => release.id === plan.localReleaseId,
+		!release ||
+		track?.id !== positionId ||
+		capturePosition(plan.target, positionId) !==
+			capturePosition(release, positionId);
+	const inventoryChanged = plan.inventoryVersion !== inventoryVersion;
+	const currentOutsideOutput = Boolean(
+		plan.force &&
+			current &&
+			!demoPathInside(destination.outputDirectory, current.path),
 	);
-	const classified = rows
-		.map((row) => {
-			if (!row.assignment?.included)
-				return {
-					row,
-					action: "Пропустить",
-					reason: "Позиция исключена из плана",
-				};
-			const sourceId = selectedSourceId(row.assignment);
-			const metadataRelease =
-				plan.mode === "local" ? (existing ?? plan.target) : plan.target;
-			const metadataTrack = row.track ?? row.targetTrack;
-			const metadataIssues = publicationMetadataIssueMessages(
-				metadataRelease,
-				metadataTrack,
-				locale,
-				sourceId,
-			);
-			if (metadataIssues.length)
-				return {
-					row,
-					action: "Невозможно обработать",
-					reason: formatPublicationMessage(locale, "invalidMetadata", {
-						fields: metadataIssues.join("; "),
-					}),
-				};
-			if (!row.file) {
-				const reason = !sourceId
-					? "Файл не выбран"
-					: publicationMessage(locale, "selectedFileUnavailable");
-				return { row, action: "Пропустить", reason };
-			}
-			return {
-				row,
-				action:
-					row.action === "Без изменений"
-						? "Без изменений"
-						: row.previous
-							? "Обновить"
-							: "Создать",
-				reason:
-					row.action === "Без изменений"
-						? "Источник и эффективные теги совпадают с публикацией"
-						: row.previous
-							? "Будут обновлены выбранные метаданные и аудио"
-							: "Новая публикация из выбранного источника",
-			};
-		})
-		.map((item) => {
-			const metadataRelease =
-				plan.mode === "local" ? (existing ?? plan.target) : plan.target;
-			const metadataTrack =
-				plan.mode === "local"
-					? (item.row.track ?? item.row.targetTrack)
-					: item.row.targetTrack;
-			const notices = publicationArtistNotices(
-				metadataRelease,
-				metadataTrack,
-				artists,
-				locale,
-			);
-			return { ...item, notices };
-		});
-	const changed = classified.filter(
-		(item) => item.action === "Создать" || item.action === "Обновить",
-	);
-	const downgrades = classified.filter(
-		(item) => item.row.downgrade && item.action === "Обновить",
-	);
-	const counts = [
-		"Создать",
-		"Обновить",
-		"Без изменений",
-		"Невозможно обработать",
-		"Пропустить",
-	].map((action) => ({
-		action,
-		count: classified.filter((item) => item.action === action).length,
-	}));
-	const stale = plan.inventoryVersion !== inventoryVersion || positionChanged;
-	const links = rows.filter((row) => {
-		const status = classified.find(
-			(item) => item.row.targetTrack.id === row.targetTrack.id,
-		)?.action;
-		if (status === "Пропустить" || status === "Невозможно обработать")
-			return false;
-		const assigned = sourceIds(row.assignment).filter((id) =>
-			usableFile(files[id]),
-		);
-		const track = existing?.tracks.find(
-			(item) => item.position === row.targetTrack.position,
-		);
-		const persisted = new Set([
-			...(track?.sourceIds ?? []),
-			...(track?.sourceId ? [track.sourceId] : []),
-		]);
-		return assigned.some((id) => !persisted.has(id));
-	});
-	const canConfirm =
-		!stale &&
-		!currentOutsideOutput &&
-		(singlePosition
-			? !readOnlyPosition && (!plan.force || current) && changed.length === 1
-			: changed.length > 0 || links.length > 0) &&
-		(!downgrades.length || confirmDowngrade);
-	const updateIncluded = (trackId: string, included: boolean) => {
-		const assignment = plan.assignments[trackId];
-		if (!assignment) return;
-		onPlan({
-			...plan,
-			assignments: {
-				...plan.assignments,
-				[trackId]: { ...assignment, included },
-			},
-		});
-	};
-	const inspections: PublicationInspection[] = classified.map(
-		({ row, action, reason, notices }) => {
-			const output = row.file
-				? choosePublicationOutput(row.file, {
-						...destination,
-						artist: originalArtistName(plan.target.artistId, artists),
-						year: plan.target.year,
-						release: plan.target.title,
-						position: row.targetTrack.position,
-						title: row.targetTrack.title,
-					})
-				: null;
-			const rebuildSource = Boolean(
-				row.file &&
-					(!row.previous ||
-						plan.force ||
-						row.previous.sourceId !== row.file.id ||
-						row.previous.codec !== row.outputCodec),
-			);
-			return {
-				id: String(row.targetTrack.id),
-				position: String(row.targetTrack.position),
-				title: row.targetTrack.title,
-				action: publicationMessage(
-					locale,
-					actionMessage[action as keyof typeof actionMessage],
-				),
-				reason: [
-					displayReason(locale, reason),
-					...notices,
-					...(row.downgrade && row.assignment?.included
-						? [publicationMessage(locale, "qualityDowngrade")]
-						: []),
-				].join(" · "),
-				source: row.file
-					? `${row.file.name} · ${row.file.codec}`
-					: selectedSourceId(row.assignment)
-						? publicationMessage(locale, "unavailableSource")
-						: publicationMessage(locale, "noSource"),
-				outputPath: output
-					? row.previous && rebuildSource && row.previous.path !== output.path
-						? `${row.previous.path} → ${output.path}`
-						: rebuildSource
-							? output.path
-							: (row.previous?.path ?? output.path)
-					: publicationMessage(locale, "pathUnavailable"),
-				container: output
-					? row.previous &&
-						rebuildSource &&
-						row.previous.container !== output.container
-						? `${row.previous.container} → ${output.container}`
-						: rebuildSource
-							? output.container
-							: (row.previous?.container ?? output.container)
-					: publicationMessage(locale, "noFormat"),
-				included: Boolean(row.assignment?.included && row.file),
-				includeDisabled: !row.file,
-				includeLabel: formatPublicationMessage(locale, "includeTrack", {
+	const sourceId = selectedSourceId(row?.assignment);
+	const metadataIssues =
+		release && track
+			? publicationMetadataIssueMessages(release, track, locale, sourceId)
+			: [];
+	const error = positionChanged
+		? publicationMessage(locale, "stalePreview")
+		: inventoryChanged
+			? publicationMessage(locale, "inventoryChanged")
+			: currentOutsideOutput
+				? publicationMessage(locale, "currentOutsideOutput")
+				: "";
+	const source = row?.file;
+	const output =
+		source && row
+			? choosePublicationOutput(source, {
+					...destination,
+					artist: originalArtistName(plan.target.artistId, artists),
+					year: plan.target.year,
+					release: plan.target.title,
+					position: row.targetTrack.position,
 					title: row.targetTrack.title,
-				}),
-				onInclude: (included) =>
-					updateIncluded(String(row.targetTrack.id), included),
-				details: individualPublicationDetails({
-					current: row.previous ?? null,
-					tags: row.nextTags,
-					path: output
-						? rebuildSource
-							? output.path
-							: (row.previous?.path ?? output.path)
-						: undefined,
-					renderedPath: output?.path,
-					source: row.file
-						? { codec: row.file.codec, path: row.file.path }
-						: undefined,
-					coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
-					lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
-					downgrade: Boolean(row.downgrade && row.assignment?.included),
-				}),
-				groups: metadataSnapshotDiff(
-					row.previous?.tags ?? {},
-					row.nextTags,
-					{
-						coverHash: row.previous?.coverHash ?? null,
-						lyrics: row.previous?.lyrics ?? null,
-					},
-					{
-						coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
-						lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
-					},
-				),
-			};
-		},
+				})
+			: undefined;
+	const rebuildSource = Boolean(
+		source &&
+			(!current ||
+				plan.force ||
+				current.sourceId !== source.id ||
+				current.codec !== row?.outputCodec),
 	);
-	const confirm = () => {
-		if (stale) {
-			setError(
-				publicationMessage(
-					locale,
-					positionChanged ? "stalePreview" : "inventoryChanged",
-				),
+	const downgrade = Boolean(row?.downgrade && row.assignment?.included);
+	const canConfirm = Boolean(
+		!error &&
+			!readOnly &&
+			(!plan.force || current) &&
+			row?.assignment?.included &&
+			source &&
+			metadataIssues.length === 0 &&
+			(row.action === "Создать" || row.action === "Заменить") &&
+			(!downgrade || confirmDowngrade),
+	);
+	const reason = metadataIssues.length
+		? formatPublicationMessage(locale, "invalidMetadata", {
+				fields: metadataIssues.join("; "),
+			})
+		: publicationMessage(
+				locale,
+				!source
+					? sourceId
+						? "selectedFileUnavailable"
+						: "noSource"
+					: row?.action === "Без изменений"
+						? "sourceAndTagsSame"
+						: current
+							? "selectedMetadataAndAudio"
+							: "newPublicationSelectedSource",
 			);
-			return;
-		}
-		if (!canConfirm) return;
-		const next = structuredClone(releases);
-		const applicableIDs = new Set(
-			classified
-				.filter(
-					(item) =>
-						item.action !== "Пропустить" &&
-						item.action !== "Невозможно обработать",
-				)
-				.map((item) => item.row.targetTrack.id),
+	const notices =
+		release && track
+			? publicationArtistNotices(release, track, artists, locale)
+			: [];
+	const details =
+		row &&
+		individualPublicationDetails({
+			current: current ?? null,
+			tags: row.nextTags,
+			path: rebuildSource ? output?.path : (current?.path ?? output?.path),
+			renderedPath: output?.path,
+			source: source ? { codec: source.codec, path: source.path } : undefined,
+			coverHash: track?.coverHash ?? null,
+			lyrics: track?.lyrics ?? null,
+			downgrade,
+		});
+
+	const confirm = () => {
+		if (!canConfirm || !row?.assignment || !track) return;
+		const previouslyLinked = new Set([
+			...(track.sourceIds ?? []),
+			...(track.sourceId ? [track.sourceId] : []),
+		]);
+		const hasNewLinks = sourceIds(row.assignment).some(
+			(id) => usableFile(files[id]) && !previouslyLinked.has(id),
 		);
-		const applicablePlan: IncomingPlan = {
-			...plan,
-			assignments: Object.fromEntries(
-				Object.entries(plan.assignments).filter(([trackId]) =>
-					applicableIDs.has(trackId),
-				),
-			),
-		};
+		const next = structuredClone(releases);
 		const applied = applyPlan(
-			applicablePlan,
+			{ ...plan, assignments: { [positionId]: row.assignment } },
 			files,
 			next,
 			providers,
@@ -374,94 +188,54 @@ export function ContextPublicationPreview({
 			artists,
 			destination,
 		);
+		if (!applied) return;
 		onReleases(next);
 		onPlan(null, false);
 		onSuccess({
 			namespace: "publication",
 			id: "applySuccess",
-			params: { count: applied, linkCount: links.length },
+			params: { count: applied, linkCount: hasNewLinks ? 1 : 0 },
 		});
 	};
 
 	return (
-		<PublicationFlow
-			title={formatPublicationMessage(locale, "contextTitle", {
-				title: plan.target.title,
-			})}
-			description={publicationMessage(locale, "contextDescription")}
-			returnLabel={publicationMessage(locale, "returnToObject")}
-			onBack={onBack}
-			stale={stale}
-			error={
-				error ||
-				(positionChanged ? publicationMessage(locale, "stalePreview") : "") ||
-				(currentOutsideOutput
-					? publicationMessage(locale, "currentOutsideOutput")
-					: "")
-			}
-			counts={counts.map(({ action, count }) => ({
-				label: publicationMessage(
-					locale,
-					actionMessage[action as keyof typeof actionMessage],
-				),
-				count,
-			}))}
-			items={inspections}
-			footer={
+		<section className="min-w-0 space-y-3" aria-label={copy.section}>
+			{error && (
+				<p role="alert" className="text-[var(--error)]">
+					{error}
+				</p>
+			)}
+			{readOnly && <p role="note">{copy.comparisonReadOnly}</p>}
+			<p>{[reason, ...notices].join(" · ")}</p>
+			{details && (
+				<PublicationPreviewDetailsView
+					locale={locale}
+					state={details}
+					sourceGroupName={`demo-publication-source-${positionId}`}
+				/>
+			)}
+			{!readOnly && (
 				<>
-					<strong>{publicationMessage(locale, "sourcesPreserved")}</strong>{" "}
-					{publicationMessage(locale, "noDelete")}
-				</>
-			}
-			primaryLabel={publicationMessage(locale, "confirmPublication")}
-			primaryDisabled={!canConfirm}
-			positionConfirmation={
-				singlePosition
-					? readOnlyPosition
-						? "read-only"
-						: current
-							? "retainedRepublish"
-							: "publish"
-					: undefined
-			}
-			confirmationTitle={
-				changed.length
-					? formatPublicationMessage(locale, "writeSelectedCount", {
-							count: changed.length,
-						})
-					: formatPublicationMessage(locale, "saveLinksCount", {
-							count: links.length,
-						})
-			}
-			confirmationDetails={
-				<>
-					<p>
-						{formatPublicationMessage(locale, "confirmSelectedRows", {
-							title: plan.target.title,
-						})}
-					</p>
-					{links.length > 0 && (
-						<p>
-							{formatPublicationMessage(locale, "sourceLinksCount", {
-								count: links.length,
+					{downgrade && (
+						<Checkbox
+							isSelected={confirmDowngrade}
+							isDisabled={Boolean(error)}
+							onChange={(checked) => onPlan(plan, checked)}
+						>
+							<span className="checkbox" />
+							{formatPublicationMessage(locale, "confirmDowngrade", {
+								count: 1,
 							})}
-						</p>
+						</Checkbox>
 					)}
-					{downgrades.length > 0 && (
-						<p>
-							{formatPublicationMessage(locale, "confirmQualityDown", {
-								count: downgrades.length,
-							})}
-						</p>
-					)}
-					<p>{publicationMessage(locale, "unmatchedFiles")}</p>
+					<LibraryPositionConfirmButton
+						locale={locale}
+						label={current ? "retainedRepublish" : "publish"}
+						disabled={!canConfirm}
+						onConfirm={confirm}
+					/>
 				</>
-			}
-			confirmLabel={publicationMessage(locale, "confirm")}
-			onConfirm={confirm}
-			downgradeCount={downgrades.length}
-			downgradeConfirmed={confirmDowngrade}
-			onDowngradeConfirmed={(checked) => onPlan(plan, checked)}
-		/>
+			)}
+		</section>
 	);
 }

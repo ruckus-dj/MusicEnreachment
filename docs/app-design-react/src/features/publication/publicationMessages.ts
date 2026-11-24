@@ -14,19 +14,9 @@ export const publicationMessages = createNamespace({
 		inspect: "Inspect metadata",
 		close: "Close inspector",
 		selected: "Selected",
-		positionExcluded: "Position excluded from the plan",
-		fileNotSelected: "No file selected",
 		sourceAndTagsSame: "Source and effective tags match the publication",
 		selectedMetadataAndAudio: "Selected metadata and audio will be updated",
 		newPublicationSelectedSource: "New publication from the selected source",
-		writeSelectedCount: "Publish {count} positions?",
-		saveLinksCount: "Save links for {count} positions?",
-		confirmSelectedRows:
-			"{title}. Only selected plan rows change. Other positions and existing publications remain unchanged.",
-		sourceLinksCount:
-			"{count} positions get new source links; selected sources and current publications remain unchanged.",
-		confirmQualityDown:
-			"A separate quality downgrade is confirmed for {count} positions.",
 		applySuccess: "Demo: {count} positions published.",
 		linkSuccess: "Links for {count} positions saved.",
 		unchangedSuccess:
@@ -119,12 +109,6 @@ export const publicationMessages = createNamespace({
 			"This action changes only prototype memory; no files are written.",
 		cancel: "Cancel",
 		confirm: "Confirm",
-		contextTitle: "Preview: {title}",
-		contextDescription:
-			"Contextual operation preview. This is not a separate publication list.",
-		noSavedPlan: "No saved publication plan. Open a release or position.",
-		toLibrary: "Go to library",
-		noPlanTitle: "Publication preview",
 		include: "Include",
 		source: "Source",
 		currentlyPublished: "Currently published",
@@ -165,7 +149,6 @@ export const publicationMessages = createNamespace({
 			"Unselected positions and unassigned files were not changed.",
 		previewPolicy:
 			"Existing publications get updated effective metadata while their audio stays the same. New publications use the selected source. Skipped positions are not included.",
-		returnToObject: "Return to object",
 		contextualPreview:
 			"Contextual operation preview. This is not a separate publication list.",
 		includeColumn: "Include",
@@ -203,19 +186,9 @@ export const publicationMessages = createNamespace({
 		inspect: "Сравнить метаданные",
 		close: "Закрыть инспектор",
 		selected: "Выбрано",
-		positionExcluded: "Позиция исключена из плана",
-		fileNotSelected: "Файл не выбран",
 		sourceAndTagsSame: "Источник и эффективные теги совпадают с публикацией",
 		selectedMetadataAndAudio: "Будут обновлены выбранные метаданные и аудио",
 		newPublicationSelectedSource: "Новая публикация из выбранного источника",
-		writeSelectedCount: "Опубликовать {count} позиций?",
-		saveLinksCount: "Сохранить связи {count} позиций?",
-		confirmSelectedRows:
-			"{title}. Изменятся только выбранные строки плана. Остальные позиции и публикации останутся без изменений.",
-		sourceLinksCount:
-			"{count} позиций получат новые связи с источниками; выбранные источники и текущие публикации сохранятся.",
-		confirmQualityDown:
-			"Подтверждено отдельное понижение качества для {count} позиций.",
 		applySuccess: "Демо: опубликовано позиций: {count}.",
 		linkSuccess: "Сохранены связи позиций: {count}.",
 		unchangedSuccess: "Невыбранные позиции и неразмеченные файлы не изменены.",
@@ -307,13 +280,6 @@ export const publicationMessages = createNamespace({
 			"Действие выполняется только в памяти макета, без записи файлов.",
 		cancel: "Отмена",
 		confirm: "Подтвердить",
-		contextTitle: "Предпросмотр: {title}",
-		contextDescription:
-			"Контекстный предпросмотр операции. Это не отдельный список публикаций.",
-		noSavedPlan:
-			"Нет сохранённого плана публикации. Откройте издание или позицию.",
-		toLibrary: "К медиатеке",
-		noPlanTitle: "Предпросмотр публикации",
 		include: "Включить",
 		source: "Источник",
 		currentlyPublished: "Сейчас опубликовано",
@@ -353,7 +319,6 @@ export const publicationMessages = createNamespace({
 			"Невыбранные позиции и неразмеченные файлы не изменены.",
 		previewPolicy:
 			"Для уже опубликованных позиций обновляются эффективные метаданные, звук сохраняется. Новые публикации используют выбранный источник. Пропущенные позиции не входят в эту выборку.",
-		returnToObject: "Вернуться к объекту",
 		contextualPreview:
 			"Контекстный предпросмотр операции. Это не отдельный список публикаций.",
 		includeColumn: "Включить",

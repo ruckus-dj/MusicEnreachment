@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
 import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -48,6 +48,7 @@ export function TrackScreen({
 	onSource,
 	onPreview,
 	onRepublish,
+	publicationPreview,
 	onAudioUpgrade,
 	onMetadataPreview = onPreview,
 	onMutate,
@@ -64,6 +65,7 @@ export function TrackScreen({
 	onSource: (id: string) => void;
 	onPreview: () => void;
 	onRepublish?: () => void;
+	publicationPreview?: ReactNode;
 	onAudioUpgrade?: () => void;
 	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
@@ -222,6 +224,7 @@ export function TrackScreen({
 								onPreview={onPreview}
 							/>
 						</div>
+						{publicationPreview}
 						{onMutate && (
 							<TrackActions
 								release={release}

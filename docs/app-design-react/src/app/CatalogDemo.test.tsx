@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
+import { firstPublicationPreviewMessages } from "../features/library/firstPublicationPreviewMessages";
 import { CatalogDemo } from "./CatalogDemo";
 
 afterEach(() => {
@@ -55,4 +56,21 @@ it("shows a read-only preview of the selected library position", async () => {
 	fireEvent.click(close);
 	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	expect(checkbox).toBeChecked();
+});
+
+it("keeps a CURRENT comparison inside the position publication panel", () => {
+	window.history.replaceState(null, "", "#track/north-t1");
+	render(<CatalogDemo />);
+	const publication = within(
+		screen.getByRole("region", { name: "Публикация" }),
+	);
+	const copy = firstPublicationPreviewMessages.ru;
+	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
+	expect(window.location.hash).toBe("#track/north-t1");
+	expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
+	expect(publication.queryByRole("button", { name: copy.publish })).toBeNull();
+	expect(
+		publication.queryByRole("button", { name: copy.retainedRepublish }),
+	).toBeNull();
+	expect(screen.queryByRole("dialog")).toBeNull();
 });
