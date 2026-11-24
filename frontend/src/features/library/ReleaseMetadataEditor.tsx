@@ -565,10 +565,12 @@ export function ReleaseMetadataEditor({
   releaseId,
   refreshToken,
   onSaved,
+  visible = true,
 }: {
   releaseId: string;
   refreshToken?: number | string;
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
+  visible?: boolean;
 }) {
   return (
     <LibraryScopedMetadataEditorSession
@@ -578,6 +580,7 @@ export function ReleaseMetadataEditor({
       ownerId={releaseId}
       refreshToken={refreshToken}
       onSaved={onSaved}
+      visible={visible}
     />
   );
 }
@@ -626,6 +629,7 @@ type LibraryScopedMetadataEditorSessionProps = {
   ownerId: string;
   refreshToken?: number | string;
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
+  visible?: boolean;
 } & (
   | { scope: "release"; releaseId?: never }
   | { scope: "recording"; releaseId?: never }
@@ -639,6 +643,7 @@ function LibraryScopedMetadataEditorSession({
   releaseId,
   refreshToken,
   onSaved,
+  visible = true,
 }: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
   const contributorControlPrefix = useId();
@@ -1540,6 +1545,10 @@ function LibraryScopedMetadataEditorSession({
         .map(({ group }) => group),
     ),
   ];
+  // Keep revisions and drafts route-scoped, but detach portaled pickers when
+  // this editor is not on the active surface.
+  if (!visible) return null;
+
   return (
     <section
       aria-label={title}

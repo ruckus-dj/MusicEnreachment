@@ -1483,12 +1483,13 @@ export function LibraryReleaseScreen({
       `${track.displayed_number.trim() || track.position}. ${track.title}`,
     ]),
   );
-  const ReleaseHeading = selectedTrack ? "h2" : "h1";
+  const showPosition = Boolean(selectedTrack);
   const body = (
     <section className="library-release-screen mx-auto max-w-5xl space-y-6">
       <nav
         className="library-release-navigation"
         aria-label={text("libraryNavigation")}
+        hidden={showPosition}
       >
         <a className="underline" href="#/library">
           {text("libraryCatalog")}
@@ -1499,7 +1500,7 @@ export function LibraryReleaseScreen({
           </a>
         ) : null}
       </nav>
-      <header>
+      <header hidden={showPosition}>
         <div className="library-release-heading">
           <span
             className="library-release-cover"
@@ -1516,9 +1517,7 @@ export function LibraryReleaseScreen({
             ) : null}
           </span>
           <div className="library-release-title">
-            <ReleaseHeading className="text-2xl font-semibold">
-              {release.title}
-            </ReleaseHeading>
+            <h1 className="text-2xl font-semibold">{release.title}</h1>
             <ReleaseCreditList credits={release.artists} />
           </div>
         </div>
@@ -1545,36 +1544,6 @@ export function LibraryReleaseScreen({
             )}
           </label>
         )}
-        {release.can_refresh_musicbrainz && (
-          <div className="mt-3 space-y-2">
-            <button
-              type="button"
-              disabled={
-                (musicBrainzRefresh.scope === scope.current &&
-                  (musicBrainzRefresh.pending || musicBrainzRefresh.active)) ||
-                musicBrainzRefreshPending.current?.scope === scope.current
-              }
-              onClick={() => void refreshMusicBrainz()}
-            >
-              {musicBrainzRefresh.scope === scope.current &&
-              (musicBrainzRefresh.pending || musicBrainzRefresh.active)
-                ? text("refreshMusicBrainzRunning")
-                : text("refreshMusicBrainz")}
-            </button>
-            {musicBrainzRefresh.scope === scope.current &&
-              musicBrainzRefresh.active && (
-                <p role="status">{text("waitingMusicBrainz")}</p>
-              )}
-            {musicBrainzRefresh.scope === scope.current &&
-              musicBrainzRefresh.notice && (
-                <p role="status">{displayText(musicBrainzRefresh.notice)}</p>
-              )}
-            {musicBrainzRefresh.scope === scope.current &&
-              musicBrainzRefresh.error && (
-                <p role="alert">{displayText(musicBrainzRefresh.error)}</p>
-              )}
-          </div>
-        )}
         {!positionId ? (
           <div className="mt-3">
             <LibraryDeletionControl
@@ -1588,15 +1557,48 @@ export function LibraryReleaseScreen({
           </div>
         ) : null}
       </header>
+      {release.can_refresh_musicbrainz && (
+        <div className="mt-3 space-y-2">
+          <button
+            type="button"
+            disabled={
+              (musicBrainzRefresh.scope === scope.current &&
+                (musicBrainzRefresh.pending || musicBrainzRefresh.active)) ||
+              musicBrainzRefreshPending.current?.scope === scope.current
+            }
+            onClick={() => void refreshMusicBrainz()}
+          >
+            {musicBrainzRefresh.scope === scope.current &&
+            (musicBrainzRefresh.pending || musicBrainzRefresh.active)
+              ? text("refreshMusicBrainzRunning")
+              : text("refreshMusicBrainz")}
+          </button>
+          {musicBrainzRefresh.scope === scope.current &&
+            musicBrainzRefresh.active && (
+              <p role="status">{text("waitingMusicBrainz")}</p>
+            )}
+          {musicBrainzRefresh.scope === scope.current &&
+            musicBrainzRefresh.notice && (
+              <p role="status">{displayText(musicBrainzRefresh.notice)}</p>
+            )}
+          {musicBrainzRefresh.scope === scope.current &&
+            musicBrainzRefresh.error && (
+              <p role="alert">{displayText(musicBrainzRefresh.error)}</p>
+            )}
+        </div>
+      )}
       {genreRefreshError ? (
         <p role="alert">{displayText(genreRefreshError)}</p>
       ) : null}
-      <ReleaseMetadataEditor
-        releaseId={releaseId}
-        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-        onSaved={refreshAfterMetadataSave}
-      />
-      <ReleaseMediaSummary release={release} />
+      <div className="contents" hidden={showPosition} data-release-only>
+        <ReleaseMetadataEditor
+          releaseId={releaseId}
+          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+          onSaved={refreshAfterMetadataSave}
+          visible={!showPosition}
+        />
+        <ReleaseMediaSummary release={release} />
+      </div>
       {!positionId && (
         <AggregatePublicationPreview
           key={releaseId}
@@ -1617,43 +1619,45 @@ export function LibraryReleaseScreen({
           {text("fullRelease")}
         </a>
       )}
-      <ReleaseCoverEditor
-        releaseId={releaseId}
-        epoch={
-          Object.values(positions).find(
-            (position) => position.publication?.active_epoch,
-          )?.publication?.active_epoch
-        }
-        onOperationsAdmitted={(operations) => {
-          const requestScope = scope.current;
-          setPositions((current) => {
-            if (!mounted.current || scope.current !== requestScope)
-              return current;
-            const next = { ...current };
-            for (const operation of operations) {
-              next[operation.position_id] = {
-                ...next[operation.position_id],
-                applyOperationID: operation.operation_id,
-                applying: true,
-                notice: libraryReleaseText("coverApplyAdmitted"),
-              };
-            }
-            return next;
-          });
-        }}
-        onCoverSnapshot={(snapshotReleaseID, generation) => {
-          if (
-            scope.current !== releaseRenderScope ||
-            snapshotReleaseID !== releaseId
-          )
-            return;
-          setSelectedCover({
-            scope: releaseRenderScope,
-            releaseID: snapshotReleaseID,
-            generation,
-          });
-        }}
-      />
+      <div className="contents" hidden={showPosition} data-release-only>
+        <ReleaseCoverEditor
+          releaseId={releaseId}
+          epoch={
+            Object.values(positions).find(
+              (position) => position.publication?.active_epoch,
+            )?.publication?.active_epoch
+          }
+          onOperationsAdmitted={(operations) => {
+            const requestScope = scope.current;
+            setPositions((current) => {
+              if (!mounted.current || scope.current !== requestScope)
+                return current;
+              const next = { ...current };
+              for (const operation of operations) {
+                next[operation.position_id] = {
+                  ...next[operation.position_id],
+                  applyOperationID: operation.operation_id,
+                  applying: true,
+                  notice: libraryReleaseText("coverApplyAdmitted"),
+                };
+              }
+              return next;
+            });
+          }}
+          onCoverSnapshot={(snapshotReleaseID, generation) => {
+            if (
+              scope.current !== releaseRenderScope ||
+              snapshotReleaseID !== releaseId
+            )
+              return;
+            setSelectedCover({
+              scope: releaseRenderScope,
+              releaseID: snapshotReleaseID,
+              generation,
+            });
+          }}
+        />
+      </div>
       {positionId && !selectedTrack ? (
         <p role="alert">{text("positionNotFound")}</p>
       ) : null}

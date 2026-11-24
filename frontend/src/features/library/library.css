@@ -5,7 +5,8 @@
   line-height: 18px;
 }
 
-.library-release-screen > :not([hidden]) ~ :not([hidden]) {
+.library-release-screen > :not([hidden]) ~ :not([hidden]),
+.library-release-screen > [data-release-only] > :not([hidden]) {
   margin-top: 12px;
 }
 
@@ -27,6 +28,7 @@
 
 .library-release-screen article,
 .library-release-screen > section,
+.library-release-screen > [data-release-only] > section,
 .library-release-screen fieldset {
   min-width: 0;
   border-color: var(--line);

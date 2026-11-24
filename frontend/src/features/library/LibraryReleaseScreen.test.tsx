@@ -1049,9 +1049,16 @@ it("keeps overview positions linked and publication controllers registered witho
 
   expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
   expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
+  const coverEditorControl = screen.getByTestId("emit-selected-cover");
+  expect(coverEditorControl).toBeVisible();
 
   rerender(positionID);
   expectPreviewsPreserved();
+  expect(screen.getByTestId("emit-selected-cover")).toBe(coverEditorControl);
+  expect(coverEditorControl).not.toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Contextual Release" }),
+  ).toBeNull();
   expect(firstPreview).toHaveAttribute("data-aggregate-managed", "false");
   expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
 
@@ -1062,6 +1069,8 @@ it("keeps overview positions linked and publication controllers registered witho
 
   rerender();
   expectPreviewsPreserved();
+  expect(screen.getByTestId("emit-selected-cover")).toBe(coverEditorControl);
+  expect(coverEditorControl).toBeVisible();
   expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
   expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
 });
