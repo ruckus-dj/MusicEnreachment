@@ -18,6 +18,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { releaseControlAlertClass } from "./libraryReleaseControlStyles";
 
 type DeletionTarget =
   | { type: "artist"; artistId: string }
@@ -578,7 +579,7 @@ export function LibraryDeletionControl({
           {state.operation.state === "failed" ? (
             <>
               {state.operation.safe_error ? (
-                <p role="alert">
+                <p role="alert" className={releaseControlAlertClass}>
                   {redactIdentifiers(state.operation.safe_error, locale)}
                 </p>
               ) : null}
@@ -590,7 +591,11 @@ export function LibraryDeletionControl({
               </AppButton>
             </>
           ) : null}
-          {state.actionError ? <p role="alert">{state.actionError}</p> : null}
+          {state.actionError ? (
+            <p role="alert" className={releaseControlAlertClass}>
+              {state.actionError}
+            </p>
+          ) : null}
         </section>
       ) : null}
       <ModalOverlay
@@ -629,7 +634,9 @@ export function LibraryDeletionControl({
                     : text.scopePublication}
               </p>
               {state.confirmationUncertain ? (
-                <p role="alert">{text.uncertain}</p>
+                <p role="alert" className={releaseControlAlertClass}>
+                  {text.uncertain}
+                </p>
               ) : null}
               {preview ? (
                 <div className="space-y-3 rounded border border-[var(--line)] p-3">
@@ -720,7 +727,7 @@ export function LibraryDeletionControl({
                     <p>{text.noOutputs}</p>
                   )}
                   {preview.blockers?.length ? (
-                    <div role="alert">
+                    <div role="alert" className={releaseControlAlertClass}>
                       <h3 className="font-semibold">{text.blockers}</h3>
                       <ul className="list-disc pl-5">
                         {preview.blockers.map((blocker, index) => (
@@ -744,10 +751,14 @@ export function LibraryDeletionControl({
                 </div>
               ) : null}
               {state.previewError ? (
-                <p role="alert">{state.previewError}</p>
+                <p role="alert" className={releaseControlAlertClass}>
+                  {state.previewError}
+                </p>
               ) : null}
               {state.actionError && !state.confirmationUncertain ? (
-                <p role="alert">{state.actionError}</p>
+                <p role="alert" className={releaseControlAlertClass}>
+                  {state.actionError}
+                </p>
               ) : null}
               {isBlocked ? <p role="status">{text.blocked}</p> : null}
             </div>

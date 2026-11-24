@@ -30,7 +30,7 @@ export function ReleaseCreditList({
     );
   const creditKeyCounts = new Map<string, number>();
   return (
-    <ul className="library-release-credits">
+    <ul className="my-1 flex list-none flex-wrap gap-x-4 gap-y-2 p-0">
       {credits.map((credit) => {
         const signature = `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`;
         const occurrence = creditKeyCounts.get(signature) ?? 0;
@@ -50,7 +50,7 @@ export function ReleaseCreditList({
             {canonicalName ? (
               <>
                 {" ("}
-                <span className="library-release-credit-identity">
+                <span className="text-[.85em] text-[color-mix(in_srgb,currentColor_68%,transparent)]">
                   {canonicalName}
                 </span>
                 {")"}
@@ -58,7 +58,7 @@ export function ReleaseCreditList({
             ) : null}
             {credit.join_phrase}
             {credit.role ? (
-              <span className="library-release-credit-role">
+              <span className="text-[color-mix(in_srgb,currentColor_68%,transparent)]">
                 {" "}
                 · {credit.role}
               </span>
@@ -136,10 +136,15 @@ export function ReleaseMediaSummary({
     }`;
   return (
     <section
-      className="library-release-media grid min-w-0 gap-3"
+      className="grid min-w-0 gap-3"
       aria-labelledby="release-media-heading"
     >
-      <h2 id="release-media-heading">{copy.heading}</h2>
+      <h2
+        id="release-media-heading"
+        className="my-2 text-base leading-[22px] font-[650]"
+      >
+        {copy.heading}
+      </h2>
       {media.length ? (
         <div className="grid gap-4">
           {media.map((medium) => {

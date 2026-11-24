@@ -19,16 +19,6 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
-import {
-  type LibraryReleaseMessage,
-  type LibraryReleaseText,
-  LocalizedLibraryReleaseError,
-  libraryReleaseError,
-  libraryReleaseMessage,
-  libraryReleaseText,
-  renderLibraryReleaseText,
-} from "./libraryReleaseMessages";
-import "./library.css";
 import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 import {
   FirstPublicationPreview,
@@ -53,6 +43,21 @@ import {
   ReleaseCreditList,
   ReleaseMediaSummary,
 } from "./LibraryReleaseFacts";
+import {
+  releaseControlAlertClass,
+  releaseControlButtonClass,
+  releaseControlFieldsetClass,
+  releaseControlSelectClass,
+} from "./libraryReleaseControlStyles";
+import {
+  type LibraryReleaseMessage,
+  type LibraryReleaseText,
+  LocalizedLibraryReleaseError,
+  libraryReleaseError,
+  libraryReleaseMessage,
+  libraryReleaseText,
+  renderLibraryReleaseText,
+} from "./libraryReleaseMessages";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 import {
   PublicationCurrentDetailsView,
@@ -1471,9 +1476,12 @@ export function LibraryReleaseScreen({
     return (
       <section>
         <h1>{text("library")}</h1>
-        <p role="alert">{displayText(error)}</p>
+        <p role="alert" className={releaseControlAlertClass}>
+          {displayText(error)}
+        </p>
         <button
           type="button"
+          className={releaseControlButtonClass}
           onClick={() => {
             window.location.hash = "/incoming-groups";
           }}
@@ -1507,10 +1515,10 @@ export function LibraryReleaseScreen({
   const showPosition = Boolean(selectedTrack);
   const body = (
     <section
-      className={`library-release-screen space-y-6 ${showPosition ? "min-w-0" : "mx-auto max-w-5xl"}`}
+      className={`grid min-w-0 gap-3 text-[13px] leading-[18px] text-ink ${showPosition ? "" : "mx-auto max-w-5xl"}`}
     >
       <nav
-        className="library-release-navigation"
+        className="flex flex-wrap gap-x-4 gap-y-2"
         aria-label={text("libraryNavigation")}
         hidden={showPosition}
       >
@@ -1538,7 +1546,9 @@ export function LibraryReleaseScreen({
             imageAlt={text("selectedReleaseCover")}
           />
           <div className="min-w-0 wrap-anywhere">
-            <h1 className="text-2xl font-semibold">{release.title}</h1>
+            <h1 className="text-xl leading-[26px] font-semibold">
+              {release.title}
+            </h1>
             <ReleaseCreditList credits={release.artists} />
           </div>
         </div>
@@ -1546,6 +1556,7 @@ export function LibraryReleaseScreen({
           <label className="block">
             {text("primaryReleaseArtist")}
             <select
+              className={releaseControlSelectClass}
               aria-label={text("primaryReleaseArtist")}
               value={release.primary_artist.selected_artist_id || ""}
               disabled={releasePrimaryArtistSaving}
@@ -1561,7 +1572,9 @@ export function LibraryReleaseScreen({
               ))}
             </select>
             {releasePrimaryArtistError && (
-              <p role="alert">{displayText(releasePrimaryArtistError)}</p>
+              <p role="alert" className={releaseControlAlertClass}>
+                {displayText(releasePrimaryArtistError)}
+              </p>
             )}
           </label>
         )}
@@ -1579,9 +1592,10 @@ export function LibraryReleaseScreen({
         ) : null}
       </header>
       {release.can_refresh_musicbrainz && (
-        <div className="mt-3 space-y-2">
+        <div className="space-y-2">
           <button
             type="button"
+            className={releaseControlButtonClass}
             disabled={
               (musicBrainzRefresh.scope === scope.current &&
                 (musicBrainzRefresh.pending || musicBrainzRefresh.active)) ||
@@ -1604,14 +1618,18 @@ export function LibraryReleaseScreen({
             )}
           {musicBrainzRefresh.scope === scope.current &&
             musicBrainzRefresh.error && (
-              <p role="alert">{displayText(musicBrainzRefresh.error)}</p>
+              <p role="alert" className={releaseControlAlertClass}>
+                {displayText(musicBrainzRefresh.error)}
+              </p>
             )}
         </div>
       )}
       {genreRefreshError ? (
-        <p role="alert">{displayText(genreRefreshError)}</p>
+        <p role="alert" className={releaseControlAlertClass}>
+          {displayText(genreRefreshError)}
+        </p>
       ) : null}
-      <div className="contents" hidden={showPosition} data-release-only>
+      <div className="grid gap-3" hidden={showPosition} data-release-only>
         <ReleaseMetadataEditor
           releaseId={releaseId}
           refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
@@ -1640,7 +1658,7 @@ export function LibraryReleaseScreen({
           {text("fullRelease")}
         </a>
       )}
-      <div className="contents" hidden={showPosition} data-release-only>
+      <div className="grid gap-3" hidden={showPosition} data-release-only>
         <ReleaseCoverEditor
           releaseId={releaseId}
           epoch={
@@ -1680,7 +1698,9 @@ export function LibraryReleaseScreen({
         />
       </div>
       {positionId && !selectedTrack ? (
-        <p role="alert">{text("positionNotFound")}</p>
+        <p role="alert" className={releaseControlAlertClass}>
+          {text("positionNotFound")}
+        </p>
       ) : null}
       {(release.tracks ?? []).map((track) => {
         const showWorkspace = positionId === track.id;
@@ -1818,6 +1838,7 @@ export function LibraryReleaseScreen({
                         <label className="block">
                           {text("primaryTrackArtist")}
                           <select
+                            className={releaseControlSelectClass}
                             aria-label={`${text("primaryTrackArtist")} ${track.displayed_number}`}
                             value={
                               track.primary_artist.selected_artist_id || ""
@@ -1869,6 +1890,7 @@ export function LibraryReleaseScreen({
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
+                          className={releaseControlButtonClass}
                           disabled={
                             !position?.metadata ||
                             position.writePending ||
@@ -1881,6 +1903,7 @@ export function LibraryReleaseScreen({
                         </button>
                         <button
                           type="button"
+                          className={releaseControlButtonClass}
                           disabled={
                             !position?.metadata ||
                             position.writePending ||
@@ -1893,6 +1916,7 @@ export function LibraryReleaseScreen({
                         </button>
                         <button
                           type="button"
+                          className={releaseControlButtonClass}
                           disabled={
                             !publication?.can_apply_manual_lyrics ||
                             !hasManualLyrics ||
@@ -1951,7 +1975,10 @@ export function LibraryReleaseScreen({
                           </p>
                         )}
                       {publication?.initial_lyrics && (
-                        <fieldset aria-label={text("lyricsPublicationResult")}>
+                        <fieldset
+                          className={releaseControlFieldsetClass}
+                          aria-label={text("lyricsPublicationResult")}
+                        >
                           <p>
                             {text("lyricsInCurrentPublication")}{" "}
                             {lyricsOutcomeLabel(
@@ -1983,11 +2010,16 @@ export function LibraryReleaseScreen({
                         </fieldset>
                       )}
                       {publication?.source_cleanup_warnings?.map((warning) => (
-                        <div key={warning.original_operation_id} role="alert">
+                        <div
+                          key={warning.original_operation_id}
+                          className={releaseControlAlertClass}
+                          role="alert"
+                        >
                           <p>{warning.safe_error}</p>
                           {warning.can_retry && (
                             <button
                               type="button"
+                              className={releaseControlButtonClass}
                               disabled={
                                 position?.cleanupRetryPendingIDs?.includes(
                                   warning.original_operation_id,
@@ -2051,12 +2083,18 @@ export function LibraryReleaseScreen({
                         <p role="status">{displayText(position.notice)}</p>
                       )}
                       {position?.error && (
-                        <p role="alert">{displayText(position.error)}</p>
+                        <p role="alert" className={releaseControlAlertClass}>
+                          {displayText(position.error)}
+                        </p>
                       )}
                       {position?.readError && (
-                        <div role="alert">
+                        <div role="alert" className={releaseControlAlertClass}>
                           {displayText(position.readError)}{" "}
-                          <button type="button" onClick={refreshReadState}>
+                          <button
+                            type="button"
+                            className={releaseControlButtonClass}
+                            onClick={refreshReadState}
+                          >
                             {text("refreshData")}
                           </button>
                         </div>
@@ -2124,7 +2162,10 @@ export function LibraryReleaseScreen({
                               </p>
                             )}
                             {publication?.current_generation && (
-                              <fieldset aria-label={text("actualCoverRegion")}>
+                              <fieldset
+                                className={releaseControlFieldsetClass}
+                                aria-label={text("actualCoverRegion")}
+                              >
                                 <p className="wrap-anywhere">
                                   {text("actualCover")}:{" "}
                                   {publication.current_assets?.cover.state ??
@@ -2196,9 +2237,16 @@ export function LibraryReleaseScreen({
               )}
             </article>
             {!positionId && position?.readError ? (
-              <div className="library-release-position-read-error" role="alert">
+              <div
+                className="flex flex-wrap items-center gap-2 rounded border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2 text-error wrap-anywhere"
+                role="alert"
+              >
                 {displayText(position.readError)}{" "}
-                <button type="button" onClick={refreshReadState}>
+                <button
+                  type="button"
+                  className={releaseControlButtonClass}
+                  onClick={refreshReadState}
+                >
                   {text("refreshData")}
                 </button>
               </div>

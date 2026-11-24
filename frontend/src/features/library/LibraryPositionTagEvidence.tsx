@@ -11,6 +11,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { LibraryTagEvidenceComparison } from "./LibraryTagComparisonTable";
+import {
+  releaseControlAlertClass,
+  releaseControlSelectClass,
+} from "./libraryReleaseControlStyles";
 import { libraryTagComparisonFields } from "./libraryTagComparisonFields";
 
 type Tags = Readonly<Record<string, readonly string[] | null>>;
@@ -151,7 +155,9 @@ function PositionTagComparison({
       )}
       {read.state === "failed" && (
         <div className="grid justify-items-start gap-2">
-          <p role="alert">{text.loadFailed}</p>
+          <p role="alert" className={releaseControlAlertClass}>
+            {text.loadFailed}
+          </p>
           <AppButton
             type="button"
             onPress={() => setRetry((value) => value + 1)}
@@ -279,6 +285,7 @@ function PositionSourceEvidence({
         <label className="grid gap-1 text-sm">
           {text.chooseLocation}
           <select
+            className={releaseControlSelectClass}
             value={location?.location_id ?? ""}
             onChange={(event) => setLocationId(event.currentTarget.value)}
           >

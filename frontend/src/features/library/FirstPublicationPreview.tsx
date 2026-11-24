@@ -11,6 +11,10 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
 import { LibraryPositionPreviewButton } from "./LibraryPositionWorkspace";
+import {
+  releaseControlButtonClass,
+  releaseControlFieldsetClass,
+} from "./libraryReleaseControlStyles";
 import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 export type SourceChoice = Pick<
@@ -1008,11 +1012,15 @@ export function FirstPublicationPreview({
     <section className="min-w-0 space-y-3" aria-label={copy.section}>
       {comparisonOnly && (
         <>
-          <fieldset className="space-y-2" disabled={loading}>
+          <fieldset
+            className={`${releaseControlFieldsetClass} space-y-2`}
+            disabled={loading}
+          >
             <legend className="font-medium">{copy.currentWorkflow}</legend>
             <label className="block">
               <input
                 type="radio"
+                className="accent-[var(--accent)]"
                 name={`current-workflow-${releaseId}-${positionId}`}
                 checked={workflow === "comparison"}
                 onChange={() => changeWorkflow("comparison")}
@@ -1022,6 +1030,7 @@ export function FirstPublicationPreview({
             <label className="block">
               <input
                 type="radio"
+                className="accent-[var(--accent)]"
                 name={`current-workflow-${releaseId}-${positionId}`}
                 checked={workflow === "retained_same_path"}
                 onChange={() => changeWorkflow("retained_same_path")}
@@ -1032,11 +1041,15 @@ export function FirstPublicationPreview({
           {workflow === "comparison" && (
             <p role="note">{copy.comparisonReadOnly}</p>
           )}
-          <fieldset className="space-y-2" disabled={loading}>
+          <fieldset
+            className={`${releaseControlFieldsetClass} space-y-2`}
+            disabled={loading}
+          >
             <legend className="font-medium">{copy.mode}</legend>
             <label className="block">
               <input
                 type="radio"
+                className="accent-[var(--accent)]"
                 name={`comparison-mode-${releaseId}-${positionId}`}
                 checked={mode === "ordinary"}
                 onChange={() => changeMode("ordinary")}
@@ -1046,6 +1059,7 @@ export function FirstPublicationPreview({
             <label className="block">
               <input
                 type="radio"
+                className="accent-[var(--accent)]"
                 name={`comparison-mode-${releaseId}-${positionId}`}
                 checked={mode === "forced"}
                 onChange={() => changeMode("forced")}
@@ -1076,6 +1090,7 @@ export function FirstPublicationPreview({
       {!comparisonOnly && workflow === "first" && (
         <button
           type="button"
+          className={releaseControlButtonClass}
           disabled={
             !canConfirm ||
             confirming ||
@@ -1091,6 +1106,7 @@ export function FirstPublicationPreview({
       {workflow === "retained_same_path" && (
         <button
           type="button"
+          className={releaseControlButtonClass}
           disabled={
             !canConfirm ||
             confirming ||

@@ -185,7 +185,7 @@ frontend/src/features/library/ReleaseMetadataEditor.tsx
 frontend/src/features/library/StructuredMetadataFields.tsx
 frontend/src/features/library/artistCreditDraft.ts
 frontend/src/features/library/artistCreditMessages.ts
-frontend/src/features/library/library.css
+frontend/src/features/library/libraryReleaseControlStyles.ts
 frontend/src/features/library/libraryReleaseMessages.ts
 frontend/src/features/library/libraryRoute.ts
 frontend/src/features/library/newReleaseCoverEditor.tsx

@@ -12,6 +12,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
+  releaseControlAlertClass,
+  releaseControlButtonClass,
+} from "./libraryReleaseControlStyles";
+import {
   type LibraryReleaseText,
   LocalizedLibraryReleaseError,
   libraryReleaseError,
@@ -186,9 +190,12 @@ export function ReleaseCoverEditor({
   return (
     <section
       aria-labelledby="release-cover-title"
-      className="space-y-3 rounded border border-stone-300 p-4"
+      className="space-y-3 rounded border border-[var(--line)] bg-surface p-4"
     >
-      <h2 id="release-cover-title" className="font-semibold">
+      <h2
+        id="release-cover-title"
+        className="text-base leading-[22px] font-semibold"
+      >
         {text("releaseCover")}
       </h2>
       {cover?.selected_generation ? (
@@ -225,6 +232,7 @@ export function ReleaseCoverEditor({
           key={releaseId}
           ref={fileInput}
           type="file"
+          className="max-w-full rounded bg-raised text-ink max-[599px]:min-h-10"
           accept="image/png,image/jpeg"
           disabled={busy}
           onChange={(event) => setFile(event.target.files?.[0])}
@@ -232,6 +240,7 @@ export function ReleaseCoverEditor({
       </label>
       <button
         type="button"
+        className={releaseControlButtonClass}
         disabled={!file || busy}
         onClick={() => void savePending()}
       >
@@ -239,6 +248,7 @@ export function ReleaseCoverEditor({
       </button>
       <button
         type="button"
+        className={releaseControlButtonClass}
         disabled={!cover?.pending_generation || !epoch || busy}
         onClick={() => void apply("apply")}
       >
@@ -246,16 +256,23 @@ export function ReleaseCoverEditor({
       </button>
       <button
         type="button"
+        className={releaseControlButtonClass}
         disabled={!cover?.selected_generation || !epoch || busy}
         onClick={() => void apply("retry")}
       >
         {text("retrySelectedCover")}
       </button>
       {cover?.warning && (
-        <p role="alert">{text("coverWarning", { warning: cover.warning })}</p>
+        <p role="alert" className={releaseControlAlertClass}>
+          {text("coverWarning", { warning: cover.warning })}
+        </p>
       )}
       {notice && <p role="status">{displayText(notice)}</p>}
-      {error && <p role="alert">{displayText(error)}</p>}
+      {error && (
+        <p role="alert" className={releaseControlAlertClass}>
+          {displayText(error)}
+        </p>
+      )}
     </section>
   );
 }
