@@ -1024,14 +1024,27 @@ it("keeps overview positions linked and publication controllers registered witho
   });
   const view = renderScreen(releaseID, undefined, client);
 
+  const media = await screen.findByRole("region", {
+    name: "Media and positions",
+  });
+  const disc = within(media).getByRole("table", {
+    name: "Edition positions · Medium 1 · Disc one · CD",
+  });
   expect(
-    await screen.findByRole("link", { name: "1 · Position One" }),
+    within(disc).getByRole("link", { name: "Position One" }),
   ).toHaveAttribute(
     "href",
     "#/library/releases/release-1/positions/position-1",
   );
+  expect(within(disc).queryByRole("link", { name: "Position Two" })).toBeNull();
   expect(
-    screen.getByRole("link", { name: "2 · Position Two" }),
+    within(media).getByText("Positions without saved media information:"),
+  ).toBeVisible();
+  const ungrouped = within(media).getByRole("table", {
+    name: "Edition positions · Contextual Release",
+  });
+  expect(
+    within(ungrouped).getByRole("link", { name: "Position Two" }),
   ).toHaveAttribute(
     "href",
     "#/library/releases/release-1/positions/position-2",

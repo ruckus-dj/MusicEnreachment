@@ -5,6 +5,10 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { sourceInventoryStatusLabel } from "../sources/SourceInventoryView";
 import { statusLabel } from "../sources/sourcesApi";
+import {
+  type LibraryArtistReleaseTrackRow,
+  LibraryArtistReleaseTracksView,
+} from "./LibraryArtistReleaseTracksView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
 
@@ -76,11 +80,7 @@ export function ReleaseMediaSummary({
     locale === "ru"
       ? {
           heading: "Носители и позиции",
-          positionsByMedia: "Позиции по носителям",
           medium: "Носитель",
-          title: "Название",
-          format: "Формат",
-          positions: "Позиции",
           untitled: "Без названия",
           unspecified: "Не указан",
           positionsUnspecified: "Позиции не указаны",
@@ -90,11 +90,7 @@ export function ReleaseMediaSummary({
         }
       : {
           heading: "Media and positions",
-          positionsByMedia: "Positions by media",
           medium: "Medium",
-          title: "Title",
-          format: "Format",
-          positions: "Positions",
           untitled: "Untitled",
           unspecified: "Not specified",
           positionsUnspecified: "No positions specified",
@@ -113,73 +109,79 @@ export function ReleaseMediaSummary({
   const ungroupedTracks = tracks.filter(
     (track) => !media.some((medium) => tracksForMedium(medium).includes(track)),
   );
-  const positionLinks = (items: typeof tracks) => (
-    <ul className="library-release-position-links">
-      {items.map((track) => (
-        <li key={track.id}>
-          <a
-            href={`#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`}
-          >
-            {positionNumber(track)} · {track.title || copy.untitled}
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
+  const trackRows = (
+    items: LibraryReleaseTrackResponse[],
+  ): LibraryArtistReleaseTrackRow[] =>
+    items.map((track) => ({
+      id: track.id,
+      numberLabel:
+        track.displayed_number.trim() ||
+        String(track.position).padStart(2, "0"),
+      title: track.title,
+      href: `#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`,
+      durationMs: track.duration_ms,
+      sourceCount: track.sources?.length ?? 0,
+      isNewRecording: !track.recording_id,
+      publication: track.publication
+        ? {
+            state: "published",
+            codec: track.publication.codec,
+            container: track.publication.container,
+          }
+        : { state: "not-published" },
+    }));
+  const mediumLabel = (medium: (typeof media)[number]) =>
+    `${copy.medium} ${medium.medium} · ${medium.title || copy.untitled} · ${
+      medium.format || copy.unspecified
+    }`;
   return (
     <section
-      className="library-release-media"
+      className="library-release-media grid min-w-0 gap-3"
       aria-labelledby="release-media-heading"
     >
       <h2 id="release-media-heading">{copy.heading}</h2>
       {media.length ? (
-        <section
-          className="library-release-table-scroll"
-          aria-label={copy.positionsByMedia}
-        >
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">{copy.medium}</th>
-                <th scope="col">{copy.title}</th>
-                <th scope="col">{copy.format}</th>
-                <th scope="col">{copy.positions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {media.map((medium) => {
-                const items = tracksForMedium(medium);
-                return (
-                  <tr key={medium.id}>
-                    <th scope="row">{medium.medium}</th>
-                    <td>{medium.title || copy.untitled}</td>
-                    <td>{medium.format || copy.unspecified}</td>
-                    <td>
-                      {items.length ? (
-                        positionLinks(items)
-                      ) : (
-                        <span>{copy.positionsUnspecified}</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+        <div className="grid gap-4">
+          {media.map((medium) => {
+            const items = tracksForMedium(medium);
+            const label = mediumLabel(medium);
+            return (
+              <section className="min-w-0" key={medium.id} aria-label={label}>
+                <h3 className="mb-1.5 text-sm font-semibold">{label}</h3>
+                {items.length ? (
+                  <LibraryArtistReleaseTracksView
+                    locale={locale}
+                    releaseTitle={label}
+                    tracks={trackRows(items)}
+                  />
+                ) : (
+                  <p>{copy.positionsUnspecified}</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
       ) : (
         <p>{copy.mediaUnrecorded}</p>
       )}
       {!media.length && tracks.length > 0 ? (
-        <div>
+        <div className="min-w-0">
           <p>{copy.releasePositions}</p>
-          {positionLinks(tracks)}
+          <LibraryArtistReleaseTracksView
+            locale={locale}
+            releaseTitle={release.title}
+            tracks={trackRows(tracks)}
+          />
         </div>
       ) : null}
       {media.length > 0 && ungroupedTracks.length > 0 ? (
-        <div>
+        <div className="min-w-0">
           <p>{copy.positionsWithoutMedia}</p>
-          {positionLinks(ungroupedTracks)}
+          <LibraryArtistReleaseTracksView
+            locale={locale}
+            releaseTitle={release.title}
+            tracks={trackRows(ungroupedTracks)}
+          />
         </div>
       ) : null}
     </section>
