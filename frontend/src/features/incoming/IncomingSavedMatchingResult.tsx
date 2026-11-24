@@ -1,5 +1,6 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { MatchingLinkResultView } from "../matchingWorkspace/MatchingLinkResultView";
+import { useMatchingLinkResultFocus } from "../matchingWorkspace/useMatchingLinkResultFocus";
 import { incomingSourceFileName } from "./apiMatchingSources";
 import type { IncomingConfirmReceipt } from "./confirmReceipts";
 import {
@@ -119,23 +120,15 @@ export function IncomingSavedMatchingResult({
   onContinue?: () => void;
 }) {
   const [publicationOpen, setPublicationOpen] = useState(false);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const publicationButtonRef = useRef<HTMLButtonElement>(null);
-  const restorePublicationFocus = useRef(false);
+  const { headingRef, publicationButtonRef, restorePublicationButtonOnReturn } =
+    useMatchingLinkResultFocus({
+      focusHeadingKey: publicationOpen ? undefined : "result",
+      publicationOpen,
+    });
   const model = useMemo(
     () => receiptPresentation(receipt, locale),
     [receipt, locale],
   );
-  useLayoutEffect(() => {
-    if (publicationOpen) return;
-    if (restorePublicationFocus.current) {
-      restorePublicationFocus.current = false;
-      publicationButtonRef.current?.focus();
-    } else {
-      headingRef.current?.focus();
-    }
-  }, [publicationOpen]);
-
   if (publicationOpen && model.releaseId)
     return (
       <IncomingReceiptPublication
@@ -144,7 +137,7 @@ export function IncomingSavedMatchingResult({
         releaseTitle={model.releaseTitle}
         positions={model.positions}
         onBack={() => {
-          restorePublicationFocus.current = true;
+          restorePublicationButtonOnReturn();
           setPublicationOpen(false);
         }}
       />

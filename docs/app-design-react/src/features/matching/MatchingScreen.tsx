@@ -27,8 +27,8 @@ import {
 import type { CatalogArtist } from "../library/catalogData";
 import { MatchingBoard, MatchingEvidenceInspector } from "./";
 import { MatchingLinkResultView } from "./MatchingLinkResultView";
-import { MatchingReceiptPublicationView } from "./MatchingReceiptPublicationView";
 import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
+import { MatchingReceiptPublicationView } from "./MatchingReceiptPublicationView";
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
 import { MatchingReviewSearchView } from "./MatchingReviewSearchView";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
@@ -40,6 +40,7 @@ import {
 import { saveMatchingLinks } from "./matchingLinks";
 import { matchingLinksCopy } from "./matchingLinksCopy";
 import { matchingMessage } from "./matchingMessages";
+import { useMatchingLinkResultFocus } from "./useMatchingLinkResultFocus";
 
 export type MatchingScreenProps = {
 	destination?: import("../publication/publicationOutput").PublicationDestination;
@@ -78,9 +79,14 @@ export function MatchingScreen({
 	const [publicationReceiptId, setPublicationReceiptId] = useState("");
 	const [focusReceiptId, setFocusReceiptId] = useState("");
 	const previewHeadingRef = useRef<HTMLHeadingElement>(null);
-	const receiptHeadingRef = useRef<HTMLHeadingElement>(null);
-	const publicationButtonRef = useRef<HTMLButtonElement>(null);
-	const restorePublicationFocus = useRef(false);
+	const {
+		headingRef: receiptHeadingRef,
+		publicationButtonRef,
+		restorePublicationButtonOnReturn,
+	} = useMatchingLinkResultFocus({
+		focusHeadingKey: focusReceiptId,
+		publicationOpen: Boolean(publicationReceiptId),
+	});
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
@@ -105,16 +111,6 @@ export function MatchingScreen({
 			block: "start",
 		});
 	}, [previewOpenSequence]);
-	useLayoutEffect(() => {
-		if (!focusReceiptId) return;
-		receiptHeadingRef.current?.focus();
-	}, [focusReceiptId]);
-	useLayoutEffect(() => {
-		if (!publicationReceiptId && restorePublicationFocus.current) {
-			restorePublicationFocus.current = false;
-			publicationButtonRef.current?.focus();
-		}
-	}, [publicationReceiptId]);
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
@@ -165,7 +161,7 @@ export function MatchingScreen({
 						destination={destination}
 						onReleases={setReleases}
 						onBack={() => {
-							restorePublicationFocus.current = true;
+							restorePublicationButtonOnReturn();
 							setPublicationReceiptId("");
 						}}
 					/>
