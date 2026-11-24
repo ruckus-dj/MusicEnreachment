@@ -206,7 +206,7 @@ it("saves recording and position title overrides through their own scopes", asyn
         },
         {
           name: "Cleared MBID",
-          role: "lyricist",
+          role: "performer",
           artist_id: "423e4567-e89b-42d3-a456-426614174000",
           mbid: "523e4567-e89b-42d3-a456-426614174000",
         },
@@ -298,6 +298,14 @@ it("saves recording and position title overrides through their own scopes", asyn
     { target: { value: "explicit_empty" } },
   );
   openGroup(position, "Участники");
+  expect(
+    within(position).getByRole("heading", {
+      name: "Исполнитель / инструмент",
+    }),
+  ).toBeVisible();
+  expect(
+    within(position).getByRole("heading", { name: "Композитор" }),
+  ).toBeVisible();
   const originalFirstContributor = within(position).getByRole("textbox", {
     name: "Имя участника 1",
   });
@@ -311,53 +319,72 @@ it("saves recording and position title overrides through their own scopes", asyn
       name: "Переместить участника вниз 3",
     }),
   ).toBeDisabled();
+  expect(
+    within(position).getByRole("button", {
+      name: "Переместить участника вверх 2",
+    }),
+  ).toBeDisabled();
+  expect(
+    within(position).getByRole("button", {
+      name: "Переместить участника вниз 2",
+    }),
+  ).toBeDisabled();
   fireEvent.click(
     within(position).getByRole("button", {
       name: "Переместить участника вниз 1",
     }),
   );
   expect(
-    within(position).getByRole("textbox", { name: "Имя участника 2" }),
+    within(position).getByRole("textbox", { name: "Имя участника 3" }),
   ).toBe(originalFirstContributor);
   fireEvent.change(
     within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 1",
+      name: "MusicBrainz ID участника 2",
     }),
     { target: { value: "723e4567-e89b-42d3-a456-426614174000" } },
   );
   fireEvent.change(
-    within(position).getByRole("textbox", { name: "Имя участника 2" }),
+    within(position).getByRole("textbox", { name: "Имя участника 3" }),
     { target: { value: "Doe, Jane (live)" } },
   );
-  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 2" }), {
+  const oldRole = within(position).getByRole("combobox", { name: "Роль 3" });
+  oldRole.focus();
+  fireEvent.change(oldRole, {
     target: { value: "composer" },
   });
   expect(
-    within(position).getByRole("textbox", { name: "Инструмент 2" }),
+    within(position).getByRole("combobox", { name: "Роль 3" }),
+  ).toHaveFocus();
+  expect(
+    within(position).getByRole("textbox", { name: "Инструмент 3" }),
   ).toHaveValue("Piano");
-  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 2" }), {
+  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 3" }), {
     target: { value: "performer" },
   });
   fireEvent.change(
     within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 2",
+      name: "MusicBrainz ID участника 3",
     }),
     { target: { value: "623e4567-e89b-42d3-a456-426614174000" } },
   );
   fireEvent.change(
     within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 3",
+      name: "MusicBrainz ID участника 1",
     }),
     { target: { value: "" } },
   );
   expect(
-    within(position).getByRole("textbox", { name: "Инструмент 2" }),
+    within(position).getByRole("textbox", { name: "Инструмент 3" }),
   ).toHaveValue("Piano");
   expect(
-    within(position).queryByText("123e4567-e89b-42d3-a456-426614174000"),
+    within(position).queryByDisplayValue(
+      "523e4567-e89b-42d3-a456-426614174000",
+    ),
   ).not.toBeInTheDocument();
   expect(
-    within(position).queryByText("223e4567-e89b-42d3-a456-426614174000"),
+    within(position).queryByDisplayValue(
+      "223e4567-e89b-42d3-a456-426614174000",
+    ),
   ).not.toBeInTheDocument();
   expect(
     within(position).getAllByText("Связь с локальным артистом сохранена"),
@@ -379,6 +406,11 @@ it("saves recording and position title overrides through their own scopes", asyn
           state: "value",
           value: [
             {
+              name: "Cleared MBID",
+              role: "performer",
+              artist_id: "423e4567-e89b-42d3-a456-426614174000",
+            },
+            {
               name: "Added MBID",
               role: "composer",
               artist_id: "323e4567-e89b-42d3-a456-426614174000",
@@ -390,11 +422,6 @@ it("saves recording and position title overrides through their own scopes", asyn
               instrument: "Piano",
               artist_id: "123e4567-e89b-42d3-a456-426614174000",
               mbid: "623e4567-e89b-42d3-a456-426614174000",
-            },
-            {
-              name: "Cleared MBID",
-              role: "lyricist",
-              artist_id: "423e4567-e89b-42d3-a456-426614174000",
             },
           ],
         },

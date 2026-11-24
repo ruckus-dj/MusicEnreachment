@@ -27,9 +27,16 @@ import {
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
 import { artistCreditMessages } from "./artistCreditMessages";
-import { ContributorRowView } from "./ContributorRowView";
+import {
+  ContributorRoleSectionView,
+  ContributorRowView,
+} from "./ContributorRowView";
 import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
+import {
+  libraryTagComparisonFieldLabel,
+  navidromeFields,
+} from "./libraryTagComparisonFields";
 import { MetadataCardActions } from "./MetadataCardActions";
 import {
   MetadataBasicsSection,
@@ -397,6 +404,10 @@ const copy = {
   },
 } as const;
 
+const contributorRoleOrder = navidromeFields.flatMap((field) =>
+  field.kind === "contributors" && field.role ? [field.role] : [],
+);
+
 type EditorValues = Record<
   MetadataFieldKey,
   { state: FieldState; value: MetadataValue }
@@ -639,6 +650,7 @@ function LibraryScopedMetadataEditorSession({
 }: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
   const contributorControlPrefix = useId();
+  const contributorRoleFocus = useRef<string | null>(null);
   const text = copy[locale];
   const genreCopy = genreMessages[locale];
   const title =
@@ -1163,6 +1175,18 @@ function LibraryScopedMetadataEditorSession({
     const field = editing ? draft[key] : saved[key];
     const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
     const contributors = field.value as ContributorDraft[];
+    const indicesByRole = new Map<string, number[]>();
+    for (const [index, { role }] of contributors.entries()) {
+      const indices = indicesByRole.get(role);
+      if (indices) indices.push(index);
+      else indicesByRole.set(role, [index]);
+    }
+    const groups = Array.from(
+      new Set([...contributorRoleOrder, ...indicesByRole.keys()]),
+    ).flatMap((role) => {
+      const indices = indicesByRole.get(role);
+      return indices ? [{ role, indices }] : [];
+    });
     const updateContributors = (value: ContributorDraft[]) =>
       updateField(key, { state: "value", value });
     const replaceContributor = (
@@ -1174,10 +1198,10 @@ function LibraryScopedMetadataEditorSession({
           rowIndex === index ? { ...row, ...changes } : row,
         ),
       );
-    const moveContributor = (index: number, offset: -1 | 1) => {
+    const moveContributor = (index: number, target: number | undefined) => {
+      if (target === undefined) return;
+      // Reorder only the slots of this role; interleaved roles keep their slots.
       const next = [...contributors];
-      const target = index + offset;
-      if (target < 0 || target >= next.length) return;
       [next[index], next[target]] = [next[target], next[index]];
       updateContributors(next);
     };
@@ -1199,143 +1223,173 @@ function LibraryScopedMetadataEditorSession({
               </span>
             ) : (
               <>
-                {contributors.map((contributor, index) => (
-                  <div
-                    key={contributor.uiKey}
-                    className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+                {groups.map(({ role, indices }) => (
+                  <ContributorRoleSectionView
+                    key={role}
+                    label={
+                      Object.hasOwn(text.contributorRoles, role)
+                        ? libraryTagComparisonFieldLabel(role, locale)
+                        : role || text.contributorRole
+                    }
                   >
-                    <ContributorRowView
-                      items={[
-                        {
-                          key: "name",
-                          id: `${contributorControlPrefix}-${contributor.uiKey}-name`,
-                          label: `${text.contributorName} ${index + 1}`,
-                          value: contributor.name,
-                          disabled: saving,
-                          display: editing ? "input" : "text",
-                          emptyValue: text.emptyValue,
-                          onChange: (name) =>
-                            replaceContributor(index, { name }),
-                        },
-                        {
-                          kind: "slot",
-                          key: "role",
-                          content: editing ? (
-                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                              <label
-                                htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                              >
-                                {`${text.contributorRole} ${index + 1}`}
-                              </label>
-                              <select
-                                id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                                className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                                value={contributor.role}
-                                disabled={saving}
-                                onChange={(event) =>
-                                  replaceContributor(index, {
-                                    role: event.currentTarget.value,
-                                  })
-                                }
-                              >
-                                <option value="">{text.contributorRole}</option>
-                                {contributor.role &&
-                                !Object.hasOwn(
-                                  text.contributorRoles,
-                                  contributor.role,
-                                ) ? (
-                                  <option value={contributor.role}>
-                                    {contributor.role}
-                                  </option>
-                                ) : null}
-                                {Object.entries(text.contributorRoles).map(
-                                  ([role, roleLabel]) => (
-                                    <option key={role} value={role}>
-                                      {roleLabel}
-                                    </option>
-                                  ),
-                                )}
-                              </select>
-                            </div>
-                          ) : (
-                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                              <span>{`${text.contributorRole} ${index + 1}`}</span>
-                              <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
-                                {text.contributorRoles[
-                                  contributor.role as keyof typeof text.contributorRoles
-                                ] ?? contributor.role}
-                              </span>
-                            </div>
-                          ),
-                        },
-                        {
-                          key: "instrument",
-                          id: `${contributorControlPrefix}-${contributor.uiKey}-instrument`,
-                          label: `${text.contributorInstrument} ${index + 1}`,
-                          value: contributor.instrument ?? "",
-                          disabled: saving,
-                          display: editing ? "input" : "text",
-                          emptyValue: text.emptyValue,
-                          onChange: (instrument) =>
-                            replaceContributor(index, {
-                              instrument: instrument || undefined,
-                            }),
-                        },
-                        {
-                          kind: "slot",
-                          key: "retained-link",
-                          content: contributor.artist_id ? (
-                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                              <span className="text-sm text-[var(--ink)]">
-                                {text.artistLinkRetained}
-                              </span>
-                            </div>
-                          ) : null,
-                        },
-                        {
-                          key: "mbid",
-                          id: `${contributorControlPrefix}-${contributor.uiKey}-mbid`,
-                          label: `${text.contributorMusicBrainzID} ${index + 1}`,
-                          value: contributor.mbid ?? "",
-                          disabled: saving,
-                          display: editing ? "input" : "text",
-                          emptyValue: text.emptyValue,
-                          onChange: (mbid) =>
-                            replaceContributor(index, {
-                              mbid: mbid || undefined,
-                            }),
-                        },
-                      ]}
-                      actions={
-                        editing
-                          ? {
-                              moveUp: {
-                                label: text.moveContributorUp(index + 1),
-                                disabled: saving || index === 0,
-                                onPress: () => moveContributor(index, -1),
-                              },
-                              moveDown: {
-                                label: text.moveContributorDown(index + 1),
-                                disabled:
-                                  saving || index === contributors.length - 1,
-                                onPress: () => moveContributor(index, 1),
-                              },
-                              remove: {
-                                label: text.removeContributor(index + 1),
-                                text: text.removeContributor(index + 1),
+                    {indices.map((index, roleIndex) => {
+                      const contributor = contributors[index];
+                      const previous = indices[roleIndex - 1];
+                      const next = indices[roleIndex + 1];
+                      return (
+                        <div
+                          key={contributor.uiKey}
+                          className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+                        >
+                          <ContributorRowView
+                            items={[
+                              {
+                                key: "name",
+                                id: `${contributorControlPrefix}-${contributor.uiKey}-name`,
+                                label: `${text.contributorName} ${index + 1}`,
+                                value: contributor.name,
                                 disabled: saving,
-                                onPress: () =>
-                                  updateContributors(
-                                    contributors.filter(
-                                      (_, row) => row !== index,
-                                    ),
-                                  ),
+                                display: editing ? "input" : "text",
+                                emptyValue: text.emptyValue,
+                                onChange: (name) =>
+                                  replaceContributor(index, { name }),
                               },
+                              {
+                                kind: "slot",
+                                key: "role",
+                                content: editing ? (
+                                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                    <label
+                                      htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                                    >
+                                      {`${text.contributorRole} ${index + 1}`}
+                                    </label>
+                                    <select
+                                      id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                                      className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                      value={contributor.role}
+                                      disabled={saving}
+                                      ref={(element) => {
+                                        if (
+                                          element &&
+                                          contributorRoleFocus.current ===
+                                            contributor.uiKey
+                                        ) {
+                                          contributorRoleFocus.current = null;
+                                          element.focus();
+                                        }
+                                      }}
+                                      onChange={(event) => {
+                                        if (
+                                          event.currentTarget.value ===
+                                          contributor.role
+                                        )
+                                          return;
+                                        contributorRoleFocus.current =
+                                          contributor.uiKey;
+                                        replaceContributor(index, {
+                                          role: event.currentTarget.value,
+                                        });
+                                      }}
+                                    >
+                                      <option value="">
+                                        {text.contributorRole}
+                                      </option>
+                                      {contributor.role &&
+                                      !Object.hasOwn(
+                                        text.contributorRoles,
+                                        contributor.role,
+                                      ) ? (
+                                        <option value={contributor.role}>
+                                          {contributor.role}
+                                        </option>
+                                      ) : null}
+                                      {Object.entries(
+                                        text.contributorRoles,
+                                      ).map(([role, roleLabel]) => (
+                                        <option key={role} value={role}>
+                                          {roleLabel}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : null,
+                              },
+                              {
+                                key: "instrument",
+                                id: `${contributorControlPrefix}-${contributor.uiKey}-instrument`,
+                                label: `${text.contributorInstrument} ${index + 1}`,
+                                value: contributor.instrument ?? "",
+                                disabled: saving,
+                                display: editing ? "input" : "text",
+                                emptyValue: text.emptyValue,
+                                onChange: (instrument) =>
+                                  replaceContributor(index, {
+                                    instrument: instrument || undefined,
+                                  }),
+                              },
+                              {
+                                kind: "slot",
+                                key: "retained-link",
+                                content: contributor.artist_id ? (
+                                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                    <span className="text-sm text-[var(--ink)]">
+                                      {text.artistLinkRetained}
+                                    </span>
+                                  </div>
+                                ) : null,
+                              },
+                              {
+                                key: "mbid",
+                                id: `${contributorControlPrefix}-${contributor.uiKey}-mbid`,
+                                label: `${text.contributorMusicBrainzID} ${index + 1}`,
+                                value: contributor.mbid ?? "",
+                                disabled: saving,
+                                display: editing ? "input" : "text",
+                                emptyValue: text.emptyValue,
+                                onChange: (mbid) =>
+                                  replaceContributor(index, {
+                                    mbid: mbid || undefined,
+                                  }),
+                              },
+                            ]}
+                            actions={
+                              editing
+                                ? {
+                                    moveUp: {
+                                      label: text.moveContributorUp(index + 1),
+                                      disabled:
+                                        saving || previous === undefined,
+                                      onPress: () =>
+                                        moveContributor(index, previous),
+                                    },
+                                    moveDown: {
+                                      label: text.moveContributorDown(
+                                        index + 1,
+                                      ),
+                                      disabled: saving || next === undefined,
+                                      onPress: () =>
+                                        moveContributor(index, next),
+                                    },
+                                    remove: {
+                                      label: text.removeContributor(index + 1),
+                                      text: text.removeContributor(index + 1),
+                                      disabled: saving,
+                                      onPress: () =>
+                                        updateContributors(
+                                          contributors.filter(
+                                            (_, row) => row !== index,
+                                          ),
+                                        ),
+                                    },
+                                  }
+                                : undefined
                             }
-                          : undefined
-                      }
-                    />
-                  </div>
+                          />
+                        </div>
+                      );
+                    })}
+                  </ContributorRoleSectionView>
                 ))}
                 {editing ? (
                   <AppButton

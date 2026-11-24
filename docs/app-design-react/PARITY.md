@@ -92,7 +92,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
 | Медиатека: раскрытие произведений и частей, строки произведений, название, всего частей и номер | `features/library/WorksMovementSectionView.tsx`, `WorkRowsView.tsx`, `MovementFieldsView.tsx` | Те же пути |
-| Медиатека: поля строки участника, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
+| Медиатека: группы ролей участников, поля строки, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Медиатека: рамка диалога удаления артиста, релиза и публикации, заголовок и название удаляемого объекта, список затронутых файлов и пустое состояние | `features/library/LibraryDeletionDialogView.tsx` | Тот же путь; приложение показывает серверные сведения о позициях и допустимости захвата файлов, которых нет в демоданных |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
@@ -182,10 +182,10 @@ source channel, а fixture макета такого происхождения 
   в макете ограничено демонстрационными данными.
   Поля со списками значений используют одинаковые строки, подписи и действия
   порядка. Приложение сохраняет массив с выбранным состоянием и ревизией.
-  Строки участников используют общие поля имени, инструмента и MBID, а также
-  действия порядка и удаления. Приложение оставляет в строке выбор роли,
-  уведомление о сохранённом `artist_id` и режим поля; макет группирует строки
-  по роли, показывает поле сортировки и добавляет роли отдельным списком.
+  Строки участников сгруппированы по ролям в обеих сборках. Поля имени,
+  инструмента и MBID, действия порядка внутри роли и удаления используют общее
+  представление. Приложение оставляет в строке выбор роли, уведомление о
+  сохранённом `artist_id` и режим поля; макет добавляет роли отдельным списком.
   Общая секция «Основное» показывает поля перед жанрами; принятые
   жанры провайдера идут отдельной строкой после этой секции. Раскрываемые
   группы используют общие сетки, а краткая сводка учитывает показанные

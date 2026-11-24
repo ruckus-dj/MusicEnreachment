@@ -67,6 +67,21 @@ function ContributorFieldView({ field }: { field: ContributorRowField }) {
   );
 }
 
+export function ContributorRoleSectionView({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-w-0 gap-2 border-b border-[var(--line)] pb-2 last:border-0">
+      <h4 className="m-0 text-xs font-semibold">{label}</h4>
+      {children}
+    </div>
+  );
+}
+
 export function ContributorRowView({
   items,
   actions,

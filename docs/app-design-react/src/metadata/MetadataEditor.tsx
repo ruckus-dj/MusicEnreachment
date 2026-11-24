@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components/ui";
-import { ContributorRowView } from "../features/library/ContributorRowView";
+import {
+	ContributorRoleSectionView,
+	ContributorRowView,
+} from "../features/library/ContributorRowView";
 import { MetadataCardActions } from "../features/library/MetadataCardActions";
 import {
 	MetadataBasicsSection,
@@ -897,13 +900,10 @@ export function MetadataEditor({
 									(field) => field.role === role && field.kind === "identity",
 								);
 								return (
-									<div
+									<ContributorRoleSectionView
 										key={role}
-										className="grid gap-2 border-b border-[var(--line)] pb-2 last:border-0"
+										label={metadataFieldLabel(roleField.key, locale)}
 									>
-										<h4 className="m-0 text-xs font-semibold">
-											{metadataFieldLabel(roleField.key, locale)}
-										</h4>
 										{(roleContributors.length
 											? roleContributors
 											: [{ name: "" }]
@@ -1038,7 +1038,7 @@ export function MetadataEditor({
 												{m("action.addContributor")}
 											</Button>
 										)}
-									</div>
+									</ContributorRoleSectionView>
 								);
 							})}
 							{editing && roleOptions.length > 0 && (
