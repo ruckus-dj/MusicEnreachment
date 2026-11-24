@@ -2171,9 +2171,12 @@ export function LibraryReleaseScreen({
                   }}
                 >
                   <LibraryPositionTagEvidence
-                    key={inspectedSource?.media_variant_id}
+                    key={track.id}
                     locale={locale}
                     open={inspection?.open ?? false}
+                    releaseId={releaseId}
+                    positionId={track.id}
+                    refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
                     source={inspectedSource}
                     current={
                       currentTags

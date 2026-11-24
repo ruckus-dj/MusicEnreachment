@@ -39,6 +39,7 @@ type Dependencies struct {
 	ManualReleaseSelection *service.ManualReleaseSelectionService
 	ManualPickerSearch     *service.ManualPickerSearchService
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
+	LibraryTagComparisons  *service.LibraryTagComparisons
 	LibraryCatalog         *service.LibraryCatalog
 	LibraryReleaseOptions  *service.LibraryReleaseOptions
 	LibraryRecordingSearch *service.LibraryRecordingSearch

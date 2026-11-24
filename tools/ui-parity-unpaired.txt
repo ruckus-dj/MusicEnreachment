@@ -29,6 +29,7 @@ docs/app-design-react/src/features/library/TrackScreen.tsx
 docs/app-design-react/src/features/library/artistReleaseRoute.ts
 docs/app-design-react/src/features/library/availabilityRows.ts
 docs/app-design-react/src/features/library/catalogData.ts
+docs/app-design-react/src/features/library/comparisonOverrides.ts
 docs/app-design-react/src/features/library/catalogMessages.ts
 docs/app-design-react/src/features/library/catalogViewModel.ts
 docs/app-design-react/src/features/library/catalogueMessages.ts

@@ -116,6 +116,7 @@ const pairs = [
       "firstPublicationPreviewMessages.ts",
       "genreMessages.ts",
       "libraryArtistCardStyles.ts",
+      "libraryTagComparisonFields.ts",
     ],
   ],
   [

@@ -12,6 +12,7 @@ export function TagsScreen({
 	scope = "track",
 	releases,
 	artists,
+	providers,
 	files,
 	onSelectFile,
 	onPreview,
@@ -21,6 +22,7 @@ export function TagsScreen({
 	scope?: TagScope;
 	releases: OriginalRelease[];
 	artists: CatalogArtist[];
+	providers?: OriginalRelease[];
 	files: SourceFiles;
 	onSelectFile?: (trackId: string, fileId: string) => void;
 	onPreview?: (ids: string[]) => void;
@@ -57,6 +59,7 @@ export function TagsScreen({
 				<TagsComparison
 					releases={releases}
 					artists={artists}
+					providers={providers}
 					files={files}
 					scope={scope}
 					initialTrackId={trackId}

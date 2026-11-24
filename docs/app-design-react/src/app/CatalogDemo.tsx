@@ -928,6 +928,7 @@ export function CatalogDemo({
 					trackId={id}
 					scope={scope}
 					releases={releases}
+					providers={providers}
 					artists={artists}
 					files={files}
 					onPreview={(ids) => {
@@ -978,6 +979,7 @@ export function CatalogDemo({
 			<section className={screenLayout}>
 				<TrackScreen
 					files={files}
+					providers={providers}
 					artists={artists}
 					onQueueDeletion={queueDeletion}
 					release={release}

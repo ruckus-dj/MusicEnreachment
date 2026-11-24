@@ -53,6 +53,11 @@ export interface OriginalTrack {
 	};
 	metadataBaseline?: Record<string, string[]>;
 	metadataBaselineExtras?: { coverHash: string | null; lyrics: string | null };
+	/** Explicit local overrides recorded only for fields changed in an editor. */
+	recordingComparisonOverrides?: MetadataValues;
+	positionComparisonOverrides?: MetadataValues;
+	/** Explicit per-source audio overrides recorded only for changed audio fields. */
+	audioComparisonOverrides?: Record<string, MetadataValues>;
 	coverHash?: string | null;
 	lyrics?: string | null;
 	recordingGenres?: string[];
@@ -89,6 +94,8 @@ export interface OriginalRelease {
 	}[];
 	metadataValues?: MetadataValues;
 	metadataGenres?: MetadataGenre[];
+	/** Explicit local overrides recorded only for fields changed in an editor. */
+	comparisonOverrides?: MetadataValues;
 	metadata?: {
 		date: string;
 		country: string;

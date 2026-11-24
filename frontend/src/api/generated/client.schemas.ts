@@ -1523,6 +1523,32 @@ export interface LibrarySelectionResponse {
   positions: LibrarySelectionPositionResponse[];
 }
 
+export type LibraryTagComparisonProviderResponseStatus = typeof LibraryTagComparisonProviderResponseStatus[keyof typeof LibraryTagComparisonProviderResponseStatus];
+
+
+export const LibraryTagComparisonProviderResponseStatus = {
+  unlinked: 'unlinked',
+  unavailable: 'unavailable',
+  saved: 'saved',
+} as const;
+
+export type LibraryTagComparisonProviderResponseTags = {[key: string]: string[] | null};
+
+export interface LibraryTagComparisonProviderResponse {
+  name?: string;
+  status: LibraryTagComparisonProviderResponseStatus;
+  tags?: LibraryTagComparisonProviderResponseTags;
+}
+
+export type LibraryTagComparisonResponseOverrides = {[key: string]: string[] | null};
+
+export interface LibraryTagComparisonResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  overrides: LibraryTagComparisonResponseOverrides;
+  provider: LibraryTagComparisonProviderResponse;
+}
+
 export interface LocalProviderCredit {
   artist_id: string;
   artist_name: string;

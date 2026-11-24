@@ -81,6 +81,7 @@ import type {
   LibraryReleasePage,
   LibrarySelectionResolveInputBody,
   LibrarySelectionResponse,
+  LibraryTagComparisonResponse,
   ListCurrentOperationsParams,
   ListInstallationsParams,
   ListLibraryArtistsParams,
@@ -7125,6 +7126,141 @@ export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetLibraryFirstPublicationPreviewQueryOptions(releaseId,positionId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getLibraryPositionTagComparisonResponse200 = {
+  data: LibraryTagComparisonResponse
+  status: 200
+}
+
+export type getLibraryPositionTagComparisonResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryPositionTagComparisonResponseSuccess = (getLibraryPositionTagComparisonResponse200) & {
+  headers: Headers;
+};
+export type getLibraryPositionTagComparisonResponseError = (getLibraryPositionTagComparisonResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryPositionTagComparisonResponse = (getLibraryPositionTagComparisonResponseSuccess | getLibraryPositionTagComparisonResponseError)
+
+export const getGetLibraryPositionTagComparisonUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/tag-comparison`
+}
+
+/**
+ * @summary Read saved provider tags and explicit local overrides for a position
+ */
+export const getLibraryPositionTagComparison = async (releaseId: string,
+    positionId: string, options?: RequestInit): Promise<getLibraryPositionTagComparisonResponse> => {
+
+  const res = await fetch(getGetLibraryPositionTagComparisonUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryPositionTagComparisonResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryPositionTagComparisonResponse
+}
+
+
+
+
+
+export const getGetLibraryPositionTagComparisonQueryKey = (releaseId: string,
+    positionId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/positions/${positionId}/tag-comparison`
+    ] as const;
+    }
+
+
+export const getGetLibraryPositionTagComparisonQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError = ErrorModel>(releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryPositionTagComparisonQueryKey(releaseId,positionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>> = ({ signal }) => getLibraryPositionTagComparison(releaseId,positionId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined && positionId !== null && positionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryPositionTagComparisonQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>>
+export type GetLibraryPositionTagComparisonQueryError = ErrorModel
+
+
+export function useGetLibraryPositionTagComparison<TData = Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryPositionTagComparison>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryPositionTagComparison>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryPositionTagComparison<TData = Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryPositionTagComparison>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryPositionTagComparison>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryPositionTagComparison<TData = Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read saved provider tags and explicit local overrides for a position
+ */
+
+export function useGetLibraryPositionTagComparison<TData = Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPositionTagComparison>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryPositionTagComparisonQueryOptions(releaseId,positionId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

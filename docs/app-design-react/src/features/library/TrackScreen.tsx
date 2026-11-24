@@ -57,6 +57,7 @@ export function TrackScreen({
 	onQueueDeletion,
 	files = originalFiles,
 	artists,
+	providers,
 }: {
 	release: OriginalRelease;
 	track: OriginalTrack;
@@ -74,6 +75,7 @@ export function TrackScreen({
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
+	providers?: OriginalRelease[];
 }) {
 	const { locale } = useI18n();
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
@@ -323,6 +325,7 @@ export function TrackScreen({
 					releases={[release]}
 					artists={artists}
 					files={files}
+					providers={providers}
 					scope="track"
 					initialTrackId={track.id}
 					initialFileId={inspectedFileId}

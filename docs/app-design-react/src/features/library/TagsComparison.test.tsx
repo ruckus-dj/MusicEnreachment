@@ -1,37 +1,34 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { originalProviders, originalReleases } from "./catalogData";
+import { originalReleases } from "./catalogData";
 import { TagsComparison } from "./TagsComparison";
 
-it("renders an empty provider tag when the provider link exists, not the absent-link marker", () => {
-	const providerTrack = originalProviders[0].tracks[0];
+it("hides empty fields until show all and keeps an explicit clear visible", () => {
 	const release = structuredClone(originalReleases[0]);
 	const track = release.tracks[0];
-	track.providerTrackId = providerTrack.id;
-	const { rerender } = render(
-		<TagsComparison
-			releases={[release]}
-			files={{}}
-			scope="track"
-			showAllFields
-		/>,
-	);
-	const comment = screen.getByRole("row", { name: /COMMENT/ });
-	const linkedProviderValue = within(comment).getAllByRole("cell")[1];
-	expect(linkedProviderValue).toHaveTextContent("—");
-	expect(linkedProviderValue).not.toHaveTextContent("Нет связи с провайдером");
-
 	track.providerTrackId = null;
-	rerender(
-		<TagsComparison
-			releases={[release]}
-			files={{}}
-			scope="track"
-			showAllFields
-		/>,
+	delete track.published?.tags.COMMENT;
+
+	const view = render(
+		<TagsComparison releases={[release]} files={{}} scope="track" />,
 	);
-	const unlinkedProviderValue = within(
+	expect(screen.queryByRole("row", { name: /COMMENT/ })).toBeNull();
+	expect(
+		screen.getByText("У этой позиции нет связанного провайдера."),
+	).toBeVisible();
+
+	fireEvent.click(screen.getByRole("checkbox", { name: "Показать все" }));
+	const providerCell = within(
 		screen.getByRole("row", { name: /COMMENT/ }),
 	).getAllByRole("cell")[1];
-	expect(unlinkedProviderValue).toHaveTextContent("Нет данных связанного провайдера");
+	expect(providerCell).toHaveTextContent("—");
+	expect(providerCell).not.toHaveTextContent("MusicBrainz");
+	view.unmount();
+
+	track.recordingComparisonOverrides = { comment: [] };
+	render(<TagsComparison releases={[release]} files={{}} scope="track" />);
+	const overrideCell = within(
+		screen.getByRole("row", { name: /COMMENT/ }),
+	).getAllByRole("cell")[2];
+	expect(overrideCell).toHaveTextContent("Очищено");
 });

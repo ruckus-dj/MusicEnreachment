@@ -547,6 +547,7 @@ func Run(ctx context.Context, config Config) error {
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,
 		LibraryReleaseDetails:  libraryReleaseDetails,
+		LibraryTagComparisons:  service.NewLibraryTagComparisons(libraryRepository),
 		LibraryCatalog:         libraryCatalog,
 		LibraryReleaseOptions:  libraryReleaseOptions,
 		LibraryRecordingSearch: libraryRecordingSearch,

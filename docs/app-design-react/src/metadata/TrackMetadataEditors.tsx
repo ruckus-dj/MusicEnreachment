@@ -1,12 +1,13 @@
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-import type {
-	CatalogArtist,
-	OriginalTrack,
-	SourceFiles,
+import {
+	type CatalogArtist,
+	type OriginalTrack,
+	type SourceFiles,
+	originalProviders,
 } from "../features/library/catalogData";
-import { originalProviders } from "../features/library/catalogData";
+import { mergeComparisonOverrides } from "../features/library/comparisonOverrides";
 import { useI18n } from "../i18n/I18nProvider";
 import { metadataEditorMessages } from "./editorMessages";
 
@@ -170,6 +171,20 @@ export function TrackMetadataEditors({
 							recordingTitle: title,
 							...(updatePositionTitle ? { title } : {}),
 							recordingMetadata: values,
+							recordingComparisonOverrides: {
+								...mergeComparisonOverrides(
+									current.recordingComparisonOverrides,
+									recording,
+									values,
+								),
+								...(details?.genres
+									? {
+											genre: details.genres
+												.map(({ name, id }) => name ?? id ?? "")
+												.filter(Boolean),
+										}
+									: {}),
+							},
 							...(details?.credits
 								? { recordingCredits: details.credits }
 								: {}),
@@ -207,28 +222,42 @@ export function TrackMetadataEditors({
 						onSave={(values, details) => {
 							const displayedNumber = values.track?.[0] ?? "";
 							const medium = Number(values.disc?.[0] ?? "1");
-							onMutate((current) => ({
-								...current,
-								displayedNumber,
-								mediumPosition:
-									Number(displayedNumber) ||
-									current.mediumPosition ||
-									current.position,
-								medium:
-									Number.isFinite(medium) && medium > 0
-										? medium
-										: current.medium,
-								positionMetadata: values,
-								...(details?.extraValues?.titleOverride !== undefined
-									? {
-											positionTitleOverride: details.extraValues.titleOverride,
-											title:
-												details.extraValues.titleOverride ||
-												recordingTitleBaseline(current) ||
-												current.title,
-										}
-									: {}),
-							}));
+							onMutate((current) => {
+								const comparison = mergeComparisonOverrides(
+									current.positionComparisonOverrides,
+									position,
+									values,
+								);
+								const titleOverride = details?.extraValues?.titleOverride;
+								if (titleOverride !== undefined) {
+									if (titleOverride) comparison.title = [titleOverride];
+									else delete comparison.title;
+								}
+								return {
+									...current,
+									displayedNumber,
+									mediumPosition:
+										Number(displayedNumber) ||
+										current.mediumPosition ||
+										current.position,
+									medium:
+										Number.isFinite(medium) && medium > 0
+											? medium
+											: current.medium,
+									positionMetadata: values,
+									positionComparisonOverrides: comparison,
+									...(details?.extraValues?.titleOverride !== undefined
+										? {
+												positionTitleOverride:
+													details.extraValues.titleOverride,
+												title:
+													details.extraValues.titleOverride ||
+													recordingTitleBaseline(current) ||
+													current.title,
+											}
+										: {}),
+								};
+							});
 						}}
 					/>
 				</div>
@@ -254,6 +283,18 @@ export function TrackMetadataEditors({
 										audioMetadata: {
 											...current.audioMetadata,
 											[track.sourceId as string]: values,
+										},
+										audioComparisonOverrides: {
+											...current.audioComparisonOverrides,
+											[track.sourceId as string]: mergeComparisonOverrides(
+												current.audioComparisonOverrides?.[
+													track.sourceId as string
+												],
+												mergedValues(
+													track.audioMetadata?.[track.sourceId as string],
+												),
+												values,
+											),
 										},
 									}))
 								}

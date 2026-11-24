@@ -1,10 +1,11 @@
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-import type {
-	CatalogArtist,
-	OriginalRelease,
+import {
+	type CatalogArtist,
+	type OriginalRelease,
 } from "../features/library/catalogData";
+import { mergeComparisonOverrides } from "../features/library/comparisonOverrides";
 import { useI18n } from "../i18n/I18nProvider";
 import { metadataEditorMessages } from "./editorMessages";
 
@@ -144,6 +145,20 @@ export function ReleaseMetadataEditor({
 						catalog,
 						metadata,
 						metadataValues: next,
+						comparisonOverrides: {
+							...mergeComparisonOverrides(
+								release.comparisonOverrides,
+								values,
+								next,
+							),
+							...(details?.genres
+								? {
+										genre: details.genres
+											.map(({ name, id }) => name ?? id ?? "")
+											.filter(Boolean),
+									}
+								: {}),
+						},
 						...(details?.genres
 							? { metadataGenres: details.genres as MetadataGenre[] }
 							: {}),

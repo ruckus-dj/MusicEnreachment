@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { getSourceLocation } from "../../api/generated/client";
+import {
+  getLibraryPositionTagComparison,
+  getSourceLocation,
+} from "../../api/generated/client";
 import type {
   LibrarySourceLocationResponse,
+  LibraryTagComparisonResponse,
   LibraryTrackSourceResponse,
   SourceMetadataResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import {
-  LibraryTagComparisonTable,
-  LibraryTagDifferencesControl,
-  libraryTagComparisonCopy,
-} from "./LibraryTagComparisonTable";
+import { LibraryTagEvidenceComparison } from "./LibraryTagComparisonTable";
+import { libraryTagComparisonFields } from "./libraryTagComparisonFields";
 
 type Tags = Readonly<Record<string, readonly string[] | null>>;
 type Locale = "en" | "ru";
@@ -37,7 +38,6 @@ const copy = {
     loadingCurrent: "Reading the current publication snapshot…",
     noCurrent: "This position has no current publication.",
     emptyCurrent: "The saved current publication snapshot has no tags.",
-    noDifferences: "No differences in the saved tags.",
   },
   ru: {
     inspectSource:
@@ -55,25 +55,21 @@ const copy = {
     loadingCurrent: "Чтение снимка текущей публикации…",
     noCurrent: "У этой позиции нет текущей публикации.",
     emptyCurrent: "В сохранённом снимке текущей публикации нет тегов.",
-    noDifferences: "Сохранённые теги не отличаются.",
   },
 };
 
-function tagsDiffer(source: Tags, publication: Tags, key: string) {
-  const a = source[key] ?? [];
-  const b = publication[key] ?? [];
-  return (
-    Object.hasOwn(source, key) !== Object.hasOwn(publication, key) ||
-    a.length !== b.length ||
-    a.some((value, index) => value !== b[index])
-  );
-}
+type PositionEvidence =
+  | { state: "loading" | "unavailable" }
+  | { state: "saved"; data: LibraryTagComparisonResponse };
 
 function PositionTagComparison({
   locale,
   variantId,
   location,
   current,
+  evidence,
+  showAll,
+  onShowAllChange,
   differencesOnly,
   onDifferencesChange,
 }: {
@@ -81,11 +77,13 @@ function PositionTagComparison({
   variantId?: string;
   location?: LibrarySourceLocationResponse;
   current: CurrentTags;
+  evidence: PositionEvidence;
+  showAll: boolean;
+  onShowAllChange: (selected: boolean) => void;
   differencesOnly: boolean;
   onDifferencesChange: (selected: boolean) => void;
 }) {
   const text = copy[locale];
-  const tableCopy = libraryTagComparisonCopy[locale];
   const rootId = location?.root_id;
   const locationId = location?.location_id;
   const [retry, setRetry] = useState(0);
@@ -132,29 +130,6 @@ function PositionTagComparison({
 
   const sourceTags = read.state === "saved" ? read.metadata.tags : undefined;
   const currentTags = current.state === "saved" ? current.tags : undefined;
-  const keys = [
-    ...new Set([
-      ...Object.keys(sourceTags ?? {}),
-      ...Object.keys(currentTags ?? {}),
-    ]),
-  ].sort();
-  const canCompare = Boolean(sourceTags && currentTags && keys.length);
-  const rows = keys.flatMap((key) => {
-    const different = Boolean(
-      sourceTags && currentTags && tagsDiffer(sourceTags, currentTags, key),
-    );
-    if (canCompare && differencesOnly && !different) return [];
-    return [
-      {
-        key,
-        different,
-        values: [
-          sourceTags ? (sourceTags[key] ?? []) : null,
-          currentTags ? (currentTags[key] ?? []) : null,
-        ],
-      },
-    ];
-  });
   const currentNotice =
     current.state === "saved"
       ? !Object.keys(current.tags).length
@@ -197,45 +172,100 @@ function PositionTagComparison({
         </>
       )}
       {currentNotice && <p className="m-0 text-sm">{currentNotice}</p>}
-      {rows.length > 0 && (
-        <LibraryTagComparisonTable
-          fieldLabel={tableCopy.field}
-          columns={[
-            { id: "source", label: tableCopy.source },
-            { id: "publication", label: tableCopy.current },
-          ]}
-          rows={rows}
-        />
-      )}
-      {canCompare && differencesOnly && !rows.length && (
-        <p role="status">{text.noDifferences}</p>
-      )}
-      {canCompare && (
-        <LibraryTagDifferencesControl
-          locale={locale}
-          selected={differencesOnly}
-          onChange={onDifferencesChange}
-        />
-      )}
+      <LibraryTagEvidenceComparison
+        locale={locale}
+        source={sourceTags}
+        provider={
+          evidence.state === "saved"
+            ? evidence.data.provider
+            : { status: evidence.state }
+        }
+        overrides={
+          evidence.state === "saved" ? evidence.data.overrides : undefined
+        }
+        overridesUnavailable={evidence.state === "unavailable"}
+        current={currentTags}
+        knownFields={libraryTagComparisonFields(locale)}
+        showAll={showAll}
+        onShowAllChange={onShowAllChange}
+        differencesOnly={differencesOnly}
+        onDifferencesChange={onDifferencesChange}
+        showDifferencesControl={Boolean(sourceTags && currentTags)}
+      />
     </>
   );
 }
 
-export function LibraryPositionTagEvidence({
-  locale,
-  open,
-  source,
-  current,
-}: {
+type LibraryPositionTagEvidenceProps = {
   locale: Locale;
   open: boolean;
+  releaseId: string;
+  positionId: string;
+  refreshToken?: string;
   source?: Pick<LibraryTrackSourceResponse, "media_variant_id" | "locations">;
   current: CurrentTags;
-}) {
-  const text = copy[locale];
-  const [locationId, setLocationId] = useState("");
+};
+
+function PositionEvidenceContent({
+  locale,
+  releaseId,
+  positionId,
+  refreshToken,
+  source,
+  current,
+}: Omit<LibraryPositionTagEvidenceProps, "open">) {
   const [differencesOnly, setDifferencesOnly] = useState(false);
-  if (!open) return null;
+  const [showAll, setShowAll] = useState(false);
+  const requestKey = JSON.stringify([releaseId, positionId, refreshToken]);
+  const [settled, setSettled] = useState<{
+    key: string;
+    evidence: PositionEvidence;
+  }>();
+  const evidence: PositionEvidence =
+    settled?.key === requestKey ? settled.evidence : { state: "loading" };
+  useEffect(() => {
+    const controller = new AbortController();
+    const finish = (next: PositionEvidence) => {
+      if (!controller.signal.aborted) {
+        setSettled({ key: requestKey, evidence: next });
+      }
+    };
+    void getLibraryPositionTagComparison(releaseId, positionId, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then((response) => {
+        if (response.status === 200) {
+          finish({ state: "saved", data: response.data });
+        } else {
+          finish({ state: "unavailable" });
+        }
+      })
+      .catch(() => finish({ state: "unavailable" }));
+    return () => controller.abort();
+  }, [releaseId, positionId, requestKey]);
+  return (
+    <PositionSourceEvidence
+      key={source?.media_variant_id}
+      source={source}
+      locale={locale}
+      current={current}
+      evidence={evidence}
+      showAll={showAll}
+      onShowAllChange={setShowAll}
+      differencesOnly={differencesOnly}
+      onDifferencesChange={setDifferencesOnly}
+    />
+  );
+}
+
+function PositionSourceEvidence({
+  source,
+  ...comparison
+}: Omit<Parameters<typeof PositionTagComparison>[0], "variantId" | "location"> &
+  Pick<LibraryPositionTagEvidenceProps, "source">) {
+  const text = copy[comparison.locale];
+  const [locationId, setLocationId] = useState("");
   const locations = source?.locations ?? [];
   const location =
     locations.length === 1
@@ -267,13 +297,17 @@ export function LibraryPositionTagEvidence({
             ? `${source?.media_variant_id}:${location.root_id}:${location.location_id}:${location.mtime}`
             : "no-location"
         }
-        locale={locale}
+        {...comparison}
         variantId={source?.media_variant_id}
         location={location}
-        current={current}
-        differencesOnly={differencesOnly}
-        onDifferencesChange={setDifferencesOnly}
       />
     </div>
   );
+}
+
+export function LibraryPositionTagEvidence({
+  open,
+  ...props
+}: LibraryPositionTagEvidenceProps) {
+  return open ? <PositionEvidenceContent {...props} /> : null;
 }

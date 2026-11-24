@@ -33,6 +33,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerManualReleaseSelection(api, dependencies.ManualReleaseSelection)
 	registerManualPickerSearch(api, dependencies.ManualPickerSearch)
 	registerLibraryReleaseDetail(api, dependencies)
+	registerLibraryTagComparison(api, dependencies.LibraryTagComparisons)
 	registerLibraryCatalog(api, dependencies.LibraryCatalog)
 	RegisterLibraryReleaseOptions(api, dependencies.LibraryReleaseOptions)
 	registerLibraryRecordingSearch(api, dependencies.LibraryRecordingSearch, dependencies.Operations)

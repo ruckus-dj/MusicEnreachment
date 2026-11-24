@@ -4,9 +4,13 @@ import { expect, it, vi } from "vitest";
 import type { LibrarySourceLocationResponse } from "../../api/generated/client.schemas";
 import { LibraryPositionTagEvidence } from "./LibraryPositionTagEvidence";
 
-const { readLocation } = vi.hoisted(() => ({ readLocation: vi.fn() }));
+const { readLocation, readComparison } = vi.hoisted(() => ({
+  readLocation: vi.fn(),
+  readComparison: vi.fn(),
+}));
 
 vi.mock("../../api/generated/client", () => ({
+  getLibraryPositionTagComparison: readComparison,
   getSourceLocation: readLocation,
 }));
 
@@ -32,7 +36,7 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
         {
           name: "metadata",
           metadata: {
-            tags: { TITLE: [title], ALBUM: ["Same album"] },
+            tags: { TITLE: [title], ALBUM: ["Same album"], COMMENT: [""] },
             provenance: { name: "test reader", version: "1", contract: "test" },
           },
         },
@@ -46,15 +50,29 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
   readLocation
     .mockReturnValueOnce(first)
     .mockResolvedValueOnce(response(1, "Second location tag"));
+  readComparison.mockResolvedValue({
+    status: 200,
+    data: {
+      provider: { name: "MusicBrainz", status: "unavailable" },
+      overrides: { ASIN: [] },
+    },
+  });
   const view = render(
     <LibraryPositionTagEvidence
       locale="en"
+      releaseId="release"
+      positionId="position"
       open
       source={{ media_variant_id: variantId, locations }}
       current={{ state: "unavailable" }}
     />,
   );
   expect(readLocation).not.toHaveBeenCalled();
+  expect(readComparison).toHaveBeenCalledWith(
+    "release",
+    "position",
+    expect.objectContaining({ cache: "no-store" }),
+  );
   expect(
     screen.getByText("The current publication tag snapshot is unavailable."),
   ).toBeVisible();
@@ -79,6 +97,15 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
   );
   expect(readLocation.mock.calls[0][2].signal.aborted).toBe(true);
   expect(await screen.findByText("Second location tag")).toBeVisible();
+  expect(
+    screen.getByRole("columnheader", { name: "Provider · MusicBrainz" }),
+  ).toBeVisible();
+  expect(screen.getByText("Provider tags are unavailable.")).toBeVisible();
+  expect(screen.getByText("Cleared")).toBeVisible();
+  expect(screen.queryByRole("rowheader", { name: / · ISRC$/ })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all" }));
+  expect(screen.getByRole("rowheader", { name: / · ISRC$/ })).toBeVisible();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all" }));
   await act(async () => finishFirst(response(0, "Superseded tag")));
   expect(screen.queryByText("Superseded tag")).toBeNull();
   expect(screen.getByText("Second location tag")).toBeVisible();
@@ -89,6 +116,8 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
   view.rerender(
     <LibraryPositionTagEvidence
       locale="en"
+      releaseId="release"
+      positionId="position"
       open
       source={{ media_variant_id: variantId, locations }}
       current={{
@@ -103,9 +132,12 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
   expect(
     screen.getByRole("columnheader", { name: "Current publication" }),
   ).toBeVisible();
-  expect(screen.getByRole("rowheader", { name: "ALBUM" })).toBeVisible();
+  expect(screen.getByRole("rowheader", { name: / · ALBUM$/ })).toBeVisible();
+  expect(screen.queryByRole("rowheader", { name: / · COMMENT$/ })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Differences only" }));
-  expect(screen.queryByRole("rowheader", { name: "ALBUM" })).toBeNull();
+  expect(screen.queryByRole("rowheader", { name: / · ALBUM$/ })).toBeNull();
+  expect(screen.getByRole("rowheader", { name: / · COMMENT$/ })).toBeVisible();
   expect(screen.getByText("Published tag")).toBeVisible();
   expect(readLocation).toHaveBeenCalledTimes(2);
+  expect(readComparison).toHaveBeenCalledTimes(1);
 });
