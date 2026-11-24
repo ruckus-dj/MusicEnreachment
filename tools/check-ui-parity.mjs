@@ -58,6 +58,7 @@ const pairs = [
     [
       "GenreCatalogView.tsx",
       "SettingsConflictDialog.tsx",
+      "SettingsDraftConflictNotice.tsx",
       "SettingsFoldersSection.tsx",
       "SettingsGeneralSection.tsx",
       "SettingsLeaveDialog.tsx",

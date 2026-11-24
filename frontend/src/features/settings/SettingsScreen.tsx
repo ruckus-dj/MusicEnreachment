@@ -56,6 +56,7 @@ import {
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
 import { SettingsConflictDialog } from "./SettingsConflictDialog";
+import { SettingsDraftConflictNotice } from "./SettingsDraftConflictNotice";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import {
   type SettingsGeneralFailureModel,
@@ -3176,6 +3177,28 @@ export function SettingsScreen() {
           </AppButton>
         </>
       )}
+      {Object.entries(conflictValues).map(([rawGroup, currentValue]) => {
+        const group = rawGroup as ConflictGroup;
+        if (!activeConflicts[group]) return null;
+        const label = conflictLabel(group, locale);
+        return (
+          <SettingsDraftConflictNotice
+            key={group}
+            label={t("settingsConflict", { label })}
+            announcement="status"
+            summary={`${t("changedSavedValue", { label })} ${displaySettingValue(currentValue)}.`}
+            disabled={effectiveBusy}
+            takeSaved={{
+              label: t("takeSavedValue", { label }),
+              onPress: () => takeSavedConflict(group),
+            }}
+            continueEditing={{
+              label: t("continueEditing", { label }),
+              onPress: () => continueEditingConflict(group),
+            }}
+          />
+        );
+      })}
       {initialLoadComplete && state && (
         <>
           <section
@@ -3546,38 +3569,6 @@ export function SettingsScreen() {
           {t("refreshState")}
         </AppButton>
       )}
-      {Object.entries(conflictValues).map(([rawGroup, currentValue]) => {
-        const group = rawGroup as ConflictGroup;
-        if (!activeConflicts[group]) return null;
-        const label = conflictLabel(group, locale);
-        return (
-          <section
-            key={group}
-            aria-label={t("settingsConflict", { label })}
-            className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
-            role="status"
-          >
-            <p className="m-0 wrap-anywhere">
-              {t("changedSavedValue", { label })}{" "}
-              {displaySettingValue(currentValue)}.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() => takeSavedConflict(group)}
-              >
-                {t("takeSavedValue", { label })}
-              </AppButton>
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() => continueEditingConflict(group)}
-              >
-                {t("continueEditing", { label })}
-              </AppButton>
-            </div>
-          </section>
-        );
-      })}
       {navigationAttempt && (
         <SettingsLeaveDialog
           dialogRef={navigationDialogRef}

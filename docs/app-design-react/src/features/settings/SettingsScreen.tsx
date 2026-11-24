@@ -1,7 +1,6 @@
 import { type Key, useEffect, useRef, useState } from "react";
 import type { BrowseDirectory } from "../../components/DirectoryPickerView";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { settingsMessages } from "../../i18n/namespaces/settings";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
@@ -16,6 +15,7 @@ import {
 	validDemoPublicationTemplate,
 } from "./publicationTemplateDemo";
 import { SettingsConflictDialog } from "./SettingsConflictDialog";
+import { SettingsDraftConflictNotice } from "./SettingsDraftConflictNotice";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import { SettingsLeaveDialog } from "./SettingsLeaveDialog";
@@ -1156,18 +1156,15 @@ export function SettingsScreen({
 				</p>
 			)}
 			{draftConflicts.length > 0 && draftDirty && (
-				<div
-					className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
-					role="alert"
-				>
-					<p className="m-0">{copy.settingsConflict}</p>
-					<div className="flex flex-wrap gap-2">
-						<Button onPress={takeSavedSettings}>{copy.takeSaved}</Button>
-						<Button onPress={() => setConflictAcknowledged(true)}>
-							{copy.continueEditing}
-						</Button>
-					</div>
-				</div>
+				<SettingsDraftConflictNotice
+					announcement="alert"
+					summary={copy.settingsConflict}
+					takeSaved={{ label: copy.takeSaved, onPress: takeSavedSettings }}
+					continueEditing={{
+						label: copy.continueEditing,
+						onPress: () => setConflictAcknowledged(true),
+					}}
+				/>
 			)}
 			<SettingsTabs
 				locale={locale}
