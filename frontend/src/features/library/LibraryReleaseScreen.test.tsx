@@ -443,10 +443,12 @@ it("shows and localizes saved loudness measurements for the current publication"
     "Album R128",
     "Not calculated",
   ]);
-  const summaryLine = screen.getByText(/^Current publication:/);
-  expect(summaryLine).toHaveTextContent("TITLE: Position One");
-  expect(summaryLine).not.toHaveTextContent("-7.50 dB");
+  const snapshot = screen.getByRole("region", { name: "Tag snapshot" });
+  expect(within(snapshot).getByText("TITLE")).toBeInTheDocument();
+  expect(within(snapshot).getByText("Position One")).toBeInTheDocument();
+  expect(snapshot).not.toHaveTextContent("-7.50 dB");
   fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+  expect(snapshot).toHaveAccessibleName("Снимок тегов");
   expect(measurements).toHaveAccessibleName(
     "Измерения громкости текущей публикации",
   );
@@ -662,6 +664,8 @@ it("hides stale measurements on a failed position read and recovers with the new
     screen.queryByLabelText("Current publication audio measurements"),
   ).toBeNull();
   expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
+  expect(screen.queryByRole("region", { name: "Tag snapshot" })).toBeNull();
+  expect(screen.getByText("The tag snapshot is unavailable.")).toBeVisible();
   expect(
     screen
       .getByTestId("publication-preview")
@@ -676,6 +680,11 @@ it("hides stale measurements on a failed position read and recovers with the new
     within(
       await screen.findByLabelText("Current publication audio measurements"),
     ).getByText("-3 dB"),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("region", { name: "Tag snapshot" })).getByText(
+      "The snapshot contains only audio measurements.",
+    ),
   ).toBeVisible();
   expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
   await waitFor(() =>

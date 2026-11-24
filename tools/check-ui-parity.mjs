@@ -101,6 +101,7 @@ const pairs = [
       "PublicationCurrentSummaryView.tsx",
       "ProviderGenreBaselineRow.tsx",
       "PublicationPreviewDetailsView.tsx",
+      "PublicationTagSnapshotView.tsx",
       "TagSnapshotView.tsx",
       "firstPublicationPreviewMessages.ts",
       "genreMessages.ts",

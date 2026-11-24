@@ -40,7 +40,6 @@ export const trackMessages = createNamespace({
 		externalChangeTime: "External file change · observed at",
 		currentPublication: "Current publication",
 		path: "Path",
-		tagSnapshot: "Tag snapshot",
 		localChangesHelp:
 			"Local metadata is compared with the last successful publication.",
 		compareFileAndPublication: "Compare source and publication tags",
@@ -114,7 +113,6 @@ export const trackMessages = createNamespace({
 		externalChangeTime: "Внешнее изменение файла · время наблюдения",
 		currentPublication: "Текущая публикация",
 		path: "Путь",
-		tagSnapshot: "Снимок тегов",
 		localChangesHelp:
 			"Локальные метаданные сравниваются с последней успешной публикацией.",
 		compareFileAndPublication: "Сравнить теги источника и публикации",

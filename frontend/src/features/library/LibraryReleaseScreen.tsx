@@ -49,11 +49,8 @@ import {
   ReleaseMediaSummary,
 } from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
-import {
-  PublicationAudioMeasurementsView,
-  publicationAudioMeasurementTags,
-} from "./PublicationAudioMeasurementsView";
 import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
+import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import {
   ReleaseMetadataEditor,
   ScopedLibraryMetadataEditor,
@@ -1664,19 +1661,10 @@ export function LibraryReleaseScreen({
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
-        const measurementTags =
+        const currentTags =
           publication?.current_generation && !position?.readError
             ? publication.current_metadata?.tags
             : undefined;
-        const publicationTags = publication?.current_metadata?.tags;
-        const summaryTags = publicationTags
-          ? Object.entries(publicationTags).filter(
-              ([name]) => !publicationAudioMeasurementTags.has(name),
-            )
-          : undefined;
-        const summaryTagText = summaryTags
-          ?.map(([name, values]) => `${name}: ${(values ?? []).join(", ")}`)
-          .join("; ");
         const hasCurrentPublication = publication
           ? Boolean(publication.current_generation || publication.current_path)
           : Boolean(track.publication?.generation);
@@ -2001,17 +1989,7 @@ export function LibraryReleaseScreen({
                       : text("noLyricsPending")}
                 </p>
                 <p>
-                  {text("currentPublicationSummary")}{" "}
-                  {summaryTags && !position?.readError
-                    ? summaryTagText ||
-                      text(
-                        measurementTags &&
-                          Object.keys(measurementTags).length > 0
-                          ? "tagsOnlyMeasurements"
-                          : "tagsMissing",
-                      )
-                    : text("metadataUnavailable")}
-                  ; {text("audio")}{" "}
+                  {text("currentPublicationSummary")} {text("audio")}{" "}
                   {publication?.current_audio
                     ? `${publication.current_audio.codec}/${publication.current_audio.container}`
                     : text("audioUnpublished")}
@@ -2022,10 +2000,10 @@ export function LibraryReleaseScreen({
                     text("lyricsUnknown")}
                   .
                 </p>
-                {measurementTags && (
-                  <PublicationAudioMeasurementsView
+                {hasCurrentPublication && (
+                  <PublicationTagSnapshotView
                     locale={locale}
-                    tags={measurementTags}
+                    tags={currentTags}
                   />
                 )}
                 {publication?.manual_lyrics_receipt && (

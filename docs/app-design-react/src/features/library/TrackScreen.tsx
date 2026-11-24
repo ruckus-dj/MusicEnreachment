@@ -32,12 +32,8 @@ import {
 } from "./LibraryPositionHeadingView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
-import {
-	PublicationAudioMeasurementsView,
-	publicationAudioMeasurementTags,
-} from "./PublicationAudioMeasurementsView";
 import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
-import { TagSnapshotView } from "./TagSnapshotView";
+import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
 import { formatTrackMessage, trackMessage } from "./trackMessages";
@@ -79,7 +75,6 @@ export function TrackScreen({
 	artists?: CatalogArtist[];
 }) {
 	const { locale } = useI18n();
-	const publishedTags = track.published?.tags;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
 	const tagComparisonRef = useRef<HTMLDetailsElement>(null);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
@@ -304,20 +299,10 @@ export function TrackScreen({
 											},
 										}}
 									/>
-									<TagSnapshotView
-										title={trackMessage(locale, "tagSnapshot")}
-										rows={Object.entries(track.published.tags)
-											.filter(
-												([key]) => !publicationAudioMeasurementTags.has(key),
-											)
-											.map(([key, values]) => ({ key, values }))}
+									<PublicationTagSnapshotView
+										locale={locale}
+										tags={track.published.tags}
 									/>
-									{publishedTags && (
-										<PublicationAudioMeasurementsView
-											locale={locale}
-											tags={publishedTags}
-										/>
-									)}
 								</DisclosurePanel>
 							</Disclosure>
 						)}
