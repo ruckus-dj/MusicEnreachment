@@ -24,6 +24,7 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
+import { SetupFeedbackView } from "./SetupFeedbackView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
 import {
   type SetupFeedback,
@@ -251,7 +252,6 @@ export function SetupTools({
         setPreflight(undefined);
       },
       action: {
-        kind: "checkInstall",
         disabled: pending || !selected[kind],
         onPress: () => {
           void install(kind);
@@ -305,25 +305,33 @@ export function SetupTools({
           onFinished={forget}
         />
       ))}
-      {(error || legacyConflict) && (
-        <p ref={alert} tabIndex={-1} role="alert">
-          {error
+      <SetupFeedbackView
+        error={
+          error
             ? setupFeedbackText(error, locale)
-            : setupFeedbackText(setupMessage("multipleReadyTools"), locale)}
-        </p>
-      )}
+            : legacyConflict
+              ? setupFeedbackText(setupMessage("multipleReadyTools"), locale)
+              : undefined
+        }
+        errorRef={alert}
+      />
       {operationsError && (
         <div>
-          <p ref={operationsAlert} tabIndex={-1} role="alert">
-            {setupFeedbackText(operationsError, locale)}
-          </p>
+          <SetupFeedbackView
+            error={setupFeedbackText(operationsError, locale)}
+            errorRef={operationsAlert}
+          />
           <AppButton isDisabled={discovering} onPress={discover}>
             {messages.retryOperations}
           </AppButton>
         </div>
       )}
-      {discovering && <p role="status">{messages.loadingOperations}</p>}
-      {pending && <p role="status">{messages.requestInProgress}</p>}
+      <SetupFeedbackView
+        pending={discovering ? messages.loadingOperations : null}
+      />
+      <SetupFeedbackView
+        pending={pending ? messages.requestInProgress : null}
+      />
       <GitHubTokenForm
         hasToken={hasGitHubToken}
         onChanged={onGitHubTokenChanged}

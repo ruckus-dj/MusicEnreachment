@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { AppButton } from "../../components/AppButton";
+import { SetupFeedbackView } from "./SetupFeedbackView";
 
 const pageClassName = "grid gap-[14px]";
 const headerClassName =
@@ -16,12 +17,8 @@ const panelClassName =
 const bodyClassName =
   "grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-[14px]";
 const helpClassName = "my-2 max-w-[75ch] text-[var(--muted)]";
-const errorClassName =
-  "my-2 border-l-[3px] border-[var(--error)] bg-[var(--error-soft)] px-3 py-[10px] text-[var(--error)]";
-const noticeClassName = "my-2 rounded bg-[var(--warning-soft)] px-3 py-[10px]";
 const footerClassName =
   "flex justify-between gap-2 border-t border-[var(--line)] pt-3";
-const pendingClassName = "my-2 text-[var(--muted)]";
 
 type Locale = "en" | "ru";
 export const setupSteps = [
@@ -153,26 +150,12 @@ export function SetupWizard({
         )}
         <div className={bodyClassName}>
           {children}
-          {error && (
-            <p
-              ref={alertRef}
-              tabIndex={-1}
-              role="alert"
-              className={errorClassName}
-            >
-              {error}
-            </p>
-          )}
-          {notice && (
-            <p role="status" aria-live="polite" className={noticeClassName}>
-              {notice}
-            </p>
-          )}
-          {pending && (
-            <p role="status" className={pendingClassName}>
-              {copy.pending}
-            </p>
-          )}
+          <SetupFeedbackView
+            error={error}
+            errorRef={alertRef}
+            notice={notice}
+            pending={pending ? copy.pending : null}
+          />
           <div className={footerClassName}>
             {step > 0 && (
               <AppButton isDisabled={backDisabled} onPress={onBack}>

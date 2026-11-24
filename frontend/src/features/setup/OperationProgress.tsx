@@ -11,6 +11,7 @@ import {
   operationStateLabel,
   operationTargetLabel,
 } from "../operations/operationPresentation";
+import { SetupFeedbackView } from "./SetupFeedbackView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -113,23 +114,32 @@ export function OperationProgress({
       setPending(false);
     }
   }
+  const failedError =
+    snapshot?.state === "failed" ? snapshot.safe_error : undefined;
   return (
-    <div role="status" className="setup-operation">
-      {snapshot
-        ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`
-        : messages.toolDownload}
-      {snapshot &&
-        operationStageLabel(snapshot.stage, locale) &&
-        ` · ${operationStageLabel(snapshot.stage, locale)}`}
-      {snapshot && ` · ${operationProgressLabel(snapshot, locale)}`}
-      {snapshot?.safe_error && ` · ${snapshot.safe_error}`}
-      {!snapshot && messages.operationStatusLoading}
+    <div className="setup-operation">
+      <p role="status">
+        {snapshot
+          ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`
+          : messages.toolDownload}
+        {snapshot &&
+          operationStageLabel(snapshot.stage, locale) &&
+          ` · ${operationStageLabel(snapshot.stage, locale)}`}
+        {snapshot && ` · ${operationProgressLabel(snapshot, locale)}`}
+        {snapshot?.safe_error &&
+          snapshot.state !== "failed" &&
+          ` · ${snapshot.safe_error}`}
+        {!snapshot && messages.operationStatusLoading}
+      </p>
+      <SetupFeedbackView error={failedError} />
       {error && (
         <AppButton isDisabled={snapshotPending} onPress={refreshSnapshot}>
           {messages.retryOperationStatus}
         </AppButton>
       )}
-      {snapshotPending && <span>{` ${messages.refreshOperationStatus}`}</span>}
+      <SetupFeedbackView
+        pending={snapshotPending ? messages.refreshOperationStatus : null}
+      />
       {snapshot?.state === "failed" && (
         <AppButton isDisabled={pending} onPress={retry}>
           {messages.retryDownload}
@@ -145,24 +155,25 @@ export function OperationProgress({
           {messages.retryToolList}
         </AppButton>
       )}
-      {pending && (
-        <span>
-          {" "}
-          {snapshot?.state === "succeeded"
-            ? messages.refreshTools
-            : messages.retryingDownload}
-        </span>
-      )}
-      {refreshError && (
-        <p role="alert" ref={refreshAlert} tabIndex={-1}>
-          {setupFeedbackText(refreshError, locale)}
-        </p>
-      )}
-      {error && (
-        <p role="alert" ref={alert} tabIndex={-1}>
-          {setupFeedbackText(error, locale)}
-        </p>
-      )}
+      <SetupFeedbackView
+        pending={
+          pending
+            ? snapshot?.state === "succeeded"
+              ? messages.refreshTools
+              : messages.retryingDownload
+            : null
+        }
+      />
+      <SetupFeedbackView
+        error={
+          refreshError ? setupFeedbackText(refreshError, locale) : undefined
+        }
+        errorRef={refreshAlert}
+      />
+      <SetupFeedbackView
+        error={error ? setupFeedbackText(error, locale) : undefined}
+        errorRef={alert}
+      />
     </div>
   );
 }

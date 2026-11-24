@@ -358,7 +358,6 @@ export function SetupScreen({
 												},
 											}),
 										action: {
-											kind: "install",
 											disabled: !selected || platformMismatch,
 											onPress: () => requestInstall(kind),
 										},

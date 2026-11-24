@@ -15,8 +15,6 @@ export type SetupToolReadyVersion = {
 };
 
 export type SetupToolAction = {
-  /** The live setup checks before installing; the prototype simulates install. */
-  kind: "checkInstall" | "install";
   disabled: boolean;
   onPress: () => void;
 };
@@ -65,7 +63,6 @@ const messages = {
     available: "Available",
     verified: "Installed and verified",
     nextTool: "Next tool",
-    checkInstall: "Check {kind} installation",
     install: "Install",
   },
   ru: {
@@ -77,7 +74,6 @@ const messages = {
     available: "Доступна",
     verified: "Установлено и проверено",
     nextTool: "Следующий инструмент",
-    checkInstall: "Проверить установку {kind}",
     install: "Установить",
   },
 } as const;
@@ -87,15 +83,6 @@ const cardClass = "grid gap-2 border-b border-[var(--line)] pb-3";
 const headingClass = "m-0 font-semibold";
 const paragraphClass = "m-0";
 const noteClass = "m-0 text-xs text-[var(--muted)]";
-
-function actionText(
-  copy: (typeof messages)[SetupToolCardsLocale],
-  tool: SetupToolCard & { state: "install" },
-) {
-  return tool.action.kind === "checkInstall"
-    ? copy.checkInstall.replace("{kind}", tool.kind)
-    : copy.install;
-}
 
 export function SetupToolCardsView({
   locale,
@@ -144,10 +131,11 @@ export function SetupToolCardsView({
                 )}
                 <AppButton
                   className="justify-self-start"
+                  aria-label={`${copy.install} ${copy.toolName[tool.kind]}`}
                   isDisabled={tool.action.disabled}
                   onPress={tool.action.onPress}
                 >
-                  {actionText(copy, tool)}
+                  {copy.install}
                 </AppButton>
               </>
             )}

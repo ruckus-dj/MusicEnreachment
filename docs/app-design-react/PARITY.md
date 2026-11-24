@@ -86,7 +86,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки, поля и подтверждение переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx`, `SettingsToolsMoveReviewDialog.tsx` | Те же пути |
 | Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: порядок шагов, каркас мастера, поля папок, карточки инструментов, формат публикации, формы провайдеров, загрузка каталога жанров и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupProvidersView.tsx`, `SetupGenreCatalogView.tsx`, `SetupSummaryView.tsx` | Те же пути |
+| Первый запуск: каркас мастера и сообщения состояния, поля папок, карточки инструментов, формат публикации, формы провайдеров, загрузка каталога жанров и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupFeedbackView.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupProvidersView.tsx`, `SetupGenreCatalogView.tsx`, `SetupSummaryView.tsx` | Те же пути |
 | Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, вкладки, поиск, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogControls.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
@@ -108,7 +108,10 @@ source channel, а fixture макета такого происхождения 
   обязательного каталога жанров общие. Макет хранит в памяти признак наличия
   ключа и загружает демонстрационный каталог. Приложение выполняет запись ключа
   через API, показывает серверные ошибки и ждёт подтверждённый результат для
-  проверенной конфигурации MusicBrainz. Вывод ошибок самого мастера ещё различается.
+  проверенной конфигурации MusicBrainz. Мастер и диагностика загрузки
+  инструментов используют общее оформление ошибок и ожидания; кнопка
+  «Установить» одинакова. Реальные причины отказа, повтор и проверка
+  конфликтов остаются у серверного провайдера.
 - **Источники.** Инспектор открывается из инвентаря в обеих сборках.
   Провайдер макета использует состояние демонстрационного анализа и не
   подставляет отсутствующие измерения, отпечатки и исходный вывод ffprobe.

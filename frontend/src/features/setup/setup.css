@@ -35,7 +35,7 @@
 .setup-shell .react-aria-CheckboxButton[data-selected]::before { content: "[x]"; }
 .setup-shell .react-aria-RadioButton[data-focus-visible], .setup-shell .react-aria-CheckboxButton[data-focus-visible] { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
 .setup-shell :focus-visible { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
-.setup-shell [role="alert"] { background: var(--setup-error-soft); color: var(--setup-error); border-left: 3px solid var(--setup-error); padding: 8px 10px; margin: 8px 0; }
+.setup-shell [role="alert"]:not([data-setup-feedback]) { background: var(--setup-error-soft); color: var(--setup-error); border-left: 3px solid var(--setup-error); padding: 8px 10px; margin: 8px 0; }
 .setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
 @media (max-width: 599px) { .setup-shell button:not(.ui-button), .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
 
