@@ -17,7 +17,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import { LibraryDeletionDialogView } from "./LibraryDeletionDialogView";
+import {
+  LibraryDeletionDialogView,
+  LibraryDeletionOutputsView,
+} from "./LibraryDeletionDialogView";
 import { releaseControlAlertClass } from "./libraryReleaseControlStyles";
 
 type DeletionTarget =
@@ -280,11 +283,9 @@ export function LibraryDeletionControl({
           coartistNames: "Соисполнители",
           recordings: "Композиции, удаляемые из медиатеки",
           files: "Файлы текущих публикаций",
-          outputs: "Будут затронуты файлы",
           blockers: "Блокирующие условия",
           capturable: "Файл доступен для безопасного удаления",
           notCapturable: "Файл не подтверждён как принадлежащий приложению",
-          noOutputs: "Текущих публикаций для удаления нет.",
           frozen:
             "Предпросмотр и его подтверждение зафиксированы. Повтор не создаст новый предпросмотр и не изменит область удаления.",
           uncertain:
@@ -338,11 +339,9 @@ export function LibraryDeletionControl({
           coartistNames: "Coartists",
           recordings: "Recordings removed from the library",
           files: "Current publication files",
-          outputs: "Files affected",
           blockers: "Blockers",
           capturable: "File is verified as safe to delete",
           notCapturable: "File is not verified as application-owned",
-          noOutputs: "There are no current publications to delete.",
           frozen:
             "The preview and confirmation are frozen. Retrying will not create a new preview or change the deletion scope.",
           uncertain:
@@ -719,38 +718,23 @@ export function LibraryDeletionControl({
                 </>
               ) : null}
             </dl>
-            {preview.outputs?.length ? (
-              <>
-                <h3 className="font-semibold">{text.outputs}</h3>
-                <ul className="max-h-56 space-y-2 overflow-y-auto pl-5">
-                  {preview.outputs.map((output) => (
-                    <li
-                      className="break-all"
-                      key={`${output.position_id}:${output.relative_path}`}
-                    >
-                      <span className="font-medium">
-                        {positionLabels?.get(output.position_id) ??
-                          (target.type === "publication" &&
-                          output.position_id === target.positionId
-                            ? positionLabel
-                            : undefined) ??
-                          (locale === "ru" ? "Позиция" : "Position")}
-                      </span>
-                      <code className="block text-sm">
-                        {output.relative_path}
-                      </code>
-                      <span className="text-sm text-[var(--muted)]">
-                        {output.capturable
-                          ? text.capturable
-                          : text.notCapturable}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p>{text.noOutputs}</p>
-            )}
+            <LibraryDeletionOutputsView
+              locale={locale}
+              rows={(preview.outputs ?? []).map((output) => ({
+                id: `${output.position_id}:${output.relative_path}`,
+                path: output.relative_path,
+                label:
+                  positionLabels?.get(output.position_id) ??
+                  (target.type === "publication" &&
+                  output.position_id === target.positionId
+                    ? positionLabel
+                    : undefined) ??
+                  (locale === "ru" ? "Позиция" : "Position"),
+                status: output.capturable
+                  ? text.capturable
+                  : text.notCapturable,
+              }))}
+            />
             {preview.blockers?.length ? (
               <div role="alert" className={releaseControlAlertClass}>
                 <h3 className="font-semibold">{text.blockers}</h3>

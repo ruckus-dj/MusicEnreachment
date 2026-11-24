@@ -7,7 +7,10 @@ import {
 	type CatalogueMessage,
 	catalogueMessage,
 } from "../features/library/catalogueMessages";
-import { LibraryDeletionDialogView } from "../features/library/LibraryDeletionDialogView";
+import {
+	LibraryDeletionDialogView,
+	LibraryDeletionOutputsView,
+} from "../features/library/LibraryDeletionDialogView";
 import { useI18n } from "../i18n/I18nProvider";
 import { AppButton } from "./AppButton";
 import { Button, Tooltip, TooltipTrigger } from "./ui";
@@ -180,17 +183,10 @@ export function DeletionRequest({
 						</ul>
 					</>
 				)}
-				{plan.paths.length ? (
-					<ul className="m-0 pl-5">
-						{plan.paths.map((path) => (
-							<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
-								<code>{path}</code>
-							</li>
-						))}
-					</ul>
-				) : (
-					<p>{m("noCurrentPublications")}</p>
-				)}
+				<LibraryDeletionOutputsView
+					locale={locale}
+					rows={plan.paths.map((path) => ({ id: path, path }))}
+				/>
 				<p>{m("deletionRequestNotice")}</p>
 			</LibraryDeletionDialogView>
 		</>

@@ -11,6 +11,52 @@ export type LibraryDeletionDialogViewProps = {
   actions: ReactNode;
 };
 
+const outputCopy = {
+  en: {
+    title: "Files affected",
+    empty: "There are no current publications to delete.",
+  },
+  ru: {
+    title: "Будут затронуты файлы",
+    empty: "Текущих публикаций для удаления нет.",
+  },
+} as const;
+
+type LibraryDeletionOutputRow = {
+  id: string;
+  path: string;
+  label?: string;
+  status?: string;
+};
+
+export function LibraryDeletionOutputsView({
+  locale,
+  rows,
+}: {
+  locale: keyof typeof outputCopy;
+  rows: readonly LibraryDeletionOutputRow[];
+}) {
+  const copy = outputCopy[locale];
+  if (rows.length === 0) return <p>{copy.empty}</p>;
+
+  return (
+    <>
+      <h3 className="font-semibold">{copy.title}</h3>
+      <ul className="max-h-56 space-y-2 overflow-y-auto pl-5">
+        {rows.map(({ id, path, label, status }) => (
+          <li className="wrap-anywhere" key={id}>
+            {label && <span className="font-medium">{label}</span>}
+            <code className="block text-sm">{path}</code>
+            {status && (
+              <span className="text-sm text-[var(--muted)]">{status}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function LibraryDeletionDialogView({
   open,
   onOpenChange,

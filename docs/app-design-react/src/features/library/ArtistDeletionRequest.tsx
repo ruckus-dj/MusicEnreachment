@@ -9,7 +9,10 @@ import type {
 	OriginalTrack,
 } from "./catalogData";
 import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
-import { LibraryDeletionDialogView } from "./LibraryDeletionDialogView";
+import {
+	LibraryDeletionDialogView,
+	LibraryDeletionOutputsView,
+} from "./LibraryDeletionDialogView";
 
 type DependencySection = {
 	title: CatalogueMessage;
@@ -221,17 +224,10 @@ export function ArtistDeletionRequest({
 						</ul>
 					</section>
 				))}
-				{plan.paths.length ? (
-					<ul className="m-0 pl-5">
-						{plan.paths.map((path) => (
-							<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
-								<code>{path}</code>
-							</li>
-						))}
-					</ul>
-				) : (
-					<p>{m("noCurrentPublications")}</p>
-				)}
+				<LibraryDeletionOutputsView
+					locale={locale}
+					rows={plan.paths.map((path) => ({ id: path, path }))}
+				/>
 				<p>{m("deletionRequestNotice")}</p>
 			</LibraryDeletionDialogView>
 		</>
