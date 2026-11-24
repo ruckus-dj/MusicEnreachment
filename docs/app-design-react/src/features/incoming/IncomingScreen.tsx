@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, PageHeader } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { formatUiNotice } from "../../infrastructure/uiNotice";
 import type { CatalogArtist } from "../library/catalogData";
@@ -14,6 +13,7 @@ import {
 import {
 	IncomingGroupsPanel,
 	incomingGroupsEmpty,
+	IncomingPageHeading,
 } from "./IncomingGroupsPanel";
 import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import {
@@ -282,28 +282,14 @@ export function IncomingScreen({
 		updateState();
 	};
 	return (
-		<section className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3">
-			<PageHeader className="mb-[10px] min-w-0">
-				<p className="mb-[3px] text-xs text-[var(--muted)]">
-					{msg("workflow")}
-				</p>
-				<div className="flex items-center justify-between gap-[14px] max-[600px]:items-start max-[600px]:flex-col">
-					<div className="min-w-0">
-						<h1 className="m-0 text-xl leading-[1.25] text-[var(--ink)] [text-wrap:balance]">
-							{msg("title")}
-						</h1>
-						<p className="mt-[3px] mb-0 text-xs text-[var(--muted)]">
-							{msg("introduction")}
-						</p>
-					</div>
-					<Button
-						className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90 max-[600px]:w-full"
-						onPress={runAuto}
-					>
-						{msg("process")}
-					</Button>
-				</div>
-			</PageHeader>
+		<section
+			aria-labelledby="incoming-title"
+			className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3"
+		>
+			<IncomingPageHeading
+				locale={locale}
+				action={{ label: msg("process"), onPress: runAuto }}
+			/>
 			<ol
 				className="mb-[10px] grid list-none grid-cols-4 gap-0 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--raised)] p-0 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1"
 				aria-label={msg("stages")}

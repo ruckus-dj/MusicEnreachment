@@ -12,10 +12,6 @@ export const incomingMessages = createNamespace({
 		noAutomaticNotice:
 			"There are no new fully confident releases. Automatic publication does not repeat work or lower quality.",
 		process: "Process automatically",
-		workflow: "Incoming · source tags → matching → publication",
-		title: "Incoming albums",
-		introduction:
-			"Groups from source tags → find a release → assign files → publish. Incomplete data is allowed.",
 		stages: "Processing stages",
 		groupFiles: "Group files",
 		match: "Match",
@@ -56,10 +52,6 @@ export const incomingMessages = createNamespace({
 		noAutomaticNotice:
 			"Нет новых полностью уверенных релизов. Автопубликация не повторяет и не понижает качество.",
 		process: "Запустить обработку",
-		workflow: "Входящие · исходные теги → сопоставление → публикация",
-		title: "Входящие альбомы",
-		introduction:
-			"Группы из исходных тегов → поиск издания → назначения → публикация. Неполные данные допустимы.",
 		stages: "Этапы обработки",
 		groupFiles: "Сгруппировать файлы",
 		match: "Сопоставить",

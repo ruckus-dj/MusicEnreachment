@@ -48,6 +48,7 @@ import {
 } from "./confirmReceipts";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
+import { IncomingPageHeading } from "./IncomingGroupsPanel";
 import { IncomingSavedMatchingResult } from "./IncomingSavedMatchingResult";
 import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
 import {
@@ -1081,21 +1082,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         hidden={matchingActive || creatingLocalRelease}
         aria-labelledby="incoming-title"
       >
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 id="incoming-title" className="text-2xl font-semibold">
-              {copy.title}
-            </h1>
-            <p className="mt-1 text-sm text-stone-700">{copy.introduction}</p>
-          </div>
-          <AppButton
-            onPress={() => {
-              void groupsQuery.refetch();
-            }}
-          >
-            {copy.refreshGroups}
-          </AppButton>
-        </div>
+        <IncomingPageHeading
+          locale={locale}
+          action={{
+            label: copy.refreshGroups,
+            onPress: () => void groupsQuery.refetch(),
+          }}
+        />
 
         {groupsQuery.isLoading ? (
           <p role="status">{copy.loadingGroups}</p>
@@ -1164,6 +1157,11 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             />
           ) : (
             <div className="space-y-4">
+              {group && (
+                <p className="m-0 text-xs text-[var(--muted)]">
+                  {copy.matchingDraftHint}
+                </p>
+              )}
               {groupsQuery.isLoading ? (
                 <p role="status">{copy.loadingGroups}</p>
               ) : null}

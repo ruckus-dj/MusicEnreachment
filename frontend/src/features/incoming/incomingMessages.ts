@@ -49,9 +49,7 @@ export const incomingMessages = {
     groupsLoadError: "Could not load groups.",
     refreshAuthority: "Refresh group and mode data",
     refreshEvaluation: "Refresh saved evaluation",
-    title: "Review incoming groups",
-    introduction:
-      "Choose a release and explicitly assign files to positions. The draft is kept on this page only.",
+    matchingDraftHint: "The draft is kept on this page only.",
     refreshGroups: "Refresh list",
     loadingGroups: "Loading incoming groups…",
     incomingGroupsLabel: "Incoming group",
@@ -189,9 +187,7 @@ export const incomingMessages = {
     groupsLoadError: "Не удалось загрузить группы.",
     refreshAuthority: "Обновить данные группы и режима",
     refreshEvaluation: "Обновить сохранённую оценку",
-    title: "Разбор входящих групп",
-    introduction:
-      "Выберите издание и явно назначьте файлы позициям. Черновик хранится только на этой странице.",
+    matchingDraftHint: "Черновик хранится только на этой странице.",
     refreshGroups: "Обновить список",
     loadingGroups: "Загрузка входящих групп…",
     incomingGroupsLabel: "Входящая группа",
