@@ -91,6 +91,7 @@ const pairs = [
       "LibraryPositionIdentityView.tsx",
       "LibraryPositionSourcesView.tsx",
       "LibraryPositionWorkspace.tsx",
+      "LibraryPositionTechnicalDetailsView.tsx",
       "LibrarySelectionDockView.tsx",
       "LibrarySelectionPreviewView.tsx",
       "LibrarySelectionReviewView.tsx",

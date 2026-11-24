@@ -42,6 +42,7 @@ import {
   libraryPositionPageClassName,
   libraryPositionTitleId,
 } from "./LibraryPositionHeadingView";
+import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
 import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
 import {
   PositionIdentity,
@@ -50,7 +51,10 @@ import {
   ReleaseMediaSummary,
 } from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
-import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
+import {
+  PublicationCurrentDetailsView,
+  PublicationCurrentSummaryView,
+} from "./PublicationCurrentSummaryView";
 import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import {
   ReleaseMetadataEditor,
@@ -1685,15 +1689,16 @@ export function LibraryReleaseScreen({
             track.id,
             currentDeletionIdentity,
           );
+        // Once the position is read, its snapshot supersedes release detail,
+        // including when it reports that publication was removed.
         const publicationSummary = publication
-          ? publication.current_generation
-            ? {
-                relative_path: publication.current_path,
-                validated_at: publication.current_validated_at,
-                codec: publication.current_audio?.codec,
-                container: publication.current_audio?.container,
-              }
-            : undefined
+          ? {
+              relative_path: publication.current_path,
+              validated_at: publication.current_validated_at,
+              codec: publication.current_audio?.codec,
+              container: publication.current_audio?.container,
+              generation: publication.current_generation,
+            }
           : track.publication;
         const lyricsField = position?.metadata?.envelope.desired.synced_lyrics;
         const hasManualLyrics =
@@ -1862,28 +1867,7 @@ export function LibraryReleaseScreen({
                     <>
                       <PublicationCurrentSummaryView
                         locale={locale}
-                        current={
-                          publicationSummary
-                            ? {
-                                details:
-                                  publicationSummary.relative_path &&
-                                  publicationSummary.validated_at &&
-                                  publicationSummary.container &&
-                                  publicationSummary.codec
-                                    ? {
-                                        path: publicationSummary.relative_path,
-                                        container: publicationSummary.container,
-                                        codec: publicationSummary.codec,
-                                        observed: {
-                                          kind: "verified",
-                                          value:
-                                            publicationSummary.validated_at,
-                                        },
-                                      }
-                                    : undefined,
-                              }
-                            : null
-                        }
+                        published={hasCurrentPublication}
                       />
                       <LibraryDeletionControl
                         target={{
@@ -1907,38 +1891,18 @@ export function LibraryReleaseScreen({
                           )
                         }
                       />
-                      <PositionIdentity track={track} />
-                      <p>
-                        {text("publication")}:{" "}
-                        {publication?.current_path ?? text("notPublishedYet")}
-                        {publication?.current_generation
-                          ? ` · ${text("generation", { generation: publication.current_generation })}`
-                          : ""}
-                      </p>
-                      {publication?.current_generation && (
-                        <fieldset aria-label={text("actualCoverRegion")}>
-                          <p className="[overflow-wrap:anywhere]">
-                            {text("actualCover")}:{" "}
-                            {publication.current_assets?.cover.state ??
-                              "unknown"}
-                            {publication.current_assets?.cover.sha256
-                              ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
+                      {publication?.current_generation &&
+                        publication.cover_embedding && (
+                          <p>
+                            {text("coverEmbeddingOutcome")}{" "}
+                            {publication.cover_embedding.outcome === "verified"
+                              ? text("verified")
+                              : text("unverified")}
+                            {publication.cover_embedding.warning_code
+                              ? ` · ${publication.cover_embedding.warning_code}`
                               : ""}
                           </p>
-                          {publication.cover_embedding && (
-                            <p>
-                              {text("coverEmbeddingOutcome")}{" "}
-                              {publication.cover_embedding.outcome ===
-                              "verified"
-                                ? text("verified")
-                                : text("unverified")}
-                              {publication.cover_embedding.warning_code
-                                ? ` · ${publication.cover_embedding.warning_code}`
-                                : ""}
-                            </p>
-                          )}
-                        </fieldset>
-                      )}
+                        )}
                       {publication?.initial_lyrics && (
                         <fieldset aria-label={text("lyricsPublicationResult")}>
                           <p>
@@ -2016,25 +1980,6 @@ export function LibraryReleaseScreen({
                             ? text("savedLyricsPending")
                             : text("noLyricsPending")}
                       </p>
-                      <p>
-                        {text("currentPublicationSummary")} {text("audio")}{" "}
-                        {publication?.current_audio
-                          ? `${publication.current_audio.codec}/${publication.current_audio.container}`
-                          : text("audioUnpublished")}
-                        ; {text("cover")}{" "}
-                        {publication?.current_assets?.cover.state ??
-                          text("unknown")}
-                        ; {text("lyrics")}{" "}
-                        {publication?.current_assets?.lyrics.state ??
-                          text("lyricsUnknown")}
-                        .
-                      </p>
-                      {hasCurrentPublication && (
-                        <PublicationTagSnapshotView
-                          locale={locale}
-                          tags={currentTags}
-                        />
-                      )}
                       {publication?.manual_lyrics_receipt && (
                         <p>
                           {text("receipt")}{" "}
@@ -2069,6 +2014,64 @@ export function LibraryReleaseScreen({
                           </button>
                         </div>
                       )}
+                      <LibraryPositionTechnicalDetailsView
+                        locale={locale}
+                        current={
+                          hasCurrentPublication && (
+                            <>
+                              <PublicationCurrentDetailsView
+                                locale={locale}
+                                details={{
+                                  path: publicationSummary?.relative_path,
+                                  container: publicationSummary?.container,
+                                  codec: publicationSummary?.codec,
+                                  observed: publicationSummary?.validated_at
+                                    ? {
+                                        kind: "verified",
+                                        value: publicationSummary.validated_at,
+                                      }
+                                    : undefined,
+                                }}
+                              />
+                              {publicationSummary?.generation && (
+                                <p>
+                                  {text("generation", {
+                                    generation: publicationSummary.generation,
+                                  })}
+                                </p>
+                              )}
+                              {publication?.current_generation && (
+                                <fieldset
+                                  aria-label={text("actualCoverRegion")}
+                                >
+                                  <p className="wrap-anywhere">
+                                    {text("actualCover")}:{" "}
+                                    {publication.current_assets?.cover.state ??
+                                      text("unknown")}
+                                    {publication.current_assets?.cover.sha256
+                                      ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
+                                      : ""}
+                                  </p>
+                                </fieldset>
+                              )}
+                              {publication && (
+                                <p>
+                                  {text("lyrics")}{" "}
+                                  {publication.current_assets?.lyrics.state ??
+                                    text("lyricsUnknown")}
+                                  .
+                                </p>
+                              )}
+                              <PublicationTagSnapshotView
+                                locale={locale}
+                                tags={currentTags}
+                              />
+                            </>
+                          )
+                        }
+                      >
+                        <PositionIdentity track={track} />
+                      </LibraryPositionTechnicalDetailsView>
                     </>
                   }
                 />

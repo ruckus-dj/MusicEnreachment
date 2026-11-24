@@ -317,6 +317,23 @@ function renderScreen(
   );
 }
 
+async function openTechnicalDetails(locale: "en" | "ru" = "en") {
+  const summary = await screen.findByText(
+    locale === "ru" ? "Технические сведения" : "Technical details",
+    { selector: "summary" },
+  );
+  if (!summary.parentElement?.hasAttribute("open")) fireEvent.click(summary);
+}
+
+async function openCurrentDetails(locale: "en" | "ru" = "en") {
+  await openTechnicalDetails(locale);
+  const trigger = await screen.findByRole("button", {
+    name: locale === "ru" ? "Текущая публикация" : "Current publication",
+  });
+  if (trigger.getAttribute("aria-expanded") !== "true")
+    fireEvent.click(trigger);
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -355,18 +372,24 @@ it("shows publication and source details from release detail without source inve
     summary,
   );
   expect(summary).toHaveTextContent("Published");
-  expect(summary).toHaveTextContent("flac · FLAC");
-  expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
-  expect(summary.querySelector("time")).toHaveAttribute(
+  expect(
+    screen.getByText("Technical details").parentElement,
+  ).not.toHaveAttribute("open");
+  await openCurrentDetails();
+  expect(
+    await screen.findByText("flac · FLAC", { selector: "dd" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Artist/Album/01 - Position One.flac", { selector: "dd" }),
+  ).toBeVisible();
+  const formatted = new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(validatedAt));
+  expect(screen.getByText(formatted, { selector: "time" })).toHaveAttribute(
     "dateTime",
     validatedAt,
   );
-  expect(
-    new Intl.DateTimeFormat("en", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(validatedAt)),
-  ).toBe(summary.querySelector("time")?.textContent);
   expect(summary).not.toHaveTextContent("Источники");
   const sources = screen.getByRole("region", {
     name: "Audio sources for position 1",
@@ -414,6 +437,7 @@ it("shows and localizes saved loudness measurements for the current publication"
     </I18nProvider>,
   );
 
+  await openCurrentDetails();
   const measurements = await screen.findByLabelText(
     "Current publication audio measurements",
   );
@@ -620,7 +644,10 @@ it("replaces the release-detail publication summary with refreshed position stat
     name: "Current publication",
   });
   await waitFor(() => expect(summary).toHaveTextContent("Published"));
-  expect(summary).toHaveTextContent("Artist/Album/rewritten.flac");
+  await openCurrentDetails();
+  expect(
+    await screen.findByText("Artist/Album/rewritten.flac", { selector: "dd" }),
+  ).toBeVisible();
   expect(summary).not.toHaveTextContent("Not published");
 });
 
@@ -656,10 +683,12 @@ it("hides stale measurements on a failed position read and recovers with the new
 
   renderScreen(releaseID, positionID);
 
-  const summary = await screen.findByRole("region", {
-    name: "Current publication",
-  });
-  expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
+  await openCurrentDetails();
+  expect(
+    await screen.findByText("Artist/Album/01 - Position One.flac", {
+      selector: "dd",
+    }),
+  ).toBeVisible();
   expect(await screen.findByText("-7.50 dB")).toBeVisible();
   fireEvent.click(screen.getByTestId("refresh-publication"));
   const retry = await screen.findByRole("button", { name: "Refresh data" });
@@ -675,10 +704,14 @@ it("hides stale measurements on a failed position read and recovers with the new
       .getAttribute("data-refresh-token"),
   ).not.toContain("generation-2");
   fireEvent.click(retry);
-  await waitFor(() =>
-    expect(summary).toHaveTextContent("Artist/Album/rewritten.flac"),
-  );
-  expect(summary).not.toHaveTextContent("Artist/Album/01 - Position One.flac");
+  expect(
+    await screen.findByText("Artist/Album/rewritten.flac", { selector: "dd" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("Artist/Album/01 - Position One.flac", {
+      selector: "dd",
+    }),
+  ).toBeNull();
   expect(
     within(
       await screen.findByLabelText("Current publication audio measurements"),
@@ -894,6 +927,7 @@ it("refreshes deletion from authoritative position state without remounting publ
     name: "Текущая публикация",
   });
   const positionArticle = await screen.findByRole("article");
+  await openTechnicalDetails("ru");
   expect(within(positionArticle).getByText("Композиция")).toBeVisible();
   expect(within(positionArticle).queryByText("Recording ID")).toBeNull();
   fireEvent.click(
@@ -928,6 +962,8 @@ it("refreshes deletion from authoritative position state without remounting publ
       }),
     ).toBeInTheDocument(),
   );
+  await openCurrentDetails("ru");
+  expect(within(positionArticle).getByText("-7.50 dB")).toBeVisible();
   fireEvent.click(
     within(positionArticle).getByRole("button", {
       name: "Удалить текущую публикацию",
@@ -941,7 +977,6 @@ it("refreshes deletion from authoritative position state without remounting publ
   ).toBeInTheDocument();
   expect(previewReads).toBe(2);
   expect(deletionCalls).toBe(1);
-  expect(within(positionArticle).getByText("-7.50 dB")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
   await waitFor(() => expect(failedDeletionRead).toBe(true));
   expect(

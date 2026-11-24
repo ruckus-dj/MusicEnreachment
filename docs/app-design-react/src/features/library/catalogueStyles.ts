@@ -112,8 +112,6 @@ export const catalogueStyles = {
 		"grid size-4 place-items-center rounded-[4px] border-[1.5px] border-[#ffffffd9] bg-[#1014154d] text-[11px] leading-none text-transparent transition-colors group-data-[hovered]:border-white group-data-[hovered]:bg-[#10141580] group-data-[selected]:border-white group-data-[selected]:bg-white group-data-[selected]:text-[#17201d] group-data-[indeterminate]:border-white group-data-[indeterminate]:bg-white group-data-[indeterminate]:text-[#17201d] group-data-[focus-visible]:outline group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-white group-data-[focus-visible]:outline-offset-2 group-data-[focus-visible]:shadow-[0_0_0_4px_#10141580] group-data-[disabled]:opacity-[.45]",
 	selectionColumn:
 		"box-border w-[34px] min-w-[34px] max-w-[34px] px-0! text-center! align-middle!",
-	trackDetails:
-		"[&_summary]:cursor-pointer [&_summary]:text-[var(--accent)] [&_summary]:underline-offset-2 [&_summary:hover]:underline",
 	dockDialog:
 		"[&_[slot=title]]:mb-2 [&_[slot=title]]:text-base [&_p]:my-2 [&_p]:mb-[14px] [&_ul]:grid [&_ul]:gap-2 [&_code]:break-all [&_button]:mr-2 [&_button]:rounded [&_button]:border [&_button]:border-[var(--control)] [&_button]:px-[10px] [&_button]:py-[6px] [&_button]:text-[var(--ink)] [&_button.ui-button--danger]:border-[var(--error)] [&_button.ui-button--danger]:bg-[var(--error)] [&_button.ui-button--danger]:text-white",
 	dockDialogFooter: "mt-3 flex flex-wrap justify-end gap-2",
@@ -124,6 +122,4 @@ export const catalogueStyles = {
 		"size-4 flex-[0_0_16px] rounded-full border border-[var(--control)] group-data-[selected]:border-[5px] group-data-[selected]:border-[var(--accent)]",
 	disclosure:
 		"my-2 min-w-0 overflow-hidden rounded-[5px] border border-[var(--line)] bg-[var(--surface)] [&_summary]:cursor-pointer [&_summary]:text-[var(--accent)] [&_summary]:underline-offset-2 [&_summary:hover]:underline",
-	trackPublication:
-		"[&_[slot=trigger]]:border-0 [&_[slot=trigger]]:bg-transparent [&_[slot=trigger]]:px-0 [&_[slot=trigger]]:py-1 [&_[slot=trigger]]:text-[var(--accent)]",
 } as const;

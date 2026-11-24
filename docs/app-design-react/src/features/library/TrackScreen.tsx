@@ -1,11 +1,6 @@
 import { useRef, useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
-import {
-	Button,
-	Disclosure,
-	DisclosurePanel,
-	Heading,
-} from "../../components/ui";
+import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import { TrackMetadataEditors } from "../../metadata/TrackMetadataEditors";
 import {
@@ -32,8 +27,9 @@ import {
 } from "./LibraryPositionHeadingView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
+import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
 import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
-import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
+import { PublicationCurrentDetailsView } from "./PublicationCurrentSummaryView";
 import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
@@ -224,8 +220,32 @@ export function TrackScreen({
 								onAudioUpgrade={onAudioUpgrade}
 							/>
 						)}
-						<details className={catalogueStyles.trackDetails}>
-							<summary>{trackMessage(locale, "technicalDetails")}</summary>
+						<LibraryPositionTechnicalDetailsView
+							locale={locale}
+							current={
+								track.published && (
+									<>
+										<PublicationCurrentDetailsView
+											locale={locale}
+											details={{
+												container: track.published.container,
+												codec: track.published.codec,
+												path: track.published.path,
+												observed: {
+													kind: "snapshot",
+													value: track.published.readAt,
+												},
+											}}
+										/>
+										<PublicationTagSnapshotView
+											locale={locale}
+											tags={track.published.tags}
+										/>
+									</>
+								)
+							}
+							afterCurrent={<p>{trackMessage(locale, "localChangesHelp")}</p>}
+						>
 							<LibraryPositionIdentityView
 								locale={locale}
 								position={trackNumberLabel(release, track)}
@@ -258,12 +278,6 @@ export function TrackScreen({
 										? `${file.codec} · ${duration(file.duration)}`
 										: trackMessage(locale, "notSelected")}
 								</dd>
-								<dt>{trackMessage(locale, "publicationFormat")}</dt>
-								<dd>
-									{track.published
-										? `${track.published.container} · ${track.published.codec}`
-										: trackMessage(locale, "noPublication")}
-								</dd>
 							</dl>
 							<dl className={catalogueStyles.facts}>
 								<dt>{trackMessage(locale, "path")}</dt>
@@ -283,37 +297,7 @@ export function TrackScreen({
 									</>
 								)}
 							</dl>
-							{track.published && (
-								<Disclosure className={catalogueStyles.trackPublication}>
-									<Heading>
-										<Button slot="trigger">
-											{trackMessage(locale, "currentPublication")}
-										</Button>
-									</Heading>
-									<DisclosurePanel>
-										<PublicationCurrentSummaryView
-											locale={locale}
-											current={{
-												details: {
-													container: track.published.container,
-													codec: track.published.codec,
-													path: track.published.path,
-													observed: {
-														kind: "snapshot",
-														value: track.published.readAt,
-													},
-												},
-											}}
-										/>
-										<PublicationTagSnapshotView
-											locale={locale}
-											tags={track.published.tags}
-										/>
-									</DisclosurePanel>
-								</Disclosure>
-							)}
-							<p>{trackMessage(locale, "localChangesHelp")}</p>
-						</details>
+						</LibraryPositionTechnicalDetailsView>
 					</>
 				}
 			/>
