@@ -218,7 +218,6 @@ frontend/src/features/setup/SetupManager.tsx
 frontend/src/features/setup/SetupMetadata.tsx
 frontend/src/features/setup/SetupSummary.tsx
 frontend/src/features/setup/SetupTools.tsx
-frontend/src/features/setup/setup.css
 frontend/src/features/setup/setupMessages.ts
 frontend/src/features/setup/useSetupGenreCatalogProvider.ts
 frontend/src/features/sources/SourceArtifactCleanupPanel.tsx

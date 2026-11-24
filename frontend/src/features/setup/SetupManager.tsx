@@ -28,7 +28,6 @@ import {
   setupMessages,
 } from "./setupMessages";
 import { useSetupGenreCatalogProvider } from "./useSetupGenreCatalogProvider";
-import "./setup.css";
 
 const stepKey = "melotrove.setup.step";
 function earliest(state: SetupStateBody) {

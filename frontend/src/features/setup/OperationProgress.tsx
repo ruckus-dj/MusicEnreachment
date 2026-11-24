@@ -117,7 +117,7 @@ export function OperationProgress({
   const failedError =
     snapshot?.state === "failed" ? snapshot.safe_error : undefined;
   return (
-    <div className="setup-operation">
+    <div className="wrap-anywhere bg-[var(--accent-soft)] p-2 my-2">
       <p role="status">
         {snapshot
           ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`

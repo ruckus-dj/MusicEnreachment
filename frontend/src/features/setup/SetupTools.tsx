@@ -310,7 +310,11 @@ export function SetupTools({
         />
       ) : null}
       {completed.map((item) => (
-        <p key={item.id} role="status" className="setup-operation">
+        <p
+          key={item.id}
+          role="status"
+          className="wrap-anywhere bg-[var(--accent-soft)] p-2 my-2"
+        >
           {operationKindLabel(item.kind, locale)} —{" "}
           {operationTargetLabel(item, locale)}:{" "}
           {operationStateLabel(item.state, locale)}.

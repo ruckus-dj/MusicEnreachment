@@ -166,7 +166,7 @@ export function AppShell() {
     return <ProductShell route={route}>{content}</ProductShell>;
 
   return (
-    <main className="setup-shell">
+    <main className="min-h-dvh bg-[var(--canvas)] p-3 text-[var(--ink)]">
       <button
         type="button"
         className={skipLinkClass}
@@ -176,7 +176,7 @@ export function AppShell() {
       >
         {copy.skip}
       </button>
-      <header className="m-0 flex flex-wrap items-center justify-between gap-3">
+      <header className="m-0 flex flex-wrap items-center justify-between gap-3 bg-[var(--surface)] px-3 py-2">
         <div className="flex min-w-0 flex-col gap-px p-1">
           <strong className="text-[15px] leading-5">MeloTrove</strong>
           <span className="text-[11px] leading-4 text-[var(--muted)]">
@@ -203,16 +203,29 @@ export function AppShell() {
     return loading ? (
       <p role="status">{appCopy.loadingServer}</p>
     ) : error ? (
-      <div ref={errorRef} tabIndex={-1} role="alert">
+      <div
+        ref={errorRef}
+        tabIndex={-1}
+        role="alert"
+        className="wrap-anywhere bg-[var(--error-soft)] p-2 text-[var(--error)]"
+      >
         {"fallback" in error ? appCopy.loadError : error.message}{" "}
         <AppButton onPress={load}>{appCopy.retry}</AppButton>
       </div>
     ) : state && (state.platform.diagnostic || !state.platform.supported) ? (
       <section aria-labelledby="diagnostic-title">
-        <h1 ref={diagnosticRef} tabIndex={-1} id="diagnostic-title">
+        <h1
+          ref={diagnosticRef}
+          tabIndex={-1}
+          id="diagnostic-title"
+          className="text-xl leading-[26px] font-[650]"
+        >
           {appCopy.diagnose}
         </h1>
-        <p role="alert">
+        <p
+          role="alert"
+          className="wrap-anywhere bg-[var(--error-soft)] p-2 text-[var(--error)]"
+        >
           {state.platform.reason || appCopy.unsupportedPlatform}
         </p>
         <p>
