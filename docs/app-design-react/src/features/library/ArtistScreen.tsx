@@ -44,6 +44,7 @@ import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
+import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import type { TagScope } from "./TagsComparison";
 
@@ -474,15 +475,10 @@ export function ArtistScreen({
 											className={`catalogue-edition-trigger ${catalogueStyles.albumTrigger}`}
 											aria-label={`${release.title} · ${release.year} · ${release.catalog || "—"}`}
 										>
-											<span
-												className={`artist-album-cover ${catalogueStyles.albumCover}`}
-												data-palette={release.color || artist.color || "clay"}
-												aria-hidden="true"
-											>
-												<span>
-													{release.title.trim().slice(0, 1).toLocaleUpperCase()}
-												</span>
-											</span>
+											<LibraryEditionArtwork
+												palette={release.color || artist.color}
+												title={release.title}
+											/>
 											<span className={catalogueStyles.albumCopy}>
 												<strong>{release.title}</strong>
 												<span className={catalogueStyles.albumMeta}>

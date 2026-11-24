@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiResponseError } from "../../api/client/errors";
 import {
+  getGetLibraryReleaseCoverImageUrl,
   useGetLibraryArtist,
   useListLibraryPositions,
   useListLibraryReleases,
@@ -12,6 +13,7 @@ import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
+import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import {
   libraryArtistRouteHref,
   libraryRouteHref,
@@ -258,22 +260,31 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 }
                 const release = item.library_release;
                 if (!release) return null;
+                const title = release.title || copy.untitledRelease;
+                const generation = release.cover?.selected_generation;
                 return (
                   <article
                     className="catalog-artist-release min-w-0"
                     key={`library_release:${release.id}`}
                   >
                     <div className="catalog-release-heading">
-                      <span className="catalog-initial" aria-hidden="true">
-                        {release.title.trim().charAt(0).toLocaleUpperCase() ||
-                          "M"}
-                      </span>
-                      <div>
+                      <LibraryEditionArtwork
+                        title={title}
+                        imageSrc={
+                          generation
+                            ? getGetLibraryReleaseCoverImageUrl(
+                                release.id,
+                                generation,
+                              )
+                            : undefined
+                        }
+                      />
+                      <div className="min-w-0 wrap-anywhere">
                         <h2>
                           <a
                             href={`#/library/releases/${encodeURIComponent(release.id)}`}
                           >
-                            {release.title || copy.untitledRelease}
+                            {title}
                           </a>
                         </h2>
                         <p>

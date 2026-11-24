@@ -60,6 +60,10 @@ do not migrate or merge the configurations to work around the invocation error.
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
+If unrelated application and prototype tests time out in different runs under
+heavy host load, retry the normal hook with `VITEST_MAX_WORKERS=4`. This limits
+local concurrency for both suites without changing coverage or test timeouts.
+
 When moving UI copy to a paired component, check message-key references across
 both source trees, not just the edited feature. Library position details also
 use source probe labels; preserve their wording when moving the common copy.
