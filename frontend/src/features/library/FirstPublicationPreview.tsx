@@ -10,11 +10,11 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
-import { LibraryPositionPreviewButton } from "./LibraryPositionWorkspace";
 import {
-  releaseControlButtonClass,
-  releaseControlFieldsetClass,
-} from "./libraryReleaseControlStyles";
+  LibraryPositionConfirmButton,
+  LibraryPositionPreviewButton,
+} from "./LibraryPositionWorkspace";
+import { releaseControlFieldsetClass } from "./libraryReleaseControlStyles";
 import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 export type SourceChoice = Pick<
@@ -1088,36 +1088,32 @@ export function FirstPublicationPreview({
         onRefresh={onRefresh}
       />
       {!comparisonOnly && workflow === "first" && (
-        <button
-          type="button"
-          className={releaseControlButtonClass}
+        <LibraryPositionConfirmButton
+          locale={locale}
+          label="publish"
+          pending={confirming}
           disabled={
             !canConfirm ||
-            confirming ||
             admissionUncertain ||
             confirmationPending.current ||
             admissionLocked.current
           }
-          onClick={() => void confirmPreview()}
-        >
-          {confirming ? copy.publicationStart : copy.publish}
-        </button>
+          onConfirm={() => void confirmPreview()}
+        />
       )}
       {workflow === "retained_same_path" && (
-        <button
-          type="button"
-          className={releaseControlButtonClass}
+        <LibraryPositionConfirmButton
+          locale={locale}
+          label="retainedRepublish"
+          pending={confirming}
           disabled={
             !canConfirm ||
-            confirming ||
             admissionUncertain ||
             confirmationPending.current ||
             admissionLocked.current
           }
-          onClick={() => void confirmPreview()}
-        >
-          {confirming ? copy.publicationStart : copy.retainedRepublish}
-        </button>
+          onConfirm={() => void confirmPreview()}
+        />
       )}
     </section>
   );

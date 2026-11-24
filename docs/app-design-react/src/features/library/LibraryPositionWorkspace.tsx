@@ -29,6 +29,33 @@ export function LibraryPositionPreviewButton({
   );
 }
 
+export function LibraryPositionConfirmButton({
+  locale,
+  label,
+  pending,
+  disabled,
+  onConfirm,
+}: {
+  locale: "en" | "ru";
+  label: "publish" | "retainedRepublish";
+  pending?: boolean;
+  disabled?: boolean;
+  onConfirm: () => void;
+}) {
+  const text = firstPublicationPreviewMessages[locale];
+  return (
+    <AppButton
+      type="button"
+      data-position-confirm-button
+      isDisabled={pending || disabled}
+      onPress={onConfirm}
+      className="min-h-8! rounded-[4px]! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
+    >
+      {pending ? text.publicationStart : text[label]}
+    </AppButton>
+  );
+}
+
 export function LibraryPositionWorkspace({
   locale,
   editors,

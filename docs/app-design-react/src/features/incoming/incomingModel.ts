@@ -314,6 +314,8 @@ export type IncomingPlan = {
 	localReleaseId: string | null;
 	assignments: Record<string, Assignment>;
 	inventoryVersion: number;
+	/** Exact single-position context; a one-row group is still a group plan. */
+	positionId?: string;
 	/** Rebuild the selected source even when the current snapshot is unchanged. */
 	force?: boolean;
 };
@@ -384,6 +386,7 @@ export function makeReleasePlan(
 		localReleaseId: release.id,
 		assignments,
 		inventoryVersion: state.inventoryVersion,
+		...(trackId ? { positionId: trackId } : {}),
 	};
 }
 

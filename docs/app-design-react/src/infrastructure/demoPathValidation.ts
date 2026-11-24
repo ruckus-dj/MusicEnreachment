@@ -38,6 +38,19 @@ function contains(parent: string[], child: string[]) {
 	);
 }
 
+/** Check fixture paths only; the real output root is verified by the server. */
+export function demoPathInside(root: string, path: string): boolean {
+	const parent = parsePath(root);
+	const child = parsePath(path);
+	return Boolean(
+		parent &&
+			child &&
+			parent.root === child.root &&
+			parent.parts.length < child.parts.length &&
+			contains(parent.parts, child.parts),
+	);
+}
+
 /** Lexical demo-fixture comparison only; this does not resolve symlinks or touch a filesystem. */
 export function demoPathsOverlap(first: string, second: string): boolean {
 	const a = parsePath(first);

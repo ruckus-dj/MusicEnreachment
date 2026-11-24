@@ -12,6 +12,7 @@ import {
 	originalProviders,
 	originalReleases,
 } from "../library/catalogData";
+import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import {
 	createIncomingState,
@@ -26,7 +27,10 @@ import {
 	formatPublicationMessage,
 	publicationMessage,
 } from "./publicationMessages";
-import { fixturePublicationDestination } from "./publicationOutput";
+import {
+	fixturePublicationDestination,
+	type PublicationDestination,
+} from "./publicationOutput";
 import { applyAudioUpgradePreview } from "../library/trackActionModel";
 import { I18nProvider } from "../../i18n/I18nProvider";
 
@@ -214,7 +218,7 @@ it("incoming match preview also uses the shared publication confirmation", () =>
 	expect(container.querySelector("[aria-label^='Предпросмотр:']")).toBeTruthy();
 });
 
-it("track and incoming plans render the same flow with force destination facts", () => {
+it("compares one CURRENT read-only and confirms an explicit republish without a dialog", () => {
 	const state = createIncomingState();
 	const plan = makeReleasePlan(
 		state,
@@ -222,24 +226,36 @@ it("track and incoming plans render the same flow with force destination facts",
 		originalFiles,
 		publishedTrack.id,
 	);
-	plan.force = true;
-	const { container } = render(
+	const onReleases = vi.fn();
+	const view = (
+		force: boolean,
+		target: PublicationDestination = destination,
+		releases = originalReleases,
+	) => (
 		<ContextPublicationPreview
-			destination={destination}
-			plan={plan}
+			destination={target}
+			plan={{ ...plan, force }}
 			files={originalFiles}
-			releases={originalReleases}
+			releases={releases}
 			providers={providerReleases}
 			artists={originalArtists}
 			inventoryVersion={state.inventoryVersion}
 			confirmDowngrade={false}
 			onPlan={vi.fn()}
-			onReleases={vi.fn()}
+			onReleases={onReleases}
 			onSuccess={vi.fn()}
 			onBack={vi.fn()}
-		/>,
+		/>
 	);
+	const { container, rerender } = render(view(false));
+	const copy = firstPublicationPreviewMessages.ru;
+	expect(screen.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
+	expect(
+		screen.queryByRole("button", { name: copy.retainedRepublish }),
+	).toBeNull();
+	expect(onReleases).not.toHaveBeenCalled();
 
+	rerender(view(true));
 	expect(
 		screen.getByRole("heading", {
 			name: publicationMessage("ru", "contextTitle").replace(
@@ -254,4 +270,36 @@ it("track and incoming plans render the same flow with force destination facts",
 	expect(container.textContent).not.toContain(
 		`${publishedTrack.published!.codec} → MKA`,
 	);
+	const confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+	expect(confirm).toBeDisabled();
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		publicationMessage("ru", "currentOutsideOutput"),
+	);
+
+	const changed = structuredClone(originalReleases);
+	const changedTrack = changed
+		.find((item) => item.id === release.id)!
+		.tracks.find((item) => item.id === publishedTrack.id)!;
+	changedTrack.published!.readAt = "New CURRENT";
+	rerender(view(true, fixturePublicationDestination, changed));
+	expect(confirm).toBeDisabled();
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		publicationMessage("ru", "stalePreview"),
+	);
+
+	rerender(view(true, fixturePublicationDestination));
+	expect(confirm).toBeEnabled();
+	fireEvent.click(confirm);
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	expect(onReleases).toHaveBeenCalledTimes(1);
+	const updated = (onReleases.mock.calls[0][0] as typeof originalReleases).find(
+		(item) => item.id === release.id,
+	)!;
+	expect(
+		updated.tracks.find((item) => item.id === publishedTrack.id)?.published
+			?.sourceId,
+	).toBe(publishedTrack.sourceId);
+	expect(
+		updated.tracks.filter((item) => item.id !== publishedTrack.id),
+	).toEqual(release.tracks.filter((item) => item.id !== publishedTrack.id));
 });

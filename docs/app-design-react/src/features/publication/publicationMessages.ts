@@ -157,6 +157,8 @@ export const publicationMessages = createNamespace({
 			"I confirm a separate quality downgrade ({count} positions)",
 		inventoryChanged:
 			"The source inventory changed. Create a new preview before confirming.",
+		currentOutsideOutput:
+			"Republishing is unavailable: the current publication is outside the configured output directory.",
 		demoApplied: "Demo: {count} positions published.",
 		linksStored: "Links for {count} positions saved.",
 		unselectedUnchanged:
@@ -343,6 +345,8 @@ export const publicationMessages = createNamespace({
 		confirmDowngrade: "Подтверждаю отдельное понижение качества ({count} поз.)",
 		inventoryChanged:
 			"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением.",
+		currentOutsideOutput:
+			"Повторная публикация недоступна: текущая публикация находится за пределами настроенной папки вывода.",
 		demoApplied: "Демо: {count} позиций опубликовано.",
 		linksStored: "Связи {count} позиций сохранены.",
 		unselectedUnchanged:

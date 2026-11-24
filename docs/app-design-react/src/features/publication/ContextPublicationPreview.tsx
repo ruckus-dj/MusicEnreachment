@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../../components/ui";
 import { useI18n } from "../../i18n";
+import { demoPathInside } from "../../infrastructure/demoPathValidation";
 import type { UiNotice } from "../../infrastructure/uiNotice";
 import {
 	applyPlan,
@@ -94,7 +95,35 @@ export function ContextPublicationPreview({
 			</section>
 		);
 
-	const rows = planRows(plan, files, releases, providers, artists, destination);
+	const singlePosition = plan.positionId !== undefined;
+	const rows = planRows(
+		plan,
+		files,
+		releases,
+		providers,
+		artists,
+		destination,
+	).filter((row) => !singlePosition || row.targetTrack.id === plan.positionId);
+	const current = singlePosition && Boolean(rows[0]?.previous);
+	const readOnlyPosition = current && !plan.force;
+	const capturedPosition = singlePosition
+		? plan.target.tracks.find((track) => track.id === plan.positionId)
+		: undefined;
+	const livePosition = rows[0]?.track;
+	const positionChanged =
+		singlePosition &&
+		(!capturedPosition ||
+			livePosition?.id !== capturedPosition.id ||
+			livePosition.sourceId !== capturedPosition.sourceId ||
+			JSON.stringify(livePosition.published) !==
+				JSON.stringify(capturedPosition.published));
+	const currentOutsideOutput =
+		singlePosition &&
+		Boolean(
+			plan.force &&
+				rows[0]?.previous &&
+				!demoPathInside(destination.outputDirectory, rows[0].previous.path),
+		);
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
 	);
@@ -177,7 +206,7 @@ export function ContextPublicationPreview({
 		action,
 		count: classified.filter((item) => item.action === action).length,
 	}));
-	const stale = plan.inventoryVersion !== inventoryVersion;
+	const stale = plan.inventoryVersion !== inventoryVersion || positionChanged;
 	const links = rows.filter((row) => {
 		const status = classified.find(
 			(item) => item.row.targetTrack.id === row.targetTrack.id,
@@ -198,7 +227,10 @@ export function ContextPublicationPreview({
 	});
 	const canConfirm =
 		!stale &&
-		(changed.length > 0 || links.length > 0) &&
+		!currentOutsideOutput &&
+		(singlePosition
+			? !readOnlyPosition && (!plan.force || current) && changed.length === 1
+			: changed.length > 0 || links.length > 0) &&
 		(!downgrades.length || confirmDowngrade);
 	const updateIncluded = (trackId: string, included: boolean) => {
 		const assignment = plan.assignments[trackId];
@@ -305,8 +337,13 @@ export function ContextPublicationPreview({
 		},
 	);
 	const confirm = () => {
-		if (plan.inventoryVersion !== inventoryVersion) {
-			setError(publicationMessage(locale, "inventoryChanged"));
+		if (stale) {
+			setError(
+				publicationMessage(
+					locale,
+					positionChanged ? "stalePreview" : "inventoryChanged",
+				),
+			);
 			return;
 		}
 		if (!canConfirm) return;
@@ -355,7 +392,13 @@ export function ContextPublicationPreview({
 			returnLabel={publicationMessage(locale, "returnToObject")}
 			onBack={onBack}
 			stale={stale}
-			error={error}
+			error={
+				error ||
+				(positionChanged ? publicationMessage(locale, "stalePreview") : "") ||
+				(currentOutsideOutput
+					? publicationMessage(locale, "currentOutsideOutput")
+					: "")
+			}
 			counts={counts.map(({ action, count }) => ({
 				label: publicationMessage(
 					locale,
@@ -372,6 +415,15 @@ export function ContextPublicationPreview({
 			}
 			primaryLabel={publicationMessage(locale, "confirmPublication")}
 			primaryDisabled={!canConfirm}
+			positionConfirmation={
+				singlePosition
+					? readOnlyPosition
+						? "read-only"
+						: current
+							? "retainedRepublish"
+							: "publish"
+					: undefined
+			}
 			confirmationTitle={
 				changed.length
 					? formatPublicationMessage(locale, "writeSelectedCount", {

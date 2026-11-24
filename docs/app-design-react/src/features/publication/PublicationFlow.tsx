@@ -5,7 +5,12 @@ import {
 	PublicationInspector,
 	type PublicationInspection,
 } from "./PublicationInspector";
-import { dialogFooter, objectActions } from "../../components/styles/matchingStyles";
+import {
+	dialogFooter,
+	objectActions,
+} from "../../components/styles/matchingStyles";
+import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
+import { LibraryPositionConfirmButton } from "../library/LibraryPositionWorkspace";
 import {
 	formatPublicationMessage,
 	publicationMessage,
@@ -23,6 +28,7 @@ export function PublicationFlow({
 	footer,
 	primaryLabel,
 	primaryDisabled,
+	positionConfirmation,
 	confirmationTitle,
 	confirmationDetails,
 	confirmationError,
@@ -43,6 +49,7 @@ export function PublicationFlow({
 	footer: ReactNode;
 	primaryLabel: string;
 	primaryDisabled: boolean;
+	positionConfirmation?: "read-only" | "publish" | "retainedRepublish";
 	confirmationTitle: string;
 	confirmationDetails: ReactNode;
 	confirmationError?: string;
@@ -90,13 +97,26 @@ export function PublicationFlow({
 			<div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] p-2">
 				<div className="min-w-0 text-xs">{footer}</div>
 				<div className={objectActions}>
-					<Button
-						className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-						isDisabled={stale || primaryDisabled}
-						onPress={() => setConfirming(true)}
-					>
-						{primaryLabel}
-					</Button>
+					{positionConfirmation === "read-only" ? (
+						<p role="note">
+							{firstPublicationPreviewMessages[locale].comparisonReadOnly}
+						</p>
+					) : positionConfirmation ? (
+						<LibraryPositionConfirmButton
+							locale={locale}
+							label={positionConfirmation}
+							disabled={stale || primaryDisabled}
+							onConfirm={onConfirm}
+						/>
+					) : (
+						<Button
+							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
+							isDisabled={stale || primaryDisabled}
+							onPress={() => setConfirming(true)}
+						>
+							{primaryLabel}
+						</Button>
+					)}
 					<Button onPress={onBack}>
 						{publicationMessage(locale, "cancel")}
 					</Button>
@@ -113,40 +133,42 @@ export function PublicationFlow({
 					})}
 				</Checkbox>
 			)}
-			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog
-					aria-labelledby="publication-flow-confirm-title"
-					className="grid gap-2"
-				>
-					<Heading slot="title" id="publication-flow-confirm-title">
-						{confirmationTitle}
-					</Heading>
-					<div className="grid gap-2 text-xs text-[var(--muted)]">
-						{confirmationDetails}
-					</div>
-					{(stale || confirmationError) && (
-						<p role="alert">
-							{confirmationError ||
-								publicationMessage(locale, "inventoryChanged")}
-						</p>
-					)}
-					<div className={dialogFooter}>
-						<Button onPress={() => setConfirming(false)}>
-							{publicationMessage(locale, "cancel")}
-						</Button>
-						<Button
-							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-							isDisabled={stale || primaryDisabled}
-							onPress={() => {
-								onConfirm();
-								setConfirming(false);
-							}}
-						>
-							{confirmLabel}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
+			{!positionConfirmation && (
+				<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
+					<Dialog
+						aria-labelledby="publication-flow-confirm-title"
+						className="grid gap-2"
+					>
+						<Heading slot="title" id="publication-flow-confirm-title">
+							{confirmationTitle}
+						</Heading>
+						<div className="grid gap-2 text-xs text-[var(--muted)]">
+							{confirmationDetails}
+						</div>
+						{(stale || confirmationError) && (
+							<p role="alert">
+								{confirmationError ||
+									publicationMessage(locale, "inventoryChanged")}
+							</p>
+						)}
+						<div className={dialogFooter}>
+							<Button onPress={() => setConfirming(false)}>
+								{publicationMessage(locale, "cancel")}
+							</Button>
+							<Button
+								className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
+								isDisabled={stale || primaryDisabled}
+								onPress={() => {
+									onConfirm();
+									setConfirming(false);
+								}}
+							>
+								{confirmLabel}
+							</Button>
+						</div>
+					</Dialog>
+				</Modal>
+			)}
 		</section>
 	);
 }
