@@ -1,23 +1,36 @@
 import type { Ref } from "react";
-import { AppButton } from "../../components/AppButton";
 
-type SourceHeadingLink = { href: string; label: string };
+const messages = {
+  en: {
+    back: "Back to sources",
+    incoming: "Review groups",
+  },
+  ru: {
+    back: "К списку источников",
+    incoming: "Разобрать группы",
+  },
+} as const;
+
+const linkClass = "text-[var(--accent)] underline underline-offset-2";
 
 export function SourceRootHeadingView({
+  locale,
   title,
   headingId,
   headingRef,
-  back,
-  incoming,
+  sourcesHref,
+  incomingHref,
   path,
 }: {
+  locale: "en" | "ru";
   title: string;
   headingId?: string;
   headingRef?: Ref<HTMLHeadingElement>;
-  back: SourceHeadingLink | { label: string; onPress: () => void };
-  incoming?: SourceHeadingLink;
+  sourcesHref: string;
+  incomingHref?: string;
   path?: string;
 }) {
+  const copy = messages[locale];
   return (
     <header className="flex flex-wrap items-end justify-between gap-3 pb-2">
       <div className="grid min-w-0 gap-1">
@@ -36,22 +49,12 @@ export function SourceRootHeadingView({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {"href" in back ? (
-          <a
-            className="text-[var(--accent)] underline underline-offset-2"
-            href={back.href}
-          >
-            {back.label}
-          </a>
-        ) : (
-          <AppButton onPress={back.onPress}>{back.label}</AppButton>
-        )}
-        {incoming && (
-          <a
-            className="text-[var(--accent)] underline underline-offset-2"
-            href={incoming.href}
-          >
-            {incoming.label}
+        <a className={linkClass} href={sourcesHref}>
+          {copy.back}
+        </a>
+        {incomingHref && (
+          <a className={linkClass} href={incomingHref}>
+            {copy.incoming}
           </a>
         )}
       </div>

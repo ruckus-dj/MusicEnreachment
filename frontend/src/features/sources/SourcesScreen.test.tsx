@@ -177,29 +177,52 @@ it("autosaves each source choice without submitting the name draft", async () =>
   expect(scans).toBe(0);
 });
 
-it("distinguishes an unchecked file from a failed audio check", async () => {
+it("distinguishes audio checks and preserves inventory while retrying a page", async () => {
   const file = {
     size_bytes: 42,
     mtime: "2026-09-26T10:20:00Z",
     has_result: false,
   };
+  const firstPage: SourceLocationResponse[] = [
+    {
+      ...file,
+      id: "waiting",
+      relative_path: "Album/waiting.mp3",
+      probe_status: "not_analyzed",
+    },
+    {
+      ...file,
+      id: "failed",
+      relative_path: "Album/failed.mp3",
+      probe_status: "probe_error",
+      safe_error: "Could not read audio.",
+    },
+  ];
+  const cursors: string[] = [];
   server.use(
     http.get("/api/sources/root-1", () => HttpResponse.json(root())),
-    locationsHandler([
-      {
-        ...file,
-        id: "waiting",
-        relative_path: "Album/waiting.mp3",
-        probe_status: "not_analyzed",
-      },
-      {
-        ...file,
-        id: "failed",
-        relative_path: "Album/failed.mp3",
-        probe_status: "probe_error",
-        safe_error: "Could not read audio.",
-      },
-    ]),
+    http.get("/api/sources/root-1/locations", ({ request }) => {
+      const cursor = new URL(request.url).searchParams.get("cursor");
+      if (!cursor)
+        return HttpResponse.json({ locations: firstPage, next_cursor: "next" });
+      cursors.push(cursor);
+      if (cursors.length === 1) {
+        return HttpResponse.json(
+          { detail: "Could not read the next page." },
+          { status: 503 },
+        );
+      }
+      return HttpResponse.json({
+        locations: [
+          {
+            ...file,
+            id: "extra",
+            relative_path: "Album/extra.mp3",
+            probe_status: "audio",
+          },
+        ],
+      });
+    }),
   );
   window.location.hash = "/sources/root-1";
   render(
@@ -216,6 +239,26 @@ it("distinguishes an unchecked file from a failed audio check", async () => {
   expect(waiting).not.toHaveTextContent("Ошибка проверки");
   expect(failed).toHaveTextContent("Ошибка проверки");
   expect(failed).toHaveTextContent("Could not read audio.");
+
+  const inventory = within(
+    screen.getByRole("region", { name: "Файлы инвентаря" }),
+  );
+  fireEvent.click(inventory.getByRole("button", { name: "Показать ещё" }));
+  const pageError = await inventory.findByRole("alert");
+  expect(pageError).toHaveTextContent("Could not read the next page.");
+  await waitFor(() => expect(pageError).toHaveFocus());
+  expect(waiting).toBeVisible();
+  expect(failed).toBeVisible();
+  fireEvent.click(
+    inventory.getByRole("button", { name: "Повторить загрузку" }),
+  );
+  expect(
+    await inventory.findByRole("row", { name: /Album\/extra/ }),
+  ).toBeVisible();
+  expect(
+    inventory.getAllByRole("row", { name: /Album\/waiting/ }),
+  ).toHaveLength(1);
+  expect(cursors).toEqual(["next", "next"]);
 });
 
 it("confirms a batch of source paths and shows per-copy cleanup results", async () => {
@@ -450,7 +493,10 @@ describe("source root creation", () => {
     ).toBeVisible();
     expect(scanRequests).toBe(0);
     expect(window.location.hash).toBe("#/sources/root-disk");
-    fireEvent.click(screen.getByRole("button", { name: "К списку каталогов" }));
+    expect(
+      screen.getByRole("link", { name: "К списку источников" }),
+    ).toHaveAttribute("href", "#/sources");
+    window.location.hash = "/sources";
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toHaveFocus();

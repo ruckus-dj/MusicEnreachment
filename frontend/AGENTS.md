@@ -60,6 +60,10 @@ do not migrate or merge the configurations to work around the invocation error.
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
+When moving UI copy to a paired component, check message-key references across
+both source trees, not just the edited feature. Library position details also
+use source probe labels; preserve their wording when moving the common copy.
+
 **Nested directory dialogs**: Stop picker `close`/`cancel` propagation so closing
 the picker cannot close its owning settings dialog. Host Escape/Tab handlers
 must ignore events from nested dialogs. Path editing must not use a nested form

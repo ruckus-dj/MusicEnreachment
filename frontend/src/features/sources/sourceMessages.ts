@@ -34,7 +34,6 @@ const en = {
   manualScanFailure:
     "Source “{name}” was registered, but the scan could not be started. The source is saved. Open it and start a scan manually.",
   openManualScan: "Open source to scan manually",
-  backToSources: "Back to sources",
   sourceTitle: "Source",
   serverDirectory: "Server directory",
   availabilityLabel: "Availability",
@@ -128,25 +127,8 @@ const en = {
   sourceTags: "Source tags",
   noSourceTags: "No source tags are present.",
   rawFfprobe: "Raw ffprobe JSON",
-  inventoryFiles: "Inventory files",
-  noInventoryYet:
-    "There is no inventory: the source has not been scanned successfully. Files will appear after a successful scan.",
-  inventoryHelp:
-    "Showing records from the last successful scan: files with supported audio extensions. Paths are relative to",
-  loadingFiles: "Loading file list…",
-  noSupportedFiles:
-    "The last successful scan found no files with supported audio extensions.",
-  filesCaption:
-    "Files from the last successful scan: relative path, size, modification time, and audio stream check",
-  audioCheck: "Audio check",
-  noAudio: "No audio track",
-  probeNotAnalyzed: "Not checked",
-  probeError: "Check failed",
   noAudioReason: "No audio track: this file cannot be analyzed.",
   probeRetryNote: "The check will be retried during the next scan.",
-  shownCount: "Showing {count}.",
-  showMore: "Show more",
-  loadingNextPage: "Loading next page…",
   retryScan: "Retry scan",
   scan: "Scan",
   scanningTitle: "Scanning",
@@ -200,7 +182,6 @@ const en = {
   fileCountOther: "{count} files",
   fileCountFew: "{count} files",
   fileCountMany: "{count} files",
-  streamAudio: "Audio",
   details: "Details",
   artifactPreparation: "Preparing",
   artifactAcquiring: "Acquiring artifact",
@@ -251,7 +232,6 @@ const ru: Record<keyof typeof en, string> = {
   manualScanFailure:
     "Каталог «{name}» зарегистрирован, но запустить сканирование не удалось. Каталог сохранён. Откройте его и запустите сканирование вручную.",
   openManualScan: "Открыть каталог для ручного сканирования",
-  backToSources: "К списку каталогов",
   sourceTitle: "Каталог источника",
   serverDirectory: "Путь на сервере",
   availabilityLabel: "Доступность",
@@ -360,25 +340,8 @@ const ru: Record<keyof typeof en, string> = {
   bitsPerSecond: "бит/с",
   bitsUnit: "бит",
   hertzUnit: "Гц",
-  inventoryFiles: "Файлы инвентаря",
-  noInventoryYet:
-    "Инвентаря нет: каталог ещё ни разу не сканировался успешно. Список файлов появится после успешного сканирования.",
-  inventoryHelp:
-    "Показаны записи последнего успешного сканирования: файлы с поддерживаемым аудиорасширением. Пути указаны относительно",
-  loadingFiles: "Загрузка списка файлов…",
-  noSupportedFiles:
-    "Последнее успешное сканирование не нашло файлов с поддерживаемым аудиорасширением.",
-  filesCaption:
-    "Файлы последнего успешного сканирования: относительный путь, размер, время изменения и проверка аудиопотока",
-  audioCheck: "Проверка аудио",
-  noAudio: "Нет аудиодорожки",
-  probeNotAnalyzed: "Не проверено",
-  probeError: "Ошибка проверки",
   noAudioReason: "Аудиодорожки нет: файл не может участвовать в анализе.",
   probeRetryNote: "Проверка повторится при следующем сканировании.",
-  shownCount: "Показано: {count}.",
-  showMore: "Показать ещё",
-  loadingNextPage: "Загрузка следующей страницы…",
   retryScan: "Повторить сканирование",
   scan: "Сканировать",
   scanningTitle: "Сканирование",
@@ -431,7 +394,6 @@ const ru: Record<keyof typeof en, string> = {
   fileCountOther: "{count} файла",
   fileCountFew: "{count} файла",
   fileCountMany: "{count} файлов",
-  streamAudio: "Аудио",
   details: "Подробнее",
 };
 

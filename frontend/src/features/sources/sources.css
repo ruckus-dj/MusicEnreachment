@@ -29,26 +29,6 @@
   font-weight: 600;
 }
 
-.sources-screen .sources-panel {
-  min-width: 0;
-  margin: 8px 0;
-  padding: 10px;
-  border: 1px solid var(--sources-line);
-  border-radius: 5px;
-  background: var(--sources-surface);
-}
-
-.sources-screen .sources-help,
-.sources-screen .sources-note {
-  color: var(--sources-muted);
-  font-size: 11px;
-}
-
-.sources-screen .sources-note {
-  display: block;
-  margin-top: 2px;
-}
-
 .sources-screen code {
   font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
   overflow-wrap: anywhere;

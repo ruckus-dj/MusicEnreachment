@@ -4,20 +4,17 @@ import type {
   SourceLocationResponse,
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import { SourceInventoryView } from "./SourceInventoryView";
-import { numberFormat, sourceMessage } from "./sourceMessages";
+import { SourceInventoryPanel } from "./SourceInventoryPanel";
+import type { SourceInventoryStatus } from "./SourceInventoryView";
+import { sourceMessage } from "./sourceMessages";
 import {
-  fileCount,
   inventoryAvailabilityNote,
-  inventoryEmptyNote,
   inventoryScopeNote,
   message,
   renderSourceError,
   sourceFailure,
 } from "./sourcesApi";
-import "./sources.css";
 
 // The server validates ?limit between 1 and 200, so a prop that drifts out of
 // that range still produces a query the API accepts.
@@ -36,28 +33,15 @@ function pageLimit(limit?: number): number {
   return Math.min(MAX_PAGE_LIMIT, Math.max(1, Math.trunc(limit)));
 }
 
-function sizeLabel(bytes: number, locale: "en" | "ru"): string {
-  let value = bytes;
-  let unit = 0;
-  const units =
-    locale === "ru" ? ["Б", "КБ", "МБ", "ГБ"] : ["B", "KB", "MB", "GB"];
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${numberFormat(locale, { maximumFractionDigits: 1 }).format(value)} ${units[unit]}`;
-}
-
-function probeStatusMessage(status: SourceLocationResponse["probe_status"]) {
+function inventoryStatus(
+  status: SourceLocationResponse["probe_status"],
+): SourceInventoryStatus {
   switch (status) {
     case "audio":
-      return "streamAudio";
     case "no_audio":
-      return "noAudio";
     case "not_analyzed":
-      return "probeNotAnalyzed";
     case "probe_error":
-      return "probeError";
+      return status;
     default:
       return "unknown";
   }
@@ -70,10 +54,6 @@ export function SourceLocations({
   limit,
 }: SourceLocationsProps) {
   const { locale } = useI18n();
-  const t = (
-    key: Parameters<typeof sourceMessage>[1],
-    values?: Record<string, string | number>,
-  ) => sourceMessage(locale, key, values);
   const size = pageLimit(limit);
   const generation = root.scan_generation;
   // Another source, generation, page size or refresh token starts page 1 again.
@@ -87,7 +67,6 @@ export function SourceLocations({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReturnType<typeof message> | null>(null);
-  const alert = useRef<HTMLParagraphElement>(null);
 
   const loadFirstPage = useCallback(async () => {
     const epoch = ++requestEpoch.current;
@@ -132,10 +111,6 @@ export function SourceLocations({
     void loadFirstPage();
   }, [inventoryKey, generation, loadFirstPage]);
 
-  useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
-
   async function loadMore() {
     const cursor = nextCursor;
     if (!cursor) return;
@@ -169,85 +144,39 @@ export function SourceLocations({
     else void loadMore();
   }
 
-  const neverScanned = generation === 0;
-  const availabilityNote = inventoryAvailabilityNote(root, locale);
-  const scopeNote = inventoryScopeNote(root, locale);
+  const notes = [
+    inventoryAvailabilityNote(root, locale),
+    inventoryScopeNote(root, locale),
+  ].filter(Boolean);
 
   return (
-    <section aria-labelledby="source-locations-title" className="sources-panel">
-      <h2 id="source-locations-title">{t("inventoryFiles")}</h2>
-      {neverScanned ? (
-        <p className="sources-note">{t("noInventoryYet")}</p>
-      ) : (
-        <>
-          <p className="sources-help">
-            {t("inventoryHelp")}{" "}
-            <code>{root.inventory_path ?? root.configured_path}</code>.
-          </p>
-          {availabilityNote && (
-            <p className="sources-note">{availabilityNote}</p>
-          )}
-          {scopeNote && <p className="sources-note">{scopeNote}</p>}
-          {!loaded && !error && <p role="status">{t("loadingFiles")}</p>}
-          {error && (
-            <>
-              <p ref={alert} tabIndex={-1} role="alert">
-                {renderSourceError(error, locale)}
-              </p>
-              <AppButton isDisabled={busy} onPress={retry}>
-                {t("retryLoad")}
-              </AppButton>
-            </>
-          )}
-          {loaded && !error && locations.length === 0 && (
-            <p role="status">
-              {inventoryEmptyNote(root, locale) || t("noSupportedFiles")}
-            </p>
-          )}
-          {locations.length > 0 && (
-            <>
-              <SourceInventoryView
-                locale={locale}
-                caption={t("filesCaption")}
-                rows={locations.map((location) => ({
-                  id: location.id,
-                  path: location.relative_path,
-                  href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
-                  size: sizeLabel(location.size_bytes, locale),
-                  modified: new Intl.DateTimeFormat(locale, {
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  }).format(new Date(location.mtime)),
-                  status: t(probeStatusMessage(location.probe_status)),
-                  statusCode: location.probe_status,
-                  notes:
-                    location.probe_status === "no_audio"
-                      ? [t("noAudioReason")]
-                      : location.probe_status === "probe_error"
-                        ? [
-                            ...(location.safe_error
-                              ? [location.safe_error]
-                              : []),
-                            t("probeRetryNote"),
-                          ]
-                        : undefined,
-                }))}
-              />
-              <p className="sources-note">
-                {t("shownCount", {
-                  count: fileCount(locations.length, locale),
-                })}
-              </p>
-              {nextCursor && (
-                <AppButton isDisabled={busy} onPress={() => void loadMore()}>
-                  {t("showMore")}
-                </AppButton>
-              )}
-              {busy && <p role="status">{t("loadingNextPage")}</p>}
-            </>
-          )}
-        </>
-      )}
-    </section>
+    <SourceInventoryPanel
+      locale={locale}
+      path={root.inventory_path ?? root.configured_path}
+      unpublished={generation === 0}
+      notes={notes}
+      loading={!loaded}
+      error={error ? renderSourceError(error, locale) : undefined}
+      onRetry={retry}
+      rows={locations.map((location) => ({
+        id: location.id,
+        path: location.relative_path,
+        href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
+        sizeBytes: location.size_bytes,
+        modifiedAt: location.mtime,
+        status: inventoryStatus(location.probe_status),
+        notes:
+          location.probe_status === "no_audio"
+            ? [sourceMessage(locale, "noAudioReason")]
+            : location.probe_status === "probe_error"
+              ? [
+                  ...(location.safe_error ? [location.safe_error] : []),
+                  sourceMessage(locale, "probeRetryNote"),
+                ]
+              : undefined,
+      }))}
+      loadingMore={busy}
+      onLoadMore={nextCursor ? () => void loadMore() : undefined}
+    />
   );
 }

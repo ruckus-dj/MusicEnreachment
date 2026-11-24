@@ -75,7 +75,7 @@ export function SourceScanControl({
   }
 
   return (
-    <div className="my-2 grid gap-1">
+    <div className="grid min-w-0 gap-1">
       <SourceScanPanel
         locale={locale}
         state={state}
@@ -85,7 +85,9 @@ export function SourceScanControl({
         startDisabled={!root.enabled || admissionDisabled}
       />
       {!root.enabled && (
-        <p className="sources-note">{sourceMessage(locale, "disabledScan")}</p>
+        <p className="m-0 text-xs text-[var(--muted)]">
+          {sourceMessage(locale, "disabledScan")}
+        </p>
       )}
       {following && streamError(root.id) && (
         <p role="status">{sourceMessage(locale, "scanStreamError")}</p>

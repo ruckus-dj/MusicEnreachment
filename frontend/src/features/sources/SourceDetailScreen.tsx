@@ -36,7 +36,6 @@ import {
   sourceResponseError,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
-import "./sources.css";
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const { locale } = useI18n();
@@ -183,19 +182,21 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   return (
-    <section
-      aria-labelledby="source-title"
-      className="mx-auto grid min-w-0 max-w-5xl gap-[14px] py-3"
-    >
+    <>
       <SourceRootDetailView
         locale={locale}
+        headingId="source-title"
         heading={
           <SourceRootHeadingView
+            locale={locale}
             title={root ? root.display_name : t("sourceTitle")}
             path={root?.configured_path}
             headingRef={heading}
             headingId="source-title"
-            back={{ label: t("backToSources"), onPress: backToList }}
+            sourcesHref="#/sources"
+            incomingHref={
+              root?.status === "available" ? "#/incoming-groups" : undefined
+            }
           />
         }
         status={
@@ -229,13 +230,11 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
         }
         inventory={
           root && (
-            <div className="sources-screen min-w-0">
-              <SourceLocations
-                sourceId={sourceId}
-                root={root}
-                refreshToken={rootQuery.dataUpdatedAt}
-              />
-            </div>
+            <SourceLocations
+              sourceId={sourceId}
+              root={root}
+              refreshToken={rootQuery.dataUpdatedAt}
+            />
           )
         }
         overview={
@@ -299,6 +298,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
           onConfirm={() => void confirmDelete()}
         />
       )}
-    </section>
+    </>
   );
 }

@@ -1,11 +1,17 @@
+export type SourceInventoryStatus =
+  | "audio"
+  | "no_audio"
+  | "not_analyzed"
+  | "probe_error"
+  | "unknown";
+
 export type SourceInventoryRow = {
   id: string;
   path: string;
   href?: string;
-  size: string;
-  modified?: string;
-  status: string;
-  statusCode?: string;
+  sizeBytes?: number;
+  modifiedAt?: string;
+  status: SourceInventoryStatus;
   notes?: readonly string[];
 };
 
@@ -16,6 +22,14 @@ const labels = {
     size: "Size",
     modified: "Modified",
     check: "Audio check",
+    status: {
+      audio: "Audio",
+      no_audio: "No audio track",
+      not_analyzed: "Not checked",
+      probe_error: "Check failed",
+      unknown: "Unknown",
+    },
+    units: ["B", "KB", "MB", "GB"],
   },
   ru: {
     title: "Файлы инвентаря",
@@ -23,26 +37,54 @@ const labels = {
     size: "Размер",
     modified: "Изменён",
     check: "Проверка аудио",
+    status: {
+      audio: "Аудио",
+      no_audio: "Нет аудиодорожки",
+      not_analyzed: "Не проверено",
+      probe_error: "Ошибка проверки",
+      unknown: "Неизвестно",
+    },
+    units: ["Б", "КБ", "МБ", "ГБ"],
   },
 } as const;
 
 const cell =
   "border-b border-[var(--line)] px-2 py-1.5 align-top wrap-anywhere";
 
+export function sourceInventoryStatusLabel(
+  locale: "en" | "ru",
+  status: SourceInventoryStatus,
+) {
+  return labels[locale].status[status];
+}
+
 export function SourceInventoryView({
   locale,
-  caption,
   rows,
 }: {
   locale: "en" | "ru";
-  caption?: string;
   rows: readonly SourceInventoryRow[];
 }) {
   const text = labels[locale];
+  const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  const date = new Intl.DateTimeFormat(locale, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+  const size = (bytes?: number) => {
+    if (bytes === undefined) return "—";
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < text.units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${number.format(value)} ${text.units[unit]}`;
+  };
   return (
     <div className="min-w-0 overflow-x-auto">
       <table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-sm">
-        <caption className="sr-only">{caption ?? text.title}</caption>
+        <caption className="sr-only">{text.title}</caption>
         <colgroup>
           <col className="w-[44%]" />
           <col className="w-[12%]" />
@@ -74,17 +116,24 @@ export function SourceInventoryView({
                 )}
               </th>
               <td data-label={text.size} className={cell}>
-                {row.size}
+                {size(row.sizeBytes)}
               </td>
               <td data-label={text.modified} className={cell}>
-                {row.modified ?? "—"}
+                {row.modifiedAt &&
+                Number.isFinite(Date.parse(row.modifiedAt)) ? (
+                  <time dateTime={row.modifiedAt}>
+                    {date.format(new Date(row.modifiedAt))}
+                  </time>
+                ) : (
+                  "—"
+                )}
               </td>
               <td data-label={text.check} className={cell}>
                 <span
                   className="inline-block rounded-full border border-[var(--line)] px-2 py-0.5 text-xs data-[status=probe_error]:text-[var(--error)]"
-                  data-status={row.statusCode}
+                  data-status={row.status}
                 >
-                  {row.status}
+                  {sourceInventoryStatusLabel(locale, row.status)}
                 </span>
                 {row.notes?.map((note) => (
                   <span

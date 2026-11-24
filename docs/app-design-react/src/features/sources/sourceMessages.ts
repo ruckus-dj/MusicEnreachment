@@ -22,7 +22,6 @@ export const sourcesMessages = createNamespace({
 		notChecked: "Not checked · fixture",
 		available: "Available",
 		unavailable: "Unavailable",
-		reviewGroups: "Review groups",
 		checkUnavailable:
 			"Source unavailable in the fixed fixture; no filesystem check was performed.",
 		scan: "Scan and process",
@@ -33,12 +32,6 @@ export const sourcesMessages = createNamespace({
 			"The fixed inventory contains no file records for this source.",
 		outputResetCancelled:
 			"Changing the publication directory cancelled this step. Retry it to continue.",
-		audioNotChecked: "Not checked",
-		audioCheckFailed: "Check failed",
-		statusQueued: "Queued",
-		statusRunning: "Running",
-		statusSucceeded: "Succeeded",
-		statusFailed: "Failed",
 		statusBlocked: "Blocked · work directory required",
 		fingerprintFailed:
 			"Could not calculate this file’s audio fingerprint. Retry this step.",
@@ -54,8 +47,6 @@ export const sourcesMessages = createNamespace({
 			"The folder cannot be changed while this source is being scanned.",
 		rootChanged:
 			"Confirmation is out of date because this source inventory changed. Review the current source and try again.",
-		unavailablePublications:
-			"An unavailable source does not remove existing managed publications.",
 		backToSources: "Back to sources",
 		sourceNotFound: "Source not found",
 		lastSuccessfulScan: "Last successful scan",
@@ -85,7 +76,6 @@ export const sourcesMessages = createNamespace({
 		notChecked: "Не проверен · фикстура",
 		available: "Доступен",
 		unavailable: "Недоступен",
-		reviewGroups: "Разобрать группы",
 		checkUnavailable:
 			"Источник недоступен в фиксированных данных; файловая система не проверялась.",
 		scan: "Сканировать и обработать",
@@ -97,12 +87,6 @@ export const sourcesMessages = createNamespace({
 			"В фиксированном инвентаре для этого источника нет записей о файлах.",
 		outputResetCancelled:
 			"Шаг отменён при смене каталога публикации. Чтобы продолжить, повторите этот шаг.",
-		audioNotChecked: "Не проверен",
-		audioCheckFailed: "Проверка не удалась",
-		statusQueued: "В очереди",
-		statusRunning: "Выполняется",
-		statusSucceeded: "Завершено",
-		statusFailed: "Ошибка",
 		statusBlocked: "Заблокировано · требуется рабочая папка",
 		fingerprintFailed:
 			"Не удалось рассчитать аудиоотпечаток файла. Повторите этот шаг.",
@@ -119,8 +103,6 @@ export const sourcesMessages = createNamespace({
 			"Каталог нельзя изменить, пока выполняется сканирование источника.",
 		rootChanged:
 			"Подтверждение устарело: инвентарь источника изменился. Проверьте текущее состояние и повторите попытку.",
-		unavailablePublications:
-			"Недоступность источника не удаляет существующие управляемые публикации.",
 		backToSources: "К списку источников",
 		sourceNotFound: "Источник не найден",
 		lastSuccessfulScan: "Последнее успешное сканирование",

@@ -223,7 +223,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(
 		within(screen.getByRole("table", { name: "Inventory files" })).getByRole(
 			"link",
-			{ name: "/mnt/music/01 - First Light.flac" },
+			{ name: "01 - First Light.flac" },
 		),
 	).toHaveAttribute("href", "#sources/root-library/locations/loc-1");
 	expect(

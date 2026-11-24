@@ -3,7 +3,7 @@ import type {
   LibraryReleaseTrackResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
-import { sourceMessage } from "../sources/sourceMessages";
+import { sourceInventoryStatusLabel } from "../sources/SourceInventoryView";
 import { statusLabel } from "../sources/sourcesApi";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
@@ -217,11 +217,9 @@ function rootStatusLabel(status: string, locale: "en" | "ru") {
 function probeStatusLabel(status: string, locale: "en" | "ru") {
   switch (status) {
     case "audio":
-      return sourceMessage(locale, "streamAudio");
     case "no_audio":
-      return sourceMessage(locale, "noAudio");
     case "probe_error":
-      return sourceMessage(locale, "probeError");
+      return sourceInventoryStatusLabel(locale, status);
     case "not_analyzed":
       return locale === "ru" ? "Не проанализировано" : "Not analyzed";
     default:

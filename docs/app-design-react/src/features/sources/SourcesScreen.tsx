@@ -1,4 +1,10 @@
-import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
+import {
+	type Dispatch,
+	type SetStateAction,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { formStyles as styles } from "../../components/styles/formStyles";
 import { Button } from "../../components/ui";
 import {
@@ -10,25 +16,28 @@ import { type Locale, useI18n } from "../../i18n";
 import { overlapsAnyDemoPath } from "../../infrastructure/demoPathValidation";
 import type { SourceFiles } from "../library/catalogData";
 import { SourceArtifactCleanupView } from "./SourceArtifactCleanupView";
-import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
 import { SourceInspectorView } from "./SourceInspectorView";
-import { SourceInventoryView } from "./SourceInventoryView";
+import { SourceInventoryPanel } from "./SourceInventoryPanel";
 import {
+	type SourceRegistrationErrorKey,
 	SourceRegistrationView,
 	sourceRegistrationMessage,
 	sourceRegistrationMessages,
-	type SourceRegistrationErrorKey,
 	useSourceRegistrationFocus,
 } from "./SourceRegistrationView";
-import { SourceRootDetailView } from "./SourceRootDetailView";
+import {
+	SourceRootDetailView,
+	sourcePublicationsNote,
+} from "./SourceRootDetailView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import {
-	SourceRootSettingsView,
 	type SourceRootChange,
+	SourceRootSettingsView,
 } from "./SourceRootSettingsView";
 import { SourceScanPanel } from "./SourceScanPanel";
+import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
 import { demoSourceLocationHref } from "./sourceDemoRoute";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
 import {
@@ -41,7 +50,6 @@ import {
 	canRemoveSourceRoot,
 	removeRootProcessingState,
 	type SourceProcessingState,
-	type SourceProcessingStep,
 } from "./sourceProcessingModel";
 
 type Mode = "in_place" | "staged";
@@ -136,6 +144,10 @@ export function SourcesScreen({
 	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
 		sourceMessage(locale, key, values);
 	const [adding, setAdding] = useState(false);
+	const rootHeading = useRef<HTMLHeadingElement>(null);
+	useEffect(() => {
+		if (selectedRootId && !selectedLocationId) rootHeading.current?.focus();
+	}, [selectedRootId, selectedLocationId]);
 	const registrationFocus = useSourceRegistrationFocus(adding);
 	const [name, setName] = useState("");
 	const [path, setPath] = useState("/mnt/music");
@@ -167,6 +179,10 @@ export function SourcesScreen({
 	const inventoryLocations = root
 		? retainedInventoryLocations(files, root)
 		: [];
+	const inventoryPath = root?.inventoryPath ?? root?.path;
+	const inventoryPrefix = inventoryPath
+		? `${inventoryPath.replace(/\/+$/, "")}/`
+		: undefined;
 	const rootFiles = root
 		? processing.files.filter((file) => file.rootId === root.id)
 		: [];
@@ -182,21 +198,6 @@ export function SourcesScreen({
 	});
 	const hasActiveRootWork = (rootId: string) =>
 		scans.active(rootId) || !canRemoveSourceRoot(processing, rootId);
-	const statusLabel = (status: string) => {
-		const key: Record<string, SourceMessageKey> = {
-			queued: "statusQueued",
-			running: "statusRunning",
-			succeeded: "statusSucceeded",
-			failed: "statusFailed",
-		};
-		return key[status] ? m(key[status]) : status;
-	};
-	const audioStepLabel = (step: SourceProcessingStep) => {
-		if (step.id !== "audio_inspection") return statusLabel(step.status);
-		if (step.status === "failed") return m("audioCheckFailed");
-		if (step.status === "queued" && !step.attempts) return m("audioNotChecked");
-		return statusLabel(step.status);
-	};
 	const requestRootRemoval = (root: SourceRoot) => {
 		if (hasActiveRootWork(root.id)) {
 			notify("rootActive");
@@ -349,16 +350,16 @@ export function SourcesScreen({
 				root ? (
 					<SourceRootDetailView
 						locale={locale}
+						headingId="source-title"
 						heading={
 							<SourceRootHeadingView
+								locale={locale}
 								title={root.name}
 								path={root.path}
-								back={{ href: "#sources", label: m("backToSources") }}
-								incoming={
-									root.available === true
-										? { href: "#review", label: m("reviewGroups") }
-										: undefined
-								}
+								headingId="source-title"
+								headingRef={rootHeading}
+								sourcesHref="#sources"
+								incomingHref={root.available === true ? "#review" : undefined}
 							/>
 						}
 						status={noticeNode}
@@ -376,46 +377,36 @@ export function SourcesScreen({
 							/>
 						}
 						inventory={
-							inventoryLocations.length > 0 ? (
-								<SourceInventoryView
-									locale={locale}
-									rows={inventoryLocations.map((location) => {
-										const observed = rootFiles.find(
-											(item) => item.id === `${root.id}:${location.id}`,
-										);
-										const step = observed?.steps.find(
-											(item) => item.id === "audio_inspection",
-										);
-										const modified = location.mtime
-											? new Date(location.mtime)
-											: null;
-										return {
-											id: location.id,
-											path: location.path,
-											href: demoSourceLocationHref(root.id, location.id),
-											size:
-												location.size === undefined
-													? "—"
-													: new Intl.NumberFormat(locale, {
-															style: "unit",
-															unit: "byte",
-														}).format(location.size),
-											modified:
-												modified && Number.isFinite(modified.getTime())
-													? new Intl.DateTimeFormat(locale, {
-															dateStyle: "short",
-															timeStyle: "short",
-														}).format(modified)
-													: undefined,
-											status: step
-												? audioStepLabel(step)
-												: m("audioNotChecked"),
-											statusCode:
-												step?.status === "failed" ? "probe_error" : undefined,
-										};
-									})}
-								/>
-							) : undefined
+							<SourceInventoryPanel
+								locale={locale}
+								path={inventoryPath}
+								unpublished={!root.lastSuccessfulScanAt}
+								rows={inventoryLocations.map((location) => {
+									const observed = rootFiles.find(
+										(item) => item.id === `${root.id}:${location.id}`,
+									);
+									const step = observed?.steps.find(
+										(item) => item.id === "audio_inspection",
+									);
+									return {
+										id: location.id,
+										path:
+											inventoryPrefix &&
+											location.path.startsWith(inventoryPrefix)
+												? location.path.slice(inventoryPrefix.length)
+												: location.path,
+										href: demoSourceLocationHref(root.id, location.id),
+										sizeBytes: location.size,
+										modifiedAt: location.mtime,
+										status:
+											step?.status === "succeeded"
+												? "audio"
+												: step?.status === "failed"
+													? "probe_error"
+													: "not_analyzed",
+									};
+								})}
+							/>
 						}
 						overview={{
 							name: root.name,
@@ -469,7 +460,6 @@ export function SourcesScreen({
 							}
 							onSave={saveRoot}
 						/>
-						<p>{m("unavailablePublications")}</p>
 					</SourceRootDetailView>
 				) : (
 					<>
@@ -551,7 +541,7 @@ export function SourcesScreen({
 						}}
 					/>
 					<SourceArtifactCleanupView {...cleanup} />
-					<p>{m("unavailablePublications")}</p>
+					<p>{sourcePublicationsNote[locale]}</p>
 					<p>
 						{m("workDirectory")}: {workDirectory || "—"} ·{" "}
 						<a href="#settings">{m("configureInSettings")}</a>
