@@ -42,6 +42,7 @@ import {
   libraryPositionPageClassName,
   libraryPositionTitleId,
 } from "./LibraryPositionHeadingView";
+import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
 import {
   PositionIdentity,
   PositionSources,
@@ -1485,7 +1486,9 @@ export function LibraryReleaseScreen({
   );
   const showPosition = Boolean(selectedTrack);
   const body = (
-    <section className="library-release-screen mx-auto max-w-5xl space-y-6">
+    <section
+      className={`library-release-screen space-y-6 ${showPosition ? "min-w-0" : "mx-auto max-w-5xl"}`}
+    >
       <nav
         className="library-release-navigation"
         aria-label={text("libraryNavigation")}
@@ -1730,314 +1733,345 @@ export function LibraryReleaseScreen({
             {positionId === track.id ? (
               <article
                 aria-labelledby={libraryPositionTitleId}
-                className="space-y-3 rounded border border-stone-300 p-4"
+                className="grid min-w-0 gap-3"
               >
-                <PublicationCurrentSummaryView
+                <LibraryPositionWorkspace
                   locale={locale}
-                  current={
-                    publicationSummary
-                      ? {
-                          details:
-                            publicationSummary.relative_path &&
-                            publicationSummary.validated_at &&
-                            publicationSummary.container &&
-                            publicationSummary.codec
-                              ? {
-                                  path: publicationSummary.relative_path,
-                                  container: publicationSummary.container,
-                                  codec: publicationSummary.codec,
-                                  observed: {
-                                    kind: "verified",
-                                    value: publicationSummary.validated_at,
-                                  },
-                                }
-                              : undefined,
-                        }
-                      : null
-                  }
-                />
-                <LibraryDeletionControl
-                  target={{
-                    type: "publication",
-                    releaseId,
-                    positionId: track.id,
-                  }}
-                  releaseTitle={release.title}
-                  targetIdentity={deletionIdentityByPosition.current.get(
-                    track.id,
-                  )}
-                  positionLabel={`${track.displayed_number.trim() || track.position}. ${track.title}`}
-                  positionLabels={positionLabels}
-                  showButton={hasCurrentPublication}
-                  onSnapshot={(snapshot) =>
-                    handleDeletionSnapshot(
-                      "publication",
-                      snapshot,
-                      renderScope,
-                      track.id,
-                    )
-                  }
-                />
-                <PositionIdentity track={track} />
-                <ReleaseCreditList credits={credits} />
-                {track.recording_id ? (
-                  <GenreMetadataEditor
-                    owner="recording"
-                    ownerId={track.recording_id}
-                    refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                    onSaved={refreshAfterMetadataSave}
-                  />
-                ) : null}
-                {track.recording_id ? (
-                  <ScopedLibraryMetadataEditor
-                    scope="recording"
-                    ownerId={track.recording_id}
-                    refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                    onSaved={refreshAfterMetadataSave}
-                  />
-                ) : null}
-                <ScopedLibraryMetadataEditor
-                  scope="position"
-                  ownerId={track.id}
-                  releaseId={releaseId}
-                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                  onSaved={refreshAfterMetadataSave}
-                />
-                {credits.length > 1 && (
-                  <label className="block">
-                    {text("primaryTrackArtist")}
-                    <select
-                      aria-label={`${text("primaryTrackArtist")} ${track.displayed_number}`}
-                      value={track.primary_artist.selected_artist_id || ""}
-                      disabled={!position?.metadata || position.writePending}
-                      onChange={(event) =>
-                        void selectPrimaryArtist(
-                          track.id,
-                          event.target.value || null,
-                        )
-                      }
-                    >
-                      <option value="">{text("notSelected")}</option>
-                      {uniqueArtists(credits).map((artist) => (
-                        <option key={artist.artist_id} value={artist.artist_id}>
-                          {artist.credit_name || artist.artist_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <PositionSources track={track} />
-                <label className="block">
-                  {text("savedLyrics")}
-                  <textarea
-                    className="mt-1 block min-h-40 w-full rounded border p-2"
-                    value={position?.lyrics ?? ""}
-                    onChange={(event) => {
-                      lyricsEditGenerations.current.set(
-                        track.id,
-                        (lyricsEditGenerations.current.get(track.id) ?? 0) + 1,
-                      );
-                      setPositions((current) => ({
-                        ...current,
-                        [track.id]: {
-                          ...current[track.id],
-                          lyrics: event.target.value,
-                          draftDirty: true,
-                        },
-                      }));
-                    }}
-                  />
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={
-                      !position?.metadata ||
-                      position.writePending ||
-                      position.saving ||
-                      Boolean(position.readError)
-                    }
-                    onClick={() => void saveLyrics(track.id)}
-                  >
-                    {text("saveLyrics")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={
-                      !position?.metadata ||
-                      position.writePending ||
-                      position.saving ||
-                      Boolean(position.readError)
-                    }
-                    onClick={() => void saveLyrics(track.id, true)}
-                  >
-                    {text("saveExplicitlyEmpty")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={
-                      !publication?.can_apply_manual_lyrics ||
-                      !hasManualLyrics ||
-                      Boolean(position?.readError) ||
-                      Boolean(position?.applyOperationID) ||
-                      Boolean(publication.active_attempt) ||
-                      position?.applying
-                    }
-                    onClick={() => void applyLyrics(track.id)}
-                  >
-                    {text("applySavedLyrics")}
-                  </button>
-                </div>
-                <p>
-                  {text("publication")}:{" "}
-                  {publication?.current_path ?? text("notPublishedYet")}
-                  {publication?.current_generation
-                    ? ` · ${text("generation", { generation: publication.current_generation })}`
-                    : ""}
-                </p>
-                {publication?.current_generation && (
-                  <fieldset aria-label={text("actualCoverRegion")}>
-                    <p className="[overflow-wrap:anywhere]">
-                      {text("actualCover")}:{" "}
-                      {publication.current_assets?.cover.state ?? "unknown"}
-                      {publication.current_assets?.cover.sha256
-                        ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
-                        : ""}
-                    </p>
-                    {publication.cover_embedding && (
-                      <p>
-                        {text("coverEmbeddingOutcome")}{" "}
-                        {publication.cover_embedding.outcome === "verified"
-                          ? text("verified")
-                          : text("unverified")}
-                        {publication.cover_embedding.warning_code
-                          ? ` · ${publication.cover_embedding.warning_code}`
-                          : ""}
-                      </p>
-                    )}
-                  </fieldset>
-                )}
-                {publication?.initial_lyrics && (
-                  <fieldset aria-label={text("lyricsPublicationResult")}>
-                    <p>
-                      {text("lyricsInCurrentPublication")}{" "}
-                      {lyricsOutcomeLabel(
-                        publication.initial_lyrics.outcome,
-                        locale,
+                  sources={<PositionSources track={track} />}
+                  editors={
+                    <>
+                      <ReleaseCreditList credits={credits} />
+                      {track.recording_id ? (
+                        <GenreMetadataEditor
+                          owner="recording"
+                          ownerId={track.recording_id}
+                          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                          onSaved={refreshAfterMetadataSave}
+                        />
+                      ) : null}
+                      {track.recording_id ? (
+                        <ScopedLibraryMetadataEditor
+                          scope="recording"
+                          ownerId={track.recording_id}
+                          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                          onSaved={refreshAfterMetadataSave}
+                        />
+                      ) : null}
+                      <ScopedLibraryMetadataEditor
+                        scope="position"
+                        ownerId={track.id}
+                        releaseId={releaseId}
+                        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                        onSaved={refreshAfterMetadataSave}
+                      />
+                      {credits.length > 1 && (
+                        <label className="block">
+                          {text("primaryTrackArtist")}
+                          <select
+                            aria-label={`${text("primaryTrackArtist")} ${track.displayed_number}`}
+                            value={
+                              track.primary_artist.selected_artist_id || ""
+                            }
+                            disabled={
+                              !position?.metadata || position.writePending
+                            }
+                            onChange={(event) =>
+                              void selectPrimaryArtist(
+                                track.id,
+                                event.target.value || null,
+                              )
+                            }
+                          >
+                            <option value="">{text("notSelected")}</option>
+                            {uniqueArtists(credits).map((artist) => (
+                              <option
+                                key={artist.artist_id}
+                                value={artist.artist_id}
+                              >
+                                {artist.credit_name || artist.artist_name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       )}
-                      {` · ${text("lyricsSource")}: ${lyricsSourceLabel(publication.initial_lyrics.source, locale)}`}
-                    </p>
-                    {publication.initial_lyrics.resolution_warning_code && (
-                      <p>
-                        {text("lyricsWarningLookup")}{" "}
-                        {lyricsWarningLabel(
-                          publication.initial_lyrics.resolution_warning_code,
-                          locale,
-                        )}
-                      </p>
-                    )}
-                    {publication.initial_lyrics.outcome_warning_code && (
-                      <p>
-                        {text("lyricsWarningPublication")}{" "}
-                        {lyricsWarningLabel(
-                          publication.initial_lyrics.outcome_warning_code,
-                          locale,
-                        )}
-                      </p>
-                    )}
-                  </fieldset>
-                )}
-                {publication?.source_cleanup_warnings?.map((warning) => (
-                  <div key={warning.original_operation_id} role="alert">
-                    <p>{warning.safe_error}</p>
-                    {warning.can_retry && (
-                      <button
-                        type="button"
-                        disabled={
-                          position?.cleanupRetryPendingIDs?.includes(
-                            warning.original_operation_id,
-                          ) ||
-                          cleanupRetryLocks.current.has(
-                            warning.original_operation_id,
-                          ) ||
-                          Boolean(position?.readError)
+                      <label className="block">
+                        {text("savedLyrics")}
+                        <textarea
+                          className="mt-1 block min-h-40 w-full rounded border p-2"
+                          value={position?.lyrics ?? ""}
+                          onChange={(event) => {
+                            lyricsEditGenerations.current.set(
+                              track.id,
+                              (lyricsEditGenerations.current.get(track.id) ??
+                                0) + 1,
+                            );
+                            setPositions((current) => ({
+                              ...current,
+                              [track.id]: {
+                                ...current[track.id],
+                                lyrics: event.target.value,
+                                draftDirty: true,
+                              },
+                            }));
+                          }}
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            !position?.metadata ||
+                            position.writePending ||
+                            position.saving ||
+                            Boolean(position.readError)
+                          }
+                          onClick={() => void saveLyrics(track.id)}
+                        >
+                          {text("saveLyrics")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !position?.metadata ||
+                            position.writePending ||
+                            position.saving ||
+                            Boolean(position.readError)
+                          }
+                          onClick={() => void saveLyrics(track.id, true)}
+                        >
+                          {text("saveExplicitlyEmpty")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !publication?.can_apply_manual_lyrics ||
+                            !hasManualLyrics ||
+                            Boolean(position?.readError) ||
+                            Boolean(position?.applyOperationID) ||
+                            Boolean(publication.active_attempt) ||
+                            position?.applying
+                          }
+                          onClick={() => void applyLyrics(track.id)}
+                        >
+                          {text("applySavedLyrics")}
+                        </button>
+                      </div>
+                    </>
+                  }
+                  publication={
+                    <>
+                      <PublicationCurrentSummaryView
+                        locale={locale}
+                        current={
+                          publicationSummary
+                            ? {
+                                details:
+                                  publicationSummary.relative_path &&
+                                  publicationSummary.validated_at &&
+                                  publicationSummary.container &&
+                                  publicationSummary.codec
+                                    ? {
+                                        path: publicationSummary.relative_path,
+                                        container: publicationSummary.container,
+                                        codec: publicationSummary.codec,
+                                        observed: {
+                                          kind: "verified",
+                                          value:
+                                            publicationSummary.validated_at,
+                                        },
+                                      }
+                                    : undefined,
+                              }
+                            : null
                         }
-                        onClick={() =>
-                          void retryCleanup(
+                      />
+                      <LibraryDeletionControl
+                        target={{
+                          type: "publication",
+                          releaseId,
+                          positionId: track.id,
+                        }}
+                        releaseTitle={release.title}
+                        targetIdentity={deletionIdentityByPosition.current.get(
+                          track.id,
+                        )}
+                        positionLabel={`${track.displayed_number.trim() || track.position}. ${track.title}`}
+                        positionLabels={positionLabels}
+                        showButton={hasCurrentPublication}
+                        onSnapshot={(snapshot) =>
+                          handleDeletionSnapshot(
+                            "publication",
+                            snapshot,
+                            renderScope,
                             track.id,
-                            warning.original_operation_id,
                           )
                         }
-                      >
-                        {position?.cleanupRetryPendingIDs?.includes(
-                          warning.original_operation_id,
-                        )
-                          ? text("cleanupRetryRunning")
-                          : text("retrySourceCleanup")}
-                      </button>
-                    )}
-                    {warning.active_retry_operation_id &&
-                      !finishedOperations.current.has(
-                        warning.active_retry_operation_id,
-                      ) && <p role="status">{text("cleanupRunning")}</p>}
-                  </div>
-                ))}
-                <p>
-                  {publication?.active_attempt
-                    ? text("operationRunning", {
-                        stage: publication.active_attempt.stage,
-                        state: publication.active_attempt.state,
-                      })
-                    : publication?.manual_lyrics?.pending
-                      ? text("savedLyricsPending")
-                      : text("noLyricsPending")}
-                </p>
-                <p>
-                  {text("currentPublicationSummary")} {text("audio")}{" "}
-                  {publication?.current_audio
-                    ? `${publication.current_audio.codec}/${publication.current_audio.container}`
-                    : text("audioUnpublished")}
-                  ; {text("cover")}{" "}
-                  {publication?.current_assets?.cover.state ?? text("unknown")};{" "}
-                  {text("lyrics")}{" "}
-                  {publication?.current_assets?.lyrics.state ??
-                    text("lyricsUnknown")}
-                  .
-                </p>
-                {hasCurrentPublication && (
-                  <PublicationTagSnapshotView
-                    locale={locale}
-                    tags={currentTags}
-                  />
-                )}
-                {publication?.manual_lyrics_receipt && (
-                  <p>
-                    {text("receipt")}{" "}
-                    {publication.manual_lyrics_receipt.desired_state}{" "}
-                    {text("confirmedInGeneration")}{" "}
-                    {publication.manual_lyrics_receipt.confirmed_generation},
-                    {text("publishedGeneration")}{" "}
-                    {publication.manual_lyrics_receipt.published_generation}
-                    {publication.manual_lyrics_receipt.warning_code
-                      ? ` · ${text("warning")}: ${publication.manual_lyrics_receipt.warning_code}`
-                      : ""}
-                    .
-                  </p>
-                )}
-                {position?.notice && (
-                  <p role="status">{displayText(position.notice)}</p>
-                )}
-                {position?.error && (
-                  <p role="alert">{displayText(position.error)}</p>
-                )}
-                {position?.readError && (
-                  <div role="alert">
-                    {displayText(position.readError)}{" "}
-                    <button type="button" onClick={refreshReadState}>
-                      {text("refreshData")}
-                    </button>
-                  </div>
-                )}
+                      />
+                      <PositionIdentity track={track} />
+                      <p>
+                        {text("publication")}:{" "}
+                        {publication?.current_path ?? text("notPublishedYet")}
+                        {publication?.current_generation
+                          ? ` · ${text("generation", { generation: publication.current_generation })}`
+                          : ""}
+                      </p>
+                      {publication?.current_generation && (
+                        <fieldset aria-label={text("actualCoverRegion")}>
+                          <p className="[overflow-wrap:anywhere]">
+                            {text("actualCover")}:{" "}
+                            {publication.current_assets?.cover.state ??
+                              "unknown"}
+                            {publication.current_assets?.cover.sha256
+                              ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
+                              : ""}
+                          </p>
+                          {publication.cover_embedding && (
+                            <p>
+                              {text("coverEmbeddingOutcome")}{" "}
+                              {publication.cover_embedding.outcome ===
+                              "verified"
+                                ? text("verified")
+                                : text("unverified")}
+                              {publication.cover_embedding.warning_code
+                                ? ` · ${publication.cover_embedding.warning_code}`
+                                : ""}
+                            </p>
+                          )}
+                        </fieldset>
+                      )}
+                      {publication?.initial_lyrics && (
+                        <fieldset aria-label={text("lyricsPublicationResult")}>
+                          <p>
+                            {text("lyricsInCurrentPublication")}{" "}
+                            {lyricsOutcomeLabel(
+                              publication.initial_lyrics.outcome,
+                              locale,
+                            )}
+                            {` · ${text("lyricsSource")}: ${lyricsSourceLabel(publication.initial_lyrics.source, locale)}`}
+                          </p>
+                          {publication.initial_lyrics
+                            .resolution_warning_code && (
+                            <p>
+                              {text("lyricsWarningLookup")}{" "}
+                              {lyricsWarningLabel(
+                                publication.initial_lyrics
+                                  .resolution_warning_code,
+                                locale,
+                              )}
+                            </p>
+                          )}
+                          {publication.initial_lyrics.outcome_warning_code && (
+                            <p>
+                              {text("lyricsWarningPublication")}{" "}
+                              {lyricsWarningLabel(
+                                publication.initial_lyrics.outcome_warning_code,
+                                locale,
+                              )}
+                            </p>
+                          )}
+                        </fieldset>
+                      )}
+                      {publication?.source_cleanup_warnings?.map((warning) => (
+                        <div key={warning.original_operation_id} role="alert">
+                          <p>{warning.safe_error}</p>
+                          {warning.can_retry && (
+                            <button
+                              type="button"
+                              disabled={
+                                position?.cleanupRetryPendingIDs?.includes(
+                                  warning.original_operation_id,
+                                ) ||
+                                cleanupRetryLocks.current.has(
+                                  warning.original_operation_id,
+                                ) ||
+                                Boolean(position?.readError)
+                              }
+                              onClick={() =>
+                                void retryCleanup(
+                                  track.id,
+                                  warning.original_operation_id,
+                                )
+                              }
+                            >
+                              {position?.cleanupRetryPendingIDs?.includes(
+                                warning.original_operation_id,
+                              )
+                                ? text("cleanupRetryRunning")
+                                : text("retrySourceCleanup")}
+                            </button>
+                          )}
+                          {warning.active_retry_operation_id &&
+                            !finishedOperations.current.has(
+                              warning.active_retry_operation_id,
+                            ) && <p role="status">{text("cleanupRunning")}</p>}
+                        </div>
+                      ))}
+                      <p>
+                        {publication?.active_attempt
+                          ? text("operationRunning", {
+                              stage: publication.active_attempt.stage,
+                              state: publication.active_attempt.state,
+                            })
+                          : publication?.manual_lyrics?.pending
+                            ? text("savedLyricsPending")
+                            : text("noLyricsPending")}
+                      </p>
+                      <p>
+                        {text("currentPublicationSummary")} {text("audio")}{" "}
+                        {publication?.current_audio
+                          ? `${publication.current_audio.codec}/${publication.current_audio.container}`
+                          : text("audioUnpublished")}
+                        ; {text("cover")}{" "}
+                        {publication?.current_assets?.cover.state ??
+                          text("unknown")}
+                        ; {text("lyrics")}{" "}
+                        {publication?.current_assets?.lyrics.state ??
+                          text("lyricsUnknown")}
+                        .
+                      </p>
+                      {hasCurrentPublication && (
+                        <PublicationTagSnapshotView
+                          locale={locale}
+                          tags={currentTags}
+                        />
+                      )}
+                      {publication?.manual_lyrics_receipt && (
+                        <p>
+                          {text("receipt")}{" "}
+                          {publication.manual_lyrics_receipt.desired_state}{" "}
+                          {text("confirmedInGeneration")}{" "}
+                          {
+                            publication.manual_lyrics_receipt
+                              .confirmed_generation
+                          }
+                          ,{text("publishedGeneration")}{" "}
+                          {
+                            publication.manual_lyrics_receipt
+                              .published_generation
+                          }
+                          {publication.manual_lyrics_receipt.warning_code
+                            ? ` · ${text("warning")}: ${publication.manual_lyrics_receipt.warning_code}`
+                            : ""}
+                          .
+                        </p>
+                      )}
+                      {position?.notice && (
+                        <p role="status">{displayText(position.notice)}</p>
+                      )}
+                      {position?.error && (
+                        <p role="alert">{displayText(position.error)}</p>
+                      )}
+                      {position?.readError && (
+                        <div role="alert">
+                          {displayText(position.readError)}{" "}
+                          <button type="button" onClick={refreshReadState}>
+                            {text("refreshData")}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  }
+                />
               </article>
             ) : null}
             {!publication?.active_attempt &&

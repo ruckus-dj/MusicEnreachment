@@ -351,6 +351,9 @@ it("shows publication and source details from release detail without source inve
   const summary = await screen.findByRole("region", {
     name: "Current publication",
   });
+  expect(screen.getByRole("region", { name: "Publication" })).toContainElement(
+    summary,
+  );
   expect(summary).toHaveTextContent("Published");
   expect(summary).toHaveTextContent("flac · FLAC");
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");

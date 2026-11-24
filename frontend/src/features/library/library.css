@@ -1,5 +1,4 @@
 .library-release-screen {
-  width: min(100%, 64rem);
   color: var(--ink);
   font-size: 13px;
   line-height: 18px;
@@ -15,9 +14,11 @@
   line-height: 26px;
 }
 
-.library-release-screen h2 {
-  font-size: 16px;
-  line-height: 22px;
+@layer components {
+  .library-release-screen h2 {
+    font-size: 16px;
+    line-height: 22px;
+  }
 }
 
 .library-release-screen h3,
@@ -26,7 +27,6 @@
   line-height: 20px;
 }
 
-.library-release-screen article,
 .library-release-screen > section,
 .library-release-screen > [data-release-only] > section,
 .library-release-screen fieldset {
@@ -34,14 +34,6 @@
   border-color: var(--line);
   border-radius: 5px;
   background: var(--surface);
-}
-
-.library-release-screen article {
-  padding: 12px;
-}
-
-.library-release-screen article > :not([hidden]) ~ :not([hidden]) {
-  margin-top: 8px;
 }
 
 .library-release-screen fieldset {
@@ -119,9 +111,6 @@
     min-height: 40px;
   }
 
-  .library-release-screen article {
-    padding: 10px;
-  }
 }
 .library-release-navigation,
 .library-release-credits {

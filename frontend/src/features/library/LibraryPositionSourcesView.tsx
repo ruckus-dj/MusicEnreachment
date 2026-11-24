@@ -215,7 +215,7 @@ export function LibraryPositionSourcesView({
       aria-label={`${text.section} ${position}`}
       className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-3"
     >
-      <h3 className="m-0 font-semibold">{text.heading}</h3>
+      <h2 className="m-0 text-sm font-semibold">{text.heading}</h2>
       {choice ? (
         <>
           <p className="m-0 text-xs text-[var(--muted)]">

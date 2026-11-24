@@ -38,6 +38,7 @@ export function PublicationTagSnapshotView({
   return (
     <>
       <TagSnapshotView
+        headingLevel={3}
         title={text.title}
         rows={rows}
         empty={entries.length ? text.onlyMeasurements : text.empty}

@@ -15,7 +15,6 @@ export const trackMessages = createNamespace({
 		inspectingTags: "Inspecting tags",
 		publicationSourceHelp:
 			"Choosing a source does not change the current publication.",
-		publication: "Publication",
 		publicationFileStatus: "Publication file",
 		metadataState: "Publication metadata state",
 		metadataChanged: "Metadata changed · {count} changes",
@@ -88,7 +87,6 @@ export const trackMessages = createNamespace({
 		inspectTags: "Посмотреть теги",
 		inspectingTags: "Сравниваем теги",
 		publicationSourceHelp: "Выбор источника не меняет текущую публикацию.",
-		publication: "Публикация",
 		publicationFileStatus: "Файл публикации",
 		metadataState: "Состояние метаданных публикации",
 		metadataChanged: "Метаданные изменились · изменений: {count}",

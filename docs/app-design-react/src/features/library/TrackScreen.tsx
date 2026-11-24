@@ -32,6 +32,7 @@ import {
 } from "./LibraryPositionHeadingView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
+import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
 import { PublicationCurrentSummaryView } from "./PublicationCurrentSummaryView";
 import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import { TagsComparison } from "./TagsComparison";
@@ -131,185 +132,191 @@ export function TrackScreen({
 				}
 				libraryHref="#library"
 			/>
-			{(onMutate || onRecordingChange) && (
-				<TrackMetadataEditors
-					track={track}
-					artists={artists ?? catalogData.artists}
-					files={files}
-					genresLoaded={genresLoaded}
-					onLoadGenres={onLoadGenres}
-					onMutate={onMutate ?? (() => undefined)}
-					onRecordingChange={onRecordingChange}
-				/>
-			)}
-			<div className={catalogueStyles.objectColumns}>
-				<LibraryPositionSourcesView
-					locale={locale}
-					position={trackNumberLabel(release, track)}
-					sources={sourceIds.flatMap((id) => {
-						const source = files[id];
-						if (!source) return [];
-						const availability = trackMessage(
-							locale,
-							source.available ? "available" : "unavailable",
-						);
-						return [
-							{
-								id,
-								label: source.name,
-								summary: `${source.codec} · ${duration(source.duration)} · ${availability}`,
-								selected: track.sourceId === id,
-							},
-						];
-					})}
-					choice={{ value: track.sourceId ?? "", onChange: onSource }}
-					inspection={{
-						value: inspectedFileId ?? undefined,
-						onChange: inspectSource,
-					}}
-				/>
-				<section className={catalogueStyles.panel}>
-					<h2>{trackMessage(locale, "publication")}</h2>
-					<p aria-label={trackMessage(locale, "metadataState")}>
-						<strong>
-							{track.published
-								? changed
-									? formatTrackMessage(locale, "metadataChanged", {
-											count: changes.reduce(
-												(count, group) => count + group.changes.length,
-												0,
-											),
-										})
-									: trackMessage(locale, "metadataMatches")
-								: trackMessage(locale, "noPublication")}
-						</strong>
-					</p>
-					{track.published && (
-						<details>
-							<summary>
-								{trackMessage(locale, "compareEffectiveMetadata")}
-							</summary>
-							<MetadataDiff groups={changes} />
-						</details>
-					)}
-					{outputStatus && (
-						<p>
-							{trackMessage(locale, "publicationFileStatus")}: {outputStatus}.
-						</p>
-					)}
-					<div className={catalogueStyles.actions}>
-						{track.published && (
-							<Button onPress={() => onMetadataPreview([track.id])}>
-								{trackMessage(locale, "updateMetadata")}
-							</Button>
-						)}
-						<Button onPress={onPreview}>
-							{trackMessage(locale, "previewPublication")}
-						</Button>
-					</div>
-					{onMutate && (
-						<TrackActions
-							release={release}
+			<LibraryPositionWorkspace
+				locale={locale}
+				editors={
+					(onMutate || onRecordingChange) && (
+						<TrackMetadataEditors
 							track={track}
-							onMutate={onMutate}
+							artists={artists ?? catalogData.artists}
 							files={files}
-							onQueueDeletion={onQueueDeletion}
-							onRepublish={onRepublish ?? onPreview}
-							onAudioUpgrade={onAudioUpgrade}
+							genresLoaded={genresLoaded}
+							onLoadGenres={onLoadGenres}
+							onMutate={onMutate ?? (() => undefined)}
+							onRecordingChange={onRecordingChange}
 						/>
-					)}
-					<details className={catalogueStyles.trackDetails}>
-						<summary>{trackMessage(locale, "technicalDetails")}</summary>
-						<LibraryPositionIdentityView
-							locale={locale}
-							position={trackNumberLabel(release, track)}
-							title={track.title}
-							durationMs={
-								track.duration == null
-									? null
-									: Math.round(track.duration * 1000)
-							}
-							recordingTitle={
-								track.recordingTitle ||
-								providerTrack?.title ||
-								trackMessage(
-									locale,
-									track.recordingId ? "linkedRecording" : "unlinkedRecording",
-								)
-							}
-						/>
-						<dl className={catalogueStyles.facts}>
-							<dt>{trackMessage(locale, "fileState")}</dt>
-							<dd>
-								{outputStatus ??
-									(track.observedFile
-										? trackMessage(locale, "fileChangedOutside")
-										: trackMessage(locale, "noFileChangesMarked"))}
-							</dd>
-							<dt>{trackMessage(locale, "sourceFormat")}</dt>
-							<dd>
-								{file
-									? `${file.codec} · ${duration(file.duration)}`
-									: trackMessage(locale, "notSelected")}
-							</dd>
-							<dt>{trackMessage(locale, "publicationFormat")}</dt>
-							<dd>
+					)
+				}
+				sources={
+					<LibraryPositionSourcesView
+						locale={locale}
+						position={trackNumberLabel(release, track)}
+						sources={sourceIds.flatMap((id) => {
+							const source = files[id];
+							if (!source) return [];
+							const availability = trackMessage(
+								locale,
+								source.available ? "available" : "unavailable",
+							);
+							return [
+								{
+									id,
+									label: source.name,
+									summary: `${source.codec} · ${duration(source.duration)} · ${availability}`,
+									selected: track.sourceId === id,
+								},
+							];
+						})}
+						choice={{ value: track.sourceId ?? "", onChange: onSource }}
+						inspection={{
+							value: inspectedFileId ?? undefined,
+							onChange: inspectSource,
+						}}
+					/>
+				}
+				publication={
+					<>
+						<p aria-label={trackMessage(locale, "metadataState")}>
+							<strong>
 								{track.published
-									? `${track.published.container} · ${track.published.codec}`
+									? changed
+										? formatTrackMessage(locale, "metadataChanged", {
+												count: changes.reduce(
+													(count, group) => count + group.changes.length,
+													0,
+												),
+											})
+										: trackMessage(locale, "metadataMatches")
 									: trackMessage(locale, "noPublication")}
-							</dd>
-						</dl>
-						<dl className={catalogueStyles.facts}>
-							<dt>{trackMessage(locale, "path")}</dt>
-							<dd>{file?.path ?? trackMessage(locale, "notSelected")}</dd>
-							<dt>{trackMessage(locale, "composition")}</dt>
-							<dd>{track.recordingId ?? trackMessage(locale, "noLink")}</dd>
-							<dt>{trackMessage(locale, "providerHint")}</dt>
-							<dd>
-								{track.providerTitle ||
-									providerTrack?.title ||
-									trackMessage(locale, "noProviderHint")}
-							</dd>
-							{track.observedFile?.mtime && (
-								<>
-									<dt>{trackMessage(locale, "externalChangeTime")}</dt>
-									<dd>{track.observedFile.mtime}</dd>
-								</>
-							)}
-						</dl>
+							</strong>
+						</p>
 						{track.published && (
-							<Disclosure className={catalogueStyles.trackPublication}>
-								<Heading>
-									<Button slot="trigger">
-										{trackMessage(locale, "currentPublication")}
-									</Button>
-								</Heading>
-								<DisclosurePanel>
-									<PublicationCurrentSummaryView
-										locale={locale}
-										current={{
-											details: {
-												container: track.published.container,
-												codec: track.published.codec,
-												path: track.published.path,
-												observed: {
-													kind: "snapshot",
-													value: track.published.readAt,
-												},
-											},
-										}}
-									/>
-									<PublicationTagSnapshotView
-										locale={locale}
-										tags={track.published.tags}
-									/>
-								</DisclosurePanel>
-							</Disclosure>
+							<details>
+								<summary>
+									{trackMessage(locale, "compareEffectiveMetadata")}
+								</summary>
+								<MetadataDiff groups={changes} />
+							</details>
 						)}
-						<p>{trackMessage(locale, "localChangesHelp")}</p>
-					</details>
-				</section>
-			</div>
+						{outputStatus && (
+							<p>
+								{trackMessage(locale, "publicationFileStatus")}: {outputStatus}.
+							</p>
+						)}
+						<div className={catalogueStyles.actions}>
+							{track.published && (
+								<Button onPress={() => onMetadataPreview([track.id])}>
+									{trackMessage(locale, "updateMetadata")}
+								</Button>
+							)}
+							<Button onPress={onPreview}>
+								{trackMessage(locale, "previewPublication")}
+							</Button>
+						</div>
+						{onMutate && (
+							<TrackActions
+								release={release}
+								track={track}
+								onMutate={onMutate}
+								files={files}
+								onQueueDeletion={onQueueDeletion}
+								onRepublish={onRepublish ?? onPreview}
+								onAudioUpgrade={onAudioUpgrade}
+							/>
+						)}
+						<details className={catalogueStyles.trackDetails}>
+							<summary>{trackMessage(locale, "technicalDetails")}</summary>
+							<LibraryPositionIdentityView
+								locale={locale}
+								position={trackNumberLabel(release, track)}
+								title={track.title}
+								durationMs={
+									track.duration == null
+										? null
+										: Math.round(track.duration * 1000)
+								}
+								recordingTitle={
+									track.recordingTitle ||
+									providerTrack?.title ||
+									trackMessage(
+										locale,
+										track.recordingId ? "linkedRecording" : "unlinkedRecording",
+									)
+								}
+							/>
+							<dl className={catalogueStyles.facts}>
+								<dt>{trackMessage(locale, "fileState")}</dt>
+								<dd>
+									{outputStatus ??
+										(track.observedFile
+											? trackMessage(locale, "fileChangedOutside")
+											: trackMessage(locale, "noFileChangesMarked"))}
+								</dd>
+								<dt>{trackMessage(locale, "sourceFormat")}</dt>
+								<dd>
+									{file
+										? `${file.codec} · ${duration(file.duration)}`
+										: trackMessage(locale, "notSelected")}
+								</dd>
+								<dt>{trackMessage(locale, "publicationFormat")}</dt>
+								<dd>
+									{track.published
+										? `${track.published.container} · ${track.published.codec}`
+										: trackMessage(locale, "noPublication")}
+								</dd>
+							</dl>
+							<dl className={catalogueStyles.facts}>
+								<dt>{trackMessage(locale, "path")}</dt>
+								<dd>{file?.path ?? trackMessage(locale, "notSelected")}</dd>
+								<dt>{trackMessage(locale, "composition")}</dt>
+								<dd>{track.recordingId ?? trackMessage(locale, "noLink")}</dd>
+								<dt>{trackMessage(locale, "providerHint")}</dt>
+								<dd>
+									{track.providerTitle ||
+										providerTrack?.title ||
+										trackMessage(locale, "noProviderHint")}
+								</dd>
+								{track.observedFile?.mtime && (
+									<>
+										<dt>{trackMessage(locale, "externalChangeTime")}</dt>
+										<dd>{track.observedFile.mtime}</dd>
+									</>
+								)}
+							</dl>
+							{track.published && (
+								<Disclosure className={catalogueStyles.trackPublication}>
+									<Heading>
+										<Button slot="trigger">
+											{trackMessage(locale, "currentPublication")}
+										</Button>
+									</Heading>
+									<DisclosurePanel>
+										<PublicationCurrentSummaryView
+											locale={locale}
+											current={{
+												details: {
+													container: track.published.container,
+													codec: track.published.codec,
+													path: track.published.path,
+													observed: {
+														kind: "snapshot",
+														value: track.published.readAt,
+													},
+												},
+											}}
+										/>
+										<PublicationTagSnapshotView
+											locale={locale}
+											tags={track.published.tags}
+										/>
+									</DisclosurePanel>
+								</Disclosure>
+							)}
+							<p>{trackMessage(locale, "localChangesHelp")}</p>
+						</details>
+					</>
+				}
+			/>
 			<details
 				ref={tagComparisonRef}
 				className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3"

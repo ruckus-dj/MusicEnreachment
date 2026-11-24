@@ -91,7 +91,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
 | Медиатека: значения части произведения — название, всего частей, номер | `features/library/MovementFieldsView.tsx` | Тот же путь |
-| Медиатека: заголовки артиста и позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
+| Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 
 ### Где ещё есть расхождения
@@ -125,6 +125,7 @@ source channel, а fixture макета такого происхождения 
   уже перенесены. Заголовок позиции общий; ссылка ведёт к изданию по маршруту
   соответствующей сборки. Редакторы издания и обложки не дублируются в
   карточке позиции; переход внутри того же издания не сбрасывает их черновики.
+  Редакторы позиции расположены над общим блоком источников и публикации.
   В остальной композиции маршрутов, редакторах
   структурированных метаданных, диалогах и каталогах переводов остаются
   разные реализации. Перед копированием

@@ -90,6 +90,7 @@ const pairs = [
       "LibraryPositionHeadingView.tsx",
       "LibraryPositionIdentityView.tsx",
       "LibraryPositionSourcesView.tsx",
+      "LibraryPositionWorkspace.tsx",
       "LibrarySelectionDockView.tsx",
       "LibrarySelectionPreviewView.tsx",
       "LibrarySelectionReviewView.tsx",
