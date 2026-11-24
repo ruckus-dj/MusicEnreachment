@@ -63,6 +63,9 @@ do not migrate or merge the configurations to work around the invocation error.
 If unrelated application and prototype tests time out in different runs under
 heavy host load, retry the normal hook with `VITEST_MAX_WORKERS=4`. This limits
 local concurrency for both suites without changing coverage or test timeouts.
+On macOS, put the supported Node 24 LTS first in `PATH` for the hook if Homebrew's
+generic `node` points to the current release. A missing `libsimdjson` reported by
+a Vitest worker is a host runtime failure, not a reason to skip the suite.
 
 When moving UI copy to a paired component, check message-key references across
 both source trees, not just the edited feature. Library position details also

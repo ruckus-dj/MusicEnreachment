@@ -7,25 +7,36 @@ export function LibraryEditionArtwork({
   title,
   palette = "clay",
   imageSrc,
+  imageAlt,
 }: {
   title: string;
   palette?: string;
   imageSrc?: string;
+  imageAlt?: string;
 }) {
   const [failedImage, setFailedImage] = useState<string>();
+  const visibleImage =
+    imageSrc && imageSrc !== failedImage ? imageSrc : undefined;
 
   return (
-    <span aria-hidden="true" className={tileClass} data-palette={palette}>
-      <span className="relative font-[Georgia,serif] text-[34px] [text-shadow:0_2px_8px_#0008] max-[600px]:text-[28px]">
-        {title.trim().slice(0, 1).toLocaleUpperCase()}
+    <span
+      aria-hidden={visibleImage && imageAlt ? undefined : true}
+      className={tileClass}
+      data-palette={palette}
+    >
+      <span
+        aria-hidden="true"
+        className="relative font-[Georgia,serif] text-[34px] [text-shadow:0_2px_8px_#0008] max-[600px]:text-[28px]"
+      >
+        {title.trim().slice(0, 1).toLocaleUpperCase() || "M"}
       </span>
-      {imageSrc && imageSrc !== failedImage ? (
+      {visibleImage ? (
         <img
-          key={imageSrc}
-          src={imageSrc}
-          alt=""
+          key={visibleImage}
+          src={visibleImage}
+          alt={imageAlt ?? ""}
           loading="lazy"
-          onError={() => setFailedImage(imageSrc)}
+          onError={() => setFailedImage(visibleImage)}
           className="absolute inset-0 size-full bg-[var(--raised)] object-cover"
         />
       ) : null}

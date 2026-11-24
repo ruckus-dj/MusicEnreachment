@@ -37,6 +37,7 @@ import {
 } from "./FirstPublicationPreview";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
+import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import {
   LibraryPositionHeadingView,
   libraryPositionPageClassName,
@@ -1523,22 +1524,20 @@ export function LibraryReleaseScreen({
         ) : null}
       </nav>
       <header hidden={showPosition}>
-        <div className="library-release-heading">
-          <span
-            className="library-release-cover"
-            aria-hidden={!selectedCoverGeneration}
-          >
-            {selectedCoverGeneration ? (
-              <img
-                src={getGetLibraryReleaseCoverImageUrl(
-                  releaseId,
-                  selectedCoverGeneration,
-                )}
-                alt={text("selectedReleaseCover")}
-              />
-            ) : null}
-          </span>
-          <div className="library-release-title">
+        <div className="flex min-w-0 items-center gap-[13px] max-[600px]:gap-[9px]">
+          <LibraryEditionArtwork
+            title={release.title}
+            imageSrc={
+              !showPosition && selectedCoverGeneration
+                ? getGetLibraryReleaseCoverImageUrl(
+                    releaseId,
+                    selectedCoverGeneration,
+                  )
+                : undefined
+            }
+            imageAlt={text("selectedReleaseCover")}
+          />
+          <div className="min-w-0 wrap-anywhere">
             <h1 className="text-2xl font-semibold">{release.title}</h1>
             <ReleaseCreditList credits={release.artists} />
           </div>
