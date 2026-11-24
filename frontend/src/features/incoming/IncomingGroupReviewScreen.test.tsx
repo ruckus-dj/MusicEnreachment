@@ -18,6 +18,7 @@ import type {
   MatchingManualConfirmBody,
   MatchingManualPreview,
   MatchingReview,
+  OperationResponse,
 } from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
@@ -788,6 +789,30 @@ describe("incoming manual group review", () => {
     const publicationPath = `/api/library/releases/${releaseId}/positions/${positionId}/publication`;
     const previewRequests: Record<string, string>[] = [];
     const publicationRequests: unknown[] = [];
+    const queuedPublication: OperationResponse = {
+      id: "fixture-operation",
+      kind: "publish_track_v1",
+      state: "queued",
+      stage: "queued",
+      bytes_completed: 0,
+      created_at: "2026-11-22T12:00:00Z",
+      updated_at: "2026-11-22T12:00:00Z",
+    };
+    let publicationSnapshot = queuedPublication;
+    const publicationReads = vi.fn();
+    let publicationStream: EventTarget | undefined;
+    const closePublicationStream = vi.fn();
+    vi.stubGlobal(
+      "EventSource",
+      class extends EventTarget {
+        constructor() {
+          super();
+          publicationStream = this;
+        }
+
+        close = closePublicationStream;
+      },
+    );
     let finishPublicationRequest = () => {};
     const publicationReply = new Promise<void>((resolve) => {
       finishPublicationRequest = resolve;
@@ -854,7 +879,11 @@ describe("incoming manual group review", () => {
       http.post(publicationPath, async ({ request }) => {
         publicationRequests.push(await request.json());
         await publicationReply;
-        return HttpResponse.json({ id: "fixture-operation" }, { status: 202 });
+        return HttpResponse.json(queuedPublication, { status: 202 });
+      }),
+      http.get("/api/operations/fixture-operation", () => {
+        publicationReads();
+        return HttpResponse.json(publicationSnapshot);
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Сохранить связи" }));
@@ -972,6 +1001,33 @@ describe("incoming manual group review", () => {
         "Операция публикации поставлена в очередь.",
       ),
     ).toBeInTheDocument();
+    const publicationFrame = within(reopened.parentElement ?? document.body);
+    expect(publicationFrame.queryByText("Результаты публикации")).toBeNull();
+    await waitFor(() => expect(publicationReads).toHaveBeenCalled());
+    publicationSnapshot = {
+      ...queuedPublication,
+      state: "succeeded",
+      stage: "succeeded",
+      updated_at: "2026-11-22T12:00:01Z",
+    };
+    const stream = publicationStream;
+    if (!stream) throw new Error("The admitted operation is not followed");
+    act(() => {
+      stream.dispatchEvent(new Event("operation-changed"));
+    });
+    expect(
+      await publicationFrame.findByText(/Опубликовано позиций: 1\./),
+    ).toBeVisible();
+    await waitFor(() => expect(closePublicationStream).toHaveBeenCalled());
+    expect(publicationRequests).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "К сохранённым связям" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Проверить публикацию" }),
+    );
+    expect(await screen.findByText(/Опубликовано позиций: 1\./)).toBeVisible();
+    expect(publicationStream).toBe(stream);
     expect(publicationRequests).toHaveLength(1);
     fireEvent.click(
       screen.getByRole("button", { name: "К сохранённым связям" }),

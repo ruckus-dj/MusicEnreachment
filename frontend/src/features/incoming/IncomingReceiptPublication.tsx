@@ -1,5 +1,6 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   type AggregateDisposition,
   type AggregateInspectorPresentation,
@@ -22,9 +23,17 @@ import {
   MatchingReceiptPublicationFrame,
   matchingReceiptFileChoiceLabels,
 } from "../matchingWorkspace/MatchingReceiptPublicationFrame";
+import {
+  type MatchingReceiptPublicationIssue,
+  MatchingReceiptPublicationOutcomeView,
+} from "../matchingWorkspace/MatchingReceiptPublicationOutcomeView";
 import { operationStateLabel } from "../operations/operationPresentation";
 import {
+  type ReceiptPublicationAdmission,
   receiptAdmissionKey,
+  receiptPublicationAdmission,
+  recordReceiptPublicationReadFailure,
+  recordReceiptPublicationSnapshot,
   refreshReceiptPublication,
   submitReceiptPublication,
   useReceiptPublicationAdmissions,
@@ -133,6 +142,8 @@ function stateReady(state: PublicationPreviewState) {
 type ReceiptAdmission = {
   controller: PublicationPreviewController;
   identity: PublicationPreviewIdentity;
+  position: IncomingReceiptPublicationPosition;
+  receipt: PublicationMatchingReceipt;
 };
 
 /**
@@ -165,7 +176,12 @@ function readyAdmissions(
       !sameReceipt(identity.receipt, source.receipt)
     )
       continue;
-    admissions.push({ controller, identity });
+    admissions.push({
+      controller,
+      identity,
+      position,
+      receipt: source.receipt,
+    });
   }
   return admissions;
 }
@@ -310,6 +326,89 @@ function ReceiptPositionPreview({
 
 const ignoreAdmission = () => {};
 
+type ReceiptPublicationBatch = {
+  sequence: number;
+  rows: readonly {
+    key: string;
+    positionId: string;
+    label: string;
+    receipt: PublicationMatchingReceipt;
+    declined?: { detail?: string };
+  }[];
+};
+
+function completedBatch(
+  batch: ReceiptPublicationBatch | null,
+  attempts: Readonly<Record<string, ReceiptPublicationAdmission>>,
+) {
+  if (!batch) return undefined;
+  let published = 0;
+  const failures: { id: string; label: string; detail?: string }[] = [];
+  const issues: MatchingReceiptPublicationIssue[] = [];
+  for (const row of batch.rows) {
+    const label = { id: row.positionId, label: row.label };
+    if (row.declined) {
+      issues.push({ ...label, kind: "stale", detail: row.declined.detail });
+      continue;
+    }
+    const attempt = attempts[row.key];
+    if (attempt?.kind === "uncertain") {
+      issues.push({ ...label, kind: "uncertain" });
+      continue;
+    }
+    if (attempt?.kind !== "admitted") return undefined;
+    const snapshot = attempt.snapshot;
+    if (snapshot.state === "succeeded") published += 1;
+    else if (snapshot.state === "failed")
+      failures.push({
+        ...label,
+        detail: snapshot.safe_error,
+      });
+    else return undefined;
+  }
+  return { attempted: batch.rows.length, published, failures, issues };
+}
+
+function operationPending(state: string) {
+  return state === "queued" || state === "running";
+}
+
+type ReceiptRefresh = () => Promise<void>;
+
+function ReceiptPublicationFollower({
+  admissionKey,
+  attempt,
+  registerRefresh,
+}: {
+  admissionKey: string;
+  attempt: Extract<ReceiptPublicationAdmission, { kind: "admitted" }>;
+  registerRefresh: (key: string, refresh: ReceiptRefresh) => () => void;
+}) {
+  const queryClient = useQueryClient();
+  const enabled = operationPending(attempt.snapshot.state);
+  const { refresh } = useOperationFollower(attempt.operationId, {
+    enabled,
+    initialSnapshot: attempt.snapshot,
+    onSnapshot: (snapshot) =>
+      recordReceiptPublicationSnapshot(queryClient, admissionKey, snapshot),
+    onSnapshotRead: (snapshot, _source, accepted) => {
+      if (!accepted && attempt.readFailed)
+        recordReceiptPublicationSnapshot(queryClient, admissionKey, snapshot);
+    },
+    onError: () =>
+      recordReceiptPublicationReadFailure(
+        queryClient,
+        admissionKey,
+        attempt.operationId,
+      ),
+    refreshOnStreamError: true,
+  });
+  useEffect(() => {
+    if (enabled) return registerRefresh(admissionKey, refresh);
+  }, [admissionKey, enabled, refresh, registerRefresh]);
+  return null;
+}
+
 export function IncomingReceiptPublication({
   locale,
   releaseTitle,
@@ -319,6 +418,21 @@ export function IncomingReceiptPublication({
 }: IncomingReceiptPublicationProps) {
   const queryClient = useQueryClient();
   const attemptStates = useReceiptPublicationAdmissions();
+  const receipt = positions.find((position) => position.sources.length > 0)
+    ?.sources[0]?.receipt;
+  const batchKey = [
+    "incoming-receipt-publication-batch",
+    receipt?.kind,
+    receipt?.requestId,
+    releaseId,
+  ] as const;
+  const batch = useQuery<ReceiptPublicationBatch | null>({
+    queryKey: batchKey,
+    queryFn: () => null,
+    initialData: null,
+    enabled: false,
+    gcTime: Number.POSITIVE_INFINITY,
+  }).data;
   const [controllers, setControllers] = useState<
     ReadonlyMap<string, PublicationPreviewController>
   >(() => new Map());
@@ -332,6 +446,17 @@ export function IncomingReceiptPublication({
     () => new Set(),
   );
   const [selectedPositionID, setSelectedPositionID] = useState("");
+  const operationRefreshes = useRef(new Map<string, ReceiptRefresh>());
+  const registerRefresh = useCallback(
+    (key: string, refresh: ReceiptRefresh) => {
+      operationRefreshes.current.set(key, refresh);
+      return () => {
+        if (operationRefreshes.current.get(key) === refresh)
+          operationRefreshes.current.delete(key);
+      };
+    },
+    [],
+  );
   const callbackCache = useRef(
     new Map<
       string,
@@ -443,17 +568,19 @@ export function IncomingReceiptPublication({
     const current = stateIsReceipt(state, source?.receipt);
     const attempt = admissionFor(position.id);
     if (attempt && isIncluded) {
+      const operationState =
+        attempt.kind === "admitted" ? attempt.snapshot.state : undefined;
       const status: AggregatePositionStatus =
-        attempt.kind === "admitted" && !attempt.state
+        attempt.kind === "admitted" &&
+        (!operationState || operationState === "queued")
           ? { kind: "queued" }
           : {
               kind: "operation",
-              label:
-                attempt.kind === "admitted" && attempt.state
-                  ? operationStateLabel(attempt.state, locale)
-                  : attempt.kind === "pending"
-                    ? copy.admissionPending
-                    : copy.receiptAdmissionUncertain,
+              label: operationState
+                ? operationStateLabel(operationState, locale)
+                : attempt.kind === "pending"
+                  ? copy.admissionPending
+                  : copy.receiptAdmissionUncertain,
             };
       return { id: position.id, label: position.label, status };
     }
@@ -560,9 +687,11 @@ export function IncomingReceiptPublication({
         ? {
             ...details,
             error:
-              selectedAdmission.kind === "admitted"
-                ? (selectedAdmission.error ?? "")
-                : "",
+              selectedAdmission.kind !== "admitted"
+                ? ""
+                : selectedAdmission.readFailed
+                  ? copy.refreshFailed
+                  : (selectedAdmission.snapshot.safe_error ?? ""),
             admissionUncertain: selectedAdmission.kind === "uncertain",
             admissionUncertainStatus: copy.receiptAdmissionUncertain,
             admittedOperationID:
@@ -570,8 +699,10 @@ export function IncomingReceiptPublication({
                 ? selectedAdmission.operationId
                 : "",
             admittedOperationStatus:
-              selectedAdmission.kind === "admitted" && selectedAdmission.state
-                ? operationStateLabel(selectedAdmission.state, locale)
+              selectedAdmission.kind === "admitted" &&
+              selectedAdmission.snapshot.state &&
+              selectedAdmission.snapshot.state !== "queued"
+                ? operationStateLabel(selectedAdmission.snapshot.state, locale)
                 : undefined,
             loading: false,
             inspection: { ...details.inspection, sourceChoiceDisabled: true },
@@ -585,13 +716,20 @@ export function IncomingReceiptPublication({
       },
       onRefresh:
         selectedAdmission?.kind === "admitted"
-          ? () =>
-              void refreshReceiptPublication(
-                queryClient,
-                keys.get(selectedPosition.id) ?? "",
-                selectedAdmission.operationId,
-                copy.refreshFailed,
-              )
+          ? () => {
+              const key = keys.get(selectedPosition.id);
+              if (!key) return;
+              // Use the follower's sequenced reader while it is attached.
+              if (operationPending(selectedAdmission.snapshot.state)) {
+                void operationRefreshes.current.get(key)?.();
+              } else {
+                void refreshReceiptPublication(
+                  queryClient,
+                  key,
+                  selectedAdmission.operationId,
+                );
+              }
+            }
           : selectedAdmission
             ? undefined
             : () => preparePosition(selectedPosition),
@@ -599,10 +737,67 @@ export function IncomingReceiptPublication({
   }
 
   function confirm() {
-    for (const { controller, identity } of admissions)
+    const upcoming = admissions.filter(
+      ({ position, receipt }) =>
+        !receiptPublicationAdmission(
+          queryClient,
+          receiptAdmissionKey(releaseId, position.id, receipt),
+        ),
+    );
+    if (!upcoming.length) return;
+    // Freeze the requested positions before the controllers begin any writes.
+    queryClient.setQueryData<ReceiptPublicationBatch | null>(
+      batchKey,
+      (previous) => ({
+        sequence: (previous?.sequence ?? 0) + 1,
+        rows: upcoming.map(({ position, receipt }) => ({
+          key: receiptAdmissionKey(releaseId, position.id, receipt),
+          positionId: position.id,
+          label: position.label,
+          receipt,
+        })),
+      }),
+    );
+    for (const { controller, identity } of upcoming)
       controller.confirm(identity);
   }
 
+  function submit(positionId: string): SubmitMatchingReceiptPublication {
+    return async (receipt, body) => {
+      const previous = queryClient.getQueryData<ReceiptPublicationBatch | null>(
+        batchKey,
+      );
+      const response = await submitReceiptPublication(
+        queryClient,
+        releaseId,
+        positionId,
+        receipt,
+        body,
+      );
+      // A rejected stale plan never entered the queue. Its lock is released
+      // by the admission provider; only mark the exact initiating batch here.
+      if (response?.status === 409 && previous) {
+        queryClient.setQueryData<ReceiptPublicationBatch | null>(
+          batchKey,
+          (active) =>
+            active?.sequence === previous.sequence
+              ? {
+                  ...active,
+                  rows: active.rows.map((row) =>
+                    row.positionId === positionId &&
+                    sameReceipt(row.receipt, receipt)
+                      ? { ...row, declined: { detail: response.data.detail } }
+                      : row,
+                  ),
+                }
+              : active,
+        );
+      }
+      return response;
+    };
+  }
+
+  const outcome = completedBatch(batch ?? null, attemptStates);
   return (
     <MatchingReceiptPublicationFrame
       locale={locale}
@@ -635,19 +830,25 @@ export function IncomingReceiptPublication({
             }
             onController={callbacks.onController}
             onStateChange={callbacks.onStateChange}
-            onSubmitReceipt={(receipt, body) =>
-              submitReceiptPublication(
-                queryClient,
-                releaseId,
-                position.id,
-                receipt,
-                body,
-              )
-            }
+            onSubmitReceipt={submit(position.id)}
             onRefresh={() => preparePosition(position)}
           />
         );
       })}
+      {[...keys.values()].map((key) => {
+        const attempt = attemptStates[key];
+        return attempt?.kind === "admitted" ? (
+          <ReceiptPublicationFollower
+            key={`${key}:${attempt.operationId}`}
+            admissionKey={key}
+            attempt={attempt}
+            registerRefresh={registerRefresh}
+          />
+        ) : null;
+      })}
+      {outcome && (
+        <MatchingReceiptPublicationOutcomeView locale={locale} {...outcome} />
+      )}
     </MatchingReceiptPublicationFrame>
   );
 }

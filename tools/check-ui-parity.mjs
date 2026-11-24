@@ -121,6 +121,7 @@ const pairs = [
       "MatchingLinkResultView.tsx",
       "MatchingPreview.tsx",
       "MatchingReceiptPublicationFrame.tsx",
+      "MatchingReceiptPublicationOutcomeView.tsx",
       "MatchingReviewSearchView.tsx",
       "MatchingWorkspaceLayout.tsx",
       "evidenceOverrideMessages.ts",

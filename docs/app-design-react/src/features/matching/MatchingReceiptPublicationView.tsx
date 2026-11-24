@@ -16,24 +16,16 @@ import {
 	MatchingReceiptPublicationFrame,
 	matchingReceiptFileChoiceLabels,
 } from "./MatchingReceiptPublicationFrame";
+import { MatchingReceiptPublicationOutcomeView } from "./MatchingReceiptPublicationOutcomeView";
 import type {
 	MatchingReceiptPublicationNotice,
 	MatchingReceiptPublicationRow,
 } from "./matchingReceiptPublication";
-import {
-	type MatchingReceiptPublicationOutcome,
-	useMatchingReceiptPublication,
-} from "./matchingReceiptPublicationController";
+import { useMatchingReceiptPublication } from "./matchingReceiptPublicationController";
 
 const copy = {
 	en: {
 		excluded: "Position excluded from this publication.",
-		outcomeHeading: "Publication results",
-		outcomeRequested: "Positions to publish: {count}.",
-		outcomePublished: "Published positions: {count}.",
-		outcomeFailed: "Not published: {count}.",
-		outcomeNothing:
-			"No position required publication; current publications were not changed.",
 		notices: {
 			"matchingReceipt.releaseMissing":
 				"The release for this saved result was not found.",
@@ -88,12 +80,6 @@ const copy = {
 	},
 	ru: {
 		excluded: "Позиция исключена из этой публикации.",
-		outcomeHeading: "Результаты публикации",
-		outcomeRequested: "Позиций к публикации: {count}.",
-		outcomePublished: "Опубликовано позиций: {count}.",
-		outcomeFailed: "Не опубликовано: {count}.",
-		outcomeNothing:
-			"Ни одной позиции не требовалась публикация; действующие публикации не изменены.",
 		notices: {
 			"matchingReceipt.releaseMissing":
 				"Издание для этого сохранённого результата не найдено.",
@@ -352,61 +338,25 @@ export function MatchingReceiptPublicationView({
 			{controller.outcome ? (
 				<MatchingReceiptPublicationOutcomeView
 					locale={locale}
-					receipt={receipt}
-					previewRows={controller.rows}
-					outcome={controller.outcome}
+					attempted={controller.outcome.attempted}
+					published={controller.outcome.published}
+					failures={controller.outcome.failed.map(({ trackId, notice }) => {
+						const row = positions.find((position) => position.id === trackId);
+						const position = receipt.positions.find(
+							(item) => String(item.trackId) === trackId,
+						);
+						return {
+							id: trackId,
+							label:
+								row?.label ??
+								(position
+									? `${position.displayedNumber ?? position.position} · ${position.title}`
+									: trackId),
+							detail: noticeText(text, notice),
+						};
+					})}
 				/>
 			) : null}
 		</MatchingReceiptPublicationFrame>
-	);
-}
-
-function MatchingReceiptPublicationOutcomeView({
-	locale,
-	receipt,
-	previewRows,
-	outcome,
-}: {
-	locale: Locale;
-	receipt: MatchingLinkReceipt;
-	previewRows: readonly MatchingReceiptPublicationRow[];
-	outcome: MatchingReceiptPublicationOutcome;
-}) {
-	const text = copy[locale];
-	const titleFor = (trackId: string) => {
-		const row = previewRows.find((item) => item.trackId === trackId);
-		if (row) return rowLabel(row);
-		const position = receipt.positions.find(
-			(item) => String(item.trackId) === trackId,
-		);
-		return position
-			? `${position.displayedNumber ?? position.position} · ${position.title}`
-			: trackId;
-	};
-	return (
-		<section
-			role="status"
-			aria-live="polite"
-			className="rounded border border-[var(--line)] bg-[var(--raised)] p-3 text-sm"
-		>
-			<h2 className="m-0 text-sm font-semibold">{text.outcomeHeading}</h2>
-			<p className="mt-1">
-				{text.outcomeRequested.replace("{count}", String(outcome.attempted))}{" "}
-				{text.outcomePublished.replace("{count}", String(outcome.published))}
-				{outcome.failed.length
-					? ` ${text.outcomeFailed.replace("{count}", String(outcome.failed.length))}`
-					: ""}
-			</p>
-			{!outcome.attempted && <p>{text.outcomeNothing}</p>}
-			{outcome.failed.length ? (
-				<ul className="mt-1 list-disc pl-5">
-					{outcome.failed.map((failure) => (
-						<li key={failure.trackId} className="wrap-anywhere">
-							{titleFor(failure.trackId)}: {noticeText(text, failure.notice)}
-						</li>
-					))}
-				</ul>
-			) : null}
-		</section>
 	);
 }
