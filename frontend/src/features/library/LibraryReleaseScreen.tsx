@@ -1669,6 +1669,7 @@ export function LibraryReleaseScreen({
         <p role="alert">{text("positionNotFound")}</p>
       ) : null}
       {(release.tracks ?? []).map((track) => {
+        const showWorkspace = positionId === track.id;
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
@@ -1735,15 +1736,20 @@ export function LibraryReleaseScreen({
         }
         return (
           <Fragment key={track.id}>
-            {positionId === track.id ? (
-              <article
-                aria-labelledby={libraryPositionTitleId}
-                className="grid min-w-0 gap-3"
-              >
-                <LibraryPositionWorkspace
-                  locale={locale}
-                  sources={<PositionSources track={track} />}
-                  editors={
+            <article
+              aria-labelledby={
+                showWorkspace ? libraryPositionTitleId : undefined
+              }
+              className="grid min-w-0 gap-3"
+              hidden={!showWorkspace}
+            >
+              <LibraryPositionWorkspace
+                locale={locale}
+                sources={
+                  showWorkspace ? <PositionSources track={track} /> : undefined
+                }
+                editors={
+                  showWorkspace ? (
                     <>
                       <ReleaseCreditList credits={credits} />
                       {track.recording_id ? (
@@ -1862,8 +1868,10 @@ export function LibraryReleaseScreen({
                         </button>
                       </div>
                     </>
-                  }
-                  publication={
+                  ) : undefined
+                }
+                publication={
+                  showWorkspace ? (
                     <>
                       <PublicationCurrentSummaryView
                         locale={locale}
@@ -2014,98 +2022,102 @@ export function LibraryReleaseScreen({
                           </button>
                         </div>
                       )}
-                      <LibraryPositionTechnicalDetailsView
-                        locale={locale}
-                        current={
-                          hasCurrentPublication && (
-                            <>
-                              <PublicationCurrentDetailsView
-                                locale={locale}
-                                details={{
-                                  path: publicationSummary?.relative_path,
-                                  container: publicationSummary?.container,
-                                  codec: publicationSummary?.codec,
-                                  observed: publicationSummary?.validated_at
-                                    ? {
-                                        kind: "verified",
-                                        value: publicationSummary.validated_at,
-                                      }
-                                    : undefined,
-                                }}
-                              />
-                              {publicationSummary?.generation && (
-                                <p>
-                                  {text("generation", {
-                                    generation: publicationSummary.generation,
-                                  })}
-                                </p>
-                              )}
-                              {publication?.current_generation && (
-                                <fieldset
-                                  aria-label={text("actualCoverRegion")}
-                                >
-                                  <p className="wrap-anywhere">
-                                    {text("actualCover")}:{" "}
-                                    {publication.current_assets?.cover.state ??
-                                      text("unknown")}
-                                    {publication.current_assets?.cover.sha256
-                                      ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
-                                      : ""}
-                                  </p>
-                                </fieldset>
-                              )}
-                              {publication && (
-                                <p>
-                                  {text("lyrics")}{" "}
-                                  {publication.current_assets?.lyrics.state ??
-                                    text("lyricsUnknown")}
-                                  .
-                                </p>
-                              )}
-                              <PublicationTagSnapshotView
-                                locale={locale}
-                                tags={currentTags}
-                              />
-                            </>
-                          )
-                        }
-                      >
-                        <PositionIdentity track={track} />
-                      </LibraryPositionTechnicalDetailsView>
                     </>
-                  }
-                />
-              </article>
-            ) : null}
-            {!publication?.active_attempt &&
-              !position?.firstPublicationOperationID && (
-                <FirstPublicationPreview
-                  releaseId={releaseId}
-                  positionId={track.id}
-                  aggregateManaged={positionId !== track.id}
-                  comparisonOnly={Boolean(
-                    publication?.current_path ||
-                      publication?.current_generation,
-                  )}
-                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
-                  onAdmitted={(operationID) => {
-                    if (!isPositionScopeCurrent()) return;
-                    setPositions((current) => {
-                      if (!isPositionScopeCurrent()) return current;
-                      return {
-                        ...current,
-                        [track.id]: {
-                          ...current[track.id],
-                          firstPublicationOperationID: operationID,
-                        },
-                      };
-                    });
-                    refreshReadState();
-                  }}
-                  onRefresh={refreshReadState}
-                  {...aggregateCallbacksFor(track.id)}
-                />
-              )}
+                  ) : undefined
+                }
+                actions={
+                  !publication?.active_attempt &&
+                  !position?.firstPublicationOperationID ? (
+                    <FirstPublicationPreview
+                      releaseId={releaseId}
+                      positionId={track.id}
+                      aggregateManaged={!showWorkspace}
+                      comparisonOnly={Boolean(
+                        publication?.current_path ||
+                          publication?.current_generation,
+                      )}
+                      refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
+                      onAdmitted={(operationID) => {
+                        if (!isPositionScopeCurrent()) return;
+                        setPositions((current) => {
+                          if (!isPositionScopeCurrent()) return current;
+                          return {
+                            ...current,
+                            [track.id]: {
+                              ...current[track.id],
+                              firstPublicationOperationID: operationID,
+                            },
+                          };
+                        });
+                        refreshReadState();
+                      }}
+                      onRefresh={refreshReadState}
+                      {...aggregateCallbacksFor(track.id)}
+                    />
+                  ) : undefined
+                }
+                technicalDetails={
+                  showWorkspace ? (
+                    <LibraryPositionTechnicalDetailsView
+                      locale={locale}
+                      current={
+                        hasCurrentPublication && (
+                          <>
+                            <PublicationCurrentDetailsView
+                              locale={locale}
+                              details={{
+                                path: publicationSummary?.relative_path,
+                                container: publicationSummary?.container,
+                                codec: publicationSummary?.codec,
+                                observed: publicationSummary?.validated_at
+                                  ? {
+                                      kind: "verified",
+                                      value: publicationSummary.validated_at,
+                                    }
+                                  : undefined,
+                              }}
+                            />
+                            {publicationSummary?.generation && (
+                              <p>
+                                {text("generation", {
+                                  generation: publicationSummary.generation,
+                                })}
+                              </p>
+                            )}
+                            {publication?.current_generation && (
+                              <fieldset aria-label={text("actualCoverRegion")}>
+                                <p className="wrap-anywhere">
+                                  {text("actualCover")}:{" "}
+                                  {publication.current_assets?.cover.state ??
+                                    text("unknown")}
+                                  {publication.current_assets?.cover.sha256
+                                    ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
+                                    : ""}
+                                </p>
+                              </fieldset>
+                            )}
+                            {publication && (
+                              <p>
+                                {text("lyrics")}{" "}
+                                {publication.current_assets?.lyrics.state ??
+                                  text("lyricsUnknown")}
+                                .
+                              </p>
+                            )}
+                            <PublicationTagSnapshotView
+                              locale={locale}
+                              tags={currentTags}
+                            />
+                          </>
+                        )
+                      }
+                    >
+                      <PositionIdentity track={track} />
+                    </LibraryPositionTechnicalDetailsView>
+                  ) : undefined
+                }
+              />
+            </article>
             {!positionId && position?.readError ? (
               <div className="library-release-position-read-error" role="alert">
                 {displayText(position.readError)}{" "}

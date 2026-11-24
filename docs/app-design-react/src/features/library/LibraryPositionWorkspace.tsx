@@ -7,11 +7,15 @@ export function LibraryPositionWorkspace({
   editors,
   sources,
   publication,
+  actions,
+  technicalDetails,
 }: {
   locale: "en" | "ru";
   editors?: ReactNode;
-  sources: ReactNode;
-  publication: ReactNode;
+  sources?: ReactNode;
+  publication?: ReactNode;
+  actions?: ReactNode;
+  technicalDetails?: ReactNode;
 }) {
   const publicationTitle = useId();
   return (
@@ -25,6 +29,8 @@ export function LibraryPositionWorkspace({
         >
           <h2 id={publicationTitle}>{title[locale]}</h2>
           {publication}
+          {actions}
+          {technicalDetails}
         </section>
       </div>
     </>

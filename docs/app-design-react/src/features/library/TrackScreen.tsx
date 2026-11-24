@@ -199,6 +199,10 @@ export function TrackScreen({
 								{trackMessage(locale, "publicationFileStatus")}: {outputStatus}.
 							</p>
 						)}
+					</>
+				}
+				actions={
+					<>
 						<div className={catalogueStyles.actions}>
 							{track.published && (
 								<Button onPress={() => onMetadataPreview([track.id])}>
@@ -220,85 +224,87 @@ export function TrackScreen({
 								onAudioUpgrade={onAudioUpgrade}
 							/>
 						)}
-						<LibraryPositionTechnicalDetailsView
+					</>
+				}
+				technicalDetails={
+					<LibraryPositionTechnicalDetailsView
+						locale={locale}
+						current={
+							track.published && (
+								<>
+									<PublicationCurrentDetailsView
+										locale={locale}
+										details={{
+											container: track.published.container,
+											codec: track.published.codec,
+											path: track.published.path,
+											observed: {
+												kind: "snapshot",
+												value: track.published.readAt,
+											},
+										}}
+									/>
+									<PublicationTagSnapshotView
+										locale={locale}
+										tags={track.published.tags}
+									/>
+								</>
+							)
+						}
+						afterCurrent={<p>{trackMessage(locale, "localChangesHelp")}</p>}
+					>
+						<LibraryPositionIdentityView
 							locale={locale}
-							current={
-								track.published && (
-									<>
-										<PublicationCurrentDetailsView
-											locale={locale}
-											details={{
-												container: track.published.container,
-												codec: track.published.codec,
-												path: track.published.path,
-												observed: {
-													kind: "snapshot",
-													value: track.published.readAt,
-												},
-											}}
-										/>
-										<PublicationTagSnapshotView
-											locale={locale}
-											tags={track.published.tags}
-										/>
-									</>
+							position={trackNumberLabel(release, track)}
+							title={track.title}
+							durationMs={
+								track.duration == null
+									? null
+									: Math.round(track.duration * 1000)
+							}
+							recordingTitle={
+								track.recordingTitle ||
+								providerTrack?.title ||
+								trackMessage(
+									locale,
+									track.recordingId ? "linkedRecording" : "unlinkedRecording",
 								)
 							}
-							afterCurrent={<p>{trackMessage(locale, "localChangesHelp")}</p>}
-						>
-							<LibraryPositionIdentityView
-								locale={locale}
-								position={trackNumberLabel(release, track)}
-								title={track.title}
-								durationMs={
-									track.duration == null
-										? null
-										: Math.round(track.duration * 1000)
-								}
-								recordingTitle={
-									track.recordingTitle ||
+						/>
+						<dl className={catalogueStyles.facts}>
+							<dt>{trackMessage(locale, "fileState")}</dt>
+							<dd>
+								{outputStatus ??
+									(track.observedFile
+										? trackMessage(locale, "fileChangedOutside")
+										: trackMessage(locale, "noFileChangesMarked"))}
+							</dd>
+							<dt>{trackMessage(locale, "sourceFormat")}</dt>
+							<dd>
+								{file
+									? `${file.codec} · ${duration(file.duration)}`
+									: trackMessage(locale, "notSelected")}
+							</dd>
+						</dl>
+						<dl className={catalogueStyles.facts}>
+							<dt>{trackMessage(locale, "path")}</dt>
+							<dd>{file?.path ?? trackMessage(locale, "notSelected")}</dd>
+							<dt>{trackMessage(locale, "composition")}</dt>
+							<dd>{track.recordingId ?? trackMessage(locale, "noLink")}</dd>
+							<dt>{trackMessage(locale, "providerHint")}</dt>
+							<dd>
+								{track.providerTitle ||
 									providerTrack?.title ||
-									trackMessage(
-										locale,
-										track.recordingId ? "linkedRecording" : "unlinkedRecording",
-									)
-								}
-							/>
-							<dl className={catalogueStyles.facts}>
-								<dt>{trackMessage(locale, "fileState")}</dt>
-								<dd>
-									{outputStatus ??
-										(track.observedFile
-											? trackMessage(locale, "fileChangedOutside")
-											: trackMessage(locale, "noFileChangesMarked"))}
-								</dd>
-								<dt>{trackMessage(locale, "sourceFormat")}</dt>
-								<dd>
-									{file
-										? `${file.codec} · ${duration(file.duration)}`
-										: trackMessage(locale, "notSelected")}
-								</dd>
-							</dl>
-							<dl className={catalogueStyles.facts}>
-								<dt>{trackMessage(locale, "path")}</dt>
-								<dd>{file?.path ?? trackMessage(locale, "notSelected")}</dd>
-								<dt>{trackMessage(locale, "composition")}</dt>
-								<dd>{track.recordingId ?? trackMessage(locale, "noLink")}</dd>
-								<dt>{trackMessage(locale, "providerHint")}</dt>
-								<dd>
-									{track.providerTitle ||
-										providerTrack?.title ||
-										trackMessage(locale, "noProviderHint")}
-								</dd>
-								{track.observedFile?.mtime && (
-									<>
-										<dt>{trackMessage(locale, "externalChangeTime")}</dt>
-										<dd>{track.observedFile.mtime}</dd>
-									</>
-								)}
-							</dl>
-						</LibraryPositionTechnicalDetailsView>
-					</>
+									trackMessage(locale, "noProviderHint")}
+							</dd>
+							{track.observedFile?.mtime && (
+								<>
+									<dt>{trackMessage(locale, "externalChangeTime")}</dt>
+									<dd>{track.observedFile.mtime}</dd>
+								</>
+							)}
+						</dl>
+					</LibraryPositionTechnicalDetailsView>
 				}
 			/>
 			<details

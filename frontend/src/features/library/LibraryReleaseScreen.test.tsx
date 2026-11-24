@@ -570,6 +570,7 @@ it("invalidates preview context immediately even if release detail refresh fails
   expect(
     screen.queryByRole("region", { name: "Current publication" }),
   ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Publication" })).toBeNull();
   const initialToken = preview.getAttribute("data-refresh-token");
   const card = within(
     await screen.findByRole("region", {
@@ -927,6 +928,9 @@ it("refreshes deletion from authoritative position state without remounting publ
     name: "Текущая публикация",
   });
   const positionArticle = await screen.findByRole("article");
+  expect(within(positionArticle).getByTestId("publication-preview")).toBe(
+    publicationPreview,
+  );
   await openTechnicalDetails("ru");
   expect(within(positionArticle).getByText("Композиция")).toBeVisible();
   expect(within(positionArticle).queryByText("Recording ID")).toBeNull();
