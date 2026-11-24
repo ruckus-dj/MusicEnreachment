@@ -89,7 +89,9 @@ export function IncomingGroupsOverviewView({
 
   return (
     <div className={`min-w-0 overflow-x-auto ${className}`}>
-      <table className="w-full min-w-[36rem] table-fixed border-collapse text-left text-sm">
+      <table
+        className={`w-full table-fixed border-collapse text-left text-sm ${rows.length ? "min-w-[36rem]" : ""}`}
+      >
         <caption className="sr-only">{labels.caption}</caption>
         <colgroup>
           <col className="w-[36%]" />

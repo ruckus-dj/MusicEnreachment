@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, PageHeader, Panel } from "../../components/ui";
+import { Button, PageHeader } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { formatUiNotice } from "../../infrastructure/uiNotice";
 import type { CatalogArtist } from "../library/catalogData";
@@ -12,10 +12,10 @@ import {
 	type IncomingGroupViewRow,
 } from "./IncomingGroupsOverviewView";
 import {
-	type IncomingMessage,
-	incomingGroupsCount,
-	incomingMessage,
-} from "./incomingMessages";
+	IncomingGroupsPanel,
+	incomingGroupsEmpty,
+} from "./IncomingGroupsPanel";
+import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import {
 	artistName,
 	createIncomingState,
@@ -200,7 +200,7 @@ export function IncomingScreen({
 		filesPaths: msg("uniqueFilesPaths"),
 		ready: msg("readyTotal"),
 		status: msg("evaluationState"),
-		empty: msg("noGroups"),
+		empty: incomingGroupsEmpty(locale),
 		number: msg("columnNumber"),
 		title: msg("columnTitle"),
 		artist: msg("columnArtist"),
@@ -360,20 +360,7 @@ export function IncomingScreen({
 									: "")}
 				</p>
 			)}
-			<Panel className="mb-[10px]" aria-labelledby="incoming-groups-heading">
-				<header className="flex min-h-10 items-center justify-between gap-2 border-b border-[var(--line)] px-[10px] py-[7px]">
-					<div>
-						<h2
-							className="m-0 text-[13px] font-semibold"
-							id="incoming-groups-heading"
-						>
-							{msg("overviewTitle")}
-						</h2>
-						<span className="mt-0.5 block text-xs text-[var(--muted)]">
-							{incomingGroupsCount(locale, rows.length)}
-						</span>
-					</div>
-				</header>
+			<IncomingGroupsPanel locale={locale} count={viewRows.length}>
 				<IncomingGroupsOverviewView
 					labels={overviewLabels}
 					rows={viewRows}
@@ -388,7 +375,7 @@ export function IncomingScreen({
 						else groupDisclosureRefs.current.delete(groupId);
 					}}
 				/>
-			</Panel>
+			</IncomingGroupsPanel>
 		</section>
 	);
 }

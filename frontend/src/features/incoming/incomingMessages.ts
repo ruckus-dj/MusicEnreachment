@@ -11,7 +11,6 @@ function russianCountForm(count: number, forms: [string, string, string]) {
 
 export const incomingMessages = {
   en: {
-    overviewTitle: "Incoming groups",
     overviewCaption:
       "Files, paths, source readiness, and saved group evaluations",
     tabMatching: "Matching",
@@ -55,7 +54,6 @@ export const incomingMessages = {
       "Choose a release and explicitly assign files to positions. The draft is kept on this page only.",
     refreshGroups: "Refresh list",
     loadingGroups: "Loading incoming groups…",
-    noGroups: "There are no incoming groups.",
     incomingGroupsLabel: "Incoming group",
     groupOption: (name: string, count: number, manual: boolean) =>
       `${name} · ${count} ${count === 1 ? "file" : "files"}${manual ? " · grouped manually" : ""}`,
@@ -152,7 +150,6 @@ export const incomingMessages = {
     remainsIncoming: "remains in incoming",
   },
   ru: {
-    overviewTitle: "Входящие группы",
     overviewCaption:
       "Файлы, пути, готовность источников и сохранённые оценки групп",
     tabMatching: "Сопоставление",
@@ -197,7 +194,6 @@ export const incomingMessages = {
       "Выберите издание и явно назначьте файлы позициям. Черновик хранится только на этой странице.",
     refreshGroups: "Обновить список",
     loadingGroups: "Загрузка входящих групп…",
-    noGroups: "Входящих групп нет.",
     incomingGroupsLabel: "Входящая группа",
     groupOption: (name: string, count: number, manual: boolean) =>
       `${name} · ${count} ${russianCountForm(count, ["файл", "файла", "файлов"])}${manual ? " · вручную сгруппирована" : ""}`,

@@ -23,7 +23,6 @@ export const incomingMessages = createNamespace({
 		automaticDirection: "automatic",
 		otherwiseManual: "Otherwise",
 		manualDirection: "manual review, including partial groups",
-		overviewTitle: "Incoming groups",
 		overviewCaption:
 			"Files, paths, source readiness, and saved group evaluations",
 		columnNumber: "No.",
@@ -46,11 +45,6 @@ export const incomingMessages = createNamespace({
 		remainingFilesFew: "and {count} more files",
 		remainingFilesMany: "and {count} more files",
 		remainingFilesOther: "and {count} more files",
-		groupsOne: "{count} group · source queue",
-		groupsFew: "{count} groups · source queue",
-		groupsMany: "{count} groups · source queue",
-		groupsOther: "{count} groups · source queue",
-		noGroups: "There are no incoming groups yet.",
 	},
 	ru: {
 		artistNotSpecified: "Артист не указан",
@@ -73,7 +67,6 @@ export const incomingMessages = createNamespace({
 		automaticDirection: "автоматически",
 		otherwiseManual: "Иначе",
 		manualDirection: "ручной разбор, в том числе частичный",
-		overviewTitle: "Входящие группы",
 		overviewCaption:
 			"Файлы, пути, готовность источников и сохранённые оценки групп",
 		columnNumber: "№",
@@ -96,11 +89,6 @@ export const incomingMessages = createNamespace({
 		remainingFilesFew: "и ещё {count} файла",
 		remainingFilesMany: "и ещё {count} файлов",
 		remainingFilesOther: "и ещё {count} файлов",
-		groupsOne: "Группа: {count} · очередь источников",
-		groupsFew: "Группы: {count} · очередь источников",
-		groupsMany: "Групп: {count} · очередь источников",
-		groupsOther: "Групп: {count} · очередь источников",
-		noGroups: "Входящих групп пока нет.",
 	},
 });
 
@@ -115,17 +103,4 @@ export function incomingMessage(
 		/\{([^}]+)\}/g,
 		(_, name: string) => String(values[name] ?? `{${name}}`),
 	);
-}
-
-export function incomingGroupsCount(locale: Locale, count: number) {
-	const category = new Intl.PluralRules(locale).select(count);
-	const key =
-		category === "one"
-			? "groupsOne"
-			: locale === "ru" && category === "few"
-				? "groupsFew"
-				: locale === "ru"
-					? "groupsMany"
-					: "groupsOther";
-	return incomingMessages[locale][key].replace("{count}", String(count));
 }

@@ -23,6 +23,10 @@ import {
   type IncomingGroupViewRow,
 } from "./IncomingGroupsOverviewView";
 import {
+  IncomingGroupsPanel,
+  incomingGroupsEmpty,
+} from "./IncomingGroupsPanel";
+import {
   type IncomingGroupName,
   incomingGroupNameText,
 } from "./incomingGroupNames";
@@ -429,13 +433,12 @@ export function IncomingGroupsOverview({
   });
 
   return (
-    <section aria-labelledby="incoming-overview-title">
-      <h2 id="incoming-overview-title">{copy.overviewTitle}</h2>
-      <p className="min-h-5 text-sm" role="status">
-        {feedback && ui[feedback]}
-      </p>
+    <IncomingGroupsPanel
+      locale={locale}
+      count={rows.length}
+      status={feedback ? ui[feedback] : ""}
+    >
       <IncomingGroupsOverviewView
-        className="mt-2"
         labels={{
           caption: copy.overviewCaption,
           group: copy.group,
@@ -449,6 +452,7 @@ export function IncomingGroupsOverview({
           actions: ui.actions,
           noTitle: ui.noTitle,
           noValue: copy.noValue,
+          empty: incomingGroupsEmpty(locale),
           expand: ui.expand,
           openGroup: copy.openGroup,
         }}
@@ -464,6 +468,6 @@ export function IncomingGroupsOverview({
         }}
         disabled={feedback === "moving"}
       />
-    </section>
+    </IncomingGroupsPanel>
   );
 }

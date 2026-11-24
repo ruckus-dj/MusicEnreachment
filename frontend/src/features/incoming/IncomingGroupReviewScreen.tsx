@@ -1108,10 +1108,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             )}
           </p>
         ) : null}
-        {groupsQuery.data && groups.length === 0 ? (
-          <p className="rounded border border-stone-300 p-4">{copy.noGroups}</p>
-        ) : null}
-
         {groupsQuery.data ? (
           <IncomingGroupsOverview
             snapshot={groupsQuery.data}
