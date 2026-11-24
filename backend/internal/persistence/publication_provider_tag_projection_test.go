@@ -12,8 +12,8 @@ import (
 func TestBuildPublicationProviderCanonicalTagPatchUsesAcceptedFieldsAndTrackOverride(t *testing.T) {
 	context := publicationTagProjectionFixture()
 	context.Release.Name = "stale source-name fallback"
-	context.Release.Fields = json.RawMessage(`{"title":"Accepted album","normalized_tracks":[{"medium":1,"position":2,"recording_provider_key":"recording-key","title":"Track override"}]}`)
-	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"title": {}, "normalized_tracks": {}}
+	context.Release.Fields = json.RawMessage(`{"title":"Accepted album","disambiguation":"edition","normalized_tracks":[{"medium":1,"position":2,"recording_provider_key":"recording-key","title":"Track override"}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"title": {}, "disambiguation": {}, "normalized_tracks": {}}
 	context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey = 1, 2, "recording-key"
 	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Name: "stale source recording title", Fields: json.RawMessage(`{"title":"Recording title"}`), FieldEvidence: json.RawMessage(`{"title":{}}`)}
 
@@ -21,7 +21,7 @@ func TestBuildPublicationProviderCanonicalTagPatchUsesAcceptedFieldsAndTrackOver
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{"ALBUM": {"Accepted album"}, "TITLE": {"Track override"}}
+	want := map[string][]string{"ALBUM": {"Accepted album (edition)"}, "TITLE": {"Track override"}}
 	if !reflect.DeepEqual(patch, want) {
 		t.Fatalf("patch = %#v, want %#v", patch, want)
 	}

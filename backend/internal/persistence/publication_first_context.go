@@ -286,9 +286,8 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	if !ok {
 		return errors.New("first publication release identifiers require a transaction")
 	}
-	result.ProviderReleaseIdentifierBaseline, err = readProviderReleaseIdentifierBaseline(ctx, txValue, releaseID)
-	if err != nil {
-		return fmt.Errorf("read first publication release identifiers: %w", err)
+	if err := readFirstPublicationProviderRelease(ctx, txValue, releaseID, result); err != nil {
+		return err
 	}
 	if err := resolveFirstPublicationOptionalFields(result); err != nil {
 		return err
@@ -300,6 +299,41 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		return err
 	}
 	*out = result
+	return nil
+}
+
+func readFirstPublicationProviderRelease(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, result *LibraryFirstPublicationContext) error {
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+		return fmt.Errorf("lock MusicBrainz configuration for publication release: %w", err)
+	}
+	accepted, err := readAcceptedProviderReleaseFields(ctx, tx, releaseID)
+	if err != nil || accepted == nil {
+		return err
+	}
+	result.ProviderReleaseIdentifierBaseline, err = accepted.identifierBaseline(releaseID)
+	if err != nil {
+		return fmt.Errorf("read first publication release identifiers: %w", err)
+	}
+	// A saved title override already determines ALBUM. Do not make it depend
+	// on a provider suffix that will not be written.
+	switch result.Tags.Release.Desired.Desired["title"].State {
+	case librarymetadata.StateValue, librarymetadata.StateExplicitEmpty:
+		return nil
+	}
+	evidence, present := accepted.evidence["disambiguation"]
+	if !present {
+		return nil
+	}
+	if _, err := acceptedReleaseFieldEvidence(evidence); err != nil {
+		return fmt.Errorf("accepted provider release disambiguation evidence: %w", err)
+	}
+	value, err := decodeNonemptyAcceptedString(accepted.fields["disambiguation"])
+	if err != nil {
+		return fmt.Errorf("decode accepted provider release disambiguation: %w", err)
+	}
+	if value != nil && strings.TrimSpace(*value) != "" {
+		result.Tags.Release.Disambiguation = *value
+	}
 	return nil
 }
 

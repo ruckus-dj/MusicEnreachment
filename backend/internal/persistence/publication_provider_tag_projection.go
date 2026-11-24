@@ -22,6 +22,13 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 	}
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "title") {
 		if title := jsonString(releaseFields["title"]); strings.TrimSpace(title) != "" {
+			if hasProviderFieldEvidence(context.Release.FieldEvidence, "disambiguation") {
+				disambiguation, _, err := acceptedProviderString(releaseFields, "disambiguation")
+				if err != nil {
+					return nil, fmt.Errorf("decode accepted provider release disambiguation: %w", err)
+				}
+				title = publication.AlbumTagTitle(title, disambiguation)
+			}
 			values.ReleaseTitle = &title
 		}
 	}

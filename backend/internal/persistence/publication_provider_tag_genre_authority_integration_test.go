@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
@@ -173,6 +174,25 @@ func TestReadFirstPublicationProviderGenresUsesCurrentSourceAndBindingsPostgreSQ
 		t.Fatalf("bound first-publication provider context = %+v", snapshot)
 	}
 
+	// A stored accepted release disambiguation contributes to ALBUM only; it is
+	// never projected as an ALBUMVERSION override.
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{disambiguation}','"Deluxe Edition"'::jsonb,true), field_evidence=field_evidence || '{"disambiguation":{"authority":4,"fetch_order":2}}'::jsonb WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFirstPublicationProviderAlbum(t, ctx, fixture, fixture.release, []string{"Release (Deluxe Edition)"})
+	// An empty stored value leaves ALBUM unchanged.
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{disambiguation}','""'::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFirstPublicationProviderAlbum(t, ctx, fixture, fixture.release, []string{"Release"})
+	// Without stored evidence the value is not accepted even when it remains.
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{disambiguation}','"Deluxe Edition"'::jsonb,true), field_evidence=field_evidence-'disambiguation' WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFirstPublicationProviderAlbum(t, ctx, fixture, fixture.release, []string{"Release"})
+	// A release without an accepted provider binding keeps the base title too.
+	assertFirstPublicationProviderAlbum(t, ctx, fixture, uuid.New(), []string{"Release"})
+
 	if _, err := fixture.f.db.NewRaw(`DELETE FROM provider_local_track WHERE provider_id=? AND local_track_id=(SELECT track_id FROM release_track WHERE id=?)`, fixture.source.ProviderID, fixture.position).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +206,36 @@ func TestReadFirstPublicationProviderGenresUsesCurrentSourceAndBindingsPostgreSQ
 	}
 	if snapshot != nil {
 		t.Fatalf("provider context without a current binding = %+v, want nil", snapshot)
+	}
+}
+
+func assertFirstPublicationProviderAlbum(t *testing.T, ctx context.Context, fixture pendingGraphFixture, releaseID uuid.UUID, want []string) {
+	t.Helper()
+	result := &LibraryFirstPublicationContext{Tags: publication.TagProjectionInput{
+		Release: publication.ReleaseTags{
+			Title:   "Release",
+			Artist:  []librarymetadata.ArtistCredit{{ArtistName: "Artist", CreditName: "Artist"}},
+			Desired: &librarymetadata.Envelope{Version: 1, Scope: librarymetadata.ScopeRelease, Desired: map[string]librarymetadata.FieldValue{}},
+		},
+		Position: publication.PositionTags{
+			Title:  "Track",
+			Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", CreditName: "Artist"}},
+		},
+	}}
+	if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return readFirstPublicationProviderRelease(ctx, tx, releaseID, result)
+	}); err != nil {
+		t.Fatalf("read first publication provider release: %v", err)
+	}
+	projection, err := publication.ProjectTags(result.Tags)
+	if err != nil {
+		t.Fatalf("project first publication provider tags: %v", err)
+	}
+	if !reflect.DeepEqual(projection.Tags["ALBUM"], want) {
+		t.Fatalf("projected album = %#v, want %#v", projection.Tags["ALBUM"], want)
+	}
+	if version, present := projection.Tags["ALBUMVERSION"]; present {
+		t.Fatalf("provider release disambiguation leaked into ALBUMVERSION: %#v", version)
 	}
 }
 

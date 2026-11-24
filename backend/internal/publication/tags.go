@@ -22,6 +22,7 @@ type TagProjectionInput struct {
 
 type ReleaseTags struct {
 	Title                 string
+	Disambiguation        string `json:",omitempty"`
 	Artist                []librarymetadata.ArtistCredit
 	ArtistCreditsResolved bool
 	ArtistCreditTerminal  bool
@@ -142,7 +143,7 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 	if input.Release.ArtistCreditsResolved || !hasDesiredCreditField(input.Release.Desired) {
 		projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", input.Release.Artist)...)
 	}
-	projection.Tags["ALBUM"] = []string{input.Release.Title}
+	projection.Tags["ALBUM"] = []string{AlbumTagTitle(input.Release.Title, input.Release.Disambiguation)}
 	projection.Tags["TITLE"] = []string{input.Position.Title}
 	projection.Fields["release.title"] = TagFieldResult{Status: "represented"}
 	projection.Fields["position.title"] = TagFieldResult{Status: "represented"}
@@ -165,6 +166,14 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired, input.Release.ArtistCreditsResolved, input.OutputContainer)...)
 	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired, input.Position.ArtistCreditsResolved, input.OutputContainer)...)
 	return projection, nil
+}
+
+// AlbumTagTitle formats the published ALBUM, without changing the catalog title.
+func AlbumTagTitle(title, disambiguation string) string {
+	if strings.TrimSpace(disambiguation) == "" {
+		return title
+	}
+	return title + " (" + disambiguation + ")"
 }
 
 func validateDesiredEnvelope(envelope *librarymetadata.Envelope, scope librarymetadata.Scope) error {

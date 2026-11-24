@@ -93,7 +93,14 @@ func readProviderGenreBaseline(ctx context.Context, tx bun.Tx, scope librarymeta
 	return &ProviderGenreBaseline{ProviderCode: "musicbrainz", SourceID: source.ID, ProviderKey: row.ProviderKey, Authority: authority, FetchOrder: fetchOrder, Genres: genres, Digest: hex.EncodeToString(digest[:])}, nil
 }
 
-func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, ownerID uuid.UUID) (*ProviderReleaseIdentifierBaseline, error) {
+type acceptedProviderReleaseFields struct {
+	source   catalogProviderSource
+	key      string
+	fields   map[string]json.RawMessage
+	evidence map[string]json.RawMessage
+}
+
+func readAcceptedProviderReleaseFields(ctx context.Context, tx bun.Tx, ownerID uuid.UUID) (*acceptedProviderReleaseFields, error) {
 	source, found, err := catalogMusicBrainzSource(ctx, tx)
 	if err != nil || !found {
 		return nil, err
@@ -112,19 +119,32 @@ func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, owner
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read accepted provider release identifiers: %w", err)
+		return nil, fmt.Errorf("read accepted provider release fields: %w", err)
 	}
 	fields, err := decodeFrozenObject(row.Fields)
 	if err != nil {
-		return nil, fmt.Errorf("decode accepted provider release identifier fields: %w", err)
+		return nil, fmt.Errorf("decode accepted provider release fields: %w", err)
 	}
 	var rawEvidence map[string]json.RawMessage
 	if err := json.Unmarshal(row.Evidence, &rawEvidence); err != nil || rawEvidence == nil {
-		return nil, errors.New("invalid accepted provider release identifier evidence")
+		return nil, errors.New("invalid accepted provider release field evidence")
 	}
-	result := &ProviderReleaseIdentifierBaseline{ProviderCode: "musicbrainz", SourceID: source.ID, ProviderKey: row.ProviderKey, Evidence: make(map[string]ProviderFieldEvidence)}
+	return &acceptedProviderReleaseFields{source: source, key: row.ProviderKey, fields: fields, evidence: rawEvidence}, nil
+}
+
+func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, ownerID uuid.UUID) (*ProviderReleaseIdentifierBaseline, error) {
+	accepted, err := readAcceptedProviderReleaseFields(ctx, tx, ownerID)
+	if err != nil || accepted == nil {
+		return nil, err
+	}
+	return accepted.identifierBaseline(ownerID)
+}
+
+func (accepted *acceptedProviderReleaseFields) identifierBaseline(ownerID uuid.UUID) (*ProviderReleaseIdentifierBaseline, error) {
+	source, fields, rawEvidence := accepted.source, accepted.fields, accepted.evidence
+	result := &ProviderReleaseIdentifierBaseline{ProviderCode: "musicbrainz", SourceID: source.ID, ProviderKey: accepted.key, Evidence: make(map[string]ProviderFieldEvidence)}
 	if raw, present := rawEvidence["asin"]; present {
-		evidence, err := acceptedReleaseIdentifierEvidence(raw)
+		evidence, err := acceptedReleaseFieldEvidence(raw)
 		if err != nil {
 			return nil, fmt.Errorf("accepted provider ASIN evidence: %w", err)
 		}
@@ -137,7 +157,7 @@ func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, owner
 		}
 	}
 	if raw, present := rawEvidence["text-representation"]; present {
-		evidence, err := acceptedReleaseIdentifierEvidence(raw)
+		evidence, err := acceptedReleaseFieldEvidence(raw)
 		if err != nil {
 			return nil, fmt.Errorf("accepted provider script evidence: %w", err)
 		}
@@ -162,7 +182,7 @@ func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, owner
 		ASIN                  *string                          `json:"asin,omitempty"`
 		Script                *string                          `json:"script,omitempty"`
 		Evidence              map[string]ProviderFieldEvidence `json:"evidence"`
-	}{1, ownerID, source.ID, source.ConfigurationIdentity, "musicbrainz", row.ProviderKey, result.ASIN, result.Script, result.Evidence}
+	}{1, ownerID, source.ID, source.ConfigurationIdentity, "musicbrainz", accepted.key, result.ASIN, result.Script, result.Evidence}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
 		return nil, fmt.Errorf("encode provider release identifier baseline identity: %w", err)
@@ -172,7 +192,7 @@ func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, owner
 	return result, nil
 }
 
-func acceptedReleaseIdentifierEvidence(raw json.RawMessage) (ProviderFieldEvidence, error) {
+func acceptedReleaseFieldEvidence(raw json.RawMessage) (ProviderFieldEvidence, error) {
 	var object map[string]json.RawMessage
 	if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &object) != nil || object == nil {
 		return ProviderFieldEvidence{}, errors.New("expected an evidence object")

@@ -389,7 +389,8 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	} else if len(request.Tools) != 0 {
 		return uuid.Nil, fmt.Errorf("admit publication: tool selections require tools-read admission")
 	}
-	if repository.publicationScorer != nil {
+	// Take the provider configuration lock before planning can lock app_setting.
+	if repository.publicationScorer != nil || request.firstAdmission != nil || request.sourceRepublishAdmission != nil {
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: lock matching provider configuration: %w", err)
 		}
