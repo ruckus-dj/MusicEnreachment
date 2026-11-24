@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -231,6 +232,69 @@ describe("SetupManager", () => {
 
     await waitFor(() => expect(operations).toHaveBeenCalled());
     expect(selector).toBe("install");
+  });
+
+  it("confirms only the exact Setup tool conflicts and keeps a failed start in the dialog", async () => {
+    const current = state(paths);
+    const conflict = "/srv/tools/ffmpeg/bin/ffmpeg";
+    const preflights = vi.fn();
+    const starts = vi.fn();
+    server.use(
+      http.get("/api/tools/catalog", ({ request }) => {
+        const kind = new URL(request.url).searchParams.get("package_kind");
+        return HttpResponse.json({
+          package_kind: kind,
+          platform: current.platform,
+          releases: kind === "ffmpeg" ? [{ identity: "8.0.1" }] : [],
+        });
+      }),
+      http.post("/api/tools/installations/preflight", async ({ request }) => {
+        preflights(await request.json());
+        return HttpResponse.json({
+          preflight_token: "setup-preflight-token",
+          conflicts: [conflict],
+          targets: [conflict, "/srv/tools/ffmpeg/bin/ffprobe"],
+        });
+      }),
+      http.post("/api/tools/installations", async ({ request }) => {
+        starts(await request.json());
+        return HttpResponse.json(
+          { detail: "stale preflight" },
+          { status: 409 },
+        );
+      }),
+    );
+    localStorage.setItem("melotrove.setup.step", "tools");
+    renderSetup(current);
+
+    const picker = await screen.findByRole("button", {
+      name: /Версия · ffmpeg/,
+    });
+    await waitFor(() => expect(picker).toBeEnabled());
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByRole("option", { name: "8.0.1" }));
+    const install = screen.getByRole("button", { name: "Установить FFmpeg" });
+    await waitFor(() => expect(install).toBeEnabled());
+    fireEvent.click(install);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Перезапись только следующих файлов:",
+    });
+    expect(preflights).toHaveBeenCalledExactlyOnceWith({
+      package_kind: "ffmpeg",
+      release_identity: "8.0.1",
+    });
+    expect(starts).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(conflict)).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить перезапись" }),
+    );
+    const problem = await within(dialog).findByRole("alert");
+    expect(problem).toBeVisible();
+    expect(starts).toHaveBeenCalledExactlyOnceWith({
+      preflight_token: "setup-preflight-token",
+      confirmed_conflicts: [conflict],
+    });
   });
 
   it("requires a catalog proof for the verified provider before continuing", async () => {

@@ -91,8 +91,8 @@ const english = {
   toolCatalogRefresh: "Refresh catalog",
   confirmOverwrite: "Overwrite only these files:",
   confirmOverwriteButton: "Confirm overwrite",
+  startingToolDownload: "Starting tool download…",
   cancel: "Cancel",
-  conflictConfirmation: "Confirm file conflicts",
   hidden: "[hidden]",
   multipleReadyTools:
     "Multiple ready versions of a package were found. Initial tool setup has stopped. Do not delete or switch versions; ask an administrator to inspect the setup state.",
@@ -209,8 +209,8 @@ const russian: SetupMessages = {
   toolCatalogRefresh: "Обновить каталог",
   confirmOverwrite: "Перезапись только следующих файлов:",
   confirmOverwriteButton: "Подтвердить перезапись",
+  startingToolDownload: "Запуск загрузки инструмента…",
   cancel: "Отмена",
-  conflictConfirmation: "Подтверждение конфликтов",
   hidden: "[скрыто]",
   multipleReadyTools:
     "Найдено несколько готовых версий одного пакета. Первичная настройка инструментов остановлена. Не удаляйте и не переключайте версии; обратитесь к администратору для проверки состояния настройки.",

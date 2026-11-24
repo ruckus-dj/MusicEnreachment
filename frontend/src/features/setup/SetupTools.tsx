@@ -26,6 +26,7 @@ import {
 import { OperationProgress } from "./OperationProgress";
 import { SetupFeedbackView } from "./SetupFeedbackView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
+import { SetupToolConfirmationView } from "./SetupToolConfirmationView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -43,6 +44,10 @@ function savedIds(): string[] {
   const saved =
     window.localStorage.getItem(operationKey)?.split(",").filter(Boolean) || [];
   return [...new Set(saved)];
+}
+
+function toolExecutables(kind: Kind): string[] {
+  return kind === "ffmpeg" ? ["ffmpeg", "ffprobe"] : ["fpcalc"];
 }
 
 export function SetupTools({
@@ -72,8 +77,11 @@ export function SetupTools({
   const [selected, setSelected] = useState<Partial<Record<Kind, string>>>({});
   const [preflight, setPreflight] = useState<{
     kind: Kind;
+    release: string;
     plan: InstallPreflightBody;
   }>();
+  const [confirmError, setConfirmError] = useState<SetupFeedback | null>(null);
+  const installTrigger = useRef<HTMLElement | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [operationsError, setOperationsError] = useState<SetupFeedback | null>(
@@ -188,11 +196,13 @@ export function SetupTools({
       setIds([...initialIds.current]);
     }
     setPreflight(undefined);
+    setConfirmError(null);
   }
   async function install(kind: Kind) {
     setPending(true);
     setError(null);
     setPreflight(undefined);
+    setConfirmError(null);
     try {
       if (readyByKind(kind).length) {
         throw setupMessage("readyVersionExists");
@@ -204,7 +214,8 @@ export function SetupTools({
         identity,
         setupHttpError,
       );
-      if (plan.conflicts?.length) setPreflight({ kind, plan });
+      if (plan.conflicts?.length)
+        setPreflight({ kind, release: identity, plan });
       else await start(plan, kind);
     } catch (reason) {
       setError(setupFeedback(reason, "unknownError"));
@@ -213,13 +224,14 @@ export function SetupTools({
     }
   }
   async function confirm() {
-    if (!preflight) return;
+    if (!preflight || pending) return;
     setPending(true);
     setError(null);
+    setConfirmError(null);
     try {
       await start(preflight.plan, preflight.kind);
     } catch (reason) {
-      setError(setupFeedback(reason, "unknownError"));
+      setConfirmError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
@@ -250,10 +262,13 @@ export function SetupTools({
           [kind]: identity ?? "",
         }));
         setPreflight(undefined);
+        setConfirmError(null);
       },
       action: {
         disabled: pending || !selected[kind],
-        onPress: () => {
+        onPress: ({ target }) => {
+          installTrigger.current =
+            target instanceof HTMLElement ? target : null;
           void install(kind);
         },
       },
@@ -268,23 +283,31 @@ export function SetupTools({
       )}
       {!legacyConflict && <SetupToolCardsView locale={locale} tools={cards} />}
       {!legacyConflict && preflight?.plan.conflicts?.length ? (
-        <fieldset aria-label={messages.conflictConfirmation}>
-          <legend>{messages.confirmOverwrite}</legend>
-          <ul>
-            {preflight.plan.conflicts.map((path) => (
-              <li key={path}>{path}</li>
-            ))}
-          </ul>
-          <AppButton isDisabled={pending} onPress={confirm}>
-            {messages.confirmOverwriteButton}
-          </AppButton>
-          <AppButton
-            isDisabled={pending}
-            onPress={() => setPreflight(undefined)}
-          >
-            {messages.cancel}
-          </AppButton>
-        </fieldset>
+        <SetupToolConfirmationView
+          title={messages.confirmOverwrite}
+          packageName={messages[preflight.kind]}
+          release={preflight.release}
+          executables={toolExecutables(preflight.kind)}
+          conflicts={preflight.plan.conflicts}
+          confirmLabel={messages.confirmOverwriteButton}
+          cancelLabel={messages.cancel}
+          busy={pending}
+          busyLabel={messages.startingToolDownload}
+          error={
+            confirmError ? setupFeedbackText(confirmError, locale) : undefined
+          }
+          onConfirm={() => {
+            void confirm();
+          }}
+          onCancel={() => {
+            const trigger = installTrigger.current;
+            setPreflight(undefined);
+            setConfirmError(null);
+            requestAnimationFrame(() => {
+              if (trigger?.isConnected) trigger.focus();
+            });
+          }}
+        />
       ) : null}
       {completed.map((item) => (
         <p key={item.id} role="status" className="setup-operation">

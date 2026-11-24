@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "../../components/ui";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -26,6 +25,7 @@ import { SetupAcoustIDView, SetupProvidersView } from "./SetupProvidersView";
 import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummaryView } from "./SetupSummaryView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
+import { SetupToolConfirmationView } from "./SetupToolConfirmationView";
 import { SetupWizard } from "./SetupWizard";
 import {
 	type SetupToolKind,
@@ -103,6 +103,9 @@ export function SetupScreen({
 		onSettings({ ...settings, ...values });
 	const toolSelection = settings.selectedRelease ?? {};
 	const installations = settings.installations ?? [];
+	const installRelease = installTarget
+		? toolSelection[installTarget]
+		: undefined;
 	const activeInstallation = (kind: SetupToolKind) =>
 		installations.find(
 			(item) => item.package === kind && item.status === "active",
@@ -502,26 +505,17 @@ export function SetupScreen({
 					/>
 				)}
 			</SetupWizard>
-			{installTarget && toolSelection[installTarget] && (
-				<Modal
-					isOpen
-					onOpenChange={(open) => !open && setInstallTarget(null)}
-					isDismissable
-				>
-					<Dialog>
-						<Heading slot="title">{copy.installVerify}</Heading>
-						<p>
-							{installTarget} · {toolSelection[installTarget]}
-						</p>
-						<p>{setupToolExecutables(installTarget).join(", ")}</p>
-						<Button isDisabled={platformMismatch} onPress={installTool}>
-							{copy.installVerify}
-						</Button>
-						<Button onPress={() => setInstallTarget(null)}>
-							{copy.cancel}
-						</Button>
-					</Dialog>
-				</Modal>
+			{installTarget && installRelease && (
+				<SetupToolConfirmationView
+					title={copy.installVerify}
+					packageName={installTarget}
+					release={installRelease}
+					executables={setupToolExecutables(installTarget)}
+					confirmLabel={copy.installVerify}
+					cancelLabel={copy.cancel}
+					onConfirm={installTool}
+					onCancel={() => setInstallTarget(null)}
+				/>
 			)}
 		</>
 	);

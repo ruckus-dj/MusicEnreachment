@@ -1,3 +1,4 @@
+import type { PressEvent } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
 import {
   type SetupToolRelease,
@@ -16,7 +17,7 @@ export type SetupToolReadyVersion = {
 
 export type SetupToolAction = {
   disabled: boolean;
-  onPress: () => void;
+  onPress: (event: PressEvent) => void;
 };
 
 export type SetupToolVerification =
