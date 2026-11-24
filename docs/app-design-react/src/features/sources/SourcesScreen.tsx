@@ -21,16 +21,13 @@ import {
 	type SourceRegistrationErrorKey,
 	SourceRegistrationView,
 	sourceRegistrationMessage,
-	sourceRegistrationMessages,
 	useSourceRegistrationFocus,
 } from "./SourceRegistrationView";
-import {
-	SourceRootDetailView,
-	sourcePublicationsNote,
-} from "./SourceRootDetailView";
+import { SourceRootDetailView } from "./SourceRootDetailView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
-import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import type { SourceRootListRow } from "./SourceRootList";
 import { SourceListHeadingView } from "./SourceListHeadingView";
+import { SourceListPageView } from "./SourceListPageView";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import {
 	type SourceRootChange,
@@ -345,7 +342,7 @@ export function SourcesScreen({
 		);
 
 	return (
-		<section className={styles.page}>
+		<section className={selectedRootId ? styles.page : undefined}>
 			{selectedRootId ? (
 				root ? (
 					<SourceRootDetailView
@@ -479,67 +476,68 @@ export function SourcesScreen({
 					</>
 				)
 			) : (
-				<>
-					<SourceListHeadingView
-						locale={locale}
-						registration={
-							adding
-								? undefined
-								: {
-										id: registrationFocus.triggerId,
-										onPress: () => {
-											setAdding(true);
-											setName("");
-											setPath("/mnt/music");
-											setMode("");
-											setRegistrationError(null);
-										},
-									}
-						}
-					/>
-					{noticeNode}
-					{adding && (
-						<SourceRegistrationView
+				<SourceListPageView
+					locale={locale}
+					heading={
+						<SourceListHeadingView
 							locale={locale}
-							name={name}
-							path={path}
-							mode={mode}
-							error={
-								registrationError
-									? sourceRegistrationMessage(locale, registrationError)
-									: undefined
+							registration={
+								adding
+									? undefined
+									: {
+											id: registrationFocus.triggerId,
+											onPress: () => {
+												setAdding(true);
+												setName("");
+												setPath("/mnt/music");
+												setMode("");
+												setRegistrationError(null);
+											},
+										}
 							}
-							browse={browseDemoDirectory}
-							resolveInitialPath={demoDirectoryStart}
-							onNameChange={setName}
-							onPathChange={setPath}
-							onModeChange={setMode}
-							onSubmit={register}
-							onCancel={() => {
-								registrationFocus.restoreOnClose();
-								setAdding(false);
-								setRegistrationError(null);
-							}}
 						/>
-					)}
-					<p className="my-2 text-xs text-[var(--muted)]">
-						{sourceRegistrationMessages[locale].sourceTableHelp}
-					</p>
-					<SourceRootList
-						rows={rows}
-						locale={locale}
-						onScan={(id) => {
-							const source = roots.find((item) => item.id === id);
-							if (source) startScan(source);
-						}}
-					/>
-					<SourceArtifactCleanupView {...cleanup} />
-					<p>{sourcePublicationsNote[locale]}</p>
-					<p>
-						{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-						<a href="#settings">{m("configureInSettings")}</a>
-					</p>
-				</>
+					}
+					registration={
+						adding && (
+							<SourceRegistrationView
+								locale={locale}
+								name={name}
+								path={path}
+								mode={mode}
+								error={
+									registrationError
+										? sourceRegistrationMessage(locale, registrationError)
+										: undefined
+								}
+								browse={browseDemoDirectory}
+								resolveInitialPath={demoDirectoryStart}
+								onNameChange={setName}
+								onPathChange={setPath}
+								onModeChange={setMode}
+								onSubmit={register}
+								onCancel={() => {
+									registrationFocus.restoreOnClose();
+									setAdding(false);
+									setRegistrationError(null);
+								}}
+							/>
+						)
+					}
+					feedback={noticeNode}
+					rows={rows}
+					onScan={(id) => {
+						const source = roots.find((item) => item.id === id);
+						if (source) startScan(source);
+					}}
+					loaded
+					cleanup={<SourceArtifactCleanupView {...cleanup} />}
+					footer={
+						<p>
+							{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+							<a href="#settings">{m("configureInSettings")}</a>
+						</p>
+					}
+				/>
 			)}
 			{removal && (
 				<SourceRootRemovalDialog

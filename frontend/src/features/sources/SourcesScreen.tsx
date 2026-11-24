@@ -9,14 +9,14 @@ import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
 import { SourceListHeadingView } from "./SourceListHeadingView";
+import { SourceListPageView } from "./SourceListPageView";
 import {
   type SourceRegistrationErrorKey,
   SourceRegistrationView,
   sourceRegistrationMessage,
-  sourceRegistrationMessages,
   useSourceRegistrationFocus,
 } from "./SourceRegistrationView";
-import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import type { SourceRootListRow } from "./SourceRootList";
 import { sourceMessage } from "./sourceMessages";
 import { SourceScansProvider, useSourceScans } from "./sourceScans";
 import {
@@ -243,99 +243,96 @@ function SourceListScreen() {
     : undefined;
 
   return (
-    <section
-      aria-labelledby="sources-title"
-      aria-busy={scans.checking || undefined}
-      className="mx-auto max-w-5xl py-3"
-    >
-      <SourceListHeadingView
-        locale={locale}
-        headingRef={heading}
-        registration={
-          creating
-            ? undefined
-            : {
-                id: registrationFocus.triggerId,
-                onPress: () => {
-                  setFormError(null);
-                  setCreating(true);
-                },
-              }
-        }
-      />
-      {creating && (
-        <SourceRegistrationView
+    <SourceListPageView
+      locale={locale}
+      ariaBusy={scans.checking}
+      heading={
+        <SourceListHeadingView
           locale={locale}
-          name={name}
-          path={path}
-          mode={processingMode}
-          saving={saving}
-          error={registrationError}
-          browse={browseServerDirectory}
-          onNameChange={setName}
-          onPathChange={setPath}
-          onModeChange={setProcessingMode}
-          onSubmit={() => void register()}
-          onCancel={cancelCreate}
+          headingRef={heading}
+          registration={
+            creating
+              ? undefined
+              : {
+                  id: registrationFocus.triggerId,
+                  onPress: () => {
+                    setFormError(null);
+                    setCreating(true);
+                  },
+                }
+          }
         />
-      )}
-      {busy && sources && (
-        <p role="status" className="m-0 text-xs text-[var(--muted)]">
-          {t("requestRunning")}
-        </p>
-      )}
-      {error && sources && (
-        <div
-          role="alert"
-          className="my-2 flex flex-wrap items-center gap-2 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-        >
-          <p className="m-0">{renderSourceError(error, locale)}</p>
-          <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
-        </div>
-      )}
-      {scanErrors.length > 0 && (
-        <div
-          role="alert"
-          className="my-2 grid gap-1 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-        >
-          {scanErrors.map(({ root, scanError }) => (
-            <p key={root.id} className="m-0">
-              {root.display_name}: {renderSourceError(scanError, locale)}
+      }
+      registration={
+        creating && (
+          <SourceRegistrationView
+            locale={locale}
+            name={name}
+            path={path}
+            mode={processingMode}
+            saving={saving}
+            error={registrationError}
+            browse={browseServerDirectory}
+            onNameChange={setName}
+            onPathChange={setPath}
+            onModeChange={setProcessingMode}
+            onSubmit={() => void register()}
+            onCancel={cancelCreate}
+          />
+        )
+      }
+      feedback={
+        <>
+          {busy && sources && (
+            <p role="status" className="m-0 text-xs text-[var(--muted)]">
+              {t("requestRunning")}
             </p>
-          ))}
-        </div>
-      )}
-      {scans.discoveryError && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p
-            role="alert"
-            className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-          >
-            {renderSourceError(scans.discoveryError, locale)}
-          </p>
-          <AppButton onPress={() => void scans.discover()}>
-            {t("retryLoad")}
-          </AppButton>
-        </div>
-      )}
-      {sources && (
-        <p className="my-2 text-xs text-[var(--muted)]">
-          {sourceRegistrationMessages[locale].sourceTableHelp}
-        </p>
-      )}
-      <fieldset
-        disabled={scanUnavailable && listState === undefined}
-        className="m-0 min-w-0 border-0 p-0"
-      >
-        <SourceRootList
-          rows={rows}
-          locale={locale}
-          state={listState}
-          onScan={startScan}
-        />
-      </fieldset>
-      {sources && <SourceArtifactCleanupPanel />}
-    </section>
+          )}
+          {error && sources && (
+            <div
+              role="alert"
+              className="my-2 flex flex-wrap items-center gap-2 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+            >
+              <p className="m-0">{renderSourceError(error, locale)}</p>
+              <AppButton onPress={() => void load()}>
+                {t("retryLoad")}
+              </AppButton>
+            </div>
+          )}
+          {scanErrors.length > 0 && (
+            <div
+              role="alert"
+              className="my-2 grid gap-1 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+            >
+              {scanErrors.map(({ root, scanError }) => (
+                <p key={root.id} className="m-0">
+                  {root.display_name}: {renderSourceError(scanError, locale)}
+                </p>
+              ))}
+            </div>
+          )}
+          {scans.discoveryError && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p
+                role="alert"
+                className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+              >
+                {renderSourceError(scans.discoveryError, locale)}
+              </p>
+              <AppButton onPress={() => void scans.discover()}>
+                {t("retryLoad")}
+              </AppButton>
+            </div>
+          )}
+        </>
+      }
+      rows={rows}
+      listState={listState}
+      onScan={startScan}
+      listDisabled={scanUnavailable && listState === undefined}
+      loaded={sources !== undefined}
+      cleanup={sources ? <SourceArtifactCleanupPanel /> : undefined}
+    />
   );
 }
 
