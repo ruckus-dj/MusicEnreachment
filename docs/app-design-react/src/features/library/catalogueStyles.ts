@@ -1,3 +1,5 @@
+import { libraryEditionCardStyles } from "./LibraryEditionCard";
+
 /** Tailwind utilities for the catalogue screens; kept literal for Tailwind scanning. */
 export const catalogueStyles = {
 	shell:
@@ -77,21 +79,17 @@ export const catalogueStyles = {
 		"min-h-0 border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-[var(--accent)] hover:underline",
 	previewTable:
 		"overflow-auto rounded-[4px] border border-[var(--line)] [&_table]:w-full [&_table]:min-w-[700px] [&_table]:border-collapse [&_table]:text-[11px] [&_th]:px-2 [&_th]:py-[7px] [&_td]:px-2 [&_td]:py-[7px] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_th]:text-left [&_td]:text-left [&_th]:align-middle [&_td]:align-top [&_td:nth-child(2)]:align-middle [&_th]:[overflow-wrap:anywhere] [&_td]:[overflow-wrap:anywhere] [&_th]:bg-[var(--raised)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_tr:last-child>*]:border-b-0",
-	editions: "border-t border-[var(--line)]",
-	albumRow: "my-3",
-	albumCard:
-		"relative min-w-0 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_5px_18px_color-mix(in_srgb,var(--ink)_5%,transparent)] transition-[border-color,box-shadow] duration-[160ms] data-[expanded]:border-[color-mix(in_srgb,var(--accent)_45%,var(--line))] data-[expanded]:shadow-[0_10px_28px_color-mix(in_srgb,var(--ink)_9%,transparent)] [&_.catalogue-edition-trigger]:before:hidden [&_.catalogue-edition-trigger]:after:content-['⌄'] [&_.catalogue-edition-trigger]:after:text-[18px] [&_.catalogue-edition-trigger]:after:text-[var(--accent)] [&_.catalogue-edition-trigger]:after:transition-transform [&_.catalogue-edition-trigger]:after:duration-[160ms] [&[data-expanded]_.catalogue-edition-trigger]:after:rotate-180 [&_.artist-album-delete]:absolute [&_.artist-album-delete]:right-[27px] [&_.artist-album-delete]:top-1/2 [&_.artist-album-delete]:z-[2] [&_.artist-album-delete]:size-[38px] [&_.artist-album-delete]:min-h-[38px] [&_.artist-album-delete]:min-w-[38px] [&_.artist-album-delete]:-translate-y-1/2 [&_.artist-album-delete]:rounded-[7px] [&_.artist-album-delete]:border [&_.artist-album-delete]:border-[color-mix(in_srgb,var(--error)_48%,var(--control))] [&_.artist-album-delete]:bg-[var(--surface)] [&_.artist-album-delete]:p-0 [&_.artist-album-delete]:text-[var(--error)] [&_.artist-album-delete:hover]:border-[var(--error)] [&_.artist-album-delete:hover]:bg-[var(--error-soft)] [&_.artist-album-delete:focus-visible]:outline [&_.artist-album-delete:focus-visible]:outline-2 [&_.artist-album-delete:focus-visible]:outline-[var(--focus)] [&_.artist-album-delete:focus-visible]:outline-offset-2",
-	albumHeader: "relative",
+	editions: libraryEditionCardStyles.list,
+	albumRow: libraryEditionCardStyles.row,
+	albumCard: `${libraryEditionCardStyles.card} [&_.catalogue-edition-trigger]:before:hidden [&_.catalogue-edition-trigger]:after:content-['⌄'] [&_.catalogue-edition-trigger]:after:text-[18px] [&_.catalogue-edition-trigger]:after:text-[var(--accent)] [&_.catalogue-edition-trigger]:after:transition-transform [&_.catalogue-edition-trigger]:after:duration-[160ms] [&[data-expanded]_.catalogue-edition-trigger]:after:rotate-180 [&_.artist-album-delete]:absolute [&_.artist-album-delete]:right-[27px] [&_.artist-album-delete]:top-1/2 [&_.artist-album-delete]:z-[2] [&_.artist-album-delete]:size-[38px] [&_.artist-album-delete]:min-h-[38px] [&_.artist-album-delete]:min-w-[38px] [&_.artist-album-delete]:-translate-y-1/2 [&_.artist-album-delete]:rounded-[7px] [&_.artist-album-delete]:border [&_.artist-album-delete]:border-[color-mix(in_srgb,var(--error)_48%,var(--control))] [&_.artist-album-delete]:bg-[var(--surface)] [&_.artist-album-delete]:p-0 [&_.artist-album-delete]:text-[var(--error)] [&_.artist-album-delete:hover]:border-[var(--error)] [&_.artist-album-delete:hover]:bg-[var(--error-soft)] [&_.artist-album-delete:focus-visible]:outline [&_.artist-album-delete:focus-visible]:outline-2 [&_.artist-album-delete:focus-visible]:outline-[var(--focus)] [&_.artist-album-delete:focus-visible]:outline-offset-2`,
+	albumHeader: libraryEditionCardStyles.header,
 	albumTrigger:
 		"grid min-h-[94px] w-full grid-cols-[68px_minmax(0,1fr)_18px] items-center gap-[13px] border-0 bg-transparent py-3 pl-[15px] pr-[66px] text-left before:hidden after:content-['⌄'] after:text-[18px] after:text-[var(--accent)] after:transition-transform after:duration-[160ms] data-[expanded]:after:rotate-180 max-[600px]:min-h-20 max-[600px]:grid-cols-[54px_minmax(0,1fr)_14px] max-[600px]:items-start max-[600px]:gap-[9px] max-[600px]:py-[9px] max-[600px]:pl-[9px]",
 	albumDelete:
 		"absolute right-[27px] top-1/2 z-[2] grid size-[38px] min-h-[38px] min-w-[38px] -translate-y-1/2 place-items-center rounded-[7px] border border-[color-mix(in_srgb,var(--error)_48%,var(--control))] bg-[var(--surface)] p-0 text-[var(--error)] hover:border-[var(--error)] hover:bg-[var(--error-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2",
-	albumCopy:
-		"grid min-w-0 gap-[5px] text-left [&>strong]:text-[clamp(14px,1.35vw,18px)] [&>strong]:leading-[1.2] [&>strong]:tracking-[-.015em] [&>strong]:[overflow-wrap:anywhere]",
-	albumMeta:
-		"block text-[12px] font-normal leading-[1.4] text-[var(--muted)] [overflow-wrap:anywhere]",
-	albumPanel:
-		"border-t border-[var(--line)] [&_.demo-preview-table]:mx-3 [&_.demo-preview-table]:mb-3",
+	albumCopy: libraryEditionCardStyles.copy,
+	albumMeta: libraryEditionCardStyles.meta,
+	albumPanel: `${libraryEditionCardStyles.panel} [&_.demo-preview-table]:mx-3 [&_.demo-preview-table]:mb-3`,
 	albumActions: "px-[13px] py-[10px]",
 	artistPanel:
 		"my-[10px] rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[0_2px_8px_#00000008] [&_h2]:mb-[9px] [&_h2]:text-sm [&_p]:my-1 [&_p]:mb-3 [&_p]:text-xs [&_p]:text-[var(--muted)] [&_select]:min-h-[34px] [&_select]:rounded-[4px] [&_select]:border [&_select]:border-[var(--control)] [&_select]:bg-[var(--surface)] [&_select]:px-2 [&_select]:py-[5px]",

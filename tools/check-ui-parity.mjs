@@ -85,6 +85,7 @@ const pairs = [
       "LibraryArtistHeadingView.tsx",
       "LibraryArtistReleaseTracksView.tsx",
       "LibraryEditionArtwork.tsx",
+      "LibraryEditionCard.tsx",
       "LibraryCatalogFilterView.tsx",
       "LibraryCatalogControls.tsx",
       "LibraryMissingEditionView.tsx",

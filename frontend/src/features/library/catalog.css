@@ -6,7 +6,7 @@
 }
 
 .library-catalog h1 { font-size: 22px; line-height: 28px; }
-.library-catalog h2 { font-size: 16px; line-height: 22px; }
+.library-catalog h2:where(:not([data-library-edition-title])) { font-size: 16px; line-height: 22px; }
 .library-catalog a { color: var(--ink); text-decoration: none; }
 .library-catalog a:hover { color: var(--accent); text-decoration: underline; }
 .library-catalog button, .library-catalog input, .library-catalog select {
@@ -29,7 +29,6 @@
 .catalog-state h2, .catalog-state p { margin: 0 0 8px; }
 .catalog-state--error { border-color: var(--danger, var(--line)); }
 .catalog-back { display: inline-block; margin-bottom: 12px; }
-.catalog-artist-releases { display: grid; gap: 8px; margin-top: 12px; }
 .catalog-artist-release { padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .catalog-release-heading { align-items: center; }
 .catalog-release-heading > div { flex: 1; }

@@ -15,6 +15,10 @@ import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import {
+  LibraryEditionCard,
+  libraryEditionCardStyles,
+} from "./LibraryEditionCard";
+import {
   libraryArtistRouteHref,
   libraryRouteHref,
   parseLibraryArtistRoute,
@@ -243,7 +247,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             </section>
           ) : releases?.items.length ? (
             <section
-              className="catalog-artist-releases"
+              className={`${libraryEditionCardStyles.list} mt-3 [&>.catalog-artist-release]:my-3`}
               aria-label={copy.artistReleases}
             >
               {releases.items.map((item) => {
@@ -260,71 +264,79 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 }
                 const release = item.library_release;
                 if (!release) return null;
-                const title = release.title || copy.untitledRelease;
+                const title = release.title.trim()
+                  ? release.title
+                  : copy.untitledRelease;
                 const generation = release.cover?.selected_generation;
+                const isExpanded = Boolean(expanded[release.id]);
                 return (
-                  <article
-                    className="catalog-artist-release min-w-0"
+                  <LibraryEditionCard
                     key={`library_release:${release.id}`}
-                  >
-                    <div className="catalog-release-heading">
-                      <LibraryEditionArtwork
-                        title={title}
-                        imageSrc={
-                          generation
-                            ? getGetLibraryReleaseCoverImageUrl(
-                                release.id,
-                                generation,
-                              )
-                            : undefined
-                        }
-                      />
-                      <div className="min-w-0 wrap-anywhere">
-                        <h2>
-                          <a
-                            href={`#/library/releases/${encodeURIComponent(release.id)}`}
-                          >
-                            {title}
-                          </a>
-                        </h2>
-                        <p>
-                          {release.edition.release_date ??
-                            release.edition.original_release_date ??
-                            copy.dateNotSpecified}{" "}
-                          ·{" "}
-                          {countLabel(release.counts.position_count, locale, {
-                            en: ["position", "positions"],
-                            ru: ["позиция", "позиции", "позиций"],
-                          })}{" "}
-                          · {release.counts.available_position_count}{" "}
-                          {copy.withAudio} ·{" "}
-                          {release.counts.published_position_count}{" "}
-                          {copy.published}
-                        </p>
+                    expanded={isExpanded}
+                    header={
+                      <div className={libraryEditionCardStyles.headerGrid}>
+                        <LibraryEditionArtwork
+                          title={title}
+                          imageSrc={
+                            generation
+                              ? getGetLibraryReleaseCoverImageUrl(
+                                  release.id,
+                                  generation,
+                                )
+                              : undefined
+                          }
+                        />
+                        <div className={libraryEditionCardStyles.copy}>
+                          <h2 data-library-edition-title>
+                            <a
+                              href={`#/library/releases/${encodeURIComponent(release.id)}`}
+                            >
+                              {title}
+                            </a>
+                          </h2>
+                          <span className={libraryEditionCardStyles.meta}>
+                            {release.edition.release_date ??
+                              release.edition.original_release_date ??
+                              copy.dateNotSpecified}{" "}
+                            ·{" "}
+                            {countLabel(release.counts.position_count, locale, {
+                              en: ["position", "positions"],
+                              ru: ["позиция", "позиции", "позиций"],
+                            })}{" "}
+                            · {release.counts.available_position_count}{" "}
+                            {copy.withAudio} ·{" "}
+                            {release.counts.published_position_count}{" "}
+                            {copy.published}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          aria-expanded={isExpanded}
+                          onClick={() =>
+                            setExpanded((value) => ({
+                              ...value,
+                              [release.id]: !value[release.id],
+                            }))
+                          }
+                        >
+                          {isExpanded ? copy.hidePositions : copy.showPositions}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        aria-expanded={Boolean(expanded[release.id])}
-                        onClick={() =>
-                          setExpanded((value) => ({
-                            ...value,
-                            [release.id]: !value[release.id],
-                          }))
-                        }
-                      >
-                        {expanded[release.id]
-                          ? copy.hidePositions
-                          : copy.showPositions}
-                      </button>
-                    </div>
-                    {expanded[release.id] && (
-                      <ReleasePositions
-                        releaseId={release.id}
-                        releaseTitle={release.title}
-                        locale={locale}
-                      />
-                    )}
-                  </article>
+                    }
+                    panel={
+                      isExpanded ? (
+                        <div
+                          className={`${libraryEditionCardStyles.panel} px-[15px] pb-3 max-[600px]:px-[9px]`}
+                        >
+                          <ReleasePositions
+                            releaseId={release.id}
+                            releaseTitle={title}
+                            locale={locale}
+                          />
+                        </div>
+                      ) : undefined
+                    }
+                  />
                 );
               })}
             </section>
