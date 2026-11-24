@@ -61,6 +61,9 @@ images (for example tiny JPEG/PNG fixtures), not opaque placeholder bytes: asset
 observation derives MIME from content. Probe case equivalence on the actual test
 filesystem rather than inferring it from GOOS. Extension-only path tests must use
 a supported transform; do not request ALAC without verified capability evidence.
+Native FFmpeg fixtures read the release identity from the executable's first
+banner line, including major.minor releases. Later compiler banners are not
+FFmpeg version evidence.
 Counting cover writers must forward `WriteWithOptionalAssets`; synthetic cover
 probes must retain the base fixture's audio facts. Assert no additional recovery
 writes against the initial count, not a fixed count for multi-pass preparation.

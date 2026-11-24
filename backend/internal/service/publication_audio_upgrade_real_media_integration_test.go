@@ -886,7 +886,27 @@ func copyRealExecutable(t *testing.T, source, target string) {
 	}
 }
 
-var ffmpegVersionIdentity = regexp.MustCompile(`(?i)\bversion\s+([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)`)
+var ffmpegVersionIdentity = regexp.MustCompile(
+	`(?i)^(?:ffmpeg|ffprobe)[ \t]+version[ \t]+n?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.-]+)?)(?:[ \t]|$)`,
+)
+
+func ffmpegIdentityFromBanner(banner string) string {
+	firstLine, _, _ := strings.Cut(banner, "\n")
+	match := ffmpegVersionIdentity.FindStringSubmatch(strings.TrimSpace(firstLine))
+	if len(match) != 2 {
+		return ""
+	}
+	return match[1]
+}
+
+func TestFFmpegFixtureReadsExecutableIdentityNotCompilerVersion(t *testing.T) {
+	t.Parallel()
+	banner := "ffmpeg version 9.1 Copyright (c) 2000-2026 the FFmpeg developers\n" +
+		"built with Apple clang version 21.0.0 (clang-2100.4.1.1)"
+	if got := ffmpegIdentityFromBanner(banner); got != "9.1" {
+		t.Fatalf("FFmpeg identity = %q, want %q", got, "9.1")
+	}
+}
 
 func verifiedBanner(executable string) (banner, identity string, err error) {
 	output, err := exec.Command(executable, "-version").CombinedOutput()
@@ -894,11 +914,11 @@ func verifiedBanner(executable string) (banner, identity string, err error) {
 		return "", "", fmt.Errorf("run %s -version: %w: %s", executable, err, strings.TrimSpace(string(output)))
 	}
 	banner = strings.TrimSpace(string(output))
-	match := ffmpegVersionIdentity.FindStringSubmatch(banner)
-	if len(match) != 2 {
+	identity = ffmpegIdentityFromBanner(banner)
+	if identity == "" {
 		return "", "", fmt.Errorf("version banner has no semantic identity: %q", banner)
 	}
-	return banner, strings.TrimPrefix(match[1], "n"), nil
+	return banner, identity, nil
 }
 
 func executableName(base string) string {
