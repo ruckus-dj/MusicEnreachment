@@ -67,7 +67,7 @@ source channel, а fixture макета такого происхождения 
 | Оболочка, язык и тема | `routes/ShellView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Те же пути |
 | Глобальные токены, типографика, фокус и цветовая схема | `app/tailwind.css`, `index.html` | `styles/index.css`, `index.html` (отличаются только заголовок и точка входа) |
 | Базовая локализация и предпочтение темы | `i18n/{I18nProvider.tsx,createNamespace.ts,locale.ts,translator.ts,types.ts,namespaces/shell.ts}`, `components/themePreference.ts` | Те же пути |
-| Источники: список, заголовок корня, сканирование и инвентарь | `features/sources/SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
+| Источники: список и его заголовок, заголовок корня, сканирование и инвентарь | `features/sources/SourceListHeadingView.tsx`, `SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
 | Источники: форма регистрации каталога | `features/sources/SourceRegistrationView.tsx` | Тот же путь |
 | Источники: инспектор файла, этапы анализа и технический результат | `features/sources/SourceInspectorView.tsx`, `SourceAnalysisSteps.tsx`, `SourceTechnicalResult.tsx`, `sourceInspectorMessages.ts`, `sourceInspectorModel.ts` | Те же пути |
 | Источники: порядок секций карточки корня | `features/sources/SourceRootDetailView.tsx` | Тот же путь |

@@ -6,7 +6,6 @@ import {
 	useState,
 } from "react";
 import { formStyles as styles } from "../../components/styles/formStyles";
-import { Button } from "../../components/ui";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -31,6 +30,7 @@ import {
 } from "./SourceRootDetailView";
 import { SourceRootHeadingView } from "./SourceRootHeadingView";
 import { SourceRootList, type SourceRootListRow } from "./SourceRootList";
+import { SourceListHeadingView } from "./SourceListHeadingView";
 import { SourceRootRemovalDialog } from "./SourceRootRemovalDialog";
 import {
 	type SourceRootChange,
@@ -480,30 +480,23 @@ export function SourcesScreen({
 				)
 			) : (
 				<>
-					<header
-						className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
-					>
-						<div>
-							<h1 className={styles.pageTitle}>{m("title")}</h1>
-							<p className={styles.pageDescription}>{m("description")}</p>
-						</div>
-						{!adding && (
-							<div className={styles.objectActions}>
-								<Button
-									id={registrationFocus.triggerId}
-									onPress={() => {
-										setAdding(true);
-										setName("");
-										setPath("/mnt/music");
-										setMode("");
-										setRegistrationError(null);
-									}}
-								>
-									{sourceRegistrationMessages[locale].addSource}
-								</Button>
-							</div>
-						)}
-					</header>
+					<SourceListHeadingView
+						locale={locale}
+						registration={
+							adding
+								? undefined
+								: {
+										id: registrationFocus.triggerId,
+										onPress: () => {
+											setAdding(true);
+											setName("");
+											setPath("/mnt/music");
+											setMode("");
+											setRegistrationError(null);
+										},
+									}
+						}
+					/>
 					{noticeNode}
 					{adding && (
 						<SourceRegistrationView

@@ -41,6 +41,7 @@ const pairs = [
       "SourceRootSettingsView.tsx",
       "SourceRootHeadingView.tsx",
       "SourceRootList.tsx",
+      "SourceListHeadingView.tsx",
       "SourceRootOverviewView.tsx",
       "SourceRootRemovalDialog.tsx",
       "SourceScanPanel.tsx",

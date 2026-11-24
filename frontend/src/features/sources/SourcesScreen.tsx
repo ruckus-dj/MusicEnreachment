@@ -8,6 +8,7 @@ import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
+import { SourceListHeadingView } from "./SourceListHeadingView";
 import {
   type SourceRegistrationErrorKey,
   SourceRegistrationView,
@@ -29,7 +30,6 @@ import {
   sourceFailure,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
-import "./sources.css";
 import {
   parseSourcesRoute,
   type SourcesRoute,
@@ -246,29 +246,23 @@ function SourceListScreen() {
     <section
       aria-labelledby="sources-title"
       aria-busy={scans.checking || undefined}
-      className="sources-screen mx-auto max-w-5xl py-3"
+      className="mx-auto max-w-5xl py-3"
     >
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-3">
-        <div className="min-w-0">
-          <h1 ref={heading} tabIndex={-1} id="sources-title">
-            {t("title")}
-          </h1>
-          <p className="m-0 max-w-[75ch] text-xs text-[var(--muted)]">
-            {t("description")}
-          </p>
-        </div>
-        {!creating && (
-          <AppButton
-            id={registrationFocus.triggerId}
-            onPress={() => {
-              setFormError(null);
-              setCreating(true);
-            }}
-          >
-            {sourceRegistrationMessages[locale].addSource}
-          </AppButton>
-        )}
-      </header>
+      <SourceListHeadingView
+        locale={locale}
+        headingRef={heading}
+        registration={
+          creating
+            ? undefined
+            : {
+                id: registrationFocus.triggerId,
+                onPress: () => {
+                  setFormError(null);
+                  setCreating(true);
+                },
+              }
+        }
+      />
       {creating && (
         <SourceRegistrationView
           locale={locale}
@@ -291,13 +285,19 @@ function SourceListScreen() {
         </p>
       )}
       {error && sources && (
-        <div role="alert" className="flex flex-wrap items-center gap-2">
+        <div
+          role="alert"
+          className="my-2 flex flex-wrap items-center gap-2 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+        >
           <p className="m-0">{renderSourceError(error, locale)}</p>
           <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
         </div>
       )}
       {scanErrors.length > 0 && (
-        <div role="alert" className="grid gap-1">
+        <div
+          role="alert"
+          className="my-2 grid gap-1 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+        >
           {scanErrors.map(({ root, scanError }) => (
             <p key={root.id} className="m-0">
               {root.display_name}: {renderSourceError(scanError, locale)}
@@ -307,7 +307,10 @@ function SourceListScreen() {
       )}
       {scans.discoveryError && (
         <div className="flex flex-wrap items-center gap-2">
-          <p role="alert" className="m-0">
+          <p
+            role="alert"
+            className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+          >
             {renderSourceError(scans.discoveryError, locale)}
           </p>
           <AppButton onPress={() => void scans.discover()}>

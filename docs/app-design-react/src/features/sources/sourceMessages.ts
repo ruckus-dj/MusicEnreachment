@@ -3,9 +3,6 @@ import type { Locale } from "../../i18n/types";
 
 export const sourcesMessages = createNamespace({
 	en: {
-		title: "Sources",
-		description:
-			"Choose server directories and their processing mode. Analysis does not modify originals; source deletion is a separate setting and requires filesystem permission. Files are not uploaded by drag and drop.",
 		sourceAdded:
 			"Source added to the prototype. No server directory was opened or scanned; a work directory is required only before staged processing.",
 		connectedFolders: "Connected directories",
@@ -57,9 +54,6 @@ export const sourcesMessages = createNamespace({
 			"This demo source fails its first scan to show retry behavior. Retry to scan it again.",
 	},
 	ru: {
-		title: "Источники",
-		description:
-			"Выберите серверные каталоги и режим их обработки. Анализ не изменяет исходники; удаление — отдельная настройка, требующая разрешения файловой системы. Файлы не загружаются перетаскиванием.",
 		sourceAdded:
 			"Источник добавлен в макет. Серверный каталог не открывался и не сканировался; рабочая папка требуется только перед обработкой через копию.",
 		connectedFolders: "Подключённые каталоги",

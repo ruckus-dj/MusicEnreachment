@@ -1,9 +1,6 @@
 import type { Locale } from "../../i18n/locale";
 
 const en = {
-  title: "Sources",
-  description:
-    "Server directories MeloTrove reads from. Paths are on the server; directories are read-only and files are never uploaded through the browser.",
   loading: "Loading…",
   requestRunning: "Request in progress…",
   retryLoad: "Retry loading",
@@ -199,9 +196,6 @@ const en = {
 } as const;
 
 const ru: Record<keyof typeof en, string> = {
-  title: "Источники",
-  description:
-    "Серверные каталоги, из которых MeloTrove читает файлы. Путь указывается на сервере; каталог читается только для чтения, файлы через браузер не загружаются.",
   loading: "Загрузка…",
   requestRunning: "Выполняется запрос…",
   retryLoad: "Повторить загрузку",

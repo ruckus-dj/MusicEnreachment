@@ -229,7 +229,6 @@ frontend/src/features/sources/SourcesScreen.tsx
 frontend/src/features/sources/sourceMessages.ts
 frontend/src/features/sources/sourceScanRefreshTestSupport.tsx
 frontend/src/features/sources/sourceScans.tsx
-frontend/src/features/sources/sources.css
 frontend/src/features/sources/sourcesApi.ts
 frontend/src/features/sources/sourcesRoute.ts
 frontend/src/features/sources/useSourceArtifactCleanup.ts
