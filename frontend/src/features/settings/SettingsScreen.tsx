@@ -101,8 +101,6 @@ import {
   settingsTabFromHash,
   settingsTabHash,
 } from "./settingsRoute";
-import "../setup/setup.css";
-import "./settings.css";
 
 const catalogCheckedKey = "melotrove.catalog-checked-at";
 const cooldownMs = 24 * 60 * 60 * 1000;
@@ -3182,22 +3180,38 @@ export function SettingsScreen() {
         <>
           <section
             aria-labelledby="health-title"
-            className="setup-panel settings-panel"
+            className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
           >
-            <h2 id="health-title">{t("configurationHealth")}</h2>
-            <p role={state.configuration_health.healthy ? "status" : "alert"}>
+            <h2 id="health-title" className="m-0 text-sm font-semibold">
+              {t("configurationHealth")}
+            </h2>
+            <p
+              className={
+                state.configuration_health.healthy
+                  ? "m-0"
+                  : "m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+              }
+              role={state.configuration_health.healthy ? "status" : "alert"}
+            >
               {state.configuration_health.healthy
                 ? t("healthyConfiguration")
                 : t("unhealthyConfiguration")}
             </p>
             {!!state.configuration_health.problems?.length && (
-              <ul>
+              <ul className="m-0 grid list-disc gap-1 pl-5 wrap-anywhere">
                 {state.configuration_health.problems.map((problem) => (
                   <li key={problem}>{problem}</li>
                 ))}
               </ul>
             )}
-            {!platformReady && <p role="alert">{t("platformUnavailable")}</p>}
+            {!platformReady && (
+              <p
+                role="alert"
+                className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
+              >
+                {t("platformUnavailable")}
+              </p>
+            )}
           </section>
           <SettingsTabs
             locale={locale}
@@ -3540,25 +3554,27 @@ export function SettingsScreen() {
           <section
             key={group}
             aria-label={t("settingsConflict", { label })}
-            className="setup-panel settings-panel"
+            className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
             role="status"
           >
-            <p>
+            <p className="m-0 wrap-anywhere">
               {t("changedSavedValue", { label })}{" "}
               {displaySettingValue(currentValue)}.
             </p>
-            <AppButton
-              isDisabled={effectiveBusy}
-              onPress={() => takeSavedConflict(group)}
-            >
-              {t("takeSavedValue", { label })}
-            </AppButton>
-            <AppButton
-              isDisabled={effectiveBusy}
-              onPress={() => continueEditingConflict(group)}
-            >
-              {t("continueEditing", { label })}
-            </AppButton>
+            <div className="flex flex-wrap gap-2">
+              <AppButton
+                isDisabled={effectiveBusy}
+                onPress={() => takeSavedConflict(group)}
+              >
+                {t("takeSavedValue", { label })}
+              </AppButton>
+              <AppButton
+                isDisabled={effectiveBusy}
+                onPress={() => continueEditingConflict(group)}
+              >
+                {t("continueEditing", { label })}
+              </AppButton>
+            </div>
           </section>
         );
       })}

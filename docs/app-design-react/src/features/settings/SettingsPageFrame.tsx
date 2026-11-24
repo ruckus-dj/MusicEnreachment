@@ -23,7 +23,7 @@ export function SettingsPageFrame({
   const copy = messages[locale];
   return (
     <section
-      className="settings-screen grid min-w-0 gap-[14px]"
+      className="grid min-w-0 gap-[14px]"
       aria-labelledby="settings-title"
     >
       <header className="mb-[18px] flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-[14px]">

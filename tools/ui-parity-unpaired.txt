@@ -208,7 +208,6 @@ frontend/src/features/own-catalog/ownCatalogModel.ts
 frontend/src/features/own-catalog/ownCatalogRoute.ts
 frontend/src/features/settings/GenreCatalogPanel.tsx
 frontend/src/features/settings/SettingsScreen.tsx
-frontend/src/features/settings/settings.css
 frontend/src/features/settings/settingsDraft.ts
 frontend/src/features/settings/settingsMessages.ts
 frontend/src/features/settings/settingsRoute.ts
