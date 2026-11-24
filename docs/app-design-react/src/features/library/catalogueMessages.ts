@@ -98,7 +98,6 @@ export const catalogueMessages = createNamespace({
 		requiredField: "Enter “{field}”.",
 		deleteAlbum: "Delete album",
 		deletePublication: "Delete publication",
-		deleteQuestion: "Delete: {target}?",
 		ownedFilesDeletion:
 			"Only publication files owned by the app will be safely removed before deleting rows ({count}). Publication rows and the listed library entities are then deleted. Provider recordings are kept; unrelated/shared files are not touched.",
 		releaseWillBeDeleted: "Release (will be deleted)",
@@ -227,7 +226,6 @@ export const catalogueMessages = createNamespace({
 		requiredField: "Заполните поле «{field}».",
 		deleteAlbum: "Удалить альбом",
 		deletePublication: "Удалить публикацию",
-		deleteQuestion: "Удалить: {target}?",
 		ownedFilesDeletion:
 			"Перед удалением строк будут безопасно удалены только файлы публикаций, принадлежащие приложению ({count}). После этого удаляются строки публикаций и указанные сущности медиатеки. Записи провайдера сохраняются; чужие/общие файлы не затрагиваются.",
 		releaseWillBeDeleted: "Релиз (будет удалён)",

@@ -127,10 +127,12 @@ export function DeletionRequest({
 				</Button>
 			)}
 			<LibraryDeletionDialogView
+				locale={locale}
+				kind={track ? "publication" : "release"}
+				targetLabel={displayedTarget}
 				open={open}
 				onOpenChange={setOpen}
 				dismissable
-				title={m("deleteQuestion", { target: displayedTarget })}
 				actions={
 					<>
 						<AppButton onPress={() => setOpen(false)}>{m("cancel")}</AppButton>

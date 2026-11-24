@@ -20,6 +20,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import {
   LibraryDeletionDialogView,
   LibraryDeletionOutputsView,
+  libraryDeletionDialogTitle,
 } from "./LibraryDeletionDialogView";
 import { releaseControlAlertClass } from "./libraryReleaseControlStyles";
 
@@ -252,12 +253,6 @@ export function LibraryDeletionControl({
           deleteRelease: "Удалить релиз",
           deleteArtist: "Удалить артиста",
           deletePublication: "Удалить текущую публикацию",
-          title:
-            target.type === "artist"
-              ? "Удаление артиста"
-              : target.type === "release"
-                ? "Удаление релиза"
-                : "Удаление публикации",
           target:
             target.type === "publication"
               ? `${releaseTitle} · ${positionLabel ?? "Позиция"}`
@@ -308,12 +303,6 @@ export function LibraryDeletionControl({
           deleteRelease: "Delete release",
           deleteArtist: "Delete artist",
           deletePublication: "Delete current publication",
-          title:
-            target.type === "artist"
-              ? "Delete artist"
-              : target.type === "release"
-                ? "Delete release"
-                : "Delete publication",
           target:
             target.type === "publication"
               ? `${releaseTitle} · ${positionLabel ?? "Position"}`
@@ -527,7 +516,7 @@ export function LibraryDeletionControl({
       {state.operation ? (
         <section
           className="mt-3 space-y-2 rounded border border-[var(--line)] p-3"
-          aria-label={text.title}
+          aria-label={libraryDeletionDialogTitle(locale, target.type)}
         >
           <p role="status">
             {state.operation.state === "succeeded"
@@ -598,6 +587,9 @@ export function LibraryDeletionControl({
         </section>
       ) : null}
       <LibraryDeletionDialogView
+        locale={locale}
+        kind={target.type}
+        targetLabel={text.target}
         open={open}
         onOpenChange={(nextOpen) => {
           if (
@@ -607,7 +599,6 @@ export function LibraryDeletionControl({
             setOpen(nextOpen);
         }}
         dismissable={!state.confirmationPending && !state.confirmationUncertain}
-        title={text.title}
         actions={
           <>
             <AppButton
@@ -657,7 +648,6 @@ export function LibraryDeletionControl({
           </>
         }
       >
-        <p className="wrap-anywhere font-medium">{text.target}</p>
         <p>
           {target.type === "release"
             ? text.scopeRelease

@@ -164,10 +164,12 @@ export function ArtistDeletionRequest({
 				{m("deleteArtist")}
 			</Button>
 			<LibraryDeletionDialogView
+				locale={locale}
+				kind="artist"
+				targetLabel={plan.target}
 				open={open}
 				onOpenChange={setOpen}
 				dismissable
-				title={m("deleteQuestion", { target: plan.target })}
 				actions={
 					<>
 						<AppButton onPress={() => setOpen(false)}>{m("cancel")}</AppButton>
