@@ -3,6 +3,7 @@ import { Button } from "../components/ui";
 import { ContributorRowView } from "../features/library/ContributorRowView";
 import { MetadataCardActions } from "../features/library/MetadataCardActions";
 import {
+	MetadataBasicsSection,
 	type MetadataFieldDescriptor,
 	MetadataFieldGroup,
 	MetadataFieldsGrid,
@@ -612,69 +613,64 @@ export function MetadataEditor({
 			{(basicFields.length > 0 ||
 				editableFields.some((field) => field.kind === "genres") ||
 				genres !== undefined) && (
-				<section className="grid min-w-0 gap-2">
-					<h3 className="m-0 text-sm font-semibold">{m("group.basic")}</h3>
-					<div className="grid min-w-0 gap-2">
-						<MetadataFieldsGrid
-							columns={3}
-							fields={basicFields.map((field) =>
-								simpleFieldDescriptor(
-									field,
-									!editing ||
-										(field.kind === "identity" && field.key !== "asin"),
-								),
-							)}
-						/>
-						{editableFields
-							.filter((field) => field.kind === "genres")
-							.map((field) => (
-								<div key={field.key} {...marker([field.key])}>
-									<GenrePicker
-										label={metadataFieldLabel(field.key, locale)}
-										readOnly={!editing}
-										loaded={genresLoaded}
-										onLoad={onLoadGenres}
-										value={genresValue}
-										onChange={(next) => {
-											if (controlled) {
-												onDraftChange?.(
-													{
-														...values,
-														genre: next.map((item) => item.name),
-													},
-													{ genres: next },
-												);
-												return;
-											}
-											setDraftGenres(next);
-											setDirtyGenres(true);
-											setValue(
-												"genre",
-												next.map((item) => item.name),
-											);
-										}}
-									/>
-								</div>
-							))}
-						{genres !== undefined &&
-							!editableFields.some((field) => field.kind === "genres") && (
+				<MetadataBasicsSection
+					locale={locale}
+					fields={basicFields.map((field) =>
+						simpleFieldDescriptor(
+							field,
+							!editing || (field.kind === "identity" && field.key !== "asin"),
+						),
+					)}
+				>
+					{editableFields
+						.filter((field) => field.kind === "genres")
+						.map((field) => (
+							<div key={field.key} {...marker([field.key])}>
 								<GenrePicker
+									label={metadataFieldLabel(field.key, locale)}
 									readOnly={!editing}
 									loaded={genresLoaded}
 									onLoad={onLoadGenres}
 									value={genresValue}
 									onChange={(next) => {
 										if (controlled) {
-											onDraftChange?.(values, { genres: next });
+											onDraftChange?.(
+												{
+													...values,
+													genre: next.map((item) => item.name),
+												},
+												{ genres: next },
+											);
 											return;
 										}
 										setDraftGenres(next);
 										setDirtyGenres(true);
+										setValue(
+											"genre",
+											next.map((item) => item.name),
+										);
 									}}
 								/>
-							)}
-					</div>
-				</section>
+							</div>
+						))}
+					{genres !== undefined &&
+						!editableFields.some((field) => field.kind === "genres") && (
+							<GenrePicker
+								readOnly={!editing}
+								loaded={genresLoaded}
+								onLoad={onLoadGenres}
+								value={genresValue}
+								onChange={(next) => {
+									if (controlled) {
+										onDraftChange?.(values, { genres: next });
+										return;
+									}
+									setDraftGenres(next);
+									setDirtyGenres(true);
+								}}
+							/>
+						)}
+				</MetadataBasicsSection>
 			)}
 			<ProviderGenreBaselineRow
 				baseline={providerGenreBaseline}

@@ -32,6 +32,7 @@ import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
 import { MetadataCardActions } from "./MetadataCardActions";
 import {
+  MetadataBasicsSection,
   type MetadataFieldDescriptor,
   MetadataFieldGroup,
   MetadataFieldsGrid,
@@ -1489,80 +1490,88 @@ function LibraryScopedMetadataEditorSession({
         onCancel={cancelEdit}
       />
       <div className="grid min-w-0 gap-2">
-        {genres && genreValue && (
-          <section
-            aria-label={genreCopy.label.release}
-            className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
-          >
-            <h3 className="text-sm font-semibold">{genreCopy.label.release}</h3>
-            {editing ? (
-              <ProviderCatalogGenreField
-                locale={locale}
-                owner="release"
-                value={genreValue}
-                onChange={(value) =>
-                  updateField("genre", {
-                    state: value.length ? "value" : "explicit_empty",
-                    value,
-                  })
-                }
-                disabled={saving}
-              />
-            ) : (
-              genreValue.length > 0 && (
-                <ul className="m-0 flex list-none flex-wrap gap-2 p-0 text-sm">
-                  {genreValue.map((genre) => (
-                    <li
-                      className="rounded-full border border-[var(--line)] px-2 py-0.5"
-                      key={genre.id}
-                    >
-                      {genre.name}
-                    </li>
-                  ))}
-                </ul>
-              )
-            )}
-            {!genreValue.length && (
-              <p className="m-0 text-sm text-[var(--muted)]">
-                {genres.state === "explicit_empty"
-                  ? genreCopy.explicitlyCleared
-                  : genreCopy.noOverride}
-              </p>
-            )}
-            {editing && (
-              <div className="flex flex-wrap gap-2">
-                <AppButton
-                  type="button"
-                  isDisabled={saving}
-                  onPress={() =>
-                    updateField("genre", { state: "explicit_empty", value: [] })
-                  }
-                >
-                  {genreCopy.clear}
-                </AppButton>
-                <AppButton
-                  type="button"
-                  isDisabled={saving}
-                  onPress={() =>
-                    updateField("genre", { state: "absent", value: [] })
-                  }
-                >
-                  {genreCopy.inherit}
-                </AppButton>
-              </div>
-            )}
-            <ProviderGenreBaselineRow
-              baseline={providerGenreBaseline ?? null}
-              locale={locale}
-            />
-          </section>
-        )}
-        <MetadataFieldsGrid
-          columns={4}
+        <MetadataBasicsSection
+          locale={locale}
           fields={scalarDescriptors(
             genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
           )}
-        />
+        >
+          {genres && genreValue && (
+            <section
+              aria-label={genreCopy.label.release}
+              className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+            >
+              <h4 className="m-0 text-sm font-semibold">
+                {genreCopy.label.release}
+              </h4>
+              {editing ? (
+                <ProviderCatalogGenreField
+                  locale={locale}
+                  owner="release"
+                  value={genreValue}
+                  onChange={(value) =>
+                    updateField("genre", {
+                      state: value.length ? "value" : "explicit_empty",
+                      value,
+                    })
+                  }
+                  disabled={saving}
+                />
+              ) : (
+                genreValue.length > 0 && (
+                  <ul className="m-0 flex list-none flex-wrap gap-2 p-0 text-sm">
+                    {genreValue.map((genre) => (
+                      <li
+                        className="rounded-full border border-[var(--line)] px-2 py-0.5"
+                        key={genre.id}
+                      >
+                        {genre.name}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              )}
+              {!genreValue.length && (
+                <p className="m-0 text-sm text-[var(--muted)]">
+                  {genres.state === "explicit_empty"
+                    ? genreCopy.explicitlyCleared
+                    : genreCopy.noOverride}
+                </p>
+              )}
+              {editing && (
+                <div className="flex flex-wrap gap-2">
+                  <AppButton
+                    type="button"
+                    isDisabled={saving}
+                    onPress={() =>
+                      updateField("genre", {
+                        state: "explicit_empty",
+                        value: [],
+                      })
+                    }
+                  >
+                    {genreCopy.clear}
+                  </AppButton>
+                  <AppButton
+                    type="button"
+                    isDisabled={saving}
+                    onPress={() =>
+                      updateField("genre", { state: "absent", value: [] })
+                    }
+                  >
+                    {genreCopy.inherit}
+                  </AppButton>
+                </div>
+              )}
+            </section>
+          )}
+        </MetadataBasicsSection>
+        {genres && genreValue && (
+          <ProviderGenreBaselineRow
+            baseline={providerGenreBaseline ?? null}
+            locale={locale}
+          />
+        )}
         <details className="min-w-0 rounded border border-[var(--line)]">
           <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
             {text.groups.artistCredits}

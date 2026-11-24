@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { AppButton } from "../../components/AppButton";
 
 export type MetadataFieldState = "absent" | "value" | "explicit_empty";
@@ -362,6 +362,28 @@ export function MetadataFieldsGrid({
 
 const disclosureSummaryClass =
   "w-full cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+
+export function MetadataBasicsSection({
+  locale,
+  fields,
+  children,
+}: {
+  locale: "en" | "ru";
+  fields: MetadataFieldDescriptor[];
+  children?: ReactNode;
+}) {
+  return (
+    <section className="grid min-w-0 gap-2">
+      <h3 className="m-0 text-sm font-semibold">
+        {locale === "ru" ? "Основное" : "Basics"}
+      </h3>
+      <div className="grid min-w-0 gap-2">
+        <MetadataFieldsGrid fields={fields} />
+        {children}
+      </div>
+    </section>
+  );
+}
 
 export function metadataFilledSummary(locale: "en" | "ru", count: number) {
   if (locale === "ru") return count ? `${count} заполнено` : "Не заполнено";
