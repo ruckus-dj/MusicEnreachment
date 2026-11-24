@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
 import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
@@ -18,6 +17,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { LibraryDeletionDialogView } from "./LibraryDeletionDialogView";
 import { releaseControlAlertClass } from "./libraryReleaseControlStyles";
 
 type DeletionTarget =
@@ -598,8 +598,8 @@ export function LibraryDeletionControl({
           ) : null}
         </section>
       ) : null}
-      <ModalOverlay
-        isOpen={open}
+      <LibraryDeletionDialogView
+        open={open}
         onOpenChange={(nextOpen) => {
           if (
             !state.confirmationPending &&
@@ -607,214 +607,180 @@ export function LibraryDeletionControl({
           )
             setOpen(nextOpen);
         }}
-        isDismissable={
-          !state.confirmationPending && !state.confirmationUncertain
-        }
-        className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/45 p-3 sm:p-6"
-      >
-        <Modal className="flex max-h-[min(70dvh,700px)] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_16px_48px_#0003]">
-          <Dialog
-            aria-labelledby="library-deletion-title"
-            className="flex min-h-0 min-w-0 flex-1 flex-col wrap-anywhere outline-none"
-          >
-            <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-              <Heading
-                slot="title"
-                id="library-deletion-title"
-                className="text-xl font-semibold"
-              >
-                {text.title}
-              </Heading>
-              <p className="wrap-anywhere font-medium">{text.target}</p>
-              <p>
-                {target.type === "release"
-                  ? text.scopeRelease
-                  : target.type === "artist"
-                    ? text.scopeArtist
-                    : text.scopePublication}
-              </p>
-              {state.confirmationUncertain ? (
-                <p role="alert" className={releaseControlAlertClass}>
-                  {text.uncertain}
-                </p>
-              ) : null}
-              {preview ? (
-                <div className="space-y-3 rounded border border-[var(--line)] p-3">
-                  <p className="wrap-anywhere">{preview.title}</p>
-                  {target.type === "artist" &&
-                  preview.artist_releases?.length ? (
-                    <section aria-label={text.artistReleases}>
-                      <h3 className="font-semibold">{text.artistReleases}</h3>
-                      <ul className="list-disc pl-5">
-                        {preview.artist_releases.map((release) => (
-                          <li key={release.title}>{release.title}</li>
-                        ))}
-                      </ul>
-                    </section>
-                  ) : null}
-                  {target.type === "artist" &&
-                  preview.coartist_warnings?.length ? (
-                    <section aria-label={text.coartistWarnings} role="note">
-                      <h3 className="font-semibold">{text.coartistWarnings}</h3>
-                      <ul className="list-disc space-y-1 pl-5">
-                        {preview.coartist_warnings.map((warning) => (
-                          <li
-                            key={`${warning.release_title}:${(warning.artist_names ?? []).join("\u0000")}`}
-                          >
-                            <span className="font-medium">
-                              {warning.release_title}
-                            </span>
-                            {warning.artist_names?.length ? (
-                              <span>
-                                {` — ${text.coartistNames}: ${warning.artist_names.join(", ")}`}
-                              </span>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ) : null}
-                  <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
-                    <dt>{text.positions}</dt>
-                    <dd>
-                      {(preview.position_ids ?? []).length.toLocaleString(
-                        locale,
-                      )}
-                    </dd>
-                    <dt>{text.files}</dt>
-                    <dd>
-                      {(preview.outputs ?? []).length.toLocaleString(locale)}
-                    </dd>
-                    {target.type !== "publication" ? (
-                      <>
-                        <dt>{text.recordings}</dt>
-                        <dd>
-                          {preview.recording_count.toLocaleString(locale)}
-                        </dd>
-                      </>
-                    ) : null}
-                  </dl>
-                  {preview.outputs?.length ? (
-                    <>
-                      <h3 className="font-semibold">{text.outputs}</h3>
-                      <ul className="max-h-56 space-y-2 overflow-y-auto pl-5">
-                        {preview.outputs.map((output) => (
-                          <li
-                            className="break-all"
-                            key={`${output.position_id}:${output.relative_path}`}
-                          >
-                            <span className="font-medium">
-                              {positionLabels?.get(output.position_id) ??
-                                (target.type === "publication" &&
-                                output.position_id === target.positionId
-                                  ? positionLabel
-                                  : undefined) ??
-                                (locale === "ru" ? "Позиция" : "Position")}
-                            </span>
-                            <code className="block text-sm">
-                              {output.relative_path}
-                            </code>
-                            <span className="text-sm text-[var(--muted)]">
-                              {output.capturable
-                                ? text.capturable
-                                : text.notCapturable}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : (
-                    <p>{text.noOutputs}</p>
-                  )}
-                  {preview.blockers?.length ? (
-                    <div role="alert" className={releaseControlAlertClass}>
-                      <h3 className="font-semibold">{text.blockers}</h3>
-                      <ul className="list-disc pl-5">
-                        {preview.blockers.map((blocker, index) => (
-                          <li
-                            key={`${blocker.code}:${blocker.position_id ?? index}`}
-                          >
-                            {blocker.position_id
-                              ? `${positionLabels?.get(blocker.position_id) ?? (locale === "ru" ? "Позиция" : "Position")}: `
-                              : ""}
-                            {blockerLabel(
-                              blocker.code,
-                              blocker.message,
-                              locale,
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {state.confirmationUncertain ? <p>{text.frozen}</p> : null}
-                </div>
-              ) : null}
-              {state.previewError ? (
-                <p role="alert" className={releaseControlAlertClass}>
-                  {state.previewError}
-                </p>
-              ) : null}
-              {state.actionError && !state.confirmationUncertain ? (
-                <p role="alert" className={releaseControlAlertClass}>
-                  {state.actionError}
-                </p>
-              ) : null}
-              {isBlocked ? <p role="status">{text.blocked}</p> : null}
-            </div>
-            <div className="sticky bottom-0 z-10 flex shrink-0 flex-col-reverse flex-wrap gap-2 border-t border-[var(--line)] bg-[var(--surface)] p-4 sm:flex-row sm:justify-end sm:px-6">
+        dismissable={!state.confirmationPending && !state.confirmationUncertain}
+        title={text.title}
+        actions={
+          <>
+            <AppButton
+              isDisabled={
+                state.confirmationPending || state.confirmationUncertain
+              }
+              onPress={() => setOpen(false)}
+            >
+              {text.cancel}
+            </AppButton>
+            {!preview ? (
               <AppButton
-                isDisabled={
-                  state.confirmationPending || state.confirmationUncertain
-                }
-                onPress={() => setOpen(false)}
+                isDisabled={state.previewPending || state.confirmationUncertain}
+                onPress={() => void preparePreview()}
               >
-                {text.cancel}
+                {state.previewPending ? text.loading : text.prepare}
               </AppButton>
-              {!preview ? (
-                <AppButton
-                  isDisabled={
-                    state.previewPending || state.confirmationUncertain
-                  }
-                  onPress={() => void preparePreview()}
-                >
-                  {state.previewPending ? text.loading : text.prepare}
-                </AppButton>
-              ) : (
-                <>
-                  {!state.operation && !state.confirmationUncertain ? (
-                    <AppButton
-                      isDisabled={
-                        state.previewPending || state.confirmationPending
-                      }
-                      onPress={() => void preparePreview()}
-                    >
-                      {state.previewPending
-                        ? text.loading
-                        : text.refreshPreview}
-                    </AppButton>
-                  ) : null}
+            ) : (
+              <>
+                {!state.operation && !state.confirmationUncertain ? (
                   <AppButton
-                    className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
                     isDisabled={
-                      isBlocked ||
-                      state.previewPending ||
-                      state.confirmationPending
+                      state.previewPending || state.confirmationPending
                     }
-                    onPress={() => void confirmPreview()}
+                    onPress={() => void preparePreview()}
                   >
-                    {state.confirmationPending
-                      ? text.loading
-                      : state.confirmationUncertain
-                        ? text.confirmAgain
-                        : text.confirm}
+                    {state.previewPending ? text.loading : text.refreshPreview}
                   </AppButton>
+                ) : null}
+                <AppButton
+                  className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
+                  isDisabled={
+                    isBlocked ||
+                    state.previewPending ||
+                    state.confirmationPending
+                  }
+                  onPress={() => void confirmPreview()}
+                >
+                  {state.confirmationPending
+                    ? text.loading
+                    : state.confirmationUncertain
+                      ? text.confirmAgain
+                      : text.confirm}
+                </AppButton>
+              </>
+            )}
+          </>
+        }
+      >
+        <p className="wrap-anywhere font-medium">{text.target}</p>
+        <p>
+          {target.type === "release"
+            ? text.scopeRelease
+            : target.type === "artist"
+              ? text.scopeArtist
+              : text.scopePublication}
+        </p>
+        {state.confirmationUncertain ? (
+          <p role="alert" className={releaseControlAlertClass}>
+            {text.uncertain}
+          </p>
+        ) : null}
+        {preview ? (
+          <div className="space-y-3 rounded border border-[var(--line)] p-3">
+            <p className="wrap-anywhere">{preview.title}</p>
+            {target.type === "artist" && preview.artist_releases?.length ? (
+              <section aria-label={text.artistReleases}>
+                <h3 className="font-semibold">{text.artistReleases}</h3>
+                <ul className="list-disc pl-5">
+                  {preview.artist_releases.map((release) => (
+                    <li key={release.title}>{release.title}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            {target.type === "artist" && preview.coartist_warnings?.length ? (
+              <section aria-label={text.coartistWarnings} role="note">
+                <h3 className="font-semibold">{text.coartistWarnings}</h3>
+                <ul className="list-disc space-y-1 pl-5">
+                  {preview.coartist_warnings.map((warning) => (
+                    <li
+                      key={`${warning.release_title}:${(warning.artist_names ?? []).join("\u0000")}`}
+                    >
+                      <span className="font-medium">
+                        {warning.release_title}
+                      </span>
+                      {warning.artist_names?.length ? (
+                        <span>
+                          {` — ${text.coartistNames}: ${warning.artist_names.join(", ")}`}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
+              <dt>{text.positions}</dt>
+              <dd>
+                {(preview.position_ids ?? []).length.toLocaleString(locale)}
+              </dd>
+              <dt>{text.files}</dt>
+              <dd>{(preview.outputs ?? []).length.toLocaleString(locale)}</dd>
+              {target.type !== "publication" ? (
+                <>
+                  <dt>{text.recordings}</dt>
+                  <dd>{preview.recording_count.toLocaleString(locale)}</dd>
                 </>
-              )}
-            </div>
-          </Dialog>
-        </Modal>
-      </ModalOverlay>
+              ) : null}
+            </dl>
+            {preview.outputs?.length ? (
+              <>
+                <h3 className="font-semibold">{text.outputs}</h3>
+                <ul className="max-h-56 space-y-2 overflow-y-auto pl-5">
+                  {preview.outputs.map((output) => (
+                    <li
+                      className="break-all"
+                      key={`${output.position_id}:${output.relative_path}`}
+                    >
+                      <span className="font-medium">
+                        {positionLabels?.get(output.position_id) ??
+                          (target.type === "publication" &&
+                          output.position_id === target.positionId
+                            ? positionLabel
+                            : undefined) ??
+                          (locale === "ru" ? "Позиция" : "Position")}
+                      </span>
+                      <code className="block text-sm">
+                        {output.relative_path}
+                      </code>
+                      <span className="text-sm text-[var(--muted)]">
+                        {output.capturable
+                          ? text.capturable
+                          : text.notCapturable}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p>{text.noOutputs}</p>
+            )}
+            {preview.blockers?.length ? (
+              <div role="alert" className={releaseControlAlertClass}>
+                <h3 className="font-semibold">{text.blockers}</h3>
+                <ul className="list-disc pl-5">
+                  {preview.blockers.map((blocker, index) => (
+                    <li key={`${blocker.code}:${blocker.position_id ?? index}`}>
+                      {blocker.position_id
+                        ? `${positionLabels?.get(blocker.position_id) ?? (locale === "ru" ? "Позиция" : "Position")}: `
+                        : ""}
+                      {blockerLabel(blocker.code, blocker.message, locale)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {state.confirmationUncertain ? <p>{text.frozen}</p> : null}
+          </div>
+        ) : null}
+        {state.previewError ? (
+          <p role="alert" className={releaseControlAlertClass}>
+            {state.previewError}
+          </p>
+        ) : null}
+        {state.actionError && !state.confirmationUncertain ? (
+          <p role="alert" className={releaseControlAlertClass}>
+            {state.actionError}
+          </p>
+        ) : null}
+        {isBlocked ? <p role="status">{text.blocked}</p> : null}
+      </LibraryDeletionDialogView>
     </>
   );
 }

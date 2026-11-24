@@ -41,9 +41,3 @@ export const objectActions = "my-2 flex flex-wrap items-center gap-2";
 
 export const dialogFooter =
 	"flex flex-wrap justify-end gap-2 border-t border-[var(--line)] pt-2";
-
-export const deletionDialog =
-	"grid max-h-[min(70dvh,700px)] gap-2 overflow-auto pr-1";
-
-export const deletionFooter =
-	"sticky bottom-[-1px] -mx-1 -mb-1 mt-1 flex justify-end gap-2 border-t border-[var(--line)] bg-[var(--surface)] px-1 pt-2.5 pb-1";

@@ -1,9 +1,16 @@
 import { useState } from "react";
-import type { OriginalRelease, OriginalTrack } from "../features/library/catalogData";
-import { type CatalogueMessage, catalogueMessage } from "../features/library/catalogueMessages";
+import type {
+	OriginalRelease,
+	OriginalTrack,
+} from "../features/library/catalogData";
+import {
+	type CatalogueMessage,
+	catalogueMessage,
+} from "../features/library/catalogueMessages";
+import { LibraryDeletionDialogView } from "../features/library/LibraryDeletionDialogView";
 import { useI18n } from "../i18n/I18nProvider";
-import { deletionDialog, deletionFooter } from "./styles/matchingStyles";
-import { Button, Dialog, Heading, Modal, Tooltip, TooltipTrigger } from "./ui";
+import { AppButton } from "./AppButton";
+import { Button, Tooltip, TooltipTrigger } from "./ui";
 
 export interface DeletionOperation {
 	kind?: "library" | "publication" | "artist";
@@ -116,68 +123,15 @@ export function DeletionRequest({
 					{track ? m("deletePublication") : m("deleteAlbum")}
 				</Button>
 			)}
-			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
-				<Dialog aria-labelledby="deletion-title" className={deletionDialog}>
-					<Heading slot="title" id="deletion-title">
-						{m("deleteQuestion", { target: displayedTarget })}
-					</Heading>
-					<p>{displayedScope}</p>
-					<p>{m("ownedFilesDeletion", { count: plan.publications })}</p>
-					{!track && (
-						<>
-							<h3 className="mt-1.5 mb-0 text-xs">
-								{m("releaseWillBeDeleted")}
-							</h3>
-							<p>{release.title}</p>
-							<h3 className="mt-1.5 mb-0 text-xs">{m("recordingsKept")}</h3>
-							<ul className="m-0 pl-5">
-								{[
-									...new Map(
-										release.tracks
-											.filter((item) => item.recordingId)
-											.map((item) => [item.recordingId, item]),
-									).values(),
-								].map((item) => (
-									<li
-										className="my-[3px] [overflow-wrap:anywhere]"
-										key={item.recordingId}
-									>
-										{item.title} · {item.recordingId}
-									</li>
-								))}
-							</ul>
-							<h3 className="mt-1.5 mb-0 text-xs">
-								{m("releasePositionsWillBeDeleted")}
-							</h3>
-							<ul className="m-0 pl-5">
-								{release.tracks.map((item) => (
-									<li
-										className="my-[3px] [overflow-wrap:anywhere]"
-										key={item.id}
-									>
-										{release.title} · {String(item.position).padStart(2, "0")} ·{" "}
-										{item.title} ·{" "}
-										{m(item.published ? "published" : "unpublished")}
-									</li>
-								))}
-							</ul>
-						</>
-					)}
-					{plan.paths.length ? (
-						<ul className="m-0 pl-5">
-							{plan.paths.map((path) => (
-								<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
-									<code>{path}</code>
-								</li>
-							))}
-						</ul>
-					) : (
-						<p>{m("noCurrentPublications")}</p>
-					)}
-					<p>{m("deletionRequestNotice")}</p>
-					<div className={deletionFooter}>
-						<Button onPress={() => setOpen(false)}>{m("cancel")}</Button>
-						<Button
+			<LibraryDeletionDialogView
+				open={open}
+				onOpenChange={setOpen}
+				dismissable
+				title={m("deleteQuestion", { target: displayedTarget })}
+				actions={
+					<>
+						<AppButton onPress={() => setOpen(false)}>{m("cancel")}</AppButton>
+						<AppButton
 							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
 								setOpen(false);
@@ -185,10 +139,60 @@ export function DeletionRequest({
 							}}
 						>
 							{m("confirm")}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
+						</AppButton>
+					</>
+				}
+			>
+				<p>{displayedScope}</p>
+				<p>{m("ownedFilesDeletion", { count: plan.publications })}</p>
+				{!track && (
+					<>
+						<h3 className="mt-1.5 mb-0 text-xs">{m("releaseWillBeDeleted")}</h3>
+						<p>{release.title}</p>
+						<h3 className="mt-1.5 mb-0 text-xs">{m("recordingsKept")}</h3>
+						<ul className="m-0 pl-5">
+							{[
+								...new Map(
+									release.tracks
+										.filter((item) => item.recordingId)
+										.map((item) => [item.recordingId, item]),
+								).values(),
+							].map((item) => (
+								<li
+									className="my-[3px] [overflow-wrap:anywhere]"
+									key={item.recordingId}
+								>
+									{item.title} · {item.recordingId}
+								</li>
+							))}
+						</ul>
+						<h3 className="mt-1.5 mb-0 text-xs">
+							{m("releasePositionsWillBeDeleted")}
+						</h3>
+						<ul className="m-0 pl-5">
+							{release.tracks.map((item) => (
+								<li className="my-[3px] [overflow-wrap:anywhere]" key={item.id}>
+									{release.title} · {String(item.position).padStart(2, "0")} ·{" "}
+									{item.title} ·{" "}
+									{m(item.published ? "published" : "unpublished")}
+								</li>
+							))}
+						</ul>
+					</>
+				)}
+				{plan.paths.length ? (
+					<ul className="m-0 pl-5">
+						{plan.paths.map((path) => (
+							<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
+								<code>{path}</code>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p>{m("noCurrentPublications")}</p>
+				)}
+				<p>{m("deletionRequestNotice")}</p>
+			</LibraryDeletionDialogView>
 		</>
 	);
 }

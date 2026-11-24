@@ -94,6 +94,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: раскрытие произведений и частей, строки произведений, название, всего частей и номер | `features/library/WorksMovementSectionView.tsx`, `WorkRowsView.tsx`, `MovementFieldsView.tsx` | Те же пути |
 | Медиатека: поля строки участника, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
+| Медиатека: рамка диалога удаления артиста, релиза и публикации | `features/library/LibraryDeletionDialogView.tsx` | Тот же путь |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 
 ### Где ещё есть расхождения

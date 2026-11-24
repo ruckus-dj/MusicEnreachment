@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "../../components/ui";
+import { AppButton } from "../../components/AppButton";
+import type { DeletionOperation } from "../../components/DeletionRequest";
+import { Button } from "../../components/ui";
+import { useI18n } from "../../i18n/I18nProvider";
 import type {
 	CatalogArtist,
 	OriginalRelease,
 	OriginalTrack,
 } from "./catalogData";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { deletionDialog, deletionFooter } from "../../components/styles/matchingStyles";
-import { useI18n } from "../../i18n/I18nProvider";
 import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
+import { LibraryDeletionDialogView } from "./LibraryDeletionDialogView";
 
 type DependencySection = {
 	title: CatalogueMessage;
@@ -159,61 +160,15 @@ export function ArtistDeletionRequest({
 			>
 				{m("deleteArtist")}
 			</Button>
-			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
-				<Dialog
-					aria-labelledby="artist-deletion-title"
-					className={deletionDialog}
-				>
-					<Heading slot="title" id="artist-deletion-title">
-						{m("deleteQuestion", { target: plan.target })}
-					</Heading>
-					<p>
-						{m("artistDeletionSummary", {
-							releases: plan.summary.releases,
-							recordings: plan.summary.recordings,
-							positions: plan.summary.positions,
-						})}
-					</p>
-					<p>{m("artistDeletionSafety", { count: plan.publications })}</p>
-					{plan.dependencies.map((section) => (
-						<section key={`${section.title}:${section.releaseTitle ?? ""}`}>
-							<h3 className="mt-1.5 mb-0 text-xs">
-								{m(section.title)}
-								{section.releaseTitle ? ` · ${section.releaseTitle}` : ""}
-							</h3>
-							<ul className="m-0 pl-5">
-								{section.items.map((item, index) => (
-									<li
-										className="my-[3px] [overflow-wrap:anywhere]"
-										key={`${item.label}:${index}`}
-									>
-										{item.position === undefined
-											? item.label || m("unnamedRelease")
-											: `${item.position.toString().padStart(2, "0")} · ${item.label}`}
-										{item.published !== undefined &&
-											` · ${m(item.published ? "published" : "unpublished")}`}
-										{item.state &&
-											` · ${m(item.state === "deleted" ? "willBeDeleted" : "willBeKept")}`}
-									</li>
-								))}
-							</ul>
-						</section>
-					))}
-					{plan.paths.length ? (
-						<ul className="m-0 pl-5">
-							{plan.paths.map((path) => (
-								<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
-									<code>{path}</code>
-								</li>
-							))}
-						</ul>
-					) : (
-						<p>{m("noCurrentPublications")}</p>
-					)}
-					<p>{m("deletionRequestNotice")}</p>
-					<div className={deletionFooter}>
-						<Button onPress={() => setOpen(false)}>{m("cancel")}</Button>
-						<Button
+			<LibraryDeletionDialogView
+				open={open}
+				onOpenChange={setOpen}
+				dismissable
+				title={m("deleteQuestion", { target: plan.target })}
+				actions={
+					<>
+						<AppButton onPress={() => setOpen(false)}>{m("cancel")}</AppButton>
+						<AppButton
 							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
 								setOpen(false);
@@ -230,10 +185,55 @@ export function ArtistDeletionRequest({
 							}}
 						>
 							{m("confirm")}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
+						</AppButton>
+					</>
+				}
+			>
+				<p>
+					{m("artistDeletionSummary", {
+						releases: plan.summary.releases,
+						recordings: plan.summary.recordings,
+						positions: plan.summary.positions,
+					})}
+				</p>
+				<p>{m("artistDeletionSafety", { count: plan.publications })}</p>
+				{plan.dependencies.map((section) => (
+					<section key={`${section.title}:${section.releaseTitle ?? ""}`}>
+						<h3 className="mt-1.5 mb-0 text-xs">
+							{m(section.title)}
+							{section.releaseTitle ? ` · ${section.releaseTitle}` : ""}
+						</h3>
+						<ul className="m-0 pl-5">
+							{section.items.map((item, index) => (
+								<li
+									className="my-[3px] [overflow-wrap:anywhere]"
+									key={`${item.label}:${index}`}
+								>
+									{item.position === undefined
+										? item.label || m("unnamedRelease")
+										: `${item.position.toString().padStart(2, "0")} · ${item.label}`}
+									{item.published !== undefined &&
+										` · ${m(item.published ? "published" : "unpublished")}`}
+									{item.state &&
+										` · ${m(item.state === "deleted" ? "willBeDeleted" : "willBeKept")}`}
+								</li>
+							))}
+						</ul>
+					</section>
+				))}
+				{plan.paths.length ? (
+					<ul className="m-0 pl-5">
+						{plan.paths.map((path) => (
+							<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
+								<code>{path}</code>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p>{m("noCurrentPublications")}</p>
+				)}
+				<p>{m("deletionRequestNotice")}</p>
+			</LibraryDeletionDialogView>
 		</>
 	);
 }
