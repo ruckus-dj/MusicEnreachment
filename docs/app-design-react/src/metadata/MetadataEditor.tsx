@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components/ui";
+import { ContributorRowView } from "../features/library/ContributorRowView";
 import { MetadataCardActions } from "../features/library/MetadataCardActions";
 import {
 	type MetadataFieldDescriptor,
@@ -936,94 +937,119 @@ export function MetadataEditor({
 												key={`${role}-${index}`}
 												className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
 											>
-												<KeyInput
-													fieldKey={roleField.key}
-													label={m("label.contributorName")}
-													value={contributor.name}
-													readOnly={!editing}
-													onChange={(name) => {
-														const next = [...roleContributors];
-														next[index] = { ...next[index], name };
-														writeRole(next);
-													}}
+												<ContributorRowView
+													items={[
+														{
+															key: "name",
+															label: m("label.contributorName"),
+															value: contributor.name,
+															dataKeys: [roleField.key],
+															readOnly: !editing,
+															onChange: (name: string) => {
+																const next = [...roleContributors];
+																next[index] = { ...next[index], name };
+																writeRole(next);
+															},
+														},
+														...(idField
+															? [
+																	{
+																		key: "mbid",
+																		label: m("label.contributorMusicBrainz"),
+																		value: contributor.mbid ?? "",
+																		dataKeys: [idField.key],
+																		readOnly: !editing,
+																		onChange: (mbid: string) => {
+																			const next = [...roleContributors];
+																			next[index] = {
+																				...next[index],
+																				mbid,
+																			};
+																			writeRole(next);
+																		},
+																	},
+																]
+															: []),
+														...(sortField
+															? [
+																	{
+																		key: "sort",
+																		label: metadataFieldLabel(
+																			sortField.key,
+																			locale,
+																		),
+																		value: contributor.sortName ?? "",
+																		dataKeys: [sortField.key],
+																		readOnly: !editing,
+																		onChange: (sortName: string) => {
+																			const next = [...roleContributors];
+																			next[index] = {
+																				...next[index],
+																				sortName,
+																			};
+																			writeRole(next);
+																		},
+																	},
+																]
+															: []),
+														...(role === "performer"
+															? [
+																	{
+																		key: "instrument",
+																		label: m("label.instrument"),
+																		value: contributor.instrument ?? "",
+																		readOnly: !editing,
+																		onChange: (instrument: string) => {
+																			const next = [...roleContributors];
+																			next[index] = {
+																				...next[index],
+																				instrument,
+																			};
+																			writeRole(next);
+																		},
+																	},
+																]
+															: []),
+													]}
+													actions={
+														editing
+															? {
+																	moveUp: {
+																		label: `${m("action.moveUp")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`,
+																		disabled: !editing || index === 0,
+																		onPress: () => {
+																			writeRole(
+																				move(roleContributors, index, -1),
+																			);
+																		},
+																	},
+																	moveDown: {
+																		label: `${m("action.moveDown")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`,
+																		disabled:
+																			!editing ||
+																			index === roleContributors.length - 1,
+																		onPress: () => {
+																			writeRole(
+																				move(roleContributors, index, 1),
+																			);
+																		},
+																	},
+																	remove: {
+																		label: `${m("action.remove")} ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`,
+																		text: m("action.remove"),
+																		disabled: !editing,
+																		onPress: () => {
+																			writeRole(
+																				roleContributors.filter(
+																					(_, row) => row !== index,
+																				),
+																			);
+																		},
+																	},
+																}
+															: undefined
+													}
 												/>
-												{idField && (
-													<KeyInput
-														fieldKey={idField.key}
-														label={m("label.contributorMusicBrainz")}
-														value={contributor.mbid ?? ""}
-														readOnly={!editing}
-														onChange={(mbid) => {
-															const next = [...roleContributors];
-															next[index] = { ...next[index], mbid };
-															writeRole(next);
-														}}
-													/>
-												)}
-												{sortField && (
-													<KeyInput
-														fieldKey={sortField.key}
-														label={metadataFieldLabel(sortField.key, locale)}
-														value={contributor.sortName ?? ""}
-														readOnly={!editing}
-														onChange={(sortName) => {
-															const next = [...roleContributors];
-															next[index] = { ...next[index], sortName };
-															writeRole(next);
-														}}
-													/>
-												)}
-												{role === "performer" && (
-													<KeyInput
-														fieldKey={undefined}
-														label={m("label.instrument")}
-														value={contributor.instrument ?? ""}
-														readOnly={!editing}
-														onChange={(instrument) => {
-															const next = [...roleContributors];
-															next[index] = { ...next[index], instrument };
-															writeRole(next);
-														}}
-													/>
-												)}
-												{editing && (
-													<div className="flex gap-1">
-														<Button
-															aria-label={`${m("action.moveUp")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
-															isDisabled={!editing || index === 0}
-															onPress={() => {
-																writeRole(move(roleContributors, index, -1));
-															}}
-														>
-															↑
-														</Button>
-														<Button
-															aria-label={`${m("action.moveDown")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
-															isDisabled={
-																!editing ||
-																index === roleContributors.length - 1
-															}
-															onPress={() => {
-																writeRole(move(roleContributors, index, 1));
-															}}
-														>
-															↓
-														</Button>
-														<Button
-															aria-label={`${m("action.remove")} ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
-															isDisabled={!editing}
-															onPress={() => {
-																writeRole(
-																	roleContributors.filter(
-																		(_, row) => row !== index,
-																	),
-																);
-															}}
-														>
-															{m("action.remove")}
-														</Button>
-													</div>
-												)}
 											</div>
 										))}
 										{editing && (

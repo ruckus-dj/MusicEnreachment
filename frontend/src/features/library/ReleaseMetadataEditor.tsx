@@ -27,6 +27,7 @@ import {
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
 import { artistCreditMessages } from "./artistCreditMessages";
+import { ContributorRowView } from "./ContributorRowView";
 import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
 import { MetadataCardActions } from "./MetadataCardActions";
@@ -1145,6 +1146,25 @@ function LibraryScopedMetadataEditorSession({
     if (kind !== "contributors") return null;
     const field = editing ? draft[key] : saved[key];
     const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
+    const contributors = field.value as ContributorDraft[];
+    const updateContributors = (value: ContributorDraft[]) =>
+      updateField(key, { state: "value", value });
+    const replaceContributor = (
+      index: number,
+      changes: Partial<ContributorDraft>,
+    ) =>
+      updateContributors(
+        contributors.map((row, rowIndex) =>
+          rowIndex === index ? { ...row, ...changes } : row,
+        ),
+      );
+    const moveContributor = (index: number, offset: -1 | 1) => {
+      const next = [...contributors];
+      const target = index + offset;
+      if (target < 0 || target >= next.length) return;
+      [next[index], next[target]] = [next[target], next[index]];
+      updateContributors(next);
+    };
     return (
       <div
         key={key}
@@ -1163,271 +1183,163 @@ function LibraryScopedMetadataEditorSession({
               </span>
             ) : (
               <>
-                {(field.value as ContributorDraft[]).map(
-                  (contributor, index) => (
-                    <div
-                      key={contributor.uiKey}
-                      className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
-                    >
-                      {editing ? (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <label
-                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-name`}
-                          >
-                            {`${text.contributorName} ${index + 1}`}
-                          </label>
-                          <input
-                            id={`${contributorControlPrefix}-${contributor.uiKey}-name`}
-                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                            value={contributor.name}
-                            disabled={saving}
-                            onChange={(event) => {
-                              const next = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              next[index] = {
-                                ...contributor,
-                                name: event.currentTarget.value,
-                              };
-                              updateField(key, {
-                                state: "value",
-                                value: next,
-                              });
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <span>{`${text.contributorName} ${index + 1}`}</span>
-                          <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
-                            {contributor.name || text.emptyValue}
-                          </span>
-                        </div>
-                      )}
-                      {editing ? (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <label
-                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                          >
-                            {`${text.contributorRole} ${index + 1}`}
-                          </label>
-                          <select
-                            id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                            className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                            value={contributor.role}
-                            disabled={saving}
-                            onChange={(event) => {
-                              const role = event.currentTarget.value;
-                              const next = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              next[index] = {
-                                ...contributor,
-                                role,
-                              };
-                              updateField(key, {
-                                state: "value",
-                                value: next,
-                              });
-                            }}
-                          >
-                            <option value="">{text.contributorRole}</option>
-                            {contributor.role &&
-                            !Object.hasOwn(
-                              text.contributorRoles,
-                              contributor.role,
-                            ) ? (
-                              <option value={contributor.role}>
-                                {contributor.role}
-                              </option>
-                            ) : null}
-                            {Object.entries(text.contributorRoles).map(
-                              ([role, roleLabel]) => (
-                                <option key={role} value={role}>
-                                  {roleLabel}
-                                </option>
-                              ),
-                            )}
-                          </select>
-                        </div>
-                      ) : (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <span>{`${text.contributorRole} ${index + 1}`}</span>
-                          <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
-                            {text.contributorRoles[
-                              contributor.role as keyof typeof text.contributorRoles
-                            ] ?? contributor.role}
-                          </span>
-                        </div>
-                      )}
-                      {editing ? (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <label
-                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-instrument`}
-                          >
-                            {`${text.contributorInstrument} ${index + 1}`}
-                          </label>
-                          <input
-                            id={`${contributorControlPrefix}-${contributor.uiKey}-instrument`}
-                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                            value={contributor.instrument ?? ""}
-                            disabled={saving}
-                            onChange={(event) => {
-                              const next = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              next[index] = {
-                                ...contributor,
-                                instrument:
-                                  event.currentTarget.value || undefined,
-                              };
-                              updateField(key, {
-                                state: "value",
-                                value: next,
-                              });
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <span>{`${text.contributorInstrument} ${index + 1}`}</span>
-                          <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
-                            {contributor.instrument || text.emptyValue}
-                          </span>
-                        </div>
-                      )}
-                      {contributor.artist_id ? (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <span className="text-sm text-[var(--ink)]">
-                            {text.artistLinkRetained}
-                          </span>
-                        </div>
-                      ) : null}
-                      {editing ? (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <label
-                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-mbid`}
-                          >
-                            {`${text.contributorMusicBrainzID} ${index + 1}`}
-                          </label>
-                          <input
-                            id={`${contributorControlPrefix}-${contributor.uiKey}-mbid`}
-                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                            value={contributor.mbid ?? ""}
-                            disabled={saving}
-                            onChange={(event) => {
-                              const next = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              next[index] = {
-                                ...contributor,
-                                mbid: event.currentTarget.value || undefined,
-                              };
-                              updateField(key, {
-                                state: "value",
-                                value: next,
-                              });
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                          <span>{`${text.contributorMusicBrainzID} ${index + 1}`}</span>
-                          <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
-                            {contributor.mbid || text.emptyValue}
-                          </span>
-                        </div>
-                      )}
-                      {editing ? (
-                        <div className="flex flex-wrap items-end gap-1">
-                          <AppButton
-                            type="button"
-                            aria-label={text.moveContributorUp(index + 1)}
-                            isDisabled={saving || index === 0}
-                            onPress={() => {
-                              const contributors = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              [contributors[index - 1], contributors[index]] = [
-                                contributors[index],
-                                contributors[index - 1],
-                              ];
-                              updateField(key, {
-                                state: "value",
-                                value: contributors,
-                              });
-                            }}
-                            className="min-w-0 justify-center"
-                          >
-                            ↑
-                          </AppButton>
-                          <AppButton
-                            type="button"
-                            aria-label={text.moveContributorDown(index + 1)}
-                            isDisabled={
-                              saving ||
-                              index ===
-                                (field.value as ContributorDraft[]).length - 1
+                {contributors.map((contributor, index) => (
+                  <div
+                    key={contributor.uiKey}
+                    className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+                  >
+                    <ContributorRowView
+                      items={[
+                        {
+                          key: "name",
+                          id: `${contributorControlPrefix}-${contributor.uiKey}-name`,
+                          label: `${text.contributorName} ${index + 1}`,
+                          value: contributor.name,
+                          disabled: saving,
+                          display: editing ? "input" : "text",
+                          emptyValue: text.emptyValue,
+                          onChange: (name) =>
+                            replaceContributor(index, { name }),
+                        },
+                        {
+                          kind: "slot",
+                          key: "role",
+                          content: editing ? (
+                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                              <label
+                                htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                              >
+                                {`${text.contributorRole} ${index + 1}`}
+                              </label>
+                              <select
+                                id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                                className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                value={contributor.role}
+                                disabled={saving}
+                                onChange={(event) =>
+                                  replaceContributor(index, {
+                                    role: event.currentTarget.value,
+                                  })
+                                }
+                              >
+                                <option value="">{text.contributorRole}</option>
+                                {contributor.role &&
+                                !Object.hasOwn(
+                                  text.contributorRoles,
+                                  contributor.role,
+                                ) ? (
+                                  <option value={contributor.role}>
+                                    {contributor.role}
+                                  </option>
+                                ) : null}
+                                {Object.entries(text.contributorRoles).map(
+                                  ([role, roleLabel]) => (
+                                    <option key={role} value={role}>
+                                      {roleLabel}
+                                    </option>
+                                  ),
+                                )}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                              <span>{`${text.contributorRole} ${index + 1}`}</span>
+                              <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
+                                {text.contributorRoles[
+                                  contributor.role as keyof typeof text.contributorRoles
+                                ] ?? contributor.role}
+                              </span>
+                            </div>
+                          ),
+                        },
+                        {
+                          key: "instrument",
+                          id: `${contributorControlPrefix}-${contributor.uiKey}-instrument`,
+                          label: `${text.contributorInstrument} ${index + 1}`,
+                          value: contributor.instrument ?? "",
+                          disabled: saving,
+                          display: editing ? "input" : "text",
+                          emptyValue: text.emptyValue,
+                          onChange: (instrument) =>
+                            replaceContributor(index, {
+                              instrument: instrument || undefined,
+                            }),
+                        },
+                        {
+                          kind: "slot",
+                          key: "retained-link",
+                          content: contributor.artist_id ? (
+                            <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                              <span className="text-sm text-[var(--ink)]">
+                                {text.artistLinkRetained}
+                              </span>
+                            </div>
+                          ) : null,
+                        },
+                        {
+                          key: "mbid",
+                          id: `${contributorControlPrefix}-${contributor.uiKey}-mbid`,
+                          label: `${text.contributorMusicBrainzID} ${index + 1}`,
+                          value: contributor.mbid ?? "",
+                          disabled: saving,
+                          display: editing ? "input" : "text",
+                          emptyValue: text.emptyValue,
+                          onChange: (mbid) =>
+                            replaceContributor(index, {
+                              mbid: mbid || undefined,
+                            }),
+                        },
+                      ]}
+                      actions={
+                        editing
+                          ? {
+                              moveUp: {
+                                label: text.moveContributorUp(index + 1),
+                                disabled: saving || index === 0,
+                                onPress: () => moveContributor(index, -1),
+                              },
+                              moveDown: {
+                                label: text.moveContributorDown(index + 1),
+                                disabled:
+                                  saving || index === contributors.length - 1,
+                                onPress: () => moveContributor(index, 1),
+                              },
+                              remove: {
+                                label: text.removeContributor(index + 1),
+                                text: text.removeContributor(index + 1),
+                                disabled: saving,
+                                onPress: () =>
+                                  updateContributors(
+                                    contributors.filter(
+                                      (_, row) => row !== index,
+                                    ),
+                                  ),
+                              },
                             }
-                            onPress={() => {
-                              const contributors = [
-                                ...(field.value as ContributorDraft[]),
-                              ];
-                              [contributors[index], contributors[index + 1]] = [
-                                contributors[index + 1],
-                                contributors[index],
-                              ];
-                              updateField(key, {
-                                state: "value",
-                                value: contributors,
-                              });
-                            }}
-                            className="min-w-0 justify-center"
-                          >
-                            ↓
-                          </AppButton>
-                          <AppButton
-                            type="button"
-                            isDisabled={saving}
-                            onPress={() =>
-                              updateField(key, {
-                                state: "value",
-                                value: (
-                                  field.value as ContributorDraft[]
-                                ).filter((_, row) => row !== index),
-                              })
-                            }
-                            className="min-w-0 justify-center"
-                          >
-                            {text.removeContributor(index + 1)}
-                          </AppButton>
-                        </div>
-                      ) : null}
-                    </div>
-                  ),
-                )}
+                          : undefined
+                      }
+                    />
+                  </div>
+                ))}
                 {editing ? (
                   <AppButton
                     type="button"
                     isDisabled={saving}
                     onPress={() =>
-                      updateField(key, {
-                        state: "value",
-                        value: [
-                          ...(field.value as ContributorDraft[]),
-                          {
-                            uiKey: createMetadataDraftRowKey(),
-                            name: "",
-                            role: "",
-                          },
-                        ],
-                      })
+                      updateContributors([
+                        ...contributors,
+                        {
+                          uiKey: createMetadataDraftRowKey(),
+                          name: "",
+                          role: "",
+                        },
+                      ])
                     }
                     className="min-w-0 justify-center justify-self-start"
                   >
                     {text.addContributor}
                   </AppButton>
-                ) : (field.value as ContributorDraft[]).length === 0 ? (
+                ) : contributors.length === 0 ? (
                   <span className="text-sm text-[var(--muted)]">
                     {text.emptyValue}
                   </span>

@@ -91,6 +91,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
 | Медиатека: раскрытие произведений и частей, строки произведений, название, всего частей и номер | `features/library/WorksMovementSectionView.tsx`, `WorkRowsView.tsx`, `MovementFieldsView.tsx` | Те же пути |
+| Медиатека: поля строки участника, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 
@@ -170,6 +171,10 @@ source channel, а fixture макета такого происхождения 
   в макете ограничено демонстрационными данными.
   Поля со списками значений используют одинаковые строки, подписи и действия
   порядка. Приложение сохраняет массив с выбранным состоянием и ревизией.
+  Строки участников используют общие поля имени, инструмента и MBID, а также
+  действия порядка и удаления. Приложение оставляет в строке выбор роли,
+  уведомление о сохранённом `artist_id` и режим поля; макет группирует строки
+  по роли, показывает поле сортировки и добавляет роли отдельным списком.
   Основные поля и раскрываемые группы обычных полей используют общие сетки;
   краткая сводка учитывает показанные сохранённые значения и черновик.
   В остальной композиции маршрутов, редакторах
