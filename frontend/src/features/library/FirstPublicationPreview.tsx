@@ -10,6 +10,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
+import { LibraryPositionPreviewButton } from "./LibraryPositionWorkspace";
 import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 export type SourceChoice = Pick<
@@ -1004,10 +1005,7 @@ export function FirstPublicationPreview({
   if (aggregateManaged) return null;
 
   return (
-    <section
-      className="space-y-3 rounded border border-stone-300 p-4"
-      aria-label={copy.section}
-    >
+    <section className="min-w-0 space-y-3" aria-label={copy.section}>
       {comparisonOnly && (
         <>
           <fieldset className="space-y-2" disabled={loading}>
@@ -1057,20 +1055,18 @@ export function FirstPublicationPreview({
           </fieldset>
         </>
       )}
-      <button
-        type="button"
+      <LibraryPositionPreviewButton
+        locale={locale}
+        pending={loading}
         disabled={
-          loading ||
           confirming ||
           Boolean(admittedOperationID) ||
           admissionUncertain ||
           confirmationPending.current ||
           admissionLocked.current
         }
-        onClick={() => void loadPreview(selectedChoice)}
-      >
-        {loading ? copy.loading : copy.preview}
-      </button>
+        onPreview={() => void loadPreview(selectedChoice)}
+      />
       <PublicationPreviewDetails
         state={aggregateState}
         sourceGroupName={`publication-source-${releaseId}-${positionId}`}

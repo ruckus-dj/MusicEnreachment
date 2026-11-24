@@ -69,7 +69,7 @@ export const catalogueStyles = {
 	facts:
 		"my-[10px] grid grid-cols-[minmax(130px,.75fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] max-[600px]:grid-cols-1 max-[600px]:gap-y-0 [&_dt]:text-[11px] [&_dt]:text-[var(--muted)] [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] max-[600px]:[&_dd]:mb-[7px]",
 	actions:
-		"my-2 flex flex-wrap items-center gap-[7px] [&>button]:min-h-8 [&>button]:rounded-[4px] [&>button]:border [&>button]:border-[var(--control)] [&>button]:bg-[var(--surface)] [&>button]:px-[9px] [&>button]:py-[5px] [&>button]:text-[var(--ink)]",
+		"my-2 flex flex-wrap items-center gap-[7px] [&>button:where(:not([data-position-preview-button]))]:min-h-8 [&>button:where(:not([data-position-preview-button]))]:rounded-[4px] [&>button:where(:not([data-position-preview-button]))]:border [&>button:where(:not([data-position-preview-button]))]:border-[var(--control)] [&>button:where(:not([data-position-preview-button]))]:bg-[var(--surface)] [&>button:where(:not([data-position-preview-button]))]:px-[9px] [&>button:where(:not([data-position-preview-button]))]:py-[5px] [&>button:where(:not([data-position-preview-button]))]:text-[var(--ink)]",
 	secondary:
 		"mt-[3px] block text-[11px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
 	sub: "mt-[3px] block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",

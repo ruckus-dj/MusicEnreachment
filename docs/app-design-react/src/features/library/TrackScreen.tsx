@@ -28,7 +28,10 @@ import {
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
 import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
-import { LibraryPositionWorkspace } from "./LibraryPositionWorkspace";
+import {
+	LibraryPositionPreviewButton,
+	LibraryPositionWorkspace,
+} from "./LibraryPositionWorkspace";
 import { PublicationCurrentDetailsView } from "./PublicationCurrentSummaryView";
 import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 import { TagsComparison } from "./TagsComparison";
@@ -209,9 +212,10 @@ export function TrackScreen({
 									{trackMessage(locale, "updateMetadata")}
 								</Button>
 							)}
-							<Button onPress={onPreview}>
-								{trackMessage(locale, "previewPublication")}
-							</Button>
+							<LibraryPositionPreviewButton
+								locale={locale}
+								onPreview={onPreview}
+							/>
 						</div>
 						{onMutate && (
 							<TrackActions

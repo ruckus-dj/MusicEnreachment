@@ -1,6 +1,33 @@
 import { type ReactNode, useId } from "react";
+import { AppButton } from "../../components/AppButton";
+import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
 
 const title = { en: "Publication", ru: "Публикация" } as const;
+
+export function LibraryPositionPreviewButton({
+  locale,
+  pending,
+  disabled,
+  onPreview,
+}: {
+  locale: "en" | "ru";
+  pending?: boolean;
+  disabled?: boolean;
+  onPreview: () => void;
+}) {
+  const text = firstPublicationPreviewMessages[locale];
+  return (
+    <AppButton
+      type="button"
+      data-position-preview-button
+      isDisabled={pending || disabled}
+      onPress={onPreview}
+      className="min-h-8! rounded-[4px]! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
+    >
+      {pending ? text.loading : text.preview}
+    </AppButton>
+  );
+}
 
 export function LibraryPositionWorkspace({
   locale,

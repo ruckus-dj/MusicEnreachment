@@ -64,7 +64,7 @@
   padding: 8px;
 }
 
-.library-release-screen button {
+.library-release-screen button:where(:not([data-position-preview-button])) {
   min-height: 30px;
   padding: 4px 8px;
   color: var(--ink);
@@ -74,12 +74,12 @@
   font: inherit;
 }
 
-.library-release-screen button:hover:not(:disabled) {
+.library-release-screen button:hover:not(:disabled):where(:not([data-position-preview-button])) {
   background: var(--raised);
   border-color: var(--accent);
 }
 
-.library-release-screen button:disabled {
+.library-release-screen button:disabled:where(:not([data-position-preview-button])) {
   color: var(--muted);
   background: var(--raised);
   border-color: var(--line);
@@ -107,7 +107,7 @@
   .library-release-screen input,
   .library-release-screen select,
   .library-release-screen textarea,
-  .library-release-screen button {
+  .library-release-screen button:where(:not([data-position-preview-button])) {
     min-height: 40px;
   }
 
