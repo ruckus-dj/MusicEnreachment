@@ -19,6 +19,7 @@ import {
   LibraryEditionCard,
   libraryEditionCardStyles,
 } from "./LibraryEditionCard";
+import { LibraryPaginationControls } from "./LibraryPaginationView";
 import {
   libraryArtistRouteHref,
   libraryRouteHref,
@@ -32,9 +33,6 @@ const statePanelClass =
   "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm [&>h2]:m-0 [&>h2]:text-base [&>p]:m-0";
 const screenLinkClass =
   "text-[var(--ink)] no-underline underline-offset-2 hover:text-[var(--accent)] hover:underline";
-const paginationClass =
-  "mt-2.5 flex flex-wrap items-center justify-end gap-2.5";
-
 const artistScreenCopy = {
   en: {
     backToLibrary: "← Back to library",
@@ -366,33 +364,26 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             </section>
           )}
           {releases && releases.total > PAGE_SIZE && (
-            <nav className={paginationClass} aria-label={copy.releasePages}>
-              <span>
-                {route.offset + 1}–
-                {Math.min(route.offset + PAGE_SIZE, releases.total)} {copy.of}{" "}
-                {releases.total}
-              </span>
-              <a
-                aria-disabled={route.offset === 0}
-                className={`${screenLinkClass} aria-disabled:pointer-events-none aria-disabled:opacity-55`}
-                href={libraryArtistRouteHref(artistId, {
+            <LibraryPaginationControls
+              label={copy.releasePages}
+              status={`${route.offset + 1}–${Math.min(route.offset + PAGE_SIZE, releases.total)} ${copy.of} ${releases.total}`}
+              previous={{
+                label: copy.previous,
+                disabled: route.offset === 0,
+                href: libraryArtistRouteHref(artistId, {
                   ...route,
                   offset: Math.max(0, route.offset - PAGE_SIZE),
-                })}
-              >
-                {copy.previous}
-              </a>
-              <a
-                aria-disabled={route.offset + PAGE_SIZE >= releases.total}
-                className={`${screenLinkClass} aria-disabled:pointer-events-none aria-disabled:opacity-55`}
-                href={libraryArtistRouteHref(artistId, {
+                }),
+              }}
+              next={{
+                label: copy.next,
+                disabled: route.offset + PAGE_SIZE >= releases.total,
+                href: libraryArtistRouteHref(artistId, {
                   ...route,
                   offset: route.offset + PAGE_SIZE,
-                })}
-              >
-                {copy.next}
-              </a>
-            </nav>
+                }),
+              }}
+            />
           )}
         </>
       ) : null}
@@ -477,26 +468,20 @@ function ReleasePositions({
         })}
       />
       {positions.length > 0 && page && page.total > PAGE_SIZE && (
-        <nav className={paginationClass} aria-label={copy.positionPages}>
-          <span>
-            {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} {copy.of}{" "}
-            {page.total}
-          </span>
-          <AppButton
-            type="button"
-            isDisabled={offset === 0}
-            onPress={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-          >
-            {copy.previous}
-          </AppButton>
-          <AppButton
-            type="button"
-            isDisabled={offset + PAGE_SIZE >= page.total}
-            onPress={() => setOffset(offset + PAGE_SIZE)}
-          >
-            {copy.next}
-          </AppButton>
-        </nav>
+        <LibraryPaginationControls
+          label={copy.positionPages}
+          status={`${offset + 1}–${Math.min(offset + PAGE_SIZE, page.total)} ${copy.of} ${page.total}`}
+          previous={{
+            label: copy.previous,
+            disabled: offset === 0,
+            onPress: () => setOffset(Math.max(0, offset - PAGE_SIZE)),
+          }}
+          next={{
+            label: copy.next,
+            disabled: offset + PAGE_SIZE >= page.total,
+            onPress: () => setOffset(offset + PAGE_SIZE),
+          }}
+        />
       )}
     </div>
   );
