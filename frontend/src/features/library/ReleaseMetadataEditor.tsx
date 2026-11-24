@@ -1563,6 +1563,28 @@ function LibraryScopedMetadataEditorSession({
             genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
           )}
         />
+        <details className="min-w-0 rounded border border-[var(--line)]">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+            {text.groups.artistCredits}
+          </summary>
+          <div className="grid min-w-0 gap-2 p-2">
+            <ArtistCreditRowsEditor
+              draft={editing ? artistCreditDraft : savedArtistCredit}
+              savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
+              baseline={artistCreditBaseline}
+              effective={effectiveArtistCredit}
+              searchQuery={artistSearchQuery}
+              searchResults={artistCreditSearchResults}
+              searchLoading={artistSearch.isFetching}
+              searchError={artistSearchError}
+              editing={editing}
+              disabled={!editing || saving}
+              onDraftChange={updateArtistCreditDraft}
+              onSearchQueryChange={setArtistSearchQuery}
+              onRetrySearch={() => void artistSearch.refetch()}
+            />
+          </div>
+        </details>
         {groupNames.map((group) => {
           const groupFields = genreFields.filter(
             (field) =>
@@ -1626,28 +1648,6 @@ function LibraryScopedMetadataEditorSession({
             </details>
           );
         })}
-        <details className="min-w-0 rounded border border-[var(--line)]">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-            {text.groups.artistCredits}
-          </summary>
-          <div className="grid min-w-0 gap-2 p-2">
-            <ArtistCreditRowsEditor
-              draft={editing ? artistCreditDraft : savedArtistCredit}
-              savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
-              baseline={artistCreditBaseline}
-              effective={effectiveArtistCredit}
-              searchQuery={artistSearchQuery}
-              searchResults={artistCreditSearchResults}
-              searchLoading={artistSearch.isFetching}
-              searchError={artistSearchError}
-              editing={editing}
-              disabled={!editing || saving}
-              onDraftChange={updateArtistCreditDraft}
-              onSearchQueryChange={setArtistSearchQuery}
-              onRetrySearch={() => void artistSearch.refetch()}
-            />
-          </div>
-        </details>
       </div>
       {loading ? (
         <p role="status" className="m-0 text-sm text-[var(--muted)]">
