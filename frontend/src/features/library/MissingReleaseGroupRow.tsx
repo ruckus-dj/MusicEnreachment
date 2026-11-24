@@ -8,6 +8,7 @@ import type {
   LibraryReleaseGroupEditionResponse,
   MissingReleaseGroupSummary,
 } from "../../api/generated/client.schemas";
+import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   type LibraryEditionPagination,
@@ -312,7 +313,7 @@ export function MissingReleaseGroupRow({
   const title = group.title || text.groupTitleUnknown;
 
   const details = (
-    <div className="catalog-missing-release-details">
+    <div>
       <p>
         {group.original_release_date ?? text.dateUnknown}
         {credits ? (
@@ -322,14 +323,10 @@ export function MissingReleaseGroupRow({
           </>
         ) : null}
       </p>
-      <p className="catalog-muted">{text.cacheNotice}</p>
-      <button
-        type="button"
-        aria-expanded={pickerOpen}
-        onClick={projection.togglePicker}
-      >
+      <p className="block text-[var(--muted)]">{text.cacheNotice}</p>
+      <AppButton aria-expanded={pickerOpen} onPress={projection.togglePicker}>
         {pickerOpen ? text.editions : text.loadEditions}
-      </button>
+      </AppButton>
       {showEditionView && (
         <div>
           <LibraryMissingEditionView locale={locale} {...viewProps} />
@@ -339,18 +336,21 @@ export function MissingReleaseGroupRow({
   );
 
   return (
-    <article className="catalog-artist-release catalog-missing-release">
-      <div className="catalog-release-heading">
-        <span className="catalog-initial" aria-hidden="true">
+    <article className="my-3 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-[10px]">
+      <div className="flex flex-wrap items-center gap-2.5 max-[720px]:items-start">
+        <span
+          className="grid size-[46px] flex-[0_0_46px] place-items-center rounded-[5px] bg-[var(--raised)] text-[20px] font-[650] text-[var(--ink)]"
+          aria-hidden="true"
+        >
           {title.trim().charAt(0).toLocaleUpperCase() || "M"}
         </span>
-        <div>
-          <h2>{title}</h2>
-          <p>
+        <div className="min-w-0 flex-1">
+          <h2 className="m-0 text-base leading-[22px]">{title}</h2>
+          <p className="m-0">
             {group.original_release_date ?? text.dateUnknown} ·{" "}
             {credits ? <CreditNames credits={group.artists} /> : text.artist}
           </p>
-          <p className="catalog-muted">
+          <p className="m-0 block text-[var(--muted)]">
             {text.mbid}: {group.provider_key}
           </p>
         </div>

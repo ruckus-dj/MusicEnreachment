@@ -7,6 +7,7 @@ import {
   useListLibraryPositions,
   useListLibraryReleases,
 } from "../../api/generated/client";
+import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
@@ -24,9 +25,15 @@ import {
   parseLibraryArtistRoute,
 } from "./libraryRoute";
 import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
-import "./catalog.css";
 
 const PAGE_SIZE = 50;
+
+const statePanelClass =
+  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm [&>h2]:m-0 [&>h2]:text-base [&>p]:m-0";
+const screenLinkClass =
+  "text-[var(--ink)] no-underline underline-offset-2 hover:text-[var(--accent)] hover:underline";
+const paginationClass =
+  "mt-2.5 flex flex-wrap items-center justify-end gap-2.5";
 
 const artistScreenCopy = {
   en: {
@@ -188,18 +195,27 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     releasesQuery.data?.status === 200 ? releasesQuery.data.data : undefined;
 
   return (
-    <section className="library-catalog" aria-labelledby="artist-title">
-      <a className="catalog-back" href={libraryRouteHref(route)}>
+    <section
+      className="w-[min(100%,76rem)] text-[13px] leading-[18px] text-[var(--ink)]"
+      aria-labelledby="artist-title"
+    >
+      <a
+        className={`inline-block mb-3 ${screenLinkClass}`}
+        href={libraryRouteHref(route)}
+      >
         {copy.backToLibrary}
       </a>
       {artistQuery.isLoading ? (
         <p role="status">{copy.loadingArtist}</p>
       ) : error ? (
-        <section className="catalog-state catalog-state--error" role="alert">
+        <section
+          className={`${statePanelClass} text-[var(--error)]`}
+          role="alert"
+        >
           <p>{error}</p>
-          <button type="button" onClick={() => void artistQuery.refetch()}>
+          <AppButton onPress={() => void artistQuery.refetch()}>
             {copy.retry}
-          </button>
+          </AppButton>
         </section>
       ) : artist ? (
         <>
@@ -234,20 +250,17 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             <p role="status">{copy.loadingReleases}</p>
           ) : releasesError ? (
             <section
-              className="catalog-state catalog-state--error"
+              className={`${statePanelClass} text-[var(--error)]`}
               role="alert"
             >
               <p>{releasesError}</p>
-              <button
-                type="button"
-                onClick={() => void releasesQuery.refetch()}
-              >
+              <AppButton onPress={() => void releasesQuery.refetch()}>
                 {copy.retry}
-              </button>
+              </AppButton>
             </section>
           ) : releases?.items.length ? (
             <section
-              className={`${libraryEditionCardStyles.list} mt-3 [&>.catalog-artist-release]:my-3`}
+              className={`${libraryEditionCardStyles.list} mt-3`}
               aria-label={copy.artistReleases}
             >
               {releases.items.map((item) => {
@@ -341,7 +354,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               })}
             </section>
           ) : (
-            <section className="catalog-state">
+            <section className={statePanelClass}>
               <h2>{copy.noReleasesFound}</h2>
               <p>
                 {route.query ||
@@ -353,7 +366,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             </section>
           )}
           {releases && releases.total > PAGE_SIZE && (
-            <nav className="catalog-pagination" aria-label={copy.releasePages}>
+            <nav className={paginationClass} aria-label={copy.releasePages}>
               <span>
                 {route.offset + 1}–
                 {Math.min(route.offset + PAGE_SIZE, releases.total)} {copy.of}{" "}
@@ -361,6 +374,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               </span>
               <a
                 aria-disabled={route.offset === 0}
+                className={`${screenLinkClass} aria-disabled:pointer-events-none aria-disabled:opacity-55`}
                 href={libraryArtistRouteHref(artistId, {
                   ...route,
                   offset: Math.max(0, route.offset - PAGE_SIZE),
@@ -370,6 +384,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               </a>
               <a
                 aria-disabled={route.offset + PAGE_SIZE >= releases.total}
+                className={`${screenLinkClass} aria-disabled:pointer-events-none aria-disabled:opacity-55`}
                 href={libraryArtistRouteHref(artistId, {
                   ...route,
                   offset: route.offset + PAGE_SIZE,
@@ -413,11 +428,12 @@ function ReleasePositions({
   if (query.isLoading) return <p role="status">{copy.loadingPositions}</p>;
   if (failure)
     return (
-      <section className="catalog-state catalog-state--error" role="alert">
+      <section
+        className={`${statePanelClass} text-[var(--error)]`}
+        role="alert"
+      >
         <p>{failure}</p>
-        <button type="button" onClick={() => void query.refetch()}>
-          {copy.retry}
-        </button>
+        <AppButton onPress={() => void query.refetch()}>{copy.retry}</AppButton>
       </section>
     );
   const page = query.data?.status === 200 ? query.data.data : undefined;
@@ -461,25 +477,25 @@ function ReleasePositions({
         })}
       />
       {positions.length > 0 && page && page.total > PAGE_SIZE && (
-        <nav className="catalog-pagination" aria-label={copy.positionPages}>
+        <nav className={paginationClass} aria-label={copy.positionPages}>
           <span>
             {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} {copy.of}{" "}
             {page.total}
           </span>
-          <button
+          <AppButton
             type="button"
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            isDisabled={offset === 0}
+            onPress={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
           >
             {copy.previous}
-          </button>
-          <button
+          </AppButton>
+          <AppButton
             type="button"
-            disabled={offset + PAGE_SIZE >= page.total}
-            onClick={() => setOffset(offset + PAGE_SIZE)}
+            isDisabled={offset + PAGE_SIZE >= page.total}
+            onPress={() => setOffset(offset + PAGE_SIZE)}
           >
             {copy.next}
-          </button>
+          </AppButton>
         </nav>
       )}
     </div>
