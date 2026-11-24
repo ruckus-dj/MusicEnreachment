@@ -9,7 +9,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
-import { readSettingsDraft, resetSettingsDraftMemory } from "./settingsDraft";
+import {
+	readSettingsDraft,
+	resetSettingsDraftMemory,
+	settingsDraftStorageKey,
+} from "./settingsDraft";
 import { demoToolCatalogRefreshDelayMs } from "./useToolCatalogDemoProvider";
 
 beforeEach(() => {
@@ -20,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it("consumes replacement approval before saving a different conflicting field group", async () => {
+it("keeps conflict actions scoped to one setting and rechecks replacement", async () => {
 	localStorage.setItem("music-design-v2-language", "en");
 	let current: typeof initialDemoSettings = {
 		...initialDemoSettings,
@@ -54,35 +58,76 @@ it("consumes replacement approval before saving a different conflicting field gr
 		musicBrainzURL: "https://remote.example",
 	};
 	view.rerender(element());
-	fireEvent.click(screen.getByRole("button", { name: "Continue editing" }));
-	fireEvent.click(screen.getByRole("button", { name: "Save concurrency" }));
-	await screen.findByRole("dialog");
-	fireEvent.click(screen.getByRole("button", { name: "Replace saved values" }));
-	await waitFor(() =>
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-	);
-	expect(onSettings).toHaveBeenCalledTimes(1);
-	expect(current).toEqual(
-		expect.objectContaining({
-			concurrency: "9",
-			musicBrainzURL: "https://remote.example",
+	fireEvent.click(
+		screen.getByRole("button", {
+			name: "Continue editing: analysis concurrency",
 		}),
 	);
+	expect(
+		screen.queryByRole("status", {
+			name: "Settings conflict: analysis concurrency",
+		}),
+	).toBeNull();
+	expect(
+		screen.getByRole("status", {
+			name: "Settings conflict: MusicBrainz settings",
+		}),
+	).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("tab", { name: "Providers" }));
-	const saveProviders = screen.getByRole("button", {
-		name: "Save and check MusicBrainz",
+	const openProviderReplacement = async () => {
+		fireEvent.click(
+			screen.getByRole("button", { name: "Save and check MusicBrainz" }),
+		);
+		return screen.findByRole("dialog", { name: "Replace saved value?" });
+	};
+	const firstDialog = await openProviderReplacement();
+	expect(onSettings).not.toHaveBeenCalled();
+	current = {
+		...current,
+		musicBrainzURL: "https://newer.example",
+		concurrency: "7",
+	};
+	view.rerender(element());
+	fireEvent.click(
+		within(firstDialog).getByRole("button", { name: "Replace saved value" }),
+	);
+	expect(onSettings).not.toHaveBeenCalled();
+	expect(screen.queryByRole("dialog")).toBeNull();
+
+	fireEvent.click(
+		screen.getByRole("button", {
+			name: "Use saved value: analysis concurrency",
+		}),
+	);
+	const stored = window.sessionStorage.getItem(settingsDraftStorageKey);
+	expect(JSON.parse(stored ?? "{}")).toMatchObject({
+		value: { concurrency: "7", musicBrainzURL: "https://draft.example" },
+		baseline: { concurrency: "7", musicBrainzURL: "https://old.example" },
 	});
-	expect(saveProviders).toBeDisabled();
-	fireEvent.click(screen.getByRole("button", { name: "Continue editing" }));
-	fireEvent.click(saveProviders);
-	await screen.findByRole("dialog");
+	expect(onSettings).not.toHaveBeenCalled();
+
+	const draftDialog = await openProviderReplacement();
+	const updatedURL = document.getElementById("settings-musicBrainzURL");
+	if (!updatedURL) throw new Error("Missing provider URL field");
+	fireEvent.change(updatedURL, {
+		target: { value: "https://draft-v2.example" },
+	});
+	fireEvent.click(
+		within(draftDialog).getByRole("button", { name: "Replace saved value" }),
+	);
+	expect(onSettings).not.toHaveBeenCalled();
+
+	const nextDialog = await openProviderReplacement();
+	current = { ...current, concurrency: "6" };
+	view.rerender(element());
+	fireEvent.click(
+		within(nextDialog).getByRole("button", { name: "Replace saved value" }),
+	);
 	expect(onSettings).toHaveBeenCalledTimes(1);
-	fireEvent.click(screen.getByRole("button", { name: "Replace saved values" }));
-	expect(onSettings).toHaveBeenCalledTimes(2);
 	expect(current).toEqual(
 		expect.objectContaining({
-			concurrency: "9",
-			musicBrainzURL: "https://draft.example",
+			concurrency: "6",
+			musicBrainzURL: "https://draft-v2.example",
 		}),
 	);
 });

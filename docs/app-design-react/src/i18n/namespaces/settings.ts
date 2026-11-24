@@ -24,10 +24,21 @@ export const settingsMessages = createNamespace({
 		save: "Save settings",
 		saved: "Settings saved",
 		invalidDelay: "Enter a non-negative delay in seconds.",
-		settingsConflict:
-			"These settings changed elsewhere while you were editing.",
-		takeSaved: "Take saved values",
-		continueEditing: "Continue editing",
+		settingsConflict: "Settings conflict: {label}",
+		changedSavedValue: "The saved value for “{label}” changed:",
+		takeSavedValue: "Use saved value: {label}",
+		continueEditing: "Continue editing: {label}",
+		conflictConcurrency: "analysis concurrency",
+		conflictMatchingThreshold: "matching threshold",
+		conflictTemplate: "publication path template",
+		conflictMusicBrainz: "MusicBrainz settings",
+		conflictWorkDirectory: "work directory",
+		conflictToolsDirectory: "tools directory",
+		conflictOutputDirectory: "publication directory",
+		inactiveMusicBrainzDraft:
+			"To edit the draft URL or request interval, select Self-hosted in Providers.",
+		staleSettings:
+			"The saved value or draft changed again. Review the values and confirm again.",
 		leaveSettingsTitle: "Leave settings?",
 		leaveSettingsText:
 			"Your unsaved text changes are kept in this tab unless you explicitly discard them.",
@@ -35,10 +46,10 @@ export const settingsMessages = createNamespace({
 		leaveKeepDraft: "Leave and keep draft",
 		leaveDiscard: "Discard draft and leave",
 		leaveSave: "Save valid changes and leave",
-		replaceSettingsTitle: "Replace saved settings?",
+		replaceSettingsTitle: "Replace saved value?",
 		replaceSettingsText:
 			"The saved values changed while you were editing. Confirm to replace those newer values with your draft.",
-		confirmReplace: "Replace saved values",
+		confirmReplace: "Replace saved value",
 		draftStorageWarning:
 			"Browser storage is unavailable. Your draft remains safe during in-app navigation, but may be lost if you reload or close this tab.",
 		providers: "Provider settings",
@@ -147,10 +158,21 @@ export const settingsMessages = createNamespace({
 		save: "Сохранить настройки",
 		saved: "Настройки сохранены",
 		invalidDelay: "Введите неотрицательную задержку в секундах.",
-		settingsConflict:
-			"Эти настройки изменились в другом месте, пока вы редактировали их.",
-		takeSaved: "Взять сохранённые значения",
-		continueEditing: "Продолжить редактирование",
+		settingsConflict: "Конфликт настроек: {label}",
+		changedSavedValue: "Сохранённое значение для «{label}» изменилось:",
+		takeSavedValue: "Взять сохранённое: {label}",
+		continueEditing: "Продолжить редактирование: {label}",
+		conflictConcurrency: "параллельность анализа",
+		conflictMatchingThreshold: "порог сопоставления",
+		conflictTemplate: "шаблон пути публикации",
+		conflictMusicBrainz: "настройки MusicBrainz",
+		conflictWorkDirectory: "рабочая папка",
+		conflictToolsDirectory: "каталог инструментов",
+		conflictOutputDirectory: "каталог публикации",
+		inactiveMusicBrainzDraft:
+			"Чтобы вернуться к черновику адреса или интервала запросов, выберите собственный сервер на вкладке «Провайдеры».",
+		staleSettings:
+			"Сохранённое значение или черновик изменились. Проверьте значения и подтвердите ещё раз.",
 		leaveSettingsTitle: "Выйти из настроек?",
 		leaveSettingsText:
 			"Несохранённые текстовые изменения останутся в этой вкладке, если вы явно не удалите черновик.",
@@ -158,10 +180,10 @@ export const settingsMessages = createNamespace({
 		leaveKeepDraft: "Выйти, сохранив черновик",
 		leaveDiscard: "Удалить черновик и выйти",
 		leaveSave: "Сохранить корректные изменения и выйти",
-		replaceSettingsTitle: "Заменить сохранённые настройки?",
+		replaceSettingsTitle: "Заменить сохранённое значение?",
 		replaceSettingsText:
 			"Сохранённые значения изменились во время редактирования. Подтвердите замену новых значений вашим черновиком.",
-		confirmReplace: "Заменить сохранённые значения",
+		confirmReplace: "Заменить сохранённое значение",
 		draftStorageWarning:
 			"Хранилище браузера недоступно. Черновик сохранится при переходах внутри приложения, но может быть потерян при перезагрузке или закрытии вкладки.",
 		providers: "Настройки провайдеров",

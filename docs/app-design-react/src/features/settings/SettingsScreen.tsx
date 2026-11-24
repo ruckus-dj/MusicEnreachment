@@ -207,6 +207,123 @@ type FolderReplacement = {
 	saved: string;
 	draft: string;
 };
+
+type SettingsConflictGroup =
+	| "concurrency"
+	| "matchingThreshold"
+	| "publicationTemplate"
+	| "workDirectory"
+	| "outputDirectory"
+	| "toolsDirectory"
+	| "musicBrainz";
+
+const conflictGroups: readonly SettingsConflictGroup[] = [
+	"concurrency",
+	"matchingThreshold",
+	"publicationTemplate",
+	"workDirectory",
+	"outputDirectory",
+	"toolsDirectory",
+	"musicBrainz",
+];
+
+const conflictGroupFields: Record<
+	SettingsConflictGroup,
+	readonly (keyof SettingsTextDraft)[]
+> = {
+	concurrency: ["concurrency"],
+	matchingThreshold: ["matchingPairThreshold"],
+	publicationTemplate: ["publicationTemplate"],
+	workDirectory: ["workDirectory"],
+	outputDirectory: ["outputDirectory"],
+	toolsDirectory: ["toolsPath"],
+	musicBrainz: ["musicBrainzMode", "musicBrainzURL", "musicBrainzDelay"],
+};
+
+const conflictGroupLabelKeys = {
+	concurrency: "conflictConcurrency",
+	matchingThreshold: "conflictMatchingThreshold",
+	publicationTemplate: "conflictTemplate",
+	workDirectory: "conflictWorkDirectory",
+	outputDirectory: "conflictOutputDirectory",
+	toolsDirectory: "conflictToolsDirectory",
+	musicBrainz: "conflictMusicBrainz",
+} as const satisfies Record<
+	SettingsConflictGroup,
+	keyof (typeof settingsMessages)["en"]
+>;
+
+const conflictGroupLabel = (
+	group: SettingsConflictGroup,
+	copy: (typeof settingsMessages)[keyof typeof settingsMessages],
+) => copy[conflictGroupLabelKeys[group]];
+
+const formatMessage = (template: string, values: Record<string, string>) =>
+	template.replace(
+		/\{([^{}]+)\}/g,
+		(match, name: string) => values[name] ?? match,
+	);
+
+const displaySettingValue = (value: string) => `«${value}»`;
+
+function conflictGroupValue(
+	group: SettingsConflictGroup,
+	values: SettingsTextDraft,
+) {
+	switch (group) {
+		case "musicBrainz": {
+			const mode = values.musicBrainzMode;
+			if (mode !== "self-hosted") return displaySettingValue(mode || "—");
+			return [
+				displaySettingValue(mode),
+				displaySettingValue(values.musicBrainzURL),
+				displaySettingValue(values.musicBrainzDelay),
+			].join(" ");
+		}
+		case "concurrency":
+			return displaySettingValue(values.concurrency);
+		case "matchingThreshold":
+			return displaySettingValue(values.matchingPairThreshold);
+		case "publicationTemplate":
+			return displaySettingValue(values.publicationTemplate);
+		case "workDirectory":
+			return displaySettingValue(values.workDirectory);
+		case "outputDirectory":
+			return displaySettingValue(values.outputDirectory);
+		case "toolsDirectory":
+			return displaySettingValue(values.toolsPath);
+	}
+}
+
+function conflictGroupValuesEqual(
+	group: SettingsConflictGroup,
+	left: SettingsTextDraft,
+	right: SettingsTextDraft,
+) {
+	return (
+		conflictGroupFields[group].every((field) => left[field] === right[field]) &&
+		(group !== "toolsDirectory" ||
+			left.toolsPathCandidate === right.toolsPathCandidate)
+	);
+}
+
+function conflictGroupSignature(
+	group: SettingsConflictGroup,
+	values: SettingsTextDraft,
+) {
+	return JSON.stringify(
+		conflictGroupFields[group].map((field) => values[field]),
+	);
+}
+
+type ValueReplacement = {
+	group: "concurrency" | "matchingThreshold" | "musicBrainz" | "toolsDirectory";
+	saved: SettingsTextDraft;
+	draft: SettingsTextDraft;
+	details: { saved: string; draft: string };
+	opener?: Element;
+};
+
 type NoticeKey =
 	| "staleMove"
 	| "staleInstall"
@@ -216,6 +333,7 @@ type NoticeKey =
 	| "providerSaved"
 	| "invalidTemplate"
 	| "staleOutput"
+	| "staleSettings"
 	| "busy"
 	| "pathOverlap";
 
@@ -261,13 +379,12 @@ export function SettingsScreen({
 	const moveCandidate = draftState.value.toolsPathCandidate;
 	const [folderReplacement, setFolderReplacement] =
 		useState<FolderReplacement>();
-	const [conflictAcknowledged, setConflictAcknowledged] = useState(false);
-	const [replacementPrompt, setReplacementPrompt] = useState(false);
+	const [dismissedConflicts, setDismissedConflicts] = useState<
+		Partial<Record<SettingsConflictGroup, string>>
+	>({});
+	const [valueReplacement, setValueReplacement] = useState<ValueReplacement>();
 	const [leavePrompt, setLeavePrompt] = useState(false);
 	const pendingHash = useRef<string | null>(null);
-	const pendingReplacement = useRef<
-		"concurrency" | "matchingThreshold" | "providers"
-	>("concurrency");
 	const allowNavigation = useRef(false);
 	const previousHash = useRef(
 		typeof window === "undefined" ? "" : window.location.hash,
@@ -304,6 +421,9 @@ export function SettingsScreen({
 		draftState.value,
 		draftState.baseline,
 	);
+	const conflictGroupsPresent = conflictGroups.filter((group) =>
+		conflictGroupFields[group].some((field) => draftConflicts.includes(field)),
+	);
 	const updateDraft = (values: Partial<SettingsTextDraft>) =>
 		setDraftState((current) => ({
 			...current,
@@ -324,9 +444,84 @@ export function SettingsScreen({
 	const providerDirty = providerFields.some(
 		(field) => isApplicableProviderField(field) && fieldDirty(field),
 	);
-	const providerConflict = draftConflicts.some((field) =>
-		isApplicableProviderField(field),
-	);
+	const groupHasConflict = (group: SettingsConflictGroup) =>
+		conflictGroupFields[group].some((field) => draftConflicts.includes(field));
+	const conflictSignatureNow = (group: SettingsConflictGroup) =>
+		conflictGroupSignature(group, currentDraftValues);
+	const dismissConflict = (group: SettingsConflictGroup) =>
+		setDismissedConflicts((current) => ({
+			...current,
+			[group]: conflictSignatureNow(group),
+		}));
+	const clearConflictDismissal = (group: SettingsConflictGroup) =>
+		setDismissedConflicts((current) => {
+			if (!(group in current)) return current;
+			const next = { ...current };
+			delete next[group];
+			return next;
+		});
+	const takeSavedGroup = (group: SettingsConflictGroup) => {
+		const saved = currentDraftValues;
+		const fields = conflictGroupFields[group];
+		setDraftState((current) => {
+			const value = { ...current.value };
+			const baseline = { ...current.baseline };
+			for (const field of fields) {
+				Object.assign(value, { [field]: saved[field] });
+				Object.assign(baseline, { [field]: saved[field] });
+			}
+			if (group === "toolsDirectory") {
+				value.toolsPathCandidate = "";
+				baseline.toolsPathCandidate = "";
+			}
+			return { value, baseline };
+		});
+		setFieldErrors((current) => {
+			const next = { ...current };
+			for (const field of fields) delete next[field];
+			return next;
+		});
+		clearConflictDismissal(group);
+		if (group === "toolsDirectory") {
+			setMovePlan(null);
+			setNotice("");
+		}
+	};
+	const confirmValueConflict = (
+		group: ValueReplacement["group"],
+		approval?: ValueReplacement,
+		options?: {
+			details?: ValueReplacement["details"];
+			opener?: Element;
+		},
+	) => {
+		if (approval) {
+			if (
+				approval.group === group &&
+				groupHasConflict(group) &&
+				conflictGroupValuesEqual(group, currentDraftValues, approval.saved) &&
+				conflictGroupValuesEqual(group, draftState.value, approval.draft)
+			)
+				return false;
+			clearConflictDismissal(group);
+			setNotice("staleSettings");
+			return true;
+		}
+		if (!groupHasConflict(group)) return false;
+		const saved = { ...currentDraftValues };
+		const draft = { ...draftState.value };
+		setValueReplacement({
+			group,
+			saved,
+			draft,
+			opener: options?.opener,
+			details: options?.details ?? {
+				saved: conflictGroupValue(group, saved),
+				draft: conflictGroupValue(group, draft),
+			},
+		});
+		return true;
+	};
 	useEffect(() => {
 		const persisted = writeSettingsDraft(
 			getSettingsDraftStorage(),
@@ -410,12 +605,6 @@ export function SettingsScreen({
 			document.removeEventListener("click", anchorClicked, true);
 		};
 	}, [draftDirty]);
-	const takeSavedSettings = () => {
-		const baseline = settingsTextBaseline(settings);
-		setDraftState({ value: baseline, baseline });
-		setFieldErrors({});
-		setConflictAcknowledged(false);
-	};
 	const validateDraft = (value = draftState.value) => {
 		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
 		if (providerDirty && !value.musicBrainzMode)
@@ -539,12 +728,11 @@ export function SettingsScreen({
 			),
 		);
 		setFieldErrors({});
-		setConflictAcknowledged(false);
-		setReplacementPrompt(false);
+		setDismissedConflicts({});
 		setNotice("saved");
 		return true;
 	};
-	const commitConcurrency = () => {
+	const commitConcurrency = (approval?: ValueReplacement) => {
 		if (!validConcurrency(draftState.value.concurrency)) {
 			setFieldErrors((current) => ({
 				...current,
@@ -553,31 +741,21 @@ export function SettingsScreen({
 			document.getElementById("settings-concurrency")?.focus();
 			return;
 		}
-		if (draftConflicts.includes("concurrency")) {
-			if (!conflictAcknowledged) return;
-			pendingReplacement.current = "concurrency";
-			setReplacementPrompt(true);
-			return;
-		}
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
 			"concurrency",
 		]);
-		const baseline = {
-			...draftState.baseline,
-			concurrency: merged.concurrency,
-		};
-		const value = { ...draftState.value, concurrency: merged.concurrency };
-		onSettings({
-			...settings,
-			concurrency: merged.concurrency,
-			runtimeSaved: true,
-		});
-		setDraftState({ baseline, value });
+		const concurrency = merged.concurrency;
+		if (confirmValueConflict("concurrency", approval)) return;
+		onSettings({ ...settings, concurrency, runtimeSaved: true });
+		setDraftState((current) => ({
+			baseline: { ...current.baseline, concurrency },
+			value: { ...current.value, concurrency },
+		}));
 		setFieldErrors((current) => ({ ...current, concurrency: undefined }));
-		setConflictAcknowledged(false);
+		clearConflictDismissal("concurrency");
 		setNotice("saved");
 	};
-	const commitMatchingThreshold = () => {
+	const commitMatchingThreshold = (approval?: ValueReplacement) => {
 		if (
 			matchingThresholdNumber(draftState.value.matchingPairThreshold) ===
 			undefined
@@ -589,34 +767,25 @@ export function SettingsScreen({
 			document.getElementById("settings-matching-threshold")?.focus();
 			return;
 		}
-		if (draftConflicts.includes("matchingPairThreshold")) {
-			if (!conflictAcknowledged) return;
-			pendingReplacement.current = "matchingThreshold";
-			setReplacementPrompt(true);
-			return;
-		}
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
 			"matchingPairThreshold",
 		]);
-		const baseline = {
-			...draftState.baseline,
-			matchingPairThreshold: merged.matchingPairThreshold,
-		};
-		const value = {
-			...draftState.value,
-			matchingPairThreshold: merged.matchingPairThreshold,
-		};
+		const matchingPairThreshold = merged.matchingPairThreshold;
+		if (confirmValueConflict("matchingThreshold", approval)) return;
 		onSettings({
 			...settings,
-			matchingPairThreshold: merged.matchingPairThreshold,
+			matchingPairThreshold,
 			runtimeSaved: true,
 		});
-		setDraftState({ baseline, value });
+		setDraftState((current) => ({
+			baseline: { ...current.baseline, matchingPairThreshold },
+			value: { ...current.value, matchingPairThreshold },
+		}));
 		setFieldErrors((current) => ({
 			...current,
 			matchingPairThreshold: undefined,
 		}));
-		setConflictAcknowledged(false);
+		clearConflictDismissal("matchingThreshold");
 		setNotice("saved");
 	};
 	const confirmFolderConflict = (
@@ -628,17 +797,17 @@ export function SettingsScreen({
 		if (approval) {
 			if (
 				approval.field === field &&
+				groupHasConflict(field) &&
 				approval.saved === saved &&
 				approval.draft === draft
 			)
 				return false;
-			setNotice("staleOutput");
+			clearConflictDismissal(field);
+			setNotice("staleSettings");
 			return true;
 		}
 		if (!draftConflicts.includes(field)) return false;
-		if (conflictAcknowledged) {
-			setFolderReplacement({ field, saved, draft });
-		}
+		setFolderReplacement({ field, saved, draft });
 		return true;
 	};
 	const validateTemplate = (template: string) => {
@@ -658,7 +827,7 @@ export function SettingsScreen({
 			baseline: { ...current.baseline, publicationTemplate },
 			value: { ...current.value, publicationTemplate },
 		}));
-		setConflictAcknowledged(false);
+		clearConflictDismissal("publicationTemplate");
 		setNotice("saved");
 	};
 	const validateWorkDirectory = (workDirectory: string) => {
@@ -696,16 +865,76 @@ export function SettingsScreen({
 			baseline: { ...current.baseline, workDirectory },
 			value: { ...current.value, workDirectory },
 		}));
-		setConflictAcknowledged(false);
+		clearConflictDismissal("workDirectory");
 		setNotice("saved");
 	};
-	const commitProviders = (forceReplace = false) => {
+	const saveProviders = (
+		musicBrainzMode: SettingsTextDraft["musicBrainzMode"],
+		musicBrainzURL: string,
+		musicBrainzDelay: string,
+	) => {
+		const selfHosted = musicBrainzMode === "self-hosted";
+		const savedMusicBrainzURL = selfHosted
+			? musicBrainzURL
+			: (settings.musicBrainzURL ?? "");
+		const savedMusicBrainzDelay = selfHosted
+			? musicBrainzDelay
+			: (settings.musicBrainzDelay ?? "");
+		const configuration = {
+			mode: musicBrainzMode,
+			url: savedMusicBrainzURL,
+			throttle: settings.musicBrainzThrottle,
+			delay: savedMusicBrainzDelay,
+		};
+		if (!isValidMusicBrainzConfiguration(configuration)) {
+			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
+			setFieldErrors((current) => ({
+				...current,
+				[field]: copy.invalidProvider,
+			}));
+			document.getElementById(`settings-${field}`)?.focus();
+			return;
+		}
+		onSettings({
+			...settings,
+			musicBrainzMode,
+			musicBrainzURL: savedMusicBrainzURL,
+			musicBrainzDelay: savedMusicBrainzDelay,
+			musicBrainzVerified: true,
+			musicBrainzVerifiedFingerprint:
+				musicBrainzConfigurationFingerprint(configuration),
+		});
+		setDraftState((current) => ({
+			baseline: {
+				...current.baseline,
+				musicBrainzMode,
+				...(selfHosted && {
+					musicBrainzURL: savedMusicBrainzURL,
+					musicBrainzDelay: savedMusicBrainzDelay,
+				}),
+			},
+			value: selfHosted
+				? {
+						...current.value,
+						musicBrainzMode,
+						musicBrainzURL,
+						musicBrainzDelay,
+					}
+				: { ...current.value, musicBrainzMode },
+		}));
+		clearConflictDismissal("musicBrainz");
+		setNotice("providerSaved");
+	};
+	const commitProviders = (approval?: ValueReplacement) => {
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
 			"musicBrainzMode",
 			"musicBrainzURL",
 			"musicBrainzDelay",
 		]);
-		const { musicBrainzMode, musicBrainzURL, musicBrainzDelay } = merged;
+		const { musicBrainzMode } = merged;
+		const selfHosted = musicBrainzMode === "self-hosted";
+		const musicBrainzURL = selfHosted ? merged.musicBrainzURL : "";
+		const musicBrainzDelay = selfHosted ? merged.musicBrainzDelay : "";
 		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
 		if (!musicBrainzMode) errors.musicBrainzMode = copy.invalidProvider;
 		if (
@@ -741,60 +970,17 @@ export function SettingsScreen({
 				?.focus();
 			return;
 		}
-		if (providerConflict && !conflictAcknowledged) return;
-		if (providerConflict && !forceReplace) {
-			pendingReplacement.current = "providers";
-			setReplacementPrompt(true);
+		if (
+			(approval || selfHosted || draftConflicts.includes("musicBrainzMode")) &&
+			confirmValueConflict("musicBrainz", approval, {
+				details: {
+					saved: conflictGroupValue("musicBrainz", currentDraftValues),
+					draft: conflictGroupValue("musicBrainz", merged),
+				},
+			})
+		)
 			return;
-		}
-		const selfHosted = musicBrainzMode === "self-hosted";
-		const savedMusicBrainzURL = selfHosted
-			? musicBrainzURL
-			: (settings.musicBrainzURL ?? "");
-		const savedMusicBrainzDelay = selfHosted
-			? musicBrainzDelay
-			: (settings.musicBrainzDelay ?? "");
-		const configuration = {
-			mode: musicBrainzMode,
-			url: savedMusicBrainzURL,
-			throttle: settings.musicBrainzThrottle,
-			delay: savedMusicBrainzDelay,
-		};
-		if (!isValidMusicBrainzConfiguration(configuration)) {
-			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
-			setFieldErrors((current) => ({
-				...current,
-				[field]: copy.invalidProvider,
-			}));
-			document.getElementById(`settings-${field}`)?.focus();
-			return;
-		}
-		const baseline = {
-			...draftState.baseline,
-			musicBrainzMode,
-			musicBrainzURL: savedMusicBrainzURL,
-			musicBrainzDelay: savedMusicBrainzDelay,
-		};
-		const value = selfHosted
-			? {
-					...draftState.value,
-					musicBrainzMode,
-					musicBrainzURL,
-					musicBrainzDelay,
-				}
-			: { ...draftState.value, musicBrainzMode };
-		onSettings({
-			...settings,
-			musicBrainzMode,
-			musicBrainzURL: savedMusicBrainzURL,
-			musicBrainzDelay: savedMusicBrainzDelay,
-			musicBrainzVerified: true,
-			musicBrainzVerifiedFingerprint:
-				musicBrainzConfigurationFingerprint(configuration),
-		});
-		setDraftState({ baseline, value });
-		setConflictAcknowledged(false);
-		setNotice("providerSaved");
+		saveProviders(musicBrainzMode, musicBrainzURL, musicBrainzDelay);
 	};
 	const selectMusicBrainzMode = (
 		musicBrainzMode: SettingsTextDraft["musicBrainzMode"],
@@ -807,14 +993,14 @@ export function SettingsScreen({
 			throttle: settings.musicBrainzThrottle,
 			delay: musicBrainzDelay,
 		};
-		const providerConflicts = draftConflicts.includes("musicBrainzMode");
+		const providerGroupConflicts = groupHasConflict("musicBrainz");
 		const delayValid =
 			musicBrainzDelay.trim() === "" ||
 			/^\d+(?:\.\d+)?$/.test(musicBrainzDelay.trim());
 		if (
 			isValidMusicBrainzConfiguration(configuration) &&
 			delayValid &&
-			!providerConflicts
+			!providerGroupConflicts
 		) {
 			if (musicBrainzMode !== (settings.musicBrainzMode ?? "")) {
 				onSettings({
@@ -947,9 +1133,6 @@ export function SettingsScreen({
 			},
 		};
 	});
-	const saveProviders = () => {
-		commitProviders();
-	};
 	const saveAcoustIDApplicationKey = () => {
 		if (!acoustIDApplicationKey) return;
 		update({ hasAcoustIDApplicationKey: true });
@@ -1060,13 +1243,13 @@ export function SettingsScreen({
 		setInstallPlan(null);
 		setNotice("");
 	};
-	const requestMove = (opener: Element) => {
-		if (!isAbsoluteDemoServerPath(moveCandidate.trim())) {
+	const startMove = (opener: Element, candidatePath: string) => {
+		if (!isAbsoluteDemoServerPath(candidatePath.trim())) {
 			setNotice("invalidPath");
 			return;
 		}
 		if (
-			overlapsAnyDemoPath(moveCandidate, [
+			overlapsAnyDemoPath(candidatePath, [
 				settings.workDirectory,
 				currentOutput,
 				...sourceRoots,
@@ -1078,10 +1261,24 @@ export function SettingsScreen({
 		}
 		moveOpener.current = opener instanceof HTMLElement ? opener : null;
 		setMovePlan({
-			...movePreflightDemo(moveCandidate, managedCount),
+			...movePreflightDemo(candidatePath, managedCount),
 			sourceDirectory: settings.toolsPath,
 			removeOld,
 		});
+	};
+	const requestMove = (opener: Element, approval?: ValueReplacement) => {
+		const candidatePath = moveCandidate;
+		if (
+			confirmValueConflict("toolsDirectory", approval, {
+				opener,
+				details: {
+					saved: conflictGroupValue("toolsDirectory", currentDraftValues),
+					draft: displaySettingValue(candidatePath.trim()),
+				},
+			})
+		)
+			return;
+		startMove(opener, candidatePath);
 	};
 	const confirmMove = () => {
 		if (!movePlan || !isAbsoluteDemoServerPath(moveCandidate.trim())) {
@@ -1113,6 +1310,7 @@ export function SettingsScreen({
 		}
 		update({ toolsPath: movePlan.path, pathChecked: false, setupVerified: {} });
 		setMovePlan(null);
+		clearConflictDismissal("toolsDirectory");
 		{
 			const baseline = {
 				...draftState.baseline,
@@ -1155,17 +1353,36 @@ export function SettingsScreen({
 					{copy.draftStorageWarning}
 				</p>
 			)}
-			{draftConflicts.length > 0 && draftDirty && (
-				<SettingsDraftConflictNotice
-					announcement="alert"
-					summary={copy.settingsConflict}
-					takeSaved={{ label: copy.takeSaved, onPress: takeSavedSettings }}
-					continueEditing={{
-						label: copy.continueEditing,
-						onPress: () => setConflictAcknowledged(true),
-					}}
-				/>
-			)}
+			{conflictGroupsPresent.map((group) => {
+				if (
+					dismissedConflicts[group] ===
+					conflictGroupSignature(group, currentDraftValues)
+				)
+					return null;
+				const saved = currentDraftValues;
+				const label = conflictGroupLabel(group, copy);
+				const inactiveProviderDraft =
+					group === "musicBrainz" &&
+					!selfHostedDraft &&
+					(draftConflicts.includes("musicBrainzURL") ||
+						draftConflicts.includes("musicBrainzDelay"));
+				return (
+					<SettingsDraftConflictNotice
+						key={group}
+						label={formatMessage(copy.settingsConflict, { label })}
+						announcement="status"
+						summary={`${formatMessage(copy.changedSavedValue, { label })} ${conflictGroupValue(group, saved)}.${inactiveProviderDraft ? ` ${copy.inactiveMusicBrainzDraft}` : ""}`}
+						takeSaved={{
+							label: formatMessage(copy.takeSavedValue, { label }),
+							onPress: () => takeSavedGroup(group),
+						}}
+						continueEditing={{
+							label: formatMessage(copy.continueEditing, { label }),
+							onPress: () => dismissConflict(group),
+						}}
+					/>
+				);
+			})}
 			<SettingsTabs
 				locale={locale}
 				selectedKey={activeTab}
@@ -1195,22 +1412,18 @@ export function SettingsScreen({
 								dirty:
 									draftState.value.concurrency !==
 									draftState.baseline.concurrency,
-								saveDisabled:
-									draftConflicts.includes("concurrency") &&
-									!conflictAcknowledged,
+								saveDisabled: false,
 								onChange: (concurrency) => updateDraft({ concurrency }),
-								onSave: commitConcurrency,
+								onSave: () => commitConcurrency(),
 							},
 							matchingThreshold: {
 								value: draftState.value.matchingPairThreshold,
 								invalid: Boolean(fieldErrors.matchingPairThreshold),
 								dirty: fieldDirty("matchingPairThreshold"),
-								saveDisabled:
-									draftConflicts.includes("matchingPairThreshold") &&
-									!conflictAcknowledged,
+								saveDisabled: false,
 								onChange: (matchingPairThreshold) =>
 									updateDraft({ matchingPairThreshold }),
-								onSave: commitMatchingThreshold,
+								onSave: () => commitMatchingThreshold(),
 							},
 							sha256: {
 								enabled: settings.sha256Enabled ?? true,
@@ -1339,7 +1552,6 @@ export function SettingsScreen({
 								delaySeconds: draftState.value.musicBrainzDelay,
 								verifiedAt: null,
 								checked: musicBrainzIsVerified,
-								checkDisabled: providerConflict && !conflictAcknowledged,
 								dirty: providerDirty,
 							},
 							lrclib: {
@@ -1363,7 +1575,7 @@ export function SettingsScreen({
 								update({ musicBrainzThrottle }),
 							onMusicBrainzDelaySecondsChange: (musicBrainzDelay) =>
 								updateDraft({ musicBrainzDelay }),
-							onSaveAndCheckMusicBrainz: saveProviders,
+							onSaveAndCheckMusicBrainz: () => commitProviders(),
 							onLrclibEnabledChange: (lrclibEnabled) =>
 								update({ lrclibEnabled }),
 						}}
@@ -1414,21 +1626,21 @@ export function SettingsScreen({
 					}}
 				/>
 			)}
-			{(replacementPrompt || folderReplacement) && (
+			{(valueReplacement || folderReplacement) && (
 				<SettingsConflictDialog
 					title={copy.replaceSettingsTitle}
 					message={copy.replaceSettingsText}
-					details={folderReplacement}
+					details={folderReplacement ?? valueReplacement?.details}
 					dismissOnBackdrop
 					onDismiss={() => {
-						setReplacementPrompt(false);
+						setValueReplacement(undefined);
 						setFolderReplacement(undefined);
 					}}
 					actions={{
 						confirm: {
 							label: copy.confirmReplace,
 							onPress: () => {
-								setReplacementPrompt(false);
+								setValueReplacement(undefined);
 								setFolderReplacement(undefined);
 								if (folderReplacement) {
 									if (folderReplacement.field === "publicationTemplate")
@@ -1436,41 +1648,24 @@ export function SettingsScreen({
 									else if (folderReplacement.field === "workDirectory")
 										commitWorkDirectory(folderReplacement);
 									else openOutputReset(folderReplacement);
-								} else if (pendingReplacement.current === "concurrency") {
-									const baseline = {
-										...draftState.baseline,
-										concurrency: draftState.value.concurrency,
-									};
-									setDraftState({ baseline, value: { ...draftState.value } });
-									onSettings({
-										...settings,
-										concurrency: draftState.value.concurrency,
-										runtimeSaved: true,
-									});
-									setConflictAcknowledged(false);
-									setNotice("saved");
-								} else if (pendingReplacement.current === "matchingThreshold") {
-									const matchingPairThreshold =
-										draftState.value.matchingPairThreshold;
-									const baseline = {
-										...draftState.baseline,
-										matchingPairThreshold,
-									};
-									setDraftState({ baseline, value: { ...draftState.value } });
-									onSettings({
-										...settings,
-										matchingPairThreshold,
-										runtimeSaved: true,
-									});
-									setConflictAcknowledged(false);
-									setNotice("saved");
-								} else commitProviders(true);
+								} else if (valueReplacement?.group === "concurrency") {
+									commitConcurrency(valueReplacement);
+								} else if (valueReplacement?.group === "matchingThreshold") {
+									commitMatchingThreshold(valueReplacement);
+								} else if (valueReplacement?.group === "musicBrainz") {
+									commitProviders(valueReplacement);
+								} else if (
+									valueReplacement?.group === "toolsDirectory" &&
+									valueReplacement.opener
+								) {
+									requestMove(valueReplacement.opener, valueReplacement);
+								}
 							},
 						},
 						cancel: {
 							label: copy.cancel,
 							onPress: () => {
-								setReplacementPrompt(false);
+								setValueReplacement(undefined);
 								setFolderReplacement(undefined);
 							},
 						},
