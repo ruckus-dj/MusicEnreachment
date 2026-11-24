@@ -160,6 +160,11 @@ it("keeps release basics visible and editable outside closed metadata groups", a
     within(release).getByRole("textbox", { name: "Название" }),
   ).toHaveValue("Edited title");
   expect(additionalGroup).not.toHaveAttribute("open");
+  const titleField = within(release).getByRole("textbox", { name: "Название" });
+  titleField.focus();
+  expect(titleField).toHaveFocus();
+  fireEvent.click(within(release).getByRole("button", { name: "Отмена" }));
+  await waitFor(() => expect(editButton).toHaveFocus());
 });
 
 it("saves recording and position title overrides through their own scopes", async () => {
@@ -408,6 +413,11 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   storage.setItem("melotrove-language", "ru");
   vi.stubGlobal("localStorage", storage);
   let patchBody: unknown;
+  let finishReload = () => {};
+  const reload = new Promise<void>((resolve) => {
+    finishReload = resolve;
+  });
+  let holdReload = false;
   const loaded = metadataWithDuplicateCredits(7);
   loaded.envelope.desired.asin = {
     authority: "local",
@@ -427,9 +437,10 @@ it("sends exact typed states at the loaded revision and retains the draft on con
     script: "Latn",
   };
   server.use(
-    http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
-      HttpResponse.json(loaded),
-    ),
+    http.get(`*/api/library/releases/${releaseId}/metadata`, async () => {
+      if (holdReload) await reload;
+      return HttpResponse.json(loaded);
+    }),
     http.patch(
       `*/api/library/releases/${releaseId}/metadata`,
       async ({ request }) => {
@@ -566,6 +577,15 @@ it("sends exact typed states at the loaded revision and retains the draft on con
       name: "Текст после этого исполнителя",
     })[0],
   ).toHaveValue("");
+  holdReload = true;
+  fireEvent.click(within(release).getByRole("button", { name: "Отмена" }));
+  try {
+    expect(editButton).toBeDisabled();
+    await waitFor(() => expect(release).toHaveFocus());
+  } finally {
+    finishReload();
+  }
+  await waitFor(() => expect(editButton).toBeEnabled());
 });
 
 it("round-trips boolean, decimal, integer, and advisory values by scope", async () => {
@@ -763,6 +783,11 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
   expect(
     within(release).getByRole("textbox", { name: "Дата выпуска" }),
   ).toHaveValue("2024-13");
+  await waitFor(() =>
+    expect(
+      within(release).getByRole("textbox", { name: "Дата выпуска" }),
+    ).toHaveFocus(),
+  );
   fireEvent.change(
     within(release).getByRole("textbox", { name: "Дата выпуска" }),
     {

@@ -23,6 +23,7 @@ import {
 	metadataExtraFieldLabel,
 	metadataMessage,
 } from "./messages";
+import { focusMetadataAction, focusMetadataKey } from "./metadataEditorFocus";
 import {
 	type MetadataContributor,
 	type MetadataCredit,
@@ -340,9 +341,7 @@ export function MetadataEditor({
 		setDraftExtras({});
 		setDirtyExtras(new Set());
 		setAddedRoles([]);
-		requestAnimationFrame(() =>
-			actionRef.current?.querySelector("button")?.focus(),
-		);
+		focusMetadataAction(actionRef);
 	};
 	const complete = async (next: MetadataValues, details?: SaveDetails) => {
 		setSaving(true);
@@ -385,27 +384,7 @@ export function MetadataEditor({
 				requiredField: missingRequired,
 			});
 			const invalidKey = missingRequired ?? errors[0]?.key;
-			if (invalidKey) {
-				const candidates = [
-					...(editorRef.current?.querySelectorAll<HTMLElement>(
-						"[data-metadata-keys]",
-					) ?? []),
-				].filter((node) =>
-					node
-						.getAttribute("data-metadata-keys")
-						?.split(",")
-						.includes(invalidKey),
-				);
-				const marked =
-					candidates.find((node) => node.matches("input, select, textarea")) ??
-					candidates[0];
-				let ancestor: HTMLElement | null = marked ?? null;
-				while (ancestor) {
-					if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
-					ancestor = ancestor.parentElement;
-				}
-				requestAnimationFrame(() => marked?.focus());
-			}
+			focusMetadataKey(editorRef, invalidKey);
 			return;
 		}
 		const update: MetadataValues = { ...values };

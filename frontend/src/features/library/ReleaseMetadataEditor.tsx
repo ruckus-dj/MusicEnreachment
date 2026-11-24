@@ -38,6 +38,7 @@ import {
   metadataFilledSummary,
   metadataListActions,
 } from "./MetadataFieldPresentation";
+import { focusMetadataAction, focusMetadataKey } from "./metadataEditorFocus";
 import { ProviderGenreBaselineRow } from "./ProviderGenreBaselineRow";
 import {
   createMetadataDraftRowKey,
@@ -659,6 +660,8 @@ function LibraryScopedMetadataEditorSession({
     sessionGeneration.current += 1;
   }
   const writePending = useRef(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
   const dirtyRef = useRef(false);
@@ -831,6 +834,7 @@ function LibraryScopedMetadataEditorSession({
     setSaveError("");
     if (refreshConflict) void loadMetadata();
     setRefreshConflict(false);
+    focusMetadataAction(actionsRef, editorRef);
   }
 
   function updateField(
@@ -864,6 +868,7 @@ function LibraryScopedMetadataEditorSession({
   async function saveDraft() {
     if (!metadata || !dirtyFields.size || writePending.current) return;
     const generation = sessionGeneration.current;
+    let invalidKey: string | undefined;
     const isCurrentSession = () =>
       sessionGeneration.current === generation &&
       sessionIdentityRef.current === sessionIdentity;
@@ -894,6 +899,7 @@ function LibraryScopedMetadataEditorSession({
                 number <= 0 ||
                 (definition.kind === "integer" && !Number.isSafeInteger(number))
               ) {
+                invalidKey = key;
                 throw new Error(
                   definition.kind === "integer"
                     ? text.invalidPositiveInteger
@@ -905,6 +911,7 @@ function LibraryScopedMetadataEditorSession({
               definition.kind === "date" &&
               !validPartialDate(String(field.value))
             ) {
+              invalidKey = key;
               throw new Error(text.invalidDate);
             } else if (definition.kind === "works") {
               wireValue = (field.value as MetadataWorkDraft[]).map((work) => ({
@@ -931,10 +938,15 @@ function LibraryScopedMetadataEditorSession({
               const movement = field.value as MetadataMovementDraft;
               const number = positiveIntegerDraft(movement.number);
               const count = positiveIntegerDraft(movement.count);
-              if (movement.name === "")
+              if (movement.name === "") {
+                invalidKey = "movementname";
                 throw new Error(text.invalidMovementName);
-              if (number === undefined || count === undefined)
+              }
+              if (number === undefined || count === undefined) {
+                invalidKey =
+                  number === undefined ? "movement" : "movementtotal";
                 throw new Error(text.invalidPositiveInteger);
+              }
               wireValue = { name: movement.name, number, count };
             }
           }
@@ -999,7 +1011,10 @@ function LibraryScopedMetadataEditorSession({
       // reported save failure, and must not overwrite the committed revision.
       void loadMetadata();
     } catch (reason) {
-      if (isCurrentSession()) setSaveError(errorMessage(reason, ""));
+      if (isCurrentSession()) {
+        setSaveError(errorMessage(reason, ""));
+        if (invalidKey) focusMetadataKey(editorRef, invalidKey);
+      }
     } finally {
       if (isCurrentSession()) {
         writePending.current = false;
@@ -1447,7 +1462,9 @@ function LibraryScopedMetadataEditorSession({
 
   return (
     <section
+      ref={editorRef}
       aria-label={title}
+      tabIndex={-1}
       className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3 text-[var(--ink)]"
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !editing || saving) return;
@@ -1461,6 +1478,7 @@ function LibraryScopedMetadataEditorSession({
         title={title}
         editing={editing}
         saving={saving}
+        actionsRef={actionsRef}
         editOrSaveDisabled={
           loading ||
           !!readError ||

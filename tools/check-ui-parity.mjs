@@ -25,6 +25,7 @@ const pairs = [
   ],
   ["i18n", "i18n", ["I18nProvider.tsx", "createNamespace.ts", "locale.ts", "translator.ts", "types.ts"]],
   ["i18n/namespaces", "i18n/namespaces", ["shell.ts"]],
+  ["metadata", "features/library", ["metadataEditorFocus.ts"]],
   ["features/incoming", "features/incoming", ["IncomingFileActions.tsx", "IncomingGroupsOverviewView.tsx", "IncomingGroupsPanel.tsx"]],
   ["features/operations", "features/operations", ["MatchingRecheckAbandonDialog.tsx", "OperationsList.tsx", "OperationsScreenView.tsx", "operationsScreenCopy.ts"]],
   [
