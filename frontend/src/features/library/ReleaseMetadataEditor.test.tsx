@@ -102,7 +102,12 @@ function metadataWithDuplicateCredits(
 }
 
 function openGroup(region: HTMLElement, label: string) {
-  fireEvent.click(within(region).getByText(label, { selector: "summary" }));
+  const summary = within(region).getByText(
+    (text) => text === label || text.startsWith(`${label} · `),
+    { selector: "summary" },
+  );
+  fireEvent.click(summary);
+  return summary;
 }
 
 function renderMetadataEditor(children: ReactNode) {
@@ -706,7 +711,7 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
   openGroup(recording, "Сведения о записи");
   openGroup(position, "Сведения о позиции");
   openGroup(position, "Дополнительные метаданные");
-  openGroup(recording, "Произведения и части");
+  const worksSummary = openGroup(recording, "Произведения и части");
   openGroup(position, "Произведения и части");
   fireEvent.click(within(release).getByRole("button", { name: "Изменить" }));
   fireEvent.click(within(recording).getByRole("button", { name: "Изменить" }));
@@ -784,6 +789,12 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
     within(recording).getByRole("textbox", { name: "Название произведения 1" }),
     { target: { value: "Recording work edited" } },
   );
+  fireEvent.click(worksSummary);
+  expect(worksSummary.parentElement).not.toHaveAttribute("open");
+  fireEvent.click(worksSummary);
+  expect(
+    within(recording).getByRole("textbox", { name: "Название произведения 1" }),
+  ).toHaveValue("Recording work edited");
   fireEvent.change(
     within(position).getByRole("textbox", { name: "Название произведения 1" }),
     { target: { value: "Position work edited" } },

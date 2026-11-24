@@ -99,6 +99,7 @@ const pairs = [
       "MetadataCardActions.tsx",
       "MetadataFieldPresentation.tsx",
       "MovementFieldsView.tsx",
+      "WorksMovementSectionView.tsx",
       "PublicationAudioMeasurementsView.tsx",
       "PublicationCurrentSummaryView.tsx",
       "ProviderGenreBaselineRow.tsx",
