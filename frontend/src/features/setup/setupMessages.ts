@@ -29,11 +29,7 @@ const english = {
   serverStateUpdated: "Server state refreshed.",
   requestInProgress: "Request in progress…",
   metadataTitle: "Metadata providers",
-  lrclibEnabled: "LRCLIB enabled",
   musicBrainzUnavailable: "MusicBrainz is unavailable.",
-  musicBrainzChanged: "Configuration changed. Check MusicBrainz again.",
-  musicBrainzCheckedAt: "Checked: ",
-  musicBrainzNotChecked: "Connection has not been checked yet.",
   saveAndCheckMusicBrainz:
     "Save and check MusicBrainz after changing its configuration.",
   musicBrainzIdentityMissing:
@@ -42,7 +38,6 @@ const english = {
     "Load the complete MusicBrainz genre catalog before continuing.",
   genreCatalogOutdated:
     "The MusicBrainz genre catalog no longer matches the current configuration. Load it again.",
-  acoustidOptional: "AcoustID (optional)",
   saveSettings: "Save settings",
   toolsInventoryLoadError: "Could not load tool status.",
   toolsInventoryUnavailable: "Tool status is unavailable: ",
@@ -92,19 +87,6 @@ const english = {
   nextStep:
     "Next: add a music source and start a scan. Import does not start automatically.",
   loadingToolsState: "Could not load tool status.",
-  acoustidDescription:
-    "An application key enables audio-fingerprint search. The fingerprint, not the audio file, is sent. Use an application key, not a user API key (that is used to submit fingerprints).",
-  registerAcoustid: "Register an AcoustID application",
-  apiDocumentation: "API documentation",
-  commercialTerms: "Commercial use terms",
-  acoustidFreeUse: "Free AcoustID use is intended for non-commercial projects.",
-  acoustidApplicationKey: "AcoustID application key",
-  keySavedHidden: "Key saved (value hidden).",
-  keyNotSet: "Key is not set.",
-  saveKey: "Save key",
-  deleteKey: "Delete key",
-  keySaved: "AcoustID application key saved.",
-  keyDeleted: "AcoustID application key deleted.",
   saveKeyError: "Could not save the AcoustID key.",
   toolCatalogRefresh: "Refresh catalog",
   checkToolInstall: "Check ",
@@ -167,11 +149,7 @@ const russian: SetupMessages = {
   serverStateUpdated: "Состояние сервера обновлено.",
   requestInProgress: "Выполняется запрос…",
   metadataTitle: "Провайдеры метаданных",
-  lrclibEnabled: "LRCLIB включён",
   musicBrainzUnavailable: "MusicBrainz недоступен.",
-  musicBrainzChanged: "Конфигурация изменена. Проверьте MusicBrainz снова.",
-  musicBrainzCheckedAt: "Проверено: ",
-  musicBrainzNotChecked: "Соединение ещё не проверено.",
   saveAndCheckMusicBrainz:
     "Сохраните и проверьте MusicBrainz после изменения конфигурации.",
   musicBrainzIdentityMissing:
@@ -180,7 +158,6 @@ const russian: SetupMessages = {
     "Загрузите полный каталог жанров MusicBrainz, чтобы продолжить.",
   genreCatalogOutdated:
     "Каталог жанров MusicBrainz больше не соответствует текущей конфигурации. Загрузите его снова.",
-  acoustidOptional: "AcoustID (необязательно)",
   saveSettings: "Сохранить настройки",
   toolsInventoryLoadError: "Не удалось загрузить состояние инструментов.",
   toolsInventoryUnavailable: "Состояние инструментов недоступно: ",
@@ -230,20 +207,6 @@ const russian: SetupMessages = {
   nextStep:
     "Следующий шаг: добавьте источник музыки и запустите сканирование. Импорт не запускается автоматически.",
   loadingToolsState: "Не удалось загрузить состояние инструментов.",
-  acoustidDescription:
-    "Ключ приложения включает поиск по аудиоотпечатку: отправляется отпечаток, а не аудиофайл. Нужен ключ приложения, а не пользовательский API key (он используется для отправки отпечатков).",
-  registerAcoustid: "Зарегистрировать приложение AcoustID",
-  apiDocumentation: "Документация API",
-  commercialTerms: "Условия коммерческого использования",
-  acoustidFreeUse:
-    "Бесплатное использование AcoustID предназначено для некоммерческих проектов.",
-  acoustidApplicationKey: "Ключ приложения AcoustID",
-  keySavedHidden: "Ключ сохранён (значение скрыто).",
-  keyNotSet: "Ключ не задан.",
-  saveKey: "Сохранить ключ",
-  deleteKey: "Удалить ключ",
-  keySaved: "Ключ приложения AcoustID сохранён.",
-  keyDeleted: "Ключ приложения AcoustID удалён.",
   saveKeyError: "Не удалось сохранить ключ AcoustID.",
   toolCatalogRefresh: "Обновить каталог",
   checkToolInstall: "Проверить установку ",

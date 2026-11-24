@@ -41,8 +41,3 @@
 
 .setup-shell .setup-help { color: var(--setup-muted); }
 .setup-shell .setup-help h2 { color: var(--setup-ink); margin-bottom: 12px; }
-
-.setup-shell .setup-metadata { display: grid; align-content: start; gap: 10px; }
-.setup-shell .setup-metadata > button, .setup-shell .setup-metadata > .react-aria-CheckboxField, .setup-shell .setup-metadata > .react-aria-RadioGroup { justify-self: start; }
-.setup-shell .setup-metadata .react-aria-TextField { width: 100%; }
-.setup-shell .setup-metadata .react-aria-TextField input { width: 100%; }

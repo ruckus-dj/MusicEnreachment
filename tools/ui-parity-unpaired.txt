@@ -211,7 +211,6 @@ frontend/src/features/settings/settings.css
 frontend/src/features/settings/settingsDraft.ts
 frontend/src/features/settings/settingsMessages.ts
 frontend/src/features/settings/settingsRoute.ts
-frontend/src/features/setup/AcoustIDKeyForm.css
 frontend/src/features/setup/AcoustIDKeyForm.tsx
 frontend/src/features/setup/OperationProgress.tsx
 frontend/src/features/setup/SetupManager.tsx

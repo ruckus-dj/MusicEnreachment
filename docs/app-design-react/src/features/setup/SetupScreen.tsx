@@ -22,7 +22,7 @@ import {
 import { GitHubTokenDemo } from "../tools/GitHubTokenDemo";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupGenreCatalogView } from "./SetupGenreCatalogView";
-import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
+import { SetupAcoustIDView, SetupProvidersView } from "./SetupProvidersView";
 import { SetupPublicationOptions } from "./SetupPublicationOptions";
 import { SetupSummaryView } from "./SetupSummaryView";
 import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
@@ -46,6 +46,37 @@ type NoticeKey =
 	| "staleMove"
 	| "invalidProvider";
 
+function SetupAcoustIDDemo({
+	locale,
+	hasKey,
+	onChanged,
+}: {
+	locale: "en" | "ru";
+	hasKey: boolean;
+	onChanged: (hasKey: boolean) => void;
+}) {
+	const [draft, setDraft] = useState("");
+	const [notice, setNotice] = useState<"saved" | "deleted">();
+	function changeKey(present: boolean) {
+		onChanged(present);
+		setDraft("");
+		setNotice(present ? "saved" : "deleted");
+	}
+	return (
+		<SetupAcoustIDView
+			locale={locale}
+			draft={draft}
+			hasKey={hasKey}
+			notice={notice}
+			onDraftChange={setDraft}
+			onSave={() => {
+				if (draft) changeKey(true);
+			}}
+			onDelete={() => changeKey(false)}
+		/>
+	);
+}
+
 export function SetupScreen({
 	settings,
 	onSettings,
@@ -60,6 +91,10 @@ export function SetupScreen({
 	const [localStep, setLocalStep] = useState(0);
 	const step = savedStep ?? localStep;
 	const [notice, setNotice] = useState<NoticeKey | "">("");
+	const [lrclibDraft, setLrclibDraft] = useState(
+		settings.lrclibEnabled ?? true,
+	);
+	const [musicBrainzChanged, setMusicBrainzChanged] = useState(false);
 	const [installTarget, setInstallTarget] = useState<ManagedToolPackage | null>(
 		null,
 	);
@@ -91,19 +126,21 @@ export function SetupScreen({
 		mode: musicBrainzMode,
 		url: musicBrainzURL,
 	});
+	const providerFingerprint = musicBrainzConfigurationFingerprint({
+		mode: musicBrainzMode,
+		url: musicBrainzURL,
+		throttle: settings.musicBrainzThrottle,
+		delay: settings.musicBrainzDelay,
+	});
+	const providerVerified =
+		settings.musicBrainzVerified &&
+		settings.musicBrainzVerifiedFingerprint === providerFingerprint;
 	const publicationReady = Boolean(
 		outputPath &&
 			format &&
 			settings.outputChecked &&
 			providerReady &&
-			settings.musicBrainzVerified &&
-			settings.musicBrainzVerifiedFingerprint ===
-				musicBrainzConfigurationFingerprint({
-					mode: musicBrainzMode,
-					url: musicBrainzURL,
-					throttle: settings.musicBrainzThrottle,
-					delay: settings.musicBrainzDelay,
-				}),
+			providerVerified,
 	);
 	const genreCatalogEndpoint = setupGenreCatalogEndpoint(
 		musicBrainzMode,
@@ -122,6 +159,7 @@ export function SetupScreen({
 	);
 
 	const setStep = (nextStep: number) => {
+		if (nextStep === 2) setLrclibDraft(settings.lrclibEnabled ?? true);
 		setLocalStep(nextStep);
 		onStepChange?.(nextStep);
 	};
@@ -213,13 +251,9 @@ export function SetupScreen({
 			update({
 				outputChecked: true,
 				genresLoaded: true,
+				lrclibEnabled: lrclibDraft,
 				musicBrainzVerified: true,
-				musicBrainzVerifiedFingerprint: musicBrainzConfigurationFingerprint({
-					mode: musicBrainzMode,
-					url: musicBrainzURL,
-					throttle: settings.musicBrainzThrottle,
-					delay: settings.musicBrainzDelay,
-				}),
+				musicBrainzVerifiedFingerprint: providerFingerprint,
 			});
 			setNotice("");
 			setStep(3);
@@ -377,28 +411,48 @@ export function SetupScreen({
 								update({ sourceCleanupEnabled })
 							}
 						/>
-						<section className="grid gap-2 border-t border-[var(--line)] pt-3">
-							<SetupMusicBrainzFields
-								locale={locale}
-								mode={musicBrainzMode}
-								baseURL={musicBrainzURL}
-								onModeChange={(mode) =>
-									update({
-										musicBrainzMode: mode,
-										musicBrainzVerified: false,
-									})
-								}
-								onBaseURLChange={(musicBrainzURL) =>
-									update({ musicBrainzURL, musicBrainzVerified: false })
-								}
-							/>
-						</section>
+						<SetupProvidersView
+							locale={locale}
+							mode={musicBrainzMode}
+							baseURL={musicBrainzURL}
+							verification={
+								providerVerified || genreCatalogReady
+									? "verified"
+									: musicBrainzChanged
+										? "changed"
+										: "untested"
+							}
+							disabled={platformMismatch}
+							lrclib={{ enabled: lrclibDraft, onChange: setLrclibDraft }}
+							acoustID={
+								!platformMismatch && (
+									<SetupAcoustIDDemo
+										locale={locale}
+										hasKey={settings.hasAcoustIDApplicationKey ?? false}
+										onChanged={(hasAcoustIDApplicationKey) =>
+											update({ hasAcoustIDApplicationKey })
+										}
+									/>
+								)
+							}
+							onModeChange={(mode) => {
+								setMusicBrainzChanged(true);
+								update({ musicBrainzMode: mode, musicBrainzVerified: false });
+							}}
+							onBaseURLChange={(musicBrainzURL) => {
+								setMusicBrainzChanged(true);
+								update({ musicBrainzURL, musicBrainzVerified: false });
+							}}
+						/>
 						<SetupGenreCatalogView
 							locale={locale}
 							state={genreCatalog.state}
 							count={genreCatalog.count}
 							disabled={!providerReady || platformMismatch}
-							onLoad={genreCatalog.load}
+							onLoad={() => {
+								setMusicBrainzChanged(false);
+								genreCatalog.load();
+							}}
 						/>
 					</>
 				)}

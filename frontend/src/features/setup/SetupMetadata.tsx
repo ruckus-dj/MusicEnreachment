@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { CheckboxButton, CheckboxField } from "react-aria-components";
 import {
   checkSetupMusicbrainz,
   saveSetupLrclib,
@@ -17,14 +16,13 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
-import { SetupMusicBrainzFields } from "./SetupMusicBrainzFields";
+import { SetupProvidersView } from "./SetupProvidersView";
 import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
   setupHttpError,
   setupMessage,
-  setupMessages,
 } from "./setupMessages";
 
 export interface SetupMetadataAction {
@@ -51,7 +49,6 @@ export function SetupMetadata({
   disabled,
 }: Props) {
   const { locale } = useI18n();
-  const messages = setupMessages[locale];
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>(
     state.settings.musicbrainz_mode === "self-hosted"
       ? "self-hosted"
@@ -156,41 +153,39 @@ export function SetupMetadata({
     return () => onBusyChange?.(false);
   }, [pending, keyPending, onBusyChange]);
   return (
-    <div className="setup-metadata">
-      <fieldset
-        disabled={disabled || pending || keyPending}
-        className="grid min-w-0 gap-2"
-      >
-        <SetupMusicBrainzFields
-          locale={locale}
-          mode={mode}
-          baseURL={baseURL}
-          onModeChange={setMode}
-          onBaseURLChange={setBaseURL}
-        />
-        <CheckboxField isSelected={lrclib} onChange={setLrclib}>
-          <CheckboxButton>{messages.lrclibEnabled}</CheckboxButton>
-        </CheckboxField>
-        <p>
-          {changed
-            ? messages.musicBrainzChanged
+    <>
+      <SetupProvidersView
+        locale={locale}
+        mode={mode}
+        baseURL={baseURL}
+        verification={
+          changed
+            ? "changed"
             : state.settings.musicbrainz_verified_at
-              ? `${messages.musicBrainzCheckedAt}${state.settings.musicbrainz_verified_at}`
-              : messages.musicBrainzNotChecked}
-        </p>
-        {state.platform.supported && !state.platform.diagnostic && (
-          <AcoustIDKeyForm
-            hasKey={state.settings.has_acoustid_application_key}
-            onChanged={refresh}
-            onBusyChange={setKeyPending}
-          />
-        )}
-      </fieldset>
+              ? "verified"
+              : "untested"
+        }
+        verifiedAt={state.settings.musicbrainz_verified_at}
+        lrclib={{ enabled: lrclib, onChange: setLrclib }}
+        disabled={disabled || pending || keyPending}
+        onModeChange={setMode}
+        onBaseURLChange={setBaseURL}
+        acoustID={
+          state.platform.supported && !state.platform.diagnostic ? (
+            <AcoustIDKeyForm
+              hasKey={state.settings.has_acoustid_application_key}
+              onChanged={refresh}
+              onBusyChange={setKeyPending}
+              disabled={disabled || pending}
+            />
+          ) : undefined
+        }
+      />
       {error && (
         <p role="alert" ref={alert} tabIndex={-1}>
           {setupFeedbackText(error, locale)}
         </p>
       )}
-    </div>
+    </>
   );
 }
