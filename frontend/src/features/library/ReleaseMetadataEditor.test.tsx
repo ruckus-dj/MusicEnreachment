@@ -144,7 +144,9 @@ it("keeps release basics visible and editable outside closed metadata groups", a
   const titleLabel = within(release).getByText("Название", { selector: "dt" });
   expect(titleLabel.closest("details")).toBeNull();
   const additionalGroup = within(release)
-    .getByText("Дополнительные метаданные", { selector: "summary" })
+    .getByText("Дополнительные метаданные · Не заполнено", {
+      selector: "summary",
+    })
     .closest("details");
   expect(additionalGroup).not.toBeNull();
   if (!additionalGroup) throw new Error("Missing additional metadata group");
@@ -445,7 +447,9 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   const editButton = screen.getByRole("button", { name: "Изменить" });
   await waitFor(() => expect(editButton).toBeEnabled());
   const release = screen.getByRole("region", { name: "Метаданные релиза" });
-  openGroup(release, "Сведения о релизе");
+  expect(openGroup(release, "Сведения о релизе")).toHaveTextContent(
+    "Сведения о релизе · 1 заполнено",
+  );
   expect(within(release).getByText("Latn")).toBeInTheDocument();
   expect(
     within(release).getByText("Эффективное значение MusicBrainz"),

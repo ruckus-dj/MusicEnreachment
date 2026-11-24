@@ -363,6 +363,11 @@ export function MetadataFieldsGrid({
 const disclosureSummaryClass =
   "w-full cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
 
+export function metadataFilledSummary(locale: "en" | "ru", count: number) {
+  if (locale === "ru") return count ? `${count} заполнено` : "Не заполнено";
+  return count ? `${count} filled` : "Not filled";
+}
+
 export function MetadataFieldGroup({
   label,
   summary,

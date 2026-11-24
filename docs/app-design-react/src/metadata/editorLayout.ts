@@ -1,6 +1,6 @@
+import { metadataFilledSummary } from "../features/library/MetadataFieldPresentation";
 import type { MetadataField, MetadataScope } from "./registry";
 import type { Locale } from "../i18n/types";
-import { metadataMessage } from "./messages";
 
 const essentials: Partial<Record<MetadataScope, string[]>> = {
 	release: [
@@ -34,7 +34,5 @@ export function metadataSummary(
 	const populated = fields.filter((field) =>
 		values[field.key]?.some(Boolean),
 	).length;
-	return populated
-		? `${populated} ${metadataMessage(locale, "state.filled")}`
-		: metadataMessage(locale, "state.empty");
+	return metadataFilledSummary(locale, populated);
 }

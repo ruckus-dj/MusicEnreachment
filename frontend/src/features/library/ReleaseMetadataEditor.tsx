@@ -34,6 +34,7 @@ import {
   type MetadataFieldDescriptor,
   MetadataFieldGroup,
   MetadataFieldsGrid,
+  metadataFilledSummary,
   metadataListActions,
 } from "./MetadataFieldPresentation";
 import { ProviderGenreBaselineRow } from "./ProviderGenreBaselineRow";
@@ -243,8 +244,6 @@ const copy = {
     inheritedFromRecording: "Inherited from recording",
     explicitEmpty: "Explicitly cleared",
     emptyValue: "Empty value",
-    filled: "filled",
-    notFilled: "Not filled",
     dateHint: "Enter the date in the format accepted by the server.",
     inherit: "Inherit",
     clear: "Clear",
@@ -346,8 +345,6 @@ const copy = {
     inheritedFromRecording: "Унаследовано от записи",
     explicitEmpty: "Явно очищено",
     emptyValue: "Пустое значение",
-    filled: "заполнено",
-    notFilled: "Не заполнено",
     dateHint: "Введите дату в формате, который принимает сервер.",
     inherit: "Наследовать",
     clear: "Очистить",
@@ -1038,7 +1035,9 @@ function LibraryScopedMetadataEditorSession({
   const fieldDescriptor = ({
     key,
     kind,
-  }: ReleaseField): MetadataFieldDescriptor | undefined => {
+  }: ReleaseField):
+    | (MetadataFieldDescriptor & { populated: boolean })
+    | undefined => {
     if (!scalarFieldKinds.has(kind)) return undefined;
     const field = editing ? draft[key] : saved[key];
     const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
@@ -1056,15 +1055,15 @@ function LibraryScopedMetadataEditorSession({
       metadata && Object.hasOwn(metadata.envelope.desired, key);
     const inheritedKey =
       key === "key" && field.state === "absent" ? effectiveKey : undefined;
+    const shownProviderIdentifier =
+      field.state === "absent" && !hasDesiredIdentifier
+        ? providerIdentifier || undefined
+        : undefined;
     const notices: string[] = [];
     if (inheritedKey?.scope === "recording") {
       notices.push(text.inheritedFromRecording);
     }
-    if (
-      field.state === "absent" &&
-      !hasDesiredIdentifier &&
-      providerIdentifier
-    ) {
+    if (shownProviderIdentifier) {
       notices.push(text.providerBaseline);
     }
     const display =
@@ -1072,11 +1071,16 @@ function LibraryScopedMetadataEditorSession({
         ? String(inheritedKey.field.value)
         : inheritedKey?.field.state === "explicit_empty"
           ? text.explicitEmpty
-          : field.state === "absent" &&
-              !hasDesiredIdentifier &&
-              providerIdentifier
-            ? providerIdentifier
-            : displayValue(field.state, field.value, text);
+          : (shownProviderIdentifier ??
+            displayValue(field.state, field.value, text));
+    const populated = inheritedKey
+      ? inheritedKey.field.state === "value" &&
+        Boolean(inheritedKey.field.value)
+      : Boolean(shownProviderIdentifier) ||
+        (field.state === "value" &&
+          (Array.isArray(field.value)
+            ? field.value.some(Boolean)
+            : typeof field.value === "boolean" || Boolean(field.value)));
     const value =
       kind === "list"
         ? (field.value as string[])
@@ -1104,6 +1108,7 @@ function LibraryScopedMetadataEditorSession({
       editing,
       disabled: saving,
       displayValue: display,
+      populated,
       state: field.state,
       mode: {
         label: text.mode,
@@ -1522,7 +1527,7 @@ function LibraryScopedMetadataEditorSession({
       if (Boolean(movement.count)) populated += 1;
       if (Boolean(movement.number)) populated += 1;
     }
-    return populated ? `${populated} ${text.filled}` : text.notFilled;
+    return metadataFilledSummary(locale, populated);
   }
   // Keep revisions and drafts route-scoped, but detach portaled pickers when
   // this editor is not on the active surface.
@@ -1623,7 +1628,7 @@ function LibraryScopedMetadataEditorSession({
           </section>
         )}
         <MetadataFieldsGrid
-          columns={3}
+          columns={4}
           fields={scalarDescriptors(
             genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
           )}
@@ -1664,8 +1669,13 @@ function LibraryScopedMetadataEditorSession({
               <MetadataFieldGroup
                 key={group}
                 label={label}
+                summary={metadataFilledSummary(
+                  locale,
+                  descriptors.filter((field) => field.populated).length,
+                )}
                 fields={descriptors}
-                columns={3}
+                columns={4}
+                heading
               />
             );
           }
