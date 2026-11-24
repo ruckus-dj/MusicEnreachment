@@ -34,11 +34,7 @@
 .catalog-release-heading { align-items: center; }
 .catalog-release-heading > div { flex: 1; }
 .catalog-release-heading button { margin-left: auto; }
-.catalog-position-list { margin: 10px 0 0; padding: 0; list-style: none; }
-.catalog-position-list li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
-.catalog-position-list li span { color: var(--muted); white-space: nowrap; }
 @media (max-width: 720px) {
   .catalog-release-heading { align-items: flex-start; flex-wrap: wrap; }
   .catalog-release-heading button { margin-left: 58px; }
-  .catalog-position-list li { flex-direction: column; gap: 2px; }
 }

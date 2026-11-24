@@ -43,9 +43,9 @@ import {
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
+import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import type { TagScope } from "./TagsComparison";
-import { trackMessage } from "./trackMessages";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
@@ -550,198 +550,66 @@ export function ArtistScreen({
 											provider={publication}
 										/>
 									)}
-									<div className={catalogueStyles.previewTable}>
-										<table>
-											<thead>
-												<tr>
-													{[
-														"selectAllEditionPositions",
-														"columnNumber",
-														"columnRecording",
-														"columnProperties",
-														"columnHasAudio",
-														"columnSourceLinks",
-														"columnPublication",
-													].map((label) => (
-														<th
-															scope="col"
-															key={label}
-															className={
-																label === "selectAllEditionPositions"
-																	? catalogueStyles.selectionColumn
-																	: undefined
-															}
-														>
-															{label === "selectAllEditionPositions" ? (
-																<Checkbox
-																	className={catalogueStyles.tableCheckbox}
-																	aria-label={m(label as CatalogueMessage)}
-																	isSelected={
-																		release.tracks.length > 0 &&
-																		release.tracks.every((track) =>
-																			selected.has(track.id),
-																		)
-																	}
-																	isIndeterminate={
-																		release.tracks.some((track) =>
-																			selected.has(track.id),
-																		) &&
-																		!release.tracks.every((track) =>
-																			selected.has(track.id),
-																		)
-																	}
-																	isDisabled={
-																		!release.tracks.length || !onSelect
-																	}
-																	onChange={(value) =>
-																		onSelect?.(
-																			release.tracks.map((track) => track.id),
-																			value,
-																		)
-																	}
-																>
-																	<span
-																		className={catalogueStyles.checkboxBox}
-																		aria-hidden="true"
-																	>
-																		{release.tracks.length > 0 &&
-																		release.tracks.every((track) =>
-																			selected.has(track.id),
-																		)
-																			? "✓"
-																			: release.tracks.some((track) =>
-																						selected.has(track.id),
-																					)
-																				? "−"
-																				: ""}
-																	</span>
-																</Checkbox>
-															) : (
-																m(label as CatalogueMessage)
-															)}
-														</th>
-													))}
-												</tr>
-											</thead>
-											<tbody>
-												{release.tracks.map((track) => {
-													const sourceIds = [
-														...new Set([
-															...(track.sourceIds ?? []),
-															...(track.sourceId ? [track.sourceId] : []),
-														]),
-													];
-													const source = track.sourceId
-														? files[track.sourceId]
-														: undefined;
-													return (
-														<tr
-															key={track.id}
-															className={availabilityRowClass(
-																track,
-																filter,
-																hasAudio,
-															)}
-														>
-															<td className={catalogueStyles.selectionColumn}>
-																<Checkbox
-																	className={catalogueStyles.tableCheckbox}
-																	aria-label={m("selectTrack", {
-																		track: track.title,
-																	})}
-																	isSelected={selected.has(track.id)}
-																	isDisabled={!onSelect}
-																	onChange={(value) =>
-																		onSelect?.([track.id], value)
-																	}
-																>
-																	<span
-																		className={catalogueStyles.checkboxBox}
-																		aria-hidden="true"
-																	>
-																		{selected.has(track.id) ? "✓" : ""}
-																	</span>
-																</Checkbox>
-															</td>
-															<td className="align-middle">
-																{trackNumberLabel(release, track)}
-															</td>
-															<td>
-																<a href={`#track/${track.id}`}>{track.title}</a>
-																<span className={catalogueStyles.secondary}>
-																	{track.duration === null
-																		? "—"
-																		: `${Math.floor(track.duration / 60)}:${String(Math.round(track.duration % 60)).padStart(2, "0")}`}
-																</span>
-																{track.recordingId ? null : (
-																	<span className={catalogueStyles.secondary}>
-																		{m("newRecording")}
-																	</span>
-																)}
-																{track.observedFile && (
-																	<span className={catalogueStyles.secondary}>
-																		{track.observedFile.state === "changed" ||
-																		track.observedFile.state === "drift"
-																			? trackMessage(locale, "fileChanged")
-																			: track.observedFile.state ===
-																						"missing" &&
-																					track.observedFile.rootAvailable ===
-																						true
-																				? trackMessage(locale, "fileMissing")
-																				: track.observedFile.state ===
-																							"missing" ||
-																						track.observedFile.state ===
-																							"output-unavailable"
-																					? trackMessage(
-																							locale,
-																							"publicationRootUnavailable",
-																						)
-																					: track.observedFile.state ===
-																								"available" ||
-																							track.observedFile.state ===
-																								"unchanged"
-																						? trackMessage(
-																								locale,
-																								"noDeviations",
-																							)
-																						: trackMessage(
-																								locale,
-																								"fileStateNotChecked",
-																							)}
-																	</span>
-																)}
-															</td>
-															<td>{audioProperties(source)}</td>
-															<td>{hasAudio(track) ? m("yes") : m("no")}</td>
-															<td>{sourceIds.length}</td>
-															<td>
-																{track.published ? (
-																	<>
-																		{track.published.container} ·{" "}
-																		{track.published.codec}
-																		{metadataChanged(
-																			release,
-																			track,
-																			artists,
-																		) && (
-																			<span
-																				className={catalogueStyles.secondary}
-																			>
-																				{m("metadataChanged")}
-																			</span>
-																		)}
-																	</>
-																) : (
-																	m("notPublished")
-																)}
-															</td>
-														</tr>
-													);
-												})}
-											</tbody>
-										</table>
-									</div>
-									{!release.tracks.length && <p>{m("positionsNotAdded")}</p>}
+									<LibraryArtistReleaseTracksView
+										locale={locale}
+										releaseTitle={release.title}
+										releaseSelection={{
+											isSelected: release.tracks.every((track) =>
+												selected.has(track.id),
+											),
+											isIndeterminate:
+												release.tracks.some((track) =>
+													selected.has(track.id),
+												) &&
+												!release.tracks.every((track) =>
+													selected.has(track.id),
+												),
+											isDisabled: !onSelect,
+											onChange: (value) =>
+												onSelect?.(
+													release.tracks.map((track) => track.id),
+													value,
+												),
+										}}
+										tracks={release.tracks.map((track) => ({
+											id: track.id,
+											numberLabel: trackNumberLabel(release, track),
+											title: track.title,
+											href: `#track/${track.id}`,
+											durationMs:
+												track.duration == null ? null : track.duration * 1000,
+											properties: audioProperties(
+												track.sourceId ? files[track.sourceId] : undefined,
+											),
+											hasAudio: hasAudio(track),
+											sourceCount: new Set([
+												...(track.sourceIds ?? []),
+												...(track.sourceId ? [track.sourceId] : []),
+											]).size,
+											publication: track.published
+												? {
+														state: "published",
+														container: track.published.container,
+														codec: track.published.codec,
+													}
+												: { state: "not-published" },
+											isNewRecording: !track.recordingId,
+											fileEvidence: track.observedFile ?? undefined,
+											metadataChanged: track.published
+												? metadataChanged(release, track, artists)
+												: false,
+											filterClass: availabilityRowClass(
+												track,
+												filter,
+												hasAudio,
+											),
+											selection: {
+												isSelected: selected.has(track.id),
+												isDisabled: !onSelect,
+												onChange: (value) => onSelect?.([track.id], value),
+											},
+										}))}
+									/>
 								</DisclosurePanel>
 							</Disclosure>
 						</div>

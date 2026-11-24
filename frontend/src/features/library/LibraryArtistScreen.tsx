@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
+import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
   libraryArtistRouteHref,
@@ -33,7 +34,6 @@ const artistScreenCopy = {
       `Could not load releases (HTTP ${status}).`,
     artistReleases: "Artist releases",
     untitledRelease: "Untitled release",
-    untitledPosition: "Untitled",
     dateNotSpecified: "Date not specified",
     withAudio: "with audio",
     published: "published",
@@ -50,10 +50,6 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Could not load positions (HTTP ${status}).`,
     positionPages: "Position pages",
-    audioAvailable: "Audio available",
-    audioMissing: "Audio missing",
-    unpublished: "Not published",
-    noPositionsInRelease: "This release has no positions yet.",
   },
   ru: {
     backToLibrary: "← К медиатеке",
@@ -66,7 +62,6 @@ const artistScreenCopy = {
       `Не удалось загрузить релизы (HTTP ${status}).`,
     artistReleases: "Релизы артиста",
     untitledRelease: "Релиз без названия",
-    untitledPosition: "Без названия",
     dateNotSpecified: "Дата не указана",
     withAudio: "с аудио",
     published: "опубликовано",
@@ -83,10 +78,6 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Не удалось загрузить позиции (HTTP ${status}).`,
     positionPages: "Страницы позиций",
-    audioAvailable: "Аудио в наличии",
-    audioMissing: "Аудио не хватает",
-    unpublished: "Не опубликовано",
-    noPositionsInRelease: "В этом релизе пока нет позиций.",
   },
 } as const;
 
@@ -269,7 +260,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 if (!release) return null;
                 return (
                   <article
-                    className="catalog-artist-release"
+                    className="catalog-artist-release min-w-0"
                     key={`library_release:${release.id}`}
                   >
                     <div className="catalog-release-heading">
@@ -318,6 +309,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                     {expanded[release.id] && (
                       <ReleasePositions
                         releaseId={release.id}
+                        releaseTitle={release.title}
                         locale={locale}
                       />
                     )}
@@ -372,9 +364,11 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
 
 function ReleasePositions({
   releaseId,
+  releaseTitle,
   locale,
 }: {
   releaseId: string;
+  releaseTitle: string;
   locale: "en" | "ru";
 }) {
   const copy = artistScreenCopy[locale];
@@ -405,32 +399,45 @@ function ReleasePositions({
     );
   const page = query.data?.status === 200 ? query.data.data : undefined;
   const positions = page?.items ?? [];
-  return positions.length ? (
-    <>
-      <ol className="catalog-position-list">
-        {positions.map((position) => (
-          <li key={position.id}>
-            <a
-              href={`#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`}
-            >
-              {position.medium}.{position.displayed_number || position.position}{" "}
-              {position.title || copy.untitledPosition}
-            </a>
-            <span>
-              {position.audio_available
-                ? copy.audioAvailable
-                : copy.audioMissing}
-              {" · "}
-              {countLabel(position.source_variant_count, locale, {
-                en: ["source", "sources"],
-                ru: ["исходник", "исходника", "исходников"],
-              })}{" "}
-              · {position.publication ? copy.published : copy.unpublished}
-            </span>
-          </li>
-        ))}
-      </ol>
-      {page && page.total > PAGE_SIZE && (
+  // An incomplete page cannot prove that this is a single-medium edition.
+  const showMedium =
+    (page?.total ?? 0) > positions.length ||
+    new Set(positions.map(({ medium }) => medium)).size > 1;
+  return (
+    <div className="mt-2.5 min-w-0">
+      <LibraryArtistReleaseTracksView
+        locale={locale}
+        releaseTitle={releaseTitle}
+        tracks={positions.map((position) => {
+          const display =
+            position.displayed_number.trim() ||
+            String(position.position).padStart(2, "0");
+          // Numeric labels may repeat across media. Qualified labels (A1,
+          // DVD1-3, etc.) are already the intended display value.
+          const numberLabel =
+            showMedium && position.medium && /^\d+$/.test(display)
+              ? `${position.medium}.${display}`
+              : display;
+          return {
+            id: position.id,
+            numberLabel,
+            title: position.title,
+            href: `#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`,
+            durationMs: position.provider_duration_ms,
+            hasAudio: position.audio_available,
+            sourceCount: position.source_variant_count,
+            isNewRecording: !position.recording_id,
+            publication: position.publication
+              ? {
+                  state: "published",
+                  codec: position.publication.audio?.codec,
+                  container: position.publication.audio?.container,
+                }
+              : { state: "not-published" },
+          };
+        })}
+      />
+      {positions.length > 0 && page && page.total > PAGE_SIZE && (
         <nav className="catalog-pagination" aria-label={copy.positionPages}>
           <span>
             {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} {copy.of}{" "}
@@ -452,8 +459,6 @@ function ReleasePositions({
           </button>
         </nav>
       )}
-    </>
-  ) : (
-    <p className="catalog-muted">{copy.noPositionsInRelease}</p>
+    </div>
   );
 }

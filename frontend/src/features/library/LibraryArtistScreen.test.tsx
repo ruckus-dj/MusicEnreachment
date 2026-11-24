@@ -35,7 +35,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
         genres: [],
         provider_links: [],
         release_count: 1,
-        position_count: 1,
+        position_count: 2,
         available_position_count: 1,
         published_position_count: 1,
       }),
@@ -126,10 +126,10 @@ it("saves combined artist metadata in one patch while keeping the artist release
               provider_links: [],
               cover: null,
               counts: {
-                position_count: 1,
+                position_count: 2,
                 published_position_count: 1,
                 available_position_count: 1,
-                provider_position_count: 1,
+                provider_position_count: 2,
               },
             },
           },
@@ -140,7 +140,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
         summary: {
           artist_count: 1,
           release_count: 1,
-          position_count: 1,
+          position_count: 2,
           published_position_count: 1,
         },
       });
@@ -160,22 +160,52 @@ it("saves combined artist metadata in one patch while keeping the artist release
             local_track_id: "track-id",
             medium: 1,
             position: 1,
-            provider_duration_ms: null,
-            publication: {},
+            provider_duration_ms: 183000,
+            publication: {
+              audio: {
+                alac_capabilities_verified: false,
+                codec: "FLAC",
+                container: "flac",
+                lossless: true,
+                stream_index: 0,
+                supported_source_container: true,
+              },
+              epoch: "test-epoch",
+              generation: "test-generation",
+              matching_confidence: null,
+              relative_path: "artist/release/1.flac",
+              validated_at: "2026-11-22T12:00:00Z",
+            },
             recording_id: null,
             release: { id: releaseId, title: "Filtered release", artists: [] },
             selected_media_variant_id: null,
             source_variant_count: 0,
             audio_available: true,
           },
+          {
+            id: "second-position-id",
+            title: "Other medium",
+            artists: [],
+            displayed_number: "1",
+            local_track_id: "second-track-id",
+            medium: 2,
+            position: 1,
+            provider_duration_ms: null,
+            publication: null,
+            recording_id: null,
+            release: { id: releaseId, title: "Filtered release", artists: [] },
+            selected_media_variant_id: null,
+            source_variant_count: 0,
+            audio_available: false,
+          },
         ],
-        total: 1,
+        total: 2,
         limit: 50,
         offset: 0,
         summary: {
           artist_count: 1,
           release_count: 1,
-          position_count: 1,
+          position_count: 2,
           published_position_count: 1,
         },
       });
@@ -232,12 +262,25 @@ it("saves combined artist metadata in one patch while keeping the artist release
   fireEvent.click(
     await screen.findByRole("button", { name: "Show positions" }),
   );
+  const tracks = await screen.findByRole("table");
+  const row = within(tracks).getByRole("row", { name: /Published track/ });
   expect(
-    await screen.findByRole("link", { name: /Published track/ }),
-  ).toBeVisible();
+    within(row).getByRole("link", { name: "Published track" }),
+  ).toHaveAttribute(
+    "href",
+    `#/library/releases/${releaseId}/positions/position-id`,
+  );
+  expect(within(row).getByText("3:03", { exact: true })).toBeVisible();
+  const cells = within(row).getAllByRole("cell");
+  expect(cells[0]).toHaveTextContent(/^1\.1$/);
+  expect(cells[2]).toHaveTextContent(/^—$/);
+  expect(cells[3]).toHaveTextContent(/^Yes$/);
+  expect(cells[4]).toHaveTextContent(/^0$/);
+  expect(cells[5]).toHaveTextContent(/^flac · FLAC$/);
+  expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
   expect(
-    screen.getByText(/Audio available · 0 sources · published/),
-  ).toBeVisible();
+    within(tracks).getByRole("row", { name: /2\.1 Other medium/ }),
+  ).toHaveTextContent("Not published");
 });
 
 it("preserves a conflicting draft and refreshes a reopened artist after a late save", async () => {
