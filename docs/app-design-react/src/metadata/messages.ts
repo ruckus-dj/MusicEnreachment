@@ -205,7 +205,6 @@ const ui = createNamespace({
 		"action.addValue": "Add value",
 		"action.addArtist": "Add artist",
 		"action.addContributor": "Add contributor",
-		"action.addWork": "Add work",
 		"action.done": "Done",
 		"action.retry": "Retry loading",
 		"action.loadCatalog": "Load catalog",
@@ -244,8 +243,6 @@ const ui = createNamespace({
 		"label.instrument": "Instrument",
 		"label.addRole": "Add role",
 		"label.selectRole": "Select a role…",
-		"label.workTitle": "Work title",
-		"label.workMusicBrainz": "Work MusicBrainz ID",
 		"label.foreignFields":
 			"Metadata authorization is pending confirmation; values from other scopes cannot be edited.",
 		"action.moveUp": "Move up",
@@ -310,7 +307,6 @@ const ui = createNamespace({
 		"action.addValue": "Добавить значение",
 		"action.addArtist": "Добавить исполнителя",
 		"action.addContributor": "Добавить участника",
-		"action.addWork": "Добавить произведение",
 		"action.done": "Готово",
 		"action.retry": "Повторить загрузку",
 		"action.loadCatalog": "Загрузить каталог",
@@ -349,8 +345,6 @@ const ui = createNamespace({
 		"label.instrument": "Инструмент",
 		"label.addRole": "Добавить роль",
 		"label.selectRole": "Выберите роль…",
-		"label.workTitle": "Название произведения",
-		"label.workMusicBrainz": "MusicBrainz ID произведения",
 		"label.foreignFields":
 			"Разрешение метаданных ожидает подтверждения; значения других областей не редактируются.",
 		"action.moveUp": "Выше",

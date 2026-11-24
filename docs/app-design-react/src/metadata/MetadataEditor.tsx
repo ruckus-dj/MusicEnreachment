@@ -8,6 +8,10 @@ import {
 } from "../features/library/MetadataFieldPresentation";
 import { MovementFieldsView } from "../features/library/MovementFieldsView";
 import { ProviderGenreBaselineRow } from "../features/library/ProviderGenreBaselineRow";
+import {
+	type WorkRowDraft,
+	WorkRowsView,
+} from "../features/library/WorkRowsView";
 import { WorksMovementSectionView } from "../features/library/WorksMovementSectionView";
 import { useI18n } from "../i18n";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
@@ -216,8 +220,13 @@ export function MetadataEditor({
 	>();
 	const [saving, setSaving] = useState(false);
 	const [addedRoles, setAddedRoles] = useState<string[]>([]);
+	const [workRowKeys, setWorkRowKeys] = useState<string[]>([]);
+	const nextAddedWork = useRef(0);
 	useEffect(() => {
-		if (!editing) setAddedRoles([]);
+		if (!editing) {
+			setAddedRoles([]);
+			setWorkRowKeys([]);
+		}
 	}, [editing]);
 	const actionRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<HTMLElement>(null);
@@ -584,6 +593,19 @@ export function MetadataEditor({
 	const roleKeys = fields
 		.filter((field) => field.group === "roles")
 		.map((field) => field.key);
+	const works = readMetadataWorks(current);
+	const displayedWorks = works.length || !editing ? works : [{ title: "" }];
+	const workRows = displayedWorks.map((work, index) => ({
+		uiKey: (editing ? workRowKeys[index] : undefined) ?? `work-${index}`,
+		title: work.title,
+		...(work.mbid !== undefined ? { mbid: work.mbid } : {}),
+	}));
+	const writeWorks = (next: WorkRowDraft[]) => {
+		const written = writeMetadataWorks(current, next);
+		setWorkRowKeys(next.map(({ uiKey }) => uiKey));
+		setValue("work", written.work);
+		setValue("musicbrainz_workid", written.musicbrainz_workid);
+	};
 
 	return (
 		<section
@@ -1064,129 +1086,25 @@ export function MetadataEditor({
 						movementDataKeys={movementFields.map((field) => field.key)}
 						works={
 							worksFields.length ? (
-								<>
-									{(readMetadataWorks(current).length
-										? readMetadataWorks(current)
-										: [{ title: "" }]
-									).map((work, index) => (
-										<div
-											key={`work-${index}`}
-											className="grid gap-2 sm:grid-cols-2"
-										>
-											<KeyInput
-												fieldKey="work"
-												label={m("label.workTitle")}
-												value={work.title}
-												readOnly={!editing}
-												onChange={(title) => {
-													const next = [...readMetadataWorks(current)];
-													next[index] = { ...next[index], title };
-													const written = writeMetadataWorks(current, next);
-													setValue("work", written.work);
-													setValue(
-														"musicbrainz_workid",
-														written.musicbrainz_workid,
-													);
-												}}
-											/>
-											<KeyInput
-												fieldKey="musicbrainz_workid"
-												label={m("label.workMusicBrainz")}
-												value={work.mbid ?? ""}
-												readOnly={!editing}
-												onChange={(mbid) => {
-													const next = [...readMetadataWorks(current)];
-													next[index] = { ...next[index], mbid };
-													const written = writeMetadataWorks(current, next);
-													setValue("work", written.work);
-													setValue(
-														"musicbrainz_workid",
-														written.musicbrainz_workid,
-													);
-												}}
-											/>
-											{editing && (
-												<div className="contents">
-													<Button
-														aria-label={`${m("action.moveUp")} ${m("group.works")} ${index + 1}`}
-														isDisabled={!editing || index === 0}
-														onPress={() => {
-															const written = writeMetadataWorks(
-																current,
-																move(readMetadataWorks(current), index, -1),
-															);
-															setValue("work", written.work);
-															setValue(
-																"musicbrainz_workid",
-																written.musicbrainz_workid,
-															);
-														}}
-													>
-														↑
-													</Button>
-													<Button
-														aria-label={`${m("action.moveDown")} ${m("group.works")} ${index + 1}`}
-														isDisabled={
-															!editing ||
-															index === readMetadataWorks(current).length - 1
-														}
-														onPress={() => {
-															const written = writeMetadataWorks(
-																current,
-																move(readMetadataWorks(current), index, 1),
-															);
-															setValue("work", written.work);
-															setValue(
-																"musicbrainz_workid",
-																written.musicbrainz_workid,
-															);
-														}}
-													>
-														↓
-													</Button>
-													<Button
-														aria-label={`${m("action.remove")} ${m("group.works")} ${index + 1}`}
-														isDisabled={!editing}
-														onPress={() => {
-															const written = writeMetadataWorks(
-																current,
-																readMetadataWorks(current).filter(
-																	(_, row) => row !== index,
-																),
-															);
-															setValue("work", written.work);
-															setValue(
-																"musicbrainz_workid",
-																written.musicbrainz_workid,
-															);
-														}}
-													>
-														{m("action.remove")}
-													</Button>
-												</div>
-											)}
-										</div>
-									))}
-									{editing && (
-										<Button
-											isDisabled={!editing}
-											className="justify-self-start"
-											onPress={() => {
-												const written = writeMetadataWorks(current, [
-													...readMetadataWorks(current),
-													{ title: "" },
-												]);
-												setValue("work", written.work);
-												setValue(
-													"musicbrainz_workid",
-													written.musicbrainz_workid,
-												);
-											}}
-										>
-											{m("action.addWork")}
-										</Button>
-									)}
-								</>
+								<WorkRowsView
+									locale={locale}
+									rows={workRows}
+									editing={editing}
+									disabled={saving}
+									editableMbid
+									titleDataKey="work"
+									mbidDataKey="musicbrainz_workid"
+									onChange={writeWorks}
+									onAdd={() =>
+										writeWorks([
+											...(works.length ? workRows : []),
+											{
+												title: "",
+												uiKey: `new-work-${++nextAddedWork.current}`,
+											},
+										])
+									}
+								/>
 							) : undefined
 						}
 						movement={

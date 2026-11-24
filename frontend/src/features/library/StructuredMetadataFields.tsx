@@ -1,6 +1,6 @@
 import { useId } from "react";
-import { AppButton } from "../../components/AppButton";
 import { MovementFieldsView } from "./MovementFieldsView";
+import { WorkRowsView } from "./WorkRowsView";
 
 let nextMetadataDraftRowKey = 0;
 
@@ -59,6 +59,7 @@ export function readMetadataMovementDraft(
 type FieldState = "absent" | "value" | "explicit_empty";
 
 type StructuredMetadataFieldProps = {
+  locale: "en" | "ru";
   label: string;
   state: FieldState;
   editing: boolean;
@@ -69,12 +70,6 @@ type StructuredMetadataFieldProps = {
   explicitEmptyLabel: string;
   noOverrideLabel: string;
   emptyValueLabel: string;
-  workNameLabel: string;
-  workMBIDLabel: string;
-  addWorkLabel: string;
-  moveWorkUpLabel: (index: number) => string;
-  moveWorkDownLabel: (index: number) => string;
-  removeWorkLabel: (index: number) => string;
   onStateChange: (state: FieldState) => void;
 } & (
   | {
@@ -84,7 +79,6 @@ type StructuredMetadataFieldProps = {
     }
   | {
       kind: "movement";
-      locale: "en" | "ru";
       value: MetadataMovementDraft;
       onValueChange: (value: MetadataMovementDraft) => void;
     }
@@ -126,123 +120,31 @@ export function StructuredMetadataField(props: StructuredMetadataFieldProps) {
           {props.explicitEmptyLabel}
         </span>
       ) : props.kind === "works" ? (
-        <div className="grid min-w-0 gap-2">
-          {props.value.length ? (
-            props.value.map((work, index) => (
-              <div
-                key={work.uiKey}
-                className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
-              >
-                {props.editing ? (
-                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                    <label htmlFor={`${controlPrefix}-${work.uiKey}-name`}>
-                      {`${props.workNameLabel} ${index + 1}`}
-                    </label>
-                    <input
-                      id={`${controlPrefix}-${work.uiKey}-name`}
-                      className={inputClassName}
-                      value={work.name}
-                      disabled={props.saving}
-                      onChange={(event) => {
-                        const value = [...props.value];
-                        value[index] = {
-                          ...work,
-                          name: event.currentTarget.value,
-                        };
-                        props.onValueChange(value);
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                    <span>{`${props.workNameLabel} ${index + 1}`}</span>
-                    <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
-                      {work.name || props.emptyValueLabel}
-                    </span>
-                  </div>
-                )}
-                {work.mbid ? (
-                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                    <span>{props.workMBIDLabel}</span>
-                    <output className="min-h-9 break-all py-2 text-sm text-[var(--ink)]">
-                      {work.mbid}
-                    </output>
-                  </div>
-                ) : null}
-                {props.editing ? (
-                  <div className="flex flex-wrap items-end gap-1">
-                    <AppButton
-                      type="button"
-                      aria-label={props.moveWorkUpLabel(index + 1)}
-                      isDisabled={props.saving || index === 0}
-                      onPress={() => {
-                        const value = [...props.value];
-                        [value[index - 1], value[index]] = [
-                          value[index],
-                          value[index - 1],
-                        ];
-                        props.onValueChange(value);
-                      }}
-                      className="min-w-0 justify-center"
-                    >
-                      ↑
-                    </AppButton>
-                    <AppButton
-                      type="button"
-                      aria-label={props.moveWorkDownLabel(index + 1)}
-                      isDisabled={
-                        props.saving || index === props.value.length - 1
-                      }
-                      onPress={() => {
-                        const value = [...props.value];
-                        [value[index], value[index + 1]] = [
-                          value[index + 1],
-                          value[index],
-                        ];
-                        props.onValueChange(value);
-                      }}
-                      className="min-w-0 justify-center"
-                    >
-                      ↓
-                    </AppButton>
-                    <AppButton
-                      type="button"
-                      aria-label={props.removeWorkLabel(index + 1)}
-                      isDisabled={props.saving}
-                      onPress={() =>
-                        props.onValueChange(
-                          props.value.filter((_, row) => row !== index),
-                        )
-                      }
-                      className="min-w-0 justify-center"
-                    >
-                      {props.removeWorkLabel(index + 1)}
-                    </AppButton>
-                  </div>
-                ) : null}
-              </div>
-            ))
-          ) : (
-            <span className="text-sm text-[var(--muted)]">
-              {props.emptyValueLabel}
-            </span>
-          )}
-          {props.editing ? (
-            <AppButton
-              type="button"
-              isDisabled={props.saving}
-              onPress={() =>
-                props.onValueChange([
-                  ...props.value,
-                  { uiKey: createMetadataDraftRowKey(), name: "" },
-                ])
-              }
-              className="min-w-0 justify-center justify-self-start"
-            >
-              {props.addWorkLabel}
-            </AppButton>
-          ) : null}
-        </div>
+        <WorkRowsView
+          locale={props.locale}
+          rows={props.value.map((work) => ({
+            uiKey: work.uiKey,
+            title: work.name,
+            ...(work.mbid !== undefined ? { mbid: work.mbid } : {}),
+          }))}
+          editing={props.editing}
+          disabled={props.saving}
+          onChange={(rows) =>
+            props.onValueChange(
+              rows.map((row) => ({
+                uiKey: row.uiKey,
+                name: row.title,
+                ...(row.mbid !== undefined ? { mbid: row.mbid } : {}),
+              })),
+            )
+          }
+          onAdd={() =>
+            props.onValueChange([
+              ...props.value,
+              { uiKey: createMetadataDraftRowKey(), name: "" },
+            ])
+          }
+        />
       ) : (
         <MovementFieldsView
           locale={props.locale}

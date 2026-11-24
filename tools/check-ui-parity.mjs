@@ -101,6 +101,7 @@ const pairs = [
       "MetadataFieldPresentation.tsx",
       "MovementFieldsView.tsx",
       "WorksMovementSectionView.tsx",
+      "WorkRowsView.tsx",
       "PublicationAudioMeasurementsView.tsx",
       "PublicationCurrentSummaryView.tsx",
       "ProviderGenreBaselineRow.tsx",

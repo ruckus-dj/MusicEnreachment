@@ -172,8 +172,10 @@ it("keeps a pending admission fenced across a metadata refresh and delivers its 
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  await screen.findByRole("button", { name: "Опубликовать" });
-  fireEvent.click(screen.getByRole("button", { name: "Опубликовать" }));
+  const confirm = await screen.findByRole("button", { name: "Опубликовать" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
+  expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
 
   view.rerender(component(1, onAdmitted));
   expect(

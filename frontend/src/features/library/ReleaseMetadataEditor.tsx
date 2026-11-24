@@ -265,12 +265,6 @@ const copy = {
     invalidMovementName: "Enter a movement name.",
     explicit: "Explicit",
     clean: "Clean",
-    workName: "Work title",
-    workMBID: "Work MusicBrainz ID",
-    addWork: "Add work",
-    moveWorkUp: (index: number) => `Move work up ${index}`,
-    moveWorkDown: (index: number) => `Move work down ${index}`,
-    removeWork: (index: number) => `Remove work ${index}`,
     contributorName: "Contributor name",
     contributorRole: "Role",
     contributorInstrument: "Instrument",
@@ -377,12 +371,6 @@ const copy = {
     invalidMovementName: "Введите название части.",
     explicit: "С ненормативной лексикой",
     clean: "Без ненормативной лексики",
-    workName: "Название произведения",
-    workMBID: "MusicBrainz ID произведения",
-    addWork: "Добавить произведение",
-    moveWorkUp: (index: number) => `Переместить произведение вверх ${index}`,
-    moveWorkDown: (index: number) => `Переместить произведение вниз ${index}`,
-    removeWork: (index: number) => `Удалить произведение ${index}`,
     contributorName: "Имя участника",
     contributorRole: "Роль",
     contributorInstrument: "Инструмент",
@@ -1478,6 +1466,7 @@ function LibraryScopedMetadataEditorSession({
   const renderWorksMovementField = (key: "works" | "movement") => {
     const field = editing ? draft[key] : saved[key];
     const props = {
+      locale,
       label: text.labels[key],
       state: field.state,
       editing,
@@ -1488,12 +1477,6 @@ function LibraryScopedMetadataEditorSession({
       explicitEmptyLabel: text.explicitEmpty,
       noOverrideLabel: text.noOverride,
       emptyValueLabel: text.emptyValue,
-      workNameLabel: text.workName,
-      workMBIDLabel: text.workMBID,
-      addWorkLabel: text.addWork,
-      moveWorkUpLabel: text.moveWorkUp,
-      moveWorkDownLabel: text.moveWorkDown,
-      removeWorkLabel: text.removeWork,
       onStateChange: (state: FieldState) =>
         updateField(key, { state, value: field.value }),
       onValueChange: (value: MetadataWorkDraft[] | MetadataMovementDraft) =>
@@ -1509,7 +1492,6 @@ function LibraryScopedMetadataEditorSession({
       <StructuredMetadataField
         {...props}
         kind="movement"
-        locale={locale}
         value={field.value as MetadataMovementDraft}
       />
     );

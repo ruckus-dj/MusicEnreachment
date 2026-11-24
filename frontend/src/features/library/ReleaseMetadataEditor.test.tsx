@@ -620,6 +620,10 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
                   name: "Recording work",
                   mbid: "11111111-1111-4111-8111-111111111111",
                 },
+                {
+                  name: "Second work",
+                  mbid: "33333333-3333-4333-8333-333333333333",
+                },
               ]
             : [
                 {
@@ -795,6 +799,17 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
   expect(
     within(recording).getByRole("textbox", { name: "Название произведения 1" }),
   ).toHaveValue("Recording work edited");
+  fireEvent.click(
+    within(recording).getByRole("button", {
+      name: "Переместить произведение вниз 1",
+    }),
+  );
+  expect(
+    within(recording).getByRole("textbox", { name: "Название произведения 1" }),
+  ).toHaveValue("Second work");
+  expect(
+    within(recording).getByRole("textbox", { name: "Название произведения 2" }),
+  ).toHaveFocus();
   fireEvent.change(
     within(position).getByRole("textbox", { name: "Название произведения 1" }),
     { target: { value: "Position work edited" } },
@@ -867,6 +882,10 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
         works: {
           state: "value",
           value: [
+            {
+              name: "Second work",
+              mbid: "33333333-3333-4333-8333-333333333333",
+            },
             {
               name: "Recording work edited",
               mbid: "11111111-1111-4111-8111-111111111111",
