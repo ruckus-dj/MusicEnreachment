@@ -182,20 +182,6 @@ export function processSourceQueue(
 	return { files, copies: [...state.copies, ...copies] };
 }
 
-export function retryCancelledSourceFile(
-	state: SourceProcessingState,
-	fileId: string,
-): SourceProcessingState {
-	let changed = false;
-	const files = state.files.map((file) => {
-		if (file.id !== fileId || file.blockedReason !== "output_reset")
-			return file;
-		changed = true;
-		return { ...file, status: "queued" as const, blockedReason: undefined };
-	});
-	return changed ? { ...state, files } : state;
-}
-
 export function resetSourceProcessingQueue(
 	state: SourceProcessingState,
 ): SourceProcessingState {
@@ -207,8 +193,13 @@ export function resetSourceProcessingQueue(
 						status: "failed" as const,
 						blockedReason: "output_reset" as const,
 						steps: file.steps.map((step) =>
-							step.status === "running"
-								? { id: step.id, status: "queued" as const }
+							step.status === "queued" || step.status === "running"
+								? {
+										id: step.id,
+										status: "failed" as const,
+										error: "outputResetCancelled" as const,
+										attempts: step.attempts,
+									}
 								: step,
 						),
 					}

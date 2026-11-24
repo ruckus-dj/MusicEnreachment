@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { isValidMusicBrainzBaseURL } from "../../infrastructure/providerValidation";
 import {
 	processSourceQueue,
-	retryCancelledSourceFile,
 	resetSourceProcessingQueue,
+	retrySourceStep,
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
-import { isValidMusicBrainzBaseURL } from "../../infrastructure/providerValidation";
 
 describe("workflow recovery", () => {
-	it("cancels queued work on output reset until an explicit retry", () => {
-		const queued: SourceProcessingState = {
+	it("cancels queued steps on output reset and keeps recovery manual and per-step", () => {
+		const interrupted: SourceProcessingState = {
 			files: [
 				{
 					id: "root:file",
@@ -18,11 +18,10 @@ describe("workflow recovery", () => {
 					path: "/music/song.flac",
 					mode: "staged",
 					status: "queued",
-					blockedReason: "work_directory_required",
 					copyId: "retained-copy",
 					steps: [
-						{ id: "audio_inspection", status: "queued" },
-						{ id: "fingerprint", status: "queued" },
+						{ id: "audio_inspection", status: "succeeded", attempts: 1 },
+						{ id: "fingerprint", status: "queued", attempts: 1 },
 					],
 				},
 			],
@@ -36,20 +35,43 @@ describe("workflow recovery", () => {
 				},
 			],
 		};
-		const reset = resetSourceProcessingQueue(queued);
+		const reset = resetSourceProcessingQueue(interrupted);
 
 		expect(reset.files[0]).toMatchObject({
 			status: "failed",
 			blockedReason: "output_reset",
 			copyId: "retained-copy",
-			steps: queued.files[0].steps,
+			steps: [
+				{ id: "audio_inspection", status: "succeeded", attempts: 1 },
+				{
+					id: "fingerprint",
+					status: "failed",
+					error: "outputResetCancelled",
+					attempts: 1,
+				},
+			],
 		});
-		expect(reset.files[0].blockedReason).not.toBe("work_directory_required");
-		expect(processSourceQueue(reset).files[0]).toEqual(reset.files[0]);
+		expect(processSourceQueue(reset)).toEqual(reset);
 
-		const retried = retryCancelledSourceFile(reset, "root:file");
+		const retried = retrySourceStep(reset, "root:file", "fingerprint");
+		expect(retried.files[0]).toMatchObject({
+			status: "queued",
+			steps: [
+				{ id: "audio_inspection", status: "succeeded", attempts: 1 },
+				{ id: "fingerprint", status: "queued", attempts: 1 },
+			],
+		});
 		expect(retried.files[0].blockedReason).toBeUndefined();
-		expect(retried.files[0].status).toBe("queued");
+
+		const completed = processSourceQueue(retried);
+		expect(completed.files[0]).toMatchObject({
+			status: "completed",
+			steps: [
+				{ id: "audio_inspection", status: "succeeded", attempts: 1 },
+				{ id: "fingerprint", status: "succeeded", attempts: 2 },
+			],
+		});
+		expect(completed.copies).toEqual(interrupted.copies);
 	});
 
 	it("accepts only HTTP(S) base URLs with a hostname", () => {

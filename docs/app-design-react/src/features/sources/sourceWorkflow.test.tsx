@@ -147,8 +147,8 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	).toBeInTheDocument();
 	expect(screen.getAllByText("Not scanned yet").length).toBeGreaterThan(0);
 	expect(
-		screen.getByText("No inventory records have been queued for processing."),
-	).toBeInTheDocument();
+		screen.queryByRole("table", { name: "Inventory files" }),
+	).not.toBeInTheDocument();
 	expect(screen.queryByText("Scan queued.")).not.toBeInTheDocument();
 	const scanStart = screen.getByRole("button", { name: "Scan directory" });
 	expect(scanStart).toBeEnabled();
@@ -226,6 +226,9 @@ it("registers without scanning, opens its route, and scans only on explicit star
 			{ name: "/mnt/music/01 - First Light.flac" },
 		),
 	).toHaveAttribute("href", "#sources/root-library/locations/loc-1");
+	expect(
+		screen.queryByRole("heading", { name: "File processing" }),
+	).not.toBeInTheDocument();
 
 	view.rerender(element("root-library", onRoots, onProcessingState, "loc-1"));
 	expect(screen.getByRole("heading", { name: "File inspector" })).toHaveFocus();

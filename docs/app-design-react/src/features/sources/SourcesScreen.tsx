@@ -38,12 +38,8 @@ import {
 } from "./sourceInventory";
 import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
-	blockStagedSourceQueue,
 	canRemoveSourceRoot,
-	processSourceQueue,
 	removeRootProcessingState,
-	retryCancelledSourceFile,
-	retrySourceStep,
 	type SourceProcessingState,
 	type SourceProcessingStep,
 } from "./sourceProcessingModel";
@@ -171,11 +167,6 @@ export function SourcesScreen({
 	const inventoryLocations = root
 		? retainedInventoryLocations(files, root)
 		: [];
-	const retryableInventory = new Set(
-		root && !scans.active(root.id) && !inventoryPathStale(root)
-			? inventoryLocations.map((location) => `${root.id}:${location.id}`)
-			: [],
-	);
 	const rootFiles = root
 		? processing.files.filter((file) => file.rootId === root.id)
 		: [];
@@ -197,7 +188,6 @@ export function SourcesScreen({
 			running: "statusRunning",
 			succeeded: "statusSucceeded",
 			failed: "statusFailed",
-			completed: "statusCompleted",
 		};
 		return key[status] ? m(key[status]) : status;
 	};
@@ -479,110 +469,6 @@ export function SourcesScreen({
 							}
 							onSave={saveRoot}
 						/>
-						<section
-							className={styles.panel}
-							aria-labelledby="source-processing-title"
-						>
-							<h2 id="source-processing-title">{m("processingTitle")}</h2>
-							<p>{m("processingDescription")}</p>
-							<p className="text-xs text-[var(--muted)]">{m("freshness")}</p>
-							{rootFiles.length === 0 ? (
-								<p>{m("noFiles")}</p>
-							) : (
-								<ul className="m-0 grid gap-3 pl-5">
-									{rootFiles.map((file) => (
-										<li key={file.id}>
-											<strong>{file.path}</strong> ·{" "}
-											{m("fileStatus", { status: statusLabel(file.status) })}
-											{file.blockedReason && (
-												<p role="status">
-													{file.blockedReason === "output_reset"
-														? m("outputResetCancelled")
-														: m("workDirectoryRequired")}{" "}
-													{file.blockedReason === "work_directory_required" && (
-														<a href="#settings">{m("configureInSettings")}</a>
-													)}
-												</p>
-											)}
-											{file.blockedReason === "output_reset" && (
-												<Button
-													isDisabled={!retryableInventory.has(file.id)}
-													onPress={() => {
-														const retried = retryCancelledSourceFile(
-															processing,
-															file.id,
-														);
-														if (file.mode === "staged" && !workDirectory) {
-															updateProcessing(
-																blockStagedSourceQueue(retried, file.rootId),
-															);
-															notify("workDirectoryRequired");
-															return;
-														}
-														updateProcessing(
-															processSourceQueue(retried, file.rootId, file.id),
-														);
-													}}
-												>
-													{m("retryCancelled")}
-												</Button>
-											)}
-											<ul className="grid gap-2 pl-5">
-												{file.steps.map((step) => (
-													<li key={step.id}>
-														{step.id === "audio_inspection"
-															? m("stepAudio")
-															: m("stepFingerprint")}
-														: {audioStepLabel(step)}
-														{step.error && <p role="alert">{m(step.error)}</p>}
-														{step.status === "failed" && (
-															<Button
-																isDisabled={!retryableInventory.has(file.id)}
-																aria-label={m("retryStep", {
-																	step:
-																		step.id === "audio_inspection"
-																			? m("stepAudio")
-																			: m("stepFingerprint"),
-																})}
-																onPress={() => {
-																	const retried = retrySourceStep(
-																		processing,
-																		file.id,
-																		step.id,
-																	);
-																	if (
-																		file.mode === "staged" &&
-																		!workDirectory
-																	) {
-																		updateProcessing(
-																			blockStagedSourceQueue(
-																				retried,
-																				file.rootId,
-																			),
-																		);
-																		notify("workDirectoryRequired");
-																		return;
-																	}
-																	updateProcessing(
-																		processSourceQueue(
-																			retried,
-																			file.rootId,
-																			file.id,
-																		),
-																	);
-																}}
-															>
-																{m("retry")}
-															</Button>
-														)}
-													</li>
-												))}
-											</ul>
-										</li>
-									))}
-								</ul>
-							)}
-						</section>
 						<p>{m("unavailablePublications")}</p>
 					</SourceRootDetailView>
 				) : (

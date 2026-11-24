@@ -31,31 +31,17 @@ export const sourcesMessages = createNamespace({
 			"Inventory scan completed for {path}; processing started for {count} file records.",
 		noInventory:
 			"The fixed inventory contains no file records for this source.",
-		workDirectoryRequired:
-			"Files found. Choose a work directory in Settings to process working copies.",
 		outputResetCancelled:
-			"Output reset cancelled this queued work. It will remain paused until you explicitly retry it.",
-		processingTitle: "File processing",
-		processingDescription:
-			"Files are processed independently. Failed steps can be retried separately.",
-		freshness: "Rescanning detects changes by file size and modification time.",
-		noFiles: "No inventory records have been queued for processing.",
-		fileStatus: "File status: {status}",
-		stepAudio: "Audio inspection",
-		stepFingerprint: "Fingerprint",
+			"Changing the publication directory cancelled this step. Retry it to continue.",
 		audioNotChecked: "Not checked",
 		audioCheckFailed: "Check failed",
 		statusQueued: "Queued",
 		statusRunning: "Running",
 		statusSucceeded: "Succeeded",
 		statusFailed: "Failed",
-		statusCompleted: "Completed",
 		statusBlocked: "Blocked · work directory required",
 		fingerprintFailed:
 			"Could not calculate this file’s audio fingerprint. Retry this step.",
-		retry: "Retry",
-		retryCancelled: "Retry cancelled work",
-		retryStep: "Retry {step}",
 		copyPathUnavailable: "Source path unavailable",
 		cleanupSelectionStale:
 			"The selected copies are no longer all eligible. Refresh the selection and choose again.",
@@ -109,32 +95,17 @@ export const sourcesMessages = createNamespace({
 			"Сканирование инвентаря {path} завершено; обработка начата для записей о файлах: {count}.",
 		noInventory:
 			"В фиксированном инвентаре для этого источника нет записей о файлах.",
-		workDirectoryRequired:
-			"Файлы найдены. Для обработки через копию выберите рабочую папку в Настройках.",
 		outputResetCancelled:
-			"Обработка в очереди отменена при смене каталога публикации. Чтобы продолжить, явно повторите обработку.",
-		processingTitle: "Обработка файлов",
-		processingDescription:
-			"Файлы обрабатываются независимо. Неудачный шаг можно повторить отдельно.",
-		freshness:
-			"Повторное сканирование определяет изменения по размеру и времени изменения файла.",
-		noFiles: "В очереди нет записей инвентаря для обработки.",
-		fileStatus: "Состояние файла: {status}",
-		stepAudio: "Проверка аудио",
-		stepFingerprint: "Fingerprint",
+			"Шаг отменён при смене каталога публикации. Чтобы продолжить, повторите этот шаг.",
 		audioNotChecked: "Не проверен",
 		audioCheckFailed: "Проверка не удалась",
 		statusQueued: "В очереди",
 		statusRunning: "Выполняется",
 		statusSucceeded: "Завершено",
 		statusFailed: "Ошибка",
-		statusCompleted: "Завершено",
 		statusBlocked: "Заблокировано · требуется рабочая папка",
 		fingerprintFailed:
 			"Не удалось рассчитать аудиоотпечаток файла. Повторите этот шаг.",
-		retry: "Повторить",
-		retryCancelled: "Повторить отменённую обработку",
-		retryStep: "Повторить: {step}",
 		copyPathUnavailable: "Путь в источнике недоступен",
 		cleanupSelectionStale:
 			"Выбранные копии больше не все доступны для очистки. Обновите подборку и выберите заново.",
