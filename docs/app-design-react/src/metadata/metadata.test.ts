@@ -61,8 +61,8 @@ it("uses the advisory values Navidrome actually reads", () => {
 });
 
 it("registers the unique supported Navidrome fields", () => {
-	expect(navidromeFields).toHaveLength(84);
-	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(84);
+	expect(navidromeFields).toHaveLength(85);
+	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(85);
 	expect(fieldByKey("encodedby")).toBeUndefined();
 	expect(fieldByKey("encodersettings")).toBeUndefined();
 	expect(
@@ -71,6 +71,21 @@ it("registers the unique supported Navidrome fields", () => {
 	expect(fieldByKey("artistsort")?.derived).toBe(true);
 	expect(fieldByKey("musicbrainz_artistid")?.kind).toBe("identity");
 	expect(fieldByKey("script")?.scope).toBe("release");
+	expect(
+		projectMetadataValues(
+			{
+				release_primary_type: ["Album"],
+				release_secondary_types: ["Compilation", "Live"],
+			},
+			"release",
+		).tags,
+	).toEqual({
+		RELEASETYPE: ["Album"],
+		RELEASETYPES: ["Compilation", "Live"],
+	});
+	expect(
+		projectMetadataValues({ release_secondary_types: [] }, "release").tags,
+	).toEqual({ RELEASETYPES: [] });
 });
 
 it("localizes every registered field and group without changing registry identities", () => {

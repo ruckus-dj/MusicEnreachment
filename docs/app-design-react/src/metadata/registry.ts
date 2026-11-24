@@ -244,7 +244,20 @@ const definitions: Definition[] = [
 	["recordingdate", "Дата записи", "recording", "date", "DATE"],
 	["releasedate", "Дата выпуска", "release", "date", "RELEASEDATE"],
 	["catalognumber", "Каталожный номер", "release", "list"],
-	["releasetype", "Тип выпуска", "release", "list"],
+	[
+		"release_primary_type",
+		"Основной тип релиза",
+		"release",
+		"text",
+		"RELEASETYPE",
+	],
+	[
+		"release_secondary_types",
+		"Дополнительные типы релиза",
+		"release",
+		"list",
+		"RELEASETYPES",
+	],
 	[
 		"musicbrainz_artistid",
 		"MBID исполнителей",

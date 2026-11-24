@@ -1,7 +1,10 @@
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-import type { CatalogArtist, OriginalRelease } from "../features/library/catalogData";
+import type {
+	CatalogArtist,
+	OriginalRelease,
+} from "../features/library/catalogData";
 import { useI18n } from "../i18n/I18nProvider";
 import { metadataEditorMessages } from "./editorMessages";
 
@@ -29,8 +32,9 @@ function releaseValues(release: OriginalRelease): MetadataValues {
 	if (!("releasecountry" in values)) values.releasecountry = [release.country];
 	if (!("recordlabel" in values)) values.recordlabel = [release.label];
 	if (!("catalognumber" in values)) values.catalognumber = [release.catalog];
-	if (!("releasetype" in values))
-		values.releasetype = [release.metadata?.type ?? ""];
+	const primaryType = release.metadata?.type;
+	if (primaryType && !("release_primary_type" in values))
+		values.release_primary_type = [primaryType];
 	// Keep explicit empty values from metadataValues authoritative over legacy fields.
 	return values;
 }
