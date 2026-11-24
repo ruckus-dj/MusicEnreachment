@@ -3,8 +3,6 @@ import type { Locale } from "../../i18n/types";
 
 export const trackMessages = createNamespace({
 	en: {
-		trackPosition: "position in this edition",
-		artistAndRelease: "Artist and release",
 		library: "Library",
 		audioSources: "Audio sources",
 		publicationSource: "Choose the audio source for publication",
@@ -80,8 +78,6 @@ export const trackMessages = createNamespace({
 		fixedFile: "Comparing file",
 	},
 	ru: {
-		trackPosition: "позиция конкретного издания",
-		artistAndRelease: "К артисту и изданию",
 		library: "К медиатеке",
 		audioSources: "Источники аудио",
 		publicationSource: "Выберите источник аудио для публикации",

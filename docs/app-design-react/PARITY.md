@@ -91,7 +91,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
 | Медиатека: значения части произведения — название, всего частей, номер | `features/library/MovementFieldsView.tsx` | Тот же путь |
-| Медиатека: заголовок артиста, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
+| Медиатека: заголовки артиста и позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 
 ### Где ещё есть расхождения
@@ -122,8 +122,10 @@ source channel, а fixture макета такого происхождения 
   и диагностику чтения приложение получает от сервера. Подробные шаги обработки
   и их повтор находятся в инспекторе, без отдельной панели в карточке каталога.
 - **Медиатека, входящие и публикация.** Общие строки и части рабочих областей
-  уже перенесены. В композиции маршрутов, редакторах структурированных метаданных,
-  диалогах и каталогах переводов остаются разные реализации. Перед копированием
+  уже перенесены. Заголовок позиции общий; ссылка ведёт к изданию по маршруту
+  соответствующей сборки. В остальной композиции маршрутов, редакторах
+  структурированных метаданных, диалогах и каталогах переводов остаются
+  разные реализации. Перед копированием
   нужно отделить представление и форматирование от загрузки, черновиков и
   записи, чтобы не заменить серверный workflow демонстрационным.
 - **Стили.** Рукописные стили отдельных экранов в `frontend/src/features/`

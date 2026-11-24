@@ -25,6 +25,11 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { catalogueStyles } from "./catalogueStyles";
+import {
+	LibraryPositionHeadingView,
+	libraryPositionPageClassName,
+	libraryPositionTitleId,
+} from "./LibraryPositionHeadingView";
 import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
 import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
 import {
@@ -111,30 +116,26 @@ export function TrackScreen({
 						? trackMessage(locale, "noDeviations")
 						: trackMessage(locale, "fileStateNotChecked");
 	return (
-		<section className={catalogueStyles.object}>
-			<header className={catalogueStyles.objectHeader}>
-				<div>
-					<h1>
-						{String(track.position).padStart(2, "0")} · {track.title}
-					</h1>
-					<p>
-						{originalArtistName(track.artistId, artists)} / {release.title} ·{" "}
-						{trackMessage(locale, "trackPosition")}
-					</p>
-				</div>
-				{artistReleaseHref(release, artists ?? catalogData.artists) ? (
-					<a
-						href={
-							artistReleaseHref(release, artists ?? catalogData.artists) ??
-							undefined
-						}
-					>
-						{trackMessage(locale, "artistAndRelease")}
-					</a>
-				) : (
-					<a href="#library">{trackMessage(locale, "library")}</a>
-				)}
-			</header>
+		<section
+			aria-labelledby={libraryPositionTitleId}
+			className={libraryPositionPageClassName}
+		>
+			<LibraryPositionHeadingView
+				locale={locale}
+				displayNumber={
+					track.displayedNumber?.trim()
+						? track.displayedNumber
+						: String(track.position).padStart(2, "0")
+				}
+				title={track.title}
+				artist={originalArtistName(track.artistId, artists)}
+				releaseTitle={release.title}
+				releaseHref={
+					artistReleaseHref(release, artists ?? catalogData.artists) ??
+					undefined
+				}
+				libraryHref="#library"
+			/>
 			{(onMutate || onRecordingChange) && (
 				<TrackMetadataEditors
 					track={track}

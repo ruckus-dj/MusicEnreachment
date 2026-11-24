@@ -87,6 +87,7 @@ const pairs = [
       "LibraryCatalogControls.tsx",
       "LibraryMissingEditionView.tsx",
       "LibraryPaginationView.tsx",
+      "LibraryPositionHeadingView.tsx",
       "LibraryPositionIdentityView.tsx",
       "LibraryPositionSourcesView.tsx",
       "LibrarySelectionDockView.tsx",

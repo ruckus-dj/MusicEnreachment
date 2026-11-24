@@ -38,6 +38,11 @@ import {
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
+  LibraryPositionHeadingView,
+  libraryPositionPageClassName,
+  libraryPositionTitleId,
+} from "./LibraryPositionHeadingView";
+import {
   PositionIdentity,
   PositionSources,
   ReleaseCreditList,
@@ -1481,7 +1486,8 @@ export function LibraryReleaseScreen({
       `${track.displayed_number.trim() || track.position}. ${track.title}`,
     ]),
   );
-  return (
+  const ReleaseHeading = selectedTrack ? "h2" : "h1";
+  const body = (
     <section className="library-release-screen mx-auto max-w-5xl space-y-6">
       <nav
         className="library-release-navigation"
@@ -1513,7 +1519,9 @@ export function LibraryReleaseScreen({
             ) : null}
           </span>
           <div className="library-release-title">
-            <h1 className="text-2xl font-semibold">{release.title}</h1>
+            <ReleaseHeading className="text-2xl font-semibold">
+              {release.title}
+            </ReleaseHeading>
             <ReleaseCreditList credits={release.artists} />
           </div>
         </div>
@@ -1607,7 +1615,7 @@ export function LibraryReleaseScreen({
           states={aggregateStates}
         />
       )}
-      {positionId && (
+      {positionId && !selectedTrack && (
         <a className="underline" href={`#/library/releases/${releaseId}`}>
           {text("fullRelease")}
         </a>
@@ -1728,11 +1736,10 @@ export function LibraryReleaseScreen({
         return (
           <Fragment key={track.id}>
             {positionId === track.id ? (
-              <article className="space-y-3 rounded border border-stone-300 p-4">
-                <h2 className="font-semibold">
-                  {track.displayed_number.trim() || track.position}.{" "}
-                  {track.title}
-                </h2>
+              <article
+                aria-labelledby={libraryPositionTitleId}
+                className="space-y-3 rounded border border-stone-300 p-4"
+              >
                 <PublicationCurrentSummaryView
                   locale={locale}
                   current={
@@ -2091,6 +2098,35 @@ export function LibraryReleaseScreen({
           </Fragment>
         );
       })}
+    </section>
+  );
+  const credits = selectedTrack?.artists ?? [];
+  const artist = credits
+    .map(
+      (credit, index) =>
+        `${credit.credit_name || credit.artist_name}${index < credits.length - 1 ? (credit.join_phrase ?? " ") : ""}`,
+    )
+    .join("");
+  return (
+    <section
+      aria-labelledby={selectedTrack ? libraryPositionTitleId : undefined}
+      className={selectedTrack ? libraryPositionPageClassName : "contents"}
+    >
+      {selectedTrack && (
+        <LibraryPositionHeadingView
+          locale={locale}
+          displayNumber={
+            selectedTrack.displayed_number.trim() ||
+            String(selectedTrack.position)
+          }
+          title={selectedTrack.title}
+          artist={artist}
+          releaseTitle={release.title}
+          releaseHref={`#/library/releases/${encodeURIComponent(release.id)}`}
+          libraryHref="#/library"
+        />
+      )}
+      {body}
     </section>
   );
 }

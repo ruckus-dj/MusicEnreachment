@@ -342,6 +342,12 @@ it("shows publication and source details from release detail without source inve
 
   renderScreen(releaseID, positionID);
 
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "1 · Position One" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Artist and release" }),
+  ).toHaveAttribute("href", `#/library/releases/${releaseID}`);
   const summary = await screen.findByRole("region", {
     name: "Current publication",
   });
