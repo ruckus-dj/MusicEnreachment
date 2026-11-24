@@ -34,6 +34,7 @@ import {
   type MetadataFieldDescriptor,
   MetadataFieldGroup,
   MetadataFieldsGrid,
+  metadataListActions,
 } from "./MetadataFieldPresentation";
 import { ProviderGenreBaselineRow } from "./ProviderGenreBaselineRow";
 import {
@@ -195,7 +196,7 @@ const copy = {
       original_release_date: "Original release date",
       recording_date: "Recording date",
       release_country: "Country",
-      label: "Labels",
+      label: "Label",
       catalog_number: "Catalog number",
       release_primary_type: "Primary release type",
       release_secondary_types: "Secondary release types",
@@ -213,8 +214,8 @@ const copy = {
       copyright: "Copyright",
       license: "License",
       website: "Website",
-      media: "Media",
-      isrc: "ISRCs",
+      media: "Release medium",
+      isrc: "ISRC",
       bpm: "BPM",
       key: "Musical key",
       language: "Language",
@@ -245,7 +246,6 @@ const copy = {
     filled: "filled",
     notFilled: "Not filled",
     dateHint: "Enter the date in the format accepted by the server.",
-    listHint: "Enter one value per line; order is preserved.",
     inherit: "Inherit",
     clear: "Clear",
     loading: "Loading saved metadata…",
@@ -299,7 +299,7 @@ const copy = {
       original_release_date: "Дата первого выпуска",
       recording_date: "Дата записи",
       release_country: "Страна",
-      label: "Лейблы",
+      label: "Лейбл",
       catalog_number: "Номер каталога",
       release_primary_type: "Основной тип релиза",
       release_secondary_types: "Дополнительные типы релиза",
@@ -317,8 +317,8 @@ const copy = {
       copyright: "Авторское право",
       license: "Лицензия",
       website: "Веб-сайт",
-      media: "Носители",
-      isrc: "Коды ISRC",
+      media: "Носитель издания",
+      isrc: "ISRC",
       bpm: "Темп (BPM)",
       key: "Тональность",
       language: "Язык",
@@ -349,7 +349,6 @@ const copy = {
     filled: "заполнено",
     notFilled: "Не заполнено",
     dateHint: "Введите дату в формате, который принимает сервер.",
-    listHint: "Введите каждое значение с новой строки; порядок сохраняется.",
     inherit: "Наследовать",
     clear: "Очистить",
     loading: "Загрузка сохранённых метаданных…",
@@ -1114,12 +1113,8 @@ function LibraryScopedMetadataEditorSession({
       },
       choices,
       hint:
-        editing && field.state === "value"
-          ? kind === "date"
-            ? text.dateHint
-            : kind === "list"
-              ? text.listHint
-              : undefined
+        editing && field.state === "value" && kind === "date"
+          ? text.dateHint
           : undefined,
       inputMode:
         kind === "integer"
@@ -1131,7 +1126,8 @@ function LibraryScopedMetadataEditorSession({
               : undefined,
       dataKeys: [key],
       notices,
-      listMode: kind === "list" ? "lines" : undefined,
+      listActions:
+        kind === "list" ? metadataListActions(locale, label) : undefined,
       onChange: (next) => {
         const value =
           kind === "boolean" ? next === "true" : (next as MetadataValue);

@@ -40,7 +40,7 @@
   padding: 8px 10px;
 }
 
-.library-release-screen input,
+.library-release-screen input:where(:not([data-metadata-list-row] input)),
 .library-release-screen select,
 .library-release-screen textarea {
   max-width: 100%;
@@ -64,7 +64,7 @@
   padding: 8px;
 }
 
-.library-release-screen button:where(:not([data-position-preview-button])) {
+.library-release-screen button:where(:not([data-position-preview-button], [data-metadata-list-row] button)) {
   min-height: 30px;
   padding: 4px 8px;
   color: var(--ink);
@@ -74,12 +74,12 @@
   font: inherit;
 }
 
-.library-release-screen button:hover:not(:disabled):where(:not([data-position-preview-button])) {
+.library-release-screen button:hover:not(:disabled):where(:not([data-position-preview-button], [data-metadata-list-row] button)) {
   background: var(--raised);
   border-color: var(--accent);
 }
 
-.library-release-screen button:disabled:where(:not([data-position-preview-button])) {
+.library-release-screen button:disabled:where(:not([data-position-preview-button], [data-metadata-list-row] button)) {
   color: var(--muted);
   background: var(--raised);
   border-color: var(--line);
@@ -104,10 +104,10 @@
 }
 
 @media (max-width: 599px) {
-  .library-release-screen input,
+  .library-release-screen input:where(:not([data-metadata-list-row] input)),
   .library-release-screen select,
   .library-release-screen textarea,
-  .library-release-screen button:where(:not([data-position-preview-button])) {
+  .library-release-screen button:where(:not([data-position-preview-button], [data-metadata-list-row] button)) {
     min-height: 40px;
   }
 

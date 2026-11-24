@@ -415,7 +415,7 @@ const definitions: Definition[] = [
 		"movement",
 	],
 	["movement", "Номер части", "recording", "movement", "MOVEMENT", "movement"],
-	["recordlabel", "Лейбл", "release", "text", "LABEL"],
+	["recordlabel", "Лейбл", "release", "list", "LABEL"],
 	[
 		"musicbrainz_workid",
 		"MBID произведения",

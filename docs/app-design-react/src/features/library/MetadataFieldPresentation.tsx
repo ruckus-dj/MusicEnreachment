@@ -29,6 +29,34 @@ export type MetadataListActions = {
   remove: (index: number) => string;
 };
 
+const listActionCopy = {
+  en: {
+    add: "Add value",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    remove: "Remove",
+  },
+  ru: {
+    add: "Добавить значение",
+    moveUp: "Выше",
+    moveDown: "Ниже",
+    remove: "Убрать",
+  },
+};
+
+export function metadataListActions(
+  locale: "en" | "ru",
+  label: string,
+): MetadataListActions {
+  const text = listActionCopy[locale];
+  return {
+    add: `${text.add}: ${label}`,
+    moveUp: (index) => `${text.moveUp}: ${label} ${index}`,
+    moveDown: (index) => `${text.moveDown}: ${label} ${index}`,
+    remove: (index) => `${text.remove}: ${label} ${index}`,
+  };
+}
+
 export type MetadataFieldDescriptor = {
   key: string;
   label: string;
@@ -49,7 +77,6 @@ export type MetadataFieldDescriptor = {
   nativeType?: "text" | "number";
   dataKeys?: string[];
   notices?: string[];
-  listMode?: "lines" | "rows";
   listActions?: MetadataListActions;
   onChange?: (value: string | string[]) => void;
   onStateChange?: (state: MetadataFieldState) => void;
@@ -100,7 +127,7 @@ function ListRowsInput({ field }: { field: MetadataFieldDescriptor }) {
   return (
     <>
       {keys.map((key, index) => (
-        <div key={key} className="relative min-w-0">
+        <div key={key} className="relative min-w-0" data-metadata-list-row>
           <input
             {...dataAttributes(field.dataKeys)}
             aria-label={`${field.label}${rows.length > 1 ? ` ${index + 1}` : ""}`}
@@ -174,23 +201,8 @@ function ListRowsInput({ field }: { field: MetadataFieldDescriptor }) {
 
 function FieldControl({ field }: { field: MetadataFieldDescriptor }) {
   const scalar = asScalar(field.value);
-  if (field.kind === "list" && field.listMode === "rows") {
-    return <ListRowsInput field={field} />;
-  }
   if (field.kind === "list") {
-    return (
-      <textarea
-        {...dataAttributes(field.dataKeys)}
-        aria-label={field.label}
-        className={`${inputClass} min-h-20 resize-y py-2`}
-        value={asArray(field.value).join("\n")}
-        disabled={field.disabled}
-        readOnly={!field.editing}
-        onChange={(event) =>
-          field.onChange?.(event.currentTarget.value.split("\n"))
-        }
-      />
-    );
+    return <ListRowsInput field={field} />;
   }
   if (field.kind === "boolean" || field.kind === "advisory") {
     return (

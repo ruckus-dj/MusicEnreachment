@@ -5,6 +5,7 @@ import {
 	type MetadataFieldDescriptor,
 	MetadataFieldGroup,
 	MetadataFieldsGrid,
+	metadataListActions,
 } from "../features/library/MetadataFieldPresentation";
 import { MovementFieldsView } from "../features/library/MovementFieldsView";
 import { ProviderGenreBaselineRow } from "../features/library/ProviderGenreBaselineRow";
@@ -287,15 +288,7 @@ export function MetadataEditor({
 			nativeType:
 				field.kind === "integer" || field.kind === "number" ? "number" : "text",
 			inputMode: field.kind === "date" ? "text" : undefined,
-			listMode: list ? "rows" : undefined,
-			listActions: list
-				? {
-						add: `${m("action.addValue")}: ${label}`,
-						moveUp: (index) => `${m("action.moveUp")}: ${label} ${index}`,
-						moveDown: (index) => `${m("action.moveDown")}: ${label} ${index}`,
-						remove: (index) => `${m("action.remove")}: ${label} ${index}`,
-					}
-				: undefined,
+			listActions: list ? metadataListActions(locale, label) : undefined,
 			onChange: (next) =>
 				setValue(field.key, Array.isArray(next) ? next : next ? [next] : []),
 		};

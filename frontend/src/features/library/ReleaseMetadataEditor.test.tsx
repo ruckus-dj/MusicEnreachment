@@ -472,9 +472,15 @@ it("sends exact typed states at the loaded revision and retains the draft on con
     }),
     { target: { value: "explicit_empty" } },
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Лейблы" }), {
-    target: { value: "North\nSouth" },
+  fireEvent.change(within(release).getByRole("textbox", { name: "Лейбл 1" }), {
+    target: { value: "South" },
   });
+  fireEvent.change(within(release).getByRole("textbox", { name: "Лейбл 2" }), {
+    target: { value: "North" },
+  });
+  fireEvent.click(
+    within(release).getByRole("button", { name: "Выше: Лейбл 2" }),
+  );
   fireEvent.change(
     screen.getByRole("combobox", {
       name: "Номер каталога — Состояние переопределения",
