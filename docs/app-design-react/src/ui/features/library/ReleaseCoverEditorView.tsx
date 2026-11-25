@@ -4,35 +4,7 @@ import {
   releaseControlAlertClass,
   releaseControlButtonClass,
 } from "./libraryReleaseControlStyles";
-
-export const releaseCoverEditorCopy = {
-  en: {
-    title: "Release cover",
-    selectedCover: "Selected cover",
-    selectedCoverAlt: "Selected release cover",
-    noSelectedCover: "No cover selected.",
-    pendingCover: "Pending cover — not published yet",
-    pendingCoverAlt: "Pending release cover",
-    unspecified: "not specified",
-    choosePngJpeg: "Choose PNG or JPEG",
-    savePendingCover: "Save pending cover",
-    applyCoverToTracks: "Apply to all published tracks",
-    retrySelectedCover: "Retry applying selected cover",
-  },
-  ru: {
-    title: "Обложка релиза",
-    selectedCover: "Выбранная обложка",
-    selectedCoverAlt: "Выбранная обложка релиза",
-    noSelectedCover: "Выбранная обложка не задана.",
-    pendingCover: "Ожидающая обложка — ещё не опубликована",
-    pendingCoverAlt: "Ожидающая обложка релиза",
-    unspecified: "не указан",
-    choosePngJpeg: "Выбрать PNG или JPEG",
-    savePendingCover: "Сохранить ожидающую обложку",
-    applyCoverToTracks: "Применить ко всем опубликованным трекам",
-    retrySelectedCover: "Повторить применение выбранной обложки",
-  },
-} as const;
+import { releaseCoverEditorCopy } from "./releaseCoverEditorCopy";
 
 export type ReleaseCoverEditorImage = {
   imageSrc?: string;

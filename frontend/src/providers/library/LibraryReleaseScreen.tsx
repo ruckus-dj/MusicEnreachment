@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
   applyLibraryManualLyrics,
@@ -39,8 +45,8 @@ import {
 import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/LibraryPositionLyricsView";
 import { ReleaseMetadataEditorView } from "../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
-import { releaseCoverEditorCopy } from "../../ui/features/library/ReleaseCoverEditorView";
 import type { ReleaseOverviewHeading } from "../../ui/features/library/ReleaseOverviewView";
+import { releaseCoverEditorCopy } from "../../ui/features/library/releaseCoverEditorCopy";
 import type {
   TrackProviderRefreshModel,
   TrackScreenPublicationView,
@@ -1624,45 +1630,49 @@ export function LibraryReleaseScreen({
     ),
     publication: overviewPublication,
     deletion: overviewDeletion,
-    cover: (
-      <ReleaseCoverEditor
-        releaseId={releaseId}
-        epoch={
-          Object.values(positions).find(
-            (position) => position.publication?.active_epoch,
-          )?.publication?.active_epoch
-        }
-        onOperationsAdmitted={(operations) => {
-          const requestScope = scope.current;
-          setPositions((current) => {
-            if (!mounted.current || scope.current !== requestScope)
-              return current;
-            const next = { ...current };
-            for (const operation of operations) {
-              next[operation.position_id] = {
-                ...next[operation.position_id],
-                applyOperationID: operation.operation_id,
-                applying: true,
-                notice: libraryReleaseText("coverApplyAdmitted"),
-              };
-            }
-            return next;
-          });
-        }}
-        onCoverSnapshot={(snapshotReleaseID, generation) => {
-          if (
-            scope.current !== releaseRenderScope ||
-            snapshotReleaseID !== releaseId
-          )
-            return;
-          setSelectedCover({
-            scope: releaseRenderScope,
-            releaseID: snapshotReleaseID,
-            generation,
-          });
-        }}
-      />
-    ),
+    cover: {
+      bind: (children: ReactNode) => (
+        <ReleaseCoverEditor
+          releaseId={releaseId}
+          epoch={
+            Object.values(positions).find(
+              (position) => position.publication?.active_epoch,
+            )?.publication?.active_epoch
+          }
+          onOperationsAdmitted={(operations) => {
+            const requestScope = scope.current;
+            setPositions((current) => {
+              if (!mounted.current || scope.current !== requestScope)
+                return current;
+              const next = { ...current };
+              for (const operation of operations) {
+                next[operation.position_id] = {
+                  ...next[operation.position_id],
+                  applyOperationID: operation.operation_id,
+                  applying: true,
+                  notice: libraryReleaseText("coverApplyAdmitted"),
+                };
+              }
+              return next;
+            });
+          }}
+          onCoverSnapshot={(snapshotReleaseID, generation) => {
+            if (
+              scope.current !== releaseRenderScope ||
+              snapshotReleaseID !== releaseId
+            )
+              return;
+            setSelectedCover({
+              scope: releaseRenderScope,
+              releaseID: snapshotReleaseID,
+              generation,
+            });
+          }}
+        >
+          {children}
+        </ReleaseCoverEditor>
+      ),
+    },
   };
   return (
     <LibraryReleaseWorkspaceView<FirstPublicationPreviewBinderProps>

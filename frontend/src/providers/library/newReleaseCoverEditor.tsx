@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   applyLibraryReleaseCover,
   getGetLibraryReleaseCoverImageUrl,
@@ -18,13 +18,17 @@ import {
   libraryReleaseText,
   renderLibraryReleaseText,
 } from "../../ui/features/library/libraryReleaseMessages";
-import { ReleaseCoverEditorView } from "../../ui/features/library/ReleaseCoverEditorView";
+import {
+  ReleaseCoverEditorDataBinder,
+  type ReleaseCoverEditorModel,
+} from "../../ui/features/library/ReleaseCoverEditorOutlet";
 
 type Props = {
   releaseId: string;
   epoch?: string;
   onOperationsAdmitted: (operations: ReleaseCoverPositionOperation[]) => void;
   onCoverSnapshot?: (releaseId: string, selectedGeneration?: string) => void;
+  children: ReactNode;
 };
 
 function errorMessage(data: unknown, status: number): Error {
@@ -46,6 +50,7 @@ export function ReleaseCoverEditor({
   epoch,
   onOperationsAdmitted,
   onCoverSnapshot,
+  children,
 }: Props) {
   const { locale } = useI18n();
   const displayText = (value: LibraryReleaseText) =>
@@ -179,44 +184,41 @@ export function ReleaseCoverEditor({
     }
   }
 
+  const model: ReleaseCoverEditorModel = {
+    releaseId,
+    selected: cover?.selected_generation
+      ? {
+          imageSrc: imageURL(cover.selected_generation),
+          checksum: cover.selected_sha256,
+        }
+      : undefined,
+    pending: cover?.pending_generation
+      ? {
+          imageSrc: imageURL(cover.pending_generation),
+          checksum: cover.pending_sha256,
+        }
+      : undefined,
+    fileInput,
+    busy,
+    savePendingDisabled: !file || busy,
+    applyDisabled: !cover?.pending_generation || !epoch || busy,
+    retryDisabled: !cover?.selected_generation || !epoch || busy,
+    onFileChange: setFile,
+    onSavePending: () => void savePending(),
+    onApply: () => void apply("apply"),
+    onRetry: () => void apply("retry"),
+    warning: cover?.warning
+      ? displayText(
+          libraryReleaseText("coverWarning", { warning: cover.warning }),
+        )
+      : undefined,
+    notice: notice ? displayText(notice) : undefined,
+    error: error ? displayText(error) : undefined,
+  };
+
   return (
-    <ReleaseCoverEditorView
-      locale={locale}
-      releaseId={releaseId}
-      selected={
-        cover?.selected_generation
-          ? {
-              imageSrc: imageURL(cover.selected_generation),
-              checksum: cover.selected_sha256,
-            }
-          : undefined
-      }
-      pending={
-        cover?.pending_generation
-          ? {
-              imageSrc: imageURL(cover.pending_generation),
-              checksum: cover.pending_sha256,
-            }
-          : undefined
-      }
-      fileInput={fileInput}
-      busy={busy}
-      savePendingDisabled={!file || busy}
-      applyDisabled={!cover?.pending_generation || !epoch || busy}
-      retryDisabled={!cover?.selected_generation || !epoch || busy}
-      onFileChange={setFile}
-      onSavePending={() => void savePending()}
-      onApply={() => void apply("apply")}
-      onRetry={() => void apply("retry")}
-      warning={
-        cover?.warning
-          ? displayText(
-              libraryReleaseText("coverWarning", { warning: cover.warning }),
-            )
-          : undefined
-      }
-      notice={notice ? displayText(notice) : undefined}
-      error={error ? displayText(error) : undefined}
-    />
+    <ReleaseCoverEditorDataBinder model={model}>
+      {children}
+    </ReleaseCoverEditorDataBinder>
   );
 }

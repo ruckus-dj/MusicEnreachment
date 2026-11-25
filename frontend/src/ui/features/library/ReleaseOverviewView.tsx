@@ -13,6 +13,10 @@ import {
   LibraryPrimaryArtistControl,
   type LibraryPrimaryArtistModel,
 } from "./LibraryPrimaryArtistControl";
+import {
+  ReleaseCoverEditorOutlet,
+  type ReleaseCoverEditorSource,
+} from "./ReleaseCoverEditorOutlet";
 
 export type ReleaseOverviewSelection = {
   isSelected: boolean;
@@ -77,7 +81,7 @@ type ReleaseOverviewContent = {
   publication?: ReactElement;
   deletion?: ReactElement;
   /** Real-only release cover management; not bound by the prototype. */
-  cover?: ReactElement;
+  cover?: ReleaseCoverEditorSource;
   /** Real-only provider refresh; not bound by the prototype. */
   providerRefresh?: ReactElement;
   primaryArtist?: LibraryPrimaryArtistModel;
@@ -402,7 +406,7 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
         ) : null}
       </section>
       {publication}
-      {cover}
+      {cover && <ReleaseCoverEditorOutlet locale={locale} source={cover} />}
     </section>
   );
 }

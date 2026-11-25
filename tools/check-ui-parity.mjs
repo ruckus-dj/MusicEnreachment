@@ -33,6 +33,7 @@ const OUTLET_OWNED_VIEWS = new Set([
   "ui/features/incoming/IncomingTagEncodingReviewView",
   "ui/features/library/ArtistScreenView",
   "ui/features/library/LibraryCatalogPageView",
+  "ui/features/library/ReleaseCoverEditorView",
   "ui/features/library/ReleaseOverviewView",
   "ui/features/library/TrackReadErrorNoticeView",
   "ui/features/library/TrackScreenView",
