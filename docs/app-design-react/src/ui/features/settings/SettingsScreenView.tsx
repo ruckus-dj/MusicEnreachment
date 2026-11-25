@@ -1,6 +1,5 @@
 import type { ComponentProps, Key, ReactNode, Ref } from "react";
 import { AppButton } from "../../components/AppButton";
-import { GitHubTokenFormView } from "../tools/GitHubTokenFormView";
 import { GenreCatalogView } from "./GenreCatalogView";
 import { SettingsConflictDialog } from "./SettingsConflictDialog";
 import { SettingsDraftConflictNotice } from "./SettingsDraftConflictNotice";
@@ -22,6 +21,10 @@ import {
   SettingsTabPanel,
   SettingsTabs,
 } from "./SettingsTabs";
+import {
+  SettingsTokenOutlet,
+  type SettingsTokenSource,
+} from "./SettingsTokenOutlet";
 import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
 import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
 import { SettingsToolsMoveReviewDialog } from "./SettingsToolsMoveReviewDialog";
@@ -75,10 +78,8 @@ export type SettingsRefreshView = {
 
 export type SettingsToolsTabViewProps = {
   root: ComponentProps<typeof SettingsToolsRootHeader>;
-  /** Pure token form used by a provider that owns the token draft. */
-  token?: ComponentProps<typeof GitHubTokenFormView>;
-  /** Narrow slot for the application's existing token controller. */
-  tokenSlot?: ReactNode;
+  /** Pure token model or a mounted controller that owns the token draft. */
+  token?: SettingsTokenSource;
   catalog: ComponentProps<typeof SettingsToolsCatalogSummary>;
   packages: ComponentProps<typeof SettingsManagedPackageCards>;
   move: ComponentProps<typeof SettingsToolsMoveEditor>;
@@ -137,9 +138,9 @@ const unhealthyTextClass =
 /**
  * Settings screen composition. Providers own lifecycle, validation, drafts,
  * preflights and transport; this view renders their typed models in the
- * established order. Independent controllers enter only through the narrow
- * token, operation-follower and genre slots so their lifetimes stay with the
- * mounted panels.
+ * established order. A mounted token controller enters through its typed
+ * provider boundary and stays mounted with the Tools panel; the operation
+ * follower and genre controllers still use narrow render slots.
  */
 export function SettingsScreenView({
   locale,
@@ -235,10 +236,9 @@ export function SettingsScreenView({
               {ready.tabs.tools.operations}
               <SettingsToolsRootHeader {...ready.tabs.tools.root} />
               <section aria-labelledby="managed-title" className="grid gap-3">
-                {ready.tabs.tools.tokenSlot ??
-                  (ready.tabs.tools.token && (
-                    <GitHubTokenFormView {...ready.tabs.tools.token} />
-                  ))}
+                {ready.tabs.tools.token && (
+                  <SettingsTokenOutlet source={ready.tabs.tools.token} />
+                )}
                 <SettingsToolsCatalogSummary {...ready.tabs.tools.catalog} />
                 <SettingsManagedPackageCards {...ready.tabs.tools.packages} />
                 <SettingsToolsMoveEditor {...ready.tabs.tools.move} />

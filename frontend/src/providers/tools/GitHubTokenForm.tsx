@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { deleteGithubToken, setGithubToken } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
+import { SettingsTokenDataBinder } from "../../ui/features/settings/SettingsTokenOutlet";
 import {
-  GitHubTokenFormView,
   type GitHubTokenFormViewProps,
   redactionMarker,
   type TokenError,
@@ -50,9 +50,23 @@ type GitHubTokenFormInputs = {
   onChanged?: () => void | Promise<void>;
 };
 
-export function GitHubTokenForm(props: GitHubTokenFormInputs) {
-  const model = useGitHubTokenFormModel(props);
-  return <GitHubTokenFormView {...model} />;
+export type GitHubTokenFormProviderProps = GitHubTokenFormInputs & {
+  children: ReactNode;
+};
+
+/**
+ * Owns the token controller for as long as the portable Settings Tools panel is
+ * mounted. The panel renders the model through the typed token outlet.
+ */
+export function GitHubTokenFormProvider({
+  hasToken,
+  onChanged,
+  children,
+}: GitHubTokenFormProviderProps) {
+  const model = useGitHubTokenFormModel({ hasToken, onChanged });
+  return (
+    <SettingsTokenDataBinder model={model}>{children}</SettingsTokenDataBinder>
+  );
 }
 
 export function useGitHubTokenFormModel({

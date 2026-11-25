@@ -69,7 +69,7 @@ import {
   settingsMessage,
 } from "../../ui/features/settings/settingsMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
-import { GitHubTokenForm } from "../tools/GitHubTokenForm";
+import { GitHubTokenFormProvider } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
   preflightManagedToolInstall,
@@ -3337,14 +3337,15 @@ function useSettingsModel(): ApplicationSettingsModel {
                     ? "#/operations"
                     : undefined,
                 },
-                tokenSlot: (
-                  <GitHubTokenForm
-                    hasToken={state.settings.has_github_token}
-                    onChanged={async () => {
+                token: {
+                  Component: GitHubTokenFormProvider,
+                  props: {
+                    hasToken: state.settings.has_github_token,
+                    onChanged: async () => {
                       await refreshState();
-                    }}
-                  />
-                ),
+                    },
+                  },
+                },
                 catalog: {
                   locale,
                   refresh: {
