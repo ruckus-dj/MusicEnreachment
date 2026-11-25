@@ -23,8 +23,12 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  ApplicationIncomingListBinder,
+  type ApplicationIncomingListModel,
+  ApplicationRouteOutlet,
+} from "../../ui/app/ApplicationRouteOutlet";
 import { focusView } from "../../ui/components/useViewFocus";
-import { IncomingScreenView } from "../../ui/features/incoming/IncomingScreenView";
 import {
   IncomingCreationFallbackView,
   IncomingWorkspaceView,
@@ -1648,6 +1652,23 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     };
   }
 
+  const listModel: ApplicationIncomingListModel = {
+    locale,
+    hidden: matchingActive || creatingLocalRelease,
+    headingAction: {
+      label: copy.refreshGroups,
+      onPress: () => void groupsQuery.refetch(),
+    },
+    loading: groupsQuery.isLoading ? copy.loadingGroups : undefined,
+    error: groupsQuery.isError
+      ? incomingFeedbackText(
+          locale,
+          errorText(groupsQuery.error, "groupsLoadError"),
+        )
+      : undefined,
+    panel: groupsPanel,
+  };
+
   return (
     <IncomingWorkspaceView>
       {creatingLocalRelease &&
@@ -1695,23 +1716,10 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             }
           />
         ))}
-      <IncomingScreenView
-        locale={locale}
-        hidden={matchingActive || creatingLocalRelease}
-        headingAction={{
-          label: copy.refreshGroups,
-          onPress: () => void groupsQuery.refetch(),
-        }}
-        loading={groupsQuery.isLoading ? copy.loadingGroups : undefined}
-        error={
-          groupsQuery.isError
-            ? incomingFeedbackText(
-                locale,
-                errorText(groupsQuery.error, "groupsLoadError"),
-              )
-            : undefined
-        }
-        panel={groupsPanel}
+      <ApplicationRouteOutlet
+        route="incoming-list"
+        provider={ApplicationIncomingListBinder}
+        providerProps={{ model: listModel }}
       />
 
       {groupId ? <MatchingScreenView model={matchingModel} /> : null}

@@ -21,12 +21,6 @@ export const localCatalogTypes = [
 
 export type LocalCatalogType = (typeof localCatalogTypes)[number];
 
-export type LocalCatalogView =
-	| { kind: "list" }
-	| { kind: "details"; type: LocalCatalogType; id: string }
-	| { kind: "create"; type: LocalCatalogType }
-	| { kind: "edit"; type: LocalCatalogType; id: string };
-
 const normalize = (value: unknown) =>
 	String(value ?? "")
 		.normalize("NFKC")

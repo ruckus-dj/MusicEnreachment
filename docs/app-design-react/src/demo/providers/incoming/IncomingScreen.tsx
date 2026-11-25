@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
+import {
+	ApplicationIncomingListBinder,
+	ApplicationRouteOutlet,
+	type ApplicationIncomingListModel,
+} from "../../../ui/app/ApplicationRouteOutlet";
 import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../../ui/features/incoming/IncomingGroupsPanel";
-import { IncomingScreenView } from "../../../ui/features/incoming/IncomingScreenView";
 import {
 	type IncomingMessage,
 	incomingMessage,
@@ -288,26 +292,31 @@ export function IncomingScreen({
 		expand: (name: string) => msg("filesIn", { name }),
 		openGroup: (name: string) => msg("openGroup", { name }),
 	};
+	const listModel: ApplicationIncomingListModel = {
+		locale,
+		headingAction: { label: msg("process"), onPress: runAuto },
+		notice,
+		showProcessingStages: true,
+		panel: {
+			labels,
+			rows: viewRows,
+			onToggle: toggleGroup,
+			onMove: (groupId, memberId, targetGroupId, focus) => {
+				if (focus) commitMove(groupId, memberId, targetGroupId);
+				else moveFile(groupId, memberId, targetGroupId);
+			},
+			onSplit: (groupId, memberId) => commitSplit(groupId, memberId),
+			disclosureRef: (groupId, node) => {
+				if (node) groupDisclosureRefs.current.set(groupId, node);
+				else groupDisclosureRefs.current.delete(groupId);
+			},
+		},
+	};
 	return (
-		<IncomingScreenView
-			locale={locale}
-			headingAction={{ label: msg("process"), onPress: runAuto }}
-			notice={notice}
-			showProcessingStages
-			panel={{
-				labels,
-				rows: viewRows,
-				onToggle: toggleGroup,
-				onMove: (groupId, memberId, targetGroupId, focus) => {
-					if (focus) commitMove(groupId, memberId, targetGroupId);
-					else moveFile(groupId, memberId, targetGroupId);
-				},
-				onSplit: (groupId, memberId) => commitSplit(groupId, memberId),
-				disclosureRef: (groupId, node) => {
-					if (node) groupDisclosureRefs.current.set(groupId, node);
-					else groupDisclosureRefs.current.delete(groupId);
-				},
-			}}
+		<ApplicationRouteOutlet
+			route="incoming-list"
+			provider={ApplicationIncomingListBinder}
+			providerProps={{ model: listModel }}
 		/>
 	);
 }

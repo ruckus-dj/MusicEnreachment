@@ -265,6 +265,11 @@ test("shared dependency guard compares resolved lock versions", () => {
 test("hosts can import route model types but not bypass the portable outlet", () => {
   for (const { view, model, component } of [
     {
+      view: "../ui/features/incoming/IncomingScreenView",
+      model: "IncomingScreenViewProps",
+      component: "IncomingScreenView",
+    },
+    {
       view: "../ui/features/local-catalog/LocalCatalogScreenView",
       model: "LocalCatalogScreenViewProps",
       component: "LocalCatalogScreenView",

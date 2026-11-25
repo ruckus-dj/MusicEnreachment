@@ -5,6 +5,10 @@ import {
   useContext,
 } from "react";
 import {
+  IncomingScreenView,
+  type IncomingScreenViewProps,
+} from "../features/incoming/IncomingScreenView";
+import {
   LocalCatalogScreenView,
   type LocalCatalogScreenViewProps,
 } from "../features/local-catalog/LocalCatalogScreenView";
@@ -21,7 +25,14 @@ import {
  * Semantic routes owned by the portable tree. A host selects the route and its
  * data provider; it does not choose or compose the screen.
  */
-export type ApplicationRoute = "own-catalog" | "operations" | "settings";
+export type ApplicationRoute =
+  | "incoming-list"
+  | "own-catalog"
+  | "operations"
+  | "settings";
+
+/** The complete data-only model of the portable Incoming list screen. */
+export type ApplicationIncomingListModel = IncomingScreenViewProps;
 
 /** The complete data-only model of the portable Local catalog screen. */
 export type ApplicationOwnCatalogModel = LocalCatalogScreenViewProps;
@@ -40,6 +51,8 @@ export type ApplicationRouteDataProvider<
   ProviderProps extends object = object,
 > = ComponentType<ProviderProps & ApplicationRouteProviderProps>;
 
+const IncomingListModelContext =
+  createContext<ApplicationIncomingListModel | null>(null);
 const OwnCatalogModelContext = createContext<ApplicationOwnCatalogModel | null>(
   null,
 );
@@ -49,6 +62,21 @@ const OperationsModelContext = createContext<ApplicationOperationsModel | null>(
 const SettingsModelContext = createContext<ApplicationSettingsModel | null>(
   null,
 );
+
+/** Host-facing adapter for the portable Incoming list screen. */
+export function ApplicationIncomingListBinder({
+  model,
+  children,
+}: {
+  model: ApplicationIncomingListModel;
+  children: ReactNode;
+}) {
+  return (
+    <IncomingListModelContext.Provider value={model}>
+      {children}
+    </IncomingListModelContext.Provider>
+  );
+}
 
 /** Host-facing adapter for the portable Local catalog screen. */
 export function ApplicationOwnCatalogBinder({
@@ -98,6 +126,12 @@ export function ApplicationSettingsBinder({
   );
 }
 
+function IncomingListRoute() {
+  const model = useContext(IncomingListModelContext);
+  if (!model) throw new Error("missing incoming list view model");
+  return <IncomingScreenView {...model} />;
+}
+
 function OwnCatalogRoute() {
   const model = useContext(OwnCatalogModelContext);
   if (!model) throw new Error("missing own catalog view model");
@@ -117,6 +151,7 @@ function SettingsRoute() {
 }
 
 const applicationRoutes: Record<ApplicationRoute, ComponentType> = {
+  "incoming-list": IncomingListRoute,
   "own-catalog": OwnCatalogRoute,
   operations: OperationsRoute,
   settings: SettingsRoute,

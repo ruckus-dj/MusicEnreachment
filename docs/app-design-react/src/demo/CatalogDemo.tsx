@@ -232,11 +232,7 @@ export function CatalogDemo({
 		subscribeRoute,
 		() => {
 			const hash = window.location.hash.slice(1);
-			return hash === "publication-list"
-				? "library"
-				: hash === "create-release"
-					? "local"
-					: hash;
+			return hash === "publication-list" ? "library" : hash;
 		},
 		() => "library",
 	);
@@ -258,7 +254,8 @@ export function CatalogDemo({
 	const headingRoute =
 		routeName === "library" ||
 		routeName === "/settings" ||
-		routeName === "/operations"
+		routeName === "/operations" ||
+		routeName === "/own-catalog"
 			? routeName
 			: route;
 	const [releases, setReleases] = useState(() =>
@@ -283,10 +280,6 @@ export function CatalogDemo({
 				color: "slate",
 			})),
 	];
-	useEffect(() => {
-		if (window.location.hash === "#create-release")
-			window.location.hash = "local";
-	}, [route]);
 	const setImportedReleases = (nextReleases: OriginalRelease[]) => {
 		const localProviderKeys = new Set(
 			providers
@@ -990,7 +983,7 @@ export function CatalogDemo({
 			</>
 		);
 	}
-	if (route === "local")
+	if (routeName === "/own-catalog")
 		return (
 			<ApplicationRouteOutlet
 				route="own-catalog"

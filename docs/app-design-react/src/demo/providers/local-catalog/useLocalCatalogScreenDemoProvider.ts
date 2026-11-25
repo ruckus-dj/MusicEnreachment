@@ -5,7 +5,9 @@ import {
 	useState,
 } from "react";
 import { useI18n } from "../../../app/i18n/host";
+import { useHashLocation } from "../../../app/navigation/hashLocation";
 import type { LocalCatalogScreenViewProps } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
+import { ownCatalogMessage } from "../../../ui/features/local-catalog/ownCatalogMessages";
 import {
 	formatLocalDuration,
 	type LocalRecordingDraft,
@@ -29,7 +31,6 @@ import {
 	filterLocalCatalogRecords,
 	type LocalArtistFormDraft,
 	type LocalCatalogType,
-	type LocalCatalogView,
 	type LocalRecordingFormDraft,
 	localCatalogArtistNames,
 	localCatalogFindArtists,
@@ -45,6 +46,11 @@ import {
 	recordingDraftToRecord,
 	releaseDraftToRecord,
 } from "./localCatalogModel";
+import {
+	defaultLocalCatalogRoute,
+	localCatalogRouteHref,
+	parseLocalCatalogRoute,
+} from "./localCatalogRoute";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,
@@ -97,8 +103,37 @@ const emptyMessage: Record<LocalCatalogType, LocalCatalogMessage> = {
 	artists: "emptyArtists",
 };
 
+type LocalCatalogEditorDraft =
+	| { kind: "create"; type: LocalCatalogType }
+	| { kind: "edit"; type: LocalCatalogType; id: string };
+type LocalCatalogEditorState = LocalCatalogEditorDraft & { hash: string };
+type LocalCatalogHistoryState = { localCatalogDetail?: string };
+
+function hashURL(href: string) {
+	return `${window.location.pathname}${window.location.search}${href}`;
+}
+
+function publishHashChange() {
+	window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+function pushCatalogHash(
+	href: string,
+	state: LocalCatalogHistoryState | null = null,
+) {
+	if (window.location.hash === href) return;
+	window.history.pushState(state, "", hashURL(href));
+	publishHashChange();
+}
+
+function replaceCatalogHash(href: string) {
+	if (window.location.hash === href) return;
+	window.history.replaceState(null, "", hashURL(href));
+	publishHashChange();
+}
+
 /**
- * Local catalog demo provider: owns tab/filter/page/view/notice state, fixture
+ * Local catalog demo provider: owns tab/filter/page/notice state, fixture
  * records, model lookups, record commits and routing, then hands the pure view
  * render-ready rows, models and events. It renders no JSX.
  */
@@ -114,16 +149,35 @@ export function useLocalCatalogScreenDemoProvider({
 		key: LocalCatalogMessage,
 		values?: Record<string, string | number>,
 	) => localCatalogMessage(locale, key, values);
-	const [type, setType] = useState<LocalCatalogType>("releases");
+	const hash = useHashLocation();
+	const route = parseLocalCatalogRoute(hash) ?? defaultLocalCatalogRoute;
 	const [query, setQuery] = useState("");
 	const [page, setPage] = useState(1);
-	const [view, setView] = useState<LocalCatalogView>({ kind: "list" });
 	const [notice, setNotice] = useState<"created" | "updated" | null>(null);
+	const [editorState, setEditor] = useState<LocalCatalogEditorState>();
+	const activeEditor = editorState?.hash === hash ? editorState : undefined;
+	const [visitHash, setVisitHash] = useState(hash);
+	if (visitHash !== hash) {
+		setVisitHash(hash);
+		setEditor(undefined);
+		if (!route.id) setNotice(null);
+	}
+	const [pageType, setPageType] = useState(route.type);
+	if (pageType !== route.type) {
+		setPageType(route.type);
+		setPage(1);
+	}
+	const type = route.type;
 	const records = localCatalogRecords(state, type);
 	const filtered = filterLocalCatalogRecords(state, type, records, query);
 	const totalPages = localCatalogPageCount(filtered.length);
 	const currentPage = Math.min(Math.max(1, page), totalPages);
 	const pageRecords = localCatalogPageSlice(filtered, currentPage);
+	const detailRecord = route.id
+		? state.items[type].find(
+				(item) => item.id === route.id && item.provider === "Local",
+			)
+		: undefined;
 	const allArtists = state.items.artists;
 	const allRecordings = state.items.recordings;
 
@@ -153,7 +207,12 @@ export function useLocalCatalogScreenDemoProvider({
 			},
 			selectedId: record.id,
 		}));
+		setEditor(undefined);
 		setNotice(created ? "created" : "updated");
+		if (created) {
+			const href = localCatalogRouteHref({ type: kind, id: record.id });
+			pushCatalogHash(href, { localCatalogDetail: href });
+		}
 	};
 
 	const appendRecording = (
@@ -212,62 +271,70 @@ export function useLocalCatalogScreenDemoProvider({
 		};
 	};
 
-	const viewRecord = (current: LocalCatalogView) => {
-		if (current.kind === "list" || current.kind === "create") return undefined;
-		return state.items[current.type].find((item) => item.id === current.id);
-	};
-
-	const navigate = (next: LocalCatalogView) => {
+	const openDetails = (kind: LocalCatalogType, record: LocalProviderRecord) => {
 		setNotice(null);
-		setView(next);
+		const href = localCatalogRouteHref({ type: kind, id: record.id });
+		pushCatalogHash(href, { localCatalogDetail: href });
 	};
-	const listHref = () => navigate({ kind: "list" });
-	const detailView = (
-		kind: LocalCatalogType,
-		id: string,
-	): LocalCatalogView => ({
-		kind: "details",
-		type: kind,
-		id,
-	});
-	const editorView = (
-		kind: LocalCatalogType,
-		id: string,
-	): LocalCatalogView => ({
-		kind: "edit",
-		type: kind,
-		id,
-	});
 
-	const backFromEditor = (current: LocalCatalogView) => {
-		if (current.kind === "edit") {
-			setView(detailView(current.type, current.id));
-		} else {
-			setView({ kind: "list" });
+	const closeDetails = () => {
+		if (!route.id) return;
+		setNotice(null);
+		const detailHref = localCatalogRouteHref({
+			type: route.type,
+			id: route.id,
+		});
+		const historyState = window.history
+			.state as LocalCatalogHistoryState | null;
+		if (historyState?.localCatalogDetail === detailHref) {
+			window.history.back();
+			return;
 		}
+		replaceCatalogHash(localCatalogRouteHref({ type: route.type }));
 	};
+
+	const openEditor = (next: LocalCatalogEditorDraft) => {
+		setNotice(null);
+		setEditor({ ...next, hash });
+	};
+	const backFromEditor = () => setEditor(undefined);
 
 	let details: LocalCatalogScreenViewProps["details"] = null;
-	if (view.kind === "details") {
-		const record = viewRecord(view);
-		if (record) {
-			details = localCatalogDetailsViewProps({
-				locale,
-				state,
-				type: view.type,
-				record,
-				onBack: listHref,
-				onEdit: () => navigate(editorView(view.type, record.id)),
-			});
-		}
+	if (route.id && !activeEditor) {
+		details = detailRecord
+			? localCatalogDetailsViewProps({
+					locale,
+					state,
+					type,
+					record: detailRecord,
+					onBack: closeDetails,
+					onEdit: () => openEditor({ kind: "edit", type, id: detailRecord.id }),
+				})
+			: {
+					title: ownCatalogMessage(locale, "recordDetails"),
+					eyebrow: ownCatalogMessage(locale, "currentDataNoHistory"),
+					backLabel: ownCatalogMessage(locale, "back"),
+					editLabel: ownCatalogMessage(locale, "edit"),
+					onBack: closeDetails,
+					body: {
+						kind: "error",
+						message: ownCatalogMessage(locale, "detailLoadError"),
+						retryLabel: ownCatalogMessage(locale, "retry"),
+						// Reading the same synchronous fixture yields the same result.
+						onRetry: () => {},
+					},
+				};
 	}
 
 	let editor: LocalCatalogEditorBinding | null = null;
-	if (view.kind === "create" || view.kind === "edit") {
-		const record = view.kind === "edit" ? viewRecord(view) : undefined;
-		if (view.kind !== "edit" || record) {
-			const kind = view.type;
-			const back = () => backFromEditor(view);
+	if (activeEditor) {
+		const record =
+			activeEditor.kind === "edit" && detailRecord?.id === activeEditor.id
+				? detailRecord
+				: undefined;
+		if (activeEditor.kind !== "edit" || record) {
+			const kind = activeEditor.type;
+			const back = backFromEditor;
 			if (kind === "releases") {
 				editor = {
 					kind,
@@ -295,7 +362,6 @@ export function useLocalCatalogScreenDemoProvider({
 								state.items.artists,
 							);
 							commitRecord("releases", saved, !record);
-							setView(detailView("releases", saved.id));
 						},
 						onBack: back,
 					},
@@ -316,7 +382,6 @@ export function useLocalCatalogScreenDemoProvider({
 								state.items.artists,
 							);
 							commitRecord("recordings", saved, !record);
-							setView(detailView("recordings", saved.id));
 						},
 						onBack: back,
 					},
@@ -332,7 +397,6 @@ export function useLocalCatalogScreenDemoProvider({
 						onSave: (draft: LocalArtistFormDraft) => {
 							const saved = artistDraftToRecord(draft, record);
 							commitRecord("artists", saved, !record);
-							setView(detailView("artists", saved.id));
 						},
 						onBack: back,
 					},
@@ -382,10 +446,10 @@ export function useLocalCatalogScreenDemoProvider({
 	};
 	const changeTab = (key: string | number) => {
 		const next = localCatalogTypes.find((kind) => kind === key);
-		if (!next) return;
-		setType(next);
-		setPage(1);
-		setView({ kind: "list" });
+		if (!next || next === type) return;
+		setNotice(null);
+		setEditor(undefined);
+		pushCatalogHash(localCatalogRouteHref({ type: next }));
 	};
 	const changeFilter = (value: string) => {
 		setQuery(value);
@@ -420,7 +484,7 @@ export function useLocalCatalogScreenDemoProvider({
 			hasFilter: Boolean(records.length && query.trim()),
 			onFilterChange: changeFilter,
 			onClearFilter: () => changeFilter(""),
-			onCreate: () => navigate({ kind: "create", type }),
+			onCreate: () => openEditor({ kind: "create", type }),
 			loading: false,
 			loaded: true,
 			error: null,
@@ -430,7 +494,7 @@ export function useLocalCatalogScreenDemoProvider({
 					id: record.id,
 					title: rowTitle(record),
 					detail: rowDetails(record),
-					onOpen: () => navigate(detailView(type, record.id)),
+					onOpen: () => openDetails(type, record),
 				})),
 			},
 			pageNumber: currentPage,

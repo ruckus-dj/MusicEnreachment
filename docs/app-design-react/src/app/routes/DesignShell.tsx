@@ -18,7 +18,6 @@ const libraryRoutes = [
 	"release",
 	"track",
 	"tags",
-	"create-release",
 	"publication-preview",
 	"publication-list",
 ];
@@ -28,9 +27,15 @@ function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (path === "/setup") return "setup";
 	if (path === "/operations") return "operations";
 	if (path === "/settings") return "settings";
+	if (path === "/own-catalog") return "local";
 	if (parseDemoSourceRoute(path)) return "sources";
 	const route = path.split("/", 1)[0];
-	if (route === "operations" || route === "settings" || route === "sources")
+	if (
+		route === "operations" ||
+		route === "settings" ||
+		route === "sources" ||
+		route === "local"
+	)
 		return undefined;
 	if (libraryRoutes.includes(route)) return "library";
 	if (route === "match") return "review";
@@ -59,7 +64,7 @@ export function DesignShell({
 					sectionLinks: {
 						review: "#review",
 						library: "#library",
-						local: "#local",
+						local: "#/own-catalog",
 						sources: demoSourcesHref,
 						operations: "#/operations",
 						settings: "#/settings",
