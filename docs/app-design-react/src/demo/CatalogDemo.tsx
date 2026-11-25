@@ -87,13 +87,14 @@ import {
 	libraryCatalogTrackResults,
 } from "./providers/library/LibraryCatalogRows";
 import { DemoLibraryCatalogBinder } from "./providers/library/LibraryCatalogScreen";
+import { DemoLibraryReleaseWorkspace } from "./providers/library/DemoLibraryReleaseWorkspace";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "./providers/library/libraryDeletionModel";
-import { ReleaseOverviewScreen } from "./providers/library/ReleaseOverviewScreen";
 import { SelectionDock } from "./providers/library/SelectionDock";
-import { TrackScreen } from "./providers/library/TrackScreen";
+import type { ReleaseOverviewScreenProps } from "./providers/library/useReleaseOverviewDemoModel";
+import type { TrackScreenProps } from "./providers/library/useTrackScreenDemoProvider";
 import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
 import { DemoLocalCatalogBinder } from "./providers/local-catalog";
 import { releaseDraftToRecord } from "./providers/local-catalog/localCatalogModel";
@@ -851,14 +852,27 @@ export function CatalogDemo({
 			</LibrarySelectionScreenFrame>
 		);
 	}
-	if (route.startsWith("release/")) {
+	const isReleaseRoute = route.startsWith("release/");
+	const isPositionRoute =
+		routeName.startsWith("track/") || routeName.startsWith("tags/");
+	if (isReleaseRoute || isPositionRoute) {
 		const [releasePath, releaseQuery = ""] = route.split("?");
-		const releaseId = routeId(releasePath.slice("release/".length));
-		const initialTagFocus =
-			new URLSearchParams(releaseQuery).get("tags") === "release";
-		const release = releases.find((item) => item.id === releaseId);
+		const openTags = routeName.startsWith("tags/");
+		const positionId = isPositionRoute ? routeName.split("/")[1] : undefined;
+		const release = isPositionRoute
+			? releases.find((item) =>
+					item.tracks.some((track) => track.id === positionId),
+				)
+			: releases.find(
+					(item) => item.id === routeId(releasePath.slice("release/".length)),
+				);
 		if (!release)
-			return (
+			return isPositionRoute ? (
+				<ScreenFeedbackView
+					title={msg("trackNotFound")}
+					link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
+				/>
+			) : (
 				<LibraryReleaseWorkspaceView
 					locale={locale}
 					selection={{ kind: "unavailable" }}
@@ -866,182 +880,181 @@ export function CatalogDemo({
 					positions={[]}
 				/>
 			);
-		return (
-			<LibrarySelectionScreenFrame>
-				<ReleaseOverviewScreen
-					key={release.id}
-					release={release}
-					artists={artists}
-					files={files}
-					selected={selected}
-					onSelect={update}
-					onUpdateRelease={(updated) =>
-						setReleases((current) =>
-							current.map((item) => (item.id === updated.id ? updated : item)),
-						)
-					}
-					onQueueDeletion={queueDeletion}
-					publication={{
-						catalog: publicationCatalog,
-						pending: publicationJobs.filter((job) => {
-							const state = operationsProvider.publicationStates?.get(job.id);
-							return !state || state === "queued" || state === "running";
-						}),
-						onQueue: queuePublications,
-					}}
-					genresLoaded={settings.genresLoaded}
-					onLoadGenres={loadGenres}
-					initialTagFocus={initialTagFocus}
-				/>
-				<SelectionDock
-					selected={selected}
-					visiblePositionIds={new Set(release.tracks.map((track) => track.id))}
-					releases={releases}
-					onSelect={update}
-					onPreview={openSelectionPreview}
-					onQueueDeletion={queueDeletion}
-				/>
-				{selectionPreviewDialog}
-			</LibrarySelectionScreenFrame>
-		);
-	}
-	if (routeName.startsWith("track/") || routeName.startsWith("tags/")) {
-		const [, trackId] = routeName.split("/");
-		const openTags = routeName.startsWith("tags/");
-		const release = releases.find((item) =>
-			item.tracks.some((track) => track.id === trackId),
-		);
-		const track = release?.tracks.find((item) => item.id === trackId);
-		if (!release || !track)
+		const track = positionId
+			? release.tracks.find((item) => item.id === positionId)
+			: undefined;
+		if (isPositionRoute && !track)
 			return (
 				<ScreenFeedbackView
 					title={msg("trackNotFound")}
 					link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
 				/>
 			);
-		const identity = recordingIdentity(track);
-		const activePositionNotice =
-			positionNotice &&
-			positionNotice.releaseId === release.id &&
-			positionNotice.positionId === track.id
-				? positionNotice.notice
-				: null;
-		const activePreview =
-			inlinePreview && inlinePreview.originRoute === route
-				? inlinePreview
-				: null;
-		const publicationPreview = (
-			<>
-				{activePositionNotice && (
-					<ScreenStatus>
-						{formatUiNotice(locale, activePositionNotice)}
-					</ScreenStatus>
-				)}
-				{activePreview ? (
-					<PublicationPreview
-						mode={activePreview.mode}
-						destination={publicationDestination}
-						token={activePreview.token}
-						inventoryVersion={incoming.inventoryVersion}
-						scopeKey={previewScopeKey(
-							activePreview.originRoute,
-							activePreview.ids,
-						)}
-						files={files}
-						releases={releases}
-						artists={artists}
-						onApply={applyPreview}
-						onBack={() => closeInlinePreview(true)}
-					/>
-				) : (
-					<DemoPositionPublication
-						key={`${release.id}:${track.id}`}
-						destination={publicationDestination}
-						release={release}
-						positionId={track.id}
-						state={incoming}
-						files={files}
-						releases={releases}
-						providers={providers}
-						artists={providerArtists}
-						onReleases={setImportedReleases}
-						onSuccess={(notice) => {
-							setPositionNotice({
-								releaseId: release.id,
-								positionId: track.id,
-								notice,
-							});
-						}}
-					/>
-				)}
-			</>
-		);
+		const initialTagFocus =
+			!isPositionRoute &&
+			new URLSearchParams(releaseQuery).get("tags") === "release";
+		const overview: ReleaseOverviewScreenProps = {
+			release,
+			artists,
+			files,
+			selected,
+			onSelect: update,
+			onUpdateRelease: (updated) =>
+				setReleases((current) =>
+					current.map((item) => (item.id === updated.id ? updated : item)),
+				),
+			onQueueDeletion: queueDeletion,
+			publication: {
+				catalog: publicationCatalog,
+				pending: publicationJobs.filter((job) => {
+					const state = operationsProvider.publicationStates?.get(job.id);
+					return !state || state === "queued" || state === "running";
+				}),
+				onQueue: queuePublications,
+			},
+			genresLoaded: settings.genresLoaded,
+			onLoadGenres: loadGenres,
+			initialTagFocus,
+		};
+		let position: TrackScreenProps | null = null;
+		if (track) {
+			const identity = recordingIdentity(track);
+			const activePositionNotice =
+				positionNotice &&
+				positionNotice.releaseId === release.id &&
+				positionNotice.positionId === track.id
+					? positionNotice.notice
+					: null;
+			const activePreview =
+				inlinePreview && inlinePreview.originRoute === route
+					? inlinePreview
+					: null;
+			const publicationPreview = (
+				<>
+					{activePositionNotice && (
+						<ScreenStatus>
+							{formatUiNotice(locale, activePositionNotice)}
+						</ScreenStatus>
+					)}
+					{activePreview ? (
+						<PublicationPreview
+							mode={activePreview.mode}
+							destination={publicationDestination}
+							token={activePreview.token}
+							inventoryVersion={incoming.inventoryVersion}
+							scopeKey={previewScopeKey(
+								activePreview.originRoute,
+								activePreview.ids,
+							)}
+							files={files}
+							releases={releases}
+							artists={artists}
+							onApply={applyPreview}
+							onBack={() => closeInlinePreview(true)}
+						/>
+					) : (
+						<DemoPositionPublication
+							key={`${release.id}:${track.id}`}
+							destination={publicationDestination}
+							release={release}
+							positionId={track.id}
+							state={incoming}
+							files={files}
+							releases={releases}
+							providers={providers}
+							artists={providerArtists}
+							onReleases={setImportedReleases}
+							onSuccess={(notice) => {
+								setPositionNotice({
+									releaseId: release.id,
+									positionId: track.id,
+									notice,
+								});
+							}}
+						/>
+					)}
+				</>
+			);
+			position = {
+				files,
+				providers,
+				artists,
+				publicationPreview,
+				onQueueDeletion: queueDeletion,
+				release,
+				track,
+				initialTagsOpen: openTags,
+				genresLoaded: settings.genresLoaded,
+				onLoadGenres: loadGenres,
+				onRecordingChange: (updateTrack) => {
+					closeInlinePreview(false);
+					setReleases((previous) =>
+						previous.map((item) => ({
+							...item,
+							tracks: item.tracks.map((candidate) =>
+								(identity && recordingIdentity(candidate) === identity) ||
+								(!identity && candidate.id === track.id)
+									? updateTrack(candidate)
+									: candidate,
+							),
+						})),
+					);
+				},
+				onMutate: (updateTrack) => {
+					closeInlinePreview(false);
+					setReleases((previous) =>
+						previous.map((item) => ({
+							...item,
+							tracks: item.tracks.map((candidate) =>
+								candidate.id === track.id ? updateTrack(candidate) : candidate,
+							),
+						})),
+					);
+				},
+				onAudioUpgrade: () => {
+					openPreview([track.id], "audioUpgrade");
+				},
+				onMetadataPreview: (ids) => {
+					openPreview(ids);
+				},
+				onSource: (id) => {
+					closeInlinePreview(false);
+					setReleases((previous) =>
+						previous.map((item) => ({
+							...item,
+							tracks: item.tracks.map((candidate) =>
+								candidate.id === track.id &&
+								(
+									candidate.sourceIds ??
+									(candidate.sourceId ? [candidate.sourceId] : [])
+								).includes(id)
+									? { ...candidate, sourceId: id }
+									: candidate,
+							),
+						})),
+					);
+				},
+			};
+		}
 		return (
-			<>
-				<TrackScreen
-					key={`${release.id}:${track.id}:${openTags}`}
-					files={files}
-					providers={providers}
-					artists={artists}
-					publicationPreview={publicationPreview}
-					onQueueDeletion={queueDeletion}
-					release={release}
-					track={track}
-					initialTagsOpen={openTags}
-					genresLoaded={settings.genresLoaded}
-					onLoadGenres={loadGenres}
-					onRecordingChange={(updateTrack) => {
-						closeInlinePreview(false);
-						setReleases((previous) =>
-							previous.map((item) => ({
-								...item,
-								tracks: item.tracks.map((candidate) =>
-									(identity && recordingIdentity(candidate) === identity) ||
-									(!identity && candidate.id === track.id)
-										? updateTrack(candidate)
-										: candidate,
-								),
-							})),
-						);
-					}}
-					onMutate={(updateTrack) => {
-						closeInlinePreview(false);
-						setReleases((previous) =>
-							previous.map((item) => ({
-								...item,
-								tracks: item.tracks.map((candidate) =>
-									candidate.id === track.id
-										? updateTrack(candidate)
-										: candidate,
-								),
-							})),
-						);
-					}}
-					onAudioUpgrade={() => {
-						openPreview([track.id], "audioUpgrade");
-					}}
-					onMetadataPreview={(ids) => {
-						openPreview(ids);
-					}}
-					onSource={(id) => {
-						closeInlinePreview(false);
-						setReleases((previous) =>
-							previous.map((item) => ({
-								...item,
-								tracks: item.tracks.map((candidate) =>
-									candidate.id === track.id &&
-									(
-										candidate.sourceIds ??
-										(candidate.sourceId ? [candidate.sourceId] : [])
-									).includes(id)
-										? { ...candidate, sourceId: id }
-										: candidate,
-								),
-							})),
-						);
-					}}
-				/>
-			</>
+			<LibrarySelectionScreenFrame dockSpace={!track}>
+				<DemoLibraryReleaseWorkspace overview={overview} position={position} />
+				{!track && (
+					<>
+						<SelectionDock
+							selected={selected}
+							visiblePositionIds={
+								new Set(release.tracks.map((track) => track.id))
+							}
+							releases={releases}
+							onSelect={update}
+							onPreview={openSelectionPreview}
+							onQueueDeletion={queueDeletion}
+						/>
+						{selectionPreviewDialog}
+					</>
+				)}
+			</LibrarySelectionScreenFrame>
 		);
 	}
 	if (routeName === "/own-catalog")

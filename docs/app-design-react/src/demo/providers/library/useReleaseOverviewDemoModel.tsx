@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
-import {
-	type LibraryReleaseOverviewModel,
-	LibraryReleaseWorkspaceView,
-} from "../../../ui/features/library/LibraryReleaseWorkspaceView";
+import type { LibraryReleaseOverviewModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import { MetadataEditorFocusView } from "../../../ui/features/library/metadata/MetadataEditorFocusView";
 import type {
 	ReleaseOverviewCredit,
 	ReleaseOverviewMedia,
 } from "../../../ui/features/library/ReleaseOverviewView";
+import type { Locale } from "../../../ui/i18n/types";
 import {
 	ReleasePublicationDemo,
 	type ReleasePublicationDemoProvider,
@@ -39,8 +37,43 @@ export type ReleaseOverviewScreenProps = {
 	publication?: ReleasePublicationDemoProvider;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
+	/**
+	 * Edition-only aggregate selection/publication, deletion and tag focus. A
+	 * host that retains this overview behind an active position passes `false`;
+	 * the metadata editor stays mounted so its draft survives same-release
+	 * navigation.
+	 * @default true
+	 */
+	editionControls?: boolean;
+	/**
+	 * Keep the release metadata editor DOM and portals mounted. A retained
+	 * overview behind an active position passes `false`: the draft provider
+	 * keeps running, but its picker portals cannot remain visible.
+	 * @default true
+	 */
+	visible?: boolean;
 	/** Release-scope tag links focus the metadata editor region on arrival. */
 	initialTagFocus?: boolean;
+};
+
+/** Resolved facts and narrow actors for one release overview projection. */
+export type ReleaseOverviewDemoModelInput = {
+	locale: Locale;
+	release: OriginalRelease;
+	artists: CatalogArtist[];
+	files: SourceFiles;
+	selected: Set<string>;
+	onSelect?: (ids: string[], value: boolean) => void;
+	onQueueDeletion?: (operation: DeletionOperation) => void;
+	publication?: ReleasePublicationDemoProvider;
+	genresLoaded: boolean;
+	onLoadGenres?: () => void | Promise<void>;
+	saveRelease: (release: OriginalRelease) => void;
+	/** Uncontrolled local release: the demo owns the saved record. */
+	local: boolean;
+	editionControls: boolean;
+	visible: boolean;
+	initialTagFocus: boolean;
 };
 
 const sourceIds = (track: OriginalTrack) => [
@@ -51,31 +84,31 @@ const sourceIds = (track: OriginalTrack) => [
 ];
 
 /**
- * Release overview demo provider. It resolves release facts, media grouping and
- * selection into the typed overview model and mounts the shared edition
- * workspace. The existing metadata, publication and deletion actors stay narrow
- * slots. The exact route keeps the provider separate from the copy-ready view.
+ * Project one release into the retained overview model. This stays free of
+ * React state so the host can reuse the same overview composition while a
+ * position route owns the workspace selection.
  */
-export function ReleaseOverviewScreen({
-	release: givenRelease,
+export function buildReleaseOverviewDemoModel({
+	locale,
+	release,
 	artists,
 	files,
-	selected = new Set(),
+	selected,
 	onSelect,
-	onUpdateRelease,
 	onQueueDeletion,
 	publication,
-	genresLoaded = false,
+	genresLoaded,
 	onLoadGenres,
-	initialTagFocus = false,
-}: ReleaseOverviewScreenProps) {
-	const { locale } = useI18n();
+	saveRelease,
+	local,
+	editionControls,
+	visible,
+	initialTagFocus,
+}: ReleaseOverviewDemoModelInput): LibraryReleaseOverviewModel {
 	const m = (
 		key: Parameters<typeof catalogueMessage>[1],
 		values?: Record<string, string | number>,
 	) => catalogueMessage(locale, key, values);
-	const [localRelease, setLocalRelease] = useState(givenRelease);
-	const release = onUpdateRelease ? givenRelease : localRelease;
 	const artist = artists.find((item) => item.id === release.artistId);
 	const hasAudio = (track: OriginalTrack) =>
 		Boolean(track.published) ||
@@ -187,12 +220,8 @@ export function ReleaseOverviewScreen({
 			? release.tracks.reduce((sum, track) => sum + (track.duration ?? 0), 0)
 			: null;
 	const ariaLabel = `${release.title} · ${release.year} · ${release.catalog || "—"}`;
-	const saveRelease = (updated: OriginalRelease) => {
-		if (onUpdateRelease) onUpdateRelease(updated);
-		else setLocalRelease(updated);
-	};
 
-	const overview: LibraryReleaseOverviewModel = {
+	return {
 		libraryHref: libraryRootHref(),
 		artistHref: artist ? `#artist/${encodeURIComponent(artist.id)}` : undefined,
 		heading: {
@@ -216,55 +245,101 @@ export function ReleaseOverviewScreen({
 				available: release.tracks.filter(hasAudio).length,
 			},
 			durationSeconds: durationTotal,
-			selection: {
-				isSelected: release.tracks.length > 0 && everySelected,
-				isIndeterminate: someSelected && !everySelected,
-				isDisabled: !release.tracks.length || !onSelect,
-				onChange: (value) => onSelect?.(trackIds, value),
-			},
+			selection: editionControls
+				? {
+						isSelected: release.tracks.length > 0 && everySelected,
+						isIndeterminate: someSelected && !everySelected,
+						isDisabled: !release.tracks.length || !onSelect,
+						onChange: (value) => onSelect?.(trackIds, value),
+					}
+				: undefined,
 		},
 		credentials,
 		media,
 		fallbackTracks,
 		unassignedTracks,
 		metadataEditor: (
-			<MetadataEditorFocusView focus={initialTagFocus}>
+			<MetadataEditorFocusView focus={editionControls && initialTagFocus}>
 				<ReleaseMetadataEditor
 					key={release.id}
 					release={release}
 					artists={artists}
 					genresLoaded={genresLoaded}
 					onLoadGenres={onLoadGenres}
-					local={!onUpdateRelease}
+					local={local}
+					visible={visible}
 					onSave={saveRelease}
 				/>
 			</MetadataEditorFocusView>
 		),
-		publication: publication ? (
-			<ReleasePublicationDemo
-				key={`publication-${release.id}`}
-				release={release}
-				provider={publication}
-			/>
-		) : undefined,
-		deletion: onQueueDeletion ? (
-			<DeletionRequest
-				key={`deletion-${release.id}`}
-				iconOnly
-				triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
-				release={release}
-				onQueue={onQueueDeletion}
-			/>
-		) : undefined,
+		publication:
+			editionControls && publication ? (
+				<ReleasePublicationDemo
+					key={`publication-${release.id}`}
+					release={release}
+					provider={publication}
+				/>
+			) : undefined,
+		deletion:
+			editionControls && onQueueDeletion ? (
+				<DeletionRequest
+					key={`deletion-${release.id}`}
+					iconOnly
+					triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
+					release={release}
+					onQueue={onQueueDeletion}
+				/>
+			) : undefined,
 		// Real-only cover and provider refresh capabilities stay unbound until
 		// their controllers exist; do not invent current cover or source data.
 	};
-	return (
-		<LibraryReleaseWorkspaceView
-			locale={locale}
-			selection={{ kind: "edition" }}
-			overview={overview}
-			positions={[]}
-		/>
-	);
+}
+
+/**
+ * Release overview demo provider. The host mounts one instance per release id
+ * and keeps it mounted while that release's positions are selected, so the
+ * metadata actor owns one draft across same-release navigation. Edition-only
+ * aggregate publication, deletion and tag focus disappear for a retained
+ * overview; the metadata editor itself stays mounted.
+ */
+export function useReleaseOverviewDemoModel({
+	release: givenRelease,
+	artists,
+	files,
+	selected = new Set(),
+	onSelect,
+	onUpdateRelease,
+	onQueueDeletion,
+	publication,
+	genresLoaded = false,
+	onLoadGenres,
+	editionControls = true,
+	visible = true,
+	initialTagFocus = false,
+}: ReleaseOverviewScreenProps): LibraryReleaseOverviewModel {
+	const { locale } = useI18n();
+	const [localRelease, setLocalRelease] = useState(givenRelease);
+	const release = onUpdateRelease ? givenRelease : localRelease;
+	const saveRelease = (updated: OriginalRelease) => {
+		if (onUpdateRelease) onUpdateRelease(updated);
+		else setLocalRelease(updated);
+	};
+
+	return buildReleaseOverviewDemoModel({
+		locale,
+		release,
+		artists,
+		files,
+		selected,
+		onSelect,
+		onQueueDeletion,
+		publication,
+		genresLoaded,
+		onLoadGenres,
+		saveRelease,
+		local: !onUpdateRelease,
+		editionControls,
+		visible,
+		initialTagFocus,
+	});
 }

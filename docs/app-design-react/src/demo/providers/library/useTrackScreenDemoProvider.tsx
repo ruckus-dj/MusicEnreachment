@@ -54,31 +54,47 @@ const duration = (seconds: number) =>
  * Track screen demo provider: owns source inspection state, derived publication
  * status and fixture/provider lookup, then hands render-ready props to the pure
  * view. Nested domain actors are supplied as narrow composition slots.
+ *
+ * The host may call it with `null` when no position is selected. Its state
+ * hooks still run, and a change of track/tag entry identity (or leaving to the
+ * edition) resets the inspection and tag-comparison session.
  */
-export function useTrackScreenDemoProvider({
-	release,
-	track,
-	onSource,
-	onPreview,
-	initialTagsOpen,
-	onRepublish,
-	publicationPreview,
-	onAudioUpgrade,
-	onMetadataPreview = onPreview,
-	onMutate,
-	onRecordingChange,
-	genresLoaded = true,
-	onLoadGenres,
-	onQueueDeletion,
-	files = originalFiles,
-	artists,
-	providers,
-}: TrackScreenProps): LibraryReleasePositionModel {
+export function useTrackScreenDemoProvider(
+	props?: TrackScreenProps | null,
+): LibraryReleasePositionModel | null {
 	const { locale } = useI18n();
+	const entryIdentity = props
+		? `${props.release.id}:${props.track.id}:${props.initialTagsOpen ? "tags" : "track"}`
+		: null;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
-	const [tagComparisonOpen, setTagComparisonOpen] = useState(
-		Boolean(initialTagsOpen),
+	const [tagComparisonOpen, setTagComparisonOpen] = useState(() =>
+		Boolean(props?.initialTagsOpen),
 	);
+	const [lastEntryIdentity, setLastEntryIdentity] = useState(entryIdentity);
+	if (lastEntryIdentity !== entryIdentity) {
+		setLastEntryIdentity(entryIdentity);
+		setInspectionFileId(undefined);
+		setTagComparisonOpen(Boolean(props?.initialTagsOpen));
+	}
+	if (!props) return null;
+	const {
+		release,
+		track,
+		onSource,
+		onPreview,
+		onRepublish,
+		publicationPreview,
+		onAudioUpgrade,
+		onMetadataPreview = onPreview,
+		onMutate,
+		onRecordingChange,
+		genresLoaded = true,
+		onLoadGenres,
+		onQueueDeletion,
+		files = originalFiles,
+		artists,
+		providers,
+	} = props;
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const inspectedFileId =

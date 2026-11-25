@@ -82,6 +82,33 @@ it("renders the focused release destination without artist management", () => {
 	).not.toBeInTheDocument();
 });
 
+it("retains an unsaved release title draft across a position visit", async () => {
+	window.history.replaceState(null, "", "#release/north");
+	render(<CatalogDemo />);
+	const editor = screen.getByRole("region", { name: "Сведения об издании" });
+	fireEvent.click(
+		within(editor).getByRole("button", { name: "Изменить" }),
+	);
+	const title = editor.querySelector<HTMLInputElement>(
+		'input[data-metadata-keys~="album"]',
+	);
+	if (!title) throw new Error("Missing release title field");
+	fireEvent.change(title, { target: { value: "Northern Lines draft" } });
+	const trackLink = screen
+		.getAllByRole("link", { name: /First Light/ })
+		.find((link) => link.getAttribute("href") === "#track/north-t1");
+	if (!trackLink) throw new Error("Missing Northern Lines position link");
+	fireEvent.click(trackLink);
+	await screen.findByRole("heading", { level: 1, name: /First Light$/ });
+	expect(window.location.hash).toBe("#track/north-t1");
+
+	window.history.back();
+	await screen.findByRole("heading", { name: "Northern Lines" });
+	expect(
+		await screen.findByDisplayValue("Northern Lines draft"),
+	).toBeInTheDocument();
+});
+
 it("shows a read-only preview of the selected library position", async () => {
 	window.history.replaceState(
 		null,
