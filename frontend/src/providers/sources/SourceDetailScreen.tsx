@@ -13,14 +13,8 @@ import {
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
 import { useViewFocus } from "../../ui/components/useViewFocus";
-import { SourceDetailFeedbackView } from "../../ui/features/sources/SourceDetailFeedbackView";
 import { SourceRootDetailView } from "../../ui/features/sources/SourceRootDetailView";
-import { SourceRootHeadingView } from "../../ui/features/sources/SourceRootHeadingView";
-import { SourceRootRemovalDialog } from "../../ui/features/sources/SourceRootRemovalDialog";
-import {
-  type SourceRootChange,
-  SourceRootSettingsView,
-} from "../../ui/features/sources/SourceRootSettingsView";
+import type { SourceRootChange } from "../../ui/features/sources/SourceRootSettingsView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
@@ -177,108 +171,96 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   return (
-    <>
-      <SourceRootDetailView
-        locale={locale}
-        headingId="source-title"
-        heading={
-          <SourceRootHeadingView
-            locale={locale}
-            title={root ? root.display_name : t("sourceTitle")}
-            path={root?.configured_path}
-            headingRef={heading}
-            headingId="source-title"
-            sourcesHref="#/sources"
-            incomingHref={
-              root?.status === "available" ? "#/incoming-groups" : undefined
-            }
+    <SourceRootDetailView
+      locale={locale}
+      headingId="source-title"
+      heading={{
+        title: root ? root.display_name : t("sourceTitle"),
+        path: root?.configured_path,
+        headingRef: heading,
+        headingId: "source-title",
+        sourcesHref: "#/sources",
+        incomingHref:
+          root?.status === "available" ? "#/incoming-groups" : undefined,
+      }}
+      feedback={{
+        requestRunning: Boolean(root) && (reading || deleting),
+        loading: !root && !error,
+        error: error ? renderSourceError(message(error), locale) : undefined,
+        retryDisabled: saving,
+        onRetry: () => void rootQuery.refetch(),
+      }}
+      scan={
+        root && <SourceScanControl root={root} admissionDisabled={saving} />
+      }
+      inventory={
+        root && (
+          <SourceLocations
+            sourceId={sourceId}
+            root={root}
+            refreshToken={rootQuery.dataUpdatedAt}
           />
-        }
-        status={
-          <SourceDetailFeedbackView
-            locale={locale}
-            requestRunning={Boolean(root) && (reading || deleting)}
-            loading={!root && !error}
-            error={
-              error ? renderSourceError(message(error), locale) : undefined
+        )
+      }
+      overview={
+        root
+          ? {
+              titleId: "source-summary-title",
+              name: root.display_name,
+              path: root.configured_path,
+              mode: root.processing_mode,
+              availability: root.status,
+              availabilityNote:
+                root.status === "unavailable" ? root.safe_error : undefined,
+              lastScan: {
+                label: lastScanLabel(root, locale),
+                dateTime: root.last_successful_scan_at,
+              },
+              inventory: {
+                label: inventoryLabel(root, locale),
+                path: root.inventory_path,
+                stale: root.stale,
+              },
+              onRemove: () => {
+                setDeleteError(null);
+                setRemoval({
+                  sourceId,
+                  path: root.configured_path,
+                  locationCount: root.location_count,
+                });
+              },
             }
-            retryDisabled={saving}
-            onRetry={() => void rootQuery.refetch()}
-          />
-        }
-        scan={
-          root && <SourceScanControl root={root} admissionDisabled={saving} />
-        }
-        inventory={
-          root && (
-            <SourceLocations
-              sourceId={sourceId}
-              root={root}
-              refreshToken={rootQuery.dataUpdatedAt}
-            />
-          )
-        }
-        overview={
-          root
-            ? {
-                titleId: "source-summary-title",
-                name: root.display_name,
-                path: root.configured_path,
-                mode: root.processing_mode,
-                availability: root.status,
-                availabilityNote:
-                  root.status === "unavailable" ? root.safe_error : undefined,
-                lastScan: {
-                  label: lastScanLabel(root, locale),
-                  dateTime: root.last_successful_scan_at,
-                },
-                inventory: {
-                  label: inventoryLabel(root, locale),
-                  path: root.inventory_path,
-                  stale: root.stale,
-                },
-                onRemove: () => {
-                  setDeleteError(null);
-                  setRemoval({
-                    sourceId,
-                    path: root.configured_path,
-                    locationCount: root.location_count,
-                  });
-                },
-              }
-            : undefined
-        }
-      >
-        {root && (
-          <SourceRootSettingsView
-            locale={locale}
-            name={root.display_name}
-            path={root.configured_path}
-            mode={root.processing_mode}
-            browse={browseServerDirectory}
-            disabled={removal !== null || (saving && !settings.isPending)}
-            error={
-              settings.error
+          : undefined
+      }
+      settings={
+        root
+          ? {
+              name: root.display_name,
+              path: root.configured_path,
+              mode: root.processing_mode,
+              browse: browseServerDirectory,
+              disabled: removal !== null || (saving && !settings.isPending),
+              error: settings.error
                 ? renderSourceError(message(settings.error), locale)
-                : undefined
+                : undefined,
+              onSave: save,
             }
-            onSave={save}
-          />
-        )}
-      </SourceRootDetailView>
-      {removal && (
-        <SourceRootRemovalDialog
-          locale={locale}
-          path={removal.path}
-          count={removal.locationCount}
-          busy={busy}
-          error={
-            deleteError ? renderSourceError(deleteError, locale) : undefined
-          }
-          onCancel={closeDelete}
-          onConfirm={() => void confirmDelete()}
-        />
-      )}
-    </>
+          : undefined
+      }
+      removal={
+        removal
+          ? {
+              path: removal.path,
+              count: removal.locationCount,
+              busy,
+              error: deleteError
+                ? renderSourceError(deleteError, locale)
+                : undefined,
+              onCancel: closeDelete,
+              onConfirm: () => void confirmDelete(),
+            }
+          : undefined
+      }
+    />
   );
 }

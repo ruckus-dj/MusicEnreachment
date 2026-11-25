@@ -12,7 +12,6 @@ import { SourceInventoryPanel } from "../../../ui/features/sources/SourceInvento
 import { SourceListPageView } from "../../../ui/features/sources/SourceListPageView";
 import {
 	MissingSourceView,
-	SourceNoticeView,
 	SourceWorkDirectoryView,
 } from "../../../ui/features/sources/SourcePageFeedbackView";
 import {
@@ -21,13 +20,8 @@ import {
 	useSourceRegistrationFocus,
 } from "../../../ui/features/sources/SourceRegistrationView";
 import { SourceRootDetailView } from "../../../ui/features/sources/SourceRootDetailView";
-import { SourceRootHeadingView } from "../../../ui/features/sources/SourceRootHeadingView";
 import type { SourceRootListRow } from "../../../ui/features/sources/SourceRootList";
-import { SourceRootRemovalDialog } from "../../../ui/features/sources/SourceRootRemovalDialog";
-import {
-	type SourceRootChange,
-	SourceRootSettingsView,
-} from "../../../ui/features/sources/SourceRootSettingsView";
+import type { SourceRootChange } from "../../../ui/features/sources/SourceRootSettingsView";
 import { SourceScanPanel } from "../../../ui/features/sources/SourceScanPanel";
 import {
 	type SourceMessageKey,
@@ -177,6 +171,11 @@ export function SourcesScreen({
 		values?: Record<string, string | number>,
 	) => setNotice({ key, values });
 	const [removal, setRemoval] = useState<RootRemoval | null>(null);
+	useEffect(() => {
+		setRemoval((current) =>
+			current?.id === selectedRootId && !selectedLocationId ? current : null,
+		);
+	}, [selectedRootId, selectedLocationId]);
 	const root = selectedRootId
 		? roots.find((item) => item.id === selectedRootId)
 		: undefined;
@@ -326,9 +325,6 @@ export function SourcesScreen({
 	}));
 
 	const noticeMessage = notice ? m(notice.key, notice.values) : undefined;
-	const noticeNode = noticeMessage ? (
-		<SourceNoticeView message={noticeMessage} />
-	) : null;
 
 	if (selectedRootId && selectedLocationId)
 		return (
@@ -353,22 +349,19 @@ export function SourcesScreen({
 			{selectedRootId ? (
 				root ? (
 					<SourceRootDetailView
+						key={root.id}
 						locale={locale}
 						headingId="source-title"
-						heading={
-							<SourceRootHeadingView
-								locale={locale}
-								title={root.name}
-								path={root.path}
-								headingId="source-title"
-								headingRef={rootHeading}
-								sourcesHref={demoSourcesHref}
-								incomingHref={
-									root.available === true ? incomingGroupsListHref() : undefined
-								}
-							/>
-						}
-						status={noticeNode}
+						heading={{
+							title: root.name,
+							path: root.path,
+							headingId: "source-title",
+							headingRef: rootHeading,
+							sourcesHref: demoSourcesHref,
+							incomingHref:
+								root.available === true ? incomingGroupsListHref() : undefined,
+						}}
+						feedback={noticeMessage}
 						scan={
 							<SourceScanPanel
 								locale={locale}
@@ -450,25 +443,55 @@ export function SourcesScreen({
 							},
 							onRemove: () => requestRootRemoval(root),
 						}}
-					>
-						<SourceRootSettingsView
-							key={root.id}
-							locale={locale}
-							name={root.name}
-							path={root.path}
-							mode={root.mode}
-							browse={browseDemoDirectory}
-							resolveInitialPath={demoDirectoryStart}
-							error={
+						settings={{
+							name: root.name,
+							path: root.path,
+							mode: root.mode,
+							browse: browseDemoDirectory,
+							resolveInitialPath: demoDirectoryStart,
+							error:
 								settingsError?.rootId === root.id
 									? settingsError.key === "pathOverlap"
 										? sourceRegistrationMessage(locale, "pathOverlap")
 										: m(settingsError.key)
-									: undefined
-							}
-							onSave={saveRoot}
-						/>
-					</SourceRootDetailView>
+									: undefined,
+							onSave: saveRoot,
+						}}
+						removal={
+							removal?.id === root.id
+								? {
+										path: removal.path,
+										count: removal.locations.length,
+										onCancel: () => setRemoval(null),
+										onConfirm: () => {
+											if (hasActiveRootWork(removal.id)) {
+												notify("rootActive");
+												setRemoval(null);
+												return;
+											}
+											const currentLocations = rootLocations(files, removal.id)
+												.map((location) => location.id)
+												.sort();
+											if (
+												currentLocations.join("|") !==
+												removal.locations.join("|")
+											) {
+												notify("rootChanged");
+												setRemoval(null);
+												return;
+											}
+											updateProcessing(
+												removeRootProcessingState(processing, removal.id),
+											);
+											onRemove(removal.id);
+											notify("rootRemoved");
+											setRemoval(null);
+											window.location.hash = demoSourcesHref;
+										},
+									}
+								: undefined
+						}
+					/>
 				) : (
 					<MissingSourceView
 						title={m("sourceNotFound")}
@@ -524,34 +547,6 @@ export function SourcesScreen({
 					}}
 					loaded
 					cleanup={cleanup}
-				/>
-			)}
-			{removal && (
-				<SourceRootRemovalDialog
-					locale={locale}
-					path={removal.path}
-					count={removal.locations.length}
-					onCancel={() => setRemoval(null)}
-					onConfirm={() => {
-						if (hasActiveRootWork(removal.id)) {
-							notify("rootActive");
-							setRemoval(null);
-							return;
-						}
-						const currentLocations = rootLocations(files, removal.id)
-							.map((location) => location.id)
-							.sort();
-						if (currentLocations.join("|") !== removal.locations.join("|")) {
-							notify("rootChanged");
-							setRemoval(null);
-							return;
-						}
-						updateProcessing(removeRootProcessingState(processing, removal.id));
-						onRemove(removal.id);
-						notify("rootRemoved");
-						setRemoval(null);
-						window.location.hash = demoSourcesHref;
-					}}
 				/>
 			)}
 		</>

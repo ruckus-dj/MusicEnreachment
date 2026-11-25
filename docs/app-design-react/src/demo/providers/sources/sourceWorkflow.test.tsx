@@ -99,6 +99,22 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+it("discards removal confirmation when leaving the selected root", () => {
+	const onRoots = vi.fn();
+	const onProcessingState = vi.fn();
+	const view = render(element("root-library", onRoots, onProcessingState));
+	fireEvent.click(screen.getByRole("button", { name: /^Remove source/ }));
+	expect(screen.getByRole("dialog")).toBeVisible();
+
+	view.rerender(element(undefined, onRoots, onProcessingState));
+	view.rerender(element("root-inbox", onRoots, onProcessingState));
+
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	expect(
+		screen.getByRole("heading", { name: "Входящие", level: 1 }),
+	).toHaveFocus();
+});
+
 it("registers without scanning, opens its route, and scans only on explicit start", () => {
 	const onRoots = vi.fn<(roots: SourceRoot[]) => void>();
 	const onProcessingState = vi.fn<(state: SourceProcessingState) => void>();
