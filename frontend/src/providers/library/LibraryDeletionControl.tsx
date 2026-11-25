@@ -22,7 +22,7 @@ import {
   LibraryDeletionOutputsView,
   libraryDeletionDialogTitle,
 } from "../../ui/features/library/LibraryDeletionDialogView";
-import { releaseControlAlertClass } from "./libraryReleaseControlStyles";
+import { releaseControlAlertClass } from "../../ui/features/library/libraryReleaseControlStyles";
 
 type DeletionTarget =
   | { type: "artist"; artistId: string }

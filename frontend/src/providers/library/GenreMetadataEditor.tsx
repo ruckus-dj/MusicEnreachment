@@ -17,17 +17,17 @@ import type {
   ProviderGenreBaseline,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
 import {
-  GenrePicker,
-  type GenreReference,
-} from "../../ui/features/library/GenrePicker";
-import { genreMessages } from "../../ui/features/library/genreMessages";
+  GenreMetadataEditorView,
+  type GenreMetadataOwner,
+  type GenreMetadataState,
+} from "../../ui/features/library/GenreMetadataEditorView";
+import type { GenreReference } from "../../ui/features/library/GenrePicker";
 
 export type { GenreReference } from "../../ui/features/library/GenrePicker";
 
-export type GenreOwner = "artist" | "release" | "recording";
-type GenreState = "absent" | "explicit_empty" | "value";
+export type GenreOwner = GenreMetadataOwner;
+type GenreState = GenreMetadataState;
 
 function savedGenres(metadata: LibraryMetadataResponse): {
   state: GenreState;
@@ -98,7 +98,6 @@ function GenreMetadataEditorSession({
   ) => void | Promise<void>;
 }) {
   const { locale } = useI18n();
-  const copy = genreMessages[locale];
   const identity = `${owner}:${ownerId}`;
   const identityRef = useRef(identity);
   identityRef.current = identity;
@@ -429,154 +428,48 @@ function GenreMetadataEditorSession({
     markDraftDirty();
   }
 
-  const label = copy.label[owner];
-  const displayedValue = editing ? draft : selected;
-  const emptyState = editing ? draftState : savedState;
-  const emptyText =
-    emptyState === "explicit_empty"
-      ? copy.explicitlyCleared
-      : emptyState === "absent"
-        ? copy.noOverride
-        : copy.empty;
-
   return (
-    <section
-      className="grid gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3 text-[var(--ink)]"
-      aria-label={label}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || !editing) return;
-        event.preventDefault();
-        cancelEdit();
+    <GenreMetadataEditorView
+      owner={owner}
+      locale={locale}
+      editing={editing}
+      draftDirty={draftDirty}
+      draft={draft}
+      selected={selected}
+      draftState={draftState}
+      savedState={savedState}
+      loadingSaved={loadingSaved}
+      saving={saving}
+      readError={readError}
+      saveError={saveError}
+      refreshConflict={refreshConflict}
+      providerGenreBaseline={
+        providerGenreBaseline
+          ? { genres: providerGenreBaseline.genres ?? [] }
+          : null
+      }
+      picker={{
+        options,
+        query,
+        onQueryChange: setQuery,
+        loading,
+        catalogError,
+        onClearCatalogError: () => setCatalogError(""),
+        onRetryCatalog: () => {
+          searchAttemptRef.current += 1;
+          setRetrySearch((value) => value + 1);
+        },
+        catalogStatus,
+        catalogStatusLoading,
+        catalogStatusError,
+        onOpenCatalog: () => void loadCatalogStatus(),
+        onRetryStatus: () => void loadCatalogStatus(),
       }}
-    >
-      <div className="grid min-w-0 gap-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-        <div className="min-w-0">
-          <h3 className="mb-1 text-sm font-semibold">{label}</h3>
-          <GenrePicker
-            value={displayedValue}
-            onChange={changeDraft}
-            editing={editing}
-            label={label}
-            copy={copy}
-            options={options}
-            query={query}
-            onQueryChange={setQuery}
-            loading={loading}
-            catalogError={catalogError}
-            onClearCatalogError={() => setCatalogError("")}
-            onRetryCatalog={() => {
-              searchAttemptRef.current += 1;
-              setRetrySearch((value) => value + 1);
-            }}
-            disabled={saving}
-            catalogStatus={catalogStatus}
-            catalogStatusLoading={catalogStatusLoading}
-            catalogStatusError={catalogStatusError}
-            onOpenCatalog={() => void loadCatalogStatus()}
-            onRetryStatus={() => void loadCatalogStatus()}
-          />
-          <p
-            className="m-0 mt-1 min-h-5 text-sm text-[var(--muted)]"
-            aria-hidden={Boolean(displayedValue.length)}
-          >
-            {displayedValue.length ? "\u00a0" : emptyText}
-          </p>
-        </div>
-        <div className="grid grid-cols-[7.5rem_7.5rem] gap-2">
-          <AppButton
-            type="button"
-            isDisabled={
-              loadingSaved ||
-              !!readError ||
-              saving ||
-              refreshConflict ||
-              (editing &&
-                (!draftDirty || (draftState === "value" && !draft.length)))
-            }
-            onPress={() => (editing ? void saveDraft() : beginEdit())}
-            className="min-w-0 justify-center"
-          >
-            {editing ? copy.save : copy.edit}
-          </AppButton>
-          <AppButton
-            type="button"
-            isDisabled={!editing || saving}
-            aria-hidden={!editing}
-            excludeFromTabOrder={!editing}
-            onPress={cancelEdit}
-            className={`min-w-0 justify-center ${editing ? "" : "invisible"}`}
-          >
-            {copy.cancel}
-          </AppButton>
-        </div>
-      </div>
-      <section
-        className="grid gap-1 border-t border-[var(--line)] pt-2 text-sm"
-        aria-label={copy.providerGenres}
-      >
-        <h4 className="m-0 font-medium">{copy.providerGenres}</h4>
-        {providerGenreBaseline ? (
-          (providerGenreBaseline.genres ?? []).length ? (
-            <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-              {(providerGenreBaseline.genres ?? []).map((genre) => (
-                <li
-                  className="rounded-full border border-[var(--line)] px-2 py-0.5"
-                  key={genre.id}
-                >
-                  {genre.name}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="m-0 text-[var(--muted)]">
-              {copy.providerGenresEmpty}
-            </p>
-          )
-        ) : (
-          <p className="m-0 text-[var(--muted)]">
-            {copy.providerGenresUnavailable}
-          </p>
-        )}
-      </section>
-      {loadingSaved ? (
-        <p role="status" className="m-0 text-sm text-[var(--muted)]">
-          {copy.loading}
-        </p>
-      ) : null}
-      {readError ? (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
-          {copy.readError} {readError}
-        </p>
-      ) : null}
-      {editing ? (
-        <div className="flex flex-wrap gap-2">
-          <AppButton
-            type="button"
-            isDisabled={saving}
-            onPress={setExplicitEmpty}
-          >
-            {copy.clear}
-          </AppButton>
-          <AppButton type="button" isDisabled={saving} onPress={setAbsent}>
-            {copy.inherit}
-          </AppButton>
-        </div>
-      ) : null}
-      {saving ? (
-        <p role="status" className="m-0 text-sm text-[var(--muted)]">
-          {copy.saving}
-        </p>
-      ) : null}
-      {saveError ? (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
-          {copy.saveError} {saveError} {copy.draftRetained}
-        </p>
-      ) : null}
-      {refreshConflict && draftDirty ? (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
-          {copy.refreshConflict}
-        </p>
-      ) : null}
-    </section>
+      onChange={changeDraft}
+      onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
+      onCancel={cancelEdit}
+      onClear={setExplicitEmpty}
+      onInherit={setAbsent}
+    />
   );
 }

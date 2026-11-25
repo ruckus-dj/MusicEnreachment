@@ -16,7 +16,6 @@ import { LocalReleaseEditor } from "../ui/features/local-release/LocalReleaseEdi
 import { ShellContent } from "../ui/shell/ShellView";
 import { ComponentsScreen } from "./components/ComponentsScreen";
 import type { DeletionOperation } from "./components/DeletionRequest";
-import { Button } from "./components/ui";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -560,7 +559,6 @@ export function CatalogDemo({
 		if (heading)
 			document.title = `${heading.textContent} · ${msg("documentTitleSuffix")}`;
 	}, [route, preview, locale]);
-	const [artistId, setArtistId] = useState<string | null>(null);
 	const [artistQuery, setArtistQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
@@ -575,8 +573,6 @@ export function CatalogDemo({
 					? hasAudio(track)
 					: !hasAudio(track),
 		);
-	const artistName = (id: string | null) =>
-		fixture.artists.find((artist) => artist.id === id)?.name ?? "";
 	const missingGroups = missingCatalogGroups(
 		fixture.absentGroups,
 		fixture.releases,
@@ -605,13 +601,9 @@ export function CatalogDemo({
 		fixture.releases
 			.filter(
 				(release) =>
-					(!artistId ||
-						release.artistId === artistId ||
-						release.credits?.some((credit) => credit.artistId === artistId)) &&
 					normalizeCatalogSearch(
 						albumSearchText(release, fixture.artists),
-					).includes(normalized) &&
-					matchesGroup(release.tracks),
+					).includes(normalized) && matchesGroup(release.tracks),
 			)
 			.map((release) => release.id),
 	);
@@ -635,12 +627,9 @@ export function CatalogDemo({
 			.filter((track) => visibleTrackIds.has(track.id))
 			.map((track) => ({ release, track })),
 	);
-	const missingGroupsForView = missingGroups.filter(
-		(group) => !artistId || group.artistId === artistId,
-	);
 	const albumEntries = combineLibraryAlbumEntries(
 		orderedVisibleReleases,
-		missingGroupsForView,
+		missingGroups,
 	);
 	const libraryTotalItems =
 		view === "artists"
@@ -1376,21 +1365,6 @@ export function CatalogDemo({
 		<LibraryCatalogPageView
 			locale={locale}
 			view={view}
-			title={
-				artistId ? artistName(artistId) || msg("artistNotSpecified") : undefined
-			}
-			headerAction={
-				artistId ? (
-					<Button
-						onPress={() => {
-							setArtistId(null);
-							setView("artists");
-						}}
-					>
-						{msg("backToLibrary")}
-					</Button>
-				) : undefined
-			}
 			className="demo-shell"
 			search={searchInput}
 			onSearch={setSearch}
@@ -1398,7 +1372,6 @@ export function CatalogDemo({
 			onFilter={setFilter}
 			onViewChange={(nextView) => {
 				setView(nextView);
-				setArtistId(null);
 				setExpanded(null);
 			}}
 			state={libraryPageState}

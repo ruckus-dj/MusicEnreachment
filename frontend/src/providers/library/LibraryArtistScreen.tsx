@@ -19,6 +19,7 @@ import {
   type ArtistDeletionAction,
   type ArtistEditionModel,
   type ArtistHeadingModel,
+  ArtistMissingGroupChooser,
   type ArtistMissingGroupCredit,
   type ArtistMissingGroupModel,
   type ArtistReleaseRowModel,
@@ -73,8 +74,6 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Could not load positions (HTTP ${status}).`,
     positionPages: "Position pages",
-    chooseEditions: "Choose an edition",
-    browseEditions: "Browse editions",
   },
   ru: {
     backToLibrary: "← К медиатеке",
@@ -106,8 +105,6 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Не удалось загрузить позиции (HTTP ${status}).`,
     positionPages: "Страницы позиций",
-    chooseEditions: "Выберите издание",
-    browseEditions: "Показать издания",
   },
 } as const;
 
@@ -163,15 +160,12 @@ function creditLinks(
  */
 function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
   const projection = useMissingReleaseGroupEditions(group);
-  const copy = artistScreenCopy[projection.locale];
   return (
-    <div className="grid min-w-0 gap-2">
-      <AppButton
-        aria-expanded={projection.pickerOpen}
-        onPress={projection.togglePicker}
-      >
-        {projection.pickerOpen ? copy.chooseEditions : copy.browseEditions}
-      </AppButton>
+    <ArtistMissingGroupChooser
+      locale={projection.locale}
+      isExpanded={projection.pickerOpen}
+      onToggle={projection.togglePicker}
+    >
       {projection.showEditionView && (
         <LibraryMissingEditionView
           locale={projection.locale}
@@ -179,7 +173,7 @@ function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
           groupTitle={projection.title}
         />
       )}
-    </div>
+    </ArtistMissingGroupChooser>
   );
 }
 

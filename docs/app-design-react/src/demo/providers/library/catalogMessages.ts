@@ -5,7 +5,6 @@ export const catalogMessages = createNamespace({
 	en: {
 		library: "Library",
 		localCatalog: "Local catalogue",
-		artistNotSpecified: "Artist not specified",
 		localReleaseSelected:
 			"Local release “{title}” selected for incoming matching.",
 		backToLibrary: "Back to library",
@@ -36,7 +35,6 @@ export const catalogMessages = createNamespace({
 	ru: {
 		library: "Медиатека",
 		localCatalog: "Локальный каталог",
-		artistNotSpecified: "Артист не указан",
 		localReleaseSelected:
 			"Для сопоставления входящих выбрано издание Local «{title}».",
 		backToLibrary: "К медиатеке",

@@ -9,6 +9,10 @@ import {
   LibraryArtistReleaseTracksView,
 } from "./LibraryArtistReleaseTracksView";
 import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
+import {
+  LibraryPrimaryArtistControl,
+  type LibraryPrimaryArtistModel,
+} from "./LibraryPrimaryArtistControl";
 
 export type ReleaseOverviewSelection = {
   isSelected: boolean;
@@ -76,7 +80,7 @@ type ReleaseOverviewContent = {
   cover?: ReactElement;
   /** Real-only provider refresh; not bound by the prototype. */
   providerRefresh?: ReactElement;
-  primaryArtist?: ReactElement;
+  primaryArtist?: LibraryPrimaryArtistModel;
 };
 
 export type ReleaseOverviewViewProps =
@@ -338,7 +342,9 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
           {t("releaseArtists")}
         </h2>
         <CreditList locale={locale} credits={credentials} />
-        {primaryArtist}
+        {primaryArtist && (
+          <LibraryPrimaryArtistControl locale={locale} model={primaryArtist} />
+        )}
       </section>
       {providerRefresh}
       {metadataEditor && (

@@ -51,6 +51,67 @@ const copy = {
   },
 } as const;
 
+const summaryCopy = {
+  en: {
+    fallback: "Releases and positions in your library",
+    artists: ["artist", "artists"],
+    releases: ["release", "releases"],
+    positions: ["position", "positions"],
+    published: "published",
+    incoming: "Review incoming groups",
+    error: "Could not load the library.",
+    httpError: "Could not load the library (HTTP {status}).",
+  },
+  ru: {
+    fallback: "Релизы и позиции медиатеки",
+    artists: ["артист", "артиста", "артистов"],
+    releases: ["релиз", "релиза", "релизов"],
+    positions: ["позиция", "позиции", "позиций"],
+    published: "опубликовано",
+    incoming: "Разобрать входящие группы",
+    error: "Не удалось загрузить медиатеку.",
+    httpError: "Не удалось загрузить медиатеку (HTTP {status}).",
+  },
+} as const;
+
+export type LibraryCatalogSummary = {
+  artists: number;
+  releases: number;
+  positions: number;
+  published: number;
+};
+
+export function libraryCatalogLoadError(locale: "en" | "ru", status?: number) {
+  const text = summaryCopy[locale];
+  return status === undefined
+    ? text.error
+    : text.httpError.replace("{status}", String(status));
+}
+
+function formatSummary(
+  locale: "en" | "ru",
+  summary: LibraryCatalogSummary | null,
+) {
+  const text = summaryCopy[locale];
+  if (!summary) return text.fallback;
+  const language = locale === "ru" ? "ru-RU" : "en-US";
+  const numbers = new Intl.NumberFormat(language);
+  const plurals = new Intl.PluralRules(language);
+  function countLabel(count: number, forms: readonly string[]) {
+    const plural =
+      locale === "en" ? (count === 1 ? "one" : "other") : plurals.select(count);
+    const index =
+      plural === "one" ? 0 : locale === "en" || plural === "few" ? 1 : 2;
+    return `${numbers.format(count)} ${forms[index]}`;
+  }
+  return [
+    countLabel(summary.artists, text.artists),
+    countLabel(summary.releases, text.releases),
+    countLabel(summary.positions, text.positions),
+    `${summary.published} ${text.published}`,
+  ].join(" · ");
+}
+
 export type LibraryCatalogPageState =
   | { status: "loading" }
   | {
@@ -75,11 +136,9 @@ export type LibraryCatalogPageState =
 export interface LibraryCatalogPageViewProps {
   locale: "en" | "ru";
   view: LibraryView;
-  title?: string;
-  /** Server/domain summary text; omitted hosts keep the heading compact. */
-  summary?: string;
-  /** Host action beside the heading, such as the incoming-groups link. */
-  headerAction?: ReactNode;
+  /** Omit when the host does not provide a summary; null shows the fallback. */
+  summary?: LibraryCatalogSummary | null;
+  incomingHref?: string;
   /** Host shell decoration; presentation stays in this view. */
   className?: string;
   search: string;
@@ -107,9 +166,8 @@ export interface LibraryCatalogPageViewProps {
 export function LibraryCatalogPageView({
   locale,
   view,
-  title,
   summary,
-  headerAction,
+  incomingHref,
   className,
   search,
   onSearch,
@@ -141,16 +199,23 @@ export function LibraryCatalogPageView({
             tabIndex={-1}
             className={catalogueStyles.pageTitle}
           >
-            {title ?? text.title}
+            {text.title}
           </h1>
           {summary !== undefined && (
             <p className={catalogueStyles.pageSubtitle} aria-live="polite">
-              {summary}
+              {formatSummary(locale, summary)}
             </p>
           )}
         </div>
-        {headerAction !== undefined && (
-          <div className={catalogueStyles.pageHeaderAction}>{headerAction}</div>
+        {incomingHref && (
+          <div className={catalogueStyles.pageHeaderAction}>
+            <a
+              className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
+              href={incomingHref}
+            >
+              {summaryCopy[locale].incoming}
+            </a>
+          </div>
         )}
       </header>
 

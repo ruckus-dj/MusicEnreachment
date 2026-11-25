@@ -18,8 +18,8 @@ import {
 import {
   type LibraryCatalogPageState,
   LibraryCatalogPageView,
+  libraryCatalogLoadError,
 } from "../../ui/features/library/LibraryCatalogPageView";
-import { librarySelectionButtonClass } from "../../ui/features/library/LibrarySelectionPreviewView";
 import { LibraryAlbumRows } from "./LibraryAlbumRows";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
@@ -43,121 +43,13 @@ const fallbackRoute: LibraryRoute = {
   availability: "all",
   offset: 0,
 };
-const screenCopy = {
-  en: {
-    summaryFallback: "Releases and positions in your library",
-    artistCount: {
-      en: ["artist", "artists"],
-      ru: ["артист", "артиста", "артистов"],
-    },
-    releaseCount: {
-      en: ["release", "releases"],
-      ru: ["релиз", "релиза", "релизов"],
-    },
-    positionCount: {
-      en: ["position", "positions"],
-      ru: ["позиция", "позиции", "позиций"],
-    },
-    incoming: "Review incoming groups",
-    requestError: "Could not load the library (HTTP {status}).",
-    error: "Could not load the library.",
-    countPublished: "published",
-    countAvailable: "with audio",
-    completenessUnknown: "completeness unknown",
-    cacheNotice:
-      "includes known groups from the cache; the discography may be incomplete",
-    audio: "Audio",
-    album: "Release",
-    artist: "Artist",
-    yearEdition: "Date / edition",
-    positions: "Positions",
-    availabilityColumn: "Availability",
-    track: "Track",
-    position: "Position",
-    sources: "Sources",
-    publicationColumn: "Publication",
-    durationUnknown: "Duration not specified",
-    available: "Available",
-    missing: "Missing",
-    sourceCount: "Sources: {count}",
-    publishedStatus: "Published",
-    unpublishedStatus: "Unpublished",
-    unnamed: "Untitled",
-    unknownDate: "Date not specified",
-    unknownEdition: "Edition not specified",
-    unknownArtist: "Unnamed artist",
-  },
-  ru: {
-    summaryFallback: "Релизы и позиции медиатеки",
-    artistCount: {
-      en: ["artist", "artists"],
-      ru: ["артист", "артиста", "артистов"],
-    },
-    releaseCount: {
-      en: ["release", "releases"],
-      ru: ["релиз", "релиза", "релизов"],
-    },
-    positionCount: {
-      en: ["position", "positions"],
-      ru: ["позиция", "позиции", "позиций"],
-    },
-    incoming: "Разобрать входящие группы",
-    requestError: "Не удалось загрузить медиатеку (HTTP {status}).",
-    error: "Не удалось загрузить медиатеку.",
-    countPublished: "опубликовано",
-    countAvailable: "с аудио",
-    completenessUnknown: "полнота неизвестна",
-    cacheNotice:
-      "включая известные группы из кэша; дискография может быть неполной",
-    audio: "Аудио",
-    album: "Релиз",
-    artist: "Артист",
-    yearEdition: "Дата / издание",
-    positions: "Позиции",
-    availabilityColumn: "Наличие",
-    track: "Трек",
-    position: "Позиция",
-    sources: "Исходники",
-    publicationColumn: "Публикация",
-    durationUnknown: "Длительность не указана",
-    available: "В наличии",
-    missing: "Отсутствует",
-    sourceCount: "Исходники: {count}",
-    publishedStatus: "Опубликовано",
-    unpublishedStatus: "Не опубликовано",
-    unnamed: "Без названия",
-    unknownDate: "Дата не указана",
-    unknownEdition: "Издание не указано",
-    unknownArtist: "Артист не указан",
-  },
-} as const;
-
-function countLabel(
-  count: number,
-  locale: "en" | "ru",
-  forms: {
-    en: readonly [string, string];
-    ru: readonly [string, string, string];
-  },
-) {
-  const formatted = new Intl.NumberFormat(
-    locale === "ru" ? "ru-RU" : "en-US",
-  ).format(count);
-  if (locale === "en") return `${formatted} ${forms.en[count === 1 ? 0 : 1]}`;
-  const plural = new Intl.PluralRules("ru-RU").select(count);
-  return `${formatted} ${forms.ru[plural === "one" ? 0 : plural === "few" ? 1 : 2]}`;
-}
-
 function requestError(
   response: { status: number; data?: unknown },
   locale: "en" | "ru",
 ) {
   return apiResponseError(
     response,
-    screenCopy[locale].requestError.replace(
-      "{status}",
-      String(response.status),
-    ),
+    libraryCatalogLoadError(locale, response.status),
   ).message;
 }
 
@@ -358,7 +250,6 @@ export function useLibraryController() {
 
 export function LibraryScreen() {
   const { locale } = useI18n();
-  const copy = screenCopy[locale];
   const {
     route,
     view,
@@ -411,7 +302,7 @@ export function LibraryScreen() {
     (activeQuery.error
       ? activeQuery.error instanceof Error
         ? activeQuery.error.message
-        : copy.error
+        : libraryCatalogLoadError(locale)
       : "");
   const artistsBody =
     artists.data?.status === 200 ? artists.data.data : undefined;
@@ -531,17 +422,15 @@ export function LibraryScreen() {
       view={view}
       summary={
         summary
-          ? `${countLabel(summary.artist_count, locale, copy.artistCount)} · ${countLabel(summary.release_count, locale, copy.releaseCount)} · ${countLabel(summary.position_count, locale, copy.positionCount)} · ${summary.published_position_count} ${copy.countPublished}`
-          : copy.summaryFallback
+          ? {
+              artists: summary.artist_count,
+              releases: summary.release_count,
+              positions: summary.position_count,
+              published: summary.published_position_count,
+            }
+          : null
       }
-      headerAction={
-        <a
-          className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
-          href="#/incoming-groups"
-        >
-          {copy.incoming}
-        </a>
-      }
+      incomingHref="#/incoming-groups"
       search={searchInput}
       onSearch={setSearch}
       filter={filter}

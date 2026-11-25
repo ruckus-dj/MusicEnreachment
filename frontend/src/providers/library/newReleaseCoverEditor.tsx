@@ -11,15 +11,11 @@ import type {
   ReleaseCoverSummary,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import {
-  releaseControlAlertClass,
-  releaseControlButtonClass,
-} from "./libraryReleaseControlStyles";
+import { ReleaseCoverEditorView } from "../../ui/features/library/ReleaseCoverEditorView";
 import {
   type LibraryReleaseText,
   LocalizedLibraryReleaseError,
   libraryReleaseError,
-  libraryReleaseMessage,
   libraryReleaseText,
   renderLibraryReleaseText,
 } from "./libraryReleaseMessages";
@@ -52,10 +48,6 @@ export function ReleaseCoverEditor({
   onCoverSnapshot,
 }: Props) {
   const { locale } = useI18n();
-  const text = (
-    key: Parameters<typeof libraryReleaseMessage>[1],
-    values?: Record<string, string | number>,
-  ) => libraryReleaseMessage(locale, key, values);
   const displayText = (value: LibraryReleaseText) =>
     renderLibraryReleaseText(locale, value);
   const requestScope = useRef({ releaseId, generation: 0 });
@@ -188,91 +180,43 @@ export function ReleaseCoverEditor({
   }
 
   return (
-    <section
-      aria-labelledby="release-cover-title"
-      className="space-y-3 rounded border border-[var(--line)] bg-surface p-4"
-    >
-      <h2
-        id="release-cover-title"
-        className="text-base leading-[22px] font-semibold"
-      >
-        {text("releaseCover")}
-      </h2>
-      {cover?.selected_generation ? (
-        <div>
-          <p>{text("selectedCover")}</p>
-          <img
-            className="max-h-48"
-            alt={text("selectedReleaseCover")}
-            src={imageURL(cover.selected_generation)}
-          />
-          <p className="[overflow-wrap:anywhere]">
-            SHA-256: {cover.selected_sha256 ?? text("unspecified")}
-          </p>
-        </div>
-      ) : (
-        <p>{text("noSelectedCover")}</p>
-      )}
-      {cover?.pending_generation && (
-        <div>
-          <p>{text("pendingCover")}</p>
-          <img
-            className="max-h-48"
-            alt={text("pendingReleaseCover")}
-            src={imageURL(cover.pending_generation)}
-          />
-          <p className="[overflow-wrap:anywhere]">
-            SHA-256: {cover.pending_sha256 ?? text("unspecified")}
-          </p>
-        </div>
-      )}
-      <label className="block">
-        {text("choosePngJpeg")}
-        <input
-          key={releaseId}
-          ref={fileInput}
-          type="file"
-          className="max-w-full rounded bg-raised text-ink max-[599px]:min-h-10"
-          accept="image/png,image/jpeg"
-          disabled={busy}
-          onChange={(event) => setFile(event.target.files?.[0])}
-        />
-      </label>
-      <button
-        type="button"
-        className={releaseControlButtonClass}
-        disabled={!file || busy}
-        onClick={() => void savePending()}
-      >
-        {text("savePendingCover")}
-      </button>
-      <button
-        type="button"
-        className={releaseControlButtonClass}
-        disabled={!cover?.pending_generation || !epoch || busy}
-        onClick={() => void apply("apply")}
-      >
-        {text("applyCoverToTracks")}
-      </button>
-      <button
-        type="button"
-        className={releaseControlButtonClass}
-        disabled={!cover?.selected_generation || !epoch || busy}
-        onClick={() => void apply("retry")}
-      >
-        {text("retrySelectedCover")}
-      </button>
-      {cover?.warning && (
-        <p role="alert" className={releaseControlAlertClass}>
-          {text("coverWarning", { warning: cover.warning })}
-        </p>
-      )}
-      {notice && <p role="status">{displayText(notice)}</p>}
-      {error && (
-        <p role="alert" className={releaseControlAlertClass}>
-          {displayText(error)}
-        </p>
-      )}
-    </section>
+    <ReleaseCoverEditorView
+      locale={locale}
+      releaseId={releaseId}
+      selected={
+        cover?.selected_generation
+          ? {
+              imageSrc: imageURL(cover.selected_generation),
+              checksum: cover.selected_sha256,
+            }
+          : undefined
+      }
+      pending={
+        cover?.pending_generation
+          ? {
+              imageSrc: imageURL(cover.pending_generation),
+              checksum: cover.pending_sha256,
+            }
+          : undefined
+      }
+      fileInput={fileInput}
+      busy={busy}
+      savePendingDisabled={!file || busy}
+      applyDisabled={!cover?.pending_generation || !epoch || busy}
+      retryDisabled={!cover?.selected_generation || !epoch || busy}
+      onFileChange={setFile}
+      onSavePending={() => void savePending()}
+      onApply={() => void apply("apply")}
+      onRetry={() => void apply("retry")}
+      warning={
+        cover?.warning
+          ? displayText(
+              libraryReleaseText("coverWarning", { warning: cover.warning }),
+            )
+          : undefined
+      }
+      notice={notice ? displayText(notice) : undefined}
+      error={error ? displayText(error) : undefined}
+    />
   );
 }

@@ -1,6 +1,6 @@
 import { useId } from "react";
-import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
+import { AppButton } from "../../../components/AppButton";
+import type { Locale } from "../../../i18n/types";
 import {
   type ArtistCreditDraft,
   type ArtistCreditProviderFact,
@@ -14,7 +14,8 @@ import {
   artistCreditMessages,
 } from "./artistCreditMessages";
 
-export type ArtistCreditRowsEditorProps = {
+export type ArtistCreditRowsEditorViewProps = {
+  locale: Locale;
   draft: ArtistCreditDraft;
   /** Original saved-key presence; controls whether undoing to inherited is legal. */
   savedHasDesiredOverride: boolean;
@@ -218,7 +219,8 @@ function moveRow(rows: ArtistCreditRow[], index: number, direction: -1 | 1) {
   return reordered;
 }
 
-export function ArtistCreditRowsEditor({
+export function ArtistCreditRowsEditorView({
+  locale,
   draft,
   savedHasDesiredOverride,
   baseline,
@@ -232,8 +234,7 @@ export function ArtistCreditRowsEditor({
   onDraftChange,
   onSearchQueryChange,
   onRetrySearch,
-}: ArtistCreditRowsEditorProps) {
-  const { locale } = useI18n();
+}: ArtistCreditRowsEditorViewProps) {
   const text = artistCreditMessages[locale];
   const queryId = useId();
   const headingId = useId();

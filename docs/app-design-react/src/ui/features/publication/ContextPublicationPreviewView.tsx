@@ -4,14 +4,12 @@ import {
   LibraryPositionConfirmButton,
   LibraryPositionPreviewButton,
 } from "../library/LibraryPositionWorkspace";
+import { releaseControlFieldsetClass } from "../library/libraryReleaseControlStyles";
 import {
   type PublicationPreviewDetailsState,
   PublicationPreviewDetailsView,
   type PublicationPreviewSourceChoice,
 } from "../library/PublicationPreviewDetailsView";
-
-const releaseControlFieldsetClass =
-  "min-w-0 rounded-[5px] border-line bg-surface px-2.5 py-2";
 
 export type ContextPublicationPreviewWorkflow =
   | "first"

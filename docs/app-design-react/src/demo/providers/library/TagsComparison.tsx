@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
+import { LibraryPositionTagEvidenceView } from "../../../ui/features/library/LibraryPositionTagEvidenceView";
 import {
 	LibraryTagEvidenceComparison,
 	libraryTagComparisonCopy,
@@ -187,108 +188,128 @@ export function TagsComparison({
 			})}
 		>
 			{fixedContext ? (
-				<header className="grid gap-1 border-b border-[var(--line)] pb-2">
-					<h3 className="m-0 text-sm font-semibold">
-						{trackMessage(locale, "tagsTitle")}
-					</h3>
-					<p className="m-0 text-xs text-[var(--muted)]">
-						{track.title} · {trackMessage(locale, "fixedFile")}:{" "}
-						{file?.name ?? trackMessage(locale, "noSourceSelected")}
-						{file &&
-							` · ${file.codec} · ${Math.floor(file.duration / 60)}:${String(Math.round(file.duration % 60)).padStart(2, "0")}`}
-					</p>
-				</header>
+				<>
+					<header className="grid gap-1 border-b border-[var(--line)] pb-2">
+						<h3 className="m-0 text-sm font-semibold">
+							{trackMessage(locale, "tagsTitle")}
+						</h3>
+						<p className="m-0 text-xs text-[var(--muted)]">
+							{track.title} · {trackMessage(locale, "fixedFile")}:{" "}
+							{file?.name ?? trackMessage(locale, "noSourceSelected")}
+							{file &&
+								` · ${file.codec} · ${Math.floor(file.duration / 60)}:${String(Math.round(file.duration % 60)).padStart(2, "0")}`}
+						</p>
+					</header>
+					<LibraryPositionTagEvidenceView
+						locale={locale}
+						source={
+							sourceTags ? { state: "saved", tags: sourceTags } : undefined
+						}
+						current={
+							publicationTags
+								? { state: "saved", tags: publicationTags }
+								: undefined
+						}
+						comparison={{ state: "saved", provider, overrides }}
+						showAll={showAll}
+						onShowAllChange={setShowAll}
+						differencesOnly={differencesOnly}
+						onDifferencesChange={setDifferencesOnly}
+					/>
+				</>
 			) : (
-				<div className={comparisonControls}>
-					<Select
-						aria-label={trackMessage(locale, "comparisonPosition")}
-						selectedKey={track.id}
-						onSelectionChange={(key) => {
-							setTrackId(String(key));
-							setFileOverride(undefined);
-						}}
-					>
-						<Label>{trackMessage(locale, "position")}</Label>
-						<Button>
-							<SelectValue />
-							<span aria-hidden="true">⌄</span>
-						</Button>
-						<Popover>
-							<ListBox>
-								{tracks.map(({ release: itemRelease, track: item }) => (
-									<ListBoxItem key={item.id} id={item.id}>
-										{String(item.position).padStart(2, "0")} · {item.title} ·{" "}
-										{itemRelease.title}
+				<>
+					<div className={comparisonControls}>
+						<Select
+							aria-label={trackMessage(locale, "comparisonPosition")}
+							selectedKey={track.id}
+							onSelectionChange={(key) => {
+								setTrackId(String(key));
+								setFileOverride(undefined);
+							}}
+						>
+							<Label>{trackMessage(locale, "position")}</Label>
+							<Button>
+								<SelectValue />
+								<span aria-hidden="true">⌄</span>
+							</Button>
+							<Popover>
+								<ListBox>
+									{tracks.map(({ release: itemRelease, track: item }) => (
+										<ListBoxItem key={item.id} id={item.id}>
+											{String(item.position).padStart(2, "0")} · {item.title} ·{" "}
+											{itemRelease.title}
+										</ListBoxItem>
+									))}
+								</ListBox>
+							</Popover>
+						</Select>
+						<Select
+							aria-label={trackMessage(locale, "comparisonSourceFile")}
+							selectedKey={fileId ?? ""}
+							onSelectionChange={(key) => {
+								const value = String(key);
+								setFileOverride(value || null);
+								if (value) onSelectFile?.(track.id, value);
+							}}
+						>
+							<Label>{libraryTagComparisonCopy[locale].source}</Label>
+							<Button>
+								<SelectValue />
+								<span aria-hidden="true">⌄</span>
+							</Button>
+							<Popover>
+								<ListBox>
+									<ListBoxItem id="">
+										{trackMessage(locale, "noSourceSelected")}
 									</ListBoxItem>
+									{linkedFileIds.map(
+										(id) =>
+											files[id] && (
+												<ListBoxItem key={id} id={id}>
+													{files[id].name}
+												</ListBoxItem>
+											),
+									)}
+								</ListBox>
+							</Popover>
+						</Select>
+					</div>
+					{allowScopeChange && (
+						<Tabs
+							selectedKey={activeScope}
+							onSelectionChange={(key) => setActiveScope(key as TagScope)}
+						>
+							<TabList aria-label={trackMessage(locale, "comparisonContext")}>
+								{(
+									[
+										["artist", trackMessage(locale, "scopeArtist")],
+										["release", trackMessage(locale, "scopeRelease")],
+										["track", trackMessage(locale, "scopeTrack")],
+									] as const
+								).map(([key, label]) => (
+									<Tab key={key} id={key}>
+										{label}
+									</Tab>
 								))}
-							</ListBox>
-						</Popover>
-					</Select>
-					<Select
-						aria-label={trackMessage(locale, "comparisonSourceFile")}
-						selectedKey={fileId ?? ""}
-						onSelectionChange={(key) => {
-							const value = String(key);
-							setFileOverride(value || null);
-							if (value) onSelectFile?.(track.id, value);
-						}}
-					>
-						<Label>{libraryTagComparisonCopy[locale].source}</Label>
-						<Button>
-							<SelectValue />
-							<span aria-hidden="true">⌄</span>
-						</Button>
-						<Popover>
-							<ListBox>
-								<ListBoxItem id="">
-									{trackMessage(locale, "noSourceSelected")}
-								</ListBoxItem>
-								{linkedFileIds.map(
-									(id) =>
-										files[id] && (
-											<ListBoxItem key={id} id={id}>
-												{files[id].name}
-											</ListBoxItem>
-										),
-								)}
-							</ListBox>
-						</Popover>
-					</Select>
-				</div>
+							</TabList>
+						</Tabs>
+					)}
+					<LibraryTagEvidenceComparison
+						locale={locale}
+						source={sourceTags}
+						current={publicationTags}
+						provider={provider}
+						overrides={overrides}
+						knownFields={knownFields}
+						showAll={showAll}
+						onShowAllChange={setShowAll}
+						differencesOnly={differencesOnly}
+						onDifferencesChange={setDifferencesOnly}
+						showDifferencesControl={Boolean(sourceTags && publicationTags)}
+					/>
+				</>
 			)}
-			{allowScopeChange && !fixedContext && (
-				<Tabs
-					selectedKey={activeScope}
-					onSelectionChange={(key) => setActiveScope(key as TagScope)}
-				>
-					<TabList aria-label={trackMessage(locale, "comparisonContext")}>
-						{(
-							[
-								["artist", trackMessage(locale, "scopeArtist")],
-								["release", trackMessage(locale, "scopeRelease")],
-								["track", trackMessage(locale, "scopeTrack")],
-							] as const
-						).map(([key, label]) => (
-							<Tab key={key} id={key}>
-								{label}
-							</Tab>
-						))}
-					</TabList>
-				</Tabs>
-			)}
-			<LibraryTagEvidenceComparison
-				locale={locale}
-				source={sourceTags}
-				current={publicationTags}
-				provider={provider}
-				overrides={overrides}
-				knownFields={knownFields}
-				showAll={showAll}
-				onShowAllChange={setShowAll}
-				differencesOnly={differencesOnly}
-				onDifferencesChange={setDifferencesOnly}
-				showDifferencesControl={Boolean(sourceTags && publicationTags)}
-			/>
 			<p className={comparisonNote}>
 				{file?.path ?? trackMessage(locale, "noSourceSelected")}
 				<br />

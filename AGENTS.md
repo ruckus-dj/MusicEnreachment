@@ -189,6 +189,8 @@ in frontend/.
 - Run the final `task verify` only after delegated edits and formatting finish.
   A gate against a partially written helper or an unformatted in-flight test is
   not a valid baseline; wait for the edit completion notification before rerunning.
+  A child report saying “no edits” while its status is still `running` is not a
+  completion notification. Wait for all writers to go idle before starting a hook.
 - The normal `quality-gates` commit hook runs `task verify` and can serve as that
   final gate. Do not routinely repeat the same full gate manually immediately
   before or after the hook on an unchanged tree. This removes duplicate work,

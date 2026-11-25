@@ -19,8 +19,13 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import { LibraryPrimaryArtistControl } from "../../ui/features/library/LibraryPrimaryArtistControl";
+import { LibraryReleaseWorkspaceView } from "../../ui/features/library/LibraryReleaseWorkspaceView";
+import { releaseControlButtonClass } from "../../ui/features/library/libraryReleaseControlStyles";
+import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/LibraryPositionLyricsView";
 import { ReleaseMetadataEditorView } from "../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
+import { releaseCoverEditorCopy } from "../../ui/features/library/ReleaseCoverEditorView";
 import {
   type ReleaseOverviewHeading,
   ReleaseOverviewView,
@@ -47,11 +52,6 @@ import {
   releaseOverviewCredits,
   releaseOverviewMedia,
 } from "./LibraryReleaseFacts";
-import {
-  releaseControlAlertClass,
-  releaseControlButtonClass,
-  releaseControlSelectClass,
-} from "./libraryReleaseControlStyles";
 import {
   type LibraryReleaseMessage,
   type LibraryReleaseText,
@@ -1530,7 +1530,7 @@ export function LibraryReleaseScreen({
       imageSrc: selectedCoverGeneration
         ? getGetLibraryReleaseCoverImageUrl(releaseId, selectedCoverGeneration)
         : undefined,
-      imageAlt: text("selectedReleaseCover"),
+      imageAlt: releaseCoverEditorCopy[locale].selectedCoverAlt,
     },
     counts: {
       positions: overviewTracks.length,
@@ -1540,32 +1540,20 @@ export function LibraryReleaseScreen({
     durationSeconds: overviewDurationSeconds,
   };
   const overviewPrimaryArtist =
-    (release.artists?.length ?? 0) > 1 ? (
-      <label className="block">
-        {text("primaryReleaseArtist")}
-        <select
-          className={releaseControlSelectClass}
-          aria-label={text("primaryReleaseArtist")}
-          value={release.primary_artist.selected_artist_id || ""}
-          disabled={releasePrimaryArtistSaving}
-          onChange={(event) =>
-            void selectReleasePrimaryArtist(event.target.value || null)
-          }
-        >
-          <option value="">{text("notSelected")}</option>
-          {uniqueArtists(release.artists).map((artist) => (
-            <option key={artist.artist_id} value={artist.artist_id}>
-              {artist.credit_name || artist.artist_name}
-            </option>
-          ))}
-        </select>
-        {releasePrimaryArtistError && (
-          <p role="alert" className={releaseControlAlertClass}>
-            {displayText(releasePrimaryArtistError)}
-          </p>
-        )}
-      </label>
-    ) : undefined;
+    (release.artists?.length ?? 0) > 1
+      ? {
+          selectedId: release.primary_artist.selected_artist_id,
+          options: uniqueArtists(release.artists).map((artist) => ({
+            id: artist.artist_id,
+            name: artist.credit_name || artist.artist_name || "",
+          })),
+          disabled: releasePrimaryArtistSaving,
+          onChange: (id: string | null) => void selectReleasePrimaryArtist(id),
+          error: releasePrimaryArtistError
+            ? displayText(releasePrimaryArtistError)
+            : undefined,
+        }
+      : undefined;
   const overviewProviderRefresh = !showPosition ? (
     <TrackProviderRefreshView {...providerRefresh} />
   ) : undefined;
@@ -1594,11 +1582,20 @@ export function LibraryReleaseScreen({
       }
     />
   ) : undefined;
-  const body = (
-    <section
-      className={`grid min-w-0 gap-3 text-[13px] leading-[18px] text-ink ${showPosition ? "" : "mx-auto max-w-5xl"}`}
-    >
-      <div hidden={showPosition}>
+  return (
+    <LibraryReleaseWorkspaceView
+      locale={locale}
+      showPosition={showPosition}
+      missingPosition={
+        positionId && !selectedTrack
+          ? {
+              message: text("positionNotFound"),
+              releaseHref: `#/library/releases/${releaseId}`,
+              releaseLabel: text("fullRelease"),
+            }
+          : undefined
+      }
+      overview={
         <ReleaseOverviewView
           locale={locale}
           libraryHref="#/library"
@@ -1664,17 +1661,8 @@ export function LibraryReleaseScreen({
             />
           }
         />
-      </div>
-      {positionId && !selectedTrack ? (
-        <TrackScreenView
-          locale={locale}
-          notFound={{
-            message: text("positionNotFound"),
-            releaseHref: `#/library/releases/${releaseId}`,
-            releaseLabel: text("fullRelease"),
-          }}
-        />
-      ) : null}
+      }
+    >
       {(release.tracks ?? []).map((track) => {
         const showWorkspace = positionId === track.id;
         const renderScope = scope.current;
@@ -1963,99 +1951,63 @@ export function LibraryReleaseScreen({
                       }
                     />
                     {credits.length > 1 && (
-                      <label className="block">
-                        {text("primaryTrackArtist")}
-                        <select
-                          className={releaseControlSelectClass}
-                          aria-label={`${text("primaryTrackArtist")} ${track.displayed_number}`}
-                          value={track.primary_artist.selected_artist_id || ""}
-                          disabled={
-                            !position?.metadata || position.writePending
-                          }
-                          onChange={(event) =>
-                            void selectPrimaryArtist(
-                              track.id,
-                              event.target.value || null,
-                            )
-                          }
-                        >
-                          <option value="">{text("notSelected")}</option>
-                          {uniqueArtists(credits).map((artist) => (
-                            <option
-                              key={artist.artist_id}
-                              value={artist.artist_id}
-                            >
-                              {artist.credit_name || artist.artist_name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                    <label className="block">
-                      {text("savedLyrics")}
-                      <textarea
-                        className="mt-1 block min-h-40 w-full rounded border p-2"
-                        value={position?.lyrics ?? ""}
-                        onChange={(event) => {
-                          lyricsEditGenerations.current.set(
-                            track.id,
-                            (lyricsEditGenerations.current.get(track.id) ?? 0) +
-                              1,
-                          );
-                          setPositions((current) => ({
-                            ...current,
-                            [track.id]: {
-                              ...current[track.id],
-                              lyrics: event.target.value,
-                              draftDirty: true,
-                            },
-                          }));
+                      <LibraryPrimaryArtistControl
+                        locale={locale}
+                        positionNumber={track.displayed_number}
+                        model={{
+                          selectedId: track.primary_artist.selected_artist_id,
+                          options: uniqueArtists(credits).map((artist) => ({
+                            id: artist.artist_id,
+                            name:
+                              artist.credit_name || artist.artist_name || "",
+                          })),
+                          disabled:
+                            !position?.metadata || position.writePending,
+                          onChange: (id) =>
+                            void selectPrimaryArtist(track.id, id),
                         }}
                       />
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className={releaseControlButtonClass}
-                        disabled={
-                          !position?.metadata ||
+                    )}
+                    <LibraryPositionLyricsView
+                      locale={locale}
+                      value={position?.lyrics ?? ""}
+                      onChange={(value) => {
+                        lyricsEditGenerations.current.set(
+                          track.id,
+                          (lyricsEditGenerations.current.get(track.id) ?? 0) +
+                            1,
+                        );
+                        setPositions((current) => ({
+                          ...current,
+                          [track.id]: {
+                            ...current[track.id],
+                            lyrics: value,
+                            draftDirty: true,
+                          },
+                        }));
+                      }}
+                      saveDisabled={
+                        !position?.metadata ||
+                        Boolean(
                           position.writePending ||
-                          position.saving ||
-                          Boolean(position.readError)
-                        }
-                        onClick={() => void saveLyrics(track.id)}
-                      >
-                        {text("saveLyrics")}
-                      </button>
-                      <button
-                        type="button"
-                        className={releaseControlButtonClass}
-                        disabled={
-                          !position?.metadata ||
-                          position.writePending ||
-                          position.saving ||
-                          Boolean(position.readError)
-                        }
-                        onClick={() => void saveLyrics(track.id, true)}
-                      >
-                        {text("saveExplicitlyEmpty")}
-                      </button>
-                      <button
-                        type="button"
-                        className={releaseControlButtonClass}
-                        disabled={
-                          !publication?.can_apply_manual_lyrics ||
-                          !hasManualLyrics ||
-                          Boolean(position?.readError) ||
-                          Boolean(position?.applyOperationID) ||
-                          Boolean(publication.active_attempt) ||
-                          position?.applying
-                        }
-                        onClick={() => void applyLyrics(track.id)}
-                      >
-                        {text("applySavedLyrics")}
-                      </button>
-                    </div>
+                            position.saving ||
+                            position.readError,
+                        )
+                      }
+                      applyDisabled={
+                        !publication?.can_apply_manual_lyrics ||
+                        !hasManualLyrics ||
+                        Boolean(
+                          position?.readError ||
+                            position?.applyOperationID ||
+                            publication.active_attempt ||
+                            position?.applying,
+                        )
+                      }
+                      onSave={() => void saveLyrics(track.id)}
+                      onClear={() => void saveLyrics(track.id, true)}
+                      onApply={() => void applyLyrics(track.id)}
+                    />
                   </>
                 ) : undefined
               }
@@ -2149,7 +2101,6 @@ export function LibraryReleaseScreen({
           </Fragment>
         );
       })}
-    </section>
+    </LibraryReleaseWorkspaceView>
   );
-  return body;
 }

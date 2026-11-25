@@ -34,20 +34,22 @@ import {
   metadataFilledSummary,
   metadataListActions,
 } from "../../ui/features/library/MetadataFieldPresentation";
+import { ArtistCreditRowsEditorView } from "../../ui/features/library/metadata/ArtistCreditRowsEditorView";
+import type {
+  ArtistCreditDraft,
+  ArtistCreditResolutionStatus,
+  ArtistCreditRow,
+} from "../../ui/features/library/metadata/artistCreditDraft";
+import { artistCreditMessages } from "../../ui/features/library/metadata/artistCreditMessages";
 import {
   focusMetadataAction,
   focusMetadataKey,
 } from "../../ui/features/library/metadata/metadataEditorFocus";
 import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
-import { ArtistCreditRowsEditor } from "./ArtistCreditRowsEditor";
 import {
-  type ArtistCreditDraft,
-  type ArtistCreditResolutionStatus,
-  type ArtistCreditRow,
   adaptArtistCreditMetadata,
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
-import { artistCreditMessages } from "./artistCreditMessages";
 import type { GenreReference } from "./GenreMetadataEditor";
 import {
   createMetadataDraftRowKey,
@@ -1756,7 +1758,8 @@ function LibraryScopedMetadataEditorSession({
             {text.groups.artistCredits}
           </summary>
           <div className="grid min-w-0 gap-2 p-2">
-            <ArtistCreditRowsEditor
+            <ArtistCreditRowsEditorView
+              locale={locale}
               draft={editing ? artistCreditDraft : savedArtistCredit}
               savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
               baseline={artistCreditBaseline}
