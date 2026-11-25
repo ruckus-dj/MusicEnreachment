@@ -1,4 +1,3 @@
-import { Checkbox } from "../../components/ui";
 import { useI18n } from "../../i18n";
 import { demoPathInside } from "../../infrastructure/demoPathValidation";
 import type { UiNotice } from "../../infrastructure/uiNotice";
@@ -18,9 +17,7 @@ import {
 	originalArtistName,
 	publicationMetadataIssueMessages,
 } from "../library/catalogData";
-import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
-import { LibraryPositionConfirmButton } from "../library/LibraryPositionWorkspace";
-import { PublicationPreviewDetailsView } from "../library/PublicationPreviewDetailsView";
+import { ContextPublicationPreviewView } from "./ContextPublicationPreviewView";
 import { individualPublicationDetails } from "./individualPublicationDetails";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
@@ -67,7 +64,6 @@ export function ContextPublicationPreview({
 	onSuccess: (notice: UiNotice) => void;
 }) {
 	const { locale } = useI18n();
-	const copy = firstPublicationPreviewMessages[locale];
 	const positionId = plan.positionId;
 	if (!positionId || plan.mode !== "local" || plan.groupId) return null;
 
@@ -199,43 +195,23 @@ export function ContextPublicationPreview({
 	};
 
 	return (
-		<section className="min-w-0 space-y-3" aria-label={copy.section}>
-			{error && (
-				<p role="alert" className="text-[var(--error)]">
-					{error}
-				</p>
-			)}
-			{readOnly && <p role="note">{copy.comparisonReadOnly}</p>}
-			<p>{[reason, ...notices].join(" · ")}</p>
-			{details && (
-				<PublicationPreviewDetailsView
-					locale={locale}
-					state={details}
-					sourceGroupName={`demo-publication-source-${positionId}`}
-				/>
-			)}
-			{!readOnly && (
-				<>
-					{downgrade && (
-						<Checkbox
-							isSelected={confirmDowngrade}
-							isDisabled={Boolean(error)}
-							onChange={(checked) => onPlan(plan, checked)}
-						>
-							<span className="checkbox" />
-							{formatPublicationMessage(locale, "confirmDowngrade", {
-								count: 1,
-							})}
-						</Checkbox>
-					)}
-					<LibraryPositionConfirmButton
-						locale={locale}
-						label={current ? "retainedRepublish" : "publish"}
-						disabled={!canConfirm}
-						onConfirm={confirm}
-					/>
-				</>
-			)}
-		</section>
+		<ContextPublicationPreviewView
+			locale={locale}
+			error={error}
+			readOnly={readOnly}
+			reason={reason}
+			notices={notices}
+			details={details}
+			sourceGroupName={`demo-publication-source-${positionId}`}
+			downgrade={downgrade}
+			downgradeLabel={formatPublicationMessage(locale, "confirmDowngrade", {
+				count: 1,
+			})}
+			confirmDowngrade={confirmDowngrade}
+			canConfirm={canConfirm}
+			hasCurrentPublication={Boolean(current)}
+			onDowngradeChange={(checked) => onPlan(plan, checked)}
+			onConfirm={confirm}
+		/>
 	);
 }

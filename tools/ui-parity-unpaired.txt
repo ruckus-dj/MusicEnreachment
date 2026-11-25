@@ -11,6 +11,7 @@ docs/app-design-react/src/components/styles/matchingStyles.ts
 docs/app-design-react/src/components/themePreferenceConfig.ts
 docs/app-design-react/src/components/ui/index.tsx
 docs/app-design-react/src/features/incoming/IncomingScreen.tsx
+docs/app-design-react/src/features/incoming/IncomingScreenView.tsx
 docs/app-design-react/src/features/incoming/incomingMessages.ts
 docs/app-design-react/src/features/incoming/incomingModel.ts
 docs/app-design-react/src/features/incoming/incomingOverview.ts
@@ -65,6 +66,7 @@ docs/app-design-react/src/features/matching/matchingSearchPickerMessages.ts
 docs/app-design-react/src/features/operations/OperationsScreen.tsx
 docs/app-design-react/src/features/operations/operationMessages.ts
 docs/app-design-react/src/features/publication/ContextPublicationPreview.tsx
+docs/app-design-react/src/features/publication/ContextPublicationPreviewView.tsx
 docs/app-design-react/src/features/publication/PublicationFlow.tsx
 docs/app-design-react/src/features/publication/PublicationInspector.tsx
 docs/app-design-react/src/features/publication/PublicationPreview.tsx
@@ -77,11 +79,12 @@ docs/app-design-react/src/features/publication/publicationArtistNotices.ts
 docs/app-design-react/src/features/publication/publicationMessages.ts
 docs/app-design-react/src/features/publication/publicationMetadataDiff.tsx
 docs/app-design-react/src/features/publication/publicationOutput.ts
-docs/app-design-react/src/features/settings/GenreCatalogDemoProvider.tsx
 docs/app-design-react/src/features/settings/SettingsScreen.tsx
+docs/app-design-react/src/features/settings/SettingsScreenView.tsx
 docs/app-design-react/src/features/settings/ToolLifecycleDemo.ts
 docs/app-design-react/src/features/settings/publicationTemplateDemo.ts
 docs/app-design-react/src/features/settings/settingsDraft.ts
+docs/app-design-react/src/features/settings/useSettingsScreenDemoProvider.ts
 docs/app-design-react/src/features/settings/useToolCatalogDemoProvider.ts
 docs/app-design-react/src/features/setup/SetupScreen.tsx
 docs/app-design-react/src/features/setup/setupToolsLifecycle.ts
@@ -95,6 +98,7 @@ docs/app-design-react/src/features/sources/sourceInventory.ts
 docs/app-design-react/src/features/sources/sourceMessages.ts
 docs/app-design-react/src/features/sources/sourceProcessingModel.ts
 docs/app-design-react/src/features/tools/GitHubTokenDemo.tsx
+docs/app-design-react/src/features/tools/useGitHubTokenDemo.ts
 docs/app-design-react/src/fixtures/LocalReleaseDemoGenres.tsx
 docs/app-design-react/src/fixtures/directoryBrowseDemo.ts
 docs/app-design-react/src/fixtures/fixtureMatchingBoard.ts

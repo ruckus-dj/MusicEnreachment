@@ -6,15 +6,8 @@ import {
 	compareSourceFiles,
 	readSourceTrackOrder,
 } from "../matching/sourceFileOrder";
-import {
-	IncomingGroupsOverviewView,
-	type IncomingGroupViewRow,
-} from "./IncomingGroupsOverviewView";
-import {
-	IncomingGroupsPanel,
-	incomingGroupsEmpty,
-	IncomingPageHeading,
-} from "./IncomingGroupsPanel";
+import type { IncomingGroupViewRow } from "./IncomingGroupsOverviewView";
+import { IncomingScreenView } from "./IncomingScreenView";
 import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import {
 	artistName,
@@ -194,23 +187,6 @@ export function IncomingScreen({
 		locale,
 		roots.map((root) => root.path),
 	);
-	const overviewLabels = {
-		caption: msg("overviewCaption"),
-		group: msg("group"),
-		filesPaths: msg("uniqueFilesPaths"),
-		ready: msg("readyTotal"),
-		status: msg("evaluationState"),
-		empty: incomingGroupsEmpty(locale),
-		number: msg("columnNumber"),
-		title: msg("columnTitle"),
-		artist: msg("columnArtist"),
-		album: msg("columnAlbum"),
-		actions: msg("columnActions"),
-		noTitle: msg("missingFileTitle"),
-		noValue: msg("noValue"),
-		expand: (name: string) => msg("filesIn", { name }),
-		openGroup: (name: string) => msg("openGroup", { name }),
-	};
 	const viewRows = rows.map(
 		({
 			group,
@@ -281,87 +257,31 @@ export function IncomingScreen({
 		else setLocalReleases(nextReleases);
 		updateState();
 	};
+	const notice =
+		state.notice ||
+		(state.uiNotice
+			? formatUiNotice(locale, state.uiNotice)
+			: state.noticeDescriptor?.code === "automaticPublished"
+				? msg("automaticNotice", state.noticeDescriptor.params)
+				: state.noticeDescriptor
+					? msg("noAutomaticNotice")
+					: "");
 	return (
-		<section
-			aria-labelledby="incoming-title"
-			className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3"
-		>
-			<IncomingPageHeading
-				locale={locale}
-				action={{ label: msg("process"), onPress: runAuto }}
-			/>
-			<ol
-				className="mb-[10px] grid list-none grid-cols-4 gap-0 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--raised)] p-0 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1"
-				aria-label={msg("stages")}
-			>
-				<li className="flex min-w-0 items-center gap-2 px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10">
-					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-						01
-					</b>
-					<span className="min-w-0">{msg("groupFiles")}</span>
-				</li>
-				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t max-[600px]:border-[var(--line)]">
-					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-						02
-					</b>
-					<span className="min-w-0">{msg("match")}</span>
-				</li>
-				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-l-0 max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
-					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-						03
-					</b>
-					<span className="min-w-0">
-						{msg("allConfidentAutomatic")}{" "}
-						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
-							→
-						</i>{" "}
-						{msg("automaticDirection")}
-					</span>
-				</li>
-				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
-					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-						04
-					</b>
-					<span className="min-w-0">
-						{msg("otherwiseManual")}{" "}
-						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
-							→
-						</i>{" "}
-						{msg("manualDirection")}
-					</span>
-				</li>
-			</ol>
-			{(state.uiNotice || state.notice || state.noticeDescriptor) && (
-				<p
-					role="status"
-					className="mb-[10px] border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-[10px] py-[7px] text-xs text-[var(--ink)]"
-				>
-					{state.notice ||
-						(state.uiNotice
-							? formatUiNotice(locale, state.uiNotice)
-							: state.noticeDescriptor?.code === "automaticPublished"
-								? msg("automaticNotice", state.noticeDescriptor.params)
-								: state.noticeDescriptor
-									? msg("noAutomaticNotice")
-									: "")}
-				</p>
-			)}
-			<IncomingGroupsPanel locale={locale} count={viewRows.length}>
-				<IncomingGroupsOverviewView
-					labels={overviewLabels}
-					rows={viewRows}
-					onToggle={toggleGroup}
-					onMove={(groupId, memberId, targetGroupId, focus) => {
-						if (focus) commitMove(groupId, memberId, targetGroupId);
-						else moveFile(groupId, memberId, targetGroupId);
-					}}
-					onSplit={(groupId, memberId) => commitSplit(groupId, memberId)}
-					disclosureRef={(groupId, node) => {
-						if (node) groupDisclosureRefs.current.set(groupId, node);
-						else groupDisclosureRefs.current.delete(groupId);
-					}}
-				/>
-			</IncomingGroupsPanel>
-		</section>
+		<IncomingScreenView
+			locale={locale}
+			rows={viewRows}
+			notice={notice}
+			onProcess={runAuto}
+			onToggleGroup={toggleGroup}
+			onMove={(groupId, memberId, targetGroupId, focus) => {
+				if (focus) commitMove(groupId, memberId, targetGroupId);
+				else moveFile(groupId, memberId, targetGroupId);
+			}}
+			onSplit={(groupId, memberId) => commitSplit(groupId, memberId)}
+			disclosureRef={(groupId, node) => {
+				if (node) groupDisclosureRefs.current.set(groupId, node);
+				else groupDisclosureRefs.current.delete(groupId);
+			}}
+		/>
 	);
 }
