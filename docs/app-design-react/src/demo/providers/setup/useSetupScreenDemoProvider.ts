@@ -9,6 +9,7 @@ import {
 	browseDemoDirectory,
 	demoDirectoryStart,
 } from "../../fixtures/directoryBrowseDemo";
+import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import {
 	isValidMusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
@@ -326,7 +327,7 @@ export function useSetupScreenDemoProvider({
 				return;
 			}
 			update({ currentOutput: outputPath });
-			window.location.hash = "review";
+			window.location.hash = incomingGroupsListHref();
 			return;
 		}
 		setNotice("");

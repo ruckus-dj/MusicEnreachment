@@ -29,7 +29,7 @@ it("renders one keyboard-operable four-option filter radio group", () => {
 it("opens Incoming from the root when the fixture has registered sources", () => {
 	window.history.replaceState(null, "", "#/");
 	render(<CatalogDemo />);
-	expect(window.location.hash).toBe("#review");
+	expect(window.location.hash).toBe("#/incoming-groups");
 });
 
 it("opens the exact release destination from an album row", () => {

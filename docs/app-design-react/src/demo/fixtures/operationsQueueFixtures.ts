@@ -1,3 +1,4 @@
+import { incomingGroupMatchingHref } from "../providers/incoming/incomingGroupsRoute";
 import {
 	originalArtistName,
 	originalFiles,
@@ -96,7 +97,7 @@ for (const group of incomingGroups) {
 		operation: "matchIncoming",
 		target: group.title,
 		targetDetail: originalArtistName(group.artistId),
-		targetHref: `#match/${group.id}`,
+		targetHref: incomingGroupMatchingHref(group.id),
 	});
 }
 

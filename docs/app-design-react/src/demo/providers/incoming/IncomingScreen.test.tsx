@@ -27,7 +27,7 @@ function renderOverview(state = createIncomingState()) {
 }
 
 beforeEach(() => {
-	window.history.replaceState(null, "", "#review");
+	window.history.replaceState(null, "", "#/incoming-groups");
 	window.localStorage.setItem("music-design-v2-language", "ru");
 });
 
@@ -54,7 +54,7 @@ it("renders one four-column overview with source paths and link navigation", () 
 	const north = screen.getByRole("link", {
 		name: "Открыть группу «Northern lines»",
 	});
-	expect(north).toHaveAttribute("href", "#match/north");
+	expect(north).toHaveAttribute("href", "#/incoming-groups/north/matching");
 	const row = north.closest("tr");
 	if (!row) throw new Error("Missing north overview row");
 	expect(within(row).getByText("Mira Vale")).toBeInTheDocument();
@@ -69,7 +69,7 @@ it("renders one four-column overview with source paths and link navigation", () 
 });
 
 it("restores the expanded group from a shared link", () => {
-	window.history.replaceState(null, "", "#review?group=north");
+	window.history.replaceState(null, "", "#/incoming-groups?group=north");
 	renderOverview();
 	expect(
 		screen.getByRole("button", { name: "Файлы группы «Northern lines»" }),
@@ -86,7 +86,7 @@ it("restores the expanded group from a shared link", () => {
 it("orders expanded source files by tag position rather than filename", () => {
 	const files = structuredClone(incomingFixtures.files);
 	files["hours-f1"].tags.TRACKNUMBER = ["9"];
-	window.history.replaceState(null, "", "#review?group=hours");
+	window.history.replaceState(null, "", "#/incoming-groups?group=hours");
 	render(
 		<I18nProvider>
 			<IncomingScreen
@@ -191,7 +191,7 @@ const draftAssignment = (
 });
 
 it("splits one exact file only on a menu action, preserving unrelated drafts", async () => {
-	window.history.replaceState(null, "", "#review?group=north");
+	window.history.replaceState(null, "", "#/incoming-groups?group=north");
 	const files = structuredClone(incomingFixtures.files);
 	const northTags = structuredClone(files["north-f1"].tags);
 	const initial = createIncomingState();
@@ -263,9 +263,11 @@ it("splits one exact file only on a menu action, preserving unrelated drafts", a
 	const routes = screen
 		.getAllByRole("link", { name: /Открыть группу/ })
 		.map((link) => link.getAttribute("href"));
-	const sourceIndex = routes.indexOf("#match/north");
+	const sourceIndex = routes.indexOf("#/incoming-groups/north/matching");
 	expect(sourceIndex).toBeGreaterThanOrEqual(0);
-	expect(routes[sourceIndex + 1]).toBe(`#match/${splitGroup.id}`);
+	expect(routes[sourceIndex + 1]).toBe(
+		`#/incoming-groups/${splitGroup.id}/matching`,
+	);
 	expect(splitGroup).toMatchObject({
 		title: "Northern Lines",
 		artistId: north.artistId,
@@ -298,7 +300,7 @@ it("splits one exact file only on a menu action, preserving unrelated drafts", a
 });
 
 it("offers a new group only for a ready file when another ready file remains", async () => {
-	window.history.replaceState(null, "", "#review?group=north");
+	window.history.replaceState(null, "", "#/incoming-groups?group=north");
 	const files = structuredClone(incomingFixtures.files);
 	files["north-f2"].available = false;
 	files["north-f2"].locations = [];

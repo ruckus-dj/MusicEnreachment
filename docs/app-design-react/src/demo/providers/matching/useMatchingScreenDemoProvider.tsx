@@ -11,6 +11,7 @@ import { matchingLinksCopy } from "../../../ui/features/matching/matchingLinksCo
 import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
 import { useMatchingLinkResultFocus } from "../../../ui/features/matching/useMatchingLinkResultFocus";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
+import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import {
 	type Assignment,
 	artistName,
@@ -119,7 +120,7 @@ export function useMatchingScreenDemoProvider({
 	const receipt = state.receipts
 		.filter((item) => item.groupId === activeGroupId)
 		.at(-1);
-	const backHref = "#review";
+	const backHref = incomingGroupsListHref(group ? [group.id] : []);
 	const backLabel = matchingMessage(locale, "backToIncoming");
 
 	if (receipt && dismissedReceiptId !== receipt.id) {

@@ -38,6 +38,11 @@ import {
 	selectDemoRelease,
 } from "./fixtures/localReleaseDemo";
 import { IncomingScreen } from "./providers/incoming/IncomingScreen";
+import {
+	incomingGroupMatchingHref,
+	incomingGroupsListHref,
+	parseIncomingGroupsRoute,
+} from "./providers/incoming/incomingGroupsRoute";
 import { createIncomingState } from "./providers/incoming/incomingModel";
 import {
 	combineLibraryAlbumEntries,
@@ -152,7 +157,7 @@ const subscribeRoute = (listener: () => void) => {
 };
 
 function openIncomingFromHome() {
-	window.location.hash = "review";
+	window.location.hash = incomingGroupsListHref();
 }
 
 const routeId = (value: string) => {
@@ -237,7 +242,8 @@ export function CatalogDemo({
 		() => "library",
 	);
 	const route = routePath;
-	const [routeName, routeQuery] = route.split("?", 2);
+	const [routeName] = route.split("?", 1);
+	const incomingRoute = parseIncomingGroupsRoute(route);
 	const {
 		view,
 		query,
@@ -536,10 +542,7 @@ export function CatalogDemo({
 		focusKey: `${headingRoute}:${preview}`,
 		titleKey: `${route}:${preview}`,
 		titleSuffix: msg("documentTitleSuffix"),
-		scrollResetKey:
-			routeName === "review" || routeName.startsWith("match/")
-				? routeName
-				: undefined,
+		scrollResetKey: incomingRoute ? routeName : undefined,
 	});
 	const [artistQuery, setArtistQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -996,7 +999,7 @@ export function CatalogDemo({
 				}}
 			/>
 		);
-	if (routeName === "review")
+	if (incomingRoute?.view === "list")
 		return (
 			<IncomingScreen
 				destination={publicationDestination}
@@ -1010,9 +1013,11 @@ export function CatalogDemo({
 				onReleases={setImportedReleases}
 			/>
 		);
-	const localReleaseRoute = /^match\/([^/]+)\/local-release$/.exec(routeName);
-	if (localReleaseRoute) {
-		const groupId = routeId(localReleaseRoute[1]);
+	if (
+		incomingRoute?.view === "matching" &&
+		incomingRoute.creatingLocalRelease
+	) {
+		const { groupId } = incomingRoute;
 		const group = incoming.groups.find((item) => item.id === groupId);
 		if (!group)
 			return (
@@ -1024,11 +1029,13 @@ export function CatalogDemo({
 					providers={providers}
 				/>
 			);
-		const returnToMatching = (prepareReleaseId?: string) => {
-			const query = prepareReleaseId
-				? `?${new URLSearchParams({ prepare: prepareReleaseId })}`
-				: "";
-			window.location.replace(`#match/${encodeURIComponent(group.id)}${query}`);
+		const returnToMatching = (
+			selection: { prepareReleaseId?: string; localReleaseId?: string } = {},
+			releaseId?: string,
+		) => {
+			window.location.replace(
+				incomingGroupMatchingHref(group.id, releaseId, selection),
+			);
 		};
 		const suggested = localReleaseSuggestions(group, files, providerArtists);
 		return (
@@ -1082,13 +1089,16 @@ export function CatalogDemo({
 					const candidate = providers.find((item) => item.id === id);
 					if (!candidate) return;
 					if (candidate.provider !== "Local") {
-						returnToMatching(candidate.providerId ?? candidate.id);
+						returnToMatching(
+							{ prepareReleaseId: candidate.providerId ?? candidate.id },
+							incomingRoute.releaseId,
+						);
 						return;
 					}
 					setIncoming((current) =>
 						selectDemoRelease(current, group.id, candidate),
 					);
-					returnToMatching();
+					returnToMatching({ localReleaseId: candidate.id });
 				}}
 				onSave={(draft) => {
 					const release = releaseDraftToRecord(
@@ -1107,17 +1117,24 @@ export function CatalogDemo({
 							true,
 						),
 					);
-					returnToMatching();
+					returnToMatching({ localReleaseId: release.id });
 				}}
-				onCancel={() => returnToMatching()}
+				onCancel={() =>
+					window.location.replace(
+						incomingGroupMatchingHref(group.id, incomingRoute.releaseId, {
+							localReleaseId: incomingRoute.localReleaseId,
+							prepareReleaseId: incomingRoute.prepareReleaseId,
+						}),
+					)
+				}
 			/>
 		);
 	}
-	if (routeName.startsWith("match/"))
+	if (incomingRoute?.view === "matching")
 		return (
 			<MatchingScreen
 				destination={publicationDestination}
-				groupId={routeId(routeName.slice(6))}
+				groupId={incomingRoute.groupId}
 				state={incoming}
 				onState={setIncoming}
 				files={files}
@@ -1125,10 +1142,12 @@ export function CatalogDemo({
 				artists={providerArtists}
 				releases={releases}
 				onReleases={setImportedReleases}
-				createLocalReleaseHref={`#match/${encodeURIComponent(routeId(routeName.slice(6)))}/local-release`}
-				prepareReleaseId={
-					new URLSearchParams(routeQuery).get("prepare") ?? undefined
-				}
+				createLocalReleaseHref={incomingGroupMatchingHref(
+					incomingRoute.groupId,
+					incomingRoute.releaseId,
+					{ ...incomingRoute, creatingLocalRelease: true },
+				)}
+				prepareReleaseId={incomingRoute.prepareReleaseId}
 			/>
 		);
 	if (routeName === "/settings")
@@ -1254,6 +1273,12 @@ export function CatalogDemo({
 					deletions,
 					provider: operationsProvider,
 					isTargetCurrent: (href) => {
+						const incomingTarget = parseIncomingGroupsRoute(href);
+						if (incomingTarget?.view === "matching")
+							return incoming.groups.some(
+								(group) =>
+									group.id === incomingTarget.groupId && !group.processed,
+							);
 						const [route, id] = href.slice(1).split("/");
 						switch (route) {
 							case "track":
@@ -1264,10 +1289,6 @@ export function CatalogDemo({
 								return releases.some((release) => release.id === id);
 							case "artist":
 								return artists.some((artist) => artist.id === id);
-							case "match":
-								return incoming.groups.some(
-									(group) => group.id === id && !group.processed,
-								);
 							default:
 								return false;
 						}

@@ -37,6 +37,7 @@ import {
 	browseDemoDirectory,
 	demoDirectoryStart,
 } from "../../fixtures/directoryBrowseDemo";
+import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import type { SourceFiles } from "../library/catalogData";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
 import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
@@ -362,7 +363,9 @@ export function SourcesScreen({
 								headingId="source-title"
 								headingRef={rootHeading}
 								sourcesHref={demoSourcesHref}
-								incomingHref={root.available === true ? "#review" : undefined}
+								incomingHref={
+									root.available === true ? incomingGroupsListHref() : undefined
+								}
 							/>
 						}
 						status={noticeNode}

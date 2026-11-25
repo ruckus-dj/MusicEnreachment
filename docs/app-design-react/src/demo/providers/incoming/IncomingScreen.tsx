@@ -19,6 +19,11 @@ import {
 import type { CatalogArtist } from "../library/catalogData";
 import { formatUiNotice } from "../notices/uiNotice";
 import {
+	incomingGroupMatchingHref,
+	incomingGroupsListHref,
+	parseIncomingGroupsRoute,
+} from "./incomingGroupsRoute";
+import {
 	artistName,
 	createIncomingState,
 	type IncomingFiles,
@@ -87,7 +92,9 @@ export function IncomingScreen({
 		groupId: string;
 		preventScroll: boolean;
 	} | null>(null);
-	const expanded = new URLSearchParams(hash.split("?")[1]).getAll("group");
+	const incomingRoute = parseIncomingGroupsRoute(hash);
+	const expanded =
+		incomingRoute?.view === "list" ? incomingRoute.expandedGroupIds : [];
 	useEffect(() => {
 		const onHashChange = () => setHash(window.location.hash);
 		window.addEventListener("hashchange", onHashChange);
@@ -117,12 +124,10 @@ export function IncomingScreen({
 		givenState ? onState?.(next) : setLocalState(next);
 	};
 	function toggleGroup(id: string) {
-		const params = new URLSearchParams();
 		const ids = expanded.includes(id)
 			? expanded.filter((openId) => openId !== id)
 			: [...expanded, id];
-		for (const groupId of ids) params.append("group", groupId);
-		window.location.hash = params.size ? `#review?${params}` : "#review";
+		window.location.hash = incomingGroupsListHref(ids);
 	}
 	function moveFile(sourceId: string, fileId: string, targetId: string) {
 		const source = state.groups.find((group) => group.id === sourceId);
@@ -239,7 +244,7 @@ export function IncomingScreen({
 				members: memberCount,
 				paths: pathCount,
 				ready: readyCount,
-				matchingHref: `#match/${group.id}`,
+				matchingHref: incomingGroupMatchingHref(group.id),
 				opened,
 				files: fileRows,
 				pathEvidence: paths,

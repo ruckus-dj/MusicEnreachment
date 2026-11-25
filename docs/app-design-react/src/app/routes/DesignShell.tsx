@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
 import {
+	incomingGroupsListHref,
+	parseIncomingGroupsRoute,
+} from "../../demo/providers/incoming/incomingGroupsRoute";
+import {
 	demoSourcesHref,
 	parseDemoSourceRoute,
 } from "../../demo/providers/sources/sourceDemoRoute";
@@ -28,17 +32,18 @@ function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (path === "/operations") return "operations";
 	if (path === "/settings") return "settings";
 	if (path === "/own-catalog") return "local";
+	if (parseIncomingGroupsRoute(path)) return "review";
 	if (parseDemoSourceRoute(path)) return "sources";
 	const route = path.split("/", 1)[0];
 	if (
 		route === "operations" ||
 		route === "settings" ||
 		route === "sources" ||
+		route === "review" ||
 		route === "local"
 	)
 		return undefined;
 	if (libraryRoutes.includes(route)) return "library";
-	if (route === "match") return "review";
 	return shellSectionId(route);
 }
 
@@ -62,7 +67,7 @@ export function DesignShell({
 				{
 					brandHref: "#/",
 					sectionLinks: {
-						review: "#review",
+						review: incomingGroupsListHref(),
 						library: "#library",
 						local: "#/own-catalog",
 						sources: demoSourcesHref,

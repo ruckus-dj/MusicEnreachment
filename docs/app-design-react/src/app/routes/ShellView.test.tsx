@@ -15,7 +15,7 @@ function shell(incomingCount: number, withSetupLink: boolean) {
 				{
 					id: "review",
 					label: "Incoming",
-					href: "#review",
+					href: "#/incoming-groups",
 					count: incomingCount,
 				},
 			]}
