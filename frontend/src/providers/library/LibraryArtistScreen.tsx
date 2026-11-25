@@ -14,17 +14,21 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
-import { ArtistReleasePositionsView } from "../../ui/features/library/ArtistReleasePositionsView";
 import {
-  type ArtistDeletionAction,
-  type ArtistEditionModel,
-  type ArtistHeadingModel,
-  ArtistMissingGroupChooser,
-  type ArtistMissingGroupCredit,
-  type ArtistMissingGroupModel,
-  type ArtistReleaseRowModel,
-  type ArtistReleasesModel,
-  ArtistScreenView,
+  ApplicationLibraryArtistBinder,
+  type ApplicationLibraryArtistModel,
+  type ApplicationRouteProviderProps,
+} from "../../ui/app/ApplicationRouteOutlet";
+import { ArtistMissingGroupChooser } from "../../ui/features/library/ArtistMissingGroupChooserView";
+import { ArtistReleasePositionsView } from "../../ui/features/library/ArtistReleasePositionsView";
+import type {
+  ArtistDeletionAction,
+  ArtistEditionModel,
+  ArtistHeadingModel,
+  ArtistMissingGroupCredit,
+  ArtistMissingGroupModel,
+  ArtistReleaseRowModel,
+  ArtistReleasesModel,
 } from "../../ui/features/library/ArtistScreenView";
 import { catalogueMessage } from "../../ui/features/library/catalogueMessages";
 import type { LibraryStateFilter } from "../../ui/features/library/LibraryCatalogFilterView";
@@ -111,7 +115,21 @@ function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
   );
 }
 
-export function LibraryArtistScreen({ artistId }: { artistId: string }) {
+export function ProductionLibraryArtistBinder({
+  artistId,
+  children,
+}: { artistId: string } & ApplicationRouteProviderProps) {
+  const model = useLibraryArtistModel(artistId);
+  return (
+    <ApplicationLibraryArtistBinder model={model}>
+      {children}
+    </ApplicationLibraryArtistBinder>
+  );
+}
+
+function useLibraryArtistModel(
+  artistId: string,
+): ApplicationLibraryArtistModel {
   const { locale } = useI18n();
   const copy = (
     key: Parameters<typeof catalogueMessage>[1],
@@ -241,25 +259,21 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     releasesQuery.data?.status === 200 ? releasesQuery.data.data : undefined;
 
   if (!artist) {
-    return (
-      <ArtistScreenView
-        locale={locale}
-        libraryHref={libraryRouteHref(route)}
-        heading={null}
-        status={
-          artistQuery.isLoading
-            ? { state: "loading", message: copy("loadingArtist") }
-            : error
-              ? {
-                  state: "error",
-                  message: error,
-                  retryLabel: copy("retry"),
-                  onRetry: () => void artistQuery.refetch(),
-                }
-              : undefined
-        }
-      />
-    );
+    return {
+      locale,
+      libraryHref: libraryRouteHref(route),
+      heading: null,
+      status: artistQuery.isLoading
+        ? { state: "loading", message: copy("loadingArtist") }
+        : error
+          ? {
+              state: "error",
+              message: error,
+              retryLabel: copy("retry"),
+              onRetry: () => void artistQuery.refetch(),
+            }
+          : undefined,
+    };
   }
 
   const heading: ArtistHeadingModel = {
@@ -420,21 +434,19 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             pagination,
           };
 
-  return (
-    <ArtistScreenView
-      locale={locale}
-      libraryHref={libraryRouteHref(route)}
-      heading={heading}
-      deletion={deletion}
-      metadataCard={metadataCard}
-      query={searchInput}
-      filter={stateFilterFor(route)}
-      onQueryChange={changeQuery}
-      onFilterChange={changeFilter}
-      editionsKey={artistId}
-      releases={releaseState}
-    />
-  );
+  return {
+    locale,
+    libraryHref: libraryRouteHref(route),
+    heading,
+    deletion,
+    metadataCard,
+    query: searchInput,
+    filter: stateFilterFor(route),
+    onQueryChange: changeQuery,
+    onFilterChange: changeFilter,
+    editionsKey: artistId,
+    releases: releaseState,
+  };
 }
 
 function ReleasePositions({

@@ -21,7 +21,7 @@ import {
   type IncomingGroupsRoute,
   parseIncomingGroupsRoute,
 } from "../../providers/incoming/incomingGroupsRoute";
-import { LibraryArtistScreen } from "../../providers/library/LibraryArtistScreen";
+import { ProductionLibraryArtistBinder } from "../../providers/library/LibraryArtistScreen";
 import { LibraryReleaseScreen } from "../../providers/library/LibraryReleaseScreen";
 import { ProductionLibraryCatalogBinder } from "../../providers/library/LibraryScreen";
 import {
@@ -280,8 +280,12 @@ export function AppShell() {
         providerProps={emptyProviderProps}
       />
     ) : state && route.startsWith("/library/artists/") ? (
-      <LibraryArtistScreen
-        artistId={parseLibraryArtistRoute(hash)?.artistId ?? ""}
+      <ApplicationRouteOutlet
+        route="library-artist"
+        provider={ProductionLibraryArtistBinder}
+        providerProps={{
+          artistId: parseLibraryArtistRoute(hash)?.artistId ?? "",
+        }}
       />
     ) : state && route.startsWith("/library/releases/") ? (
       <LibraryReleaseScreen

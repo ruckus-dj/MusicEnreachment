@@ -10,10 +10,21 @@ import {
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
-import { LibraryArtistScreen } from "./LibraryArtistScreen";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { ProductionLibraryArtistBinder } from "./LibraryArtistScreen";
 
 const artistId = "123e4567-e89b-42d3-a456-426614174000";
 const releaseId = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+
+function LibraryArtistRoute({ artistId }: { artistId: string }) {
+  return (
+    <ApplicationRouteOutlet
+      route="library-artist"
+      provider={ProductionLibraryArtistBinder}
+      providerProps={{ artistId }}
+    />
+  );
+}
 
 afterEach(() => {
   cleanup();
@@ -219,7 +230,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
   });
   render(
     <QueryClientProvider client={client}>
-      <LibraryArtistScreen artistId={artistId} />
+      <LibraryArtistRoute artistId={artistId} />
     </QueryClientProvider>,
   );
 
@@ -390,7 +401,7 @@ it("preserves a conflicting draft and refreshes a reopened artist after a late s
   });
   const renderScreen = (id: string) => (
     <QueryClientProvider client={client}>
-      <LibraryArtistScreen artistId={id} />
+      <LibraryArtistRoute artistId={id} />
     </QueryClientProvider>
   );
   const rendered = render(renderScreen(artistId));

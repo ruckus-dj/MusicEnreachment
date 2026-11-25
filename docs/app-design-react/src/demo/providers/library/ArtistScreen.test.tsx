@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
 import { ArtistScreen } from "./ArtistScreen";
 import {
 	originalArtists,
@@ -49,11 +50,15 @@ it.each([
 		rootAvailable: state === "missing" ? true : undefined,
 	};
 	render(
-		<ArtistScreen
-			artistId={source.artistId}
-			artists={originalArtists}
-			releases={[release]}
-			files={originalFiles}
+		<ApplicationRouteOutlet
+			route="library-artist"
+			provider={ArtistScreen}
+			providerProps={{
+				artistId: source.artistId,
+				artists: originalArtists,
+				releases: [release],
+				files: originalFiles,
+			}}
 		/>,
 	);
 
@@ -71,11 +76,15 @@ it("distinguishes a missing file when the publication root is unavailable", () =
 	release.tracks = [track];
 	track.observedFile = { state: "missing", rootAvailable: false };
 	render(
-		<ArtistScreen
-			artistId={source.artistId}
-			artists={originalArtists}
-			releases={[release]}
-			files={originalFiles}
+		<ApplicationRouteOutlet
+			route="library-artist"
+			provider={ArtistScreen}
+			providerProps={{
+				artistId: source.artistId,
+				artists: originalArtists,
+				releases: [release],
+				files: originalFiles,
+			}}
 		/>,
 	);
 

@@ -1,18 +1,22 @@
 import { useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
+import {
+	ApplicationLibraryArtistBinder,
+	type ApplicationLibraryArtistModel,
+	type ApplicationRouteProviderProps,
+} from "../../../ui/app/ApplicationRouteOutlet";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
 import {
 	ArtistMetadataCard,
 	type ArtistMetadataValues,
 } from "../../../ui/features/library/ArtistMetadataCard";
-import {
-	type ArtistDeletionAction,
-	type ArtistEditionModel,
-	type ArtistHeadingModel,
-	type ArtistMissingGroupModel,
-	type ArtistReleaseRowModel,
-	ArtistScreenView,
-	type ArtistTagFocus,
+import type {
+	ArtistDeletionAction,
+	ArtistEditionModel,
+	ArtistHeadingModel,
+	ArtistMissingGroupModel,
+	ArtistReleaseRowModel,
+	ArtistTagFocus,
 } from "../../../ui/features/library/ArtistScreenView";
 import {
 	type CatalogueMessage,
@@ -81,6 +85,7 @@ export function ArtistScreen({
 	initialReleaseId,
 	genresLoaded = false,
 	onLoadGenres,
+	children,
 }: {
 	artistId: string;
 	artists: CatalogArtist[];
@@ -99,7 +104,7 @@ export function ArtistScreen({
 	initialReleaseId?: string;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
-}) {
+} & ApplicationRouteProviderProps) {
 	const { locale } = useI18n();
 	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
 		catalogueMessage(locale, key, values);
@@ -194,11 +199,11 @@ export function ArtistScreen({
 	});
 	if (!artist)
 		return (
-			<ArtistScreenView
-				locale={locale}
-				libraryHref={libraryHref}
-				heading={null}
-			/>
+			<ApplicationLibraryArtistBinder
+				model={{ locale, libraryHref, heading: null }}
+			>
+				{children}
+			</ApplicationLibraryArtistBinder>
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
 		tracks.filter(predicate).length;
@@ -483,22 +488,25 @@ export function ArtistScreen({
 				},
 			}
 		: undefined;
+	const model: ApplicationLibraryArtistModel = {
+		locale,
+		libraryHref,
+		heading,
+		deletion,
+		metadataCard,
+		query,
+		filter,
+		onQueryChange: changeQuery,
+		onFilterChange: changeFilter,
+		editionsKey: artistId,
+		releases: { state: "ready", rows: releaseRows },
+		expandedReleaseId,
+		tagFocus,
+	};
 	return (
-		<ArtistScreenView
-			locale={locale}
-			libraryHref={libraryHref}
-			heading={heading}
-			deletion={deletion}
-			metadataCard={metadataCard}
-			query={query}
-			filter={filter}
-			onQueryChange={changeQuery}
-			onFilterChange={changeFilter}
-			editionsKey={artistId}
-			releases={{ state: "ready", rows: releaseRows }}
-			expandedReleaseId={expandedReleaseId}
-			tagFocus={tagFocus}
-		/>
+		<ApplicationLibraryArtistBinder model={model}>
+			{children}
+		</ApplicationLibraryArtistBinder>
 	);
 }
 

@@ -9,6 +9,10 @@ import {
   type IncomingScreenViewProps,
 } from "../features/incoming/IncomingScreenView";
 import {
+  ArtistScreenView,
+  type ArtistScreenViewProps,
+} from "../features/library/ArtistScreenView";
+import {
   LibraryCatalogPageView,
   type LibraryCatalogPageViewProps,
 } from "../features/library/LibraryCatalogPageView";
@@ -31,6 +35,7 @@ import {
  */
 export type ApplicationRoute =
   | "incoming-list"
+  | "library-artist"
   | "library-catalog"
   | "own-catalog"
   | "operations"
@@ -38,6 +43,9 @@ export type ApplicationRoute =
 
 /** The complete data-only model of the portable Incoming list screen. */
 export type ApplicationIncomingListModel = IncomingScreenViewProps;
+
+/** The complete data-only model of the portable library artist screen. */
+export type ApplicationLibraryArtistModel = ArtistScreenViewProps;
 
 /** The complete data-only model of the portable library catalog screen. */
 export type ApplicationLibraryCatalogModel = LibraryCatalogPageViewProps;
@@ -61,6 +69,8 @@ export type ApplicationRouteDataProvider<
 
 const IncomingListModelContext =
   createContext<ApplicationIncomingListModel | null>(null);
+const LibraryArtistModelContext =
+  createContext<ApplicationLibraryArtistModel | null>(null);
 const LibraryCatalogModelContext =
   createContext<ApplicationLibraryCatalogModel | null>(null);
 const OwnCatalogModelContext = createContext<ApplicationOwnCatalogModel | null>(
@@ -85,6 +95,21 @@ export function ApplicationIncomingListBinder({
     <IncomingListModelContext.Provider value={model}>
       {children}
     </IncomingListModelContext.Provider>
+  );
+}
+
+/** Host-facing adapter for the portable library artist screen. */
+export function ApplicationLibraryArtistBinder({
+  model,
+  children,
+}: {
+  model: ApplicationLibraryArtistModel;
+  children: ReactNode;
+}) {
+  return (
+    <LibraryArtistModelContext.Provider value={model}>
+      {children}
+    </LibraryArtistModelContext.Provider>
   );
 }
 
@@ -157,6 +182,12 @@ function IncomingListRoute() {
   return <IncomingScreenView {...model} />;
 }
 
+function LibraryArtistRoute() {
+  const model = useContext(LibraryArtistModelContext);
+  if (!model) throw new Error("missing library artist view model");
+  return <ArtistScreenView {...model} />;
+}
+
 function LibraryCatalogRoute() {
   const model = useContext(LibraryCatalogModelContext);
   if (!model) throw new Error("missing library catalog view model");
@@ -183,6 +214,7 @@ function SettingsRoute() {
 
 const applicationRoutes: Record<ApplicationRoute, ComponentType> = {
   "incoming-list": IncomingListRoute,
+  "library-artist": LibraryArtistRoute,
   "library-catalog": LibraryCatalogRoute,
   "own-catalog": OwnCatalogRoute,
   operations: OperationsRoute,

@@ -806,34 +806,35 @@ export function CatalogDemo({
 		const releaseId = params.get("release") ?? undefined;
 		return (
 			<LibrarySelectionScreenFrame>
-				<ArtistScreen
+				<ApplicationRouteOutlet
 					key={route}
-					artistId={artistPath.slice(7)}
-					artists={artists}
-					releases={releases}
-					files={files}
-					genresLoaded={settings.genresLoaded}
-					onLoadGenres={loadGenres}
-					selected={selected}
-					query={artistQuery}
-					filter={filter}
-					onQueryChange={setArtistQuery}
-					onFilterChange={setFilter}
-					onSelect={update}
-					onQueueDeletion={queueDeletion}
-					onUpdateArtist={(updated) =>
-						setArtists((current) =>
-							current.map((artist) =>
-								artist.id === updated.id ? updated : artist,
+					route="library-artist"
+					provider={ArtistScreen}
+					providerProps={{
+						artistId: artistPath.slice(7),
+						artists,
+						releases,
+						files,
+						genresLoaded: settings.genresLoaded,
+						onLoadGenres: loadGenres,
+						selected,
+						query: artistQuery,
+						filter,
+						onQueryChange: setArtistQuery,
+						onFilterChange: setFilter,
+						onSelect: update,
+						onQueueDeletion: queueDeletion,
+						onUpdateArtist: (updated) =>
+							setArtists((current) =>
+								current.map((artist) =>
+									artist.id === updated.id ? updated : artist,
+								),
 							),
-						)
-					}
-					initialTags={
-						initialTagsScope
+						initialTags: initialTagsScope
 							? { scope: initialTagsScope, releaseId }
-							: undefined
-					}
-					initialReleaseId={releaseId}
+							: undefined,
+						initialReleaseId: releaseId,
+					}}
 				/>
 				<SelectionDock
 					selected={selected}
@@ -1370,8 +1371,8 @@ export function CatalogDemo({
 								? "view"
 								: "filtered",
 				onReset: !isPristine ? resetLibrarySearch : undefined,
-					addSourceHref:
-						catalogIsEmpty && isPristine ? demoSourcesHref : undefined,
+				addSourceHref:
+					catalogIsEmpty && isPristine ? demoSourcesHref : undefined,
 			};
 
 	const missingCounts = new Map(
