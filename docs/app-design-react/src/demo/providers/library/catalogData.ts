@@ -1,5 +1,6 @@
 import type { Locale } from "../../../ui/i18n/types";
 import original from "../../fixtures/original-fixtures.json";
+import { applyDemoLocalMatchingBindings } from "../../fixtures/localMatchingBindings";
 import {
 	resolveCatalogGenreName,
 	resolveCatalogGenreValue,
@@ -28,6 +29,8 @@ export interface OriginalTrack {
 	artistId: string | null;
 	recordingId?: string | null;
 	providerTrackId?: string | null;
+	/** Exact Local catalog position identity bound by the demo fixture adapter. */
+	localProviderTrackId?: string | null;
 	recordingTitle?: string;
 	localRecordingId?: string | null;
 	providerTitle?: string;
@@ -131,19 +134,20 @@ export function trackNumberLabel(
 const demoMatchingConfidence: Partial<Record<string, number>> = {
 	"north-t1": 0.94,
 };
-export const originalReleases: OriginalRelease[] = original.releases.map(
-	(release) => ({
-		...release,
-		tracks: release.tracks.map((track) => {
-			const matchingConfidence = demoMatchingConfidence[track.id];
-			if (!track.published || matchingConfidence === undefined) return track;
-			return {
-				...track,
-				published: { ...track.published, matchingConfidence },
-			};
-		}),
-	}),
-);
+export const originalReleases: OriginalRelease[] =
+	applyDemoLocalMatchingBindings(
+		original.releases.map((release) => ({
+			...release,
+			tracks: release.tracks.map((track) => {
+				const matchingConfidence = demoMatchingConfidence[track.id];
+				if (!track.published || matchingConfidence === undefined) return track;
+				return {
+					...track,
+					published: { ...track.published, matchingConfidence },
+				};
+			}),
+		})),
+	);
 export const recoveryFixture = original.recoveryFixture;
 export type CatalogArtist = {
 	id: string;

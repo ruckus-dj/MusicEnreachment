@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { ManualReleasePreparationView } from "../../../ui/features/matching/ManualReleasePreparationView";
 import {
@@ -9,6 +9,7 @@ import {
 export type MatchingReleasePreparationProps = {
 	/** Explicit selection coming from the release search, mirroring `searchRelease`. */
 	releaseId?: string | null;
+	selectionKey?: string;
 	disabled?: boolean;
 	resolveRelease: (identity: string) => string | undefined;
 	onPrepared: (releaseId: string) => void;
@@ -30,6 +31,7 @@ function canonicalReleaseId(value: string) {
  */
 export function MatchingReleasePreparation({
 	releaseId,
+	selectionKey = "",
 	disabled = false,
 	resolveRelease,
 	onPrepared,
@@ -40,6 +42,16 @@ export function MatchingReleasePreparation({
 	const [prepared, setPrepared] = useState(false);
 	const [errorKey, setErrorKey] =
 		useState<ManualReleasePreparationMessageKey>();
+	const target = useRef<
+		{ selectionKey: string; releaseId: typeof releaseId } | undefined
+	>(undefined);
+
+	useLayoutEffect(() => {
+		target.current = { selectionKey, releaseId };
+		return () => {
+			target.current = undefined;
+		};
+	}, [selectionKey, releaseId]);
 
 	useEffect(() => {
 		if (!releaseId) return;
@@ -58,11 +70,16 @@ export function MatchingReleasePreparation({
 		const canonical = canonicalReleaseId(requested);
 		const selected = releaseId && requested === releaseId ? releaseId : null;
 		if (!requested || pending || disabled) return;
+		const origin = target.current;
+		const originHash = window.location.hash;
 		setPending(true);
 		setPrepared(false);
 		setErrorKey(undefined);
 		await Promise.resolve();
+		if (!target.current) return;
 		setPending(false);
+		if (target.current !== origin || window.location.hash !== originHash)
+			return;
 		const identity = selected ?? canonical;
 		const preparedId = identity ? resolveRelease(identity) : undefined;
 		if (!preparedId) {

@@ -2,6 +2,7 @@ import {
 	type IncomingFiles,
 	type IncomingGroup,
 	type IncomingState,
+	matchingDraftKey,
 	unassignFile,
 	usableFile,
 } from "./incomingModel";
@@ -65,7 +66,10 @@ export function splitFileIntoNewGroup(
 		processed: false,
 		reason: { code: "incomplete" },
 		drafts: {
-			[source.mode === "local" ? "local" : String(source.candidateId)]: {},
+			[matchingDraftKey(
+				source.mode,
+				source.mode === "local" ? source.releaseId : source.candidateId,
+			)]: {},
 		},
 	});
 	if (next.plan?.groupId === sourceGroupId) {

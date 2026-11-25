@@ -9,6 +9,7 @@ import {
 	type MatchingLinkReceiptPosition,
 	selectedSourceId,
 	sourceIds,
+	unassignFile,
 	usableFile,
 } from "../incoming/incomingModel";
 
@@ -24,6 +25,39 @@ function localTrackFor(
 	position: number,
 ): IncomingReleases[number]["tracks"][number] | undefined {
 	return release.tracks.find((track) => track.position === position);
+}
+
+function localTrackForBinding(
+	release: IncomingReleases[number],
+	bindingId: string,
+): IncomingReleases[number]["tracks"][number] | undefined {
+	return release.tracks.find(
+		(track) => track.localProviderTrackId === bindingId,
+	);
+}
+
+function materializeLocalRelease(
+	target: IncomingReleases[number],
+	providerId: string,
+): IncomingReleases[number] {
+	const id = `local-${providerId}`;
+	return {
+		...structuredClone(target),
+		id,
+		provider: "Local",
+		providerId,
+		tracks: target.tracks.map((track) => ({
+			...structuredClone(track),
+			id: `${id}-${track.id}`,
+			localProviderTrackId: track.id,
+			providerTrackId: null,
+			sourceId: null,
+			sourceIds: [],
+			published: null,
+			metadataBaseline: undefined,
+			metadataBaselineExtras: undefined,
+		})),
+	};
 }
 
 /**
@@ -64,28 +98,66 @@ export function saveMatchingLinks(
 	}
 	if (!accepted.size) return null;
 
-	let release = releases.find((item) => item.id === plan.localReleaseId);
+	const localProviderId = plan.mode === "local" ? plan.target.providerId : null;
+	if (plan.mode === "local") {
+		if (!localProviderId) return null;
+		const current = providers.find(
+			(release) =>
+				release.provider === "Local" &&
+				release.providerId === localProviderId &&
+				release.id === plan.target.id,
+		);
+		if (!current) return null;
+	}
+	let release =
+		plan.mode === "local"
+			? releases.find(
+					(item) =>
+						item.provider === "Local" && item.providerId === localProviderId,
+				)
+			: releases.find((item) => item.id === plan.localReleaseId);
 	if (!release) {
-		release = {
-			...structuredClone(plan.target),
-			id: `import-${plan.target.id}`,
-			providerId:
-				plan.mode === "provider"
-					? (plan.target.providerId ?? plan.target.id)
-					: null,
-			tracks: plan.target.tracks.map((track) => ({
-				...structuredClone(track),
-				id: `import-${plan.target.id}-t${track.position}`,
-				sourceId: null,
-				sourceIds: [],
-				providerTrackId: null,
-				published: null,
-				metadataBaseline: undefined,
-				metadataBaselineExtras: undefined,
-			})),
-		};
-		releases.push(release);
+		if (plan.mode === "local") {
+			release = materializeLocalRelease(plan.target, localProviderId ?? "");
+			releases.push(release);
+		} else {
+			release = {
+				...structuredClone(plan.target),
+				id: `import-${plan.target.id}`,
+				providerId: plan.target.providerId ?? plan.target.id,
+				tracks: plan.target.tracks.map((track) => ({
+					...structuredClone(track),
+					id: `import-${plan.target.id}-t${track.position}`,
+					sourceId: null,
+					sourceIds: [],
+					providerTrackId: null,
+					published: null,
+					metadataBaseline: undefined,
+					metadataBaselineExtras: undefined,
+				})),
+			};
+			releases.push(release);
+		}
 		plan.localReleaseId = String(release.id);
+	}
+	if (plan.mode === "local" && release.tracks.length > 0) {
+		const targetTrackIds = new Set(
+			plan.target.tracks.map((track) => String(track.id)),
+		);
+		const boundTracks = release.tracks.filter(
+			(track) => track.localProviderTrackId,
+		);
+		const boundTrackIds = boundTracks.map((track) =>
+			String(track.localProviderTrackId),
+		);
+		if (
+			!boundTracks.length ||
+			new Set(boundTrackIds).size !== boundTrackIds.length ||
+			boundTracks.some(
+				(track) => !targetTrackIds.has(String(track.localProviderTrackId)),
+			)
+		)
+			return null;
 	}
 
 	const positions: MatchingLinkReceiptPosition[] = [];
@@ -94,11 +166,19 @@ export function saveMatchingLinks(
 	for (const targetTrack of plan.target.tracks) {
 		const assignment = accepted.get(String(targetTrack.id));
 		if (!assignment) continue;
-		let track = localTrackFor(release, targetTrack.position);
+		let track =
+			plan.mode === "local"
+				? localTrackForBinding(release, String(targetTrack.id))
+				: localTrackFor(release, targetTrack.position);
 		if (!track) {
 			track = {
 				...structuredClone(targetTrack),
-				id: `${release.id}-t${targetTrack.position}`,
+				id:
+					plan.mode === "local"
+						? `${release.id}-${targetTrack.id}`
+						: `${release.id}-t${targetTrack.position}`,
+				localProviderTrackId:
+					plan.mode === "local" ? String(targetTrack.id) : null,
 				sourceId: null,
 				sourceIds: [],
 				providerTrackId: null,
@@ -108,6 +188,8 @@ export function saveMatchingLinks(
 			};
 			release.tracks.push(track);
 		}
+		if (plan.mode === "local")
+			track.localProviderTrackId = String(targetTrack.id);
 		const existing = new Set([
 			...(track.sourceIds ?? []),
 			...(track.sourceId ? [track.sourceId] : []),
@@ -143,7 +225,10 @@ export function saveMatchingLinks(
 	if (!positions.length) return null;
 
 	group.fileIds = group.fileIds.filter((id) => !savedFileIds.has(id));
-	group.drafts = {};
+	for (const assignments of Object.values(group.drafts))
+		for (const targetId of Object.keys(assignments))
+			for (const fileId of savedFileIds)
+				unassignFile(assignments, targetId, fileId);
 	group.processed = group.fileIds.length === 0;
 
 	const receipt: MatchingLinkReceipt = {

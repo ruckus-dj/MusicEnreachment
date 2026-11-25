@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { usePreviewHeadingFocus } from "../../../ui/components/useViewFocus";
 import type { MatchingPreviewRow } from "../../../ui/features/matching/MatchingPreview";
@@ -7,6 +7,7 @@ import type {
 	MatchingScreenViewPreview,
 	MatchingScreenViewWorkspace,
 } from "../../../ui/features/matching/MatchingScreenView";
+import { matchingBoardMessages } from "../../../ui/features/matching/matchingBoardMessages";
 import { matchingLinksCopy } from "../../../ui/features/matching/matchingLinksCopy";
 import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
 import { useMatchingLinkResultFocus } from "../../../ui/features/matching/useMatchingLinkResultFocus";
@@ -20,10 +21,12 @@ import {
 	findTarget,
 	getDraft,
 	type IncomingFiles,
+	type IncomingGroup,
 	type IncomingPlan,
 	type IncomingReleases,
 	type IncomingState,
 	incomingFixtures,
+	type MatchingLinkReceipt,
 	normalized,
 	providerReleases,
 	selectedSourceId,
@@ -50,12 +53,37 @@ export type MatchingScreenProps = {
 	onReleases?: (releases: IncomingReleases) => void;
 	createLocalReleaseHref?: string;
 	prepareReleaseId?: string;
+	releaseId?: string;
+	localReleaseId?: string;
+	onSelectProviderRelease?: (releaseId?: string) => void;
+	onSelectLocalRelease?: (localReleaseId: string) => void;
 };
 
 const duration = (seconds: unknown) =>
 	Number.isFinite(Number(seconds))
 		? `${Math.floor(Number(seconds) / 60)}:${String(Math.round(Number(seconds) % 60)).padStart(2, "0")}`
 		: "—";
+
+function receiptMatchesTarget(
+	receipt: MatchingLinkReceipt,
+	target: IncomingReleases[number],
+	mode: IncomingGroup["mode"],
+) {
+	const id = String(target.id);
+	if (mode === "local") {
+		return (
+			target.providerId != null &&
+			receipt.providerReleaseId === target.providerId
+		);
+	}
+	return (
+		receipt.releaseId === id ||
+		receipt.providerReleaseId === id ||
+		(target.providerId != null &&
+			receipt.providerReleaseId === target.providerId) ||
+		receipt.releaseId === `import-${id}`
+	);
+}
 
 export function useMatchingScreenDemoProvider({
 	destination,
@@ -69,6 +97,10 @@ export function useMatchingScreenDemoProvider({
 	onReleases,
 	createLocalReleaseHref,
 	prepareReleaseId,
+	releaseId,
+	localReleaseId,
+	onSelectProviderRelease,
+	onSelectLocalRelease,
 }: MatchingScreenProps): MatchingScreenViewModel {
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [previewOpenSequence, setPreviewOpenSequence] = useState(0);
@@ -117,11 +149,99 @@ export function useMatchingScreenDemoProvider({
 	);
 	const activeGroupId = groupId ?? state.groupId;
 	const group = state.groups.find((item) => item.id === activeGroupId);
-	const receipt = state.receipts
-		.filter((item) => item.groupId === activeGroupId)
-		.at(-1);
+	const rememberedTargets = useRef<Record<string, string>>({});
+	const localMode = Boolean(localReleaseId);
+	const storedTarget = group ? findTarget(group, releases, providers) : null;
+	const localTarget = localReleaseId
+		? providers.find(
+				(release) =>
+					release.provider === "Local" && release.id === localReleaseId,
+			)
+		: undefined;
+	const routeTarget =
+		!localMode && releaseId
+			? providers.find(
+					(release) =>
+						release.provider !== "Local" &&
+						release.tracks.length > 0 &&
+						release.id === releaseId,
+				)
+			: undefined;
+	const rememberedTargetId = group ? rememberedTargets.current[group.id] : "";
+	const rememberedTarget =
+		!localMode && rememberedTargetId
+			? providers.find(
+					(release) =>
+						release.provider !== "Local" &&
+						release.tracks.length > 0 &&
+						release.id === rememberedTargetId,
+				)
+			: undefined;
+	if (group && routeTarget)
+		rememberedTargets.current[group.id] = String(routeTarget.id);
+	const activeTarget = localMode
+		? (localTarget ?? null)
+		: (routeTarget ?? rememberedTarget ?? storedTarget);
+	const activeMode = localMode
+		? ("local" as const)
+		: group && activeTarget === storedTarget
+			? group.mode
+			: ("provider" as const);
+	const activeTargetKey = group
+		? `${group.id}:${activeMode}:${activeTarget ? String(activeTarget.id) : ""}`
+		: "";
+	const targetResetRef = useRef("");
+	const groupReceipts = state.receipts.filter(
+		(item) => item.groupId === activeGroupId,
+	);
+	const receipt = prepareReleaseId
+		? undefined
+		: localMode || releaseId || rememberedTarget
+			? groupReceipts
+					.filter(
+						(item) =>
+							activeTarget &&
+							receiptMatchesTarget(item, activeTarget, activeMode),
+					)
+					.at(-1)
+			: groupReceipts.at(-1);
 	const backHref = incomingGroupsListHref(group ? [group.id] : []);
 	const backLabel = matchingMessage(locale, "backToIncoming");
+	useEffect(() => {
+		if (!group) return;
+		const previous = targetResetRef.current;
+		targetResetRef.current = activeTargetKey;
+		if (previous === activeTargetKey) return;
+		if (!previous && !releaseId && !localReleaseId) return;
+		setInspectedPair(undefined);
+		setPublicationReceiptId("");
+		setFocusReceiptId("");
+		setDismissedReceiptId("");
+		if (
+			!state.selectedFile &&
+			!state.selectedTarget &&
+			!state.recordingTarget &&
+			!state.recordingResults &&
+			!state.plan
+		)
+			return;
+		const next = structuredClone(state);
+		next.selectedFile = null;
+		next.selectedTarget = null;
+		next.recordingTarget = null;
+		next.recordingResults = null;
+		next.plan = null;
+		next.confirmDowngrade = false;
+		givenState ? onState?.(next) : setLocalState(next);
+	}, [
+		activeTargetKey,
+		givenState,
+		group,
+		localReleaseId,
+		onState,
+		releaseId,
+		state,
+	]);
 
 	if (receipt && dismissedReceiptId !== receipt.id) {
 		const publicationOpen = publicationReceiptId === receipt.id;
@@ -194,19 +314,104 @@ export function useMatchingScreenDemoProvider({
 			},
 		};
 	state.groupId = group.id;
-	const target = findTarget(group, releases, providers);
-	if (!target)
+	if (!activeTarget) {
+		if (!localMode)
+			return {
+				kind: "missing",
+				locale,
+				heading: {
+					backHref,
+					backLabel,
+					title: matchingMessage(locale, "targetNotFound"),
+				},
+			};
+		const boardCopy = matchingBoardMessages[locale];
 		return {
-			kind: "missing",
+			kind: "workspace",
 			locale,
 			heading: {
 				backHref,
-				backLabel,
-				title: matchingMessage(locale, "targetNotFound"),
+				backLabel: matchingMessage(locale, "incomingLink"),
+				sourceDirectoryLabel: matchingMessage(locale, "sourceDirectory"),
+				sourcePath: `/mnt/inbox/${group.id}`,
+				title: matchingMessage(locale, "matchingTitle", { group: group.title }),
+				hint: matchingMessage(locale, "localTrackListHint"),
 			},
+			feedback: { text: "", visible: false },
+			status: { error: matchingMessage(locale, "targetNotFound") },
+			search: (
+				<MatchingSearchPicker
+					artists={artists}
+					releases={searchableEditions}
+					selectedReleaseId={null}
+					onSelectRelease={(release) => {
+						const targetId =
+							release.provider === "Local"
+								? release.id
+								: resolveMusicBrainzEdition(release.id);
+						if (!targetId) return false;
+						if (release.provider === "Local")
+							onSelectLocalRelease?.(String(targetId));
+						else onSelectProviderRelease?.(String(targetId));
+						return true;
+					}}
+				/>
+			),
+			preparation: (
+				<MatchingReleasePreparation
+					key={group.id}
+					releaseId={prepareReleaseId}
+					selectionKey={activeTargetKey}
+					resolveRelease={resolveMusicBrainzEdition}
+					onPrepared={(id) => onSelectProviderRelease?.(id)}
+				/>
+			),
+			createLocalReleaseHref,
+			board: null,
+			emptyBoard: {
+				positions: {
+					heading: boardCopy.positionsHeading(group.title),
+					instruction: matchingMessage(locale, "targetNotFound"),
+				},
+				sources: {
+					heading: boardCopy.sourcesHeading(group.fileIds.length),
+					instruction: boardCopy.sourcesInstructions,
+					members: group.fileIds.map((id) => ({
+						key: id,
+						label: files[id]?.name ?? id,
+					})),
+					emptyText: boardCopy.allAssigned,
+				},
+			},
+			inspector: {
+				ariaLabel: matchingMessage(locale, "ariaTrackInspector"),
+				title: matchingMessage(locale, "inspectorTitle", {
+					track: group.title,
+				}),
+				evidence: null,
+				emptyText: matchingMessage(locale, "noEvidenceFile"),
+			},
+			footer: null,
+			preview: null,
 		};
-	const tracks = target.tracks;
-	const assignments = getDraft(group, files, providers, releases);
+	}
+	const editionGroup =
+		activeTarget === storedTarget && !localMode
+			? group
+			: {
+					...group,
+					mode: activeMode,
+					candidateId: localMode ? group.candidateId : String(activeTarget.id),
+					...(localMode ? { releaseId: String(activeTarget.id) } : {}),
+				};
+	const tracks = activeTarget.tracks;
+	const assignments = getDraft(
+		editionGroup,
+		files,
+		providers,
+		releases,
+		activeTarget,
+	);
 	const commitState = () => {
 		const next = structuredClone(state);
 		givenState ? onState?.(next) : setLocalState(next);
@@ -238,7 +443,7 @@ export function useMatchingScreenDemoProvider({
 	const fixtureBoard = fixtureMatchingBoard(
 		group.id,
 		group.fileIds,
-		target,
+		activeTarget,
 		files,
 		assignments,
 	);
@@ -246,12 +451,17 @@ export function useMatchingScreenDemoProvider({
 		(position) => position.track_id === inspected?.id,
 	);
 	const existingRelease =
-		group.mode === "local"
-			? releases.find((release) => release.id === group.releaseId)
+		activeMode === "local"
+			? releases.find(
+					(release) =>
+						release.provider === "Local" &&
+						activeTarget.providerId != null &&
+						release.providerId === activeTarget.providerId,
+				)
 			: releases.find(
 					(release) =>
-						release.providerId === target.id ||
-						release.providerId === target.providerId,
+						release.providerId === activeTarget.id ||
+						release.providerId === activeTarget.providerId,
 				);
 	const used = new Set(
 		Object.values(assignments).flatMap((item) => item.sourceIds),
@@ -298,12 +508,13 @@ export function useMatchingScreenDemoProvider({
 			return false;
 		}
 		const didAssign = assignFile(
-			group,
+			editionGroup,
 			trackId,
 			fileId,
 			files,
 			releases,
 			providers,
+			activeTarget,
 		);
 		state.selectedFile = null;
 		state.selectedTarget = trackId;
@@ -316,23 +527,60 @@ export function useMatchingScreenDemoProvider({
 		commitState();
 		return didAssign;
 	};
-	const setCandidate = (id: string) => {
-		if (group.mode === "provider" && group.candidateId === id) return;
-		group.mode = "provider";
-		group.candidateId = id;
+	const setCandidate = (
+		id: string,
+		options: { forceRoute?: boolean; writeRoute?: boolean } = {},
+	) => {
+		const release = providers.find((item) => item.id === id);
+		if (!release) return;
+		const routedLocal =
+			release.provider === "Local" && onSelectLocalRelease !== undefined;
+		const writeRoute =
+			options.writeRoute !== false &&
+			release.provider !== "Local" &&
+			release.tracks.length > 0;
+		const canonicalRoute = !releaseId || releaseId === id;
+		const canonicalLocal = !localReleaseId || localReleaseId === id;
+		const sameActiveTarget = String(activeTarget.id) === String(id);
+		const canSkip =
+			!options.forceRoute &&
+			!prepareReleaseId &&
+			(writeRoute
+				? sameActiveTarget &&
+					activeMode === "provider" &&
+					canonicalRoute &&
+					!localMode
+				: sameActiveTarget &&
+					activeMode === "local" &&
+					canonicalLocal &&
+					!releaseId);
+		if (canSkip) return;
 		state.selectedFile = null;
 		state.selectedTarget = null;
 		state.recordingTarget = null;
 		state.recordingResults = null;
 		setNotice({ namespace: "matching", id: "candidateChanged" });
 		clearPreview();
+		if (routedLocal) {
+			onSelectLocalRelease?.(String(id));
+		} else {
+			group.mode = "provider";
+			group.candidateId = id;
+			if (writeRoute) {
+				rememberedTargets.current[group.id] = String(id);
+				onSelectProviderRelease?.(id);
+			} else {
+				delete rememberedTargets.current[group.id];
+				onSelectProviderRelease?.(undefined);
+			}
+		}
 		commitState();
 	};
 	const openPreview = () => {
 		state.plan = {
-			mode: group.mode,
+			mode: activeMode,
 			groupId: group.id,
-			target: structuredClone(target),
+			target: structuredClone(activeTarget),
 			localReleaseId: (existingRelease?.id as string | undefined) ?? null,
 			assignments: structuredClone(assignments),
 			inventoryVersion: state.inventoryVersion,
@@ -341,7 +589,12 @@ export function useMatchingScreenDemoProvider({
 		setPreviewOpenSequence((sequence) => sequence + 1);
 		commitState();
 	};
-	const preview = state.plan?.groupId === group.id ? state.plan : null;
+	const preview =
+		state.plan?.groupId === group.id &&
+		state.plan.mode === activeMode &&
+		String(state.plan.target.id) === String(activeTarget.id)
+			? state.plan
+			: null;
 	const stale = Boolean(
 		preview && preview.inventoryVersion !== state.inventoryVersion,
 	);
@@ -369,6 +622,47 @@ export function useMatchingScreenDemoProvider({
 	}
 	const confirmLinks = () => {
 		if (!preview || stale) return;
+		const previewTrackIds = preview.target.tracks.map((track) =>
+			String(track.id),
+		);
+		const currentTrackIds = activeTarget.tracks.map((track) =>
+			String(track.id),
+		);
+		if (
+			preview.mode !== activeMode ||
+			String(preview.target.id) !== String(activeTarget.id) ||
+			previewTrackIds.length !== currentTrackIds.length ||
+			previewTrackIds.some((id, index) => id !== currentTrackIds[index])
+		)
+			return;
+		if (preview.mode === "local") {
+			const providerId = preview.target.providerId;
+			if (!providerId) return;
+			const current = providers.find(
+				(release) =>
+					release.provider === "Local" &&
+					release.providerId === providerId &&
+					release.id === preview.target.id,
+			);
+			if (!current) return;
+			const exactReleases = releases.filter(
+				(release) =>
+					release.provider === "Local" && release.providerId === providerId,
+			);
+			if (exactReleases.length > 1) return;
+			const targetIds = new Set(previewTrackIds);
+			const existing = exactReleases[0];
+			if (existing) {
+				const boundIds = existing.tracks
+					.filter((track) => track.localProviderTrackId)
+					.map((track) => String(track.localProviderTrackId));
+				if (
+					new Set(boundIds).size !== boundIds.length ||
+					boundIds.some((id) => !targetIds.has(id))
+				)
+					return;
+			}
+		}
 		const nextReleases = structuredClone(releases);
 		const result = saveMatchingLinks(
 			preview,
@@ -413,14 +707,18 @@ export function useMatchingScreenDemoProvider({
 		<MatchingSearchPicker
 			artists={artists}
 			releases={searchableEditions}
-			selectedReleaseId={group.mode === "provider" ? group.candidateId : null}
+			selectedReleaseId={
+				activeMode === "provider" ? String(activeTarget.id) : null
+			}
 			onSelectRelease={(release) => {
 				const targetId =
 					release.provider === "Local"
 						? release.id
 						: resolveMusicBrainzEdition(release.id);
 				if (!targetId) return false;
-				setCandidate(targetId);
+				setCandidate(targetId, {
+					writeRoute: release.provider !== "Local",
+				});
 				return true;
 			}}
 		/>
@@ -429,8 +727,9 @@ export function useMatchingScreenDemoProvider({
 		<MatchingReleasePreparation
 			key={group.id}
 			releaseId={prepareReleaseId}
+			selectionKey={activeTargetKey}
 			resolveRelease={resolveMusicBrainzEdition}
-			onPrepared={setCandidate}
+			onPrepared={(id) => setCandidate(id, { forceRoute: true })}
 		/>
 	);
 	const previewModel: MatchingScreenViewPreview | null = preview
@@ -470,7 +769,7 @@ export function useMatchingScreenDemoProvider({
 			sourcePath: `/mnt/inbox/${group.id}`,
 			title: matchingMessage(locale, "matchingTitle", { group: group.title }),
 			hint:
-				group.mode === "local"
+				activeMode === "local"
 					? matchingMessage(locale, "localTrackListHint")
 					: matchingMessage(locale, "providerTrackListHint"),
 		},
@@ -487,13 +786,13 @@ export function useMatchingScreenDemoProvider({
 			}),
 			free: matchingMessage(locale, "freeCount", { count: pool.length }),
 			detail:
-				group.mode === "local"
+				activeMode === "local"
 					? matchingMessage(locale, "localOrder")
 					: [
-							target.provider ?? "MusicBrainz",
-							target.year,
-							target.country,
-							target.catalog,
+							activeTarget.provider ?? "MusicBrainz",
+							activeTarget.year,
+							activeTarget.country,
+							activeTarget.catalog,
 						]
 							.filter(Boolean)
 							.join(" · "),
@@ -526,7 +825,7 @@ export function useMatchingScreenDemoProvider({
 				commitState();
 			},
 			recordingSearch:
-				group.mode === "local"
+				activeMode === "local"
 					? {
 							label: matchingMessage(locale, "recordingSearch"),
 							trackIds: tracks.map((track) => String(track.id)),
@@ -537,7 +836,7 @@ export function useMatchingScreenDemoProvider({
 		inspector: {
 			ariaLabel: matchingMessage(locale, "ariaTrackInspector"),
 			title: matchingMessage(locale, "inspectorTitle", {
-				track: String(inspected.title),
+				track: inspected ? String(inspected.title) : group.title,
 			}),
 			evidence:
 				evidencePosition && evidenceFile

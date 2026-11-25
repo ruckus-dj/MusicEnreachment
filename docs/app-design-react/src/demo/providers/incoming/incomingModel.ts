@@ -170,8 +170,24 @@ export function findTarget(
 	providers: IncomingReleases = providerReleases,
 ): OriginalRelease | null {
 	if (group.mode === "local")
-		return releases.find((release) => release.id === group.releaseId) ?? null;
+		return (
+			providers.find(
+				(release) =>
+					release.provider === "Local" && release.id === group.releaseId,
+			) ??
+			releases.find((release) => release.id === group.releaseId) ??
+			null
+		);
 	return providers.find((release) => release.id === group.candidateId) ?? null;
+}
+
+/** Stable per-edition draft identity without re-resolving a target. */
+export function matchingDraftKey(
+	mode: IncomingGroup["mode"],
+	targetId: string | null | undefined,
+) {
+	const id = targetId == null ? "" : String(targetId);
+	return mode === "local" ? `local:${id}` : id;
 }
 
 export function getDraft(
@@ -179,21 +195,33 @@ export function getDraft(
 	files: IncomingFiles,
 	providers: IncomingReleases = providerReleases,
 	releases: IncomingReleases = originalReleases,
+	resolvedTarget?: OriginalRelease | null,
 ) {
-	const target = findTarget(group, releases, providers);
+	const target = resolvedTarget ?? findTarget(group, releases, providers);
 	if (!target) return {};
 	const targetTracks = target.tracks;
-	const key = group.mode === "local" ? "local" : String(group.candidateId);
-	if (!group.drafts[key]) {
+	const key = matchingDraftKey(group.mode, target.id);
+	if (!Object.hasOwn(group.drafts, key)) {
 		const assignments: Record<string, Assignment> = {};
+		const localRelease =
+			group.mode === "local" && target.providerId
+				? releases.find(
+						(release) =>
+							release.provider === "Local" &&
+							release.providerId === target.providerId,
+					)
+				: undefined;
 		for (const track of targetTracks) {
+			const linkedTrack = localRelease?.tracks.find(
+				(candidate) => candidate.localProviderTrackId === track.id,
+			);
 			const source = group.fileIds
 				.map((id) => files[id])
 				.find(
 					(file) =>
 						file &&
 						(group.mode === "local"
-							? file.id === track.sourceId
+							? file.id === (linkedTrack?.sourceId ?? track.sourceId)
 							: file.providerTrackId === track.id &&
 								file.confidence === "high"),
 				);
@@ -212,7 +240,7 @@ export function getDraft(
 				confidence: source.confidence ?? null,
 				providerTrackId:
 					group.mode === "local"
-						? (track.providerTrackId ?? null)
+						? (linkedTrack?.providerTrackId ?? track.providerTrackId ?? null)
 						: String(track.id),
 				included: true,
 			};
@@ -229,12 +257,13 @@ export function assignFile(
 	files: IncomingFiles,
 	releases: IncomingReleases = originalReleases,
 	providers: IncomingReleases = providerReleases,
+	resolvedTarget?: OriginalRelease | null,
 ) {
 	if (!group.fileIds.includes(fileId) || !usableFile(files[fileId]))
 		return false;
-	const target = findTarget(group, releases, providers);
+	const target = resolvedTarget ?? findTarget(group, releases, providers);
 	if (!target?.tracks.some((track) => track.id === targetId)) return false;
-	const assignments = getDraft(group, files, providers, releases);
+	const assignments = getDraft(group, files, providers, releases, target);
 	const old = assignments[targetId];
 	if (sourceIds(old).includes(fileId)) return false;
 	const assignment = old ?? {

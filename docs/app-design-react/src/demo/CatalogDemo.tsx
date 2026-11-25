@@ -1178,6 +1178,21 @@ export function CatalogDemo({
 					{ ...incomingRoute, creatingLocalRelease: true },
 				)}
 				prepareReleaseId={incomingRoute.prepareReleaseId}
+				releaseId={incomingRoute.releaseId}
+				localReleaseId={incomingRoute.localReleaseId}
+				onSelectProviderRelease={(releaseId) => {
+					window.location.hash = incomingGroupMatchingHref(
+						incomingRoute.groupId,
+						releaseId,
+					);
+				}}
+				onSelectLocalRelease={(localReleaseId) => {
+					window.location.hash = incomingGroupMatchingHref(
+						incomingRoute.groupId,
+						undefined,
+						{ localReleaseId },
+					);
+				}}
 			/>
 		);
 	if (routeName === "/settings")

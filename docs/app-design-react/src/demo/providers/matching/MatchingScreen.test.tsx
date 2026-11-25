@@ -23,9 +23,13 @@ let previousLanguagePreference: string | null = null;
 function MatchingHarness({
 	artists,
 	providers,
+	releaseId,
+	localReleaseId,
 }: {
 	artists?: CatalogArtist[];
 	providers?: IncomingReleases;
+	releaseId?: string;
+	localReleaseId?: string;
 } = {}) {
 	const [state, setState] = useState(createIncomingState);
 	return (
@@ -46,6 +50,8 @@ function MatchingHarness({
 				onState={setState}
 				artists={artists}
 				providers={providers}
+				releaseId={releaseId}
+				localReleaseId={localReleaseId}
 			/>
 		</>
 	);
@@ -151,6 +157,89 @@ it("switches between Local and MusicBrainz search results without losing the dra
 		/Local/,
 	);
 	expect(screen.getByText(/Назначено позиций: 1 из /)).toBeInTheDocument();
+});
+
+it("routes a provider edition and writes assignments into that edition's draft", () => {
+	render(<MatchingHarness releaseId="p-japan" />);
+	const positions = screen.getByRole("region", {
+		name: "Позиции · Northern Lines",
+	});
+	expect(screen.getByText(/Назначено позиций: 0 из 11/)).toBeInTheDocument();
+	fireEvent.click(
+		screen.getByRole("button", { name: "Выбрать 01 - First Light.flac" }),
+	);
+	fireEvent.click(
+		within(positions).getAllByRole("button", {
+			name: /^Добавить 01 - First Light\.flac к позиции/,
+		})[0],
+	);
+	expect(screen.getByText(/Назначено позиций: 1 из 11/)).toBeInTheDocument();
+});
+
+it("prefers an exact Local route and keeps its draft across a provider switch", () => {
+	const localReleases = localProviderReleases(createLocalProviderState());
+	const local = localReleases[0];
+	if (!local) throw new Error("Missing Local matching fixture");
+	const providers = [...incomingFixtures.providerReleases, ...localReleases];
+	const { rerender } = render(
+		<MatchingHarness
+			providers={providers}
+			releaseId="p-japan"
+			localReleaseId={local.id}
+		/>,
+	);
+	const localPositions = screen.getByRole("region", {
+		name: "Позиции · Northern Lines",
+	});
+	fireEvent.click(
+		screen.getByRole("button", { name: "Выбрать 01 - First Light.flac" }),
+	);
+	fireEvent.click(
+		within(localPositions).getAllByRole("button", {
+			name: /^Добавить 01 - First Light\.flac к позиции/,
+		})[0],
+	);
+	expect(
+		screen.getByText(
+			new RegExp(`Назначено позиций: 1 из ${local.tracks.length}`),
+		),
+	).toBeInTheDocument();
+	rerender(
+		<MatchingHarness
+			providers={providers}
+			releaseId="p-japan"
+			localReleaseId={undefined}
+		/>,
+	);
+	expect(screen.getByText(/Назначено позиций: 0 из 11/)).toBeInTheDocument();
+	rerender(
+		<MatchingHarness
+			providers={providers}
+			releaseId="p-japan"
+			localReleaseId={local.id}
+		/>,
+	);
+	expect(
+		screen.getByText(
+			new RegExp(`Назначено позиций: 1 из ${local.tracks.length}`),
+		),
+	).toBeInTheDocument();
+});
+
+it("keeps search recoverable for an unknown Local route", () => {
+	const localReleases = localProviderReleases(createLocalProviderState());
+	render(
+		<MatchingHarness
+			providers={[...incomingFixtures.providerReleases, ...localReleases]}
+			localReleaseId="missing-local-release"
+		/>,
+	);
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"Цель сопоставления не найдена",
+	);
+	expect(
+		screen.getByRole("region", { name: "Поиск изданий" }),
+	).toBeInTheDocument();
 });
 
 afterEach(() => {
