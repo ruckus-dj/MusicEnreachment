@@ -1,3 +1,4 @@
+import { createContext, type ReactNode, useContext } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import {
 	type LibraryAlbumCredit,
@@ -12,14 +13,16 @@ import {
 	LibraryArtistCards,
 } from "../../../ui/features/library/LibraryArtistCards";
 import {
+	LibraryAlbumDataBinder,
+	type LibraryCatalogAlbumModel,
+	type LibraryCatalogArtistResults,
+	type LibraryCatalogTrackResults,
+} from "../../../ui/features/library/LibraryCatalogResults";
+import {
 	type LibraryTrackCredit,
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "../../../ui/features/library/LibraryTrackListView";
-import type {
-	LibraryCatalogArtistResults,
-	LibraryCatalogTrackResults,
-} from "../../../ui/features/library/LibraryCatalogResults";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -245,11 +248,29 @@ export function libraryCatalogTrackResults({
 	};
 }
 
-export function LibraryCatalogRows({
-	view,
+export type LibraryCatalogAlbumRowsData = Pick<
+	LibraryCatalogRowsProps,
+	| "artists"
+	| "releases"
+	| "hasAudio"
+	| "files"
+	| "filter"
+	| "albumEntries"
+	| "selectedEditions"
+	| "onSelectEdition"
+	| "expanded"
+	| "onToggleAlbum"
+	| "pageSelection"
+> & { locale: "en" | "ru" };
+
+/**
+ * Pure album projection for the portable album outlet. The demo controller owns
+ * expansion and edition selection; the provider only binds the resulting model.
+ */
+export function libraryCatalogAlbumResults({
+	locale,
 	artists,
 	releases,
-	missingCounts,
 	hasAudio,
 	files,
 	filter = "all",
@@ -259,42 +280,11 @@ export function LibraryCatalogRows({
 	expanded,
 	onToggleAlbum,
 	pageSelection,
-}: LibraryCatalogRowsProps) {
-	const { locale } = useI18n();
+}: LibraryCatalogAlbumRowsData): LibraryCatalogAlbumModel {
 	const m = (
 		key: LibraryRowsMessage,
 		values?: Record<string, string | number>,
 	) => libraryRowsMessage(locale, key, values);
-	if (view === "artists") {
-		return (
-			<LibraryArtistCards
-				locale={locale}
-				{...libraryCatalogArtistResults({
-					artists,
-					releases,
-					missingCounts,
-					hasAudio,
-					pageSelection,
-				})}
-			/>
-		);
-	}
-	if (view === "tracks") {
-		return (
-			<LibraryTrackListView
-				locale={locale}
-				{...libraryCatalogTrackResults({
-					locale,
-					artists,
-					releases,
-					hasAudio,
-					files,
-					filter,
-					pageSelection,
-				})}
-			/>
-		);
-	}
 	const positionsFor = (release: Release): LibraryAlbumPosition[] =>
 		release.tracks.map((track) => {
 			const ids = sourceIds(track);
@@ -503,14 +493,112 @@ export function LibraryCatalogRows({
 						credits: credit ? [credit] : undefined,
 					};
 				})();
+	return {
+		albums,
+		expandedId: expanded,
+		onToggleExpanded: onToggleAlbum,
+		pageSelection: albumPageSelection,
+		detail,
+	};
+}
+
+const AlbumRowsDataContext = createContext<LibraryCatalogAlbumRowsData | null>(
+	null,
+);
+
+/** Binds the demo controller's raw album data for the portable album outlet. */
+export function DemoLibraryAlbumRowsDataProvider({
+	value,
+	children,
+}: {
+	value: LibraryCatalogAlbumRowsData | null;
+	children: ReactNode;
+}) {
+	return (
+		<AlbumRowsDataContext.Provider value={value}>
+			{children}
+		</AlbumRowsDataContext.Provider>
+	);
+}
+
+/** Stable provider mounted by the demo album results leaf. */
+export function DemoLibraryAlbumRowsProvider({
+	children,
+}: {
+	children: ReactNode;
+}) {
+	const data = useContext(AlbumRowsDataContext);
+	if (!data) throw new Error("missing demo library album rows data");
+	return (
+		<LibraryAlbumDataBinder model={libraryCatalogAlbumResults(data)}>
+			{children}
+		</LibraryAlbumDataBinder>
+	);
+}
+
+export function LibraryCatalogRows({
+	view,
+	artists,
+	releases,
+	missingCounts,
+	hasAudio,
+	files,
+	filter = "all",
+	albumEntries,
+	selectedEditions,
+	onSelectEdition,
+	expanded,
+	onToggleAlbum,
+	pageSelection,
+}: LibraryCatalogRowsProps) {
+	const { locale } = useI18n();
+	if (view === "artists") {
+		return (
+			<LibraryArtistCards
+				locale={locale}
+				{...libraryCatalogArtistResults({
+					artists,
+					releases,
+					missingCounts,
+					hasAudio,
+					pageSelection,
+				})}
+			/>
+		);
+	}
+	if (view === "tracks") {
+		return (
+			<LibraryTrackListView
+				locale={locale}
+				{...libraryCatalogTrackResults({
+					locale,
+					artists,
+					releases,
+					hasAudio,
+					files,
+					filter,
+					pageSelection,
+				})}
+			/>
+		);
+	}
 	return (
 		<LibraryAlbumListView
 			locale={locale}
-			albums={albums}
-			expandedId={expanded}
-			onToggleExpanded={onToggleAlbum}
-			pageSelection={albumPageSelection}
-			detail={detail}
+			{...libraryCatalogAlbumResults({
+				locale,
+				artists,
+				releases,
+				hasAudio,
+				files,
+				filter,
+				albumEntries,
+				selectedEditions,
+				onSelectEdition,
+				expanded,
+				onToggleAlbum,
+				pageSelection,
+			})}
 		/>
 	);
 }

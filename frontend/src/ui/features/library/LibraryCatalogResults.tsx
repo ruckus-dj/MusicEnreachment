@@ -1,4 +1,14 @@
-import type { ComponentProps, ReactNode } from "react";
+import {
+  type ComponentProps,
+  type ComponentType,
+  createContext,
+  type ReactNode,
+  useContext,
+} from "react";
+import {
+  LibraryAlbumListView,
+  type LibraryAlbumListViewProps,
+} from "./LibraryAlbumListView";
 import { LibraryArtistCards } from "./LibraryArtistCards";
 import { LibraryTrackListView } from "./LibraryTrackListView";
 
@@ -14,12 +24,23 @@ export type LibraryCatalogTrackResults = Omit<
   "locale"
 >;
 
+/** Typed album leaf model; the page supplies the locale. */
+export type LibraryCatalogAlbumModel = Omit<
+  LibraryAlbumListViewProps,
+  "locale"
+>;
+
+/** Stable host provider that owns album row state and reads. */
+export type LibraryCatalogAlbumDataProvider = ComponentType<{
+  children: ReactNode;
+}>;
+
 /**
- * Narrow album-only temporary slot. Album rows keep their host-owned mount and
- * queries until a typed scoped provider replaces this slot.
+ * Album results carry a stable data provider. The provider binds the typed
+ * model here; the fixed list mount below renders it with the page locale.
  */
 export type LibraryCatalogAlbumResults = {
-  slot: ReactNode;
+  DataProvider: LibraryCatalogAlbumDataProvider;
 };
 
 /** Results selected by their typed leaf, not by a host-rendered tree. */
@@ -28,9 +49,33 @@ export type LibraryCatalogResults =
   | ({ kind: "tracks" } & LibraryCatalogTrackResults)
   | ({ kind: "albums" } & LibraryCatalogAlbumResults);
 
+const AlbumModelContext = createContext<LibraryCatalogAlbumModel | null>(null);
+
+/** Host adapter: binds album list data without rendering the portable view. */
+export function LibraryAlbumDataBinder({
+  model,
+  children,
+}: {
+  model: LibraryCatalogAlbumModel;
+  children: ReactNode;
+}) {
+  return (
+    <AlbumModelContext.Provider value={model}>
+      {children}
+    </AlbumModelContext.Provider>
+  );
+}
+
+function BoundAlbumListView({ locale }: { locale: "en" | "ru" }) {
+  const model = useContext(AlbumModelContext);
+  if (!model) throw new Error("missing library album view model");
+  return <LibraryAlbumListView locale={locale} {...model} />;
+}
+
 /**
  * Selects and mounts the typed result leaf. Artist and track models are
- * complete leaf props; album rows stay an explicit host-rendered slot.
+ * complete leaf props; album rows mount through the host data provider and the
+ * fixed portable list below.
  */
 export function LibraryCatalogResultView({
   locale,
@@ -57,7 +102,13 @@ export function LibraryCatalogResultView({
           label={results.label}
         />
       );
-    case "albums":
-      return <>{results.slot}</>;
+    case "albums": {
+      const DataProvider = results.DataProvider;
+      return (
+        <DataProvider>
+          <BoundAlbumListView locale={locale} />
+        </DataProvider>
+      );
+    }
   }
 }

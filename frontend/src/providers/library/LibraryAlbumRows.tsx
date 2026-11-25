@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 import { useGetLibraryRelease } from "../../api/generated/client";
 import type {
   LibraryArtistCreditResponse,
@@ -7,21 +7,29 @@ import type {
   LibraryReleaseSummary,
   MissingReleaseGroupSummary,
 } from "../../api/generated/client.schemas";
-import { useI18n } from "../../app/i18n/host";
-import {
-  type LibraryAlbumCredit,
-  type LibraryAlbumDetail,
-  LibraryAlbumListView,
-  type LibraryAlbumRow,
-  type LibraryAlbumSelectionControl,
+import type {
+  LibraryAlbumCredit,
+  LibraryAlbumDetail,
+  LibraryAlbumRow,
+  LibraryAlbumSelectionControl,
 } from "../../ui/features/library/LibraryAlbumListView";
 import type { LibraryAlbumPosition } from "../../ui/features/library/LibraryAlbumPositionsView";
+import {
+  LibraryAlbumDataBinder,
+  type LibraryCatalogAlbumModel,
+} from "../../ui/features/library/LibraryCatalogResults";
 import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
 type SelectionControl = (
   scope: LibrarySelectionScope,
 ) => LibraryAlbumSelectionControl;
+
+/** Private page data supplied by the library route binder. */
+export interface LibraryAlbumRowsData {
+  items: LibraryReleaseItem[];
+  selectionControl: SelectionControl;
+}
 
 function releaseHref(id: string) {
   return `#/library/releases/${encodeURIComponent(id)}`;
@@ -158,14 +166,39 @@ function releasePositions(
   });
 }
 
-export function LibraryAlbumRows({
-  items,
-  selectionControl,
+const AlbumRowsDataContext = createContext<LibraryAlbumRowsData | null>(null);
+
+/**
+ * Route adapter: publishes the current page's raw album items and selection
+ * resolver while the results branch owns the album provider's lifetime.
+ */
+export function ProductionLibraryAlbumRowsDataProvider({
+  value,
+  children,
 }: {
-  items: LibraryReleaseItem[];
-  selectionControl: SelectionControl;
+  value: LibraryAlbumRowsData | null;
+  children: ReactNode;
 }) {
-  const { locale } = useI18n();
+  return (
+    <AlbumRowsDataContext.Provider value={value}>
+      {children}
+    </AlbumRowsDataContext.Provider>
+  );
+}
+
+/**
+ * Owns the album expansion state and release/edition reads for as long as the
+ * portable album results leaf is mounted, then binds the typed model above the
+ * fixed list view.
+ */
+export function ProductionLibraryAlbumRowsProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const data = useContext(AlbumRowsDataContext);
+  if (!data) throw new Error("missing library album rows data");
+  const { items, selectionControl } = data;
   const [expanded, setExpanded] = useState<string | null>(null);
   const entries = items.flatMap((item) => {
     const entry = albumEntry(item, selectionControl);
@@ -212,16 +245,16 @@ export function LibraryAlbumRows({
     };
   }
 
+  const model: LibraryCatalogAlbumModel = {
+    albums: entries.map((entry) => entry.row),
+    expandedId: expanded,
+    onToggleExpanded: (id) =>
+      setExpanded((current) => (current === id ? null : id)),
+    pageSelection: selectionControl({ kind: "page" }),
+    detail,
+  };
+
   return (
-    <LibraryAlbumListView
-      locale={locale}
-      albums={entries.map((entry) => entry.row)}
-      expandedId={expanded}
-      onToggleExpanded={(id) =>
-        setExpanded((current) => (current === id ? null : id))
-      }
-      pageSelection={selectionControl({ kind: "page" })}
-      detail={detail}
-    />
+    <LibraryAlbumDataBinder model={model}>{children}</LibraryAlbumDataBinder>
   );
 }

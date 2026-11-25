@@ -54,7 +54,6 @@ import {
 	useLibraryRouteState,
 } from "./providers/library";
 import { ArtistScreen } from "./providers/library/ArtistScreen";
-import { DemoLibraryCatalogBinder } from "./providers/library/LibraryCatalogScreen";
 import {
 	artistReleaseHref,
 	releaseHref,
@@ -81,10 +80,11 @@ import {
 } from "./providers/library/catalogViewModel";
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
 import {
-	LibraryCatalogRows,
+	DemoLibraryAlbumRowsProvider,
 	libraryCatalogArtistResults,
 	libraryCatalogTrackResults,
 } from "./providers/library/LibraryCatalogRows";
+import { DemoLibraryCatalogBinder } from "./providers/library/LibraryCatalogScreen";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
@@ -1409,28 +1409,7 @@ export function CatalogDemo({
 					}
 				: {
 						kind: "albums",
-						slot: (
-							<LibraryCatalogRows
-								view="albums"
-								artists={fixture.artists}
-								releases={pageAlbumReleases}
-								albumEntries={pageAlbumEntries}
-								selectedEditions={editions}
-								onSelectEdition={(groupId, editionKey) =>
-									setEditions((previous) => ({
-										...previous,
-										[groupId]: editionKey,
-									}))
-								}
-								missingCounts={missingCounts}
-								hasAudio={(track) => hasAudio(track as Track)}
-								files={files}
-								filter={filter}
-								expanded={expanded}
-								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-								pageSelection={pageSelection}
-							/>
-						),
+						DataProvider: DemoLibraryAlbumRowsProvider,
 					};
 
 	return (
@@ -1452,6 +1431,27 @@ export function CatalogDemo({
 				},
 				state: libraryPageState,
 				results: libraryResults,
+				albumRows:
+					view === "albums"
+						? {
+								locale,
+								artists: fixture.artists,
+								releases: pageAlbumReleases,
+								albumEntries: pageAlbumEntries,
+								selectedEditions: editions,
+								onSelectEdition: (groupId, editionKey) =>
+									setEditions((previous) => ({
+										...previous,
+										[groupId]: editionKey,
+									})),
+								hasAudio: (track) => hasAudio(track as Track),
+								files,
+								filter,
+								expanded,
+								onToggleAlbum: (id) => setExpanded(expanded === id ? null : id),
+								pageSelection,
+							}
+						: null,
 				page: currentPage,
 				totalPages,
 				totalItems: libraryTotalItems,

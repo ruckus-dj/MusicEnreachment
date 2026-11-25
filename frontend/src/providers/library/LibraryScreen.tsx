@@ -27,7 +27,11 @@ import type {
   LibraryCatalogResults,
 } from "../../ui/features/library/LibraryCatalogResults";
 import { libraryCatalogLoadError } from "../../ui/features/library/libraryCatalogMessages";
-import { LibraryAlbumRows } from "./LibraryAlbumRows";
+import {
+  type LibraryAlbumRowsData,
+  ProductionLibraryAlbumRowsDataProvider,
+  ProductionLibraryAlbumRowsProvider,
+} from "./LibraryAlbumRows";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
 import { libraryPositionRowsModel } from "./LibraryTrackArtistRows";
@@ -299,15 +303,20 @@ export function useLibraryController() {
 export function ProductionLibraryCatalogBinder({
   children,
 }: ApplicationRouteProviderProps) {
-  const model = useLibraryCatalogModel();
+  const { model, albumRows } = useLibraryCatalogModel();
   return (
-    <ApplicationLibraryCatalogBinder model={model}>
-      {children}
-    </ApplicationLibraryCatalogBinder>
+    <ProductionLibraryAlbumRowsDataProvider value={albumRows}>
+      <ApplicationLibraryCatalogBinder model={model}>
+        {children}
+      </ApplicationLibraryCatalogBinder>
+    </ProductionLibraryAlbumRowsDataProvider>
   );
 }
 
-function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
+function useLibraryCatalogModel(): {
+  model: ApplicationLibraryCatalogModel;
+  albumRows: LibraryAlbumRowsData | null;
+} {
   const { locale } = useI18n();
   const {
     route,
@@ -472,22 +481,22 @@ function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
         })
       : { rows: [] };
 
-  const albumSlot =
-    view === "albums" && releasesBody ? (
-      <LibraryAlbumRows
-        items={releasesBody.items}
-        selectionControl={selection.selectionControl}
-      />
-    ) : null;
+  const albumRows: LibraryAlbumRowsData | null =
+    view === "albums" && releasesBody
+      ? {
+          items: releasesBody.items,
+          selectionControl: selection.selectionControl,
+        }
+      : null;
 
   const results: LibraryCatalogResults =
     view === "artists"
       ? { kind: "artists", ...artistResults }
       : view === "tracks"
         ? { kind: "tracks", ...trackResults }
-        : { kind: "albums", slot: albumSlot };
+        : { kind: "albums", DataProvider: ProductionLibraryAlbumRowsProvider };
 
-  return {
+  const model: ApplicationLibraryCatalogModel = {
     locale,
     view,
     summary: summary
@@ -529,4 +538,6 @@ function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
     ) : undefined,
     dockSpace: selection.positions.length > 0,
   };
+
+  return { model, albumRows };
 }

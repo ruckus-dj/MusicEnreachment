@@ -140,7 +140,7 @@ export interface LibraryCatalogPageViewProps {
   onFilter: (value: LibraryStateFilter) => void;
   onViewChange: (view: LibraryView) => void;
   state: LibraryCatalogPageState;
-  /** Selected typed result leaf; album rows remain an explicit narrow slot. */
+  /** Selected typed result leaf; the page supplies the album list locale. */
   results: LibraryCatalogResults;
   page: number;
   totalPages: number;
