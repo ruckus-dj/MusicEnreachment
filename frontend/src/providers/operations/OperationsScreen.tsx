@@ -41,6 +41,7 @@ import { operationsControllerCopy as messages } from "../../ui/features/operatio
 import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";
 import type { Locale } from "../../ui/i18n/locale";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
+import { libraryArtistRouteHref } from "../library/libraryRoute";
 import {
   operationKindLabel,
   operationStageLabel,
@@ -197,7 +198,7 @@ function targetHref(ref: OperationTargetRef | undefined) {
     return libraryPositionHref(releaseId, positionId);
   if (ref.kind === "release" && releaseId) return libraryReleaseHref(releaseId);
   if (ref.kind === "artist" && artistId)
-    return `#/library/artists/${encodeURIComponent(artistId)}`;
+    return libraryArtistRouteHref(artistId);
   if (ref.kind === "source_location" && rootId && locationId)
     return `#/sources/${encodeURIComponent(rootId)}/locations/${encodeURIComponent(locationId)}`;
   if (ref.kind === "source_root" && rootId)

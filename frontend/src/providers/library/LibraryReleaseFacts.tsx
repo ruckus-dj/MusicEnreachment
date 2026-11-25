@@ -13,6 +13,7 @@ import type {
 } from "../../ui/features/library/ReleaseOverviewView";
 import { sourceInventoryStatusLabel } from "../../ui/features/sources/SourceInventoryView";
 import { statusLabel } from "../sources/sourcesApi";
+import { libraryArtistRouteHref } from "./libraryRoute";
 
 export function ReleaseCreditList({
   credits,
@@ -27,7 +28,7 @@ export function ReleaseCreditList({
         key: `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`,
         name: credit.credit_name || credit.artist_name || "",
         canonicalName: credit.artist_name,
-        href: `#/library/artists/${encodeURIComponent(credit.artist_id)}`,
+        href: libraryArtistRouteHref(credit.artist_id),
         joinPhrase: credit.join_phrase,
         role: credit.role,
       }))}
@@ -41,7 +42,7 @@ export function releaseOverviewCredits(
   return (credits ?? []).map((credit) => ({
     name: credit.credit_name || credit.artist_name || "",
     canonicalName: credit.artist_name,
-    href: `#/library/artists/${encodeURIComponent(credit.artist_id)}`,
+    href: libraryArtistRouteHref(credit.artist_id),
     joinPhrase: credit.join_phrase,
     role: credit.role || null,
   }));

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
+import { useHashLocation } from "../../../app/navigation/hashLocation";
 import {
 	ApplicationLibraryArtistBinder,
 	type ApplicationLibraryArtistModel,
@@ -15,12 +16,18 @@ import type {
 	ArtistHeadingModel,
 	ArtistMissingGroupModel,
 	ArtistReleaseRowModel,
+	ArtistReleasesModel,
 } from "../../../ui/features/library/ArtistScreenView";
 import {
 	type CatalogueMessage,
 	catalogueMessage,
 } from "../../../ui/features/library/catalogueMessages";
-import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
+import {
+	type LibraryArtistAddress,
+	libraryArtistAddressHref,
+	libraryPositionHref,
+	parseLibraryArtistAddress,
+} from "../../../ui/features/library/libraryDetailRoute";
 import { genreCatalog as demoGenres } from "../genres/catalogue";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import { releaseHref } from "./artistReleaseRoute";
@@ -39,15 +46,86 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
+import {
+	missingCatalogGroupsForAxes,
+	normalizeCatalogSearch,
+	releaseMatchesFilterAxes,
+} from "./catalogViewModel";
 import type { DeletionOperation } from "./DeletionRequest";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
-import { libraryRootHref } from "./libraryRoute";
+import { LIBRARY_PAGE_SIZE, libraryRootHref } from "./libraryRoute";
 import { audioProperties } from "./metadata/audioProperties";
 
 const libraryHref = libraryRootHref();
+const SEARCH_DEBOUNCE_MS = 250;
+
+function filterForRoute(route: LibraryArtistAddress): CatalogFilterValue {
+	if (route.publication === "published") return "published";
+	if (route.availability === "available") return "available";
+	if (route.availability === "missing") return "missing";
+	return "all";
+}
+
+function routeWithFilter(
+	route: LibraryArtistAddress,
+	filter: CatalogFilterValue,
+): LibraryArtistAddress {
+	return {
+		...route,
+		publication: filter === "published" ? "published" : "all",
+		availability:
+			filter === "available"
+				? "available"
+				: filter === "missing"
+					? "missing"
+					: "all",
+	};
+}
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
+
+/** Live edition search matches title, release artists/credits and catalogue. */
+function editionMatchesQuery(
+	release: OriginalRelease,
+	artists: CatalogArtist[],
+	query: string,
+) {
+	const normalizedQuery = normalizeCatalogSearch(query);
+	if (!normalizedQuery) return true;
+	const creditedIds = new Set<string>();
+	if (release.artistId) creditedIds.add(release.artistId);
+	for (const credit of release.credits ?? [])
+		if (credit.artistId) creditedIds.add(credit.artistId);
+	const names = [
+		...(release.credits ?? []).flatMap((credit) => [
+			credit.credit,
+			credit.name,
+		]),
+		...[...creditedIds].map(
+			(id) => artists.find((artist) => artist.id === id)?.name,
+		),
+	].filter((name): name is string => Boolean(name));
+	return [release.title, ...names, release.catalog].some((value) =>
+		normalizeCatalogSearch(value).includes(normalizedQuery),
+	);
+}
+
+/** Live missing-group search matches release-group title and artist names. */
+function missingGroupMatchesQuery(
+	group: MissingGroup,
+	artists: CatalogArtist[],
+	query: string,
+) {
+	const normalizedQuery = normalizeCatalogSearch(query);
+	if (!normalizedQuery) return true;
+	const artistName = artists.find(
+		(artist) => artist.id === group.artistId,
+	)?.name;
+	return [group.title, artistName ?? ""].some((value) =>
+		normalizeCatalogSearch(value).includes(normalizedQuery),
+	);
+}
 
 function genreOptions(query: string) {
 	const term = query.trim().toLocaleLowerCase("en");
@@ -70,12 +148,8 @@ export function ArtistScreen({
 	artists,
 	releases,
 	files,
-	query: sharedQuery,
-	filter: sharedFilter,
 	selected = new Set(),
 	onSelect,
-	onQueryChange,
-	onFilterChange,
 	onDeleteArtist,
 	onQueueDeletion,
 	onUpdateArtist,
@@ -87,12 +161,8 @@ export function ArtistScreen({
 	artists: CatalogArtist[];
 	releases: OriginalRelease[];
 	files: SourceFiles;
-	query?: string;
-	filter?: CatalogFilterValue;
 	selected?: Set<string>;
 	onSelect?: (ids: string[], value: boolean) => void;
-	onQueryChange?: (value: string) => void;
-	onFilterChange?: (value: CatalogFilterValue) => void;
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	onUpdateArtist?: (artist: CatalogArtist) => void;
@@ -102,24 +172,71 @@ export function ArtistScreen({
 	const { locale } = useI18n();
 	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
 		catalogueMessage(locale, key, values);
-	const [localQuery, setLocalQuery] = useState("");
+	const hash = useHashLocation();
+	const parsedRoute = parseLibraryArtistAddress(hash);
+	const route: LibraryArtistAddress =
+		parsedRoute?.artistId === artistId
+			? parsedRoute
+			: {
+					artistId,
+					view: "artists",
+					query: "",
+					publication: "all",
+					availability: "all",
+					offset: 0,
+				};
+	const [searchInput, setSearchInput] = useState(route.query);
+	const pendingSearch = useRef<number | null>(null);
+	const filter = filterForRoute(route);
 	const [genreQuery, setGenreQuery] = useState("");
 	const [localGenresLoaded, setLocalGenresLoaded] = useState(false);
 	const genreSearchResults = useMemo(
 		() => genreOptions(genreQuery),
 		[genreQuery],
 	);
-	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
-	const query = sharedQuery ?? localQuery;
-	const filter = sharedFilter ?? localFilter;
-	const changeQuery = (value: string) => {
-		setLocalQuery(value);
-		onQueryChange?.(value);
-	};
-	const changeFilter = (value: CatalogFilterValue) => {
-		setLocalFilter(value);
-		onFilterChange?.(value);
-	};
+	useEffect(() => {
+		if (pendingSearch.current !== null) {
+			window.clearTimeout(pendingSearch.current);
+			pendingSearch.current = null;
+		}
+		setSearchInput(route.query);
+	}, [hash, route.query]);
+	useEffect(
+		() => () => {
+			if (pendingSearch.current !== null)
+				window.clearTimeout(pendingSearch.current);
+		},
+		[],
+	);
+	function currentRoute() {
+		const parsed = parseLibraryArtistAddress(window.location.hash);
+		return parsed?.artistId === artistId ? parsed : route;
+	}
+	function changeQuery(value: string) {
+		setSearchInput(value);
+		if (pendingSearch.current !== null)
+			window.clearTimeout(pendingSearch.current);
+		const capturedHash = window.location.hash;
+		pendingSearch.current = window.setTimeout(() => {
+			pendingSearch.current = null;
+			if (window.location.hash !== capturedHash) return;
+			const current = currentRoute();
+			if (current.query === value) return;
+			window.location.hash = libraryArtistAddressHref(artistId, {
+				...current,
+				query: value,
+				offset: 0,
+			}).slice(1);
+		}, SEARCH_DEBOUNCE_MS);
+	}
+	function changeFilter(value: CatalogFilterValue) {
+		const current = currentRoute();
+		if (filterForRoute(current) === value) return;
+		window.location.hash = libraryArtistAddressHref(artistId, {
+			...routeWithFilter(current, value),
+			offset: 0,
+		}).slice(1);
+	}
 	const [localArtistUpdates, setLocalArtistUpdates] = useState<
 		Record<string, CatalogArtist>
 	>({});
@@ -160,12 +277,16 @@ export function ArtistScreen({
 				provider.tracks.length === release.tracks.length,
 		);
 	};
+	const filterAxes = {
+		publication: route.publication,
+		availability: route.availability,
+	};
+	const visibleEditions = artistReleases.filter(
+		(release) =>
+			editionMatchesQuery(release, artists, route.query) &&
+			releaseMatchesFilterAxes(release.tracks, filterAxes, hasAudio),
+	);
 	const missingGroups = catalogData.absentGroups as MissingGroup[];
-	const queryTerms = query
-		.normalize("NFKC")
-		.toLocaleLowerCase()
-		.split(/\s+/)
-		.filter(Boolean);
 	const unrepresentedMissingGroups = missingGroups.filter(
 		(group) =>
 			group.artistId === artistId &&
@@ -175,14 +296,13 @@ export function ArtistScreen({
 						.releaseGroupId === group.groupId,
 			),
 	);
-	const filteredMissingGroups = unrepresentedMissingGroups.filter((group) => {
-		if (filter !== "all" && filter !== "missing") return false;
-		const searchable =
-			`${group.title} ${group.editions.map((edition) => `${edition.year} ${edition.country} ${edition.format} ${edition.disambiguation} ${edition.titles.join(" ")}`).join(" ")}`
-				.normalize("NFKC")
-				.toLocaleLowerCase();
-		return queryTerms.every((term) => searchable.includes(term));
-	});
+	const visibleMissingGroups = missingCatalogGroupsForAxes(
+		unrepresentedMissingGroups,
+		allReleases,
+		artists,
+		"",
+		filterAxes,
+	).filter((group) => missingGroupMatchesQuery(group, artists, route.query));
 	if (!artist)
 		return (
 			<ApplicationLibraryArtistBinder
@@ -345,7 +465,7 @@ export function ArtistScreen({
 			onSave={saveArtist}
 		/>
 	);
-	const editions: ArtistEditionModel[] = artistReleases.map((release) => {
+	const editions: ArtistEditionModel[] = visibleEditions.map((release) => {
 		const durationTotal =
 			release.tracks.length > 0 &&
 			release.tracks.every((track) => Number.isFinite(track.duration))
@@ -436,7 +556,7 @@ export function ArtistScreen({
 		};
 	});
 	const preparedMissingGroups: ArtistMissingGroupModel[] =
-		filteredMissingGroups.map((group) => ({
+		visibleMissingGroups.map((group) => ({
 			key: group.id,
 			title: group.title,
 			artistName: originalArtistName(group.artistId, artists),
@@ -462,19 +582,74 @@ export function ArtistScreen({
 			kind: "missing-group" as const,
 			group,
 		})),
-	];
+	].sort((a, b) => {
+		const aTitle = a.kind === "edition" ? a.edition.title : a.group.title;
+		const bTitle = b.kind === "edition" ? b.edition.title : b.group.title;
+		const normalizedA = normalizeCatalogSearch(aTitle);
+		const normalizedB = normalizeCatalogSearch(bTitle);
+		if (normalizedA !== normalizedB) return normalizedA < normalizedB ? -1 : 1;
+		if (a.kind !== b.kind) return a.kind === "edition" ? -1 : 1;
+		const aKey = a.kind === "edition" ? a.edition.key : a.group.key;
+		const bKey = b.kind === "edition" ? b.edition.key : b.group.key;
+		if (aKey === bKey) return 0;
+		return aKey < bKey ? -1 : 1;
+	});
+	const pageRows = releaseRows.slice(
+		route.offset,
+		route.offset + LIBRARY_PAGE_SIZE,
+	);
+	const pagination =
+		releaseRows.length > LIBRARY_PAGE_SIZE || route.offset > 0
+			? {
+					label: m("releasePages"),
+					status: pageRows.length
+						? `${route.offset + 1}–${Math.min(route.offset + LIBRARY_PAGE_SIZE, releaseRows.length)} ${m("of")} ${releaseRows.length}`
+						: `0 ${m("of")} ${releaseRows.length}`,
+					previous: {
+						label: m("previous"),
+						disabled: route.offset === 0,
+						href: libraryArtistAddressHref(artistId, {
+							...route,
+							offset: Math.max(0, route.offset - LIBRARY_PAGE_SIZE),
+						}),
+					},
+					next: {
+						label: m("next"),
+						disabled: route.offset + LIBRARY_PAGE_SIZE >= releaseRows.length,
+						href: libraryArtistAddressHref(artistId, {
+							...route,
+							offset: route.offset + LIBRARY_PAGE_SIZE,
+						}),
+					},
+				}
+			: null;
+	const hasFilter =
+		route.query !== "" ||
+		route.publication !== "all" ||
+		route.availability !== "all";
+	const releaseState: ArtistReleasesModel =
+		pageRows.length === 0
+			? {
+					state: "empty",
+					title: m("noReleasesFound"),
+					description: hasFilter
+						? m("changeFilters")
+						: m("artistHasNoReleases"),
+					pagination,
+				}
+			: { state: "ready", rows: pageRows, pagination };
 	const model: ApplicationLibraryArtistModel = {
 		locale,
 		libraryHref,
 		heading,
 		deletion,
 		metadataCard,
-		query,
+		query: searchInput,
 		filter,
 		onQueryChange: changeQuery,
 		onFilterChange: changeFilter,
 		editionsKey: artistId,
-		releases: { state: "ready", rows: releaseRows },
+		releases: releaseState,
 	};
 	return (
 		<ApplicationLibraryArtistBinder model={model}>

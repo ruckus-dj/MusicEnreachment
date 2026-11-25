@@ -1,26 +1,24 @@
 import {
+  type LibraryArtistAddress,
+  type LibraryArtistQueryState,
+  type LibraryAvailabilityFilter,
   type LibraryPositionAddress,
+  type LibraryPublicationFilter,
   type LibraryReleaseAddress,
+  libraryArtistAddressHref,
+  parseLibraryArtistAddress,
   parseLibraryPositionAddress,
   parseLibraryReleaseAddress,
 } from "../../ui/features/library/libraryDetailRoute";
 import type { LibraryView } from "../../ui/features/library/libraryView";
 
 export type { LibraryView } from "../../ui/features/library/libraryView";
-export type PublicationFilter = "all" | "published" | "unpublished";
-export type AvailabilityFilter = "all" | "available" | "missing";
+export type PublicationFilter = LibraryPublicationFilter;
+export type AvailabilityFilter = LibraryAvailabilityFilter;
 
-export interface LibraryRoute {
-  view: LibraryView;
-  query: string;
-  publication: PublicationFilter;
-  availability: AvailabilityFilter;
-  offset: number;
-}
+export type LibraryRoute = LibraryArtistQueryState;
 
-export interface LibraryArtistRoute extends LibraryRoute {
-  artistId: string;
-}
+export type LibraryArtistRoute = LibraryArtistAddress;
 
 export type LibraryReleaseRoute = LibraryReleaseAddress;
 
@@ -84,36 +82,7 @@ export function parseLibraryRoute(hash: string): LibraryRoute | undefined {
   };
 }
 
-export function parseLibraryArtistRoute(
-  hash: string,
-): LibraryArtistRoute | undefined {
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  const [pathname, search = ""] = path.split("?", 2);
-  const match = /^\/library\/artists\/([^/]+)$/.exec(pathname);
-  if (!match) return undefined;
-  try {
-    const artistId = decodeURIComponent(match[1]);
-    const params = new URLSearchParams(search);
-    const view = params.get("view") as LibraryView | null;
-    const publication = params.get("publication") as PublicationFilter | null;
-    const availability = params.get(
-      "availability",
-    ) as AvailabilityFilter | null;
-    const offset = Number(params.get("offset") ?? 0);
-    return {
-      artistId,
-      view: view && views.has(view) ? view : "artists",
-      query: params.get("q") ?? "",
-      publication:
-        publication && publications.has(publication) ? publication : "all",
-      availability:
-        availability && availabilities.has(availability) ? availability : "all",
-      offset: Number.isSafeInteger(offset) && offset > 0 ? offset : 0,
-    };
-  } catch {
-    return undefined;
-  }
-}
+export const parseLibraryArtistRoute = parseLibraryArtistAddress;
 
 export function libraryRouteHref(route: LibraryRoute) {
   const params = new URLSearchParams();
@@ -125,12 +94,4 @@ export function libraryRouteHref(route: LibraryRoute) {
   return `#/library?${params.toString()}`;
 }
 
-export function libraryArtistRouteHref(artistId: string, route: LibraryRoute) {
-  const params = new URLSearchParams();
-  params.set("view", route.view);
-  if (route.query) params.set("q", route.query);
-  params.set("publication", route.publication);
-  params.set("availability", route.availability);
-  if (route.offset > 0) params.set("offset", String(route.offset));
-  return `#/library/artists/${encodeURIComponent(artistId)}?${params.toString()}`;
-}
+export const libraryArtistRouteHref = libraryArtistAddressHref;

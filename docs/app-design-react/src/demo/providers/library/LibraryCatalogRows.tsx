@@ -23,7 +23,10 @@ import {
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "../../../ui/features/library/LibraryTrackListView";
-import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
+import {
+	libraryArtistAddressHref,
+	libraryPositionHref,
+} from "../../../ui/features/library/libraryDetailRoute";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -110,7 +113,7 @@ function artistCardModels(
 		return {
 			id: artist.id,
 			name: artist.name,
-			href: `#artist/${artist.id}`,
+			href: libraryArtistAddressHref(artist.id),
 			monogram: artist.name.slice(0, 1),
 			palette: artist.color || "clay",
 			genres: artist.genre ? [artist.genre] : [],
@@ -203,7 +206,9 @@ export function libraryCatalogTrackResults({
 							? artists.find((artist) => artist.id === credit.artistId)?.name
 							: undefined) ||
 						"",
-					...(credit.artistId ? { href: `#artist/${credit.artistId}` } : {}),
+					...(credit.artistId
+						? { href: libraryArtistAddressHref(credit.artistId) }
+						: {}),
 					joinPhrase: credit.joinPhrase,
 				}))
 			: [{ name: originalArtistName(track.artistId, artists) }];
@@ -365,7 +370,7 @@ export function libraryCatalogAlbumResults({
 		if (!name) return null;
 		return {
 			name,
-			...(id ? { href: `#artist/${id}` } : {}),
+			...(id ? { href: libraryArtistAddressHref(id) } : {}),
 			joinPhrase: null,
 		};
 	};

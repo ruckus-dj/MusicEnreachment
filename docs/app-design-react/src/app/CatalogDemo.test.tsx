@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { CatalogDemo } from "../demo/CatalogDemo";
 import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
@@ -57,6 +57,33 @@ it("opens the exact release destination from an album row", () => {
 	expect(
 		links.some((link) => link.getAttribute("href") === northernReleaseHref),
 	).toBe(true);
+});
+
+it("restores the artist query and filter from the canonical address", () => {
+	window.history.replaceState(
+		null,
+		"",
+		"#/library/artists/mira?view=artists&q=Mira&publication=published&availability=all",
+	);
+	render(<CatalogDemo />);
+	const search = screen.getByDisplayValue("Mira");
+	expect(search).toBeInTheDocument();
+	search.focus();
+	expect(screen.getByRole("radio", { name: "Опубликовано" })).toBeChecked();
+
+	act(() => {
+		window.history.replaceState(
+			null,
+			"",
+			"#/library/artists/mira?view=artists&q=Arden&publication=all&availability=missing",
+		);
+		window.dispatchEvent(new HashChangeEvent("hashchange"));
+	});
+	expect(screen.getByDisplayValue("Arden")).toHaveFocus();
+	expect(screen.getByRole("radio", { name: "Не хватает" })).toBeChecked();
+	expect(window.location.hash).toBe(
+		"#/library/artists/mira?view=artists&q=Arden&publication=all&availability=missing",
+	);
 });
 
 it("keeps a copied exact offset instead of snapping to the page start", () => {

@@ -18,6 +18,7 @@ import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelec
 import {
 	libraryPositionHref,
 	libraryReleaseHref,
+	parseLibraryArtistAddress,
 	parseLibraryPositionAddress,
 	parseLibraryReleaseAddress,
 } from "../ui/features/library/libraryDetailRoute";
@@ -176,14 +177,6 @@ function openIncomingFromHome() {
 	window.location.hash = incomingGroupsListHref();
 }
 
-const routeId = (value: string) => {
-	try {
-		return decodeURIComponent(value);
-	} catch {
-		return value;
-	}
-};
-
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
 type InlinePublicationPreview = {
@@ -271,6 +264,7 @@ export function CatalogDemo({
 	const route = routePath;
 	const [routeName] = route.split("?", 1);
 	const incomingRoute = parseIncomingGroupsRoute(route);
+	const artistAddress = parseLibraryArtistAddress(route);
 	const {
 		view,
 		query,
@@ -287,11 +281,12 @@ export function CatalogDemo({
 		setSearch,
 		reset: resetLibrarySearch,
 	} = useLibraryRouteState(route);
-	const headingRoute =
-		routeName === "/library" ||
-		routeName === "/settings" ||
-		routeName === "/operations" ||
-		routeName === "/own-catalog"
+	const headingRoute = artistAddress
+		? `/library/artists/${artistAddress.artistId}`
+		: routeName === "/library" ||
+				routeName === "/settings" ||
+				routeName === "/operations" ||
+				routeName === "/own-catalog"
 			? routeName
 			: route;
 	const [releases, setReleases] = useState(() =>
@@ -566,7 +561,6 @@ export function CatalogDemo({
 		titleSuffix: msg("documentTitleSuffix"),
 		scrollResetKey: incomingRoute ? routeName : undefined,
 	});
-	const [artistQuery, setArtistQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [editions, setEditions] = useState<Record<string, string>>({});
@@ -792,12 +786,12 @@ export function CatalogDemo({
 				onOpenIncoming={openIncomingFromHome}
 			/>
 		);
-	if (route.startsWith("artist/")) {
-		const artistId = routeId(routeName.slice("artist/".length));
+	if (artistAddress) {
+		const artistId = artistAddress.artistId;
 		return (
 			<LibrarySelectionScreenFrame>
 				<ApplicationRouteOutlet
-					key={route}
+					key={artistId}
 					route="library-artist"
 					provider={ArtistScreen}
 					providerProps={{
@@ -808,10 +802,6 @@ export function CatalogDemo({
 						genresLoaded: settings.genresLoaded,
 						onLoadGenres: loadGenres,
 						selected,
-						query: artistQuery,
-						filter,
-						onQueryChange: setArtistQuery,
-						onFilterChange: setFilter,
 						onSelect: update,
 						onQueueDeletion: queueDeletion,
 						onUpdateArtist: (updated) =>
@@ -1362,9 +1352,11 @@ export function CatalogDemo({
 							return releases.some(
 								(release) => release.id === releaseAddress.releaseId,
 							);
-						const [route, id] = href.slice(1).split("/");
-						if (route === "artist")
-							return artists.some((artist) => artist.id === id);
+						const artistAddress = parseLibraryArtistAddress(href);
+						if (artistAddress)
+							return artists.some(
+								(artist) => artist.id === artistAddress.artistId,
+							);
 						return false;
 					},
 				}}

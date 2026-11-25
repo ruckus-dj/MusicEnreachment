@@ -69,6 +69,7 @@ import {
   releaseOverviewCredits,
   releaseOverviewMedia,
 } from "./LibraryReleaseFacts";
+import { libraryArtistRouteHref } from "./libraryRoute";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 import {
   ReleaseMetadataEditor,
@@ -1538,7 +1539,7 @@ export function LibraryReleaseScreen({
         ) / 1000
       : null;
   const overviewArtistHref = release.primary_artist.effective_artist_id
-    ? `#/library/artists/${encodeURIComponent(release.primary_artist.effective_artist_id)}`
+    ? libraryArtistRouteHref(release.primary_artist.effective_artist_id)
     : undefined;
   const overviewHeading: ReleaseOverviewHeading = {
     title: release.title,

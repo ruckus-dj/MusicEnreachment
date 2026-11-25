@@ -1,8 +1,26 @@
 /**
- * Portable release (edition) and position hash addresses. The codec owns the
- * exact nested route shape and URI encoding only; identifier policy, including
- * UUID validation for live identifiers, belongs to the host route adapter.
+ * Portable artist, release (edition) and position hash addresses. The codec
+ * owns the route shapes, query defaults and URI encoding only; identifier
+ * policy, including UUID validation for live identifiers, belongs to the host
+ * route adapter.
  */
+
+import type { LibraryView } from "./libraryView";
+
+export type LibraryPublicationFilter = "all" | "published" | "unpublished";
+export type LibraryAvailabilityFilter = "all" | "available" | "missing";
+
+export interface LibraryArtistQueryState {
+  view: LibraryView;
+  query: string;
+  publication: LibraryPublicationFilter;
+  availability: LibraryAvailabilityFilter;
+  offset: number;
+}
+
+export interface LibraryArtistAddress extends LibraryArtistQueryState {
+  artistId: string;
+}
 
 export interface LibraryReleaseAddress {
   releaseId: string;
@@ -31,6 +49,76 @@ function decodeId(value: string) {
   } catch {
     return undefined;
   }
+}
+
+const artistViews = new Set<LibraryView>(["artists", "albums", "tracks"]);
+const artistPublications = new Set<LibraryPublicationFilter>([
+  "all",
+  "published",
+  "unpublished",
+]);
+const artistAvailabilities = new Set<LibraryAvailabilityFilter>([
+  "all",
+  "available",
+  "missing",
+]);
+const artistPattern = /^\/library\/artists\/([^/]+)$/;
+
+/** Parses `#/library/artists/<artist>` with the live query defaults. */
+export function parseLibraryArtistAddress(
+  route: string,
+): LibraryArtistAddress | undefined {
+  const path = route.startsWith("#") ? route.slice(1) : route;
+  const [pathname, search = ""] = path.split("?", 2);
+  const match = artistPattern.exec(pathname);
+  if (!match) return undefined;
+  try {
+    const artistId = decodeURIComponent(match[1]);
+    const params = new URLSearchParams(search);
+    const view = params.get("view") as LibraryView | null;
+    const publication = params.get(
+      "publication",
+    ) as LibraryPublicationFilter | null;
+    const availability = params.get(
+      "availability",
+    ) as LibraryAvailabilityFilter | null;
+    const offset = Number(params.get("offset") ?? 0);
+    return {
+      artistId,
+      view: view && artistViews.has(view) ? view : "artists",
+      query: params.get("q") ?? "",
+      publication:
+        publication && artistPublications.has(publication)
+          ? publication
+          : "all",
+      availability:
+        availability && artistAvailabilities.has(availability)
+          ? availability
+          : "all",
+      offset: Number.isSafeInteger(offset) && offset > 0 ? offset : 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Builds the artist address. Without state the href is the bare canonical
+ * path; a supplied query state appends the live filter/search shape.
+ */
+export function libraryArtistAddressHref(
+  artistId: string,
+  state?: LibraryArtistQueryState,
+) {
+  const base = `#/library/artists/${encodeURIComponent(artistId)}`;
+  if (!state) return base;
+  const params = new URLSearchParams();
+  params.set("view", state.view);
+  if (state.query) params.set("q", state.query);
+  params.set("publication", state.publication);
+  params.set("availability", state.availability);
+  if (state.offset > 0) params.set("offset", String(state.offset));
+  return `${base}?${params.toString()}`;
 }
 
 /**

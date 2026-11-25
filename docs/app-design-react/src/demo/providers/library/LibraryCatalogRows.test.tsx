@@ -178,7 +178,7 @@ it("renders mobile album credits, fallback artist links, and unknown artists", (
 		within(fallbackField as HTMLElement).getByRole("link", {
 			name: "Mira Vale",
 		}),
-	).toHaveAttribute("href", `#artist/${originalArtists[0].id}`);
+	).toHaveAttribute("href", `#/library/artists/${originalArtists[0].id}`);
 	const unknownRow = mobileRow(unknown.title);
 	expect(unknownRow).not.toBeNull();
 	const unknownField = within(unknownRow as HTMLElement).getByText(

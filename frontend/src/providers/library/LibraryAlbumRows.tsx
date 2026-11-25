@@ -22,6 +22,7 @@ import {
   libraryPositionHref,
   libraryReleaseHref,
 } from "../../ui/features/library/libraryDetailRoute";
+import { libraryArtistRouteHref } from "./libraryRoute";
 import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
@@ -50,9 +51,7 @@ function creditLinks(
 ): LibraryAlbumCredit[] {
   return credits.map((credit) => ({
     name: credit.credit_name || credit.artist_name || "",
-    href: credit.artist_id
-      ? `#/library/artists/${encodeURIComponent(credit.artist_id)}`
-      : null,
+    href: credit.artist_id ? libraryArtistRouteHref(credit.artist_id) : null,
     joinPhrase: credit.join_phrase,
   }));
 }

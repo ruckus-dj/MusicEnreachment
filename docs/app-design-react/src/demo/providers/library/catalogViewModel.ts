@@ -101,7 +101,7 @@ export function artistReleases<T extends CatalogRelease>(
 
 function searchMissingCatalogGroups(
 	groups: AbsentCatalogGroup[],
-	releases: CatalogRelease[],
+	releases: readonly Pick<OriginalRelease, "releaseGroupId">[],
 	artists: CatalogArtist[],
 	query: string,
 ) {
@@ -148,7 +148,7 @@ export function missingCatalogGroups(
 /** Missing provider groups only exist outside published and available axes. */
 export function missingCatalogGroupsForAxes(
 	groups: AbsentCatalogGroup[],
-	releases: CatalogRelease[],
+	releases: readonly Pick<OriginalRelease, "releaseGroupId">[],
 	artists: CatalogArtist[],
 	query: string,
 	axes: CatalogFilterAxes,

@@ -9,6 +9,7 @@ import {
 	parseDemoSourceRoute,
 } from "../../demo/providers/sources/sourceDemoRoute";
 import {
+	parseLibraryArtistAddress,
 	parseLibraryPositionAddress,
 	parseLibraryReleaseAddress,
 } from "../../ui/features/library/libraryDetailRoute";
@@ -22,12 +23,16 @@ import { useI18n } from "../i18n";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
 
-const libraryRoutes = ["artist", "publication-list"];
+const libraryRoutes = ["publication-list"];
 
 function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (!path || path === "/") return "home";
 	if (path === "/library") return "library";
-	if (parseLibraryReleaseAddress(path) || parseLibraryPositionAddress(path))
+	if (
+		parseLibraryArtistAddress(path) ||
+		parseLibraryReleaseAddress(path) ||
+		parseLibraryPositionAddress(path)
+	)
 		return "library";
 	if (path === "/setup") return "setup";
 	if (path === "/operations") return "operations";

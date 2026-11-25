@@ -2,7 +2,10 @@ import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
 import type { LibraryReleaseOverviewModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
-import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
+import {
+	libraryArtistAddressHref,
+	libraryPositionHref,
+} from "../../../ui/features/library/libraryDetailRoute";
 import type {
 	ReleaseOverviewCredit,
 	ReleaseOverviewMedia,
@@ -155,9 +158,7 @@ export function buildReleaseOverviewDemoModel({
 		if (!name) return null;
 		return {
 			name,
-			...(resolved
-				? { href: `#artist/${encodeURIComponent(resolved.id)}` }
-				: {}),
+			...(resolved ? { href: libraryArtistAddressHref(resolved.id) } : {}),
 			joinPhrase: null,
 		};
 	};
@@ -219,7 +220,7 @@ export function buildReleaseOverviewDemoModel({
 
 	return {
 		libraryHref: libraryRootHref(),
-		artistHref: artist ? `#artist/${encodeURIComponent(artist.id)}` : undefined,
+		artistHref: artist ? libraryArtistAddressHref(artist.id) : undefined,
 		heading: {
 			title: release.title,
 			disambiguation: release.disambiguation,
