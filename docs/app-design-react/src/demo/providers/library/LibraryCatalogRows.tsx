@@ -16,6 +16,10 @@ import {
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "../../../ui/features/library/LibraryTrackListView";
+import type {
+	LibraryCatalogArtistResults,
+	LibraryCatalogTrackResults,
+} from "../../../ui/features/library/LibraryCatalogResults";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -46,7 +50,7 @@ type Release = Omit<OriginalRelease, "tracks"> & { tracks: CatalogTrack[] };
 type AlbumEntry =
 	| { kind: "release"; release: Release }
 	| { kind: "missing"; group: AbsentCatalogGroup };
-interface Props {
+export interface LibraryCatalogRowsProps {
 	view: View;
 	artists: CatalogArtist[];
 	releases: Release[];
@@ -123,6 +127,124 @@ function artistCardModels(
 	};
 }
 
+export function libraryCatalogArtistResults({
+	artists,
+	releases,
+	missingCounts,
+	hasAudio,
+	pageSelection,
+}: Pick<
+	LibraryCatalogRowsProps,
+	"artists" | "releases" | "missingCounts" | "hasAudio" | "pageSelection"
+>): LibraryCatalogArtistResults {
+	const { rows, pageSelectionControl } = artistCardModels(
+		artists,
+		releases,
+		missingCounts,
+		hasAudio,
+		pageSelection,
+	);
+	return { artists: rows, pageSelectionControl };
+}
+
+export function libraryCatalogTrackResults({
+	locale,
+	artists,
+	releases,
+	hasAudio,
+	files,
+	filter = "all",
+	pageSelection,
+}: Pick<
+	LibraryCatalogRowsProps,
+	"artists" | "releases" | "hasAudio" | "files" | "filter" | "pageSelection"
+> & { locale: "en" | "ru" }): LibraryCatalogTrackResults {
+	const tracks = releases.flatMap((release) =>
+		release.tracks.map((track) => ({ release, track })),
+	);
+	const tableTrackIds = tracks.map(({ track }) => track.id);
+	const rows: LibraryTrackRow[] = tracks.map(({ release, track }) => {
+		const ids = sourceIds(track);
+		const selectedFile = track.sourceId ? files[track.sourceId] : undefined;
+		const sourceCodec = selectedFile?.codec ?? null;
+		const pub =
+			track.published && typeof track.published === "object"
+				? track.published
+				: null;
+		const rowClass = availabilityRowClass(
+			track as OriginalTrack,
+			filter,
+			hasAudio,
+		);
+		const filterState: LibraryTrackRow["filterState"] =
+			rowClass === "filter-match"
+				? "match"
+				: rowClass === "filter-muted"
+					? "muted"
+					: undefined;
+		// A persisted source with an unknown codec is still selected; only
+		// the codec fact is omitted, never downgraded to "unselected".
+		const sourceSelection: LibraryTrackRow["sourceSelection"] = sourceCodec
+			? undefined
+			: track.sourceId
+				? undefined
+				: ids.length > 0
+					? "unselected"
+					: "missing";
+		const credits: LibraryTrackCredit[] = track.recordingCredits?.length
+			? track.recordingCredits.map((credit) => ({
+					name:
+						credit.creditName ||
+						(credit.artistId
+							? artists.find((artist) => artist.id === credit.artistId)?.name
+							: undefined) ||
+						"",
+					...(credit.artistId ? { href: `#artist/${credit.artistId}` } : {}),
+					joinPhrase: credit.joinPhrase,
+				}))
+			: [{ name: originalArtistName(track.artistId, artists) }];
+		return {
+			id: track.id,
+			title: track.title,
+			durationMs:
+				track.duration === null ? null : Math.round(track.duration) * 1000,
+			href: `#track/${track.id}`,
+			releaseTitle: release.title,
+			releaseHref: releaseHref(release.id),
+			releaseSubtitle: `${originalArtistName(release.artistId, artists)} · ${release.year}`,
+			recordingTitle: track.recordingTitle,
+			credits,
+			positionLabel: `${
+				release.media?.[(track.medium || 1) - 1]?.title || track.medium || "—"
+			} · ${trackNumberLabel(release, track)}`,
+			hasAudio: hasAudio(track),
+			variantCount: ids.length,
+			published: Boolean(track.published),
+			sourceCodec,
+			...(sourceSelection ? { sourceSelection } : {}),
+			properties: audioProperties(selectedFile),
+			paths: ids
+				.map((id) => files[id]?.path || files[id]?.name)
+				.filter((path): path is string => Boolean(path)),
+			...(pub
+				? {
+						publicationContainer: pub.container,
+						publicationCodec: pub.codec,
+						tagsTitle: pub.tags.TITLE?.join(", ") || track.title,
+					}
+				: {}),
+			tagsHref: `#tags/${track.id}/track`,
+			...(filterState ? { filterState } : {}),
+			selection: selectionControl([track.id], pageSelection),
+		};
+	});
+	return {
+		rows,
+		pageSelection: selectionControl(tableTrackIds, pageSelection),
+		label: libraryRowsMessage(locale, "tracksTable"),
+	};
+}
+
 export function LibraryCatalogRows({
 	view,
 	artists,
@@ -137,114 +259,39 @@ export function LibraryCatalogRows({
 	expanded,
 	onToggleAlbum,
 	pageSelection,
-}: Props) {
+}: LibraryCatalogRowsProps) {
 	const { locale } = useI18n();
 	const m = (
 		key: LibraryRowsMessage,
 		values?: Record<string, string | number>,
 	) => libraryRowsMessage(locale, key, values);
 	if (view === "artists") {
-		const { rows, pageSelectionControl } = artistCardModels(
-			artists,
-			releases,
-			missingCounts,
-			hasAudio,
-			pageSelection,
-		);
 		return (
 			<LibraryArtistCards
 				locale={locale}
-				artists={rows}
-				pageSelectionControl={pageSelectionControl}
+				{...libraryCatalogArtistResults({
+					artists,
+					releases,
+					missingCounts,
+					hasAudio,
+					pageSelection,
+				})}
 			/>
 		);
 	}
-	const tracks = releases.flatMap((release) =>
-		release.tracks.map((track) => ({ release, track })),
-	);
-	const tableTrackIds = tracks.map(({ track }) => track.id);
 	if (view === "tracks") {
-		const rows: LibraryTrackRow[] = tracks.map(({ release, track }) => {
-			const ids = sourceIds(track);
-			const selectedFile = track.sourceId ? files[track.sourceId] : undefined;
-			const sourceCodec = selectedFile?.codec ?? null;
-			const pub =
-				track.published && typeof track.published === "object"
-					? track.published
-					: null;
-			const rowClass = availabilityRowClass(
-				track as OriginalTrack,
-				filter,
-				hasAudio,
-			);
-			const filterState: LibraryTrackRow["filterState"] =
-				rowClass === "filter-match"
-					? "match"
-					: rowClass === "filter-muted"
-						? "muted"
-						: undefined;
-			// A persisted source with an unknown codec is still selected; only
-			// the codec fact is omitted, never downgraded to "unselected".
-			const sourceSelection: LibraryTrackRow["sourceSelection"] = sourceCodec
-				? undefined
-				: track.sourceId
-					? undefined
-					: ids.length > 0
-						? "unselected"
-						: "missing";
-			const credits: LibraryTrackCredit[] = track.recordingCredits?.length
-				? track.recordingCredits.map((credit) => ({
-						name:
-							credit.creditName ||
-							(credit.artistId
-								? artists.find((artist) => artist.id === credit.artistId)?.name
-								: undefined) ||
-							"",
-						...(credit.artistId ? { href: `#artist/${credit.artistId}` } : {}),
-						joinPhrase: credit.joinPhrase,
-					}))
-				: [{ name: originalArtistName(track.artistId, artists) }];
-			return {
-				id: track.id,
-				title: track.title,
-				durationMs:
-					track.duration === null ? null : Math.round(track.duration) * 1000,
-				href: `#track/${track.id}`,
-				releaseTitle: release.title,
-				releaseHref: releaseHref(release.id),
-				releaseSubtitle: `${originalArtistName(release.artistId, artists)} · ${release.year}`,
-				recordingTitle: track.recordingTitle,
-				credits,
-				positionLabel: `${
-					release.media?.[(track.medium || 1) - 1]?.title || track.medium || "—"
-				} · ${trackNumberLabel(release, track)}`,
-				hasAudio: hasAudio(track),
-				variantCount: ids.length,
-				published: Boolean(track.published),
-				sourceCodec,
-				...(sourceSelection ? { sourceSelection } : {}),
-				properties: audioProperties(selectedFile),
-				paths: ids
-					.map((id) => files[id]?.path || files[id]?.name)
-					.filter((path): path is string => Boolean(path)),
-				...(pub
-					? {
-							publicationContainer: pub.container,
-							publicationCodec: pub.codec,
-							tagsTitle: pub.tags.TITLE?.join(", ") || track.title,
-						}
-					: {}),
-				tagsHref: `#tags/${track.id}/track`,
-				...(filterState ? { filterState } : {}),
-				selection: selectionControl([track.id], pageSelection),
-			};
-		});
 		return (
 			<LibraryTrackListView
 				locale={locale}
-				rows={rows}
-				pageSelection={selectionControl(tableTrackIds, pageSelection)}
-				label={m("tracksTable")}
+				{...libraryCatalogTrackResults({
+					locale,
+					artists,
+					releases,
+					hasAudio,
+					files,
+					filter,
+					pageSelection,
+				})}
 			/>
 		);
 	}

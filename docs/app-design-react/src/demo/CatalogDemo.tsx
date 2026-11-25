@@ -3,6 +3,7 @@ import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
+import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
 import {
 	type LibrarySelectionPreviewPosition,
 	type LibrarySelectionPreviewState,
@@ -75,7 +76,11 @@ import {
 	trackSearchText,
 } from "./providers/library/catalogViewModel";
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
-import { LibraryCatalogRows } from "./providers/library/LibraryCatalogRows";
+import {
+	LibraryCatalogRows,
+	libraryCatalogArtistResults,
+	libraryCatalogTrackResults,
+} from "./providers/library/LibraryCatalogRows";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
@@ -1319,6 +1324,65 @@ export function CatalogDemo({
 					onReset: query || filter !== "all" ? resetLibrarySearch : undefined,
 				};
 
+	const missingCounts = new Map(
+		fixture.artists.map((artist) => [
+			artist.id,
+			unrepresentedMissingGroups.filter((group) => group.artistId === artist.id)
+				.length,
+		]),
+	);
+	const pageSelection = { selectedIds: selected, onChange: update };
+	const libraryResults: LibraryCatalogResults =
+		view === "artists"
+			? {
+					kind: "artists",
+					...libraryCatalogArtistResults({
+						artists: pageArtists,
+						releases,
+						missingCounts,
+						hasAudio: (track) => hasAudio(track as Track),
+						pageSelection,
+					}),
+				}
+			: view === "tracks"
+				? {
+						kind: "tracks",
+						...libraryCatalogTrackResults({
+							locale,
+							artists: fixture.artists,
+							releases: pageTrackReleases,
+							hasAudio: (track) => hasAudio(track as Track),
+							files,
+							filter,
+							pageSelection,
+						}),
+					}
+				: {
+						kind: "albums",
+						slot: (
+							<LibraryCatalogRows
+								view="albums"
+								artists={fixture.artists}
+								releases={pageAlbumReleases}
+								albumEntries={pageAlbumEntries}
+								selectedEditions={editions}
+								onSelectEdition={(groupId, editionKey) =>
+									setEditions((previous) => ({
+										...previous,
+										[groupId]: editionKey,
+									}))
+								}
+								missingCounts={missingCounts}
+								hasAudio={(track) => hasAudio(track as Track)}
+								files={files}
+								filter={filter}
+								expanded={expanded}
+								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+								pageSelection={pageSelection}
+							/>
+						),
+					};
+
 	return (
 		<ApplicationRouteOutlet
 			route="library-catalog"
@@ -1335,43 +1399,7 @@ export function CatalogDemo({
 					setExpanded(null);
 				},
 				state: libraryPageState,
-				results: (
-					<LibraryCatalogRows
-						view={view}
-						artists={view === "artists" ? pageArtists : fixture.artists}
-						releases={
-							view === "albums"
-								? pageAlbumReleases
-								: view === "tracks"
-									? pageTrackReleases
-									: releases
-						}
-						albumEntries={view === "albums" ? pageAlbumEntries : undefined}
-						selectedEditions={editions}
-						onSelectEdition={(groupId, editionKey) =>
-							setEditions((previous) => ({
-								...previous,
-								[groupId]: editionKey,
-							}))
-						}
-						missingCounts={
-							new Map(
-								fixture.artists.map((artist) => [
-									artist.id,
-									unrepresentedMissingGroups.filter(
-										(group) => group.artistId === artist.id,
-									).length,
-								]),
-							)
-						}
-						hasAudio={(track) => hasAudio(track as Track)}
-						files={files}
-						filter={filter}
-						expanded={expanded}
-						onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-						pageSelection={{ selectedIds: selected, onChange: update }}
-					/>
-				),
+				results: libraryResults,
 				page: currentPage,
 				totalPages,
 				totalItems: libraryTotalItems,

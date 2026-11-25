@@ -1,6 +1,7 @@
 import type { LibraryPositionPage } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import type { ArtistCardSelectionControl } from "../../ui/features/library/LibraryArtistCards";
+import type { LibraryCatalogTrackResults } from "../../ui/features/library/LibraryCatalogResults";
 import {
   LibraryTrackListView,
   type LibraryTrackRow,
@@ -33,14 +34,22 @@ function positionCredits(position: Position): LibraryTrackRow["credits"] {
   }));
 }
 
-export function LibraryPositionRows({
-  items,
-  selectionControl,
-}: {
+export type LibraryPositionRowsProps = {
   items: LibraryPositionPage["items"];
   selectionControl: SelectionControl;
-}) {
-  const { locale } = useI18n();
+};
+
+/**
+ * Pure track-row projection for the portable track leaf. The live screen and
+ * tests can build the typed result without mounting the route.
+ */
+export function libraryPositionRowsModel({
+  items,
+  selectionControl,
+  locale,
+}: LibraryPositionRowsProps & {
+  locale: "en" | "ru";
+}): LibraryCatalogTrackResults {
   const rows: LibraryTrackRow[] = items.map((position) => {
     const title = position.title || untitledTitle[locale];
     return {
@@ -66,11 +75,21 @@ export function LibraryPositionRows({
       }),
     };
   });
+  return {
+    rows,
+    pageSelection: selectionControl({ kind: "page" }),
+  };
+}
+
+export function LibraryPositionRows({
+  items,
+  selectionControl,
+}: LibraryPositionRowsProps) {
+  const { locale } = useI18n();
   return (
     <LibraryTrackListView
       locale={locale}
-      rows={rows}
-      pageSelection={selectionControl({ kind: "page" })}
+      {...libraryPositionRowsModel({ items, selectionControl, locale })}
     />
   );
 }

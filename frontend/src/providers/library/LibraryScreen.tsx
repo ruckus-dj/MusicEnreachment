@@ -5,6 +5,7 @@ import {
   useListLibraryPositions,
   useListLibraryReleases,
 } from "../../api/generated/client";
+import type { LibraryArtistPage } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashObservation } from "../../app/navigation/hashLocation";
 import {
@@ -12,20 +13,24 @@ import {
   type ApplicationLibraryCatalogModel,
   type ApplicationRouteProviderProps,
 } from "../../ui/app/ApplicationRouteOutlet";
-import {
-  type LibraryArtistCard,
-  LibraryArtistCards,
+import type {
+  ArtistCardSelectionControl,
+  LibraryArtistCard,
 } from "../../ui/features/library/LibraryArtistCards";
 import {
   type LibraryStateFilter,
   libraryFilterOptions,
 } from "../../ui/features/library/LibraryCatalogFilterView";
 import type { LibraryCatalogPageState } from "../../ui/features/library/LibraryCatalogPageView";
+import type {
+  LibraryCatalogArtistResults,
+  LibraryCatalogResults,
+} from "../../ui/features/library/LibraryCatalogResults";
 import { libraryCatalogLoadError } from "../../ui/features/library/libraryCatalogMessages";
 import { LibraryAlbumRows } from "./LibraryAlbumRows";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
-import { LibraryPositionRows } from "./LibraryTrackArtistRows";
+import { libraryPositionRowsModel } from "./LibraryTrackArtistRows";
 import {
   type LibraryRoute,
   type LibraryView,
@@ -33,7 +38,10 @@ import {
   libraryRouteHref,
   parseLibraryRoute,
 } from "./libraryRoute";
-import { useLibrarySelection } from "./useLibrarySelection";
+import {
+  type LibrarySelectionScope,
+  useLibrarySelection,
+} from "./useLibrarySelection";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
@@ -130,6 +138,41 @@ function artistPalette(id: string) {
 
 function artistMonogram(name: string) {
   return name.trim().charAt(0).toLocaleUpperCase() || "?";
+}
+
+/**
+ * Pure artist-card projection for the portable artist leaf. The live screen
+ * and tests can build the typed result without mounting the route.
+ */
+export function libraryArtistCardsModel({
+  items,
+  route,
+  selectionControl,
+}: {
+  items: LibraryArtistPage["items"];
+  route: LibraryRoute;
+  selectionControl: (
+    scope: LibrarySelectionScope,
+  ) => ArtistCardSelectionControl;
+}): LibraryCatalogArtistResults {
+  const artists: LibraryArtistCard[] = items.map((artist) => ({
+    id: artist.id,
+    name: artist.name,
+    href: libraryArtistRouteHref(artist.id, route),
+    monogram: artistMonogram(artist.name),
+    palette: artistPalette(artist.id),
+    genres: artist.genres,
+    releaseCount: artist.release_count,
+    positionCount: artist.position_count,
+    availableCount: artist.available_position_count,
+    publishedCount: artist.published_position_count,
+    partialProviderScope: true,
+    selection: selectionControl({ kind: "artist", id: artist.id }),
+  }));
+  return {
+    artists,
+    pageSelectionControl: selectionControl({ kind: "page" }),
+  };
 }
 
 /**
@@ -373,27 +416,6 @@ function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
         : undefined,
     pageReady: !!body && !error,
   });
-  const artistCards: LibraryArtistCard[] =
-    view === "artists" && artistsBody
-      ? artistsBody.items.map((artist) => ({
-          id: artist.id,
-          name: artist.name,
-          href: libraryArtistRouteHref(artist.id, route),
-          monogram: artistMonogram(artist.name),
-          palette: artistPalette(artist.id),
-          genres: artist.genres,
-          releaseCount: artist.release_count,
-          positionCount: artist.position_count,
-          availableCount: artist.available_position_count,
-          publishedCount: artist.published_position_count,
-          partialProviderScope: true,
-          selection: selection.selectionControl({
-            kind: "artist",
-            id: artist.id,
-          }),
-        }))
-      : [];
-
   function retry() {
     void activeQuery.refetch();
   }
@@ -432,6 +454,39 @@ function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
               : undefined,
           };
 
+  const artistResults =
+    view === "artists" && artistsBody
+      ? libraryArtistCardsModel({
+          items: artistsBody.items,
+          route,
+          selectionControl: selection.selectionControl,
+        })
+      : { artists: [] };
+
+  const trackResults =
+    view === "tracks" && positionsBody
+      ? libraryPositionRowsModel({
+          items: positionsBody.items,
+          selectionControl: selection.selectionControl,
+          locale,
+        })
+      : { rows: [] };
+
+  const albumSlot =
+    view === "albums" && releasesBody ? (
+      <LibraryAlbumRows
+        items={releasesBody.items}
+        selectionControl={selection.selectionControl}
+      />
+    ) : null;
+
+  const results: LibraryCatalogResults =
+    view === "artists"
+      ? { kind: "artists", ...artistResults }
+      : view === "tracks"
+        ? { kind: "tracks", ...trackResults }
+        : { kind: "albums", slot: albumSlot };
+
   return {
     locale,
     view,
@@ -450,31 +505,7 @@ function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
     onFilter: setFilter,
     onViewChange: setView,
     state: pageState,
-    results: (
-      <>
-        {view === "artists" && artistsBody && (
-          <LibraryArtistCards
-            locale={locale}
-            artists={artistCards}
-            pageSelectionControl={selection.selectionControl({
-              kind: "page",
-            })}
-          />
-        )}
-        {view === "albums" && releasesBody && (
-          <LibraryAlbumRows
-            items={releasesBody.items}
-            selectionControl={selection.selectionControl}
-          />
-        )}
-        {view === "tracks" && positionsBody && (
-          <LibraryPositionRows
-            items={positionsBody.items}
-            selectionControl={selection.selectionControl}
-          />
-        )}
-      </>
-    ),
+    results,
     page: currentPage,
     totalPages,
     totalItems: total,

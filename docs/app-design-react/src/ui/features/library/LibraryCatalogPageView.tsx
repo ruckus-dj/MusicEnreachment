@@ -7,6 +7,10 @@ import {
   libraryViewLabel,
 } from "./LibraryCatalogControls";
 import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
+import {
+  type LibraryCatalogResults,
+  LibraryCatalogResultView,
+} from "./LibraryCatalogResults";
 import { LibraryPaginationView } from "./LibraryPaginationView";
 import { librarySelectionButtonClass } from "./LibrarySelectionPreviewView";
 import type { LibraryView } from "./libraryView";
@@ -136,8 +140,8 @@ export interface LibraryCatalogPageViewProps {
   onFilter: (value: LibraryStateFilter) => void;
   onViewChange: (view: LibraryView) => void;
   state: LibraryCatalogPageState;
-  /** Host row adapters for the selected view, rendered inside the result region. */
-  results: ReactNode;
+  /** Selected typed result leaf; album rows remain an explicit narrow slot. */
+  results: LibraryCatalogResults;
   page: number;
   totalPages: number;
   totalItems: number;
@@ -289,7 +293,7 @@ export function LibraryCatalogPageView({
                   className={catalogueStyles.list}
                   aria-label={libraryViewLabel(locale, view)}
                 >
-                  {results}
+                  <LibraryCatalogResultView locale={locale} results={results} />
                 </section>
                 <LibraryPaginationView
                   locale={locale}
