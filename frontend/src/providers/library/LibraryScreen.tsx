@@ -8,6 +8,11 @@ import {
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import {
+  ApplicationLibraryCatalogBinder,
+  type ApplicationLibraryCatalogModel,
+  type ApplicationRouteProviderProps,
+} from "../../ui/app/ApplicationRouteOutlet";
+import {
   type LibraryArtistCard,
   LibraryArtistCards,
 } from "../../ui/features/library/LibraryArtistCards";
@@ -15,11 +20,8 @@ import {
   type LibraryStateFilter,
   libraryFilterOptions,
 } from "../../ui/features/library/LibraryCatalogFilterView";
-import {
-  type LibraryCatalogPageState,
-  LibraryCatalogPageView,
-  libraryCatalogLoadError,
-} from "../../ui/features/library/LibraryCatalogPageView";
+import type { LibraryCatalogPageState } from "../../ui/features/library/LibraryCatalogPageView";
+import { libraryCatalogLoadError } from "../../ui/features/library/libraryCatalogMessages";
 import { LibraryAlbumRows } from "./LibraryAlbumRows";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
@@ -248,7 +250,18 @@ export function useLibraryController() {
   };
 }
 
-export function LibraryScreen() {
+export function ProductionLibraryCatalogBinder({
+  children,
+}: ApplicationRouteProviderProps) {
+  const model = useLibraryCatalogModel();
+  return (
+    <ApplicationLibraryCatalogBinder model={model}>
+      {children}
+    </ApplicationLibraryCatalogBinder>
+  );
+}
+
+function useLibraryCatalogModel(): ApplicationLibraryCatalogModel {
   const { locale } = useI18n();
   const {
     route,
@@ -416,76 +429,70 @@ export function LibraryScreen() {
               : undefined,
           };
 
-  return (
-    <LibraryCatalogPageView
-      locale={locale}
-      view={view}
-      summary={
-        summary
-          ? {
-              artists: summary.artist_count,
-              releases: summary.release_count,
-              positions: summary.position_count,
-              published: summary.published_position_count,
-            }
-          : null
-      }
-      incomingHref="#/incoming-groups"
-      search={searchInput}
-      onSearch={setSearch}
-      filter={filter}
-      onFilter={setFilter}
-      onViewChange={setView}
-      state={pageState}
-      results={
-        <>
-          {view === "artists" && artistsBody && (
-            <LibraryArtistCards
-              locale={locale}
-              artists={artistCards}
-              pageSelectionControl={selection.selectionControl({
-                kind: "page",
-              })}
-            />
-          )}
-          {view === "albums" && releasesBody && (
-            <LibraryAlbumRows
-              items={releasesBody.items}
-              selectionControl={selection.selectionControl}
-            />
-          )}
-          {view === "tracks" && positionsBody && (
-            <LibraryPositionRows
-              items={positionsBody.items}
-              selectionControl={selection.selectionControl}
-            />
-          )}
-        </>
-      }
-      page={currentPage}
-      totalPages={totalPages}
-      totalItems={total}
-      hasPrevious={route.offset !== 0}
-      hasNext={route.offset + PAGE_SIZE < total}
-      onPageChange={(next) => setPage(next, totalPages)}
-      selectionDock={
-        <LibrarySelectionDock
-          positions={selection.positions}
-          hiddenCount={selection.hiddenCount}
-          onDeselect={selection.deselect}
-          onClear={selection.clear}
-          onPreview={selection.setFrozen}
-        />
-      }
-      selectionPreview={
-        selection.frozen ? (
-          <LibrarySelectionPreview
-            positions={selection.frozen}
-            onClose={() => selection.setFrozen(undefined)}
+  return {
+    locale,
+    view,
+    summary: summary
+      ? {
+          artists: summary.artist_count,
+          releases: summary.release_count,
+          positions: summary.position_count,
+          published: summary.published_position_count,
+        }
+      : null,
+    incomingHref: "#/incoming-groups",
+    search: searchInput,
+    onSearch: setSearch,
+    filter,
+    onFilter: setFilter,
+    onViewChange: setView,
+    state: pageState,
+    results: (
+      <>
+        {view === "artists" && artistsBody && (
+          <LibraryArtistCards
+            locale={locale}
+            artists={artistCards}
+            pageSelectionControl={selection.selectionControl({
+              kind: "page",
+            })}
           />
-        ) : undefined
-      }
-      dockSpace={selection.positions.length > 0}
-    />
-  );
+        )}
+        {view === "albums" && releasesBody && (
+          <LibraryAlbumRows
+            items={releasesBody.items}
+            selectionControl={selection.selectionControl}
+          />
+        )}
+        {view === "tracks" && positionsBody && (
+          <LibraryPositionRows
+            items={positionsBody.items}
+            selectionControl={selection.selectionControl}
+          />
+        )}
+      </>
+    ),
+    page: currentPage,
+    totalPages,
+    totalItems: total,
+    hasPrevious: route.offset !== 0,
+    hasNext: route.offset + PAGE_SIZE < total,
+    onPageChange: (next) => setPage(next, totalPages),
+    selectionDock: (
+      <LibrarySelectionDock
+        positions={selection.positions}
+        hiddenCount={selection.hiddenCount}
+        onDeselect={selection.deselect}
+        onClear={selection.clear}
+        onPreview={selection.setFrozen}
+      />
+    ),
+    selectionPreview: selection.frozen ? (
+      <LibrarySelectionPreview
+        positions={selection.frozen}
+        onClose={() => selection.setFrozen(undefined)}
+      />
+    ) : undefined,
+    dockSpace: selection.positions.length > 0,
+  };
 }

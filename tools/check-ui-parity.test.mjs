@@ -270,6 +270,11 @@ test("hosts can import route model types but not bypass the portable outlet", ()
       component: "IncomingScreenView",
     },
     {
+      view: "../ui/features/library/LibraryCatalogPageView",
+      model: "LibraryCatalogPageViewProps",
+      component: "LibraryCatalogPageView",
+    },
+    {
       view: "../ui/features/local-catalog/LocalCatalogScreenView",
       model: "LocalCatalogScreenViewProps",
       component: "LocalCatalogScreenView",

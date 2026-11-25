@@ -59,8 +59,6 @@ const summaryCopy = {
     positions: ["position", "positions"],
     published: "published",
     incoming: "Review incoming groups",
-    error: "Could not load the library.",
-    httpError: "Could not load the library (HTTP {status}).",
   },
   ru: {
     fallback: "Релизы и позиции медиатеки",
@@ -69,8 +67,6 @@ const summaryCopy = {
     positions: ["позиция", "позиции", "позиций"],
     published: "опубликовано",
     incoming: "Разобрать входящие группы",
-    error: "Не удалось загрузить медиатеку.",
-    httpError: "Не удалось загрузить медиатеку (HTTP {status}).",
   },
 } as const;
 
@@ -80,13 +76,6 @@ export type LibraryCatalogSummary = {
   positions: number;
   published: number;
 };
-
-export function libraryCatalogLoadError(locale: "en" | "ru", status?: number) {
-  const text = summaryCopy[locale];
-  return status === undefined
-    ? text.error
-    : text.httpError.replace("{status}", String(status));
-}
 
 function formatSummary(
   locale: "en" | "ru",

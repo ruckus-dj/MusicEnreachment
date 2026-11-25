@@ -13,7 +13,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { LibraryScreen } from "./LibraryScreen";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { ProductionLibraryCatalogBinder } from "./LibraryScreen";
 
 const artistId = "123e4567-e89b-42d3-a456-426614174000";
 const secondArtistId = "223e4567-e89b-42d3-a456-426614174001";
@@ -35,6 +36,16 @@ function renderScreen(screen: ReactNode, locale: "en" | "ru" = "ru") {
     <I18nProvider>
       <QueryClientProvider client={client}>{screen}</QueryClientProvider>
     </I18nProvider>,
+  );
+}
+
+function LibraryCatalogRoute() {
+  return (
+    <ApplicationRouteOutlet
+      route="library-catalog"
+      provider={ProductionLibraryCatalogBinder}
+      providerProps={{}}
+    />
   );
 }
 
@@ -120,7 +131,7 @@ it("renders server summary, artist cards and preserves search and pagination in 
       });
     }),
   );
-  renderScreen(<LibraryScreen />);
+  renderScreen(<LibraryCatalogRoute />);
   expect(screen.getByRole("tab", { name: "Артисты" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -232,7 +243,7 @@ it("retains the catalog route and search state without refetching when locale ch
     <I18nProvider>
       <QueryClientProvider client={client}>
         <LocaleControls />
-        <LibraryScreen />
+        <LibraryCatalogRoute />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -290,7 +301,7 @@ it("shows audio availability separately from sources and publication", async () 
     ),
   );
 
-  renderScreen(<LibraryScreen />);
+  renderScreen(<LibraryCatalogRoute />);
 
   expect(
     await screen.findByRole("row", { name: /source-only/ }),
@@ -360,7 +371,7 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
     ),
   );
 
-  renderScreen(<LibraryScreen />);
+  renderScreen(<LibraryCatalogRoute />);
 
   const row = await screen.findByRole("row", {
     name: /Incomplete provider cache/,
@@ -455,7 +466,7 @@ it("loads a missing group’s edition and tracks only after explicit selection",
     }),
   );
 
-  renderScreen(<LibraryScreen />, "en");
+  renderScreen(<LibraryCatalogRoute />, "en");
   const row = await screen.findByRole("row", { name: /Missing album/ });
   expect(row).toHaveTextContent("—");
   expect(editionRequests).toBe(0);
@@ -541,7 +552,7 @@ it("keeps a page selection off-page and previews only the frozen position", asyn
       });
     }),
   );
-  renderScreen(<LibraryScreen />, "en");
+  renderScreen(<LibraryCatalogRoute />, "en");
   const grid = await screen.findByRole("grid", { name: "Library tracks" });
   await within(grid).findByRole("row", { name: /Selected/ });
   const page = within(grid).getByRole("checkbox", {

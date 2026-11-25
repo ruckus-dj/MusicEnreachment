@@ -23,7 +23,7 @@ import {
 } from "../../providers/incoming/incomingGroupsRoute";
 import { LibraryArtistScreen } from "../../providers/library/LibraryArtistScreen";
 import { LibraryReleaseScreen } from "../../providers/library/LibraryReleaseScreen";
-import { LibraryScreen } from "../../providers/library/LibraryScreen";
+import { ProductionLibraryCatalogBinder } from "../../providers/library/LibraryScreen";
 import {
   parseLibraryArtistRoute,
   parseLibraryPositionRoute,
@@ -268,7 +268,11 @@ export function AppShell() {
         providerProps={emptyProviderProps}
       />
     ) : state && route === "/library" ? (
-      <LibraryScreen />
+      <ApplicationRouteOutlet
+        route="library-catalog"
+        provider={ProductionLibraryCatalogBinder}
+        providerProps={emptyProviderProps}
+      />
     ) : state && route === "/own-catalog" ? (
       <ApplicationRouteOutlet
         route="own-catalog"

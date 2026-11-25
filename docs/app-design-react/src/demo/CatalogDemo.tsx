@@ -2,10 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
-import {
-	type LibraryCatalogPageState,
-	LibraryCatalogPageView,
-} from "../ui/features/library/LibraryCatalogPageView";
+import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import {
 	type LibrarySelectionPreviewPosition,
 	type LibrarySelectionPreviewState,
@@ -54,6 +51,7 @@ import {
 	useLibraryRouteState,
 } from "./providers/library";
 import { ArtistScreen } from "./providers/library/ArtistScreen";
+import { DemoLibraryCatalogBinder } from "./providers/library/LibraryCatalogScreen";
 import {
 	artistReleaseHref,
 	releaseHref,
@@ -1322,73 +1320,77 @@ export function CatalogDemo({
 				};
 
 	return (
-		<LibraryCatalogPageView
-			locale={locale}
-			view={view}
-			search={searchInput}
-			onSearch={setSearch}
-			filter={filter}
-			onFilter={setFilter}
-			onViewChange={(nextView) => {
-				setView(nextView);
-				setExpanded(null);
+		<ApplicationRouteOutlet
+			route="library-catalog"
+			provider={DemoLibraryCatalogBinder}
+			providerProps={{
+				locale,
+				view,
+				search: searchInput,
+				onSearch: setSearch,
+				filter,
+				onFilter: setFilter,
+				onViewChange: (nextView) => {
+					setView(nextView);
+					setExpanded(null);
+				},
+				state: libraryPageState,
+				results: (
+					<LibraryCatalogRows
+						view={view}
+						artists={view === "artists" ? pageArtists : fixture.artists}
+						releases={
+							view === "albums"
+								? pageAlbumReleases
+								: view === "tracks"
+									? pageTrackReleases
+									: releases
+						}
+						albumEntries={view === "albums" ? pageAlbumEntries : undefined}
+						selectedEditions={editions}
+						onSelectEdition={(groupId, editionKey) =>
+							setEditions((previous) => ({
+								...previous,
+								[groupId]: editionKey,
+							}))
+						}
+						missingCounts={
+							new Map(
+								fixture.artists.map((artist) => [
+									artist.id,
+									unrepresentedMissingGroups.filter(
+										(group) => group.artistId === artist.id,
+									).length,
+								]),
+							)
+						}
+						hasAudio={(track) => hasAudio(track as Track)}
+						files={files}
+						filter={filter}
+						expanded={expanded}
+						onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+						pageSelection={{ selectedIds: selected, onChange: update }}
+					/>
+				),
+				page: currentPage,
+				totalPages,
+				totalItems: libraryTotalItems,
+				hasPrevious: currentPage > 1,
+				hasNext: currentPage < totalPages,
+				onPageChange: (next) => setPage(next, totalPages),
+				selectionDock: (
+					<SelectionDock
+						selected={selected}
+						visiblePositionIds={visiblePositionIds}
+						releases={releases}
+						onSelect={update}
+						onPreview={openSelectionPreview}
+						onQueueDeletion={queueDeletion}
+					/>
+				),
+				selectionPreview: selectionPreviewDialog ?? undefined,
+				dockSpace: true,
 			}}
-			state={libraryPageState}
-			results={
-				<LibraryCatalogRows
-					view={view}
-					artists={view === "artists" ? pageArtists : fixture.artists}
-					releases={
-						view === "albums"
-							? pageAlbumReleases
-							: view === "tracks"
-								? pageTrackReleases
-								: releases
-					}
-					albumEntries={view === "albums" ? pageAlbumEntries : undefined}
-					selectedEditions={editions}
-					onSelectEdition={(groupId, editionKey) =>
-						setEditions((previous) => ({
-							...previous,
-							[groupId]: editionKey,
-						}))
-					}
-					missingCounts={
-						new Map(
-							fixture.artists.map((artist) => [
-								artist.id,
-								unrepresentedMissingGroups.filter(
-									(group) => group.artistId === artist.id,
-								).length,
-							]),
-						)
-					}
-					hasAudio={(track) => hasAudio(track as Track)}
-					files={files}
-					filter={filter}
-					expanded={expanded}
-					onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-					pageSelection={{ selectedIds: selected, onChange: update }}
-				/>
-			}
-			page={currentPage}
-			totalPages={totalPages}
-			totalItems={libraryTotalItems}
-			hasPrevious={currentPage > 1}
-			hasNext={currentPage < totalPages}
-			onPageChange={(next) => setPage(next, totalPages)}
-			selectionDock={
-				<SelectionDock
-					selected={selected}
-					visiblePositionIds={visiblePositionIds}
-					releases={releases}
-					onSelect={update}
-					onPreview={openSelectionPreview}
-					onQueueDeletion={queueDeletion}
-				/>
-			}
-			selectionPreview={selectionPreviewDialog ?? undefined}
-			dockSpace
 		/>
 	);
 }

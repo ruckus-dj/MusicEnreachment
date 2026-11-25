@@ -9,6 +9,10 @@ import {
   type IncomingScreenViewProps,
 } from "../features/incoming/IncomingScreenView";
 import {
+  LibraryCatalogPageView,
+  type LibraryCatalogPageViewProps,
+} from "../features/library/LibraryCatalogPageView";
+import {
   LocalCatalogScreenView,
   type LocalCatalogScreenViewProps,
 } from "../features/local-catalog/LocalCatalogScreenView";
@@ -27,12 +31,16 @@ import {
  */
 export type ApplicationRoute =
   | "incoming-list"
+  | "library-catalog"
   | "own-catalog"
   | "operations"
   | "settings";
 
 /** The complete data-only model of the portable Incoming list screen. */
 export type ApplicationIncomingListModel = IncomingScreenViewProps;
+
+/** The complete data-only model of the portable library catalog screen. */
+export type ApplicationLibraryCatalogModel = LibraryCatalogPageViewProps;
 
 /** The complete data-only model of the portable Local catalog screen. */
 export type ApplicationOwnCatalogModel = LocalCatalogScreenViewProps;
@@ -53,6 +61,8 @@ export type ApplicationRouteDataProvider<
 
 const IncomingListModelContext =
   createContext<ApplicationIncomingListModel | null>(null);
+const LibraryCatalogModelContext =
+  createContext<ApplicationLibraryCatalogModel | null>(null);
 const OwnCatalogModelContext = createContext<ApplicationOwnCatalogModel | null>(
   null,
 );
@@ -75,6 +85,21 @@ export function ApplicationIncomingListBinder({
     <IncomingListModelContext.Provider value={model}>
       {children}
     </IncomingListModelContext.Provider>
+  );
+}
+
+/** Host-facing adapter for the portable library catalog screen. */
+export function ApplicationLibraryCatalogBinder({
+  model,
+  children,
+}: {
+  model: ApplicationLibraryCatalogModel;
+  children: ReactNode;
+}) {
+  return (
+    <LibraryCatalogModelContext.Provider value={model}>
+      {children}
+    </LibraryCatalogModelContext.Provider>
   );
 }
 
@@ -132,6 +157,12 @@ function IncomingListRoute() {
   return <IncomingScreenView {...model} />;
 }
 
+function LibraryCatalogRoute() {
+  const model = useContext(LibraryCatalogModelContext);
+  if (!model) throw new Error("missing library catalog view model");
+  return <LibraryCatalogPageView {...model} />;
+}
+
 function OwnCatalogRoute() {
   const model = useContext(OwnCatalogModelContext);
   if (!model) throw new Error("missing own catalog view model");
@@ -152,6 +183,7 @@ function SettingsRoute() {
 
 const applicationRoutes: Record<ApplicationRoute, ComponentType> = {
   "incoming-list": IncomingListRoute,
+  "library-catalog": LibraryCatalogRoute,
   "own-catalog": OwnCatalogRoute,
   operations: OperationsRoute,
   settings: SettingsRoute,

@@ -30,6 +30,7 @@ const TEST_LIBRARIES = new Set([
 const CSS_LIBRARIES = new Set(["tailwindcss"]);
 const OUTLET_OWNED_VIEWS = new Set([
   "ui/features/incoming/IncomingScreenView",
+  "ui/features/library/LibraryCatalogPageView",
   "ui/features/local-catalog/LocalCatalogScreenView",
   "ui/features/operations/OperationsScreenView",
   "ui/features/settings/SettingsScreenView",
@@ -846,11 +847,15 @@ function main() {
     ...hostTreeErrors(prototypeHostLabel, prototypeSourceTree, prototypeSrc),
     ...hostTreeErrors(applicationHostLabel, applicationSourceTree, applicationSrc),
   ];
-  const operationsLocation = "app/navigation/operationsLocation.ts";
-  const designOperationsLocation = readFileSync(new URL(operationsLocation, prototypeSrc));
-  const applicationOperationsLocation = readFileSync(new URL(operationsLocation, applicationSrc));
-  if (!designOperationsLocation.equals(applicationOperationsLocation)) {
-    errors.push(`Different host route codec: ${operationsLocation}`);
+  for (const [designPath, applicationPath] of [
+    ["app/navigation/operationsLocation.ts", "app/navigation/operationsLocation.ts"],
+    ["demo/providers/incoming/incomingGroupsRoute.ts", "providers/incoming/incomingGroupsRoute.ts"],
+  ]) {
+    const designCodec = readFileSync(new URL(designPath, prototypeSrc));
+    const applicationCodec = readFileSync(new URL(applicationPath, applicationSrc));
+    if (!designCodec.equals(applicationCodec)) {
+      errors.push(`Different host route codec: ${applicationPath}`);
+    }
   }
   // The entry documents are host integration, not portable UI modules: compare
   // them only after the two expected prototype/application entry differences.
