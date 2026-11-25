@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiResponseError } from "../../api/client/errors";
 import {
   getGetLibraryReleaseCoverImageUrl,
@@ -7,32 +7,41 @@ import {
   useListLibraryPositions,
   useListLibraryReleases,
 } from "../../api/generated/client";
+import type {
+  LibraryArtistCreditResponse,
+  LibraryReleaseSummary,
+  MissingReleaseGroupSummary,
+} from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
-import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
+import {
+  type ArtistDeletionAction,
+  type ArtistEditionModel,
+  type ArtistHeadingModel,
+  type ArtistMissingGroupCredit,
+  type ArtistMissingGroupModel,
+  type ArtistReleaseRowModel,
+  type ArtistReleasesModel,
+  ArtistScreenView,
+} from "./ArtistScreenView";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
+import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
-import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
-import {
-  LibraryEditionCard,
-  libraryEditionCardStyles,
-} from "./LibraryEditionCard";
+import { LibraryMissingEditionView } from "./LibraryMissingEditionView";
 import { LibraryPaginationControls } from "./LibraryPaginationView";
 import {
+  type LibraryRoute,
   libraryArtistRouteHref,
   libraryRouteHref,
   parseLibraryArtistRoute,
 } from "./libraryRoute";
-import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
+import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
 
 const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 250;
 
-const statePanelClass =
-  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm [&>h2]:m-0 [&>h2]:text-base [&>p]:m-0";
-const screenLinkClass =
-  "text-[var(--ink)] no-underline underline-offset-2 hover:text-[var(--accent)] hover:underline";
 const artistScreenCopy = {
   en: {
     backToLibrary: "← Back to library",
@@ -45,6 +54,9 @@ const artistScreenCopy = {
       `Could not load releases (HTTP ${status}).`,
     artistReleases: "Artist releases",
     untitledRelease: "Untitled release",
+    untitledReleaseGroup: "Untitled release group",
+    unnamedArtist: "Unnamed artist",
+    localRelease: "Local release",
     dateNotSpecified: "Date not specified",
     withAudio: "with audio",
     published: "published",
@@ -61,6 +73,8 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Could not load positions (HTTP ${status}).`,
     positionPages: "Position pages",
+    chooseEditions: "Choose an edition",
+    browseEditions: "Browse editions",
   },
   ru: {
     backToLibrary: "← К медиатеке",
@@ -73,6 +87,9 @@ const artistScreenCopy = {
       `Не удалось загрузить релизы (HTTP ${status}).`,
     artistReleases: "Релизы артиста",
     untitledRelease: "Релиз без названия",
+    untitledReleaseGroup: "Группа релизов без названия",
+    unnamedArtist: "Артист не указан",
+    localRelease: "Локальное издание",
     dateNotSpecified: "Дата не указана",
     withAudio: "с аудио",
     published: "опубликовано",
@@ -89,23 +106,81 @@ const artistScreenCopy = {
     positionLoadFailed: (status: number) =>
       `Не удалось загрузить позиции (HTTP ${status}).`,
     positionPages: "Страницы позиций",
+    chooseEditions: "Выберите издание",
+    browseEditions: "Показать издания",
   },
 } as const;
 
-function countLabel(
-  count: number,
-  locale: "en" | "ru",
-  forms: {
-    en: readonly [string, string];
-    ru: readonly [string, string, string];
-  },
-) {
-  const formatted = new Intl.NumberFormat(
-    locale === "ru" ? "ru-RU" : "en-US",
-  ).format(count);
-  if (locale === "en") return `${formatted} ${forms.en[count === 1 ? 0 : 1]}`;
-  const plural = new Intl.PluralRules("ru-RU").select(count);
-  return `${formatted} ${forms.ru[plural === "one" ? 0 : plural === "few" ? 1 : 2]}`;
+function stateFilterFor(route: LibraryRoute): LibraryStateFilter {
+  if (route.publication === "published") return "published";
+  if (route.availability === "available") return "available";
+  if (route.availability === "missing") return "missing";
+  return "all";
+}
+
+function withStateFilter(
+  route: LibraryRoute,
+  filter: LibraryStateFilter,
+): LibraryRoute {
+  return {
+    ...route,
+    publication: filter === "published" ? "published" : "all",
+    availability:
+      filter === "available"
+        ? "available"
+        : filter === "missing"
+          ? "missing"
+          : "all",
+  };
+}
+
+function creditNames(credits: LibraryArtistCreditResponse[]) {
+  return credits
+    .map(
+      (credit, index) =>
+        `${credit.credit_name || credit.artist_name || ""}${credit.join_phrase ?? (index < credits.length - 1 ? " " : "")}`,
+    )
+    .join("");
+}
+
+function creditLinks(
+  credits: LibraryArtistCreditResponse[],
+  unnamedArtist: string,
+): ArtistMissingGroupCredit[] {
+  return credits.map((credit) => ({
+    name: credit.credit_name || credit.artist_name || unnamedArtist,
+    href: credit.artist_id
+      ? `#/library/artists/${encodeURIComponent(credit.artist_id)}`
+      : null,
+    joinPhrase: credit.join_phrase,
+  }));
+}
+
+/**
+ * Narrow edition chooser actor for one absent provider group. The MusicBrainz
+ * cache is read only while the picker is open; the shell and row labels stay
+ * in the screen view.
+ */
+function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
+  const projection = useMissingReleaseGroupEditions(group);
+  const copy = artistScreenCopy[projection.locale];
+  return (
+    <div className="grid min-w-0 gap-2">
+      <AppButton
+        aria-expanded={projection.pickerOpen}
+        onPress={projection.togglePicker}
+      >
+        {projection.pickerOpen ? copy.chooseEditions : copy.browseEditions}
+      </AppButton>
+      {projection.showEditionView && (
+        <LibraryMissingEditionView
+          locale={projection.locale}
+          {...projection.viewProps}
+          groupTitle={projection.title}
+        />
+      )}
+    </div>
+  );
 }
 
 export function LibraryArtistScreen({ artistId }: { artistId: string }) {
@@ -130,7 +205,49 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     publication: route.publication,
     availability: route.availability,
   });
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [searchInput, setSearchInput] = useState(route.query);
+  const searchTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (searchTimer.current !== null) {
+      window.clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
+    setSearchInput(parseLibraryArtistRoute(hash)?.query ?? route.query);
+  }, [hash, route.query]);
+  useEffect(
+    () => () => {
+      if (searchTimer.current !== null)
+        window.clearTimeout(searchTimer.current);
+    },
+    [],
+  );
+  function currentRoute() {
+    return parseLibraryArtistRoute(window.location.hash) ?? route;
+  }
+  function changeQuery(value: string) {
+    setSearchInput(value);
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+    const capturedHash = window.location.hash;
+    searchTimer.current = window.setTimeout(() => {
+      searchTimer.current = null;
+      if (window.location.hash !== capturedHash) return;
+      const current = currentRoute();
+      if (current.query === value) return;
+      window.location.hash = libraryArtistRouteHref(artistId, {
+        ...current,
+        query: value,
+        offset: 0,
+      }).slice(1);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+  function changeFilter(value: LibraryStateFilter) {
+    const current = currentRoute();
+    if (stateFilterFor(current) === value) return;
+    window.location.hash = libraryArtistRouteHref(artistId, {
+      ...withStateFilter(current, value),
+      offset: 0,
+    }).slice(1);
+  }
   function invalidateArtistMetadata() {
     void queryClient.invalidateQueries({
       predicate: ({ queryKey }) => {
@@ -192,202 +309,200 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   const releases =
     releasesQuery.data?.status === 200 ? releasesQuery.data.data : undefined;
 
-  return (
-    <section
-      className="w-[min(100%,76rem)] text-[13px] leading-[18px] text-[var(--ink)]"
-      aria-labelledby="artist-title"
-    >
-      <a
-        className={`inline-block mb-3 ${screenLinkClass}`}
-        href={libraryRouteHref(route)}
-      >
-        {copy.backToLibrary}
-      </a>
-      {artistQuery.isLoading ? (
-        <p role="status">{copy.loadingArtist}</p>
-      ) : error ? (
-        <section
-          className={`${statePanelClass} text-[var(--error)]`}
-          role="alert"
-        >
-          <p>{error}</p>
-          <AppButton onPress={() => void artistQuery.refetch()}>
-            {copy.retry}
-          </AppButton>
-        </section>
-      ) : artist ? (
-        <>
-          <LibraryArtistHeadingView
-            locale={locale}
-            name={artist.name}
-            disambiguation={artist.disambiguation}
-            genres={artist.genres}
-            count={{
-              releases: artist.release_count,
-              positions: artist.position_count,
-              published: artist.published_position_count,
-              available: artist.available_position_count,
-              missing: artist.missing_release_groups ?? 0,
-              local:
-                artist.release_count - (artist.missing_release_groups ?? 0),
-            }}
-            includesCachedGroups={!artist.discography_complete}
-            discographyComplete={artist.discography_complete}
-          />
-          <LibraryDeletionControl
-            target={{ type: "artist", artistId }}
-            releaseTitle={artist.name}
-            onSnapshot={handleArtistDeletionSnapshot}
-          />
-          <LibraryArtistMetadataCard
-            key={artistId}
-            artistId={artistId}
-            onSaved={invalidateArtistMetadata}
-          />
-          {releasesQuery.isLoading ? (
-            <p role="status">{copy.loadingReleases}</p>
-          ) : releasesError ? (
-            <section
-              className={`${statePanelClass} text-[var(--error)]`}
-              role="alert"
-            >
-              <p>{releasesError}</p>
-              <AppButton onPress={() => void releasesQuery.refetch()}>
-                {copy.retry}
-              </AppButton>
-            </section>
-          ) : releases?.items.length ? (
-            <section
-              className={`${libraryEditionCardStyles.list} mt-3`}
-              aria-label={copy.artistReleases}
-            >
-              {releases.items.map((item) => {
-                if (
-                  item.kind === "missing_release_group" &&
-                  item.missing_release_group
-                ) {
-                  return (
-                    <MissingReleaseGroupRow
-                      key={`missing_release_group:${item.missing_release_group.provider_key}`}
-                      group={item.missing_release_group}
-                    />
-                  );
+  if (!artist) {
+    return (
+      <ArtistScreenView
+        locale={locale}
+        libraryHref={libraryRouteHref(route)}
+        heading={null}
+        status={
+          artistQuery.isLoading
+            ? { state: "loading", message: copy.loadingArtist }
+            : error
+              ? {
+                  state: "error",
+                  message: error,
+                  retryLabel: copy.retry,
+                  onRetry: () => void artistQuery.refetch(),
                 }
-                const release = item.library_release;
-                if (!release) return null;
-                const title = release.title.trim()
-                  ? release.title
-                  : copy.untitledRelease;
-                const generation = release.cover?.selected_generation;
-                const isExpanded = Boolean(expanded[release.id]);
-                return (
-                  <LibraryEditionCard
-                    key={`library_release:${release.id}`}
-                    expanded={isExpanded}
-                    header={
-                      <div className={libraryEditionCardStyles.headerGrid}>
-                        <LibraryEditionArtwork
-                          title={title}
-                          imageSrc={
-                            generation
-                              ? getGetLibraryReleaseCoverImageUrl(
-                                  release.id,
-                                  generation,
-                                )
-                              : undefined
-                          }
-                        />
-                        <div className={libraryEditionCardStyles.copy}>
-                          <h2 data-library-edition-title>
-                            <a
-                              href={`#/library/releases/${encodeURIComponent(release.id)}`}
-                            >
-                              {title}
-                            </a>
-                          </h2>
-                          <span className={libraryEditionCardStyles.meta}>
-                            {release.edition.release_date ??
-                              release.edition.original_release_date ??
-                              copy.dateNotSpecified}{" "}
-                            ·{" "}
-                            {countLabel(release.counts.position_count, locale, {
-                              en: ["position", "positions"],
-                              ru: ["позиция", "позиции", "позиций"],
-                            })}{" "}
-                            · {release.counts.available_position_count}{" "}
-                            {copy.withAudio} ·{" "}
-                            {release.counts.published_position_count}{" "}
-                            {copy.published}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          aria-expanded={isExpanded}
-                          onClick={() =>
-                            setExpanded((value) => ({
-                              ...value,
-                              [release.id]: !value[release.id],
-                            }))
-                          }
-                        >
-                          {isExpanded ? copy.hidePositions : copy.showPositions}
-                        </button>
-                      </div>
-                    }
-                    panel={
-                      isExpanded ? (
-                        <div
-                          className={`${libraryEditionCardStyles.panel} px-[15px] pb-3 max-[600px]:px-[9px]`}
-                        >
-                          <ReleasePositions
-                            releaseId={release.id}
-                            releaseTitle={title}
-                            locale={locale}
-                          />
-                        </div>
-                      ) : undefined
-                    }
-                  />
-                );
-              })}
-            </section>
-          ) : (
-            <section className={statePanelClass}>
-              <h2>{copy.noReleasesFound}</h2>
-              <p>
-                {route.query ||
-                route.publication !== "all" ||
-                route.availability !== "all"
-                  ? copy.changeFilters
-                  : copy.artistHasNoReleases}
-              </p>
-            </section>
-          )}
-          {releases && releases.total > PAGE_SIZE && (
-            <LibraryPaginationControls
-              label={copy.releasePages}
-              status={`${route.offset + 1}–${Math.min(route.offset + PAGE_SIZE, releases.total)} ${copy.of} ${releases.total}`}
-              previous={{
-                label: copy.previous,
-                disabled: route.offset === 0,
-                href: libraryArtistRouteHref(artistId, {
-                  ...route,
-                  offset: Math.max(0, route.offset - PAGE_SIZE),
-                }),
-              }}
-              next={{
-                label: copy.next,
-                disabled: route.offset + PAGE_SIZE >= releases.total,
-                href: libraryArtistRouteHref(artistId, {
-                  ...route,
-                  offset: route.offset + PAGE_SIZE,
-                }),
-              }}
-            />
-          )}
-        </>
-      ) : null}
-    </section>
+              : undefined
+        }
+      />
+    );
+  }
+
+  const heading: ArtistHeadingModel = {
+    name: artist.name,
+    disambiguation: artist.disambiguation,
+    genres: artist.genres,
+    count: {
+      releases: artist.release_count,
+      positions: artist.position_count,
+      published: artist.published_position_count,
+      available: artist.available_position_count,
+      missing: artist.missing_release_groups ?? 0,
+      local: artist.release_count - (artist.missing_release_groups ?? 0),
+    },
+    includesCachedGroups: !artist.discography_complete,
+    discographyComplete: artist.discography_complete,
+  };
+  const deletion: ArtistDeletionAction = {
+    kind: "actor",
+    node: (
+      <LibraryDeletionControl
+        target={{ type: "artist", artistId }}
+        releaseTitle={artist.name}
+        onSnapshot={handleArtistDeletionSnapshot}
+      />
+    ),
+  };
+  const metadataCard = (
+    <LibraryArtistMetadataCard
+      key={artistId}
+      artistId={artistId}
+      onSaved={invalidateArtistMetadata}
+    />
+  );
+
+  function editionModel(release: LibraryReleaseSummary): ArtistEditionModel {
+    const title = release.title.trim() ? release.title : copy.untitledRelease;
+    const date =
+      release.edition.release_date ??
+      release.edition.original_release_date ??
+      copy.dateNotSpecified;
+    const catalog = release.edition.catalog_numbers[0] ?? "";
+    const generation = release.cover?.selected_generation;
+    const provider = release.provider_links[0];
+    return {
+      key: release.id,
+      title,
+      titleHref: `#/library/releases/${encodeURIComponent(release.id)}`,
+      year: date,
+      catalog,
+      ariaLabel: `${title} · ${date} · ${catalog || "—"}`,
+      artwork: {
+        title,
+        imageSrc: generation
+          ? getGetLibraryReleaseCoverImageUrl(release.id, generation)
+          : undefined,
+      },
+      providerText: provider
+        ? `${provider.provider_code} · ${provider.provider_key}`
+        : copy.localRelease,
+      positionCount: release.counts.position_count,
+      availableCount: release.counts.available_position_count,
+      publishedCount: release.counts.published_position_count,
+      country: release.edition.country ?? "",
+      label: release.edition.labels[0] ?? "",
+      providerTrackCount: release.counts.provider_position_count,
+      metadataChangedCount: 0,
+      positions: (
+        <ReleasePositions
+          releaseId={release.id}
+          releaseTitle={title}
+          locale={locale}
+        />
+      ),
+    };
+  }
+
+  function missingGroupModel(
+    group: MissingReleaseGroupSummary,
+  ): ArtistMissingGroupModel {
+    return {
+      key: group.provider_key,
+      title: group.title.trim() ? group.title : copy.untitledReleaseGroup,
+      artistName: creditNames(group.artists) || copy.unnamedArtist,
+      originalReleaseDate: group.original_release_date,
+      providerKey: group.provider_key,
+      artistCredits: creditLinks(group.artists, copy.unnamedArtist),
+      chooser: <MissingGroupChooser group={group} />,
+    };
+  }
+
+  const rows: ArtistReleaseRowModel[] =
+    releases?.items.flatMap((item): ArtistReleaseRowModel[] => {
+      if (item.kind === "library_release" && item.library_release) {
+        return [
+          { kind: "edition", edition: editionModel(item.library_release) },
+        ];
+      }
+      if (item.kind === "missing_release_group" && item.missing_release_group) {
+        return [
+          {
+            kind: "missing-group",
+            group: missingGroupModel(item.missing_release_group),
+          },
+        ];
+      }
+      return [];
+    }) ?? [];
+  const pagination =
+    releases && (route.offset > 0 || releases.total > PAGE_SIZE)
+      ? {
+          label: copy.releasePages,
+          status: rows.length
+            ? `${route.offset + 1}–${Math.min(route.offset + PAGE_SIZE, releases.total)} ${copy.of} ${releases.total}`
+            : `0 ${copy.of} ${releases.total}`,
+          previous: {
+            label: copy.previous,
+            disabled: route.offset === 0,
+            href: libraryArtistRouteHref(artistId, {
+              ...route,
+              offset: Math.max(0, route.offset - PAGE_SIZE),
+            }),
+          },
+          next: {
+            label: copy.next,
+            disabled: route.offset + PAGE_SIZE >= releases.total,
+            href: libraryArtistRouteHref(artistId, {
+              ...route,
+              offset: route.offset + PAGE_SIZE,
+            }),
+          },
+        }
+      : null;
+  const releaseState: ArtistReleasesModel = releasesQuery.isLoading
+    ? { state: "loading", message: copy.loadingReleases }
+    : releasesError
+      ? {
+          state: "error",
+          message: releasesError,
+          retryLabel: copy.retry,
+          onRetry: () => void releasesQuery.refetch(),
+        }
+      : rows.length === 0
+        ? {
+            state: "empty",
+            title: copy.noReleasesFound,
+            description:
+              route.query ||
+              route.publication !== "all" ||
+              route.availability !== "all"
+                ? copy.changeFilters
+                : copy.artistHasNoReleases,
+            pagination,
+          }
+        : {
+            state: "ready",
+            rows,
+            pagination,
+          };
+
+  return (
+    <ArtistScreenView
+      locale={locale}
+      libraryHref={libraryRouteHref(route)}
+      heading={heading}
+      deletion={deletion}
+      metadataCard={metadataCard}
+      query={searchInput}
+      filter={stateFilterFor(route)}
+      onQueryChange={changeQuery}
+      onFilterChange={changeFilter}
+      editionsKey={artistId}
+      releases={releaseState}
+    />
   );
 }
 
@@ -420,7 +535,7 @@ function ReleasePositions({
   if (failure)
     return (
       <section
-        className={`${statePanelClass} text-[var(--error)]`}
+        className="grid justify-items-start gap-2 rounded-md border border-[var(--error)] bg-[var(--surface)] p-4 text-sm text-[var(--error)] [&>p]:m-0"
         role="alert"
       >
         <p>{failure}</p>

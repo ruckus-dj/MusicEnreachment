@@ -17,7 +17,6 @@ docs/app-design-react/src/features/incoming/incomingOverview.ts
 docs/app-design-react/src/features/incoming/incomingSplitModel.ts
 docs/app-design-react/src/features/library/ArtistDeletionRequest.tsx
 docs/app-design-react/src/features/library/ArtistScreen.tsx
-docs/app-design-react/src/features/library/ArtistScreenView.tsx
 docs/app-design-react/src/features/library/CatalogFilter.tsx
 docs/app-design-react/src/features/library/LibraryCatalogRows.tsx
 docs/app-design-react/src/features/library/LibraryMissingEditionDemo.tsx
@@ -34,8 +33,6 @@ docs/app-design-react/src/features/library/catalogData.ts
 docs/app-design-react/src/features/library/comparisonOverrides.ts
 docs/app-design-react/src/features/library/catalogMessages.ts
 docs/app-design-react/src/features/library/catalogViewModel.ts
-docs/app-design-react/src/features/library/catalogueMessages.ts
-docs/app-design-react/src/features/library/catalogueStyles.ts
 docs/app-design-react/src/features/library/index.ts
 docs/app-design-react/src/features/library/libraryCatalogPage.ts
 docs/app-design-react/src/features/library/libraryDeletionModel.ts

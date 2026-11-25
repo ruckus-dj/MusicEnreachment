@@ -19,6 +19,7 @@ import {
 	type ArtistEditionModel,
 	type ArtistHeadingModel,
 	type ArtistMissingGroupModel,
+	type ArtistReleaseRowModel,
 	ArtistScreenView,
 	type ArtistTagFocus,
 } from "./ArtistScreenView";
@@ -511,6 +512,13 @@ export function ArtistScreen({
 				/>
 			),
 		}));
+	const releaseRows: ArtistReleaseRowModel[] = [
+		...editions.map((edition) => ({ kind: "edition" as const, edition })),
+		...preparedMissingGroups.map((group) => ({
+			kind: "missing-group" as const,
+			group,
+		})),
+	];
 	const tagFocus: ArtistTagFocus | undefined = initialTags
 		? {
 				scope: initialTags.scope === "artist" ? "artist" : "release",
@@ -532,9 +540,8 @@ export function ArtistScreen({
 			onQueryChange={changeQuery}
 			onFilterChange={changeFilter}
 			editionsKey={artistId}
-			editions={editions}
+			releases={{ state: "ready", rows: releaseRows }}
 			expandedReleaseId={expandedReleaseId}
-			missingGroups={preparedMissingGroups}
 			tagFocus={tagFocus}
 		/>
 	);

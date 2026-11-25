@@ -83,6 +83,9 @@ const pairs = [
     "features/library",
     [
       "AggregatePublicationPreviewView.tsx",
+      "ArtistScreenView.tsx",
+      "catalogueMessages.ts",
+      "catalogueStyles.ts",
       "ArtistMetadataCard.tsx",
       "ContributorRowView.tsx",
       "GenrePicker.tsx",

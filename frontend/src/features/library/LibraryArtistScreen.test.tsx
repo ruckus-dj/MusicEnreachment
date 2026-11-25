@@ -26,6 +26,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
   let detailsRevision = 1;
   let artistName = "Artist";
   let metadataPatchCount = 0;
+  let positionRequestCount = 0;
   server.use(
     http.get(`*/api/library/artists/${artistId}`, () =>
       HttpResponse.json({
@@ -146,6 +147,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
       });
     }),
     http.get("*/api/library/positions", ({ request }) => {
+      positionRequestCount += 1;
       const url = new URL(request.url);
       expect(url.searchParams.get("release_id")).toBe(releaseId);
       expect(url.searchParams.get("availability")).toBe("all");
@@ -259,10 +261,12 @@ it("saves combined artist metadata in one patch while keeping the artist release
     ).toBeEnabled(),
   );
 
+  expect(positionRequestCount).toBe(0);
   fireEvent.click(
     await screen.findByRole("button", { name: "Show positions" }),
   );
   const tracks = await screen.findByRole("table");
+  expect(positionRequestCount).toBeGreaterThan(0);
   const row = within(tracks).getByRole("row", { name: /Published track/ });
   expect(
     within(row).getByRole("link", { name: "Published track" }),
