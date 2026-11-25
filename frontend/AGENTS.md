@@ -70,6 +70,9 @@ a Vitest worker is a host runtime failure, not a reason to skip the suite.
 When moving UI copy to a paired component, check message-key references across
 both source trees, not just the edited feature. Library position details also
 use source probe labels; preserve their wording when moving the common copy.
+Keep model and component module stems distinct even after case folding. On a
+case-insensitive filesystem, an extensionless import can resolve a `.ts` model
+instead of its same-stem `.tsx` view.
 
 **Nested directory dialogs**: Stop picker `close`/`cancel` propagation so closing
 the picker cannot close its owning settings dialog. Host Escape/Tab handlers

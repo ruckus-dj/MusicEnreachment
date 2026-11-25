@@ -173,7 +173,7 @@ const pairs = [
   [
     "features/local-catalog",
     "features/own-catalog",
-    ["OwnCatalogDetailsView.tsx", "OwnCatalogEditorShell.tsx", "OwnCatalogList.tsx", "OwnCatalogPagination.tsx", "OwnCatalogRecordFieldsView.tsx"],
+    ["LocalCatalogScreenView.tsx", "OwnCatalogDetailsView.tsx", "OwnCatalogEditorShell.tsx", "OwnCatalogList.tsx", "OwnCatalogPagination.tsx", "OwnCatalogRecordFieldsView.tsx"],
   ],
 ];
 

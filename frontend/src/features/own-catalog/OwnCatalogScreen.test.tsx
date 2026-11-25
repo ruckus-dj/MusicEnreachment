@@ -477,6 +477,7 @@ it("does not navigate when a create completes after leaving and returning to its
   fireEvent.change(field(/^name/i), { target: { value: "Deferred artist" } });
   fireEvent.click(press(/^(Create (Local )?artist|Save( changes)?)$/i));
   await waitFor(() => expect(api.createLocalProviderArtist).toHaveBeenCalled());
+  expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
   window.history.back();
   expect(await screen.findByText("Local Release 1")).toBeVisible();
   window.history.forward();
@@ -560,4 +561,8 @@ it("creates a Local artist with a catalog genre from the explicit create action"
     name: "Local Artist",
     genres: [expect.objectContaining({ id: "mbid-genre", name: "Indie Rock" })],
   });
+  expect(await screen.findByText("Local record created.")).toHaveAttribute(
+    "role",
+    "status",
+  );
 });

@@ -50,7 +50,6 @@ docs/app-design-react/src/features/library/useTrackScreenDemoProvider.tsx
 docs/app-design-react/src/features/local-catalog/LocalCatalogRecordEditors.tsx
 docs/app-design-react/src/features/local-catalog/LocalCatalogReleaseEditor.tsx
 docs/app-design-react/src/features/local-catalog/LocalCatalogScreen.tsx
-docs/app-design-react/src/features/local-catalog/LocalCatalogScreenView.tsx
 docs/app-design-react/src/features/local-catalog/index.ts
 docs/app-design-react/src/features/local-catalog/localCatalogDetailsView.ts
 docs/app-design-react/src/features/local-catalog/localCatalogMessage.ts
@@ -219,10 +218,10 @@ frontend/src/features/local-release/localReleaseWrites.ts
 frontend/src/features/operations/OperationsScreen.tsx
 frontend/src/features/operations/operationKindLabels.json
 frontend/src/features/operations/operationPresentation.ts
-frontend/src/features/own-catalog/OwnCatalogDetails.tsx
 frontend/src/features/own-catalog/OwnCatalogRecordEditors.tsx
 frontend/src/features/own-catalog/OwnCatalogReleaseEditor.tsx
 frontend/src/features/own-catalog/OwnCatalogScreen.tsx
+frontend/src/features/own-catalog/ownCatalogDetailModel.ts
 frontend/src/features/own-catalog/ownCatalogLookups.ts
 frontend/src/features/own-catalog/ownCatalogMessages.ts
 frontend/src/features/own-catalog/ownCatalogModel.ts

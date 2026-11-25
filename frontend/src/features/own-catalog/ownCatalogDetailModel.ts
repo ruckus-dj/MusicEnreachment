@@ -1,10 +1,7 @@
 import type { LocalProviderItem } from "../../api/generated/client.schemas";
 import type { Locale } from "../../i18n/locale";
 import { formatLocalDuration } from "../local-release/localReleaseFormModel";
-import {
-  OwnCatalogDetailsView,
-  type OwnCatalogDetailsViewProps,
-} from "./OwnCatalogDetailsView";
+import type { OwnCatalogDetailsViewProps } from "./OwnCatalogDetailsView";
 import {
   type OwnCatalogMessage,
   ownCatalogMessage,
@@ -16,7 +13,8 @@ import {
   ownCatalogReleaseTitle,
 } from "./ownCatalogModel";
 
-export function OwnCatalogDetails({
+/** Projects a selected record snapshot into the detail view contract. */
+export function ownCatalogDetailsViewProps({
   locale,
   type,
   item,
@@ -34,7 +32,7 @@ export function OwnCatalogDetails({
   onRetry: () => void;
   onBack: () => void;
   onEdit?: () => void;
-}) {
+}): OwnCatalogDetailsViewProps {
   const m = (key: OwnCatalogMessage) => ownCatalogMessage(locale, key);
   const fact = (key: OwnCatalogMessage, value?: string | null) => ({
     label: m(key),
@@ -112,15 +110,13 @@ export function OwnCatalogDetails({
           : undefined,
     };
   }
-  return (
-    <OwnCatalogDetailsView
-      title={title}
-      eyebrow={m("currentDataNoHistory")}
-      backLabel={m("back")}
-      editLabel={m("edit")}
-      onBack={onBack}
-      onEdit={item ? onEdit : undefined}
-      body={body}
-    />
-  );
+  return {
+    title,
+    eyebrow: m("currentDataNoHistory"),
+    backLabel: m("back"),
+    editLabel: m("edit"),
+    onBack,
+    onEdit: item ? onEdit : undefined,
+    body,
+  };
 }

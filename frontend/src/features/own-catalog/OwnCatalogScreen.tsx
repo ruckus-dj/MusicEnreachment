@@ -1,10 +1,4 @@
-import {
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   createLocalProviderArtist,
@@ -41,19 +35,21 @@ import {
   catalogCreateIdentity,
   writeCatalogRecord,
 } from "../local-release/localReleaseWrites";
-import { OwnCatalogDetails } from "./OwnCatalogDetails";
-import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import {
-  OwnCatalogList,
-  type OwnCatalogListCopy,
-  type OwnCatalogListRow,
-  type OwnCatalogListTab,
+  type LocalCatalogEditorSlot,
+  LocalCatalogScreenView,
+} from "./LocalCatalogScreenView";
+import type {
+  OwnCatalogListCopy,
+  OwnCatalogListRow,
+  OwnCatalogListTab,
 } from "./OwnCatalogList";
 import {
   OwnCatalogArtistForm,
   OwnCatalogRecordingForm,
 } from "./OwnCatalogRecordEditors";
 import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
+import { ownCatalogDetailsViewProps } from "./ownCatalogDetailModel";
 import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
 import {
   type OwnCatalogMessage,
@@ -671,43 +667,30 @@ export function OwnCatalogScreen() {
   const pageCount = ownCatalogPageCount(activePage?.total ?? 0);
   const currentPage = Math.min(Math.max(1, page), pageCount);
   const pagerBusy = listLoading || !activePage || filterInput.trim() !== filter;
-  const shell = (content: ReactNode) => (
-    <section className="mx-auto max-w-none p-3">
-      {content}
-      {notice ? (
-        <p className="mt-3 text-sm text-[var(--ink)]" role="status">
-          {m(notice)}
-        </p>
-      ) : null}
-    </section>
-  );
+  const detailsView =
+    route.id && !editor
+      ? ownCatalogDetailsViewProps({
+          locale,
+          type: route.type,
+          item: activeDetail.item,
+          loading: activeDetail.loading,
+          error:
+            activeDetail.error === null ? detailLoadError : activeDetail.error,
+          onRetry: () => setDetailRetry((attempt) => attempt + 1),
+          onBack: closeDetails,
+          onEdit:
+            fullDetailItem && !saving
+              ? () =>
+                  openEditor({
+                    kind: "edit",
+                    type: route.type,
+                    id: fullDetailItem.id,
+                  })
+              : undefined,
+        })
+      : null;
 
-  if (route.id && !editor) {
-    return shell(
-      <OwnCatalogDetails
-        locale={locale}
-        type={route.type}
-        item={activeDetail.item}
-        loading={activeDetail.loading}
-        error={
-          activeDetail.error === null ? detailLoadError : activeDetail.error
-        }
-        onRetry={() => setDetailRetry((attempt) => attempt + 1)}
-        onBack={closeDetails}
-        onEdit={
-          fullDetailItem && !saving
-            ? () =>
-                openEditor({
-                  kind: "edit",
-                  type: route.type,
-                  id: fullDetailItem.id,
-                })
-            : undefined
-        }
-      />,
-    );
-  }
-
+  let editorView: LocalCatalogEditorSlot | null = null;
   if (editor) {
     const record =
       editor.kind === "edit" && fullDetailItem?.id === editor.id
@@ -725,30 +708,32 @@ export function OwnCatalogScreen() {
         }),
       );
       if (kind === "releases") {
-        return shell(
-          <OwnCatalogReleaseEditor
-            locale={locale}
-            record={record}
-            artists={[...recordArtists, ...artists]}
-            recordings={record ? releaseRecordRecordings(record) : []}
-            findRecordings={findRecordings}
-            findArtists={findArtists}
-            saveRecording={saveReleaseRecording}
-            saveArtist={createArtist}
-            onSave={(draft) => saveReleaseDraft(draft, record)}
-            onBack={back}
-          />,
-        );
-      }
-      if (kind === "recordings") {
-        return shell(
-          <OwnCatalogEditorShell
-            eyebrow={m("eyebrow")}
-            title={record ? m("editRecording") : m("createRecording")}
-            backLabel={m("back")}
-            backDisabled={saving}
-            onBack={back}
-          >
+        editorView = {
+          kind: "releases",
+          element: (
+            <OwnCatalogReleaseEditor
+              locale={locale}
+              record={record}
+              artists={[...recordArtists, ...artists]}
+              recordings={record ? releaseRecordRecordings(record) : []}
+              findRecordings={findRecordings}
+              findArtists={findArtists}
+              saveRecording={saveReleaseRecording}
+              saveArtist={createArtist}
+              onSave={(draft) => saveReleaseDraft(draft, record)}
+              onBack={back}
+            />
+          ),
+        };
+      } else if (kind === "recordings") {
+        editorView = {
+          kind: "recordings",
+          eyebrow: m("eyebrow"),
+          title: record ? m("editRecording") : m("createRecording"),
+          backLabel: m("back"),
+          backDisabled: saving,
+          onBack: back,
+          element: (
             <OwnCatalogRecordingForm
               locale={locale}
               record={record}
@@ -757,25 +742,26 @@ export function OwnCatalogScreen() {
               onSave={(draft) => saveRecordingDraft(draft, record)}
               onBack={back}
             />
-          </OwnCatalogEditorShell>,
-        );
+          ),
+        };
+      } else {
+        editorView = {
+          kind: "artists",
+          eyebrow: m("eyebrow"),
+          title: record ? m("editArtist") : m("createArtist"),
+          backLabel: m("back"),
+          backDisabled: saving,
+          onBack: back,
+          element: (
+            <OwnCatalogArtistForm
+              locale={locale}
+              record={record}
+              onSave={(draft) => saveArtistDraft(draft, record)}
+              onBack={back}
+            />
+          ),
+        };
       }
-      return shell(
-        <OwnCatalogEditorShell
-          eyebrow={m("eyebrow")}
-          title={record ? m("editArtist") : m("createArtist")}
-          backLabel={m("back")}
-          backDisabled={saving}
-          onBack={back}
-        >
-          <OwnCatalogArtistForm
-            locale={locale}
-            record={record}
-            onSave={(draft) => saveArtistDraft(draft, record)}
-            onBack={back}
-          />
-        </OwnCatalogEditorShell>,
-      );
     }
   }
 
@@ -817,29 +803,34 @@ export function OwnCatalogScreen() {
     clearFilter: m("clearFilter"),
   };
 
-  return shell(
-    <OwnCatalogList<LocalProviderItem>
-      locale={locale}
-      copy={copy}
-      tabs={tabs}
-      selectedTab={route.type}
-      onTabChange={changeTab}
-      filter={filterInput}
-      hasFilter={Boolean(filter)}
-      onFilterChange={changeFilter}
-      onClearFilter={clearFilter}
-      onCreate={() => openEditor({ kind: "create", type: route.type })}
-      createDisabled={saving}
-      loading={listLoading}
-      loaded={listLoaded}
-      error={listError}
-      page={activePage ? { rows, total: activePage.total } : undefined}
-      pageNumber={currentPage}
-      pageCount={pageCount}
-      busy={pagerBusy}
-      onRetry={() => setListVersion((attempt) => attempt + 1)}
-      onOpenRow={(row) => openDetails(route.type, row.value)}
-      onPageChange={setPage}
-    />,
+  return (
+    <LocalCatalogScreenView<LocalProviderItem>
+      list={{
+        locale,
+        copy,
+        tabs,
+        selectedTab: route.type,
+        onTabChange: changeTab,
+        filter: filterInput,
+        hasFilter: Boolean(filter),
+        onFilterChange: changeFilter,
+        onClearFilter: clearFilter,
+        onCreate: () => openEditor({ kind: "create", type: route.type }),
+        createDisabled: saving,
+        loading: listLoading,
+        loaded: listLoaded,
+        error: listError,
+        page: activePage ? { rows, total: activePage.total } : undefined,
+        pageNumber: currentPage,
+        pageCount,
+        busy: pagerBusy,
+        onRetry: () => setListVersion((attempt) => attempt + 1),
+        onOpenRow: (row) => openDetails(route.type, row.value),
+        onPageChange: setPage,
+      }}
+      notice={notice ? m(notice) : ""}
+      details={detailsView}
+      editor={editorView}
+    />
   );
 }

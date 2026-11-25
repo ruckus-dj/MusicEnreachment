@@ -9,6 +9,10 @@ import {
 	LocalCatalogScreenView,
 } from "./LocalCatalogScreenView";
 import {
+	type LocalCatalogMessage,
+	localCatalogMessage,
+} from "./localCatalogMessage";
+import {
 	type LocalCatalogEditorBinding,
 	type LocalCatalogScreenProps,
 	useLocalCatalogScreenDemoProvider,
@@ -26,6 +30,7 @@ function editorSlot(
 	editor: LocalCatalogEditorBinding,
 	locale: Locale,
 ): LocalCatalogEditorSlot {
+	const m = (key: LocalCatalogMessage) => localCatalogMessage(locale, key);
 	if (editor.kind === "releases") {
 		return {
 			kind: "releases",
@@ -35,25 +40,29 @@ function editorSlot(
 	if (editor.kind === "recordings") {
 		return {
 			kind: "recordings",
-			mode: editor.props.record ? "edit" : "create",
+			eyebrow: m("eyebrow"),
+			title: editor.props.record ? m("editRecording") : m("createRecording"),
+			backLabel: m("back"),
 			onBack: editor.props.onBack,
 			element: <LocalCatalogRecordingForm locale={locale} {...editor.props} />,
 		};
 	}
 	return {
 		kind: "artists",
-		mode: editor.props.record ? "edit" : "create",
+		eyebrow: m("eyebrow"),
+		title: editor.props.record ? m("editArtist") : m("createArtist"),
+		backLabel: m("back"),
 		onBack: editor.props.onBack,
 		element: <LocalCatalogArtistForm locale={locale} {...editor.props} />,
 	};
 }
 
 export function LocalCatalogScreen(props: LocalCatalogScreenProps) {
-	const { editor, ...view } = useLocalCatalogScreenDemoProvider(props);
+	const { editor, locale, ...view } = useLocalCatalogScreenDemoProvider(props);
 	return (
 		<LocalCatalogScreenView
 			{...view}
-			editor={editor ? editorSlot(editor, view.locale) : null}
+			editor={editor ? editorSlot(editor, locale) : null}
 		/>
 	);
 }

@@ -5,6 +5,7 @@ import {
 	useState,
 } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { Locale } from "../../i18n/types";
 import {
 	formatLocalDuration,
 	type LocalRecordingDraft,
@@ -73,9 +74,10 @@ export type LocalCatalogEditorBinding =
 	  };
 
 export type LocalCatalogScreenModel = Omit<
-	LocalCatalogScreenViewProps,
+	LocalCatalogScreenViewProps<string>,
 	"editor"
 > & {
+	locale: Locale;
 	editor: LocalCatalogEditorBinding | null;
 };
 
@@ -215,7 +217,11 @@ export function useLocalCatalogScreenDemoProvider({
 		return state.items[current.type].find((item) => item.id === current.id);
 	};
 
-	const listHref = () => setView({ kind: "list" });
+	const navigate = (next: LocalCatalogView) => {
+		setNotice(null);
+		setView(next);
+	};
+	const listHref = () => navigate({ kind: "list" });
 	const detailView = (
 		kind: LocalCatalogType,
 		id: string,
@@ -241,7 +247,7 @@ export function useLocalCatalogScreenDemoProvider({
 		}
 	};
 
-	let details: LocalCatalogScreenViewProps["details"] = null;
+	let details: LocalCatalogScreenViewProps<string>["details"] = null;
 	if (view.kind === "details") {
 		const record = viewRecord(view);
 		if (record) {
@@ -251,7 +257,7 @@ export function useLocalCatalogScreenDemoProvider({
 				type: view.type,
 				record,
 				onBack: listHref,
-				onEdit: () => setView(editorView(view.type, record.id)),
+				onEdit: () => navigate(editorView(view.type, record.id)),
 			});
 		}
 	}
@@ -414,7 +420,7 @@ export function useLocalCatalogScreenDemoProvider({
 			hasFilter: Boolean(records.length && query.trim()),
 			onFilterChange: changeFilter,
 			onClearFilter: () => changeFilter(""),
-			onCreate: () => setView({ kind: "create", type }),
+			onCreate: () => navigate({ kind: "create", type }),
 			loading: false,
 			loaded: true,
 			error: null,
@@ -430,7 +436,7 @@ export function useLocalCatalogScreenDemoProvider({
 			pageNumber: currentPage,
 			pageCount: totalPages,
 			onRetry: () => {},
-			onOpenRow: (row) => setView(detailView(type, row.value)),
+			onOpenRow: (row) => navigate(detailView(type, row.value)),
 			onPageChange: setPage,
 		},
 		notice: notice ? m(notice) : "",

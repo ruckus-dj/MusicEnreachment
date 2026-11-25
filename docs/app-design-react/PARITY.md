@@ -79,8 +79,7 @@ source channel, а fixture макета такого происхождения 
 
 В медиатеке отдельно собраны представления артиста с его изданиями и позиции
 с источниками, действиями и техническими данными (`ArtistScreenView.tsx`,
-`TrackScreenView.tsx`, `TrackActionsView.tsx`). `LocalCatalogScreenView.tsx`
-собирает список, карточку и редактор собственного каталога. Независимые
+`TrackScreenView.tsx`, `TrackActionsView.tsx`). Независимые
 редакторы и диалоги подключаются к этим представлениям отдельно; они не
 передают экрану доступ к данным или полномочия записи.
 
@@ -102,7 +101,7 @@ source channel, а fixture макета такого происхождения 
 | Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
 | Сопоставление: секция поиска, подготовки и создания издания | `features/matching/MatchingReviewSearchView.tsx` | `features/matchingWorkspace/MatchingReviewSearchView.tsx` |
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
-| Собственный каталог: списки, карточки записей и поля форм артиста и композиции | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/` |
+| Собственный каталог: экран списка, карточки и оболочки редакторов | `features/local-catalog/`: `LocalCatalogScreenView.tsx`, `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/`. Состав полей и связанных записей зависит от провайдера; наличие поля в макете не подтверждает его сохранение через API |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: каркас страницы, заголовок и подзаголовок | `features/settings/SettingsPageFrame.tsx` | Тот же путь |
 | Настройки: весь экран — загрузка, состояние конфигурации, вкладки, обратная связь и диалоги | `features/settings/SettingsScreenView.tsx` | Тот же путь; приложение сохраняет черновик токена при смене вкладки, макет сбрасывает его. Запись и повторное чтение состояния остаются в провайдерах |
