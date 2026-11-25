@@ -36,6 +36,10 @@ import {
   type OwnCatalogMessage,
   ownCatalogMessage,
 } from "../../ui/features/local-catalog/ownCatalogMessages";
+import {
+  LocalReleaseGenreCatalogBinder,
+  type LocalReleaseGenreCatalogProviderProps,
+} from "../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
 import type {
   LocalRecordingDraft,
   LocalReleaseArtist,
@@ -50,11 +54,11 @@ import {
   catalogCreateIdentity,
   writeCatalogRecord,
 } from "../local-release/localReleaseWrites";
+import { useProviderGenreCatalog } from "../local-release/ProviderCatalogGenreField";
 import {
   OwnCatalogArtistForm,
   OwnCatalogRecordingForm,
 } from "./OwnCatalogRecordEditors";
-import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
 import { ownCatalogDetailsViewProps } from "./ownCatalogDetailModel";
 import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
 import {
@@ -70,6 +74,7 @@ import {
   recordingDraftToWrite,
   releaseDraftToWrite,
   releaseRecordRecordings,
+  releaseRecordToFormValues,
 } from "./ownCatalogModel";
 import {
   defaultOwnCatalogRoute,
@@ -194,6 +199,18 @@ export function ProductionOwnCatalogBinder({
     <ApplicationOwnCatalogBinder model={model}>
       {children}
     </ApplicationOwnCatalogBinder>
+  );
+}
+
+function LiveReleaseGenreCatalogProvider({
+  children,
+}: LocalReleaseGenreCatalogProviderProps) {
+  const { locale } = useI18n();
+  const catalog = useProviderGenreCatalog(locale);
+  return (
+    <LocalReleaseGenreCatalogBinder catalog={catalog}>
+      {children}
+    </LocalReleaseGenreCatalogBinder>
   );
 }
 
@@ -723,20 +740,20 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       if (kind === "releases") {
         editorView = {
           kind: "releases",
-          element: (
-            <OwnCatalogReleaseEditor
-              locale={locale}
-              record={record}
-              artists={[...recordArtists, ...artists]}
-              recordings={record ? releaseRecordRecordings(record) : []}
-              findRecordings={findRecordings}
-              findArtists={findArtists}
-              saveRecording={saveReleaseRecording}
-              saveArtist={createArtist}
-              onSave={(draft) => saveReleaseDraft(draft, record)}
-              onBack={back}
-            />
-          ),
+          actor: {
+            initialValues: record
+              ? releaseRecordToFormValues(record)
+              : undefined,
+            artists: [...recordArtists, ...artists],
+            recordings: record ? releaseRecordRecordings(record) : [],
+            findRecordings,
+            findArtists,
+            saveRecording: saveReleaseRecording,
+            saveArtist: createArtist,
+            genreCatalogProvider: LiveReleaseGenreCatalogProvider,
+            onSave: (draft) => saveReleaseDraft(draft, record),
+            onBack: back,
+          },
         };
       } else if (kind === "recordings") {
         editorView = {

@@ -6,8 +6,13 @@ import {
 } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { useHashLocation } from "../../../app/navigation/hashLocation";
-import type { LocalCatalogScreenViewProps } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
+import type { GenrePickerCatalog } from "../../../ui/features/library/GenrePicker";
+import type {
+	LocalCatalogReleaseEditorActor,
+	LocalCatalogScreenViewProps,
+} from "../../../ui/features/local-catalog/LocalCatalogScreenView";
 import { ownCatalogMessage } from "../../../ui/features/local-catalog/ownCatalogMessages";
+import type { LocalReleaseGenreSelectionAdapter } from "../../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
 import {
 	formatLocalDuration,
 	type LocalRecordingDraft,
@@ -16,11 +21,16 @@ import {
 	type LocalReleaseRecording,
 } from "../../../ui/features/local-release/localReleaseFormModel";
 import type { Locale } from "../../../ui/i18n/types";
+import {
+	genreCatalog as demoGenreCatalog,
+	resolveCatalogGenreName,
+} from "../genres/catalogue";
+import { useGenrePickerDemoProvider } from "../library/metadata/useGenrePickerDemoProvider";
+import { DemoReleaseGenreCatalogProvider } from "./DemoReleaseGenreCatalogProvider";
 import type {
 	LocalCatalogArtistForm,
 	LocalCatalogRecordingForm,
 } from "./LocalCatalogRecordEditors";
-import type { LocalCatalogReleaseEditor } from "./LocalCatalogReleaseEditor";
 import { localCatalogDetailsViewProps } from "./localCatalogDetailsView";
 import {
 	type LocalCatalogMessage,
@@ -45,6 +55,7 @@ import {
 	localCatalogTypes,
 	recordingDraftToRecord,
 	releaseDraftToRecord,
+	releaseRecordToFormValues,
 } from "./localCatalogModel";
 import {
 	defaultLocalCatalogRoute,
@@ -68,7 +79,7 @@ export type LocalCatalogScreenProps = {
 export type LocalCatalogEditorBinding =
 	| {
 			kind: "releases";
-			props: Omit<ComponentProps<typeof LocalCatalogReleaseEditor>, "locale">;
+			actor: LocalCatalogReleaseEditorActor;
 	  }
 	| {
 			kind: "recordings";
@@ -156,6 +167,38 @@ export function useLocalCatalogScreenDemoProvider({
 	const [notice, setNotice] = useState<"created" | "updated" | null>(null);
 	const [editorState, setEditor] = useState<LocalCatalogEditorState>();
 	const activeEditor = editorState?.hash === hash ? editorState : undefined;
+	const releaseGenreCatalog: GenrePickerCatalog = useGenrePickerDemoProvider({
+		value: [],
+		onChange: () => undefined,
+		loaded: genresLoaded,
+		onLoad: onLoadGenres,
+		options: genreOptions,
+		lifetime: activeEditor
+			? `${activeEditor.hash}:${activeEditor.kind}:${activeEditor.type}`
+			: "own-catalog-closed",
+	});
+	const releaseGenreCatalogById = new Map(
+		(genreOptions ?? demoGenreCatalog).map((item) => [item.id, item]),
+	);
+	const releaseGenreSelection: LocalReleaseGenreSelectionAdapter = {
+		display: (value) =>
+			value.map((item) => {
+				const entry = releaseGenreCatalogById.get(item.id);
+				const name = entry ? resolveCatalogGenreName(entry) : item.name;
+				return { id: item.id, name, source_name: name };
+			}),
+		adapt: (next, current) => {
+			const currentById = new Map(current.map((item) => [item.id, item]));
+			return next.map(
+				(item) =>
+					currentById.get(item.id) ?? {
+						id: item.id,
+						name: item.name,
+						source_name: item.source_name,
+					},
+			);
+		},
+	};
 	const [visitHash, setVisitHash] = useState(hash);
 	if (visitHash !== hash) {
 		setVisitHash(hash);
@@ -338,8 +381,10 @@ export function useLocalCatalogScreenDemoProvider({
 			if (kind === "releases") {
 				editor = {
 					kind,
-					props: {
-						record,
+					actor: {
+						initialValues: record
+							? releaseRecordToFormValues(record)
+							: undefined,
 						artists: artistOptions,
 						recordings: recordingOptions,
 						findRecordings: async (value) =>
@@ -352,9 +397,9 @@ export function useLocalCatalogScreenDemoProvider({
 							localCatalogFindArtists(state.items.artists, value),
 						saveRecording: appendRecording,
 						saveArtist: appendArtist,
-						genresLoaded,
-						genreOptions,
-						onLoadGenres,
+						genreCatalogProvider: DemoReleaseGenreCatalogProvider,
+						genreCatalogModel: releaseGenreCatalog,
+						genreCatalogSelection: releaseGenreSelection,
 						onSave: (draft: LocalReleaseDraft) => {
 							const saved = releaseDraftToRecord(
 								draft,

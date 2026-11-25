@@ -2,6 +2,16 @@ import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { OwnCatalogDetailsView } from "./OwnCatalogDetailsView";
 import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import { OwnCatalogList, type OwnCatalogListProps } from "./OwnCatalogList";
+import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
+
+/**
+ * Host-ready data for the portable release actor: roster, initial projection,
+ * typed genre catalog and actions only.
+ */
+export type LocalCatalogReleaseEditorActor = Omit<
+  ComponentProps<typeof OwnCatalogReleaseEditor>,
+  "locale"
+>;
 
 /**
  * An independent editor actor, already composed by the facade. The view keeps
@@ -9,7 +19,7 @@ import { OwnCatalogList, type OwnCatalogListProps } from "./OwnCatalogList";
  * the localized labels for the shelled actors.
  */
 export type LocalCatalogEditorSlot =
-  | { kind: "releases"; element: ReactElement }
+  | { kind: "releases"; actor: LocalCatalogReleaseEditorActor }
   | {
       kind: "recordings" | "artists";
       eyebrow: string;
@@ -56,7 +66,9 @@ export function LocalCatalogScreenView({
     return shell(<OwnCatalogDetailsView {...details} />);
   }
   if (editor?.kind === "releases") {
-    return shell(editor.element);
+    return shell(
+      <OwnCatalogReleaseEditor locale={list.locale} {...editor.actor} />,
+    );
   }
   if (editor) {
     return shell(

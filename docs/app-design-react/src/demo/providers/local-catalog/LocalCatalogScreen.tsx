@@ -9,7 +9,6 @@ import {
 	LocalCatalogArtistForm,
 	LocalCatalogRecordingForm,
 } from "./LocalCatalogRecordEditors";
-import { LocalCatalogReleaseEditor } from "./LocalCatalogReleaseEditor";
 import {
 	type LocalCatalogMessage,
 	localCatalogMessage,
@@ -34,10 +33,7 @@ function editorSlot(
 ): LocalCatalogEditorSlot {
 	const m = (key: LocalCatalogMessage) => localCatalogMessage(locale, key);
 	if (editor.kind === "releases") {
-		return {
-			kind: "releases",
-			element: <LocalCatalogReleaseEditor locale={locale} {...editor.props} />,
-		};
+		return { kind: "releases", actor: editor.actor };
 	}
 	if (editor.kind === "recordings") {
 		return {
