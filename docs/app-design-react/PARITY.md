@@ -71,10 +71,19 @@ source channel, а fixture макета такого происхождения 
 (`SettingsScreenView.tsx`, `SetupScreenView.tsx`, `MatchingScreenView.tsx`),
 предпросмотр позиции и
 публикация из сохранённых связей (`ContextPublicationPreviewView.tsx`,
-`MatchingReceiptPublicationReadyView.tsx`), а также общий редактор метаданных
-с выбором жанров (`MetadataEditorView.tsx`, `GenrePickerView.tsx`). Провайдеры
+`MatchingReceiptPublicationReadyView.tsx`). Разметка редактора метаданных,
+выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
+полей и сохранения (`MetadataEditorView.tsx`, `GenrePickerView.tsx`,
+`ReleaseMetadataEditorView.tsx`, `TrackMetadataEditorsView.tsx`). Провайдеры
 макета готовят данные и обработчики; эти представления ещё не входят в реестр
 пар с приложением.
+
+В медиатеке отдельно собраны представления артиста с его изданиями и позиции
+с источниками, действиями и техническими данными (`ArtistScreenView.tsx`,
+`TrackScreenView.tsx`, `TrackActionsView.tsx`). `LocalCatalogScreenView.tsx`
+собирает список, карточку и редактор собственного каталога. Независимые
+редакторы и диалоги подключаются к этим представлениям отдельно; они не
+передают экрану доступ к данным или полномочия записи.
 
 | Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
 | --- | --- | --- |

@@ -14,23 +14,29 @@ import type {
 	LocalProviderRecord,
 	LocalProviderState,
 } from "./localProviderModel";
-import { OwnCatalogDetailsView } from "./OwnCatalogDetailsView";
+import type { OwnCatalogDetailsViewProps } from "./OwnCatalogDetailsView";
 
-export function LocalCatalogDetails({
-	locale,
-	state,
-	type,
-	record,
-	onBack,
-	onEdit,
-}: {
+type LocalCatalogDetailsInput = {
 	locale: "ru" | "en";
 	state: LocalProviderState;
 	type: LocalCatalogType;
 	record: LocalProviderRecord;
 	onBack: () => void;
 	onEdit: () => void;
-}) {
+};
+
+/**
+ * JSX-free projection of one Local catalog record into the shared details view.
+ * The provider resolves the record and routing; the view actor stays portable.
+ */
+export function localCatalogDetailsViewProps({
+	locale,
+	state,
+	type,
+	record,
+	onBack,
+	onEdit,
+}: LocalCatalogDetailsInput): OwnCatalogDetailsViewProps {
 	const m = (key: LocalCatalogMessage) => localCatalogMessage(locale, key);
 	const fact = (key: LocalCatalogMessage, value?: string | null) => ({
 		label: m(key),
@@ -88,51 +94,49 @@ export function LocalCatalogDetails({
 		fact("genres", localCatalogGenreNames(record).join(", ")),
 		fact("tags", record.tags),
 	);
-	return (
-		<OwnCatalogDetailsView
-			title={title}
-			eyebrow={m("currentDataNoHistory")}
-			backLabel={m("back")}
-			editLabel={m("edit")}
-			onBack={onBack}
-			onEdit={onEdit}
-			body={{
-				kind: "record",
-				facts,
-				tracklist:
-					type === "releases"
-						? {
-								title: m("tracklist"),
-								positions: m("positions"),
-								empty: m("noPositions"),
-								tracks: (record.tracks ?? []).map((track, index) => {
-									const recording = state.items.recordings.find(
-										(item) => item.id === track.recordingId,
-									);
-									const duration =
-										track.durationOverrideMs === "" ||
-										track.durationOverrideMs == null
-											? recording?.duration_ms
-											: track.durationOverrideMs;
-									return {
-										id: track.id || String(index),
-										number: String(index + 1),
-										title:
-											track.titleOverride ||
-											(recording
-												? localCatalogRecordingTitle(recording)
-												: m("recordingNotSelected")),
-										description: [
-											recording?.provider,
-											formatLocalDuration(duration),
-										]
-											.filter(Boolean)
-											.join(" · "),
-									};
-								}),
-							}
-						: undefined,
-			}}
-		/>
-	);
+	return {
+		title,
+		eyebrow: m("currentDataNoHistory"),
+		backLabel: m("back"),
+		editLabel: m("edit"),
+		onBack,
+		onEdit,
+		body: {
+			kind: "record",
+			facts,
+			tracklist:
+				type === "releases"
+					? {
+							title: m("tracklist"),
+							positions: m("positions"),
+							empty: m("noPositions"),
+							tracks: (record.tracks ?? []).map((track, index) => {
+								const recording = state.items.recordings.find(
+									(item) => item.id === track.recordingId,
+								);
+								const duration =
+									track.durationOverrideMs === "" ||
+									track.durationOverrideMs == null
+										? recording?.duration_ms
+										: track.durationOverrideMs;
+								return {
+									id: track.id || String(index),
+									number: String(index + 1),
+									title:
+										track.titleOverride ||
+										(recording
+											? localCatalogRecordingTitle(recording)
+											: m("recordingNotSelected")),
+									description: [
+										recording?.provider,
+										formatLocalDuration(duration),
+									]
+										.filter(Boolean)
+										.join(" · "),
+								};
+							}),
+						}
+					: undefined,
+		},
+	};
 }

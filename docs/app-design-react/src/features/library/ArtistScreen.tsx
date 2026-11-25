@@ -2,16 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
 import { DeletionRequest } from "../../components/DeletionRequest";
 import { demoGenres } from "../../components/GenreLibrary";
-import {
-	Button,
-	Checkbox,
-	Disclosure,
-	DisclosureGroup,
-	DisclosurePanel,
-	Heading,
-	Input,
-	SearchField,
-} from "../../components/ui";
 import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
 import { ReleaseMetadataEditor } from "../../metadata/ReleaseMetadataEditor";
@@ -25,10 +15,17 @@ import {
 	type ArtistMetadataValues,
 } from "./ArtistMetadataCard";
 import {
+	type ArtistDeletionAction,
+	type ArtistEditionModel,
+	type ArtistHeadingModel,
+	type ArtistMissingGroupModel,
+	ArtistScreenView,
+	type ArtistTagFocus,
+} from "./ArtistScreenView";
+import {
 	availabilityRowClass,
 	type CatalogFilter as CatalogFilterValue,
 } from "./availabilityRows";
-import { CatalogFilter } from "./CatalogFilter";
 import {
 	type CatalogArtist,
 	catalogData,
@@ -41,12 +38,10 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
-import { catalogueStyles } from "./catalogueStyles";
-import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
-import { LibraryArtistReleaseTracksView } from "./LibraryArtistReleaseTracksView";
-import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import type { TagScope } from "./TagsComparison";
+
+const libraryHref = "#library";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
@@ -209,13 +204,11 @@ export function ArtistScreen({
 	});
 	if (!artist)
 		return (
-			<header className={catalogueStyles.objectHeader}>
-				<div>
-					<h1>{m("artistNotFound")}</h1>
-					<p>{m("artistLinkMismatch")}</p>
-				</div>
-				<a href="#library">{m("allLibrary")}</a>
-			</header>
+			<ArtistScreenView
+				locale={locale}
+				libraryHref={libraryHref}
+				heading={null}
+			/>
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
 		tracks.filter(predicate).length;
@@ -277,385 +270,273 @@ export function ArtistScreen({
 				[updated.id]: updated,
 			}));
 	};
-	return (
-		<section className={catalogueStyles.object}>
-			<nav className={catalogueStyles.heroBack} aria-label={m("navigation")}>
-				<a href="#library">{m("backToLibrary")}</a>
-			</nav>
-			<LibraryArtistHeadingView
-				locale={locale}
-				name={artist.name}
-				disambiguation={artist.disambiguation}
-				genres={
-					artist.genres?.some((genre) => genre.name)
-						? artist.genres.flatMap((genre) => (genre.name ? [genre.name] : []))
-						: artist.genreOverride?.state !== "explicit_empty" && artist.genre
-							? [artist.genre]
-							: []
-				}
-				palette={artist.color}
-				count={{
-					releases: artistReleases.length + unrepresentedMissingGroups.length,
-					positions: tracks.length,
-					published: counts((track) => Boolean(track.published)),
-					missing: unrepresentedMissingGroups.length,
-					local: artistReleases.length,
-				}}
-				discographyComplete={artist.discographyComplete}
-				includesCachedGroups={!artist.discographyComplete}
-				selection={{
-					total: ids.length,
-					selected: selectedCount,
-					onChange: onSelect && ((value) => onSelect(ids, value)),
-				}}
-			/>
-			<div
-				className={`${catalogueStyles.actions} ${catalogueStyles.artistDanger}`}
-			>
-				{onQueueDeletion ? (
+	const metadataValues: ArtistMetadataValues = {
+		name: artist.name,
+		sortName: artist.sortName ?? null,
+		disambiguation: artist.disambiguation ?? null,
+		tags: artist.tags?.join(", ") ?? "",
+		genre: {
+			state: selectedGenres.length
+				? "value"
+				: (artist.genreOverride?.state ?? "absent"),
+			value: selectedGenres,
+		},
+	};
+	const heading: ArtistHeadingModel = {
+		name: artist.name,
+		disambiguation: artist.disambiguation,
+		genres: artist.genres?.some((genre) => genre.name)
+			? artist.genres.flatMap((genre) => (genre.name ? [genre.name] : []))
+			: artist.genreOverride?.state !== "explicit_empty" && artist.genre
+				? [artist.genre]
+				: [],
+		palette: artist.color,
+		count: {
+			releases: artistReleases.length + unrepresentedMissingGroups.length,
+			positions: tracks.length,
+			published: counts((track) => Boolean(track.published)),
+			missing: unrepresentedMissingGroups.length,
+			local: artistReleases.length,
+		},
+		discographyComplete: artist.discographyComplete,
+		includesCachedGroups: !artist.discographyComplete,
+		selection: {
+			total: ids.length,
+			selected: selectedCount,
+			onChange: onSelect && ((value) => onSelect(ids, value)),
+		},
+	};
+	const deletion: ArtistDeletionAction = onQueueDeletion
+		? {
+				kind: "actor",
+				node: (
 					<ArtistDeletionRequest
 						artistId={artist.id}
 						artists={artists}
 						releases={releases}
 						onQueue={onQueueDeletion}
 					/>
-				) : (
-					<Button
-						className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
-						isDisabled={!onDeleteArtist}
-						onPress={() => onDeleteArtist?.(artist.id)}
-					>
-						{m("deleteArtist")}
-					</Button>
-				)}
-			</div>
-			<div
-				ref={initialTags?.scope === "artist" ? initialTagsTarget : undefined}
-				tabIndex={initialTags?.scope === "artist" ? -1 : undefined}
-			>
-				<ArtistMetadataCard
-					key={artist.id}
-					locale={locale}
-					revision={artist.id}
-					values={{
-						name: artist.name,
-						sortName: artist.sortName ?? null,
-						disambiguation: artist.disambiguation ?? null,
-						tags: artist.tags?.join(", ") ?? "",
-						genre: {
-							state: selectedGenres.length
-								? "value"
-								: (artist.genreOverride?.state ?? "absent"),
-							value: selectedGenres,
-						},
-					}}
-					readOnly={[
-						{ id: "id", label: m("artistID"), value: artist.id },
-						...(
-							(
-								artist as CatalogArtist & {
-									providerLinks?: {
-										providerCode: string;
-										providerKey: string;
-									}[];
-								}
-							).providerLinks ?? []
-						).map((link, index) => ({
-							id: `provider-${link.providerCode}-${index}`,
-							label: `ID ${link.providerCode}`,
-							value: link.providerKey,
-						})),
-					]}
-					genreCaption={
-						artist.genres
-							?.map((genre) => genre.name)
-							.filter(Boolean)
-							.join(", ") || artist.genre
-					}
-					genreCatalog={{
-						options: genreSearchResults,
-						query: genreQuery,
-						onQueryChange: setGenreQuery,
-						loading: false,
-						catalogError: "",
-						onClearCatalogError: () => undefined,
-						onRetryCatalog: () => undefined,
-						catalogStatusLoading: false,
-						catalogStatusError: "",
-						bundledCatalogReady: genresLoaded || localGenresLoaded,
-						onLoadBundledCatalog: () => {
-							if (onLoadGenres) void onLoadGenres();
-							else setLocalGenresLoaded(true);
-						},
-						settingsHref: "#settings",
-						onOpenCatalog: () => undefined,
-						onRetryStatus: () => undefined,
-					}}
-					onSave={saveArtist}
+				),
+			}
+		: {
+				kind: "button",
+				isDisabled: !onDeleteArtist,
+				onPress: onDeleteArtist ? () => onDeleteArtist(artist.id) : undefined,
+			};
+	const metadataCard = (
+		<ArtistMetadataCard
+			key={artist.id}
+			locale={locale}
+			revision={artist.id}
+			values={metadataValues}
+			readOnly={[
+				{ id: "id", label: m("artistID"), value: artist.id },
+				...(
+					(
+						artist as CatalogArtist & {
+							providerLinks?: {
+								providerCode: string;
+								providerKey: string;
+							}[];
+						}
+					).providerLinks ?? []
+				).map((link, index) => ({
+					id: `provider-${link.providerCode}-${index}`,
+					label: `ID ${link.providerCode}`,
+					value: link.providerKey,
+				})),
+			]}
+			genreCaption={
+				artist.genres
+					?.map((genre) => genre.name)
+					.filter(Boolean)
+					.join(", ") || artist.genre
+			}
+			genreCatalog={{
+				options: genreSearchResults,
+				query: genreQuery,
+				onQueryChange: setGenreQuery,
+				loading: false,
+				catalogError: "",
+				onClearCatalogError: () => undefined,
+				onRetryCatalog: () => undefined,
+				catalogStatusLoading: false,
+				catalogStatusError: "",
+				bundledCatalogReady: genresLoaded || localGenresLoaded,
+				onLoadBundledCatalog: () => {
+					if (onLoadGenres) void onLoadGenres();
+					else setLocalGenresLoaded(true);
+				},
+				settingsHref: "#settings",
+				onOpenCatalog: () => undefined,
+				onRetryStatus: () => undefined,
+			}}
+			onSave={saveArtist}
+		/>
+	);
+	const editions: ArtistEditionModel[] = artistReleases.map((release) => {
+		const durationTotal =
+			release.tracks.length > 0 &&
+			release.tracks.every((track) => Number.isFinite(track.duration))
+				? release.tracks.reduce((sum, track) => sum + (track.duration ?? 0), 0)
+				: null;
+		const pubCount = release.tracks.filter((track) => track.published).length;
+		const provider = providerFor(release);
+		const complete = providerComplete(release);
+		const changes = release.tracks.filter((track) =>
+			metadataChanged(release, track, artists),
+		).length;
+		const trackIds = release.tracks.map((track) => track.id);
+		const everySelected = release.tracks.every((track) =>
+			selected.has(track.id),
+		);
+		const someSelected = release.tracks.some((track) => selected.has(track.id));
+		const ariaLabel = `${release.title} · ${release.year} · ${release.catalog || "—"}`;
+		const selectTracks = (value: boolean) => onSelect?.(trackIds, value);
+		return {
+			key: release.id,
+			title: release.title,
+			year: release.year,
+			catalog: release.catalog,
+			ariaLabel,
+			artwork: {
+				palette: release.color || artist.color,
+				title: release.title,
+			},
+			durationSeconds: durationTotal,
+			providerText:
+				release.provider === "Local"
+					? "Local"
+					: release.providerId
+						? `${release.provider || "MusicBrainz"} · ${release.providerId}`
+						: m("localRelease"),
+			positionCount: release.tracks.length,
+			country: release.country,
+			label: release.label,
+			publishedCount: pubCount,
+			providerTrackCount: complete && provider ? provider.tracks.length : null,
+			metadataChangedCount: changes,
+			selection: {
+				isSelected: release.tracks.length > 0 && everySelected,
+				isIndeterminate: someSelected && !everySelected,
+				isDisabled: !release.tracks.length || !onSelect,
+				onChange: selectTracks,
+			},
+			trackSelection: {
+				isSelected: everySelected,
+				isIndeterminate: someSelected && !everySelected,
+				isDisabled: !onSelect,
+				onChange: selectTracks,
+			},
+			tracks: release.tracks.map((track) => ({
+				id: track.id,
+				numberLabel: trackNumberLabel(release, track),
+				title: track.title,
+				href: `#track/${track.id}`,
+				durationMs: track.duration == null ? null : track.duration * 1000,
+				properties: audioProperties(
+					track.sourceId ? files[track.sourceId] : undefined,
+				),
+				hasAudio: hasAudio(track),
+				sourceCount: new Set([
+					...(track.sourceIds ?? []),
+					...(track.sourceId ? [track.sourceId] : []),
+				]).size,
+				publication: track.published
+					? {
+							state: "published" as const,
+							container: track.published.container,
+							codec: track.published.codec,
+						}
+					: { state: "not-published" as const },
+				isNewRecording: !track.recordingId,
+				fileEvidence: track.observedFile ?? undefined,
+				metadataChanged: track.published
+					? metadataChanged(release, track, artists)
+					: false,
+				filterClass: availabilityRowClass(track, filter, hasAudio),
+				selection: {
+					isSelected: selected.has(track.id),
+					isDisabled: !onSelect,
+					onChange: (value: boolean) => onSelect?.([track.id], value),
+				},
+			})),
+			editor: (
+				<ReleaseMetadataEditor
+					key={release.id}
+					release={release}
+					artists={artists}
+					genresLoaded={genresLoaded}
+					onLoadGenres={onLoadGenres}
+					local={!onUpdateRelease}
+					onSave={saveRelease}
 				/>
-			</div>
-			<div className={catalogueStyles.controls}>
-				<div className={catalogueStyles.panelControls}>
-					<SearchField
-						aria-label={m("searchLibrary")}
-						value={query}
-						onChange={changeQuery}
-						className={catalogueStyles.search}
-					>
-						<Input placeholder={m("searchPlaceholder")} />
-					</SearchField>
-					<CatalogFilter value={filter} onChange={changeFilter} />
-				</div>
-			</div>
-			<DisclosureGroup
-				key={artistId}
-				className={catalogueStyles.editions}
-				allowsMultipleExpanded
-				defaultExpandedKeys={
-					expandedReleaseId ? new Set([expandedReleaseId]) : undefined
-				}
-			>
-				{artistReleases.map((release, index) => {
-					const durationTotal =
-						release.tracks.length > 0 &&
-						release.tracks.every((track) => Number.isFinite(track.duration))
-							? release.tracks.reduce(
-									(sum, track) => sum + (track.duration ?? 0),
-									0,
-								)
-							: null;
-					const pubCount = release.tracks.filter(
-						(track) => track.published,
-					).length;
-					const provider = providerFor(release);
-					const complete = providerComplete(release);
-					const changes = release.tracks.filter((track) =>
-						metadataChanged(release, track, artists),
-					).length;
-					return (
-						<div className={catalogueStyles.albumRow} key={release.id}>
-							<Disclosure className={catalogueStyles.albumCard} id={release.id}>
-								<div className={catalogueStyles.cardSelection}>
-									<Checkbox
-										aria-label={`${m("selectAllEditionPositions")}: ${release.title} · ${release.year} · ${release.catalog || "—"}`}
-										className={catalogueStyles.cardCheckbox}
-										isSelected={
-											release.tracks.length > 0 &&
-											release.tracks.every((track) => selected.has(track.id))
-										}
-										isIndeterminate={
-											release.tracks.some((track) => selected.has(track.id)) &&
-											!release.tracks.every((track) => selected.has(track.id))
-										}
-										isDisabled={!release.tracks.length || !onSelect}
-										onChange={(value) =>
-											onSelect?.(
-												release.tracks.map((track) => track.id),
-												value,
-											)
-										}
-									>
-										<span
-											className={catalogueStyles.cardCheckboxBox}
-											aria-hidden="true"
-										>
-											{release.tracks.length > 0 &&
-											release.tracks.every((track) => selected.has(track.id))
-												? "✓"
-												: release.tracks.some((track) => selected.has(track.id))
-													? "−"
-													: ""}
-										</span>
-									</Checkbox>
-								</div>
-								<div className={catalogueStyles.albumHeader}>
-									<Heading>
-										<Button
-											slot="trigger"
-											className={`catalogue-edition-trigger ${catalogueStyles.albumTrigger}`}
-											aria-label={`${release.title} · ${release.year} · ${release.catalog || "—"}`}
-										>
-											<LibraryEditionArtwork
-												palette={release.color || artist.color}
-												title={release.title}
-											/>
-											<span className={catalogueStyles.albumCopy}>
-												<strong>{release.title}</strong>
-												<span className={catalogueStyles.albumMeta}>
-													{durationTotal === null
-														? m("durationUnknown")
-														: `${Math.floor(durationTotal / 60)}:${String(Math.round(durationTotal % 60)).padStart(2, "0")} ${m("total")}`}
-													·{" "}
-													{release.provider === "Local"
-														? "Local"
-														: release.providerId
-															? `${release.provider || "MusicBrainz"} · ${release.providerId}`
-															: m("localRelease")}
-												</span>
-												<span className={catalogueStyles.albumMeta}>
-													{release.year} · {release.tracks.length}{" "}
-													{m("positionsCount")} ·{" "}
-													{release.country || m("countryUnspecified")} ·{" "}
-													{release.label || m("local")} ·{" "}
-													{release.catalog || "—"}
-												</span>
-												<span className={catalogueStyles.albumMeta}>
-													{complete && provider
-														? `${pubCount}/${provider.tracks.length} ${m("publishedCount")}`
-														: `${pubCount} ${m("publishedCount")} · ${m("providerCompletenessUnknown")}`}
-													{changes
-														? ` · ${m("metadataChangedFor", { count: changes })}`
-														: ""}
-												</span>
-											</span>
-										</Button>
-									</Heading>
-									{onQueueDeletion && (
-										<DeletionRequest
-											iconOnly
-											triggerLabel={`${m("deleteAlbum")} ${release.title} · ${release.year} · ${release.catalog || "—"}`}
-											release={release}
-											onQueue={onQueueDeletion}
-										/>
-									)}
-								</div>
-								<DisclosurePanel className={catalogueStyles.albumPanel}>
-									<div
-										ref={
-											initialTags?.releaseId === release.id
-												? initialTagsTarget
-												: undefined
-										}
-										tabIndex={
-											initialTags?.releaseId === release.id ? -1 : undefined
-										}
-										className="grid min-w-0 gap-3"
-									>
-										<ReleaseMetadataEditor
-											release={release}
-											artists={artists}
-											genresLoaded={genresLoaded}
-											onLoadGenres={onLoadGenres}
-											local={!onUpdateRelease}
-											onSave={saveRelease}
-										/>
-									</div>
-									{publication && (
-										<ReleasePublicationDemo
-											release={release}
-											provider={publication}
-										/>
-									)}
-									<LibraryArtistReleaseTracksView
-										locale={locale}
-										releaseTitle={release.title}
-										releaseSelection={{
-											isSelected: release.tracks.every((track) =>
-												selected.has(track.id),
-											),
-											isIndeterminate:
-												release.tracks.some((track) =>
-													selected.has(track.id),
-												) &&
-												!release.tracks.every((track) =>
-													selected.has(track.id),
-												),
-											isDisabled: !onSelect,
-											onChange: (value) =>
-												onSelect?.(
-													release.tracks.map((track) => track.id),
-													value,
-												),
-										}}
-										tracks={release.tracks.map((track) => ({
-											id: track.id,
-											numberLabel: trackNumberLabel(release, track),
-											title: track.title,
-											href: `#track/${track.id}`,
-											durationMs:
-												track.duration == null ? null : track.duration * 1000,
-											properties: audioProperties(
-												track.sourceId ? files[track.sourceId] : undefined,
-											),
-											hasAudio: hasAudio(track),
-											sourceCount: new Set([
-												...(track.sourceIds ?? []),
-												...(track.sourceId ? [track.sourceId] : []),
-											]).size,
-											publication: track.published
-												? {
-														state: "published",
-														container: track.published.container,
-														codec: track.published.codec,
-													}
-												: { state: "not-published" },
-											isNewRecording: !track.recordingId,
-											fileEvidence: track.observedFile ?? undefined,
-											metadataChanged: track.published
-												? metadataChanged(release, track, artists)
-												: false,
-											filterClass: availabilityRowClass(
-												track,
-												filter,
-												hasAudio,
-											),
-											selection: {
-												isSelected: selected.has(track.id),
-												isDisabled: !onSelect,
-												onChange: (value) => onSelect?.([track.id], value),
-											},
-										}))}
-									/>
-								</DisclosurePanel>
-							</Disclosure>
-						</div>
-					);
-				})}
-			</DisclosureGroup>
-			{filteredMissingGroups.length > 0 && (
-				<section className={catalogueStyles.artistPanel}>
-					<h2>{m("missingAlbums")}</h2>
-					<p>{m("missingAlbumsDescription")}</p>
-					<div className={catalogueStyles.previewTable}>
-						<table>
-							<thead>
-								<tr>
-									<th scope="col">{m("columnAlbum")}</th>
-									<th scope="col">{m("columnChooseEdition")}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{filteredMissingGroups.map((group) => (
-									<tr key={group.id}>
-										<th scope="row">
-											{group.title}
-											<span className={catalogueStyles.secondary}>
-												{originalArtistName(group.artistId, artists)} ·
-												{m("albumNotInLibrary")}
-											</span>
-										</th>
-										<td>
-											<LibraryMissingEditionDemo
-												locale={locale}
-												groupTitle={group.title}
-												editions={group.editions}
-												selectedEditionKey={absentEdition[group.id] ?? ""}
-												onSelectEdition={(editionKey) =>
-													setAbsentEdition((value) => ({
-														...value,
-														[group.id]: editionKey,
-													}))
-												}
-											/>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				</section>
-			)}
-		</section>
+			),
+			publication: publication ? (
+				<ReleasePublicationDemo
+					key={`publication-${release.id}`}
+					release={release}
+					provider={publication}
+				/>
+			) : undefined,
+			deletion: onQueueDeletion ? (
+				<DeletionRequest
+					key={`deletion-${release.id}`}
+					iconOnly
+					triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
+					release={release}
+					onQueue={onQueueDeletion}
+				/>
+			) : undefined,
+		};
+	});
+	const preparedMissingGroups: ArtistMissingGroupModel[] =
+		filteredMissingGroups.map((group) => ({
+			key: group.id,
+			title: group.title,
+			artistName: originalArtistName(group.artistId, artists),
+			chooser: (
+				<LibraryMissingEditionDemo
+					key={group.id}
+					locale={locale}
+					groupTitle={group.title}
+					editions={group.editions}
+					selectedEditionKey={absentEdition[group.id] ?? ""}
+					onSelectEdition={(editionKey) =>
+						setAbsentEdition((value) => ({
+							...value,
+							[group.id]: editionKey,
+						}))
+					}
+				/>
+			),
+		}));
+	const tagFocus: ArtistTagFocus | undefined = initialTags
+		? {
+				scope: initialTags.scope === "artist" ? "artist" : "release",
+				releaseId: initialTags.releaseId,
+				ref: (node: HTMLDivElement | null) => {
+					initialTagsTarget.current = node;
+				},
+			}
+		: undefined;
+	return (
+		<ArtistScreenView
+			locale={locale}
+			libraryHref={libraryHref}
+			heading={heading}
+			deletion={deletion}
+			metadataCard={metadataCard}
+			query={query}
+			filter={filter}
+			onQueryChange={changeQuery}
+			onFilterChange={changeFilter}
+			editionsKey={artistId}
+			editions={editions}
+			expandedReleaseId={expandedReleaseId}
+			missingGroups={preparedMissingGroups}
+			tagFocus={tagFocus}
+		/>
 	);
 }
 
