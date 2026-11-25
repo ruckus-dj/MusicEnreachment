@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import {
+	ContextPublicationPreviewDataBinder,
 	type ContextPublicationPreviewMode,
-	ContextPublicationPreviewView,
-	type ContextPublicationPreviewViewProps,
-} from "../../../ui/features/publication/ContextPublicationPreviewView";
+	type ContextPublicationPreviewModel,
+	type ContextPublicationPreviewSource,
+} from "../../../ui/features/publication/ContextPublicationPreview";
 import {
 	formatPublicationMessage,
 	publicationMessage,
@@ -46,6 +47,31 @@ function capturePosition(release: OriginalRelease, positionId: string) {
 	]);
 }
 
+export type ContextPublicationPreviewProps = {
+	destination?: PublicationDestination;
+	plan: IncomingPlan;
+	files: IncomingFiles;
+	releases: IncomingReleases;
+	providers: IncomingReleases;
+	artists: CatalogArtist[];
+	inventoryVersion: number;
+	confirmDowngrade: boolean;
+	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
+	onReleases: (releases: OriginalRelease[]) => void;
+	onSuccess: (notice: UiNotice) => void;
+	controls?: Pick<
+		ContextPublicationPreviewModel,
+		"workflowControl" | "planControl"
+	>;
+	comparisonOnly?: boolean;
+	children?: ReactNode;
+};
+
+export type ContextPublicationPreviewBinderProps = Omit<
+	ContextPublicationPreviewProps,
+	"children"
+>;
+
 export function ContextPublicationPreview({
 	destination = fixturePublicationDestination,
 	plan,
@@ -60,24 +86,8 @@ export function ContextPublicationPreview({
 	onSuccess,
 	controls,
 	comparisonOnly = false,
-}: {
-	destination?: PublicationDestination;
-	plan: IncomingPlan;
-	files: IncomingFiles;
-	releases: IncomingReleases;
-	providers: IncomingReleases;
-	artists: CatalogArtist[];
-	inventoryVersion: number;
-	confirmDowngrade: boolean;
-	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
-	onReleases: (releases: OriginalRelease[]) => void;
-	onSuccess: (notice: UiNotice) => void;
-	controls?: Pick<
-		ContextPublicationPreviewViewProps,
-		"workflowControl" | "planControl"
-	>;
-	comparisonOnly?: boolean;
-}) {
+	children,
+}: ContextPublicationPreviewProps) {
 	const { locale } = useI18n();
 	const positionId = plan.positionId;
 	if (!positionId || plan.mode !== "local" || plan.groupId) return null;
@@ -220,36 +230,60 @@ export function ContextPublicationPreview({
 		});
 	};
 
+	const model: ContextPublicationPreviewModel = {
+		...controls,
+		locale,
+		error,
+		readOnly,
+		reason,
+		notices,
+		details,
+		sourceGroupName: `demo-publication-source-${positionId}`,
+		downgradeControl: downgrade
+			? {
+					checked: confirmDowngrade,
+					disabled: Boolean(error),
+					label: formatPublicationMessage(locale, "confirmDowngrade", {
+						count: 1,
+					}),
+					onChange: (checked) => onPlan(plan, checked),
+				}
+			: undefined,
+		confirmControl: {
+			label: current ? "retainedRepublish" : "publish",
+			disabled: !canConfirm,
+			onConfirm: confirm,
+		},
+	};
+
 	return (
-		<ContextPublicationPreviewView
-			{...controls}
-			locale={locale}
-			error={error}
-			readOnly={readOnly}
-			reason={reason}
-			notices={notices}
-			details={details}
-			sourceGroupName={`demo-publication-source-${positionId}`}
-			downgradeControl={
-				downgrade
-					? {
-							checked: confirmDowngrade,
-							disabled: Boolean(error),
-							label: formatPublicationMessage(locale, "confirmDowngrade", {
-								count: 1,
-							}),
-							onChange: (checked) => onPlan(plan, checked),
-						}
-					: undefined
-			}
-			confirmControl={{
-				label: current ? "retainedRepublish" : "publish",
-				disabled: !canConfirm,
-				onConfirm: confirm,
-			}}
-		/>
+		<ContextPublicationPreviewDataBinder model={model}>
+			{children}
+		</ContextPublicationPreviewDataBinder>
 	);
 }
+
+export type DemoPositionPublicationProps = {
+	destination: PublicationDestination;
+	release: OriginalRelease;
+	positionId: string;
+	state: IncomingState;
+	files: IncomingFiles;
+	releases: IncomingReleases;
+	providers: IncomingReleases;
+	artists: CatalogArtist[];
+	onReleases: (releases: OriginalRelease[]) => void;
+	onSuccess: (notice: UiNotice) => void;
+	children?: ReactNode;
+};
+
+export type DemoPositionPublicationBinderProps = Omit<
+	DemoPositionPublicationProps,
+	"children"
+>;
+
+export type DemoPositionPublicationSource =
+	ContextPublicationPreviewSource<DemoPositionPublicationBinderProps>;
 
 export function DemoPositionPublication({
 	destination,
@@ -262,18 +296,8 @@ export function DemoPositionPublication({
 	artists,
 	onReleases,
 	onSuccess,
-}: {
-	destination: PublicationDestination;
-	release: OriginalRelease;
-	positionId: string;
-	state: IncomingState;
-	files: IncomingFiles;
-	releases: IncomingReleases;
-	providers: IncomingReleases;
-	artists: CatalogArtist[];
-	onReleases: (releases: OriginalRelease[]) => void;
-	onSuccess: (notice: UiNotice) => void;
-}) {
+	children,
+}: DemoPositionPublicationProps) {
 	const { locale } = useI18n();
 	const [prepared, setPrepared] = useState<{
 		plan: IncomingPlan;
@@ -322,22 +346,23 @@ export function DemoPositionPublication({
 			: undefined,
 	};
 	if (!prepared) {
+		const model: ContextPublicationPreviewModel = {
+			...controls,
+			locale,
+			sourceGroupName: `demo-publication-source-${positionId}`,
+			readOnly: compare,
+			confirmControl: confirmable
+				? {
+						label: hasCurrent ? "retainedRepublish" : "publish",
+						disabled: true,
+						onConfirm: () => {},
+					}
+				: undefined,
+		};
 		return (
-			<ContextPublicationPreviewView
-				{...controls}
-				locale={locale}
-				sourceGroupName={`demo-publication-source-${positionId}`}
-				readOnly={compare}
-				confirmControl={
-					confirmable
-						? {
-								label: hasCurrent ? "retainedRepublish" : "publish",
-								disabled: true,
-								onConfirm: () => {},
-							}
-						: undefined
-				}
-			/>
+			<ContextPublicationPreviewDataBinder model={model}>
+				{children}
+			</ContextPublicationPreviewDataBinder>
 		);
 	}
 	return (
@@ -359,6 +384,8 @@ export function DemoPositionPublication({
 			onSuccess={onSuccess}
 			comparisonOnly={compare}
 			controls={controls}
-		/>
+		>
+			{children}
+		</ContextPublicationPreview>
 	);
 }

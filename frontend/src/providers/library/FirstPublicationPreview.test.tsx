@@ -12,6 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LibraryFirstPublicationPreviewResponse } from "../../api/generated/client.schemas";
 import { I18nProvider } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
+import { ContextPublicationPreviewOutlet } from "../../ui/features/publication/ContextPublicationPreview";
 import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 
 const api = vi.hoisted(() => ({
@@ -57,13 +58,19 @@ function component(
 ) {
   return (
     <I18nProvider>
-      <FirstPublicationPreview
-        releaseId="release-1"
-        positionId="position-1"
-        refreshToken={refreshToken}
-        comparisonOnly={comparisonOnly}
-        onAdmitted={onAdmitted}
-        onRefresh={vi.fn()}
+      <ContextPublicationPreviewOutlet
+        source={{
+          key: "release-1:position-1",
+          Component: FirstPublicationPreview,
+          props: {
+            releaseId: "release-1",
+            positionId: "position-1",
+            refreshToken,
+            comparisonOnly,
+            onAdmitted,
+            onRefresh: vi.fn(),
+          },
+        }}
       />
     </I18nProvider>
   );

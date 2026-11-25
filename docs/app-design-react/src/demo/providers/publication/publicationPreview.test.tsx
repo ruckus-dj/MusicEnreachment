@@ -8,6 +8,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n/host";
 import { firstPublicationPreviewMessages } from "../../../ui/features/library/firstPublicationPreviewMessages";
+import { ContextPublicationPreviewOutlet } from "../../../ui/features/publication/ContextPublicationPreview";
 import {
 	formatPublicationMessage,
 	publicationMessage,
@@ -129,17 +130,23 @@ it("localizes the publication reason before adding artist warnings", () => {
 	plan.force = true;
 	const { container } = render(
 		<I18nProvider>
-			<ContextPublicationPreview
-				plan={plan}
-				files={originalFiles}
-				releases={originalReleases}
-				providers={providerReleases}
-				artists={originalArtists}
-				inventoryVersion={state.inventoryVersion}
-				confirmDowngrade={false}
-				onPlan={vi.fn()}
-				onReleases={vi.fn()}
-				onSuccess={vi.fn()}
+			<ContextPublicationPreviewOutlet
+				source={{
+					key: "publication-preview",
+					Component: ContextPublicationPreview,
+					props: {
+						plan,
+						files: originalFiles,
+						releases: originalReleases,
+						providers: providerReleases,
+						artists: originalArtists,
+						inventoryVersion: state.inventoryVersion,
+						confirmDowngrade: false,
+						onPlan: vi.fn(),
+						onReleases: vi.fn(),
+						onSuccess: vi.fn(),
+					},
+				}}
 			/>
 		</I18nProvider>,
 	);
@@ -194,18 +201,24 @@ it("compares one CURRENT read-only and confirms an explicit republish without a 
 		target: PublicationDestination = destination,
 		releases = originalReleases,
 	) => (
-		<ContextPublicationPreview
-			destination={target}
-			plan={{ ...plan, force }}
-			files={originalFiles}
-			releases={releases}
-			providers={providerReleases}
-			artists={originalArtists}
-			inventoryVersion={state.inventoryVersion}
-			confirmDowngrade={false}
-			onPlan={vi.fn()}
-			onReleases={onReleases}
-			onSuccess={vi.fn()}
+		<ContextPublicationPreviewOutlet
+			source={{
+				key: "publication-preview",
+				Component: ContextPublicationPreview,
+				props: {
+					destination: target,
+					plan: { ...plan, force },
+					files: originalFiles,
+					releases,
+					providers: providerReleases,
+					artists: originalArtists,
+					inventoryVersion: state.inventoryVersion,
+					confirmDowngrade: false,
+					onPlan: vi.fn(),
+					onReleases,
+					onSuccess: vi.fn(),
+				},
+			}}
 		/>
 	);
 	const { container, rerender } = render(view(false));

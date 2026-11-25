@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   getLibraryFirstPublicationPreview,
   startLibraryFirstPublication,
@@ -10,7 +17,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { firstPublicationPreviewMessages } from "../../ui/features/library/firstPublicationPreviewMessages";
-import { ContextPublicationPreviewView } from "../../ui/features/publication/ContextPublicationPreviewView";
+import {
+  ContextPublicationPreviewDataBinder,
+  type ContextPublicationPreviewModel,
+} from "../../ui/features/publication/ContextPublicationPreview";
 
 export type SourceChoice = Pick<
   FirstPublicationPreviewSource,
@@ -209,6 +219,26 @@ function responseError(
   return data.detail || fallback(status);
 }
 
+export type FirstPublicationPreviewProps = {
+  releaseId: string;
+  positionId: string;
+  refreshToken?: number | string;
+  comparisonOnly?: boolean;
+  aggregateManaged?: boolean;
+  onAdmitted: (operationID: string) => void;
+  onRefresh: () => void;
+  onController?: (controller: PublicationPreviewController | null) => void;
+  onStateChange?: (state: PublicationPreviewState) => void;
+  onSubmitReceipt?: SubmitMatchingReceiptPublication;
+  children?: ReactNode;
+};
+
+/** Props a host binds; the outlet supplies the mounted view as children. */
+export type FirstPublicationPreviewBinderProps = Omit<
+  FirstPublicationPreviewProps,
+  "children"
+>;
+
 export function FirstPublicationPreview({
   releaseId,
   positionId,
@@ -220,18 +250,8 @@ export function FirstPublicationPreview({
   onController,
   onStateChange,
   onSubmitReceipt,
-}: {
-  releaseId: string;
-  positionId: string;
-  refreshToken?: number | string;
-  comparisonOnly?: boolean;
-  aggregateManaged?: boolean;
-  onAdmitted: (operationID: string) => void;
-  onRefresh: () => void;
-  onController?: (controller: PublicationPreviewController | null) => void;
-  onStateChange?: (state: PublicationPreviewState) => void;
-  onSubmitReceipt?: SubmitMatchingReceiptPublication;
-}) {
+  children,
+}: FirstPublicationPreviewProps) {
   const { locale } = useI18n();
   const copy = firstPublicationPreviewMessages[locale];
   const [preview, setPreview] =
@@ -1003,53 +1023,54 @@ export function FirstPublicationPreview({
 
   if (aggregateManaged) return null;
 
+  const model: ContextPublicationPreviewModel = {
+    locale,
+    details: aggregateState,
+    sourceGroupName: `publication-source-${releaseId}-${positionId}`,
+    onSourceChoice: changeChoice,
+    onRefresh,
+    workflowControl: comparisonOnly
+      ? {
+          disabled: loading,
+          mode,
+          namePrefix: `${releaseId}-${positionId}`,
+          onChange: changeWorkflow,
+          onModeChange: changeMode,
+          workflow,
+        }
+      : undefined,
+    planControl: {
+      pending: loading,
+      disabled:
+        confirming ||
+        Boolean(admittedOperationID) ||
+        admissionUncertain ||
+        confirmationPending.current ||
+        admissionLocked.current,
+      onPreview: () => void loadPreview(selectedChoice),
+    },
+    confirmControl:
+      (!comparisonOnly && workflow === "first") ||
+      workflow === "retained_same_path"
+        ? {
+            label:
+              workflow === "retained_same_path"
+                ? "retainedRepublish"
+                : "publish",
+            pending: confirming,
+            disabled:
+              !canConfirm ||
+              admissionUncertain ||
+              confirmationPending.current ||
+              admissionLocked.current,
+            onConfirm: () => void confirmPreview(),
+          }
+        : undefined,
+  };
+
   return (
-    <ContextPublicationPreviewView
-      locale={locale}
-      details={aggregateState}
-      sourceGroupName={`publication-source-${releaseId}-${positionId}`}
-      onSourceChoice={changeChoice}
-      onRefresh={onRefresh}
-      workflowControl={
-        comparisonOnly
-          ? {
-              disabled: loading,
-              mode,
-              namePrefix: `${releaseId}-${positionId}`,
-              onChange: changeWorkflow,
-              onModeChange: changeMode,
-              workflow,
-            }
-          : undefined
-      }
-      planControl={{
-        pending: loading,
-        disabled:
-          confirming ||
-          Boolean(admittedOperationID) ||
-          admissionUncertain ||
-          confirmationPending.current ||
-          admissionLocked.current,
-        onPreview: () => void loadPreview(selectedChoice),
-      }}
-      confirmControl={
-        (!comparisonOnly && workflow === "first") ||
-        workflow === "retained_same_path"
-          ? {
-              label:
-                workflow === "retained_same_path"
-                  ? "retainedRepublish"
-                  : "publish",
-              pending: confirming,
-              disabled:
-                !canConfirm ||
-                admissionUncertain ||
-                confirmationPending.current ||
-                admissionLocked.current,
-              onConfirm: () => void confirmPreview(),
-            }
-          : undefined
-      }
-    />
+    <ContextPublicationPreviewDataBinder model={model}>
+      {children}
+    </ContextPublicationPreviewDataBinder>
   );
 }

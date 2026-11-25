@@ -44,6 +44,7 @@ const OUTLET_OWNED_VIEWS = new Set([
   "ui/features/matching/ManualSearchView",
   "ui/features/matching/MatchingScreenView",
   "ui/features/operations/OperationsScreenView",
+  "ui/features/publication/ContextPublicationPreviewView",
   "ui/features/settings/SettingsScreenView",
   "ui/features/sources/SourceInspectorView",
   "ui/features/sources/SourceListPageView",

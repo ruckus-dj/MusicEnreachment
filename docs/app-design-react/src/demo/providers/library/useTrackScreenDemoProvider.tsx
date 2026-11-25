@@ -6,6 +6,10 @@ import {
 	trackMessage,
 } from "../../../ui/features/library/trackMessages";
 import { PublicationMetadataChanges } from "../../../ui/features/publication/PublicationInspector";
+import type {
+	DemoPositionPublicationBinderProps,
+	DemoPositionPublicationSource,
+} from "../publication/ContextPublicationPreview";
 import { publicationMetadataDiff } from "../publication/publicationMetadataDiff";
 import { releaseHref } from "./artistReleaseRoute";
 import {
@@ -31,7 +35,9 @@ export type TrackScreenProps = {
 	onSource: (id: string) => void;
 	onPreview?: () => void;
 	onRepublish?: () => void;
-	publicationPreview?: ReactNode;
+	publicationPreviewNotice?: string;
+	inlinePublicationPreview?: ReactNode;
+	contextualPublication?: DemoPositionPublicationSource;
 	onAudioUpgrade?: () => void;
 	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
@@ -60,7 +66,7 @@ const duration = (seconds: number) =>
  */
 export function useTrackScreenDemoProvider(
 	props?: TrackScreenProps | null,
-): LibraryReleasePositionModel | null {
+): LibraryReleasePositionModel<DemoPositionPublicationBinderProps> | null {
 	const { locale } = useI18n();
 	const entryIdentity = props ? `${props.release.id}:${props.track.id}` : null;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
@@ -78,7 +84,9 @@ export function useTrackScreenDemoProvider(
 		onSource,
 		onPreview,
 		onRepublish,
-		publicationPreview,
+		publicationPreviewNotice,
+		inlinePublicationPreview,
+		contextualPublication,
 		onAudioUpgrade,
 		onMetadataPreview = onPreview,
 		onMutate,
@@ -193,8 +201,10 @@ export function useTrackScreenDemoProvider(
 				track.published && onMetadataPreview
 					? () => onMetadataPreview([track.id])
 					: undefined,
-			preview: publicationPreview,
+			previewNotice: publicationPreviewNotice,
 		},
+		inlinePublicationPreview,
+		contextualPublication,
 		actions: onMutate ? (
 			<TrackActions
 				release={release}

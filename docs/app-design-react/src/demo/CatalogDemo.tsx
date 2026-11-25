@@ -22,10 +22,7 @@ import {
 	parseLibraryReleaseAddress,
 } from "../ui/features/library/libraryDetailRoute";
 import { libraryReleaseMessage } from "../ui/features/library/libraryReleaseMessages";
-import {
-	ScreenFeedbackView,
-	ScreenStatus,
-} from "../ui/shell/ScreenFeedbackView";
+import { ScreenFeedbackView } from "../ui/shell/ScreenFeedbackView";
 import { ShellStartupContent } from "../ui/shell/ShellStartupContent";
 import { ShellHomeView } from "../ui/shell/ShellStartupView";
 import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
@@ -113,7 +110,10 @@ import {
 	type DemoPublicationJob,
 	useOperationsDemoProvider,
 } from "./providers/operations/useOperationsDemoProvider";
-import { DemoPositionPublication } from "./providers/publication/ContextPublicationPreview";
+import {
+	DemoPositionPublication,
+	type DemoPositionPublicationSource,
+} from "./providers/publication/ContextPublicationPreview";
 import {
 	type DemoPublicationCatalog,
 	type DemoPublicationRow,
@@ -893,57 +893,56 @@ export function CatalogDemo({
 				inlinePreview && inlinePreview.originRoute === route
 					? inlinePreview
 					: null;
-			const publicationPreview = (
-				<>
-					{activePositionNotice && (
-						<ScreenStatus>
-							{formatUiNotice(locale, activePositionNotice)}
-						</ScreenStatus>
-					)}
-					{activePreview ? (
-						<PublicationPreview
-							mode={activePreview.mode}
-							destination={publicationDestination}
-							token={activePreview.token}
-							inventoryVersion={incoming.inventoryVersion}
-							scopeKey={previewScopeKey(
-								activePreview.originRoute,
-								activePreview.ids,
-							)}
-							files={files}
-							releases={releases}
-							artists={artists}
-							onApply={applyPreview}
-							onBack={() => closeInlinePreview(true)}
-						/>
-					) : (
-						<DemoPositionPublication
-							key={`${release.id}:${track.id}`}
-							destination={publicationDestination}
-							release={release}
-							positionId={track.id}
-							state={incoming}
-							files={files}
-							releases={releases}
-							providers={providers}
-							artists={providerArtists}
-							onReleases={setImportedReleases}
-							onSuccess={(notice) => {
-								setPositionNotice({
-									releaseId: release.id,
-									positionId: track.id,
-									notice,
-								});
-							}}
-						/>
-					)}
-				</>
-			);
+			const contextualPublication: DemoPositionPublicationSource | undefined =
+				activePreview
+					? undefined
+					: {
+							key: `${release.id}:${track.id}`,
+							Component: DemoPositionPublication,
+							props: {
+								destination: publicationDestination,
+								release,
+								positionId: track.id,
+								state: incoming,
+								files,
+								releases,
+								providers,
+								artists: providerArtists,
+								onReleases: setImportedReleases,
+								onSuccess: (notice) => {
+									setPositionNotice({
+										releaseId: release.id,
+										positionId: track.id,
+										notice,
+									});
+								},
+							},
+						};
 			position = {
 				files,
 				providers,
 				artists,
-				publicationPreview,
+				publicationPreviewNotice: activePositionNotice
+					? formatUiNotice(locale, activePositionNotice)
+					: undefined,
+				contextualPublication,
+				inlinePublicationPreview: activePreview ? (
+					<PublicationPreview
+						mode={activePreview.mode}
+						destination={publicationDestination}
+						token={activePreview.token}
+						inventoryVersion={incoming.inventoryVersion}
+						scopeKey={previewScopeKey(
+							activePreview.originRoute,
+							activePreview.ids,
+						)}
+						files={files}
+						releases={releases}
+						artists={artists}
+						onApply={applyPreview}
+						onBack={() => closeInlinePreview(true)}
+					/>
+				) : undefined,
 				onQueueDeletion: queueDeletion,
 				release,
 				track,

@@ -46,9 +46,11 @@ import type {
   TrackScreenPublicationView,
   TrackScreenTechnicalView,
 } from "../../ui/features/library/TrackScreenView";
+import type { ContextPublicationPreviewSource } from "../../ui/features/publication/ContextPublicationPreview";
 import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 import {
   FirstPublicationPreview,
+  type FirstPublicationPreviewBinderProps,
   type PublicationPreviewController,
   type PublicationPreviewState,
 } from "./FirstPublicationPreview";
@@ -1663,13 +1665,15 @@ export function LibraryReleaseScreen({
     ),
   };
   return (
-    <LibraryReleaseWorkspaceView
+    <LibraryReleaseWorkspaceView<FirstPublicationPreviewBinderProps>
       locale={locale}
       selection={workspaceSelection}
       overview={overview}
       overviewProviderRefresh={showPosition ? undefined : providerRefresh}
       positions={(release.tracks ?? []).map(
-        (track): LibraryReleasePositionEntry => {
+        (
+          track,
+        ): LibraryReleasePositionEntry<FirstPublicationPreviewBinderProps> => {
           const showWorkspace = positionId === track.id;
           const renderScope = scope.current;
           const position = positions[track.id];
@@ -1859,36 +1863,42 @@ export function LibraryReleaseScreen({
             recordingTitle: track.recording_title,
             current: publicationView.current,
           };
-          const publicationPreview =
+          const contextualPublication:
+            | ContextPublicationPreviewSource<FirstPublicationPreviewBinderProps>
+            | undefined =
             !publication?.active_attempt &&
-            !position?.firstPublicationOperationID ? (
-              <FirstPublicationPreview
-                key={track.id}
-                releaseId={releaseId}
-                positionId={track.id}
-                aggregateManaged={!showWorkspace}
-                comparisonOnly={Boolean(
-                  publication?.current_path || publication?.current_generation,
-                )}
-                refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
-                onAdmitted={(operationID) => {
-                  if (!isPositionScopeCurrent()) return;
-                  setPositions((current) => {
-                    if (!isPositionScopeCurrent()) return current;
-                    return {
-                      ...current,
-                      [track.id]: {
-                        ...current[track.id],
-                        firstPublicationOperationID: operationID,
-                      },
-                    };
-                  });
-                  refreshReadState();
-                }}
-                onRefresh={refreshReadState}
-                {...aggregateCallbacksFor(track.id)}
-              />
-            ) : undefined;
+            !position?.firstPublicationOperationID
+              ? {
+                  key: track.id,
+                  Component: FirstPublicationPreview,
+                  props: {
+                    releaseId,
+                    positionId: track.id,
+                    aggregateManaged: !showWorkspace,
+                    comparisonOnly: Boolean(
+                      publication?.current_path ||
+                        publication?.current_generation,
+                    ),
+                    refreshToken: `${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`,
+                    onAdmitted: (operationID) => {
+                      if (!isPositionScopeCurrent()) return;
+                      setPositions((current) => {
+                        if (!isPositionScopeCurrent()) return current;
+                        return {
+                          ...current,
+                          [track.id]: {
+                            ...current[track.id],
+                            firstPublicationOperationID: operationID,
+                          },
+                        };
+                      });
+                      refreshReadState();
+                    },
+                    onRefresh: refreshReadState,
+                    ...aggregateCallbacksFor(track.id),
+                  },
+                }
+              : undefined;
           return {
             id: track.id,
             screen: {
@@ -2011,7 +2021,7 @@ export function LibraryReleaseScreen({
                 </>
               ) : undefined,
               publication: publicationView,
-              publicationPreview,
+              contextualPublication,
               deletion: showWorkspace ? (
                 <LibraryDeletionControl
                   target={{

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { LibraryReleaseWorkspaceView } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import type { TrackScreenNotFoundView } from "../../../ui/features/library/TrackScreenView";
+import type { DemoPositionPublicationBinderProps } from "../publication/ContextPublicationPreview";
 import {
 	type ReleaseOverviewScreenProps,
 	useReleaseOverviewDemoModel,
@@ -45,7 +46,7 @@ function DemoLibraryReleaseWorkspaceForRelease({
 	});
 	const positionModel = useTrackScreenDemoProvider(position);
 	return (
-		<LibraryReleaseWorkspaceView
+		<LibraryReleaseWorkspaceView<DemoPositionPublicationBinderProps>
 			locale={locale}
 			selection={
 				notFound

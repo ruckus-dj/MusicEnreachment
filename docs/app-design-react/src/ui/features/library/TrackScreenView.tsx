@@ -1,5 +1,10 @@
 import type { ComponentProps, ReactNode } from "react";
 import type { Locale } from "../../i18n/locale";
+import { ScreenStatus } from "../../shell/ScreenFeedbackView";
+import {
+  ContextPublicationPreviewOutlet,
+  type ContextPublicationPreviewSource,
+} from "../publication/ContextPublicationPreview";
 import {
   LibraryPositionHeadingView,
   libraryPositionPageClassName,
@@ -254,7 +259,7 @@ export type TrackScreenPublicationView = {
   outputStatus?: string;
   onPreview?: () => void;
   onUpdateMetadata?: () => void;
-  preview?: ReactNode;
+  previewNotice?: string;
   current?: TrackScreenPublicationCurrentView;
   coverEmbedding?: TrackScreenCoverEmbeddingView;
   lyricsResult?: TrackScreenLyricsResultView;
@@ -336,12 +341,14 @@ export function TrackProviderRefreshView({
 /**
  * Whole position route composition. The route owns every read and action
  * admission; this view renders a typed snapshot plus narrow slots for the
- * independent editor, publication preview, deletion and tag evidence actors.
- * The publication preview slot stays outside the active-only branches so its
- * controller keeps one reconciliation identity across overview and position
- * routes.
+ * independent editor, inline publication preview, contextual publication
+ * preview, deletion and tag evidence actors. Both publication preview slots
+ * stay outside the active-only branches so their controllers keep one
+ * reconciliation identity across overview and position routes.
  */
-export type TrackScreenViewProps = {
+export type TrackScreenViewProps<
+  ContextProps extends object = Record<never, never>,
+> = {
   locale: Locale;
   active?: boolean;
   notFound?: TrackScreenNotFoundView;
@@ -350,7 +357,8 @@ export type TrackScreenViewProps = {
   editors?: ReactNode;
   sources?: TrackScreenSourcesView;
   publication?: TrackScreenPublicationView;
-  publicationPreview?: ReactNode;
+  inlinePublicationPreview?: ReactNode;
+  contextualPublication?: ContextPublicationPreviewSource<ContextProps>;
   actions?: ReactNode;
   deletion?: ReactNode;
   technical?: TrackScreenTechnicalView;
@@ -601,7 +609,9 @@ function TechnicalDetails({
   );
 }
 
-export function TrackScreenView({
+export function TrackScreenView<
+  ContextProps extends object = Record<never, never>,
+>({
   locale,
   active = true,
   notFound,
@@ -610,13 +620,14 @@ export function TrackScreenView({
   editors,
   sources,
   publication,
-  publicationPreview,
+  inlinePublicationPreview,
+  contextualPublication,
   actions,
   deletion,
   technical,
   tags,
   evidence,
-}: TrackScreenViewProps) {
+}: TrackScreenViewProps<ContextProps>) {
   if (notFound) {
     return (
       <section className={libraryPositionPageClassName}>
@@ -690,7 +701,15 @@ export function TrackScreenView({
                   )}
                 </div>
               )}
-              {publicationPreview ?? publication?.preview}
+              {publication?.previewNotice ? (
+                <ScreenStatus>{publication.previewNotice}</ScreenStatus>
+              ) : null}
+              {inlinePublicationPreview ??
+                (contextualPublication ? (
+                  <ContextPublicationPreviewOutlet
+                    source={contextualPublication}
+                  />
+                ) : null)}
               {actions}
             </>
           }
