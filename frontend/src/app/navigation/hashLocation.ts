@@ -16,6 +16,11 @@ type PendingAttempt = {
   source: "anchor" | "browser";
 };
 
+/** Cached accepted hash, with identity refreshed for observers. */
+interface HashObservation {
+  readonly hash: string;
+}
+
 const listeners = new Set<() => void>();
 let acceptedHash: string | undefined;
 let storeWindow: Window | undefined;
@@ -23,6 +28,8 @@ let navigationGuard: HashNavigationGuard | undefined;
 let pendingAttempt: PendingAttempt | undefined;
 let nextAttemptID = 1;
 let browserListenersAttached = false;
+let acceptedObservation: HashObservation | undefined;
+const serverObservation: HashObservation = { hash: "" };
 
 function initializeStore() {
   if (typeof window === "undefined") return;
@@ -42,9 +49,19 @@ function notifyListeners() {
   for (const listener of listeners) listener();
 }
 
+function cachedObservation(hash: string) {
+  if (acceptedObservation?.hash !== hash) acceptedObservation = { hash };
+  return acceptedObservation;
+}
+
+function refreshObservation(hash: string) {
+  acceptedObservation = { hash };
+}
+
 function publishHash(hash: string) {
   if (acceptedHash === hash) return;
   acceptedHash = hash;
+  refreshObservation(hash);
   notifyListeners();
 }
 
@@ -64,6 +81,11 @@ function handleHashChange() {
   const hash = storeWindow.location.hash;
   if (hash === acceptedHash) {
     pendingAttempt = undefined;
+    // A queued native event can confirm an already accepted hash after Back
+    // restored an earlier entry while a consumer's local state still reflects
+    // the superseded write. Refresh identity so observers re-adopt the hash.
+    refreshObservation(hash);
+    notifyListeners();
     return;
   }
   if (
@@ -163,12 +185,30 @@ function getSnapshot() {
   return acceptedHash ?? "";
 }
 
+function getObservationSnapshot() {
+  initializeStore();
+  return cachedObservation(acceptedHash ?? "");
+}
+
 function getServerSnapshot() {
   return "";
 }
 
 export function useHashLocation() {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
+/**
+ * Opt-in view of the accepted hash whose snapshot identity also changes when a
+ * native hashchange confirms the hash already accepted. Consumers that keep a
+ * local route copy can re-adopt the accepted hash even when its text is stable.
+ */
+export function useHashObservation() {
+  return useSyncExternalStore(
+    subscribe,
+    getObservationSnapshot,
+    () => serverObservation,
+  );
 }
 
 export function registerHashNavigationGuard(

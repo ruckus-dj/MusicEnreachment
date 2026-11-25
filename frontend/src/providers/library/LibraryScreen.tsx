@@ -6,7 +6,7 @@ import {
   useListLibraryReleases,
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
-import { useHashLocation } from "../../app/navigation/hashLocation";
+import { useHashObservation } from "../../app/navigation/hashLocation";
 import {
   ApplicationLibraryCatalogBinder,
   type ApplicationLibraryCatalogModel,
@@ -138,9 +138,9 @@ function artistMonogram(name: string) {
  * availability axes, while page maps to the server offset at PAGE_SIZE.
  */
 export function useLibraryController() {
-  const hash = useHashLocation();
+  const observation = useHashObservation();
   const initialRoute =
-    libraryControllerRoute(hash) ?? normalizedRoute(fallbackRoute);
+    libraryControllerRoute(observation.hash) ?? normalizedRoute(fallbackRoute);
   const [route, setRoute] = useState(initialRoute);
   const [searchInput, setSearchInput] = useState(initialRoute.query);
   const lastHref = useRef(libraryRouteHref(initialRoute));
@@ -155,17 +155,20 @@ export function useLibraryController() {
   }, []);
 
   // Adopt browser back/forward or a copied link without fighting our own writes.
+  // Depend on the observation identity, not just the hash text: a queued native
+  // event can confirm an earlier accepted hash after an immediate Back.
   useEffect(() => {
-    const next = libraryControllerRoute(hash);
+    const next = libraryControllerRoute(observation.hash);
     if (!next) return;
     const href = libraryRouteHref(next);
-    if (hash === lastHref.current || href === lastHref.current) return;
+    if (observation.hash === lastHref.current || href === lastHref.current)
+      return;
     lastHref.current = href;
     skipNextUrlWrite.current = true;
     clearPendingSearch();
     setSearchInput(next.query);
     setRoute(next);
-  }, [hash, clearPendingSearch]);
+  }, [observation, clearPendingSearch]);
 
   useEffect(() => {
     if (skipNextUrlWrite.current) {

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -197,6 +198,59 @@ it("renders server summary, artist cards and preserves search and pagination in 
     expect(window.location.hash).not.toContain("offset=");
   });
   await waitFor(() => expect(artistRequests).toBe(4));
+});
+
+it("re-adopts the accepted URL when an immediate Back precedes the filter's queued hash change", async () => {
+  const all = "#/library?view=artists&publication=all&availability=all";
+  const published =
+    "#/library?view=artists&publication=published&availability=all";
+  window.location.hash = all;
+  server.use(
+    http.get("*/api/library/artists", () =>
+      HttpResponse.json({
+        items: [
+          {
+            id: artistId,
+            name: "A Artist",
+            disambiguation: null,
+            genres: [],
+            provider_links: [],
+            release_count: 1,
+            position_count: 1,
+            available_position_count: 1,
+            published_position_count: 1,
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        summary,
+      }),
+    ),
+  );
+  renderScreen(<LibraryCatalogRoute />, "en");
+  expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
+  await screen.findByRole("link", { name: /A Artist/ });
+
+  fireEvent.click(screen.getByRole("radio", { name: "Published" }));
+  expect(screen.getByRole("radio", { name: "Published" })).toBeChecked();
+  expect(window.location.hash).toBe(published);
+
+  // Back restores the earlier entry before the filter write's queued native
+  // event arrives; that stale event still reports the superseded destination.
+  act(() => {
+    window.history.replaceState(null, "", all);
+    window.dispatchEvent(
+      new HashChangeEvent("hashchange", {
+        oldURL: new URL(all, window.location.href).href,
+        newURL: new URL(published, window.location.href).href,
+      }),
+    );
+  });
+
+  expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
+  expect(screen.getByRole("radio", { name: "Published" })).not.toBeChecked();
+  expect(window.location.hash).toBe(all);
 });
 
 it("retains the catalog route and search state without refetching when locale changes", async () => {
