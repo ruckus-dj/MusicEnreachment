@@ -8,10 +8,23 @@ import {
   OperationsList,
   type OperationsListFilterOption,
   type OperationsListRow,
-  type OperationsListSortColumn,
   type OperationsListStatus,
 } from "./OperationsList";
-import type { OperationsScreenCopy } from "./operationsScreenCopy";
+import {
+  isOperationsKindSelection,
+  isOperationsSortColumn,
+  isOperationsStatusFilter,
+  type OperationsKindSelection,
+  type OperationsSortColumn,
+  type OperationsSortDirection,
+  type OperationsStatusFilter,
+  operationsKindFilters,
+  operationsStatusFilters,
+} from "./operationsFilters";
+import {
+  type OperationsScreenCopy,
+  operationsScreenCopy,
+} from "./operationsScreenCopy";
 
 /**
  * Portable operations screen composition.
@@ -26,58 +39,6 @@ import type { OperationsScreenCopy } from "./operationsScreenCopy";
  * rows/total; the demo keeps its in-memory rows, local filtering and demo
  * settlement. Neither adapter passes JSX into this component.
  */
-
-export const operationsStatusFilters = [
-  "attention",
-  "all",
-  "failed",
-  "running",
-  "queued",
-] as const;
-
-export const operationsKindFilters = [
-  "publication",
-  "analysis",
-  "removal",
-  "matching",
-] as const;
-
-const sortColumns: readonly OperationsListSortColumn[] = [
-  "target",
-  "operation",
-  "state",
-  "created",
-];
-
-export type OperationsStatusFilter = (typeof operationsStatusFilters)[number];
-export type OperationsKindFilter = (typeof operationsKindFilters)[number];
-export type OperationsKindSelection = OperationsKindFilter | "all";
-export type OperationsSortColumn = OperationsListSortColumn;
-export type OperationsSortDirection = "asc" | "desc";
-
-export function isOperationsStatusFilter(
-  value: string,
-): value is OperationsStatusFilter {
-  return operationsStatusFilters.some((candidate) => candidate === value);
-}
-
-export function isOperationsKindFilter(
-  value: string,
-): value is OperationsKindFilter {
-  return operationsKindFilters.some((candidate) => candidate === value);
-}
-
-export function isOperationsKindSelection(
-  value: string,
-): value is OperationsKindSelection {
-  return value === "all" || isOperationsKindFilter(value);
-}
-
-export function isOperationsSortColumn(
-  value: string,
-): value is OperationsSortColumn {
-  return sortColumns.some((candidate) => candidate === value);
-}
 
 export interface OperationsScreenFilters {
   query: string;
@@ -108,7 +69,6 @@ export interface OperationsScreenMatchingRecheckAbandon {
 }
 
 export interface OperationsScreenViewProps {
-  copy: OperationsScreenCopy;
   locale: "en" | "ru";
   rows: OperationsListRow[];
   status?: OperationsListStatus;
@@ -145,7 +105,6 @@ function paginationLabel(
 }
 
 export function OperationsScreenView({
-  copy,
   locale,
   rows,
   status,
@@ -162,6 +121,7 @@ export function OperationsScreenView({
   pagination,
   matchingRecheckAbandon,
 }: OperationsScreenViewProps) {
+  const copy = operationsScreenCopy[locale];
   const statusOptions: OperationsListFilterOption[] =
     operationsStatusFilters.map((value) => ({
       value,

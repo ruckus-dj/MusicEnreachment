@@ -25,11 +25,12 @@ import {
   parseLibraryRoute,
 } from "../../providers/library/libraryRoute";
 import { OwnCatalogScreen } from "../../providers/local-catalog/OwnCatalogScreen";
-import { OperationsScreen } from "../../providers/operations/OperationsScreen";
+import { ProductionOperationsBinder } from "../../providers/operations/OperationsScreen";
 import { SettingsScreen } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
 import { SourcesScreen } from "../../providers/sources/SourcesScreen";
 import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
 import {
   ApplicationFrame,
   ShellStartupView,
@@ -84,6 +85,8 @@ function currentRoute(
   if (libraryRelease) return `/library/releases/${libraryRelease.releaseId}`;
   return "/";
 }
+const emptyProviderProps = {};
+
 export function AppShell() {
   const { locale } = useI18n();
   const hash = useHashLocation();
@@ -186,7 +189,11 @@ export function AppShell() {
     ) : state && incomingGroupsRoute ? (
       <IncomingGroupReviewScreen route={incomingGroupsRoute} />
     ) : state && route === "/operations" ? (
-      <OperationsScreen />
+      <ApplicationRouteOutlet
+        route="operations"
+        provider={ProductionOperationsBinder}
+        providerProps={emptyProviderProps}
+      />
     ) : state && route === "/library" ? (
       <LibraryScreen />
     ) : state && route === "/own-catalog" ? (

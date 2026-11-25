@@ -11,7 +11,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { OperationsScreen } from "./OperationsScreen";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { ProductionOperationsBinder } from "./OperationsScreen";
 
 const releaseId = "123e4567-e89b-42d3-a456-426614174000";
 const positionId = "223e4567-e89b-42d3-a456-426614174000";
@@ -49,7 +50,11 @@ function renderScreen(
     <QueryClientProvider client={client}>
       <I18nProvider>
         {withLocaleSwitcher && <LocaleSwitcher />}
-        <OperationsScreen />
+        <ApplicationRouteOutlet
+          route="operations"
+          provider={ProductionOperationsBinder}
+          providerProps={{}}
+        />
       </I18nProvider>
     </QueryClientProvider>,
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
+import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import {
 	type LibraryCatalogPageState,
@@ -84,7 +85,7 @@ import { localProviderReleases } from "./providers/local-catalog/localProviderMo
 import { LocalReleaseDemoGenres } from "./providers/local-release/LocalReleaseDemoGenres";
 import { MatchingScreen } from "./providers/matching/MatchingScreen";
 import { formatUiNotice, type UiNotice } from "./providers/notices/uiNotice";
-import { OperationsScreen } from "./providers/operations/OperationsScreen";
+import { DemoOperationsBinder } from "./providers/operations/OperationsScreen";
 import {
 	type DemoPublicationJob,
 	useOperationsDemoProvider,
@@ -246,7 +247,11 @@ export function CatalogDemo({
 		reset: resetLibrarySearch,
 	} = useLibraryRouteState(route);
 	const headingRoute =
-		routeName === "library" || routeName === "settings" ? routeName : route;
+		routeName === "library" ||
+		routeName === "settings" ||
+		routeName === "/operations"
+			? routeName
+			: route;
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
@@ -393,7 +398,7 @@ export function CatalogDemo({
 	);
 	const queueDeletion = (operation: DeletionOperation) => {
 		setDeletions((previous) => [...previous, operation]);
-		window.location.hash = "operations";
+		window.location.hash = "/operations";
 	};
 	const operationsProvider = useOperationsDemoProvider({
 		deletions,
@@ -1215,13 +1220,15 @@ export function CatalogDemo({
 		);
 		return sourceScreen;
 	}
-	if (route === "operations")
+	if (routeName === "/operations")
 		return (
-			<>
-				<OperationsScreen
-					deletions={deletions}
-					provider={operationsProvider}
-					isTargetCurrent={(href) => {
+			<ApplicationRouteOutlet
+				route="operations"
+				provider={DemoOperationsBinder}
+				providerProps={{
+					deletions,
+					provider: operationsProvider,
+					isTargetCurrent: (href) => {
 						const [route, id] = href.slice(1).split("/");
 						switch (route) {
 							case "track":
@@ -1239,9 +1246,9 @@ export function CatalogDemo({
 							default:
 								return false;
 						}
-					}}
-				/>
-			</>
+					},
+				}}
+			/>
 		);
 	if (route && routeName !== "library")
 		return (

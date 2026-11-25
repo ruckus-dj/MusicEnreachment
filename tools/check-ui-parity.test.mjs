@@ -261,3 +261,22 @@ test("shared dependency guard compares resolved lock versions", () => {
     ),
   );
 });
+
+test("hosts can import route model types but not bypass the portable outlet", () => {
+  const view = "../ui/features/operations/OperationsScreenView";
+  const typeOnly = {
+    path: "app/model.ts",
+    text: `import { type OperationsScreenViewProps } from "${view}";`,
+  };
+  assert.deepEqual(checkHostBoundaries("host", [typeOnly]), []);
+  for (const source of [
+    `import { OperationsScreenView } from "${view}";`,
+    `export { OperationsScreenView } from "${view}.tsx";`,
+    `const screen = import("${view}");`,
+  ]) {
+    assert.match(
+      checkHostBoundaries("host", [{ ...typeOnly, text: source }]).join("\n"),
+      /Use the portable route outlet/,
+    );
+  }
+});

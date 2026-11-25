@@ -17,14 +17,24 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
+import {
+  type OperationsLocation,
+  operationsLocationHref,
+  parseOperationsLocation,
+} from "../../app/navigation/operationsLocation";
+import {
+  ApplicationOperationsBinder,
+  type ApplicationOperationsModel,
+  type ApplicationRouteProviderProps,
+} from "../../ui/app/ApplicationRouteOutlet";
 import type { MatchingRecheckAbandonPosition } from "../../ui/features/operations/MatchingRecheckAbandonDialog";
 import type {
   OperationsListAction,
   OperationsListRow,
   OperationsListStatus,
 } from "../../ui/features/operations/OperationsList";
-import { OperationsScreenView } from "../../ui/features/operations/OperationsScreenView";
 import { operationsControllerCopy as messages } from "../../ui/features/operations/operationsScreenCopy";
+import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";
 import type { Locale } from "../../ui/i18n/locale";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
 import {
@@ -35,28 +45,9 @@ import {
 } from "./operationPresentation";
 
 const PAGE_SIZE = 50;
-const MAX_PAGE_OFFSET = 1_000_000;
 const MAX_QUERY_LENGTH = 200;
 const OPERATIONS_POLL_INTERVAL_MS = 8_000;
 const operationsListQueryKey = getListCurrentOperationsQueryKey();
-
-const statusFilters = [
-  "attention",
-  "all",
-  "failed",
-  "running",
-  "queued",
-] as const;
-type OperationStatusFilter = (typeof statusFilters)[number];
-
-const kindFilters = ["publication", "analysis", "removal", "matching"] as const;
-type OperationKindFilter = (typeof kindFilters)[number];
-type OperationKindSelection = OperationKindFilter | "all";
-
-const sortColumns = ["target", "operation", "state", "created"] as const;
-type OperationSort = (typeof sortColumns)[number];
-const sortDirections = ["asc", "desc"] as const;
-type OperationSortDirection = (typeof sortDirections)[number];
 
 const DISMISSIBLE_TOOL_KINDS = new Set(["install", "move_tools_root"]);
 const GENERIC_RETRY_KINDS = new Set([
@@ -76,80 +67,6 @@ const GENERIC_RETRY_KINDS = new Set([
 ]);
 
 type Copy = (typeof messages)[Locale];
-
-interface OperationsRoute {
-  status: OperationStatusFilter;
-  kind: OperationKindSelection;
-  sort: OperationSort;
-  direction: OperationSortDirection;
-  offset: number;
-}
-
-const defaultRoute: OperationsRoute = {
-  status: "attention",
-  kind: "all",
-  sort: "created",
-  direction: "desc",
-  offset: 0,
-};
-
-function isStatusFilter(value: string): value is OperationStatusFilter {
-  return statusFilters.some((candidate) => candidate === value);
-}
-
-function isKindFilter(value: string): value is OperationKindFilter {
-  return kindFilters.some((candidate) => candidate === value);
-}
-
-function isSortColumn(value: string): value is OperationSort {
-  return sortColumns.some((candidate) => candidate === value);
-}
-
-function isSortDirection(value: string): value is OperationSortDirection {
-  return sortDirections.some((candidate) => candidate === value);
-}
-
-function parseOperationsRoute(hash: string): OperationsRoute {
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  const [pathname, search = ""] = path.split("?", 2);
-  if (pathname !== "/operations") return defaultRoute;
-  const params = new URLSearchParams(search);
-  const requestedStatus = params.get("status") ?? "";
-  const requestedKind = params.get("kind") ?? "";
-  const requestedSort = params.get("sort") ?? "";
-  const requestedDirection = params.get("direction") ?? "";
-  const requestedOffset = Number(params.get("offset") ?? 0);
-  return {
-    status: isStatusFilter(requestedStatus)
-      ? requestedStatus
-      : defaultRoute.status,
-    kind:
-      requestedKind === "all" || isKindFilter(requestedKind)
-        ? requestedKind
-        : defaultRoute.kind,
-    sort: isSortColumn(requestedSort) ? requestedSort : defaultRoute.sort,
-    direction: isSortDirection(requestedDirection)
-      ? requestedDirection
-      : defaultRoute.direction,
-    offset:
-      Number.isSafeInteger(requestedOffset) && requestedOffset > 0
-        ? Math.min(requestedOffset, MAX_PAGE_OFFSET)
-        : 0,
-  };
-}
-
-function operationsRouteHref(route: OperationsRoute) {
-  const params = new URLSearchParams();
-  if (route.status !== defaultRoute.status) params.set("status", route.status);
-  if (route.kind !== defaultRoute.kind) params.set("kind", route.kind);
-  if (route.sort !== defaultRoute.sort) params.set("sort", route.sort);
-  if (route.direction !== defaultRoute.direction)
-    params.set("direction", route.direction);
-  if (route.offset > 0)
-    params.set("offset", String(Math.min(route.offset, MAX_PAGE_OFFSET)));
-  const search = params.toString();
-  return search ? `#/operations?${search}` : "#/operations";
-}
 
 function pageShowsState(
   state: string,
@@ -384,12 +301,23 @@ function operationRow(
   };
 }
 
-export function OperationsScreen() {
+export function ProductionOperationsBinder({
+  children,
+}: ApplicationRouteProviderProps) {
+  const model = useOperationsModel();
+  return (
+    <ApplicationOperationsBinder model={model}>
+      {children}
+    </ApplicationOperationsBinder>
+  );
+}
+
+function useOperationsModel(): ApplicationOperationsModel {
   const { locale } = useI18n();
   const copy = messages[locale];
   const queryClient = useQueryClient();
   const hash = useHashLocation();
-  const route = parseOperationsRoute(hash);
+  const route = parseOperationsLocation(hash);
   const { headingRef, focusHeading, restoreHeadingFocus } =
     useOperationsHeadingFocus();
   const pendingGuard = useRef(false);
@@ -416,8 +344,8 @@ export function OperationsScreen() {
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const updateRoute = useCallback(
-    (next: Partial<OperationsRoute>) => {
-      window.location.hash = operationsRouteHref({
+    (next: Partial<OperationsLocation>, replace = false) => {
+      const href = operationsLocationHref({
         status: route.status,
         kind: route.kind,
         sort: route.sort,
@@ -425,6 +353,8 @@ export function OperationsScreen() {
         offset: route.offset,
         ...next,
       });
+      if (replace) window.location.replace(href);
+      else window.location.hash = href;
     },
     [route.direction, route.kind, route.offset, route.sort, route.status],
   );
@@ -498,7 +428,7 @@ export function OperationsScreen() {
   useEffect(() => {
     if (!currentData || loadError || pending || operationsQuery.isFetching)
       return;
-    if (route.offset > lastOffset) updateRoute({ offset: lastOffset });
+    if (route.offset > lastOffset) updateRoute({ offset: lastOffset }, true);
   }, [
     currentData,
     lastOffset,
@@ -687,60 +617,52 @@ export function OperationsScreen() {
     }
   }
 
-  return (
-    <OperationsScreenView
-      copy={copy}
-      locale={locale}
-      rows={rows}
-      status={listStatus}
-      error={loadError}
-      notice={notice ? copy[notice] : undefined}
-      actionError={actionErrorText(actionError, copy)}
-      headingRef={headingRef}
-      sortColumn={route.sort}
-      sortDirection={route.direction}
-      onSortChange={(sort, direction) =>
-        updateRoute({ sort, direction, offset: 0 })
-      }
-      onRefresh={() => {
-        void refresh();
-      }}
-      isRefreshing={manualRefreshing}
-      filters={{
-        query: searchText,
-        onQueryChange: (value) => {
-          setSearchText(value);
-          if (route.offset !== 0) updateRoute({ offset: 0 });
-        },
-        status: route.status,
-        onStatusChange: (value) => {
-          updateRoute({ status: value, offset: 0 });
-        },
-        kind: route.kind,
-        onKindChange: (value) => {
-          updateRoute({ kind: value, offset: 0 });
-        },
-      }}
-      pagination={pagination}
-      matchingRecheckAbandon={
-        abandonPreview
-          ? {
-              positions: abandonPreview.positions,
-              busy: abandonBusy,
-              error: abandonError,
-              onConfirm: () => {
-                void confirmAbandon();
-              },
-              onCancel: () => {
-                if (abandonBusy) return;
-                setAbandonPreview(undefined);
-                setAbandonError(undefined);
-              },
-            }
-          : undefined
-      }
-    />
-  );
+  return {
+    locale,
+    rows,
+    status: listStatus,
+    error: loadError,
+    notice: notice ? copy[notice] : undefined,
+    actionError: actionErrorText(actionError, copy),
+    headingRef,
+    sortColumn: route.sort,
+    sortDirection: route.direction,
+    onSortChange: (sort, direction) =>
+      updateRoute({ sort, direction, offset: 0 }),
+    onRefresh: () => {
+      void refresh();
+    },
+    isRefreshing: manualRefreshing,
+    filters: {
+      query: searchText,
+      onQueryChange: (value) => {
+        setSearchText(value);
+        if (route.offset !== 0) updateRoute({ offset: 0 });
+      },
+      status: route.status,
+      onStatusChange: (value) => {
+        updateRoute({ status: value, offset: 0 });
+      },
+      kind: route.kind,
+      onKindChange: (value) => {
+        updateRoute({ kind: value, offset: 0 });
+      },
+    },
+    pagination,
+    matchingRecheckAbandon: abandonPreview
+      ? {
+          positions: abandonPreview.positions,
+          busy: abandonBusy,
+          error: abandonError,
+          onConfirm: () => {
+            void confirmAbandon();
+          },
+          onCancel: () => {
+            if (abandonBusy) return;
+            setAbandonPreview(undefined);
+            setAbandonError(undefined);
+          },
+        }
+      : undefined,
+  };
 }
-
-import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";

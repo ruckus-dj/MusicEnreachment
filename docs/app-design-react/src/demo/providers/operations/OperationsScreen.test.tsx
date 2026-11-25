@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n";
+import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import { originalReleases } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
-import { OperationsScreen } from "./OperationsScreen";
+import { DemoOperationsBinder } from "./OperationsScreen";
 import {
 	demoOperationSettleDelayMs,
 	demoOperationStartDelayMs,
@@ -14,11 +15,13 @@ import {
 
 beforeEach(() => {
 	window.localStorage.setItem("music-design-v2-language", "en");
+	window.location.hash = "#/operations";
 	vi.useFakeTimers();
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	window.location.hash = "";
 });
 
 function OperationsHarness({
@@ -26,13 +29,27 @@ function OperationsHarness({
 	...props
 }: OperationsDemoProviderOptions & { queue?: typeof queuedOperationFixtures }) {
 	const provider = useOperationsDemoProvider(props);
-	return <OperationsScreen deletions={props.deletions} provider={provider} queue={queue} />;
+	return (
+		<ApplicationRouteOutlet
+			route="operations"
+			provider={DemoOperationsBinder}
+			providerProps={{
+				deletions: props.deletions,
+				provider,
+				queue,
+			}}
+		/>
+	);
 }
 
 function advance(delay: number) {
 	act(() => {
 		vi.advanceTimersByTime(delay);
 	});
+}
+
+function syncLocation() {
+	act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
 }
 
 it("settles removal automatically and keeps failed attempts retryable until completion", () => {
@@ -70,8 +87,10 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 	expect(screen.queryByText(track.title)).toBeNull();
 	fireEvent.click(screen.getByRole("button", { name: /status/i }));
 	fireEvent.click(screen.getByRole("option", { name: /^All$/ }));
+	syncLocation();
 	fireEvent.click(screen.getByRole("button", { name: /kind/i }));
 	fireEvent.click(screen.getByRole("option", { name: "Removal" }));
+	syncLocation();
 	expect(screen.getByText(track.title)).toBeVisible();
 	expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
 
@@ -133,12 +152,16 @@ it("sorts the whole filtered queue before pagination and returns to page one", (
 	);
 	fireEvent.click(screen.getByRole("button", { name: /status/i }));
 	fireEvent.click(screen.getByRole("option", { name: "Queued" }));
+	syncLocation();
 	const grid = screen.getByRole("grid");
 	const created = within(grid).getByRole("columnheader", { name: "Created" });
 	expect(created).toHaveAttribute("aria-sort", "descending");
 	fireEvent.click(screen.getByRole("button", { name: "Next" }));
+	syncLocation();
+	expect(window.location.hash).toBe("#/operations?status=queued&offset=50");
 	expect(screen.getByText("51–100 of 2,400")).toBeVisible();
 	fireEvent.click(created);
+	syncLocation();
 	expect(created).toHaveAttribute("aria-sort", "ascending");
 	expect(screen.getByText("1–50 of 2,400")).toBeVisible();
 	const oldest = queuedOperationFixtures.at(-1);

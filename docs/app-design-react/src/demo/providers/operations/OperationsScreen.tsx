@@ -1,15 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import type { OperationsListRow } from "../../../ui/features/operations/OperationsList";
+import { useHashLocation } from "../../../app/navigation/hashLocation";
 import {
-	type OperationsKindFilter,
-	type OperationsKindSelection,
-	OperationsScreenView,
-	type OperationsSortColumn,
-	type OperationsSortDirection,
-	type OperationsStatusFilter,
-} from "../../../ui/features/operations/OperationsScreenView";
+	type OperationsLocation,
+	operationsLocationHref,
+	parseOperationsLocation,
+} from "../../../app/navigation/operationsLocation";
+import {
+	ApplicationOperationsBinder,
+	type ApplicationOperationsModel,
+	type ApplicationRouteProviderProps,
+} from "../../../ui/app/ApplicationRouteOutlet";
+import type { OperationsListRow } from "../../../ui/features/operations/OperationsList";
 import { operationMessages } from "../../../ui/features/operations/operationMessages";
+import type {
+	OperationsKindFilter,
+	OperationsKindSelection,
+	OperationsStatusFilter,
+} from "../../../ui/features/operations/operationsFilters";
 import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
 import {
 	type QueuedOperationFixture,
@@ -33,13 +41,6 @@ interface ScreenRow {
 	createdAt: number;
 }
 
-const defaultSort: {
-	column: OperationsSortColumn;
-	direction: OperationsSortDirection;
-} = {
-	column: "created",
-	direction: "desc",
-};
 const statusOrder: Record<VisibleOperationStatus, number> = {
 	failed: 0,
 	running: 1,
@@ -53,27 +54,60 @@ function matchesStatus(row: ScreenRow, filter: OperationsStatusFilter) {
 	return row.status === filter;
 }
 
-export function OperationsScreen({
-	deletions,
-	provider,
-	isTargetCurrent,
-	queue = queuedOperationFixtures,
-}: {
+export interface DemoOperationsScreenProps {
 	deletions: DeletionOperation[];
 	provider: OperationsDemoProvider;
 	isTargetCurrent?: (href: string) => boolean;
 	queue?: readonly QueuedOperationFixture[];
-}) {
+}
+
+export function DemoOperationsBinder({
+	children,
+	...props
+}: DemoOperationsScreenProps & ApplicationRouteProviderProps) {
+	const model = useDemoOperationsModel(props);
+	return (
+		<ApplicationOperationsBinder model={model}>
+			{children}
+		</ApplicationOperationsBinder>
+	);
+}
+
+function useDemoOperationsModel({
+	deletions,
+	provider,
+	isTargetCurrent,
+	queue = queuedOperationFixtures,
+}: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
 	const copy = operationMessages[locale];
+	const hash = useHashLocation();
+	const location = parseOperationsLocation(hash);
 	const [query, setQuery] = useState("");
-	const [status, setStatus] = useState<OperationsStatusFilter>("attention");
-	const [kind, setKind] = useState<OperationsKindSelection>("all");
-	const [page, setPage] = useState(0);
-	const [sort, setSort] = useState(defaultSort);
 	const [abandonOpen, setAbandonOpen] = useState(false);
 	const [demoStartedAt] = useState(() =>
 		Math.max(Date.now(), (queue[0]?.createdAt ?? 0) + 60_000),
+	);
+	const updateLocation = useCallback(
+		(next: Partial<OperationsLocation>, replace = false) => {
+			const href = operationsLocationHref({
+				status: location.status,
+				kind: location.kind,
+				sort: location.sort,
+				direction: location.direction,
+				offset: location.offset,
+				...next,
+			});
+			if (replace) window.location.replace(href);
+			else window.location.hash = href;
+		},
+		[
+			location.status,
+			location.kind,
+			location.sort,
+			location.direction,
+			location.offset,
+		],
 	);
 	const deletionRows = useRef(
 		new WeakMap<DeletionOperation, { id: string; createdAt: number }>(),
@@ -268,39 +302,44 @@ export function OperationsScreen({
 		provider.signals,
 	]);
 
-	const normalizedQuery = query.trim().toLocaleLowerCase(locale);
+	const normalizedQuery = query.trim().slice(0, 200).toLocaleLowerCase(locale);
 	const filteredRows = useMemo(
 		() =>
 			rows.filter(
 				(row) =>
-					matchesStatus(row, status) &&
-					(kind === "all" || row.kind === kind) &&
+					matchesStatus(row, location.status) &&
+					(location.kind === "all" || row.kind === location.kind) &&
 					(normalizedQuery === "" ||
 						row.list.target
 							.toLocaleLowerCase(locale)
 							.includes(normalizedQuery)),
 			),
-		[kind, locale, normalizedQuery, rows, status],
+		[location.kind, location.status, locale, normalizedQuery, rows],
 	);
 
-	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-	const pageIndex = Math.min(page, pageCount - 1);
-
 	// Clamp after deletions shrink the result set so the view never goes blank.
+	const lastOffset = Math.max(
+		0,
+		Math.floor((filteredRows.length - 1) / pageSize) * pageSize,
+	);
 	useEffect(() => {
-		if (pageIndex !== page) setPage(pageIndex);
-	}, [page, pageIndex]);
+		if (location.offset > lastOffset)
+			updateLocation({ offset: lastOffset }, true);
+	}, [lastOffset, location.offset, updateLocation]);
 
-	const start = pageIndex * pageSize;
+	const start = Math.min(location.offset, lastOffset);
 	const sortedRows = useMemo(() => {
-		const direction = sort.direction === "asc" ? 1 : -1;
+		const direction = location.direction === "asc" ? 1 : -1;
 		return [...filteredRows].sort((left, right) => {
-			switch (sort.column) {
+			switch (location.sort) {
 				case "target":
 				case "operation":
 					return (
 						direction *
-						collator.compare(left.list[sort.column], right.list[sort.column])
+						collator.compare(
+							left.list[location.sort],
+							right.list[location.sort],
+						)
 					);
 				case "state":
 					return (
@@ -312,7 +351,7 @@ export function OperationsScreen({
 					return 0;
 			}
 		});
-	}, [collator, filteredRows, sort]);
+	}, [collator, filteredRows, location.direction, location.sort]);
 	const pageRows = sortedRows.slice(start, start + pageSize);
 
 	const pagination =
@@ -321,63 +360,61 @@ export function OperationsScreen({
 					from: start + 1,
 					to: Math.min(start + pageSize, filteredRows.length),
 					total: filteredRows.length,
-					onPrevious: pageIndex > 0 ? () => setPage(pageIndex - 1) : undefined,
+					onPrevious:
+						start > 0
+							? () =>
+									updateLocation({
+										offset: Math.max(0, start - pageSize),
+									})
+							: undefined,
 					onNext:
-						pageIndex < pageCount - 1
-							? () => setPage(pageIndex + 1)
+						start + pageSize < filteredRows.length
+							? () => updateLocation({ offset: start + pageSize })
 							: undefined,
 				}
 			: undefined;
 
 	const changeQuery = (value: string) => {
 		setQuery(value);
-		setPage(0);
+		if (location.offset !== 0) updateLocation({ offset: 0 });
 	};
 	const changeStatus = (value: OperationsStatusFilter) => {
-		setStatus(value);
-		setPage(0);
+		updateLocation({ status: value, offset: 0 });
 	};
 	const changeKind = (value: OperationsKindSelection) => {
-		setKind(value);
-		setPage(0);
+		updateLocation({ kind: value, offset: 0 });
 	};
 
-	return (
-		<OperationsScreenView
-			copy={copy}
-			locale={locale}
-			rows={pageRows.map((row) => row.list)}
-			notice={provider.notice ? copy[provider.notice] : undefined}
-			onRefresh={provider.refresh}
-			isRefreshing={provider.isRefreshing}
-			filters={{
-				query,
-				onQueryChange: changeQuery,
-				status,
-				onStatusChange: changeStatus,
-				kind,
-				onKindChange: changeKind,
-			}}
-			sortColumn={sort.column}
-			sortDirection={sort.direction}
-			onSortChange={(column, direction) => {
-				setSort({ column, direction });
-				setPage(0);
-			}}
-			pagination={pagination}
-			matchingRecheckAbandon={
-				abandonOpen && provider.signals === "failed"
-					? {
-							positions: matchingRecheckAbandonFixture.positions,
-							busy: false,
-							onConfirm: () => {
-								setAbandonOpen(false);
-								provider.abandonSignals();
-							},
-							onCancel: () => setAbandonOpen(false),
-						}
-					: undefined
-			}
-		/>
-	);
+	return {
+		locale,
+		rows: pageRows.map((row) => row.list),
+		notice: provider.notice ? copy[provider.notice] : undefined,
+		onRefresh: provider.refresh,
+		isRefreshing: provider.isRefreshing,
+		filters: {
+			query,
+			onQueryChange: changeQuery,
+			status: location.status,
+			onStatusChange: changeStatus,
+			kind: location.kind,
+			onKindChange: changeKind,
+		},
+		sortColumn: location.sort,
+		sortDirection: location.direction,
+		onSortChange: (sort, direction) =>
+			updateLocation({ sort, direction, offset: 0 }),
+		pagination,
+		matchingRecheckAbandon:
+			abandonOpen && provider.signals === "failed"
+				? {
+						positions: matchingRecheckAbandonFixture.positions,
+						busy: false,
+						onConfirm: () => {
+							setAbandonOpen(false);
+							provider.abandonSignals();
+						},
+						onCancel: () => setAbandonOpen(false),
+					}
+				: undefined,
+	};
 }

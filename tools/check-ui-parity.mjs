@@ -28,6 +28,9 @@ const TEST_LIBRARIES = new Set([
   "@testing-library/jest-dom",
 ]);
 const CSS_LIBRARIES = new Set(["tailwindcss"]);
+const OUTLET_OWNED_VIEWS = new Set([
+  "ui/features/operations/OperationsScreenView",
+]);
 // Portable UI behavior is only equivalent at equal resolved versions. Keep the
 // explicit shared runtime and build set; this is not a full resolver.
 export const SHARED_DEPENDENCY_PACKAGES = [
@@ -616,6 +619,21 @@ function checkHostCss(label, filePath, text) {
   return errors;
 }
 
+function isOutletOwnedView(path, specifier) {
+  return specifier?.startsWith(".") && OUTLET_OWNED_VIEWS.has(
+    relativeTarget(path, specifier).replace(/\.[cm]?[jt]sx?$/, ""),
+  );
+}
+
+function importsRuntime(ts, clause) {
+  if (!clause) return true;
+  if (clause.isTypeOnly) return false;
+  if (clause.name) return true;
+  const bindings = clause.namedBindings;
+  return bindings && (!ts.isNamedImports(bindings) ||
+    bindings.elements.some((item) => !item.isTypeOnly));
+}
+
 export function checkHostBoundaries(label, files) {
   const ts = loadTypeScript();
   const errors = [];
@@ -634,7 +652,15 @@ export function checkHostBoundaries(label, files) {
       scriptKind(ts, path),
     );
     const bindings = collectHostBindings(ts, source);
+    const rejectOutletBypass = (specifier) => {
+      if (isOutletOwnedView(path, specifier)) {
+        errors.push(`${label}/${path}: Use the portable route outlet instead of ${specifier}`);
+      }
+    };
     for (const statement of source.statements) {
+      if (ts.isImportDeclaration(statement) && importsRuntime(ts, statement.importClause)) {
+        rejectOutletBypass(statement.moduleSpecifier.text);
+      }
       if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue;
       const specifier = statement.moduleSpecifier?.text;
       const named = statement.exportClause && ts.isNamedExports(statement.exportClause);
@@ -644,6 +670,7 @@ export function checkHostBoundaries(label, files) {
             .map((item) => (item.propertyName ?? item.name).text)
         : [];
       const external = specifier && !specifier.startsWith(".");
+      if (!named || members.length) rejectOutletBypass(specifier);
       const forbidden = external
         ? !named || members.some((member) => !headlessJsxMember({ specifier }, member))
         : !specifier && members.some((member) => {
@@ -663,6 +690,13 @@ export function checkHostBoundaries(label, files) {
       ) {
         hostJsxNodeErrors(ts, label, path, node, bindings, errors);
       } else if (ts.isCallExpression(node)) {
+        if (
+          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+            (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
+          node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])
+        ) {
+          rejectOutletBypass(node.arguments[0].text);
+        }
         const factory = hostElementFactory(ts, node.expression, bindings);
         if (factory) {
           errors.push(
@@ -809,6 +843,12 @@ function main() {
     ...hostTreeErrors(prototypeHostLabel, prototypeSourceTree, prototypeSrc),
     ...hostTreeErrors(applicationHostLabel, applicationSourceTree, applicationSrc),
   ];
+  const operationsLocation = "app/navigation/operationsLocation.ts";
+  const designOperationsLocation = readFileSync(new URL(operationsLocation, prototypeSrc));
+  const applicationOperationsLocation = readFileSync(new URL(operationsLocation, applicationSrc));
+  if (!designOperationsLocation.equals(applicationOperationsLocation)) {
+    errors.push(`Different host route codec: ${operationsLocation}`);
+  }
   // The entry documents are host integration, not portable UI modules: compare
   // them only after the two expected prototype/application entry differences.
   const prototypeEntry = normalizeEntry(
