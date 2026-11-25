@@ -1,4 +1,5 @@
 import type { OwnCatalogArtistDraft } from "../../../ui/features/local-catalog/OwnCatalogArtistEditor";
+import type { OwnCatalogRecordingDraft } from "../../../ui/features/local-catalog/OwnCatalogRecordingEditor";
 import {
 	formatLocalDuration,
 	type LocalReleaseDraft,
@@ -256,16 +257,6 @@ export function releaseRecordToFormValues(
 	};
 }
 
-function splitList(value: string) {
-	return value
-		.split(",")
-		.map((item) => item.trim())
-		.filter(Boolean);
-}
-
-const advisory = (value: string) =>
-	value === "true" ? "1" : value === "false" ? "2" : "";
-
 export function artistRecordToDraft(
 	record: LocalProviderRecord,
 ): OwnCatalogArtistDraft {
@@ -281,23 +272,38 @@ export function artistRecordToDraft(
 	};
 }
 
+export function recordingRecordToDraft(
+	record: LocalProviderRecord,
+	artists: readonly LocalProviderRecord[],
+): OwnCatalogRecordingDraft {
+	const savedCredits =
+		record.credits?.map((credit) => ({
+			artistId: credit.artistId,
+			creditName: credit.creditName,
+		})) ??
+		(record.artistIds ?? []).map((artistId) => ({
+			artistId,
+			creditName: artists.find((artist) => artist.id === artistId)?.name ?? "",
+		}));
+	return {
+		title: record.title ?? "",
+		durationInput: formatLocalDuration(record.duration_ms),
+		tags: record.tags ?? "",
+		genres: (record.genres ?? []).map((id) => ({
+			id,
+			name: record.genreNamesById?.[id] ?? id,
+			source_name: record.genreNamesById?.[id] ?? id,
+		})),
+		credits: savedCredits,
+	};
+}
+
 export type LocalArtistFormDraft = {
 	name: string;
 	sortName: string;
 	disambiguation: string;
 	tags: string;
 	genres: GenreReference[];
-};
-
-export type LocalRecordingFormDraft = {
-	title: string;
-	durationInput: string;
-	disambiguation: string;
-	explicit: string;
-	isrcs: string;
-	tags: string;
-	genres: GenreReference[];
-	artistIds: string[];
 };
 
 const genreRecordFields = (genres: readonly GenreReference[]) => ({
@@ -419,40 +425,66 @@ export function artistDraftToRecord(
 	};
 }
 
-export function recordingDraftToRecord(
-	draft: LocalRecordingFormDraft,
+function recordingCredits(
 	existing: LocalProviderRecord | undefined,
-	artists: readonly LocalProviderRecord[],
+	credits: readonly { artistId: string; creditName: string }[],
+) {
+	const existingCredits = existing?.credits ?? [];
+	const sameOrder =
+		existingCredits.length === credits.length &&
+		existingCredits.every(
+			(credit, index) => credit.artistId === credits[index].artistId,
+		);
+	return credits.map((credit, index) => {
+		const nextArtistId = credits[index + 1]?.artistId;
+		const adjacentCredit = sameOrder
+			? existingCredits[index]
+			: existingCredits.find(
+					(item, position) =>
+						item.artistId === credit.artistId &&
+						existingCredits[position + 1]?.artistId === nextArtistId,
+				);
+		const retainedCredit =
+			adjacentCredit ??
+			existingCredits.find((item) => item.artistId === credit.artistId);
+		return {
+			...retainedCredit,
+			...credit,
+			joinPhrase: adjacentCredit?.joinPhrase ?? (nextArtistId ? ", " : ""),
+		};
+	});
+}
+
+export function recordingDraftToRecord(
+	draft: OwnCatalogRecordingDraft,
+	existing: LocalProviderRecord | undefined,
 ): LocalProviderRecord {
 	const key = existing?.key || crypto.randomUUID();
 	const metadata = structuredClone(existing?.metadataValues ?? {});
-	const title = draft.title;
-	const isrcs = splitList(draft.isrcs);
-	const explicit = advisory(draft.explicit);
+	const title = draft.title.trim();
+	const artistIds = draft.credits.map((credit) => credit.artistId);
 	const set = (metadataKey: string, values: string[]) => {
 		if (values.some(Boolean)) metadata[metadataKey] = values;
 		else delete metadata[metadataKey];
 	};
 	set("title", title ? [title] : []);
-	set("isrc", isrcs);
-	set("explicitstatus", explicit ? [explicit] : []);
 	return {
 		...existing,
 		id: existing?.id || `local-${key}`,
 		key,
 		provider: "Local",
 		title,
-		artistIds: [...draft.artistIds],
+		artistIds,
 		duration_ms:
 			existing &&
 			draft.durationInput === formatLocalDuration(existing.duration_ms)
 				? existing.duration_ms
 				: parseLocalDuration(draft.durationInput),
-		disambiguation: draft.disambiguation,
-		explicit: draft.explicit,
-		isrcs: draft.isrcs,
+		disambiguation: existing?.disambiguation ?? "",
+		explicit: existing?.explicit ?? "",
+		isrcs: existing?.isrcs ?? "",
 		tags: draft.tags,
-		credits: syncCredits(existing, draft.artistIds, artists),
+		credits: recordingCredits(existing, draft.credits),
 		metadataValues: metadata,
 		...genreRecordFields(draft.genres),
 	};

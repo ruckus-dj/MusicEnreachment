@@ -55,7 +55,6 @@ import {
   writeCatalogRecord,
 } from "../local-release/localReleaseWrites";
 import { useProviderGenreCatalog } from "../local-release/ProviderCatalogGenreField";
-import { OwnCatalogRecordingForm } from "./OwnCatalogRecordEditors";
 import { ownCatalogDetailsViewProps } from "./ownCatalogDetailModel";
 import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
 import {
@@ -70,6 +69,7 @@ import {
   ownCatalogTypes,
   type RecordingFormDraft,
   recordingDraftToWrite,
+  recordingRecordToDraft,
   releaseDraftToWrite,
   releaseRecordRecordings,
   releaseRecordToFormValues,
@@ -756,21 +756,14 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       } else if (kind === "recordings") {
         editorView = {
           kind: "recordings",
-          eyebrow: m("eyebrow"),
-          title: record ? m("editRecording") : m("createRecording"),
-          backLabel: m("back"),
-          backDisabled: saving,
-          onBack: back,
-          element: (
-            <OwnCatalogRecordingForm
-              locale={locale}
-              record={record}
-              findArtists={findArtists}
-              saveArtist={createArtist}
-              onSave={(draft) => saveRecordingDraft(draft, record)}
-              onBack={back}
-            />
-          ),
+          actor: {
+            initialValues: record ? recordingRecordToDraft(record) : undefined,
+            findArtists,
+            saveArtist: createArtist,
+            genreCatalogProvider: LiveReleaseGenreCatalogProvider,
+            onSave: (draft) => saveRecordingDraft(draft, record),
+            onBack: back,
+          },
         };
       } else {
         editorView = {

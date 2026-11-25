@@ -1,14 +1,10 @@
-import {
-	type ComponentProps,
-	type Dispatch,
-	type SetStateAction,
-	useState,
-} from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { useHashLocation } from "../../../app/navigation/hashLocation";
 import type { GenrePickerCatalog } from "../../../ui/features/library/GenrePicker";
 import type {
 	LocalCatalogArtistEditorActor,
+	LocalCatalogRecordingEditorActor,
 	LocalCatalogReleaseEditorActor,
 	LocalCatalogScreenViewProps,
 } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
@@ -29,7 +25,6 @@ import {
 } from "../genres/catalogue";
 import { useGenrePickerDemoProvider } from "../library/metadata/useGenrePickerDemoProvider";
 import { DemoReleaseGenreCatalogProvider } from "./DemoReleaseGenreCatalogProvider";
-import type { LocalCatalogRecordingForm } from "./LocalCatalogRecordEditors";
 import { localCatalogDetailsViewProps } from "./localCatalogDetailsView";
 import {
 	type LocalCatalogMessage,
@@ -40,7 +35,6 @@ import {
 	artistRecordToDraft,
 	filterLocalCatalogRecords,
 	type LocalCatalogType,
-	type LocalRecordingFormDraft,
 	localCatalogArtistNames,
 	localCatalogFindArtists,
 	localCatalogFindRecordings,
@@ -53,6 +47,7 @@ import {
 	localCatalogReleaseTitle,
 	localCatalogTypes,
 	recordingDraftToRecord,
+	recordingRecordToDraft,
 	releaseDraftToRecord,
 	releaseRecordToFormValues,
 } from "./localCatalogModel";
@@ -82,7 +77,7 @@ export type LocalCatalogEditorBinding =
 	  }
 	| {
 			kind: "recordings";
-			props: Omit<ComponentProps<typeof LocalCatalogRecordingForm>, "locale">;
+			actor: LocalCatalogRecordingEditorActor;
 	  }
 	| {
 			kind: "artists";
@@ -265,15 +260,11 @@ export function useLocalCatalogScreenDemoProvider({
 				{
 					title: data.title,
 					durationInput: formatLocalDuration(data.duration_ms),
-					disambiguation: "",
-					explicit: "",
-					isrcs: "",
 					tags: "",
 					genres: [],
-					artistIds: data.credits?.map((credit) => credit.artistId) ?? [],
+					credits: data.credits ?? [],
 				},
 				undefined,
-				state.items.artists,
 			),
 			duration_ms: data.duration_ms ?? null,
 			credits: data.credits,
@@ -311,6 +302,20 @@ export function useLocalCatalogScreenDemoProvider({
 			name: record.name ?? "",
 			provider: record.provider,
 		};
+	};
+
+	const findArtists = async (
+		query: string,
+		signal?: AbortSignal,
+	): Promise<readonly LocalReleaseArtist[]> => {
+		if (signal?.aborted) return [];
+		return localCatalogFindArtists(state.items.artists, query).map(
+			(artist) => ({
+				id: artist.id,
+				name: artist.name ?? "",
+				provider: artist.provider,
+			}),
+		);
 	};
 
 	const openDetails = (kind: LocalCatalogType, record: LocalProviderRecord) => {
@@ -413,18 +418,17 @@ export function useLocalCatalogScreenDemoProvider({
 			} else if (kind === "recordings") {
 				editor = {
 					kind,
-					props: {
-						record,
-						artists: state.items.artists,
-						genresLoaded,
-						onLoadGenres,
-						genreOptions,
-						onSave: (draft: LocalRecordingFormDraft) => {
-							const saved = recordingDraftToRecord(
-								draft,
-								record,
-								state.items.artists,
-							);
+					actor: {
+						initialValues: record
+							? recordingRecordToDraft(record, state.items.artists)
+							: undefined,
+						findArtists,
+						saveArtist: appendArtist,
+						genreCatalogProvider: DemoReleaseGenreCatalogProvider,
+						genreCatalogModel: releaseGenreCatalog,
+						genreCatalogSelection: releaseGenreSelection,
+						onSave: (draft) => {
+							const saved = recordingDraftToRecord(draft, record);
 							commitRecord("recordings", saved, !record);
 						},
 						onBack: back,

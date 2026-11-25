@@ -1,8 +1,8 @@
-import type { ComponentProps, ReactElement, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { OwnCatalogArtistEditor } from "./OwnCatalogArtistEditor";
 import { OwnCatalogDetailsView } from "./OwnCatalogDetailsView";
-import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import { OwnCatalogList, type OwnCatalogListProps } from "./OwnCatalogList";
+import { OwnCatalogRecordingEditor } from "./OwnCatalogRecordingEditor";
 import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
 
 /**
@@ -24,22 +24,22 @@ export type LocalCatalogArtistEditorActor = Omit<
 >;
 
 /**
+ * Host-ready data for the portable recording actor: initial draft, artist
+ * lookup actions, typed genre catalog and save/back actions only.
+ */
+export type LocalCatalogRecordingEditorActor = Omit<
+  ComponentProps<typeof OwnCatalogRecordingEditor>,
+  "locale"
+>;
+
+/**
  * An independent editor actor, already composed by the facade. The view keeps
- * the screen shell; the facade supplies the localized labels for the hosted
- * recording actor.
+ * the screen shell.
  */
 export type LocalCatalogEditorSlot =
   | { kind: "releases"; actor: LocalCatalogReleaseEditorActor }
-  | { kind: "artists"; actor: LocalCatalogArtistEditorActor }
-  | {
-      kind: "recordings";
-      eyebrow: string;
-      title: string;
-      backLabel: string;
-      backDisabled?: boolean;
-      onBack: () => void;
-      element: ReactElement;
-    };
+  | { kind: "recordings"; actor: LocalCatalogRecordingEditorActor }
+  | { kind: "artists"; actor: LocalCatalogArtistEditorActor };
 
 export type LocalCatalogScreenViewProps = {
   list: OwnCatalogListProps;
@@ -81,22 +81,14 @@ export function LocalCatalogScreenView({
       <OwnCatalogReleaseEditor locale={list.locale} {...editor.actor} />,
     );
   }
+  if (editor?.kind === "recordings") {
+    return shell(
+      <OwnCatalogRecordingEditor locale={list.locale} {...editor.actor} />,
+    );
+  }
   if (editor?.kind === "artists") {
     return shell(
       <OwnCatalogArtistEditor locale={list.locale} {...editor.actor} />,
-    );
-  }
-  if (editor) {
-    return shell(
-      <OwnCatalogEditorShell
-        eyebrow={editor.eyebrow}
-        title={editor.title}
-        backLabel={editor.backLabel}
-        backDisabled={editor.backDisabled}
-        onBack={editor.onBack}
-      >
-        {editor.element}
-      </OwnCatalogEditorShell>,
     );
   }
   return shell(<OwnCatalogList {...list} />, true);

@@ -5,6 +5,7 @@ import type {
   LocalProviderWrite,
 } from "../../api/generated/client.schemas";
 import type { OwnCatalogArtistDraft } from "../../ui/features/local-catalog/OwnCatalogArtistEditor";
+import type { OwnCatalogRecordingDraft } from "../../ui/features/local-catalog/OwnCatalogRecordingEditor";
 import type { OwnCatalogMessage } from "../../ui/features/local-catalog/ownCatalogMessages";
 import {
   formatLocalDuration,
@@ -14,7 +15,6 @@ import {
   parseLocalDuration,
 } from "../../ui/features/local-release/localReleaseFormModel";
 import type { LocalReleaseFormInitialValues } from "../../ui/features/local-release/useLocalReleaseForm";
-import type { GenreReference } from "../library/GenreMetadataEditor";
 
 export const OWN_CATALOG_PAGE_SIZE = 50;
 
@@ -302,13 +302,23 @@ export function artistDraftToWrite(draft: ArtistFormDraft): LocalProviderWrite {
   };
 }
 
-export type RecordingFormDraft = {
-  title: string;
-  durationInput: string;
-  tags: string;
-  genres: GenreReference[];
-  credits: LocalRecordingCreditSelection[];
-};
+export type RecordingFormDraft = OwnCatalogRecordingDraft;
+
+export function recordingRecordToDraft(
+  item: LocalProviderItem,
+): RecordingFormDraft {
+  return {
+    title: item.title ?? "",
+    durationInput: formatLocalDuration(item.duration_ms),
+    tags: (item.tags ?? []).join(", "),
+    genres: (item.genres ?? []).map((genre) => ({
+      id: genre.id,
+      name: genre.name,
+      source_name: genre.source_name,
+    })),
+    credits: recordingCreditsFromItem(item),
+  };
+}
 
 export function recordingDuration(
   existing: LocalProviderItem | undefined,
