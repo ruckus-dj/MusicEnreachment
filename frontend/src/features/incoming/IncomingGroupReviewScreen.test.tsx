@@ -551,9 +551,12 @@ it("restores the selected release from the URL without another first release", a
     groupId: ids.group,
     releaseId: ids.releaseTwo,
   });
+  const heading = screen.getByRole("heading", { name: /^Сопоставление/ });
   expect(await screen.findByLabelText("Издание (выбор вручную)")).toHaveValue(
     ids.releaseTwo,
   );
+  expect(screen.getByRole("heading", { name: /^Сопоставление/ })).toBe(heading);
+  expect(heading).toHaveFocus();
 });
 
 it("changes locale without resetting assignments, preview, feedback, or queries", async () => {

@@ -62,7 +62,6 @@ docs/app-design-react/src/features/matching/MatchingReleasePreparation.tsx
 docs/app-design-react/src/features/matching/MatchingReceiptPublicationReadyView.tsx
 docs/app-design-react/src/features/matching/MatchingReceiptPublicationView.tsx
 docs/app-design-react/src/features/matching/MatchingScreen.tsx
-docs/app-design-react/src/features/matching/MatchingScreenView.tsx
 docs/app-design-react/src/features/matching/MatchingSearchPicker.tsx
 docs/app-design-react/src/features/matching/matchingMessages.ts
 docs/app-design-react/src/features/matching/matchingLinks.ts

@@ -67,8 +67,8 @@ source channel, а fixture макета такого происхождения 
 рассчитывает допустимость и меняет данные. Отделение представления в макете
 не считается парой файлов и не означает, что приложение уже его использует.
 
-В макете отделены представления «Сопоставления» (`MatchingScreenView.tsx`)
-и публикации из сохранённых связей (`MatchingReceiptPublicationReadyView.tsx`).
+В макете отделено представление публикации из сохранённых связей
+(`MatchingReceiptPublicationReadyView.tsx`).
 Разметка редактора метаданных,
 выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
 полей и сохранения (`MetadataEditorView.tsx`, `GenrePickerView.tsx`,
@@ -99,6 +99,7 @@ source channel, а fixture макета такого происхождения 
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
 | Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
 | Сопоставление: секция поиска, подготовки и создания издания | `features/matching/MatchingReviewSearchView.tsx` | `features/matchingWorkspace/MatchingReviewSearchView.tsx` |
+| Сопоставление: экран группы, рабочая область, предпросмотр назначений и результат сохранения связей | `features/matching/MatchingScreenView.tsx` | `features/matchingWorkspace/MatchingScreenView.tsx`. Привязка записи на позиции остаётся сценарием макета; реальные проверки и доступность действий определяет приложение |
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
 | Собственный каталог: экран списка, карточки и оболочки редакторов | `features/local-catalog/`: `LocalCatalogScreenView.tsx`, `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/`. Состав полей и связанных записей зависит от провайдера; наличие поля в макете не подтверждает его сохранение через API |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |

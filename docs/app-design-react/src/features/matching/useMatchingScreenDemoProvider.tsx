@@ -138,11 +138,13 @@ export function useMatchingScreenDemoProvider({
 		return {
 			kind: "receipt",
 			locale,
-			backHref,
-			backLabel,
-			title: matchingMessage(locale, "matchingTitle", {
-				group: receipt.groupTitle,
-			}),
+			heading: {
+				backHref,
+				backLabel,
+				title: matchingMessage(locale, "matchingTitle", {
+					group: receipt.groupTitle,
+				}),
+			},
 			body: publicationOpen
 				? {
 						kind: "publication",
@@ -195,9 +197,11 @@ export function useMatchingScreenDemoProvider({
 		return {
 			kind: "missing",
 			locale,
-			backHref,
-			backLabel,
-			title: matchingMessage(locale, "groupNotFound"),
+			heading: {
+				backHref,
+				backLabel,
+				title: matchingMessage(locale, "groupNotFound"),
+			},
 		};
 	state.groupId = group.id;
 	const target = findTarget(group, releases, providers);
@@ -205,9 +209,11 @@ export function useMatchingScreenDemoProvider({
 		return {
 			kind: "missing",
 			locale,
-			backHref,
-			backLabel,
-			title: matchingMessage(locale, "targetNotFound"),
+			heading: {
+				backHref,
+				backLabel,
+				title: matchingMessage(locale, "targetNotFound"),
+			},
 		};
 	const tracks = target.tracks;
 	const assignments = getDraft(group, files, providers, releases);
