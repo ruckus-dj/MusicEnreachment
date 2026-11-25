@@ -4,6 +4,7 @@ import type {
   LocalProviderItem,
   LocalProviderWrite,
 } from "../../api/generated/client.schemas";
+import type { OwnCatalogArtistDraft } from "../../ui/features/local-catalog/OwnCatalogArtistEditor";
 import type { OwnCatalogMessage } from "../../ui/features/local-catalog/ownCatalogMessages";
 import {
   formatLocalDuration,
@@ -277,12 +278,20 @@ export function releaseDraftToWrite(
   };
 }
 
-export type ArtistFormDraft = {
-  name: string;
-  sortName: string;
-  tags: string;
-  genres: GenreReference[];
-};
+export type ArtistFormDraft = OwnCatalogArtistDraft;
+
+export function artistRecordToDraft(item: LocalProviderItem): ArtistFormDraft {
+  return {
+    name: item.name ?? "",
+    sortName: item.sort_name ?? "",
+    tags: (item.tags ?? []).join(", "),
+    genres: (item.genres ?? []).map((genre) => ({
+      id: genre.id,
+      name: genre.name,
+      source_name: genre.source_name,
+    })),
+  };
+}
 
 export function artistDraftToWrite(draft: ArtistFormDraft): LocalProviderWrite {
   return {

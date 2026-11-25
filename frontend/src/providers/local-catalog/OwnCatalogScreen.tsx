@@ -55,15 +55,13 @@ import {
   writeCatalogRecord,
 } from "../local-release/localReleaseWrites";
 import { useProviderGenreCatalog } from "../local-release/ProviderCatalogGenreField";
-import {
-  OwnCatalogArtistForm,
-  OwnCatalogRecordingForm,
-} from "./OwnCatalogRecordEditors";
+import { OwnCatalogRecordingForm } from "./OwnCatalogRecordEditors";
 import { ownCatalogDetailsViewProps } from "./ownCatalogDetailModel";
 import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
 import {
   type ArtistFormDraft,
   artistDraftToWrite,
+  artistRecordToDraft,
   OWN_CATALOG_PAGE_SIZE,
   type OwnCatalogType,
   ownCatalogPageCount,
@@ -777,19 +775,12 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       } else {
         editorView = {
           kind: "artists",
-          eyebrow: m("eyebrow"),
-          title: record ? m("editArtist") : m("createArtist"),
-          backLabel: m("back"),
-          backDisabled: saving,
-          onBack: back,
-          element: (
-            <OwnCatalogArtistForm
-              locale={locale}
-              record={record}
-              onSave={(draft) => saveArtistDraft(draft, record)}
-              onBack={back}
-            />
-          ),
+          actor: {
+            initialValues: record ? artistRecordToDraft(record) : undefined,
+            genreCatalogProvider: LiveReleaseGenreCatalogProvider,
+            onSave: (draft) => saveArtistDraft(draft, record),
+            onBack: back,
+          },
         };
       }
     }

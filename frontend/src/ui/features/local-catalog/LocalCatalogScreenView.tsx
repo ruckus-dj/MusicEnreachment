@@ -1,4 +1,5 @@
 import type { ComponentProps, ReactElement, ReactNode } from "react";
+import { OwnCatalogArtistEditor } from "./OwnCatalogArtistEditor";
 import { OwnCatalogDetailsView } from "./OwnCatalogDetailsView";
 import { OwnCatalogEditorShell } from "./OwnCatalogEditorShell";
 import { OwnCatalogList, type OwnCatalogListProps } from "./OwnCatalogList";
@@ -14,14 +15,24 @@ export type LocalCatalogReleaseEditorActor = Omit<
 >;
 
 /**
+ * Host-ready data for the portable artist actor: initial draft, typed genre
+ * catalog and save/back actions only.
+ */
+export type LocalCatalogArtistEditorActor = Omit<
+  ComponentProps<typeof OwnCatalogArtistEditor>,
+  "locale"
+>;
+
+/**
  * An independent editor actor, already composed by the facade. The view keeps
- * the screen shell and the create/edit heading placement; the facade supplies
- * the localized labels for the shelled actors.
+ * the screen shell; the facade supplies the localized labels for the hosted
+ * recording actor.
  */
 export type LocalCatalogEditorSlot =
   | { kind: "releases"; actor: LocalCatalogReleaseEditorActor }
+  | { kind: "artists"; actor: LocalCatalogArtistEditorActor }
   | {
-      kind: "recordings" | "artists";
+      kind: "recordings";
       eyebrow: string;
       title: string;
       backLabel: string;
@@ -68,6 +79,11 @@ export function LocalCatalogScreenView({
   if (editor?.kind === "releases") {
     return shell(
       <OwnCatalogReleaseEditor locale={list.locale} {...editor.actor} />,
+    );
+  }
+  if (editor?.kind === "artists") {
+    return shell(
+      <OwnCatalogArtistEditor locale={list.locale} {...editor.actor} />,
     );
   }
   if (editor) {

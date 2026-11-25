@@ -1,3 +1,4 @@
+import type { OwnCatalogArtistDraft } from "../../../ui/features/local-catalog/OwnCatalogArtistEditor";
 import {
 	formatLocalDuration,
 	type LocalReleaseDraft,
@@ -264,6 +265,21 @@ function splitList(value: string) {
 
 const advisory = (value: string) =>
 	value === "true" ? "1" : value === "false" ? "2" : "";
+
+export function artistRecordToDraft(
+	record: LocalProviderRecord,
+): OwnCatalogArtistDraft {
+	return {
+		name: record.name ?? "",
+		sortName: record.sortName ?? "",
+		tags: record.tags ?? "",
+		genres: (record.genres ?? []).map((id) => ({
+			id,
+			name: record.genreNamesById?.[id] ?? id,
+			source_name: record.genreNamesById?.[id] ?? id,
+		})),
+	};
+}
 
 export type LocalArtistFormDraft = {
 	name: string;

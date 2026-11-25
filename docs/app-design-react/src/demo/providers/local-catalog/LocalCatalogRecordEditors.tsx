@@ -12,10 +12,7 @@ import {
 	type LocalCatalogMessage,
 	localCatalogMessage,
 } from "./localCatalogMessage";
-import type {
-	LocalArtistFormDraft,
-	LocalRecordingFormDraft,
-} from "./localCatalogModel";
+import type { LocalRecordingFormDraft } from "./localCatalogModel";
 import type { LocalProviderRecord } from "./localProviderModel";
 
 type GenreOption = { id: string; name: string };
@@ -25,85 +22,6 @@ function genreReferences(record: LocalProviderRecord | undefined) {
 		id,
 		name: record?.genreNamesById?.[id] ?? id,
 	}));
-}
-
-export function LocalCatalogArtistForm({
-	locale,
-	record,
-	genresLoaded,
-	onLoadGenres,
-	genreOptions,
-	onSave,
-	onBack,
-}: {
-	locale: "ru" | "en";
-	record?: LocalProviderRecord;
-	genresLoaded: boolean;
-	onLoadGenres?: () => void | Promise<void>;
-	genreOptions?: readonly GenreOption[];
-	onSave: (draft: LocalArtistFormDraft) => void;
-	onBack: () => void;
-}) {
-	const m = (key: LocalCatalogMessage) => localCatalogMessage(locale, key);
-	const [name, setName] = useState(record?.name ?? "");
-	const [sortName, setSortName] = useState(record?.sortName ?? "");
-	const [disambiguation, setDisambiguation] = useState(
-		record?.disambiguation ?? "",
-	);
-	const [tags, setTags] = useState(record?.tags ?? "");
-	const [genres, setGenres] = useState<GenreReference[]>(() =>
-		genreReferences(record),
-	);
-	return (
-		<OwnCatalogRecordEditorView
-			notice={m("formRequiredNotice")}
-			fields={[
-				{
-					label: `${m("name")} · ${m("required")}`,
-					value: name,
-					onChange: setName,
-					required: true,
-				},
-				{
-					label: `${m("sortName")} · ${m("optional")}`,
-					value: sortName,
-					onChange: setSortName,
-				},
-				{
-					label: `${m("disambiguation")} · ${m("optional")}`,
-					value: disambiguation,
-					onChange: setDisambiguation,
-				},
-				{
-					label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
-					value: tags,
-					onChange: setTags,
-				},
-			]}
-			genre={
-				<GenrePicker
-					value={genres}
-					onChange={setGenres}
-					loaded={genresLoaded}
-					onLoad={onLoadGenres}
-					options={genreOptions}
-				/>
-			}
-			save={{
-				label: m("save"),
-				disabled: !name.trim(),
-				onPress: () =>
-					onSave({
-						name: name.trim(),
-						sortName: sortName.trim(),
-						disambiguation: disambiguation.trim(),
-						tags,
-						genres,
-					}),
-			}}
-			cancel={{ label: m("cancel"), onPress: onBack }}
-		/>
-	);
 }
 
 export function LocalCatalogRecordingForm({

@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useContext } from "react";
+import type { GenreMetadataOwner } from "../library/GenreMetadataEditorView";
 import {
   GenrePicker,
   type GenrePickerCatalog,
@@ -57,14 +58,16 @@ export function LocalReleaseGenreCatalogBinder({
 
 /**
  * Shared Local release genre leaf. The catalog and its actions come from the
- * mounted host provider; this view keeps the canonical release-form labels.
+ * mounted host provider; this view keeps the canonical genre label for the
+ * requested owner.
  */
 export function LocalReleaseGenreCatalogOutlet({
   locale,
+  owner = "release",
   value,
   onChange,
   disabled,
-}: LocalReleaseGenreFieldProps) {
+}: LocalReleaseGenreFieldProps & { owner?: GenreMetadataOwner }) {
   const binding = useContext(LocalReleaseGenreCatalogContext);
   if (!binding) throw new Error("missing Local release genre catalog");
   const copy = genreMessages[locale];
@@ -81,7 +84,7 @@ export function LocalReleaseGenreCatalogOutlet({
       value={[...displayed]}
       onChange={change}
       editing
-      label={copy.label.release}
+      label={copy.label[owner]}
       copy={copy}
       disabled={Boolean(disabled)}
     />

@@ -5,10 +5,7 @@ import {
 } from "../../../ui/app/ApplicationRouteOutlet";
 import type { LocalCatalogEditorSlot } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
 import type { Locale } from "../../../ui/i18n/types";
-import {
-	LocalCatalogArtistForm,
-	LocalCatalogRecordingForm,
-} from "./LocalCatalogRecordEditors";
+import { LocalCatalogRecordingForm } from "./LocalCatalogRecordEditors";
 import {
 	type LocalCatalogMessage,
 	localCatalogMessage,
@@ -45,14 +42,7 @@ function editorSlot(
 			element: <LocalCatalogRecordingForm locale={locale} {...editor.props} />,
 		};
 	}
-	return {
-		kind: "artists",
-		eyebrow: m("eyebrow"),
-		title: editor.props.record ? m("editArtist") : m("createArtist"),
-		backLabel: m("back"),
-		onBack: editor.props.onBack,
-		element: <LocalCatalogArtistForm locale={locale} {...editor.props} />,
-	};
+	return { kind: "artists", actor: editor.actor };
 }
 
 /** Binds demo data to the portable Local catalog route. */

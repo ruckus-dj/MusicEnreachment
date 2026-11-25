@@ -8,9 +8,11 @@ import { useI18n } from "../../../app/i18n/host";
 import { useHashLocation } from "../../../app/navigation/hashLocation";
 import type { GenrePickerCatalog } from "../../../ui/features/library/GenrePicker";
 import type {
+	LocalCatalogArtistEditorActor,
 	LocalCatalogReleaseEditorActor,
 	LocalCatalogScreenViewProps,
 } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
+import type { OwnCatalogArtistDraft } from "../../../ui/features/local-catalog/OwnCatalogArtistEditor";
 import { ownCatalogMessage } from "../../../ui/features/local-catalog/ownCatalogMessages";
 import type { LocalReleaseGenreSelectionAdapter } from "../../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
 import {
@@ -27,10 +29,7 @@ import {
 } from "../genres/catalogue";
 import { useGenrePickerDemoProvider } from "../library/metadata/useGenrePickerDemoProvider";
 import { DemoReleaseGenreCatalogProvider } from "./DemoReleaseGenreCatalogProvider";
-import type {
-	LocalCatalogArtistForm,
-	LocalCatalogRecordingForm,
-} from "./LocalCatalogRecordEditors";
+import type { LocalCatalogRecordingForm } from "./LocalCatalogRecordEditors";
 import { localCatalogDetailsViewProps } from "./localCatalogDetailsView";
 import {
 	type LocalCatalogMessage,
@@ -38,8 +37,8 @@ import {
 } from "./localCatalogMessage";
 import {
 	artistDraftToRecord,
+	artistRecordToDraft,
 	filterLocalCatalogRecords,
-	type LocalArtistFormDraft,
 	type LocalCatalogType,
 	type LocalRecordingFormDraft,
 	localCatalogArtistNames,
@@ -87,7 +86,7 @@ export type LocalCatalogEditorBinding =
 	  }
 	| {
 			kind: "artists";
-			props: Omit<ComponentProps<typeof LocalCatalogArtistForm>, "locale">;
+			actor: LocalCatalogArtistEditorActor;
 	  };
 
 export type LocalCatalogScreenModel = Omit<
@@ -434,13 +433,21 @@ export function useLocalCatalogScreenDemoProvider({
 			} else {
 				editor = {
 					kind,
-					props: {
-						record,
-						genresLoaded,
-						onLoadGenres,
-						genreOptions,
-						onSave: (draft: LocalArtistFormDraft) => {
-							const saved = artistDraftToRecord(draft, record);
+					actor: {
+						initialValues: record ? artistRecordToDraft(record) : undefined,
+						genreCatalogProvider: DemoReleaseGenreCatalogProvider,
+						genreCatalogModel: releaseGenreCatalog,
+						genreCatalogSelection: releaseGenreSelection,
+						onSave: (draft: OwnCatalogArtistDraft) => {
+							const saved = artistDraftToRecord(
+								{
+									...draft,
+									name: draft.name.trim(),
+									sortName: draft.sortName.trim(),
+									disambiguation: record?.disambiguation ?? "",
+								},
+								record,
+							);
 							commitRecord("artists", saved, !record);
 						},
 						onBack: back,
