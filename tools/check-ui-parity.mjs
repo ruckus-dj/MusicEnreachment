@@ -1,195 +1,36 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { posix, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const prototype = new URL("../docs/app-design-react/src/", import.meta.url);
-const application = new URL("../frontend/src/", import.meta.url);
+const prototypeUi = new URL("../docs/app-design-react/src/ui/", import.meta.url);
+const applicationUi = new URL("../frontend/src/ui/", import.meta.url);
+const prototypeLabel = "docs/app-design-react/src/ui";
+const applicationLabel = "frontend/src/ui";
 
-// Register each portable UI module after its first port. A prototype-first
-// revision may lead the port only with exact bytes recorded in the receipt.
-const pairs = [
-  ["routes", "routes", ["ShellView.tsx"]],
-  [
-    "components",
-    "components",
-    [
-      "AppButton.tsx",
-      "DirectoryPathFieldView.tsx",
-      "DirectoryPickerMessages.ts",
-      "DirectoryPickerView.tsx",
-      "LanguageControl.tsx",
-      "ThemeControl.tsx",
-      "themePreference.ts",
-    ],
-  ],
-  ["i18n", "i18n", ["I18nProvider.tsx", "createNamespace.ts", "locale.ts", "translator.ts", "types.ts"]],
-  ["i18n/namespaces", "i18n/namespaces", ["shell.ts"]],
-  ["metadata", "features/library", ["metadataEditorFocus.ts"]],
-  ["features/incoming", "features/incoming", ["IncomingFileActions.tsx", "IncomingGroupsOverviewView.tsx", "IncomingGroupsPanel.tsx", "IncomingScreenView.tsx"]],
-  ["features/publication", "features/publication", ["ContextPublicationPreviewView.tsx"]],
-  ["features/operations", "features/operations", ["MatchingRecheckAbandonDialog.tsx", "OperationsList.tsx", "OperationsScreenView.tsx", "operationsScreenCopy.ts"]],
-  [
-    "features/sources",
-    "features/sources",
-    [
-      "SourceAnalysisSteps.tsx",
-      "SourceArtifactCleanupView.tsx",
-      "SourceInspectorView.tsx",
-      "SourceInventoryPanel.tsx",
-      "SourceInventoryView.tsx",
-      "SourceRegistrationView.tsx",
-      "SourceRootDetailView.tsx",
-      "SourceRootSettingsView.tsx",
-      "SourceRootHeadingView.tsx",
-      "SourceRootList.tsx",
-      "SourceListHeadingView.tsx",
-      "SourceListPageView.tsx",
-      "SourceRootOverviewView.tsx",
-      "SourceRootRemovalDialog.tsx",
-      "SourceScanPanel.tsx",
-      "SourceTechnicalResult.tsx",
-      "sourceInspectorMessages.ts",
-      "sourceInspectorModel.ts",
-    ],
-  ],
-  [
-    "features/settings",
-    "features/settings",
-    [
-      "GenreCatalogView.tsx",
-      "SettingsConflictDialog.tsx",
-      "SettingsDraftConflictNotice.tsx",
-      "SettingsFoldersSection.tsx",
-      "SettingsGeneralSection.tsx",
-      "SettingsLeaveDialog.tsx",
-      "SettingsManagedPackageCards.tsx",
-      "SettingsOutputResetDialog.tsx",
-      "SettingsPageFrame.tsx",
-      "SettingsProvidersSection.tsx",
-      "SettingsScreenView.tsx",
-      "SettingsTabs.tsx",
-      "SettingsToolInstallDialog.tsx",
-      "SettingsToolsMoveReview.tsx",
-      "SettingsToolsMoveReviewDialog.tsx",
-      "SettingsToolsMoveEditor.tsx",
-      "SettingsToolsOverview.tsx",
-    ],
-  ],
-  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupFeedbackView.tsx", "SetupGenreCatalogView.tsx", "SetupMusicBrainzFields.tsx", "SetupProvidersView.tsx", "SetupPublicationOptions.tsx", "SetupScreenView.tsx", "SetupSummaryView.tsx", "SetupToolCardsView.tsx", "SetupToolConfirmationView.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
-  ["features/tools", "features/tools", ["GitHubTokenFormView.tsx", "toolMessages.ts"]],
-  [
-    "features/library",
-    "features/library",
-    [
-      "AggregatePublicationPreviewView.tsx",
-      "ArtistScreenView.tsx",
-      "catalogueMessages.ts",
-      "catalogueStyles.ts",
-      "ArtistMetadataCard.tsx",
-      "ContributorRowView.tsx",
-      "GenrePicker.tsx",
-      "LibraryAlbumListView.tsx",
-      "LibraryAlbumPositionsView.tsx",
-      "LibraryArtistCards.tsx",
-      "LibraryArtistHeadingView.tsx",
-      "LibraryArtistReleaseTracksView.tsx",
-      "LibraryEditionArtwork.tsx",
-      "LibraryEditionCard.tsx",
-      "LibraryCatalogFilterView.tsx",
-      "LibraryCatalogControls.tsx",
-      "LibraryCatalogPageView.tsx",
-      "LibraryDeletionDialogView.tsx",
-      "LibraryMissingEditionView.tsx",
-      "LibraryPaginationView.tsx",
-      "LibraryPositionHeadingView.tsx",
-      "LibraryPositionIdentityView.tsx",
-      "LibraryPositionSourcesView.tsx",
-      "TrackScreenView.tsx",
-      "LibraryPositionTagsDisclosure.tsx",
-      "LibraryPositionWorkspace.tsx",
-      "LibraryPositionTechnicalDetailsView.tsx",
-      "LibrarySelectionDockView.tsx",
-      "LibrarySelectionPreviewView.tsx",
-      "LibrarySelectionReviewView.tsx",
-      "LibraryTagComparisonTable.tsx",
-      "LibraryTrackListView.tsx",
-      "MetadataCardActions.tsx",
-      "MetadataEditorView.tsx",
-      "MetadataFieldPresentation.tsx",
-      "MovementFieldsView.tsx",
-      "WorksMovementSectionView.tsx",
-      "WorkRowsView.tsx",
-      "PublicationAudioMeasurementsView.tsx",
-      "PublicationCurrentSummaryView.tsx",
-      "ProviderGenreBaselineRow.tsx",
-      "ReleaseOverviewView.tsx",
-      "PublicationPreviewDetailsView.tsx",
-      "PublicationTagSnapshotView.tsx",
-      "TagSnapshotView.tsx",
-      "firstPublicationPreviewMessages.ts",
-      "genreMessages.ts",
-      "libraryArtistCardStyles.ts",
-      "libraryTagComparisonFields.ts",
-    ],
-  ],
-  [
-    "features/matching",
-    "features/matchingWorkspace",
-    [
-      "ManualReleasePreparationView.tsx",
-      "ManualSearchView.tsx",
-      "MatchingBoard.tsx",
-      "MatchingDnD.tsx",
-      "MatchingEvidenceInspector.tsx",
-      "MatchingLinkResultView.tsx",
-      "useMatchingLinkResultFocus.ts",
-      "MatchingPreview.tsx",
-      "MatchingReceiptPublicationFrame.tsx",
-      "MatchingReceiptPublicationOutcomeView.tsx",
-      "MatchingReviewSearchView.tsx",
-      "MatchingScreenView.tsx",
-      "MatchingWorkspaceLayout.tsx",
-      "evidenceOverrideMessages.ts",
-      "index.ts",
-      "manualReleasePreparationContract.ts",
-      "manualSearchContract.ts",
-      "matchingBoardMessages.ts",
-      "matchingBoardStyles.ts",
-      "matchingLinksCopy.ts",
-      "matchingSourcePath.ts",
-      "scoring.ts",
-      "sourceFileOrder.ts",
-      "types.ts",
-    ],
-  ],
-  [
-    "features/local-release",
-    "features/local-release",
-    [
-      "LocalRecordingArtistField.tsx",
-      "LocalReleaseCancelDialog.tsx",
-      "LocalReleaseEditor.tsx",
-      "LocalReleaseForm.tsx",
-      "LocalReleaseRecordingPicker.tsx",
-      "localReleaseFormModel.ts",
-      "localReleaseMessages.ts",
-      "localReleaseUi.tsx",
-      "useLocalReleaseForm.ts",
-    ],
-  ],
-  [
-    "features/local-catalog",
-    "features/own-catalog",
-    ["LocalCatalogScreenView.tsx", "OwnCatalogDetailsView.tsx", "OwnCatalogEditorShell.tsx", "OwnCatalogList.tsx", "OwnCatalogPagination.tsx", "OwnCatalogRecordFieldsView.tsx"],
-  ],
-];
-
-const sourcePairs = [
-  ["app/tailwind.css", "styles/index.css"],
-  ...pairs.flatMap(([from, to, files]) =>
-    files.map((file) => [`${from}/${file}`, `${to}/${file}`]),
-  ),
+// Every portable UI module lives at the same path under src/ui/ in both trees.
+// Leads use keys relative to that root. A prototype-first revision may lead the
+// port only with exact bytes recorded in the receipt; applicationSHA256 is null
+// until the first copy of a new module exists.
+const CODE_FILE = /\.[cm]?[jt]sx?$/;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json"];
+// Only dependencies present in both package manifests may cross the UI boundary.
+const RUNTIME_LIBRARIES = new Set(["react", "react-dom", "react-aria-components"]);
+const TEST_LIBRARIES = new Set([
+  "vitest",
+  "@testing-library/react",
+  "@testing-library/jest-dom",
+]);
+const CSS_LIBRARIES = new Set(["tailwindcss"]);
+const HOST_ALIASES = [
+  /^\//,
+  /^@\//,
+  /^~\//,
+  /^@(?:api|app|host|src|ui)\//,
+  /^(?:src|app|api|features|components|styles)\//,
+  /^(?:i18n|routes|navigation|metadata|infrastructure|fixtures|genres|test)\//,
 ];
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -216,7 +57,7 @@ export function compareUiSources(pairs, receipts, readSource, readCopy) {
   let identical = 0;
   const pending = [];
   for (const [from, to] of pairs) {
-    const label = `docs/app-design-react/src/${from} ↔ frontend/src/${to}`;
+    const label = `${prototypeLabel}/${from} ↔ ${applicationLabel}/${to}`;
     const lead = leads.get(from);
     leads.delete(from);
     try {
@@ -225,13 +66,20 @@ export function compareUiSources(pairs, receipts, readSource, readCopy) {
       try {
         copy = readCopy(to);
       } catch (error) {
-        if (error.code !== "ENOENT" || lead?.applicationSHA256 !== null) throw error;
+        if (error.code !== "ENOENT") throw error;
+        if (!lead) {
+          errors.push(`UI source is not ported and has no prototype lead: ${from}`);
+          continue;
+        }
+        if (lead.applicationSHA256 !== null) throw error;
+        copy = null;
       }
       if (copy && source.equals(copy)) {
         identical++;
         if (lead) errors.push(`Remove the completed prototype lead: ${from}`);
       } else if (
-        lead && digest(source) === lead.prototypeSHA256 &&
+        lead &&
+        digest(source) === lead.prototypeSHA256 &&
         (copy ? digest(copy) : null) === lead.applicationSHA256
       ) {
         pending.push(`${label}: ${lead.reason}`);
@@ -244,68 +92,327 @@ export function compareUiSources(pairs, receipts, readSource, readCopy) {
   }
 
   for (const from of leads.keys()) {
-    errors.push(`Prototype lead is not a registered pair: ${from}`);
+    errors.push(`Prototype lead is not a registered UI source: ${from}`);
   }
   return { errors, identical, pending };
 }
 
-function unpairedSources(root, paired, label) {
-  const src = fileURLToPath(root);
-  return readdirSync(src, { recursive: true, withFileTypes: true })
-    .filter((entry) => !entry.isDirectory())
-    .map((entry) =>
-      `${relative(src, entry.parentPath)}/${entry.name}`
-        .replaceAll("\\", "/")
-        .replace(/^\//, ""),
-    )
-    .filter((path) =>
-      !/\.(?:test|spec|d)\./.test(path) &&
-      !/(?:^|\/)\.DS_Store$|\.md$/.test(path) &&
-      !/^(?:test|api\/generated)\//.test(path) &&
-      !paired.has(path),
-    )
-    .map((path) => `${label}/${path}`);
+export function enumerateUiPairs(sourceFiles, copyFiles) {
+  const source = new Set(sourceFiles);
+  const copy = new Set(copyFiles);
+  return {
+    pairs: [...source].sort().map((path) => [path, path]),
+    sourceOnly: [...source].filter((path) => !copy.has(path)).sort(),
+    copyOnly: [...copy].filter((path) => !source.has(path)).sort(),
+  };
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+export function compareUiDirectories(sourceFiles, copyFiles, receipts, readSource, readCopy) {
+  const { pairs, sourceOnly, copyOnly } = enumerateUiPairs(sourceFiles, copyFiles);
+  const result = compareUiSources(pairs, receipts, readSource, readCopy);
+  for (const path of copyOnly) {
+    result.errors.push(`Application-only UI source: ${path}`);
+  }
+  return { ...result, sourceOnly, copyOnly };
+}
+
+function basePackage(specifier) {
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+function isHostAlias(specifier) {
+  return HOST_ALIASES.some((pattern) => pattern.test(specifier));
+}
+
+function relativeTarget(filePath, specifier) {
+  return posix.normalize(posix.join(posix.dirname(filePath), specifier));
+}
+
+function checkAsset(label, filePath, kind, specifier, exists) {
+  const location = `${label}/${filePath}`;
+  if (specifier.includes("\\") || isHostAlias(specifier)) {
+    return `${location}: ${kind} uses a host/API alias: ${specifier}`;
+  }
+  const target = relativeTarget(filePath, specifier);
+  if (target === ".." || target.startsWith("../") || posix.isAbsolute(target)) {
+    return `${location}: ${kind} escapes the UI boundary: ${specifier}`;
+  }
+  if (kind === "@source") {
+    // Globs are permitted inside the tree. After a pattern component, a parent
+    // traversal is ambiguous to globbers and must not be used.
+    if (/[*?{\[][\s\S]*\/\.\.(?:\/|$)/.test(specifier))
+      return `${location}: ${kind} has a parent traversal after a glob: ${specifier}`;
+    return null;
+  }
+  const asset = target.split(/[?#]/, 1)[0];
+  const candidates = kind === "import"
+    ? [asset, ...MODULE_EXTENSIONS.flatMap((ext) => [asset + ext, `${asset}/index${ext}`])]
+    : [asset];
+  if (exists && !candidates.some(exists)) {
+    return `${location}: ${kind} references a missing UI asset: ${specifier}`;
+  }
+  return null;
+}
+
+function checkSpecifier(label, filePath, kind, specifier, exists) {
+  const location = `${label}/${filePath}`;
+  if (kind === "@source") return checkAsset(label, filePath, kind, specifier, exists);
+  if (kind === "url") {
+    if (/^(?:data|https?):/.test(specifier) || specifier.startsWith("#") || specifier === "") {
+      return null;
+    }
+    if (isHostAlias(specifier)) {
+      return `${location}: url uses a host/API alias: ${specifier}`;
+    }
+    // A CSS url() is an asset path even without a leading "./".
+    return checkAsset(label, filePath, kind, specifier, exists);
+  }
+  if (specifier.startsWith(".")) {
+    return checkAsset(label, filePath, kind, specifier, exists);
+  }
+  if (isHostAlias(specifier)) {
+    return `${location}: ${kind} uses a host/API alias: ${specifier}`;
+  }
+  const approved = kind === "import"
+    ? new Set([...RUNTIME_LIBRARIES, ...(TEST_FILE.test(filePath) ? TEST_LIBRARIES : [])])
+    : CSS_LIBRARIES;
+  if (!approved.has(basePackage(specifier))) {
+    return `${location}: Nonapproved UI dependency: ${specifier}`;
+  }
+  return null;
+}
+
+let typeScript;
+
+function loadTypeScript() {
+  if (!typeScript) {
+    try {
+      const requireFrontend = createRequire(
+        new URL("../frontend/package.json", import.meta.url),
+      );
+      typeScript = requireFrontend("typescript");
+    } catch {
+      throw new Error("Install frontend dependencies (task frontend:install) to parse UI imports");
+    }
+  }
+  return typeScript;
+}
+
+function scriptKind(ts, fileName) {
+  if (fileName.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (fileName.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (/\.[cm]?ts$/.test(fileName)) return ts.ScriptKind.TS;
+  return ts.ScriptKind.JS;
+}
+
+export function parseModuleSpecifiers(fileName, text, reportUnsupported = () => undefined) {
+  const ts = loadTypeScript();
+  const source = ts.createSourceFile(
+    fileName,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(ts, fileName),
+  );
+  const specifiers = [];
+  const push = (node) => {
+    if (node && ts.isStringLiteralLike(node)) specifiers.push(node.text);
+    else reportUnsupported("computed module reference");
+  };
+  const importMeta = (node) => ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword;
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier) push(node.moduleSpecifier);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      push(node.moduleReference.expression);
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (
+        (callee.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(callee) && callee.text === "require"))
+      ) {
+        push(node.arguments[0]);
+      } else if (
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        importMeta(callee.expression)
+      ) {
+        reportUnsupported("module loader on import.meta");
+      }
+    } else if (ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression) && node.expression.text === "URL" &&
+        node.arguments?.[1] && (ts.isPropertyAccessExpression(node.arguments[1]) ||
+          ts.isElementAccessExpression(node.arguments[1])) && importMeta(node.arguments[1].expression)) {
+      push(node.arguments[0]);
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      push(node.argument.literal);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return specifiers;
+}
+
+export function parseCssReferences(text) {
+  const references = [];
+  const importRanges = [];
+  const importPattern = /@(import|reference|source)\s+(?:not\s+)?(?:url\(\s*)?(?:"([^"]+)"|'([^']+)'|([^'")\s;]+))/g;
+  for (const match of text.matchAll(importPattern)) {
+    const specifier = match[2] ?? match[3] ?? match[4];
+    if (match[1] === "source" && specifier.startsWith("inline(")) continue;
+    if (match[1] === "source" && specifier === "none") continue;
+    references.push({ kind: `@${match[1]}`, specifier });
+    importRanges.push([match.index, match.index + match[0].length]);
+  }
+  for (const match of text.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']+?))\s*\)/g)) {
+    if (importRanges.some(([start, end]) => match.index >= start && match.index < end)) continue;
+    references.push({ kind: "url", specifier: (match[1] ?? match[2] ?? match[3]).trim() });
+  }
+  return references;
+}
+
+export function isUiTextFile(path) {
+  return CODE_FILE.test(path) || path.endsWith(".css");
+}
+
+export function checkUiBoundaries(label, files, options = {}) {
+  const errors = [];
+  for (const { path, text } of files) {
+    const references = CODE_FILE.test(path)
+      ? parseModuleSpecifiers(path, text, (feature) => {
+          errors.push(`${label}/${path}: Unsupported code in portable UI: ${feature}`);
+        }).map((specifier) => ({ kind: "import", specifier }))
+      : parseCssReferences(text);
+    for (const { kind, specifier } of references) {
+      const error = checkSpecifier(label, path, kind, specifier, options.exists);
+      if (error && !errors.includes(error)) errors.push(error);
+    }
+  }
+  return errors;
+}
+
+export function collectUiTree(root) {
+  const dir = fileURLToPath(root);
+  if (lstatSync(dir).isSymbolicLink()) {
+    throw new Error(`UI source root is a symlink: ${dir}`);
+  }
+  const files = [];
+  const symlinks = [];
+  const visit = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = resolve(current, entry.name);
+      const path = relative(dir, full).replaceAll("\\", "/");
+      if (entry.isSymbolicLink()) {
+        symlinks.push(path);
+      } else if (entry.isDirectory()) {
+        visit(full);
+      } else if (entry.isFile() && entry.name !== ".DS_Store") {
+        files.push(path);
+      }
+    }
+  };
+  visit(dir);
+  return { files: files.sort(), symlinks: symlinks.sort() };
+}
+
+function textSources(root, files) {
+  return files
+    .filter(isUiTextFile)
+    .map((path) => ({ path, text: readFileSync(new URL(path, root), "utf8") }));
+}
+
+function existsIn(files) {
+  const paths = new Set(files);
+  return (path) => paths.has(path);
+}
+
+const entryScript = 'src="/src/main.tsx"';
+
+function normalizeEntry(html, prototype) {
+  let normalized = html;
+  if (prototype) {
+    normalized = normalized.replace(
+      "<title>Медиатека · стенд MeloTrove</title>",
+      "<title>MeloTrove</title>",
+    );
+  }
+  return normalized
+    .replace('src="/src/app/main.tsx"', entryScript)
+    .replace('src="./src/app/main.tsx"', entryScript)
+    .replace('src="./src/main.tsx"', entryScript);
+}
+
+function main() {
   const receipts = JSON.parse(
     readFileSync(new URL("./ui-parity-prototype-leads.json", import.meta.url), "utf8"),
   );
-  const result = compareUiSources(
-    sourcePairs,
+  let prototypeTree;
+  let applicationTree;
+  try {
+    prototypeTree = collectUiTree(prototypeUi);
+    applicationTree = collectUiTree(applicationUi);
+  } catch (error) {
+    console.error(`Cannot read UI source tree: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  const result = compareUiDirectories(
+    prototypeTree.files,
+    applicationTree.files,
     receipts,
-    (path) => readFileSync(new URL(path, prototype)),
-    (path) => readFileSync(new URL(path, application)),
+    (path) => readFileSync(new URL(path, prototypeUi)),
+    (path) => readFileSync(new URL(path, applicationUi)),
   );
-  const prototypeEntry = readFileSync(new URL("../index.html", prototype), "utf8");
-  const applicationEntry = readFileSync(new URL("../index.html", application), "utf8");
-  if (prototypeEntry
-    .replace("<title>Медиатека · стенд MeloTrove</title>", "<title>MeloTrove</title>")
-    .replace('src="/src/app/main.tsx"', 'src="/src/main.tsx"') !== applicationEntry) {
-    result.errors.push("Different application entry presentation: index.html");
-  }
-  for (const error of result.errors) console.error(error);
-  for (const lead of result.pending) console.log(`Prototype awaiting port: ${lead}`);
-  console.log(`Byte-identical UI source pairs: ${result.identical}/${sourcePairs.length}`);
-  const actualUnpaired = new Set([
-    ...unpairedSources(prototype, new Set(sourcePairs.map(([from]) => from)), "docs/app-design-react/src"),
-    ...unpairedSources(application, new Set(sourcePairs.map(([, to]) => to)), "frontend/src"),
-  ].sort());
-  const unpaired = new Set(
-    readFileSync(new URL("./ui-parity-unpaired.txt", import.meta.url), "utf8")
-      .split(/\r?\n/)
-      .filter((line) => line && !line.startsWith("#")),
-  );
-  console.log(`Unpaired runtime source files (providers and outstanding ports): ${actualUnpaired.size}`);
-  if (process.argv.includes("--inventory")) {
-    for (const path of actualUnpaired) console.log(path);
-  }
-  const inventoryErrors = [
-    ...[...actualUnpaired].filter((path) => !unpaired.has(path))
-      .map((path) => `Unclassified runtime source: ${path}`),
-    ...[...unpaired].filter((path) => !actualUnpaired.has(path))
-      .map((path) => `Remove stale unpaired entry: ${path}`),
+  const errors = [
+    ...result.errors,
+    ...prototypeTree.symlinks.map(
+      (path) => `Cross UI symlink is not allowed: ${prototypeLabel}/${path}`,
+    ),
+    ...applicationTree.symlinks.map(
+      (path) => `Cross UI symlink is not allowed: ${applicationLabel}/${path}`,
+    ),
+    ...checkUiBoundaries(prototypeLabel, textSources(prototypeUi, prototypeTree.files), {
+      exists: existsIn(prototypeTree.files),
+    }),
+    ...checkUiBoundaries(applicationLabel, textSources(applicationUi, applicationTree.files), {
+      exists: existsIn(applicationTree.files),
+    }),
   ];
-  for (const error of inventoryErrors) console.error(error);
-  if (result.errors.length > 0 || inventoryErrors.length > 0) process.exitCode = 1;
+  // The entry documents are host integration, not portable UI modules: compare
+  // them only after the two expected prototype/application entry differences.
+  const prototypeEntry = normalizeEntry(
+    readFileSync(new URL("../../index.html", prototypeUi), "utf8"),
+    true,
+  );
+  const applicationEntry = normalizeEntry(
+    readFileSync(new URL("../../index.html", applicationUi), "utf8"),
+    false,
+  );
+  if (prototypeEntry !== applicationEntry) {
+    errors.push("Different application entry presentation: index.html");
+  }
+  for (const error of errors) console.error(error);
+  for (const lead of result.pending) console.log(`Prototype awaiting port: ${lead}`);
+  console.log(`Byte-identical UI source pairs: ${result.identical}/${prototypeTree.files.length}`);
+  const inventory = [
+    ...result.sourceOnly.map((path) => `${prototypeLabel}/${path}`),
+    ...result.copyOnly.map((path) => `${applicationLabel}/${path}`),
+  ].sort();
+  console.log(`Unpaired UI source files: ${inventory.length}`);
+  if (process.argv.includes("--inventory")) {
+    console.log(`Portable UI tree (${prototypeTree.files.length} files):`);
+    for (const path of prototypeTree.files) console.log(`  ${path}`);
+    if (inventory.length) {
+      console.log("Unpaired paths:");
+      for (const path of inventory) console.log(`  ${path}`);
+    }
+  }
+  if (errors.length > 0) process.exitCode = 1;
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  main();
 }

@@ -41,8 +41,9 @@ source channel, а fixture макета такого происхождения 
 
 ## Перенос исходников
 
-`task design:parity` сравнивает байты файлов из
-[реестра пар](../../tools/check-ui-parity.mjs) и выводит путь каждого расхождения.
+Копируем целиком [`src/ui/`](src/ui/) в `frontend/src/ui/` без правок
+путей и файлов. `task design:parity` сравнивает оба дерева по относительным
+путям и байтам, а также проверяет, что UI не импортирует код своей сборки.
 Эта же проверка запускается в `task design:check` и через неё — в `task verify`.
 Если согласованная работа над следующим дизайном временно опережает приложение,
 запишите причину и обе контрольные суммы SHA-256 (`null` для ещё не перенесённого
@@ -52,35 +53,30 @@ source channel, а fixture макета такого происхождения 
 сначала в приложении: проверка подтверждает указанные байты, а направление
 изменений и ещё не перенесённый статус подтверждаются при ревью.
 
-В таблице — уже перенесённый код, а не граница требования. Для обзора остального
-запустите `task design:parity -- --inventory`. Проверка требует учесть каждый
-новый файл в `src`: зарегистрировать пару либо явно добавить провайдер в
-[реестр непарных файлов](../../tools/ui-parity-unpaired.txt). Этот реестр
-также содержит пока не перенесённые файлы: запись в нём не подтверждает паритет
-и не проверяет содержимое. Удаляйте записи при переносе. Тесты, сгенерированный
-клиент и документация не входят в инвентарь UI. Представление не должно читать
-моки или HTTP API: провайдеры передают данные и действия через типизированный
-контракт.
+`task design:parity -- --inventory` перечисляет файлы переносимого дерева.
+Добавление файла в `ui/` автоматически включает его в проверку; отдельный
+реестр не нужен. Тесты конкретных сборок, клиент API, моки и провайдеры
+находятся снаружи. Представление получает данные, ссылки и действия через
+типизированный контракт; обвязка `app/` выбирает провайдера и обрабатывает URL.
 
 До переноса целого экрана сначала проверяем границу в самом макете: в файле
 представления остаются JSX и UI-взаимодействия, а провайдер готовит значения,
 рассчитывает допустимость и меняет данные. Отделение представления в макете
-не считается парой файлов и не означает, что приложение уже его использует.
+не означает, что приложение уже его использует.
 
 В макете отделено представление публикации из сохранённых связей
 (`MatchingReceiptPublicationReadyView.tsx`).
-В макете отдельно собраны выбор жанров и внешние оболочки редакторов релиза
-и позиции (`GenrePickerView.tsx`, `ReleaseMetadataEditorView.tsx`,
-`TrackMetadataEditorsView.tsx`). Они не входят в реестр пар с приложением.
+Редакторы релиза и позиции используют общие оболочки в
+`ui/features/library/metadata/`.
 
 Дополнительные действия позиции (`TrackActionsView.tsx`) отделены в макете.
 Независимые редакторы и диалоги подключаются к представлениям отдельно и
 не дают экрану доступа к данным или полномочий записи.
 
-| Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
+| Область | Файлы относительно `src/ui/` | Копии и различия провайдеров |
 | --- | --- | --- |
-| Оболочка, язык и тема | `routes/ShellView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Те же пути |
-| Глобальные токены, типографика, фокус и цветовая схема | `app/tailwind.css`, `index.html` | `styles/index.css`, `index.html` (отличаются только заголовок и точка входа) |
+| Оболочка, язык и тема | `shell/ShellView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Те же пути; маршруты и подключение сохранённых предпочтений задаёт сборка |
+| Глобальные токены, типографика, фокус и цветовая схема | `styles/index.css` | Тот же путь. `app/styles.css` только подключает общие стили и задаёт поиск классов для своей сборки |
 | Базовая локализация и предпочтение темы | `i18n/{I18nProvider.tsx,createNamespace.ts,locale.ts,translator.ts,types.ts,namespaces/shell.ts}`, `components/themePreference.ts` | Те же пути |
 | Источники: композиция страницы списка, его заголовок, заголовок корня, сканирование и инвентарь | `features/sources/SourceListPageView.tsx`, `SourceListHeadingView.tsx`, `SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |
 | Источники: форма регистрации каталога | `features/sources/SourceRegistrationView.tsx` | Тот же путь |
@@ -92,11 +88,9 @@ source channel, а fixture макета такого происхождения 
 | Операции: список, фильтры, поиск, пагинация, раскрытие и подтверждение прерывания перепубликаций | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts`, `MatchingRecheckAbandonDialog.tsx` | Те же пути |
 | Входящие: вся страница списка — заголовок, ожидание, ошибка, обзор групп, счётчик, пустое состояние и действия с файлами | `features/incoming/IncomingScreenView.tsx`, `IncomingGroupsPanel.tsx`, `IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx` | Те же пути. Приложение обновляет серверный список, макет показывает этапы и даёт запустить обработку в памяти. Рабочая область сопоставления переносится отдельно |
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
-| Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
-| Сопоставление: секция поиска, подготовки и создания издания | `features/matching/MatchingReviewSearchView.tsx` | `features/matchingWorkspace/MatchingReviewSearchView.tsx` |
-| Сопоставление: экран группы, рабочая область, предпросмотр назначений и результат сохранения связей | `features/matching/MatchingScreenView.tsx` | `features/matchingWorkspace/MatchingScreenView.tsx`. Привязка записи на позиции остаётся сценарием макета; реальные проверки и доступность действий определяет приложение |
+| Сопоставление | `features/matching/` | Те же пути. Привязка записи на позиции остаётся сценарием макета; реальные проверки и доступность действий определяет приложение |
 | Редактор Local-релиза | `features/local-release/`: `LocalReleaseEditor.tsx`, `LocalReleaseForm.tsx`, `LocalReleaseCancelDialog.tsx`, `LocalRecordingArtistField.tsx`, `LocalReleaseRecordingPicker.tsx`, `useLocalReleaseForm.ts`, `localReleaseFormModel.ts`, `localReleaseMessages.ts`, `localReleaseUi.tsx` | Те же пути |
-| Собственный каталог: экран списка, карточки и оболочки редакторов | `features/local-catalog/`: `LocalCatalogScreenView.tsx`, `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/`. Состав полей и связанных записей зависит от провайдера; наличие поля в макете не подтверждает его сохранение через API |
+| Собственный каталог: экран списка, карточки и оболочки редакторов | `features/local-catalog/` | Те же пути. Состав полей и связанных записей зависит от провайдера; наличие поля в макете не подтверждает его сохранение через API |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: каркас страницы, заголовок и подзаголовок | `features/settings/SettingsPageFrame.tsx` | Тот же путь |
 | Настройки: весь экран — загрузка, состояние конфигурации, вкладки, обратная связь и диалоги | `features/settings/SettingsScreenView.tsx` | Тот же путь; приложение сохраняет черновик токена при смене вкладки, макет сбрасывает его. Запись и повторное чтение состояния остаются в провайдерах |
@@ -222,7 +216,7 @@ source channel, а fixture макета такого происхождения 
   разные реализации. Перед копированием
   нужно отделить представление и форматирование от загрузки, черновиков и
   записи, чтобы не заменить серверный workflow демонстрационным.
-- **Стили.** Экранные стили в `frontend/src/features/` перенесены на утилиты
+- **Стили.** Экранные стили переносимого `src/ui/` используют утилиты
   Tailwind. Общим компонентам больше не переопределяют оформление CSS-файлы
   отдельных экранов. Точка входа глобальных стилей общая; различия версий
   библиотек проверяются отдельно.

@@ -21,7 +21,7 @@ tasks:
 
   design:check:
     desc: Validate canonical fixtures and check the separate React design prototype
-    deps: [design:install]
+    deps: [design:install, frontend:install]
     dir: docs/app-design-react
     cmds:
       - node ../../tools/check-ui-parity.mjs
@@ -33,6 +33,7 @@ tasks:
 
   design:parity:
     desc: Compare ported UI source bytes; pass -- --inventory to list unpaired files
+    deps: [frontend:install]
     cmds:
       - node tools/check-ui-parity.mjs {{.CLI_ARGS}}
 
@@ -161,6 +162,7 @@ tasks:
 
   tools:test:
     internal: true
+    deps: [frontend:install]
     cmds:
       # Node 24 expands tools/*.test.mjs itself, so colocated tool tests are picked up
       # without shell globbing (works on Windows shells that do not expand globs).

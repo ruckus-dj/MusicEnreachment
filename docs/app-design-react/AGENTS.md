@@ -14,15 +14,14 @@ artifacts.
 
 ## Approved prototype-to-production port
 
-- Keep screen-specific components, copy and colocated tests in `src/features/`
-  by feature. Keep the top-level entry and shared modules independent of any
-  one screen; new screen work must not grow the flat `src/` layout.
-
-- Keep no direct source files under `src/`: app entry and composition live in
-  `src/app/`, shell in `src/routes/`, shared controls in `src/components/`,
-  feature code and tests in `src/features/<feature>/`, fixtures in
-  `src/fixtures/`, cross-feature utilities in `src/infrastructure/`, metadata in
-  `src/metadata/`, i18n in `src/i18n/`, and test support in `src/test/`.
+- Keep transferable screens, local UI interactions, copy and contracts in
+  `src/ui/features/<feature>/`, generic controls in `src/ui/components/`,
+  the shell in `src/ui/shell/`, and theme/locale machinery in `src/ui/`.
+  `src/ui/` is copied as a whole to `frontend/src/ui/`, with identical paths
+  and bytes. Its imports stay inside that tree or use approved UI packages.
+- Keep prototype providers and scenarios in `src/demo/`, canonical data in
+  `src/demo/fixtures/`, and bootstrap/routes in `src/app/`. Host tests stay
+  outside the copied tree. `demo` and `app` may import `ui`, not the reverse.
 
 - Keep fixture imports and demo execution behind the prototype data provider so
   the approved UI modules can be copied without changes. Production code must
@@ -39,7 +38,7 @@ verification: `task design:check` and live prototype checks, not application
 reintroduce application checks through the commit hook for such changes.
 
 Use React 19, TypeScript, Vite, Tailwind 4 and react-aria-components. The fixture
-at `src/fixtures/original-fixtures.json` is canonical, self-contained demo data. Do not
+at `src/demo/fixtures/original-fixtures.json` is canonical, self-contained demo data. Do not
 regenerate it from a retired prototype or add invented source hashes/provenance.
 `check-fixtures.mjs` validates structure, identity uniqueness, references, and
 critical existing identities; update it only when approved fixture identities

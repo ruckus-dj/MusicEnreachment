@@ -51,7 +51,8 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Tool integrations | backend/internal/integrations/tools/AGENTS.md | Managed ffmpeg/fpcalc downloads, GitHub adapters |
 | Migrations | backend/internal/migrations/AGENTS.md | Embedded SQL, versioned .tx.up/.down pairs |
 | Settings | backend/internal/settings | PostgreSQL-backed runtime registry and filesystem validation |
-| Frontend screens | frontend/src/features/ | Setup, settings, sources, incoming grouping, and matching workflows |
+| Frontend screens | frontend/src/ui/features/ | Exact copy of the prototype's portable UI tree |
+| Frontend providers | frontend/src/providers/ | API-backed controllers and actions, outside the UI copy |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (single current product contract), repository-architecture.md (layering) |
 | Design prototype | docs/app-design-react/AGENTS.md | Standalone React design artifact; sole graphical reference |
@@ -67,10 +68,10 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | settings.Registry | type | backend/internal/settings/settings.go | 8+ | PostgreSQL-backed platform and runtime settings hub |
 | integrations/tools.Catalog | type | backend/internal/integrations/tools/catalog.go | 6+ | GitHub release adapters for tool downloads |
 | integrations/tools.Lifecycle | type | backend/internal/integrations/tools/lifecycle.go | 4+ | Managed tool materialization (download and executable-version verification) |
-| SetupManager | component | frontend/src/features/setup/SetupManager.tsx | 2 | First-run setup wizard |
-| SettingsScreen | component | frontend/src/features/settings/SettingsScreen.tsx | 1 | Runtime settings and managed tools |
-| SourcesScreen | component | frontend/src/features/sources/ | — | Source inventory and analysis |
-| AppShell | component | frontend/src/routes/AppShell.tsx | 1 | Hash router and screen wiring |
+| SetupManager | component | frontend/src/providers/setup/SetupManager.tsx | 2 | First-run setup wizard |
+| SettingsScreen | component | frontend/src/providers/settings/SettingsScreen.tsx | 1 | Runtime settings and managed tools |
+| SourcesScreen | component | frontend/src/providers/sources/ | — | Source inventory and analysis |
+| AppShell | component | frontend/src/app/routes/AppShell.tsx | 1 | Hash router and provider wiring |
 
 ## CONVENTIONS
 **Config model inverted**: No config files; only 3 bootstrap env vars (DATABASE_URL, HTTP_BIND_ADDRESS, HTTP_PORT). All other settings are DB-backed runtime values edited via UI. Do NOT add new env vars.

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const fixturePath = new URL("./src/fixtures/original-fixtures.json", import.meta.url);
+const fixturePath = new URL("./src/demo/fixtures/original-fixtures.json", import.meta.url);
 
 function requireObject(name, value) {
 	if (!value || typeof value !== "object" || Array.isArray(value))

@@ -9,16 +9,10 @@ React 19 + Vite + Tailwind 4 + TanStack Query + react-aria-components. Orval-gen
 ```
 frontend/
 ├── src/
-│   ├── main.tsx           # React 19 createRoot entry
-│   ├── routes/
-│   │   └── AppShell.tsx   # Hash router, useSyncExternalStore
-│   ├── features/
-│   │   ├── setup/         # First-run setup flow
-│   │   ├── settings/      # Runtime settings and managed tools
-│   │   ├── sources/       # Source roots, inventory, and analysis
-│   │   ├── incoming/      # Incoming grouping and matching review
-│   │   └── ...            # Other product features
-│   ├── components/        # Shared UI components
+│   ├── app/               # Entry, hash router, locale and theme binding
+│   ├── ui/                # Byte-identical copy of the prototype UI tree
+│   ├── providers/         # API-backed screen controllers by feature
+│   ├── test/              # Host test infrastructure
 │   └── api/
 │       ├── client/        # Operation event-stream helpers
 │       └── generated/     # Orval output (DO NOT EDIT)
@@ -30,11 +24,9 @@ frontend/
 ```
 
 ## WHERE TO LOOK
-- src/features/setup/ - first-run wizard, including tool catalog, preflight, and download flow
-- src/features/settings/ - runtime settings and managed tools
-- src/features/sources/ - source roots, inventory, and analysis
-- src/features/incoming/ - incoming grouping, matching review, and manual corrections
-- src/routes/AppShell.tsx - hash routing, screen wiring
+- `src/ui/` — portable screens, styles and copy; replace from the prototype, not by hand-editing one copy
+- `src/providers/{setup,settings,sources,incoming}/` — runtime API access and actions
+- `src/app/routes/AppShell.tsx` — hash routing and provider wiring
 - src/api/generated/client.ts - Orval-generated hooks/types (NEVER hand-edit)
 - src/api/client/operations.ts - operation event-stream subscription helper
 

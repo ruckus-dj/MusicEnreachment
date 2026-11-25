@@ -1,9 +1,9 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CatalogDemo } from "./CatalogDemo";
-import { I18nProvider } from "../i18n";
-import { DesignShell } from "../routes/DesignShell";
-import "./tailwind.css";
+import { CatalogDemo } from "../demo/CatalogDemo";
+import { I18nProvider } from "./i18n";
+import { DesignShell } from "./routes/DesignShell";
+import "./styles.css";
 
 const root = document.getElementById("root");
 function PrototypeApp() {

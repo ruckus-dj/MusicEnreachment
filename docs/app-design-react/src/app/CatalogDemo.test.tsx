@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import { firstPublicationPreviewMessages } from "../features/library/firstPublicationPreviewMessages";
-import { CatalogDemo } from "./CatalogDemo";
+import { CatalogDemo } from "../demo/CatalogDemo";
+import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
 
 afterEach(() => {
 	window.history.replaceState(null, "", "#library");
