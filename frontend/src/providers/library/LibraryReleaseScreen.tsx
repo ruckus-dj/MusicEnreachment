@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
   applyLibraryManualLyrics,
@@ -20,7 +20,12 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { LibraryPrimaryArtistControl } from "../../ui/features/library/LibraryPrimaryArtistControl";
-import { LibraryReleaseWorkspaceView } from "../../ui/features/library/LibraryReleaseWorkspaceView";
+import {
+  type LibraryReleaseOverviewModel,
+  type LibraryReleasePositionEntry,
+  type LibraryReleaseWorkspaceSelection,
+  LibraryReleaseWorkspaceView,
+} from "../../ui/features/library/LibraryReleaseWorkspaceView";
 import {
   type LibraryReleaseMessage,
   type LibraryReleaseText,
@@ -34,17 +39,11 @@ import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/Li
 import { ReleaseMetadataEditorView } from "../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
 import { releaseCoverEditorCopy } from "../../ui/features/library/ReleaseCoverEditorView";
-import {
-  type ReleaseOverviewHeading,
-  ReleaseOverviewView,
-} from "../../ui/features/library/ReleaseOverviewView";
-import { TrackReadErrorNoticeView } from "../../ui/features/library/TrackReadErrorNoticeView";
-import {
-  type TrackProviderRefreshModel,
-  TrackProviderRefreshView,
-  type TrackScreenPublicationView,
-  type TrackScreenTechnicalView,
-  TrackScreenView,
+import type { ReleaseOverviewHeading } from "../../ui/features/library/ReleaseOverviewView";
+import type {
+  TrackProviderRefreshModel,
+  TrackScreenPublicationView,
+  TrackScreenTechnicalView,
 } from "../../ui/features/library/TrackScreenView";
 import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 import {
@@ -1434,30 +1433,38 @@ export function LibraryReleaseScreen({
 
   if (error)
     return (
-      <ReleaseOverviewView
+      <LibraryReleaseWorkspaceView
         locale={locale}
-        libraryHref="#/library"
-        heading={null}
-        unavailable={{
-          status: "error",
-          title: text("library"),
-          message: displayText(error),
-          action: {
-            label: text("incoming"),
-            onPress: () => {
-              window.location.hash = "/incoming-groups";
+        selection={{ kind: "unavailable" }}
+        overview={{
+          libraryHref: "#/library",
+          heading: null,
+          unavailable: {
+            status: "error",
+            title: text("library"),
+            message: displayText(error),
+            action: {
+              label: text("incoming"),
+              onPress: () => {
+                window.location.hash = "/incoming-groups";
+              },
             },
           },
         }}
+        positions={[]}
       />
     );
   if (!release || loadedReleaseID !== releaseId)
     return (
-      <ReleaseOverviewView
+      <LibraryReleaseWorkspaceView
         locale={locale}
-        libraryHref="#/library"
-        heading={null}
-        unavailable={{ status: "loading", message: text("loadingRelease") }}
+        selection={{ kind: "unavailable" }}
+        overview={{
+          libraryHref: "#/library",
+          heading: null,
+          unavailable: { status: "loading", message: text("loadingRelease") },
+        }}
+        positions={[]}
       />
     );
   const releaseRenderScope = scope.current;
@@ -1554,9 +1561,6 @@ export function LibraryReleaseScreen({
             : undefined,
         }
       : undefined;
-  const overviewProviderRefresh = !showPosition ? (
-    <TrackProviderRefreshView {...providerRefresh} />
-  ) : undefined;
   const overviewPublication = !positionId ? (
     <AggregatePublicationPreview
       key={releaseId}
@@ -1582,517 +1586,505 @@ export function LibraryReleaseScreen({
       }
     />
   ) : undefined;
+  const workspaceSelection: LibraryReleaseWorkspaceSelection = selectedTrack
+    ? { kind: "position", positionId: selectedTrack.id }
+    : positionId
+      ? {
+          kind: "missing",
+          notFound: {
+            message: text("positionNotFound"),
+            releaseHref: `#/library/releases/${releaseId}`,
+            releaseLabel: text("fullRelease"),
+          },
+        }
+      : { kind: "edition" };
+  const overview: LibraryReleaseOverviewModel = {
+    libraryHref: "#/library",
+    heading: overviewHeading,
+    artistHref: overviewArtistHref,
+    credentials: releaseOverviewCredits(release.artists),
+    media: overviewMedia.media,
+    fallbackTracks: overviewMedia.fallbackTracks,
+    unassignedTracks: overviewMedia.unassignedTracks,
+    primaryArtist: overviewPrimaryArtist,
+    metadataEditor: (
+      <ReleaseMetadataEditorView
+        editor={
+          <ReleaseMetadataEditor
+            releaseId={releaseId}
+            refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+            onSaved={refreshAfterMetadataSave}
+            visible={!showPosition}
+          />
+        }
+      />
+    ),
+    publication: overviewPublication,
+    deletion: overviewDeletion,
+    cover: (
+      <ReleaseCoverEditor
+        releaseId={releaseId}
+        epoch={
+          Object.values(positions).find(
+            (position) => position.publication?.active_epoch,
+          )?.publication?.active_epoch
+        }
+        onOperationsAdmitted={(operations) => {
+          const requestScope = scope.current;
+          setPositions((current) => {
+            if (!mounted.current || scope.current !== requestScope)
+              return current;
+            const next = { ...current };
+            for (const operation of operations) {
+              next[operation.position_id] = {
+                ...next[operation.position_id],
+                applyOperationID: operation.operation_id,
+                applying: true,
+                notice: libraryReleaseText("coverApplyAdmitted"),
+              };
+            }
+            return next;
+          });
+        }}
+        onCoverSnapshot={(snapshotReleaseID, generation) => {
+          if (
+            scope.current !== releaseRenderScope ||
+            snapshotReleaseID !== releaseId
+          )
+            return;
+          setSelectedCover({
+            scope: releaseRenderScope,
+            releaseID: snapshotReleaseID,
+            generation,
+          });
+        }}
+      />
+    ),
+  };
   return (
     <LibraryReleaseWorkspaceView
       locale={locale}
-      showPosition={showPosition}
-      missingPosition={
-        positionId && !selectedTrack
-          ? {
-              message: text("positionNotFound"),
-              releaseHref: `#/library/releases/${releaseId}`,
-              releaseLabel: text("fullRelease"),
-            }
-          : undefined
-      }
-      overview={
-        <ReleaseOverviewView
-          locale={locale}
-          libraryHref="#/library"
-          heading={overviewHeading}
-          artistHref={overviewArtistHref}
-          credentials={releaseOverviewCredits(release.artists)}
-          media={overviewMedia.media}
-          fallbackTracks={overviewMedia.fallbackTracks}
-          unassignedTracks={overviewMedia.unassignedTracks}
-          primaryArtist={overviewPrimaryArtist}
-          providerRefresh={overviewProviderRefresh}
-          metadataEditor={
-            <ReleaseMetadataEditorView
-              editor={
-                <ReleaseMetadataEditor
-                  releaseId={releaseId}
-                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                  onSaved={refreshAfterMetadataSave}
-                  visible={!showPosition}
-                />
-              }
-            />
-          }
-          publication={overviewPublication}
-          deletion={overviewDeletion}
-          cover={
-            <ReleaseCoverEditor
-              releaseId={releaseId}
-              epoch={
-                Object.values(positions).find(
-                  (position) => position.publication?.active_epoch,
-                )?.publication?.active_epoch
-              }
-              onOperationsAdmitted={(operations) => {
-                const requestScope = scope.current;
-                setPositions((current) => {
-                  if (!mounted.current || scope.current !== requestScope)
-                    return current;
-                  const next = { ...current };
-                  for (const operation of operations) {
-                    next[operation.position_id] = {
-                      ...next[operation.position_id],
-                      applyOperationID: operation.operation_id,
-                      applying: true,
-                      notice: libraryReleaseText("coverApplyAdmitted"),
-                    };
-                  }
-                  return next;
-                });
-              }}
-              onCoverSnapshot={(snapshotReleaseID, generation) => {
-                if (
-                  scope.current !== releaseRenderScope ||
-                  snapshotReleaseID !== releaseId
-                )
-                  return;
-                setSelectedCover({
-                  scope: releaseRenderScope,
-                  releaseID: snapshotReleaseID,
-                  generation,
-                });
-              }}
-            />
-          }
-        />
-      }
-    >
-      {(release.tracks ?? []).map((track) => {
-        const showWorkspace = positionId === track.id;
-        const renderScope = scope.current;
-        const position = positions[track.id];
-        const publication = position?.publication;
-        const currentTags =
-          publication?.current_generation && !position?.readError
-            ? publication.current_metadata?.tags
-            : undefined;
-        const hasCurrentPublication = publication
-          ? Boolean(publication.current_generation || publication.current_path)
-          : Boolean(track.publication?.generation);
-        const inspection =
-          showWorkspace &&
-          tagInspection?.releaseId === releaseId &&
-          tagInspection.positionId === track.id
-            ? tagInspection
-            : undefined;
-        const inspectedSource = (track.sources ?? []).find(
-          (source) => source.media_variant_id === inspection?.variantId,
-        );
-        const currentDeletionIdentity =
-          publication?.current_generation ??
-          publication?.current_path ??
-          track.publication?.generation ??
-          track.publication?.relative_path;
-        if (currentDeletionIdentity)
-          deletionIdentityByPosition.current.set(
-            track.id,
-            currentDeletionIdentity,
+      selection={workspaceSelection}
+      overview={overview}
+      overviewProviderRefresh={showPosition ? undefined : providerRefresh}
+      positions={(release.tracks ?? []).map(
+        (track): LibraryReleasePositionEntry => {
+          const showWorkspace = positionId === track.id;
+          const renderScope = scope.current;
+          const position = positions[track.id];
+          const publication = position?.publication;
+          const currentTags =
+            publication?.current_generation && !position?.readError
+              ? publication.current_metadata?.tags
+              : undefined;
+          const hasCurrentPublication = publication
+            ? Boolean(
+                publication.current_generation || publication.current_path,
+              )
+            : Boolean(track.publication?.generation);
+          const inspection =
+            showWorkspace &&
+            tagInspection?.releaseId === releaseId &&
+            tagInspection.positionId === track.id
+              ? tagInspection
+              : undefined;
+          const inspectedSource = (track.sources ?? []).find(
+            (source) => source.media_variant_id === inspection?.variantId,
           );
-        // Once the position is read, its snapshot supersedes release detail,
-        // including when it reports that publication was removed.
-        const publicationSummary = publication
-          ? {
-              relative_path: publication.current_path,
-              validated_at: publication.current_validated_at,
-              codec: publication.current_audio?.codec,
-              container: publication.current_audio?.container,
-              generation: publication.current_generation,
-            }
-          : track.publication;
-        const lyricsField = position?.metadata?.envelope.desired.synced_lyrics;
-        const hasManualLyrics =
-          lyricsField?.authority === "manual" &&
-          ["value", "explicit_empty"].includes(lyricsField.state);
-        const credits = track.artists ?? [];
-
-        function isPositionScopeCurrent() {
-          return (
-            mounted.current &&
-            currentReleaseID.current === releaseId &&
-            scope.current === renderScope
-          );
-        }
-
-        function refreshReadState() {
-          if (!isPositionScopeCurrent()) return;
-          void refreshPosition(track.id).catch((reason: unknown) => {
-            if (!isPositionScopeCurrent()) return;
-            setPositions((current) => {
-              if (!isPositionScopeCurrent()) return current;
-              return {
-                ...current,
-                [track.id]: {
-                  ...current[track.id],
-                  readError: libraryReleaseError(
-                    reason,
-                    "publicationRefreshFailed",
-                  ),
-                },
-              };
-            });
-          });
-        }
-        const displayNumber =
-          track.displayed_number.trim() || String(track.position);
-        const artist = credits
-          .map(
-            (credit, index) =>
-              `${credit.credit_name || credit.artist_name}${index < credits.length - 1 ? (credit.join_phrase ?? " ") : ""}`,
-          )
-          .join("");
-        const publicationView: TrackScreenPublicationView = {
-          published: hasCurrentPublication,
-          current: hasCurrentPublication
+          const currentDeletionIdentity =
+            publication?.current_generation ??
+            publication?.current_path ??
+            track.publication?.generation ??
+            track.publication?.relative_path;
+          if (currentDeletionIdentity)
+            deletionIdentityByPosition.current.set(
+              track.id,
+              currentDeletionIdentity,
+            );
+          // Once the position is read, its snapshot supersedes release detail,
+          // including when it reports that publication was removed.
+          const publicationSummary = publication
             ? {
-                details: {
-                  path: publicationSummary?.relative_path,
-                  container: publicationSummary?.container,
-                  codec: publicationSummary?.codec,
-                  observed: publicationSummary?.validated_at
+                relative_path: publication.current_path,
+                validated_at: publication.current_validated_at,
+                codec: publication.current_audio?.codec,
+                container: publication.current_audio?.container,
+                generation: publication.current_generation,
+              }
+            : track.publication;
+          const lyricsField =
+            position?.metadata?.envelope.desired.synced_lyrics;
+          const hasManualLyrics =
+            lyricsField?.authority === "manual" &&
+            ["value", "explicit_empty"].includes(lyricsField.state);
+          const credits = track.artists ?? [];
+
+          function isPositionScopeCurrent() {
+            return (
+              mounted.current &&
+              currentReleaseID.current === releaseId &&
+              scope.current === renderScope
+            );
+          }
+
+          function refreshReadState() {
+            if (!isPositionScopeCurrent()) return;
+            void refreshPosition(track.id).catch((reason: unknown) => {
+              if (!isPositionScopeCurrent()) return;
+              setPositions((current) => {
+                if (!isPositionScopeCurrent()) return current;
+                return {
+                  ...current,
+                  [track.id]: {
+                    ...current[track.id],
+                    readError: libraryReleaseError(
+                      reason,
+                      "publicationRefreshFailed",
+                    ),
+                  },
+                };
+              });
+            });
+          }
+          const displayNumber =
+            track.displayed_number.trim() || String(track.position);
+          const artist = credits
+            .map(
+              (credit, index) =>
+                `${credit.credit_name || credit.artist_name}${index < credits.length - 1 ? (credit.join_phrase ?? " ") : ""}`,
+            )
+            .join("");
+          const publicationView: TrackScreenPublicationView = {
+            published: hasCurrentPublication,
+            current: hasCurrentPublication
+              ? {
+                  details: {
+                    path: publicationSummary?.relative_path,
+                    container: publicationSummary?.container,
+                    codec: publicationSummary?.codec,
+                    observed: publicationSummary?.validated_at
+                      ? {
+                          kind: "verified",
+                          value: publicationSummary.validated_at,
+                        }
+                      : undefined,
+                  },
+                  generation: publicationSummary?.generation,
+                  cover: publication?.current_generation
                     ? {
-                        kind: "verified",
-                        value: publicationSummary.validated_at,
+                        state: publication.current_assets?.cover.state,
+                        sha256: publication.current_assets?.cover.sha256,
                       }
                     : undefined,
-                },
-                generation: publicationSummary?.generation,
-                cover: publication?.current_generation
-                  ? {
-                      state: publication.current_assets?.cover.state,
-                      sha256: publication.current_assets?.cover.sha256,
-                    }
-                  : undefined,
-                lyrics: publication
-                  ? (publication.current_assets?.lyrics.state ??
-                    text("lyricsUnknown"))
-                  : undefined,
-                tags: currentTags,
-              }
-            : undefined,
-          coverEmbedding:
-            publication?.current_generation && publication.cover_embedding
-              ? {
-                  outcome: publication.cover_embedding.outcome,
-                  warningCode: publication.cover_embedding.warning_code,
+                  lyrics: publication
+                    ? (publication.current_assets?.lyrics.state ??
+                      text("lyricsUnknown"))
+                    : undefined,
+                  tags: currentTags,
                 }
               : undefined,
-          lyricsResult: publication?.initial_lyrics
-            ? {
-                outcome: publication.initial_lyrics.outcome,
-                source: publication.initial_lyrics.source,
-                resolutionWarningCode:
-                  publication.initial_lyrics.resolution_warning_code,
-                outcomeWarningCode:
-                  publication.initial_lyrics.outcome_warning_code,
-              }
-            : undefined,
-          cleanupWarnings: publication?.source_cleanup_warnings?.map(
-            (warning) => ({
-              key: warning.original_operation_id,
-              message: warning.safe_error,
-              canRetry: warning.can_retry,
-              retryPending: Boolean(
-                position?.cleanupRetryPendingIDs?.includes(
-                  warning.original_operation_id,
-                ),
-              ),
-              disabled:
-                Boolean(position?.readError) ||
-                cleanupRetryLocks.current.has(warning.original_operation_id),
-              running: Boolean(
-                warning.active_retry_operation_id &&
-                  !finishedOperations.current.has(
-                    warning.active_retry_operation_id,
+            coverEmbedding:
+              publication?.current_generation && publication.cover_embedding
+                ? {
+                    outcome: publication.cover_embedding.outcome,
+                    warningCode: publication.cover_embedding.warning_code,
+                  }
+                : undefined,
+            lyricsResult: publication?.initial_lyrics
+              ? {
+                  outcome: publication.initial_lyrics.outcome,
+                  source: publication.initial_lyrics.source,
+                  resolutionWarningCode:
+                    publication.initial_lyrics.resolution_warning_code,
+                  outcomeWarningCode:
+                    publication.initial_lyrics.outcome_warning_code,
+                }
+              : undefined,
+            cleanupWarnings: publication?.source_cleanup_warnings?.map(
+              (warning) => ({
+                key: warning.original_operation_id,
+                message: warning.safe_error,
+                canRetry: warning.can_retry,
+                retryPending: Boolean(
+                  position?.cleanupRetryPendingIDs?.includes(
+                    warning.original_operation_id,
                   ),
-              ),
-              onRetry: () =>
-                void retryCleanup(track.id, warning.original_operation_id),
-            }),
-          ),
-          activity: publication?.active_attempt
-            ? {
-                kind: "operation",
-                stage: publication.active_attempt.stage,
-                state: publication.active_attempt.state,
-              }
-            : publication?.manual_lyrics?.pending
-              ? { kind: "savedLyricsPending" }
-              : { kind: "none" },
-          receipt: publication?.manual_lyrics_receipt
-            ? {
-                desiredState: publication.manual_lyrics_receipt.desired_state,
-                confirmedGeneration:
-                  publication.manual_lyrics_receipt.confirmed_generation,
-                publishedGeneration:
-                  publication.manual_lyrics_receipt.published_generation,
-                warningCode: publication.manual_lyrics_receipt.warning_code,
-              }
-            : undefined,
-          notice: position?.notice ? displayText(position.notice) : undefined,
-          error: position?.error ? displayText(position.error) : undefined,
-          readError: position?.readError
-            ? {
-                text: displayText(position.readError),
-                onRefresh: refreshReadState,
-              }
-            : undefined,
-        };
-        const technicalView: TrackScreenTechnicalView = {
-          position: displayNumber,
-          title: track.title,
-          durationMs: track.duration_ms ?? null,
-          recordingTitle: track.recording_title,
-          current: publicationView.current,
-        };
-        const publicationPreview =
-          !publication?.active_attempt &&
-          !position?.firstPublicationOperationID ? (
-            <FirstPublicationPreview
-              releaseId={releaseId}
-              positionId={track.id}
-              aggregateManaged={!showWorkspace}
-              comparisonOnly={Boolean(
-                publication?.current_path || publication?.current_generation,
-              )}
-              refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
-              onAdmitted={(operationID) => {
-                if (!isPositionScopeCurrent()) return;
-                setPositions((current) => {
-                  if (!isPositionScopeCurrent()) return current;
-                  return {
-                    ...current,
-                    [track.id]: {
-                      ...current[track.id],
-                      firstPublicationOperationID: operationID,
-                    },
-                  };
-                });
-                refreshReadState();
-              }}
-              onRefresh={refreshReadState}
-              {...aggregateCallbacksFor(track.id)}
-            />
-          ) : undefined;
-        return (
-          <Fragment key={track.id}>
-            <TrackScreenView
-              locale={locale}
-              active={showWorkspace}
-              providerRefresh={providerRefresh}
-              heading={
-                showWorkspace
-                  ? {
-                      displayNumber,
-                      title: track.title,
-                      artist,
-                      releaseTitle: release.title,
-                      releaseHref: `#/library/releases/${encodeURIComponent(release.id)}`,
-                      libraryHref: "#/library",
-                    }
-                  : undefined
-              }
-              sources={
-                showWorkspace
-                  ? {
-                      position: displayNumber,
-                      items: positionSourceItems(track, locale),
-                      inspection: {
-                        value: inspection?.open
-                          ? inspectedSource?.media_variant_id
-                          : undefined,
-                        onChange: (variantId) =>
-                          setTagInspection({
-                            releaseId,
-                            positionId: track.id,
-                            variantId,
-                            open: true,
-                          }),
+                ),
+                disabled:
+                  Boolean(position?.readError) ||
+                  cleanupRetryLocks.current.has(warning.original_operation_id),
+                running: Boolean(
+                  warning.active_retry_operation_id &&
+                    !finishedOperations.current.has(
+                      warning.active_retry_operation_id,
+                    ),
+                ),
+                onRetry: () =>
+                  void retryCleanup(track.id, warning.original_operation_id),
+              }),
+            ),
+            activity: publication?.active_attempt
+              ? {
+                  kind: "operation",
+                  stage: publication.active_attempt.stage,
+                  state: publication.active_attempt.state,
+                }
+              : publication?.manual_lyrics?.pending
+                ? { kind: "savedLyricsPending" }
+                : { kind: "none" },
+            receipt: publication?.manual_lyrics_receipt
+              ? {
+                  desiredState: publication.manual_lyrics_receipt.desired_state,
+                  confirmedGeneration:
+                    publication.manual_lyrics_receipt.confirmed_generation,
+                  publishedGeneration:
+                    publication.manual_lyrics_receipt.published_generation,
+                  warningCode: publication.manual_lyrics_receipt.warning_code,
+                }
+              : undefined,
+            notice: position?.notice ? displayText(position.notice) : undefined,
+            error: position?.error ? displayText(position.error) : undefined,
+            readError: position?.readError
+              ? {
+                  text: displayText(position.readError),
+                  onRefresh: refreshReadState,
+                }
+              : undefined,
+          };
+          const technicalView: TrackScreenTechnicalView = {
+            position: displayNumber,
+            title: track.title,
+            durationMs: track.duration_ms ?? null,
+            recordingTitle: track.recording_title,
+            current: publicationView.current,
+          };
+          const publicationPreview =
+            !publication?.active_attempt &&
+            !position?.firstPublicationOperationID ? (
+              <FirstPublicationPreview
+                key={track.id}
+                releaseId={releaseId}
+                positionId={track.id}
+                aggregateManaged={!showWorkspace}
+                comparisonOnly={Boolean(
+                  publication?.current_path || publication?.current_generation,
+                )}
+                refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
+                onAdmitted={(operationID) => {
+                  if (!isPositionScopeCurrent()) return;
+                  setPositions((current) => {
+                    if (!isPositionScopeCurrent()) return current;
+                    return {
+                      ...current,
+                      [track.id]: {
+                        ...current[track.id],
+                        firstPublicationOperationID: operationID,
                       },
-                    }
-                  : undefined
-              }
-              editors={
-                showWorkspace ? (
-                  <>
-                    <ReleaseCreditList credits={credits} />
-                    {track.recording_id ? (
-                      <GenreMetadataEditor
-                        owner="recording"
-                        ownerId={track.recording_id}
-                        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                        onSaved={refreshAfterMetadataSave}
-                      />
-                    ) : null}
-                    <TrackMetadataEditorsView
-                      recording={
-                        track.recording_id ? (
-                          <ScopedLibraryMetadataEditor
-                            scope="recording"
-                            ownerId={track.recording_id}
-                            refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                            onSaved={refreshAfterMetadataSave}
-                          />
-                        ) : undefined
-                      }
-                      position={
-                        <ScopedLibraryMetadataEditor
-                          scope="position"
-                          ownerId={track.id}
-                          releaseId={releaseId}
-                          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                          onSaved={refreshAfterMetadataSave}
-                        />
-                      }
-                    />
-                    {credits.length > 1 && (
-                      <LibraryPrimaryArtistControl
-                        locale={locale}
-                        positionNumber={track.displayed_number}
-                        model={{
-                          selectedId: track.primary_artist.selected_artist_id,
-                          options: uniqueArtists(credits).map((artist) => ({
-                            id: artist.artist_id,
-                            name:
-                              artist.credit_name || artist.artist_name || "",
-                          })),
-                          disabled:
-                            !position?.metadata || position.writePending,
-                          onChange: (id) =>
-                            void selectPrimaryArtist(track.id, id),
-                        }}
-                      />
-                    )}
-                    <LibraryPositionLyricsView
-                      locale={locale}
-                      value={position?.lyrics ?? ""}
-                      onChange={(value) => {
-                        lyricsEditGenerations.current.set(
-                          track.id,
-                          (lyricsEditGenerations.current.get(track.id) ?? 0) +
-                            1,
-                        );
-                        setPositions((current) => ({
-                          ...current,
-                          [track.id]: {
-                            ...current[track.id],
-                            lyrics: value,
-                            draftDirty: true,
-                          },
-                        }));
-                      }}
-                      saveDisabled={
-                        !position?.metadata ||
-                        Boolean(
-                          position.writePending ||
-                            position.saving ||
-                            position.readError,
-                        )
-                      }
-                      applyDisabled={
-                        !publication?.can_apply_manual_lyrics ||
-                        !hasManualLyrics ||
-                        Boolean(
-                          position?.readError ||
-                            position?.applyOperationID ||
-                            publication.active_attempt ||
-                            position?.applying,
-                        )
-                      }
-                      onSave={() => void saveLyrics(track.id)}
-                      onClear={() => void saveLyrics(track.id, true)}
-                      onApply={() => void applyLyrics(track.id)}
-                    />
-                  </>
-                ) : undefined
-              }
-              publication={publicationView}
-              publicationPreview={publicationPreview}
-              deletion={
-                showWorkspace ? (
-                  <LibraryDeletionControl
-                    target={{
-                      type: "publication",
-                      releaseId,
-                      positionId: track.id,
-                    }}
-                    releaseTitle={release.title}
-                    targetIdentity={deletionIdentityByPosition.current.get(
-                      track.id,
-                    )}
-                    positionLabel={`${track.displayed_number.trim() || track.position}. ${track.title}`}
-                    positionLabels={positionLabels}
-                    showButton={hasCurrentPublication}
-                    onSnapshot={(snapshot) =>
-                      handleDeletionSnapshot(
-                        "publication",
-                        snapshot,
-                        renderScope,
-                        track.id,
-                      )
-                    }
-                  />
-                ) : undefined
-              }
-              technical={showWorkspace ? technicalView : undefined}
-              tags={
-                showWorkspace
-                  ? {
-                      open: inspection?.open ?? false,
-                      onOpenChange: (open) => {
-                        if (open === (inspection?.open ?? false)) return;
+                    };
+                  });
+                  refreshReadState();
+                }}
+                onRefresh={refreshReadState}
+                {...aggregateCallbacksFor(track.id)}
+              />
+            ) : undefined;
+          return {
+            id: track.id,
+            screen: {
+              providerRefresh,
+              heading: showWorkspace
+                ? {
+                    displayNumber,
+                    title: track.title,
+                    artist,
+                    releaseTitle: release.title,
+                    releaseHref: `#/library/releases/${encodeURIComponent(release.id)}`,
+                    libraryHref: "#/library",
+                  }
+                : undefined,
+              sources: showWorkspace
+                ? {
+                    position: displayNumber,
+                    items: positionSourceItems(track, locale),
+                    inspection: {
+                      value: inspection?.open
+                        ? inspectedSource?.media_variant_id
+                        : undefined,
+                      onChange: (variantId) =>
                         setTagInspection({
                           releaseId,
                           positionId: track.id,
-                          variantId: inspection?.variantId,
-                          open,
-                        });
-                      },
+                          variantId,
+                          open: true,
+                        }),
+                    },
+                  }
+                : undefined,
+              editors: showWorkspace ? (
+                <>
+                  <ReleaseCreditList credits={credits} />
+                  {track.recording_id ? (
+                    <GenreMetadataEditor
+                      owner="recording"
+                      ownerId={track.recording_id}
+                      refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                      onSaved={refreshAfterMetadataSave}
+                    />
+                  ) : null}
+                  <TrackMetadataEditorsView
+                    recording={
+                      track.recording_id ? (
+                        <ScopedLibraryMetadataEditor
+                          scope="recording"
+                          ownerId={track.recording_id}
+                          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                          onSaved={refreshAfterMetadataSave}
+                        />
+                      ) : undefined
                     }
-                  : undefined
-              }
-              evidence={
-                showWorkspace ? (
-                  <LibraryPositionTagEvidence
-                    key={track.id}
-                    locale={locale}
-                    open={inspection?.open ?? false}
-                    releaseId={releaseId}
-                    positionId={track.id}
-                    refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                    source={inspectedSource}
-                    current={
-                      currentTags
-                        ? { state: "saved", tags: currentTags }
-                        : position?.readError
-                          ? { state: "unavailable" }
-                          : !publication
-                            ? { state: "loading" }
-                            : {
-                                state: hasCurrentPublication
-                                  ? "unavailable"
-                                  : "absent",
-                              }
+                    position={
+                      <ScopedLibraryMetadataEditor
+                        scope="position"
+                        ownerId={track.id}
+                        releaseId={releaseId}
+                        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                        onSaved={refreshAfterMetadataSave}
+                      />
                     }
                   />
-                ) : undefined
-              }
-            />
-            {!positionId && position?.readError ? (
-              <TrackReadErrorNoticeView
-                locale={locale}
-                message={displayText(position.readError)}
-                onRefresh={refreshReadState}
-              />
-            ) : null}
-          </Fragment>
-        );
-      })}
-    </LibraryReleaseWorkspaceView>
+                  {credits.length > 1 && (
+                    <LibraryPrimaryArtistControl
+                      locale={locale}
+                      positionNumber={track.displayed_number}
+                      model={{
+                        selectedId: track.primary_artist.selected_artist_id,
+                        options: uniqueArtists(credits).map((artist) => ({
+                          id: artist.artist_id,
+                          name: artist.credit_name || artist.artist_name || "",
+                        })),
+                        disabled: !position?.metadata || position.writePending,
+                        onChange: (id) =>
+                          void selectPrimaryArtist(track.id, id),
+                      }}
+                    />
+                  )}
+                  <LibraryPositionLyricsView
+                    locale={locale}
+                    value={position?.lyrics ?? ""}
+                    onChange={(value) => {
+                      lyricsEditGenerations.current.set(
+                        track.id,
+                        (lyricsEditGenerations.current.get(track.id) ?? 0) + 1,
+                      );
+                      setPositions((current) => ({
+                        ...current,
+                        [track.id]: {
+                          ...current[track.id],
+                          lyrics: value,
+                          draftDirty: true,
+                        },
+                      }));
+                    }}
+                    saveDisabled={
+                      !position?.metadata ||
+                      Boolean(
+                        position.writePending ||
+                          position.saving ||
+                          position.readError,
+                      )
+                    }
+                    applyDisabled={
+                      !publication?.can_apply_manual_lyrics ||
+                      !hasManualLyrics ||
+                      Boolean(
+                        position?.readError ||
+                          position?.applyOperationID ||
+                          publication.active_attempt ||
+                          position?.applying,
+                      )
+                    }
+                    onSave={() => void saveLyrics(track.id)}
+                    onClear={() => void saveLyrics(track.id, true)}
+                    onApply={() => void applyLyrics(track.id)}
+                  />
+                </>
+              ) : undefined,
+              publication: publicationView,
+              publicationPreview,
+              deletion: showWorkspace ? (
+                <LibraryDeletionControl
+                  target={{
+                    type: "publication",
+                    releaseId,
+                    positionId: track.id,
+                  }}
+                  releaseTitle={release.title}
+                  targetIdentity={deletionIdentityByPosition.current.get(
+                    track.id,
+                  )}
+                  positionLabel={`${track.displayed_number.trim() || track.position}. ${track.title}`}
+                  positionLabels={positionLabels}
+                  showButton={hasCurrentPublication}
+                  onSnapshot={(snapshot) =>
+                    handleDeletionSnapshot(
+                      "publication",
+                      snapshot,
+                      renderScope,
+                      track.id,
+                    )
+                  }
+                />
+              ) : undefined,
+              technical: showWorkspace ? technicalView : undefined,
+              tags: showWorkspace
+                ? {
+                    open: inspection?.open ?? false,
+                    onOpenChange: (open) => {
+                      if (open === (inspection?.open ?? false)) return;
+                      setTagInspection({
+                        releaseId,
+                        positionId: track.id,
+                        variantId: inspection?.variantId,
+                        open,
+                      });
+                    },
+                  }
+                : undefined,
+              evidence: showWorkspace ? (
+                <LibraryPositionTagEvidence
+                  key={track.id}
+                  locale={locale}
+                  open={inspection?.open ?? false}
+                  releaseId={releaseId}
+                  positionId={track.id}
+                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                  source={inspectedSource}
+                  current={
+                    currentTags
+                      ? { state: "saved", tags: currentTags }
+                      : position?.readError
+                        ? { state: "unavailable" }
+                        : !publication
+                          ? { state: "loading" }
+                          : {
+                              state: hasCurrentPublication
+                                ? "unavailable"
+                                : "absent",
+                            }
+                  }
+                />
+              ) : undefined,
+            },
+            notice:
+              !positionId && position?.readError
+                ? {
+                    message: displayText(position.readError),
+                    onRefresh: refreshReadState,
+                  }
+                : undefined,
+          };
+        },
+      )}
+    />
   );
 }

@@ -4,6 +4,7 @@ import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
+import { LibraryReleaseWorkspaceView } from "../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	type LibrarySelectionPreviewPosition,
 	type LibrarySelectionPreviewState,
@@ -11,7 +12,6 @@ import {
 	maxLibraryPreviewPositions,
 } from "../ui/features/library/LibrarySelectionPreviewView";
 import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelectionScreenFrame";
-import { ReleaseOverviewView } from "../ui/features/library/ReleaseOverviewView";
 import { LocalReleaseEditor } from "../ui/features/local-release/LocalReleaseEditor";
 import {
 	ScreenFeedbackView,
@@ -855,13 +855,12 @@ export function CatalogDemo({
 		const release = releases.find((item) => item.id === releaseId);
 		if (!release)
 			return (
-				<>
-					<ReleaseOverviewView
-						locale={locale}
-						libraryHref={libraryRootHref()}
-						heading={null}
-					/>
-				</>
+				<LibraryReleaseWorkspaceView
+					locale={locale}
+					selection={{ kind: "unavailable" }}
+					overview={{ libraryHref: libraryRootHref(), heading: null }}
+					positions={[]}
+				/>
 			);
 		return (
 			<LibrarySelectionScreenFrame>

@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
-import type { TrackScreenViewProps } from "../../../ui/features/library/TrackScreenView";
+import type { LibraryReleasePositionModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	formatTrackMessage,
 	trackMessage,
@@ -73,7 +73,7 @@ export function useTrackScreenDemoProvider({
 	files = originalFiles,
 	artists,
 	providers,
-}: TrackScreenProps): TrackScreenViewProps {
+}: TrackScreenProps): LibraryReleasePositionModel {
 	const { locale } = useI18n();
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
 	const [tagComparisonOpen, setTagComparisonOpen] = useState(
@@ -139,7 +139,6 @@ export function useTrackScreenDemoProvider({
 		];
 	});
 	return {
-		locale,
 		heading: {
 			displayNumber: track.displayedNumber?.trim()
 				? track.displayedNumber

@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
-import { MetadataEditorFocusView } from "../../../ui/features/library/metadata/MetadataEditorFocusView";
 import {
-	type ReleaseOverviewCredit,
-	type ReleaseOverviewMedia,
-	ReleaseOverviewView,
+	type LibraryReleaseOverviewModel,
+	LibraryReleaseWorkspaceView,
+} from "../../../ui/features/library/LibraryReleaseWorkspaceView";
+import { MetadataEditorFocusView } from "../../../ui/features/library/metadata/MetadataEditorFocusView";
+import type {
+	ReleaseOverviewCredit,
+	ReleaseOverviewMedia,
 } from "../../../ui/features/library/ReleaseOverviewView";
 import {
 	ReleasePublicationDemo,
@@ -49,9 +52,9 @@ const sourceIds = (track: OriginalTrack) => [
 
 /**
  * Release overview demo provider. It resolves release facts, media grouping and
- * selection into the focused view, and mounts the existing metadata,
- * publication and deletion actors through narrow slots. The exact route keeps
- * the provider separate from the copy-ready view.
+ * selection into the typed overview model and mounts the shared edition
+ * workspace. The existing metadata, publication and deletion actors stay narrow
+ * slots. The exact route keeps the provider separate from the copy-ready view.
  */
 export function ReleaseOverviewScreen({
 	release: givenRelease,
@@ -189,80 +192,79 @@ export function ReleaseOverviewScreen({
 		else setLocalRelease(updated);
 	};
 
+	const overview: LibraryReleaseOverviewModel = {
+		libraryHref: libraryRootHref(),
+		artistHref: artist ? `#artist/${encodeURIComponent(artist.id)}` : undefined,
+		heading: {
+			title: release.title,
+			disambiguation: release.disambiguation,
+			year: release.year,
+			country: release.country,
+			label: release.label,
+			catalog: release.catalog,
+			providerText:
+				release.provider === "Local"
+					? "Local"
+					: release.providerId
+						? `${release.provider || "MusicBrainz"} · ${release.providerId}`
+						: m("localRelease"),
+			palette: release.color || artist?.color,
+			artwork: {},
+			counts: {
+				positions: release.tracks.length,
+				published: release.tracks.filter((track) => track.published).length,
+				available: release.tracks.filter(hasAudio).length,
+			},
+			durationSeconds: durationTotal,
+			selection: {
+				isSelected: release.tracks.length > 0 && everySelected,
+				isIndeterminate: someSelected && !everySelected,
+				isDisabled: !release.tracks.length || !onSelect,
+				onChange: (value) => onSelect?.(trackIds, value),
+			},
+		},
+		credentials,
+		media,
+		fallbackTracks,
+		unassignedTracks,
+		metadataEditor: (
+			<MetadataEditorFocusView focus={initialTagFocus}>
+				<ReleaseMetadataEditor
+					key={release.id}
+					release={release}
+					artists={artists}
+					genresLoaded={genresLoaded}
+					onLoadGenres={onLoadGenres}
+					local={!onUpdateRelease}
+					onSave={saveRelease}
+				/>
+			</MetadataEditorFocusView>
+		),
+		publication: publication ? (
+			<ReleasePublicationDemo
+				key={`publication-${release.id}`}
+				release={release}
+				provider={publication}
+			/>
+		) : undefined,
+		deletion: onQueueDeletion ? (
+			<DeletionRequest
+				key={`deletion-${release.id}`}
+				iconOnly
+				triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
+				release={release}
+				onQueue={onQueueDeletion}
+			/>
+		) : undefined,
+		// Real-only cover and provider refresh capabilities stay unbound until
+		// their controllers exist; do not invent current cover or source data.
+	};
 	return (
-		<ReleaseOverviewView
+		<LibraryReleaseWorkspaceView
 			locale={locale}
-			libraryHref={libraryRootHref()}
-			artistHref={
-				artist ? `#artist/${encodeURIComponent(artist.id)}` : undefined
-			}
-			heading={{
-				title: release.title,
-				disambiguation: release.disambiguation,
-				year: release.year,
-				country: release.country,
-				label: release.label,
-				catalog: release.catalog,
-				providerText:
-					release.provider === "Local"
-						? "Local"
-						: release.providerId
-							? `${release.provider || "MusicBrainz"} · ${release.providerId}`
-							: m("localRelease"),
-				palette: release.color || artist?.color,
-				artwork: {},
-				counts: {
-					positions: release.tracks.length,
-					published: release.tracks.filter((track) => track.published).length,
-					available: release.tracks.filter(hasAudio).length,
-				},
-				durationSeconds: durationTotal,
-				selection: {
-					isSelected: release.tracks.length > 0 && everySelected,
-					isIndeterminate: someSelected && !everySelected,
-					isDisabled: !release.tracks.length || !onSelect,
-					onChange: (value) => onSelect?.(trackIds, value),
-				},
-			}}
-			credentials={credentials}
-			media={media}
-			fallbackTracks={fallbackTracks}
-			unassignedTracks={unassignedTracks}
-			metadataEditor={
-				<MetadataEditorFocusView focus={initialTagFocus}>
-					<ReleaseMetadataEditor
-						key={release.id}
-						release={release}
-						artists={artists}
-						genresLoaded={genresLoaded}
-						onLoadGenres={onLoadGenres}
-						local={!onUpdateRelease}
-						onSave={saveRelease}
-					/>
-				</MetadataEditorFocusView>
-			}
-			publication={
-				publication ? (
-					<ReleasePublicationDemo
-						key={`publication-${release.id}`}
-						release={release}
-						provider={publication}
-					/>
-				) : undefined
-			}
-			deletion={
-				onQueueDeletion ? (
-					<DeletionRequest
-						key={`deletion-${release.id}`}
-						iconOnly
-						triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
-						release={release}
-						onQueue={onQueueDeletion}
-					/>
-				) : undefined
-			}
-			// Real-only cover and provider refresh capabilities stay unbound until
-			// their controllers exist; do not invent current cover or source data.
+			selection={{ kind: "edition" }}
+			overview={overview}
+			positions={[]}
 		/>
 	);
 }
