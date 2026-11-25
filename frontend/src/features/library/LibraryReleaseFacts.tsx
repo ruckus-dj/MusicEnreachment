@@ -5,11 +5,12 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { sourceInventoryStatusLabel } from "../sources/SourceInventoryView";
 import { statusLabel } from "../sources/sourcesApi";
-import {
-  type LibraryArtistReleaseTrackRow,
-  LibraryArtistReleaseTracksView,
-} from "./LibraryArtistReleaseTracksView";
+import type { LibraryArtistReleaseTrackRow } from "./LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "./LibraryPositionSourcesView";
+import type {
+  ReleaseOverviewCredit,
+  ReleaseOverviewMedia,
+} from "./ReleaseOverviewView";
 
 export function ReleaseCreditList({
   credits,
@@ -65,127 +66,66 @@ export function ReleaseCreditList({
   );
 }
 
-export function ReleaseMediaSummary({
-  release,
-}: {
-  release: LibraryReleaseDetailResponse;
-}) {
-  const { locale } = useI18n();
-  const copy =
-    locale === "ru"
-      ? {
-          heading: "Носители и позиции",
-          medium: "Носитель",
-          untitled: "Без названия",
-          unspecified: "Не указан",
-          positionsUnspecified: "Позиции не указаны",
-          mediaUnrecorded: "Сведения о носителях не сохранены.",
-          releasePositions: "Позиции релиза:",
-          positionsWithoutMedia: "Позиции без сведений о носителе:",
-        }
-      : {
-          heading: "Media and positions",
-          medium: "Medium",
-          untitled: "Untitled",
-          unspecified: "Not specified",
-          positionsUnspecified: "No positions specified",
-          mediaUnrecorded: "Media information has not been saved.",
-          releasePositions: "Release positions:",
-          positionsWithoutMedia: "Positions without saved media information:",
-        };
-  const media = release.media ?? [];
+export function releaseOverviewCredits(
+  credits: LibraryReleaseDetailResponse["artists"],
+): ReleaseOverviewCredit[] {
+  return (credits ?? []).map((credit) => ({
+    name: credit.credit_name || credit.artist_name || "",
+    canonicalName: credit.artist_name,
+    href: `#/library/artists/${encodeURIComponent(credit.artist_id)}`,
+    joinPhrase: credit.join_phrase,
+    role: credit.role || null,
+  }));
+}
+
+export function releaseOverviewMedia(release: LibraryReleaseDetailResponse): {
+  media: ReleaseOverviewMedia[];
+  fallbackTracks?: LibraryArtistReleaseTrackRow[];
+  unassignedTracks?: LibraryArtistReleaseTrackRow[];
+} {
+  const mediaRecords = release.media ?? [];
   const tracks = release.tracks ?? [];
-  const tracksForMedium = (medium: (typeof media)[number]) =>
+  const trackRow = (
+    track: LibraryReleaseTrackResponse,
+  ): LibraryArtistReleaseTrackRow => ({
+    id: track.id,
+    numberLabel:
+      track.displayed_number.trim() || String(track.position).padStart(2, "0"),
+    title: track.title,
+    href: `#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`,
+    durationMs: track.duration_ms,
+    sourceCount: track.sources?.length ?? 0,
+    isNewRecording: !track.recording_id,
+    publication: track.publication
+      ? {
+          state: "published",
+          codec: track.publication.codec,
+          container: track.publication.container,
+        }
+      : { state: "not-published" },
+  });
+  const tracksForMedium = (medium: (typeof mediaRecords)[number]) =>
     tracks.filter((track) =>
       track.medium_id
         ? track.medium_id === medium.id
         : track.medium === medium.medium,
     );
+  const media = mediaRecords.map((medium) => ({
+    key: medium.id,
+    number: medium.medium,
+    title: medium.title,
+    format: medium.format,
+    tracks: tracksForMedium(medium).map(trackRow),
+  }));
   const ungroupedTracks = tracks.filter(
-    (track) => !media.some((medium) => tracksForMedium(medium).includes(track)),
+    (track) =>
+      !mediaRecords.some((medium) => tracksForMedium(medium).includes(track)),
   );
-  const trackRows = (
-    items: LibraryReleaseTrackResponse[],
-  ): LibraryArtistReleaseTrackRow[] =>
-    items.map((track) => ({
-      id: track.id,
-      numberLabel:
-        track.displayed_number.trim() ||
-        String(track.position).padStart(2, "0"),
-      title: track.title,
-      href: `#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`,
-      durationMs: track.duration_ms,
-      sourceCount: track.sources?.length ?? 0,
-      isNewRecording: !track.recording_id,
-      publication: track.publication
-        ? {
-            state: "published",
-            codec: track.publication.codec,
-            container: track.publication.container,
-          }
-        : { state: "not-published" },
-    }));
-  const mediumLabel = (medium: (typeof media)[number]) =>
-    `${copy.medium} ${medium.medium} · ${medium.title || copy.untitled} · ${
-      medium.format || copy.unspecified
-    }`;
-  return (
-    <section
-      className="grid min-w-0 gap-3"
-      aria-labelledby="release-media-heading"
-    >
-      <h2
-        id="release-media-heading"
-        className="my-2 text-base leading-[22px] font-[650]"
-      >
-        {copy.heading}
-      </h2>
-      {media.length ? (
-        <div className="grid gap-4">
-          {media.map((medium) => {
-            const items = tracksForMedium(medium);
-            const label = mediumLabel(medium);
-            return (
-              <section className="min-w-0" key={medium.id} aria-label={label}>
-                <h3 className="mb-1.5 text-sm font-semibold">{label}</h3>
-                {items.length ? (
-                  <LibraryArtistReleaseTracksView
-                    locale={locale}
-                    releaseTitle={label}
-                    tracks={trackRows(items)}
-                  />
-                ) : (
-                  <p>{copy.positionsUnspecified}</p>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      ) : (
-        <p>{copy.mediaUnrecorded}</p>
-      )}
-      {!media.length && tracks.length > 0 ? (
-        <div className="min-w-0">
-          <p>{copy.releasePositions}</p>
-          <LibraryArtistReleaseTracksView
-            locale={locale}
-            releaseTitle={release.title}
-            tracks={trackRows(tracks)}
-          />
-        </div>
-      ) : null}
-      {media.length > 0 && ungroupedTracks.length > 0 ? (
-        <div className="min-w-0">
-          <p>{copy.positionsWithoutMedia}</p>
-          <LibraryArtistReleaseTracksView
-            locale={locale}
-            releaseTitle={release.title}
-            tracks={trackRows(ungroupedTracks)}
-          />
-        </div>
-      ) : null}
-    </section>
-  );
+  return {
+    media,
+    fallbackTracks: media.length ? undefined : tracks.map(trackRow),
+    unassignedTracks: media.length ? ungroupedTracks.map(trackRow) : undefined,
+  };
 }
 
 function rootStatusLabel(status: string, locale: "en" | "ru") {

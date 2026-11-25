@@ -1,4 +1,4 @@
-import { MetadataEditorView } from "./MetadataEditorView";
+import { MetadataEditorView } from "../features/library/MetadataEditorView";
 import {
 	type MetadataEditorProps,
 	useMetadataEditorProvider,

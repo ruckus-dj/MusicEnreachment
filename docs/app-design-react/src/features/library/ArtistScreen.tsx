@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeletionOperation } from "../../components/DeletionRequest";
-import { DeletionRequest } from "../../components/DeletionRequest";
 import { demoGenres } from "../../components/GenreLibrary";
 import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
-import { ReleaseMetadataEditor } from "../../metadata/ReleaseMetadataEditor";
-import {
-	ReleasePublicationDemo,
-	type ReleasePublicationDemoProvider,
-} from "../publication/ReleasePublicationDemo";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	ArtistMetadataCard,
@@ -27,6 +21,7 @@ import {
 	availabilityRowClass,
 	type CatalogFilter as CatalogFilterValue,
 } from "./availabilityRows";
+import { releaseHref } from "./artistReleaseRoute";
 import {
 	type CatalogArtist,
 	catalogData,
@@ -77,10 +72,8 @@ export function ArtistScreen({
 	onDeleteArtist,
 	onQueueDeletion,
 	onUpdateArtist,
-	onUpdateRelease,
 	initialTags,
 	initialReleaseId,
-	publication,
 	genresLoaded = false,
 	onLoadGenres,
 }: {
@@ -97,10 +90,8 @@ export function ArtistScreen({
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	onUpdateArtist?: (artist: CatalogArtist) => void;
-	onUpdateRelease?: (release: OriginalRelease) => void;
 	initialTags?: { scope: TagScope; releaseId?: string };
 	initialReleaseId?: string;
-	publication?: ReleasePublicationDemoProvider;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 }) {
@@ -128,9 +119,6 @@ export function ArtistScreen({
 	const [localArtistUpdates, setLocalArtistUpdates] = useState<
 		Record<string, CatalogArtist>
 	>({});
-	const [localReleaseUpdates, setLocalReleaseUpdates] = useState<
-		Record<string, OriginalRelease>
-	>({});
 	const artist =
 		localArtistUpdates[artistId] ??
 		artists.find((item) => item.id === artistId);
@@ -147,20 +135,16 @@ export function ArtistScreen({
 	}, [initialTags?.scope, initialTags?.releaseId]);
 	const artistReleases = useMemo(
 		() =>
-			releases
-				.map((release) => localReleaseUpdates[release.id] ?? release)
-				.filter(
-					(release) =>
-						release.artistId === artistId ||
-						(releaseFields(release) &&
-							release.credits?.some((credit) => credit.artistId === artistId)),
-				),
-		[artistId, localReleaseUpdates, releases],
+			releases.filter(
+				(release) =>
+					release.artistId === artistId ||
+					(releaseFields(release) &&
+						release.credits?.some((credit) => credit.artistId === artistId)),
+			),
+		[artistId, releases],
 	);
 	const tracks = artistReleases.flatMap((release) => release.tracks);
-	const allReleases = releases.map(
-		(release) => localReleaseUpdates[release.id] ?? release,
-	);
+	const allReleases = releases;
 	const ids = tracks.map((track) => track.id);
 	const hasAudio = (track: OriginalTrack) =>
 		Boolean(track.published) ||
@@ -261,14 +245,6 @@ export function ArtistScreen({
 			setLocalArtistUpdates((current) => ({
 				...current,
 				[artist.id]: updated,
-			}));
-	};
-	const saveRelease = (updated: OriginalRelease) => {
-		if (onUpdateRelease) onUpdateRelease(updated);
-		else
-			setLocalReleaseUpdates((current) => ({
-				...current,
-				[updated.id]: updated,
 			}));
 	};
 	const metadataValues: ArtistMetadataValues = {
@@ -397,6 +373,7 @@ export function ArtistScreen({
 		return {
 			key: release.id,
 			title: release.title,
+			titleHref: releaseHref(release.id),
 			year: release.year,
 			catalog: release.catalog,
 			ariaLabel,
@@ -462,33 +439,6 @@ export function ArtistScreen({
 					onChange: (value: boolean) => onSelect?.([track.id], value),
 				},
 			})),
-			editor: (
-				<ReleaseMetadataEditor
-					key={release.id}
-					release={release}
-					artists={artists}
-					genresLoaded={genresLoaded}
-					onLoadGenres={onLoadGenres}
-					local={!onUpdateRelease}
-					onSave={saveRelease}
-				/>
-			),
-			publication: publication ? (
-				<ReleasePublicationDemo
-					key={`publication-${release.id}`}
-					release={release}
-					provider={publication}
-				/>
-			) : undefined,
-			deletion: onQueueDeletion ? (
-				<DeletionRequest
-					key={`deletion-${release.id}`}
-					iconOnly
-					triggerLabel={`${m("deleteAlbum")} ${ariaLabel}`}
-					release={release}
-					onQueue={onQueueDeletion}
-				/>
-			) : undefined,
 		};
 	});
 	const preparedMissingGroups: ArtistMissingGroupModel[] =

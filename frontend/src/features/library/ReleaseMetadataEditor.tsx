@@ -27,27 +27,25 @@ import {
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
 import { artistCreditMessages } from "./artistCreditMessages";
-import {
-  ContributorRoleSectionView,
-  ContributorRowView,
-} from "./ContributorRowView";
 import type { GenreReference } from "./GenreMetadataEditor";
 import { genreMessages } from "./genreMessages";
 import {
   libraryTagComparisonFieldLabel,
   navidromeFields,
 } from "./libraryTagComparisonFields";
-import { MetadataCardActions } from "./MetadataCardActions";
 import {
-  MetadataBasicsSection,
+  type MetadataEditorLabels,
+  type MetadataEditorRolesView,
+  type MetadataEditorRoleView,
+  MetadataEditorView,
+  type MetadataEditorWorksMovementView,
+} from "./MetadataEditorView";
+import {
   type MetadataFieldDescriptor,
-  MetadataFieldGroup,
-  MetadataFieldsGrid,
   metadataFilledSummary,
   metadataListActions,
 } from "./MetadataFieldPresentation";
 import { focusMetadataAction, focusMetadataKey } from "./metadataEditorFocus";
-import { ProviderGenreBaselineRow } from "./ProviderGenreBaselineRow";
 import {
   createMetadataDraftRowKey,
   type MetadataMovementDraft,
@@ -56,7 +54,6 @@ import {
   readMetadataWorkDrafts,
   StructuredMetadataField,
 } from "./StructuredMetadataFields";
-import { WorksMovementSectionView } from "./WorksMovementSectionView";
 
 type FieldState = "absent" | "value" | "explicit_empty";
 type ContributorDraft = {
@@ -280,6 +277,12 @@ const copy = {
     contributorMusicBrainzID: "Contributor MusicBrainz ID",
     artistLinkRetained: "Local artist link retained",
     addContributor: "Add contributor",
+    addRole: "Add role",
+    selectRole: "Select a role…",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    remove: "Remove",
+    contributorNameRequired: "Contributor name is required.",
     moveContributorUp: (index: number) => `Move contributor up ${index}`,
     moveContributorDown: (index: number) => `Move contributor down ${index}`,
     removeContributor: (index: number) => `Remove contributor ${index}`,
@@ -383,6 +386,12 @@ const copy = {
     contributorMusicBrainzID: "MusicBrainz ID участника",
     artistLinkRetained: "Связь с локальным артистом сохранена",
     addContributor: "Добавить участника",
+    addRole: "Добавить роль",
+    selectRole: "Выберите роль…",
+    moveUp: "Выше",
+    moveDown: "Ниже",
+    remove: "Убрать",
+    contributorNameRequired: "Укажите имя участника.",
     moveContributorUp: (index: number) =>
       `Переместить участника вверх ${index}`,
     moveContributorDown: (index: number) =>
@@ -650,7 +659,19 @@ function LibraryScopedMetadataEditorSession({
 }: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
   const contributorControlPrefix = useId();
-  const contributorRoleFocus = useRef<string | null>(null);
+  const [newContributorKeys, setNewContributorKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [contributorFocus, setContributorFocus] = useState<{
+    uiKey: string;
+    field: "name" | "role";
+  } | null>(null);
+  const contributorAddBaseline = useRef<{
+    state: FieldState;
+    value: ContributorDraft[];
+    dirty: boolean;
+  } | null>(null);
+  const contributorModeTouched = useRef(false);
   const text = copy[locale];
   const genreCopy = genreMessages[locale];
   const title =
@@ -832,6 +853,10 @@ function LibraryScopedMetadataEditorSession({
     setArtistSearchQuery("");
     dirtyRef.current = false;
     setDirtyFields(new Set());
+    setNewContributorKeys(new Set());
+    setContributorFocus(null);
+    contributorAddBaseline.current = null;
+    contributorModeTouched.current = false;
     setSaveError("");
     setRefreshConflict(false);
     setEditing(true);
@@ -840,6 +865,10 @@ function LibraryScopedMetadataEditorSession({
   function cancelEdit() {
     dirtyRef.current = false;
     setDirtyFields(new Set());
+    setNewContributorKeys(new Set());
+    setContributorFocus(null);
+    contributorAddBaseline.current = null;
+    contributorModeTouched.current = false;
     setDraft(saved);
     setArtistCreditDraft(savedArtistCredit);
     setArtistSearchQuery("");
@@ -880,6 +909,21 @@ function LibraryScopedMetadataEditorSession({
 
   async function saveDraft() {
     if (!metadata || !dirtyFields.size || writePending.current) return;
+    const nameless = activeContributorRoles
+      .flatMap(({ indices }) => indices)
+      .map((index) => contributors[index])
+      .find(
+        (contributor) =>
+          newContributorKeys.has(contributor.uiKey) && !contributor.name.trim(),
+      );
+    if (nameless) {
+      setSaveError("");
+      focusMetadataKey(
+        editorRef,
+        `${contributorControlPrefix}-${nameless.uiKey}-name`,
+      );
+      return;
+    }
     const generation = sessionGeneration.current;
     let invalidKey: string | undefined;
     const isCurrentSession = () =>
@@ -936,13 +980,13 @@ function LibraryScopedMetadataEditorSession({
                 (contributor) => ({
                   name: contributor.name,
                   role: contributor.role,
-                  ...(contributor.instrument !== undefined
+                  ...(contributor.instrument?.trim()
                     ? { instrument: contributor.instrument }
                     : {}),
                   ...(contributor.artist_id !== undefined
                     ? { artist_id: contributor.artist_id }
                     : {}),
-                  ...(contributor.mbid !== undefined
+                  ...(contributor.mbid?.trim()
                     ? { mbid: contributor.mbid }
                     : {}),
                 }),
@@ -977,6 +1021,10 @@ function LibraryScopedMetadataEditorSession({
       if (!Object.keys(changes).length) {
         dirtyRef.current = false;
         setDirtyFields(new Set());
+        setNewContributorKeys(new Set());
+        setContributorFocus(null);
+        contributorAddBaseline.current = null;
+        contributorModeTouched.current = false;
         setDraft(saved);
         setArtistCreditDraft(savedArtistCredit);
         setArtistSearchQuery("");
@@ -1016,6 +1064,10 @@ function LibraryScopedMetadataEditorSession({
       setArtistCreditDraft(artistCreditDraft);
       dirtyRef.current = false;
       setDirtyFields(new Set());
+      setNewContributorKeys(new Set());
+      setContributorFocus(null);
+      contributorAddBaseline.current = null;
+      contributorModeTouched.current = false;
       setRefreshConflict(false);
       setEditing(false);
       setArtistSearchQuery("");
@@ -1026,7 +1078,8 @@ function LibraryScopedMetadataEditorSession({
     } catch (reason) {
       if (isCurrentSession()) {
         setSaveError(errorMessage(reason, ""));
-        if (invalidKey) focusMetadataKey(editorRef, invalidKey);
+        if (invalidKey && invalidKey !== "contributors")
+          focusMetadataKey(editorRef, invalidKey);
       }
     } finally {
       if (isCurrentSession()) {
@@ -1060,7 +1113,6 @@ function LibraryScopedMetadataEditorSession({
     "number",
     "advisory",
   ]);
-  const isScalarField = ({ kind }: ReleaseField) => scalarFieldKinds.has(kind);
   const fieldDescriptor = ({
     key,
     kind,
@@ -1170,281 +1222,275 @@ function LibraryScopedMetadataEditorSession({
       onStateChange: (state) => updateField(key, { state, value: field.value }),
     };
   };
-  const renderStructuredField = ({ key, kind }: ReleaseField) => {
-    if (kind !== "contributors") return null;
-    const field = editing ? draft[key] : saved[key];
-    const label = text.labels[key as Exclude<ReleaseFieldKey, "genre">];
-    const contributors = field.value as ContributorDraft[];
-    const indicesByRole = new Map<string, number[]>();
-    for (const [index, { role }] of contributors.entries()) {
-      const indices = indicesByRole.get(role);
-      if (indices) indices.push(index);
-      else indicesByRole.set(role, [index]);
-    }
-    const groups = Array.from(
-      new Set([...contributorRoleOrder, ...indicesByRole.keys()]),
-    ).flatMap((role) => {
-      const indices = indicesByRole.get(role);
-      return indices ? [{ role, indices }] : [];
-    });
-    const updateContributors = (value: ContributorDraft[]) =>
-      updateField(key, { state: "value", value });
-    const replaceContributor = (
-      index: number,
-      changes: Partial<ContributorDraft>,
-    ) =>
-      updateContributors(
-        contributors.map((row, rowIndex) =>
-          rowIndex === index ? { ...row, ...changes } : row,
-        ),
-      );
-    const moveContributor = (index: number, target: number | undefined) => {
-      if (target === undefined) return;
-      // Reorder only the slots of this role; interleaved roles keep their slots.
-      const next = [...contributors];
-      [next[index], next[target]] = [next[target], next[index]];
-      updateContributors(next);
-    };
-    return (
-      <div
-        key={key}
-        className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
-      >
-        <dt className="text-xs text-[var(--muted)]">{label}</dt>
-        <dd className="m-0 min-w-0 text-sm">
-          <div className="grid min-w-0 gap-2">
-            {field.state === "absent" ? (
-              <span className="text-sm text-[var(--muted)]">
-                {text.noOverride}
-              </span>
-            ) : field.state === "explicit_empty" ? (
-              <span className="text-sm text-[var(--muted)]">
-                {text.explicitEmpty}
-              </span>
-            ) : (
-              <>
-                {groups.map(({ role, indices }) => (
-                  <ContributorRoleSectionView
-                    key={role}
-                    label={
-                      Object.hasOwn(text.contributorRoles, role)
-                        ? libraryTagComparisonFieldLabel(role, locale)
-                        : role || text.contributorRole
-                    }
-                  >
-                    {indices.map((index, roleIndex) => {
-                      const contributor = contributors[index];
-                      const previous = indices[roleIndex - 1];
-                      const next = indices[roleIndex + 1];
-                      return (
-                        <div
-                          key={contributor.uiKey}
-                          className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
-                        >
-                          <ContributorRowView
-                            items={[
-                              {
-                                key: "name",
-                                id: `${contributorControlPrefix}-${contributor.uiKey}-name`,
-                                label: `${text.contributorName} ${index + 1}`,
-                                value: contributor.name,
-                                disabled: saving,
-                                display: editing ? "input" : "text",
-                                emptyValue: text.emptyValue,
-                                onChange: (name) =>
-                                  replaceContributor(index, { name }),
-                              },
-                              {
-                                kind: "slot",
-                                key: "role",
-                                content: editing ? (
-                                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                                    <label
-                                      htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                                    >
-                                      {`${text.contributorRole} ${index + 1}`}
-                                    </label>
-                                    <select
-                                      id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
-                                      className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
-                                      value={contributor.role}
-                                      disabled={saving}
-                                      ref={(element) => {
-                                        if (
-                                          element &&
-                                          contributorRoleFocus.current ===
-                                            contributor.uiKey
-                                        ) {
-                                          contributorRoleFocus.current = null;
-                                          element.focus();
-                                        }
-                                      }}
-                                      onChange={(event) => {
-                                        if (
-                                          event.currentTarget.value ===
-                                          contributor.role
-                                        )
-                                          return;
-                                        contributorRoleFocus.current =
-                                          contributor.uiKey;
-                                        replaceContributor(index, {
-                                          role: event.currentTarget.value,
-                                        });
-                                      }}
-                                    >
-                                      <option value="">
-                                        {text.contributorRole}
-                                      </option>
-                                      {contributor.role &&
-                                      !Object.hasOwn(
-                                        text.contributorRoles,
-                                        contributor.role,
-                                      ) ? (
-                                        <option value={contributor.role}>
-                                          {contributor.role}
-                                        </option>
-                                      ) : null}
-                                      {Object.entries(
-                                        text.contributorRoles,
-                                      ).map(([role, roleLabel]) => (
-                                        <option key={role} value={role}>
-                                          {roleLabel}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                ) : null,
-                              },
-                              {
-                                key: "instrument",
-                                id: `${contributorControlPrefix}-${contributor.uiKey}-instrument`,
-                                label: `${text.contributorInstrument} ${index + 1}`,
-                                value: contributor.instrument ?? "",
-                                disabled: saving,
-                                display: editing ? "input" : "text",
-                                emptyValue: text.emptyValue,
-                                onChange: (instrument) =>
-                                  replaceContributor(index, {
-                                    instrument: instrument || undefined,
-                                  }),
-                              },
-                              {
-                                kind: "slot",
-                                key: "retained-link",
-                                content: contributor.artist_id ? (
-                                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                                    <span className="text-sm text-[var(--ink)]">
-                                      {text.artistLinkRetained}
-                                    </span>
-                                  </div>
-                                ) : null,
-                              },
-                              {
-                                key: "mbid",
-                                id: `${contributorControlPrefix}-${contributor.uiKey}-mbid`,
-                                label: `${text.contributorMusicBrainzID} ${index + 1}`,
-                                value: contributor.mbid ?? "",
-                                disabled: saving,
-                                display: editing ? "input" : "text",
-                                emptyValue: text.emptyValue,
-                                onChange: (mbid) =>
-                                  replaceContributor(index, {
-                                    mbid: mbid || undefined,
-                                  }),
-                              },
-                            ]}
-                            actions={
-                              editing
-                                ? {
-                                    moveUp: {
-                                      label: text.moveContributorUp(index + 1),
-                                      disabled:
-                                        saving || previous === undefined,
-                                      onPress: () =>
-                                        moveContributor(index, previous),
-                                    },
-                                    moveDown: {
-                                      label: text.moveContributorDown(
-                                        index + 1,
-                                      ),
-                                      disabled: saving || next === undefined,
-                                      onPress: () =>
-                                        moveContributor(index, next),
-                                    },
-                                    remove: {
-                                      label: text.removeContributor(index + 1),
-                                      text: text.removeContributor(index + 1),
-                                      disabled: saving,
-                                      onPress: () =>
-                                        updateContributors(
-                                          contributors.filter(
-                                            (_, row) => row !== index,
-                                          ),
-                                        ),
-                                    },
-                                  }
-                                : undefined
-                            }
-                          />
-                        </div>
-                      );
-                    })}
-                  </ContributorRoleSectionView>
-                ))}
-                {editing ? (
-                  <AppButton
-                    type="button"
-                    isDisabled={saving}
-                    onPress={() =>
-                      updateContributors([
-                        ...contributors,
-                        {
-                          uiKey: createMetadataDraftRowKey(),
-                          name: "",
-                          role: "",
-                        },
-                      ])
-                    }
-                    className="min-w-0 justify-center justify-self-start"
-                  >
-                    {text.addContributor}
-                  </AppButton>
-                ) : contributors.length === 0 ? (
-                  <span className="text-sm text-[var(--muted)]">
-                    {text.emptyValue}
-                  </span>
-                ) : null}
-              </>
-            )}
-            {editing ? (
-              <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                <label htmlFor={`${contributorControlPrefix}-${key}-state`}>
-                  {text.mode}
-                </label>
-                <select
-                  id={`${contributorControlPrefix}-${key}-state`}
-                  aria-label={`${label} — ${text.mode}`}
-                  className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)]"
-                  value={field.state}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateField(key, {
-                      state: event.currentTarget.value as FieldState,
-                      value: field.value,
-                    })
-                  }
-                >
-                  <option value="absent">{text.absent}</option>
-                  <option value="value">{text.value}</option>
-                  <option value="explicit_empty">{text.explicitEmpty}</option>
-                </select>
-              </div>
-            ) : null}
-          </div>
-        </dd>
-      </div>
-    );
+  const contributorsField = fields.find(
+    (field) => field.kind === "contributors",
+  );
+  const contributorsState = contributorsField
+    ? (editing ? draft : saved)[contributorsField.key]
+    : undefined;
+  const contributors =
+    contributorsState?.state === "value"
+      ? (contributorsState.value as ContributorDraft[])
+      : [];
+  const contributorsByRole = new Map<string, number[]>();
+  for (const [index, { role }] of contributors.entries()) {
+    const indices = contributorsByRole.get(role);
+    if (indices) indices.push(index);
+    else contributorsByRole.set(role, [index]);
+  }
+  const activeContributorRoles = Array.from(
+    new Set([...contributorRoleOrder, ...contributorsByRole.keys()]),
+  ).flatMap((role) => {
+    const indices = contributorsByRole.get(role);
+    return indices ? [{ role, indices }] : [];
+  });
+  const contributorRoleLabel = (role: string) =>
+    Object.hasOwn(text.contributorRoles, role)
+      ? libraryTagComparisonFieldLabel(role, locale)
+      : role || text.contributorRole;
+  const updateContributors = (value: ContributorDraft[]) => {
+    if (!contributorsField) return;
+    updateField(contributorsField.key, { state: "value", value });
   };
+  const sameContributorRows = (
+    left: ContributorDraft[],
+    right: ContributorDraft[],
+  ) =>
+    left.length === right.length &&
+    left.every((row, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        row.uiKey === other.uiKey &&
+        row.name === other.name &&
+        row.role === other.role &&
+        row.instrument === other.instrument &&
+        row.artist_id === other.artist_id &&
+        row.mbid === other.mbid
+      );
+    });
+  const restoreContributorBaseline = () => {
+    if (!contributorsField) return;
+    const baseline = contributorAddBaseline.current;
+    if (!baseline) return;
+    contributorAddBaseline.current = null;
+    contributorModeTouched.current = false;
+    setNewContributorKeys(new Set());
+    setContributorFocus(null);
+    setDraft((current) => ({
+      ...current,
+      [contributorsField.key]: {
+        state: baseline.state,
+        value: baseline.value,
+      },
+    }));
+    setDirtyFields((current) => {
+      const next = new Set(current);
+      if (baseline.dirty) next.add(contributorsField.key);
+      else next.delete(contributorsField.key);
+      dirtyRef.current = next.size > 0;
+      return next;
+    });
+    setSaveError("");
+  };
+  const replaceContributor = (
+    index: number,
+    changes: Partial<ContributorDraft>,
+  ) =>
+    updateContributors(
+      contributors.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...changes } : row,
+      ),
+    );
+  const moveContributorWithinRole = (
+    indices: number[],
+    roleIndex: number,
+    delta: number,
+  ) => {
+    const source = indices[roleIndex];
+    const target = indices[roleIndex + delta];
+    if (source === undefined || target === undefined) return;
+    const next = [...contributors];
+    [next[source], next[target]] = [next[target], next[source]];
+    updateContributors(next);
+  };
+  const addContributor = (role: string) => {
+    if (writePending.current || !contributorsField) return;
+    if (!contributorAddBaseline.current) {
+      contributorAddBaseline.current = {
+        state: contributorsState?.state ?? "absent",
+        value: contributors.map((contributor) => ({ ...contributor })),
+        dirty: dirtyFields.has(contributorsField.key),
+      };
+      contributorModeTouched.current = false;
+    }
+    const uiKey = createMetadataDraftRowKey();
+    setNewContributorKeys((current) => new Set(current).add(uiKey));
+    setContributorFocus({ uiKey, field: "name" });
+    updateContributors([...contributors, { uiKey, name: "", role }]);
+  };
+  const removeContributor = (index: number) => {
+    if (writePending.current || !contributorsField) return;
+    const uiKey = contributors[index]?.uiKey;
+    if (uiKey) {
+      setNewContributorKeys((current) => {
+        const next = new Set(current);
+        next.delete(uiKey);
+        return next;
+      });
+    }
+    const next = contributors.filter((_, row) => row !== index);
+    const baseline = contributorAddBaseline.current;
+    if (
+      baseline &&
+      !contributorModeTouched.current &&
+      sameContributorRows(next, baseline.value)
+    ) {
+      restoreContributorBaseline();
+      return;
+    }
+    updateContributors(next);
+  };
+  const contributorRoleControl = (
+    contributor: ContributorDraft,
+    index: number,
+  ) => (
+    <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+      <label htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}>
+        {`${text.contributorRole} ${index + 1}`}
+      </label>
+      <select
+        id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+        value={contributor.role}
+        disabled={saving}
+        onChange={(event) => {
+          const role = event.currentTarget.value;
+          if (role === contributor.role) return;
+          replaceContributor(index, { role });
+          setContributorFocus({ uiKey: contributor.uiKey, field: "role" });
+        }}
+      >
+        <option value="">{text.contributorRole}</option>
+        {contributor.role &&
+        !Object.hasOwn(text.contributorRoles, contributor.role) ? (
+          <option value={contributor.role}>{contributor.role}</option>
+        ) : null}
+        {Object.entries(text.contributorRoles).map(([role, roleLabel]) => (
+          <option key={role} value={role}>
+            {roleLabel}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+  const rolesView: MetadataEditorRolesView | undefined = contributorsField
+    ? {
+        label: text.groups.contributors,
+        summary: metadataFilledSummary(
+          locale,
+          contributors.filter((contributor) => contributor.name.trim()).length,
+        ),
+        dataKeys: [contributorsField.key],
+        roles: activeContributorRoles.map(
+          ({ role, indices }): MetadataEditorRoleView => ({
+            role,
+            label: contributorRoleLabel(role),
+            contributorCount: indices.length,
+            editing,
+            contributors: indices.map((index) => {
+              const contributor = contributors[index];
+              const required = newContributorKeys.has(contributor.uiKey);
+              const nameInputId = `${contributorControlPrefix}-${contributor.uiKey}-name`;
+              const nameError =
+                required && !contributor.name.trim()
+                  ? text.contributorNameRequired
+                  : undefined;
+              return {
+                uiKey: contributor.uiKey,
+                name: contributor.name,
+                ...(contributor.mbid !== undefined
+                  ? { mbid: contributor.mbid }
+                  : {}),
+                ...(contributor.instrument !== undefined
+                  ? { instrument: contributor.instrument }
+                  : {}),
+                nameKey: contributorsField.key,
+                nameInputId,
+                ...(required ? { nameRequired: true } : {}),
+                ...(nameError ? { nameError } : {}),
+                mbidKey: contributorsField.key,
+                showInstrument:
+                  editing ||
+                  role === "performer" ||
+                  contributor.instrument !== undefined,
+                roleControl: editing
+                  ? contributorRoleControl(contributor, index)
+                  : undefined,
+                artistLink: contributor.artist_id ? (
+                  <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                    <span className="text-sm text-[var(--ink)]">
+                      {text.artistLinkRetained}
+                    </span>
+                  </div>
+                ) : undefined,
+              };
+            }),
+            onChange: (roleIndex, patch) =>
+              replaceContributor(indices[roleIndex], patch),
+            onMove: (roleIndex, delta) =>
+              moveContributorWithinRole(indices, roleIndex, delta),
+            onRemove: (roleIndex) => removeContributor(indices[roleIndex]),
+            onAdd: () => addContributor(role),
+          }),
+        ),
+        roleOptions: contributorRoleOrder
+          .filter((role) => !contributorsByRole.has(role))
+          .map((role) => ({ role, label: contributorRoleLabel(role) })),
+        addRoleLabel: text.addRole,
+        selectRoleLabel: text.selectRole,
+        editing,
+        onAddRole: (role) => addContributor(role),
+        modeControl: editing ? (
+          <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+            <label
+              htmlFor={`${contributorControlPrefix}-${contributorsField.key}-state`}
+            >
+              {text.mode}
+            </label>
+            <select
+              id={`${contributorControlPrefix}-${contributorsField.key}-state`}
+              aria-label={`${text.groups.contributors} — ${text.mode}`}
+              className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)]"
+              value={contributorsState?.state ?? "absent"}
+              disabled={saving}
+              onChange={(event) => {
+                contributorModeTouched.current = true;
+                updateField(contributorsField.key, {
+                  state: event.currentTarget.value as FieldState,
+                  value: contributorsState?.value ?? [],
+                });
+              }}
+            >
+              <option value="absent">{text.absent}</option>
+              <option value="value">{text.value}</option>
+              <option value="explicit_empty">{text.explicitEmpty}</option>
+            </select>
+          </div>
+        ) : undefined,
+      }
+    : undefined;
+  const rolesViewWithEmpty = rolesView
+    ? {
+        ...rolesView,
+        emptyText:
+          contributorsState?.state === "explicit_empty"
+            ? text.explicitEmpty
+            : contributorsState?.state === "absent"
+              ? text.noOverride
+              : text.emptyValue,
+      }
+    : undefined;
 
   const renderWorksMovementField = (key: "works" | "movement") => {
     const field = editing ? draft[key] : saved[key];
@@ -1505,52 +1551,130 @@ function LibraryScopedMetadataEditorSession({
     }
     if (values.movement?.state === "value") {
       const movement = values.movement.value as MetadataMovementDraft;
-      if (Boolean(movement.name)) populated += 1;
-      if (Boolean(movement.count)) populated += 1;
-      if (Boolean(movement.number)) populated += 1;
+      if (movement.name) populated += 1;
+      if (movement.count) populated += 1;
+      if (movement.number) populated += 1;
     }
     return metadataFilledSummary(locale, populated);
   }
+  const worksMovementFields = genreFields.filter(
+    ({ group }) => group === "worksMovement",
+  );
+  const worksMovementView: MetadataEditorWorksMovementView | undefined =
+    worksMovementFields.length
+      ? {
+          label: text.groups.worksMovement,
+          summary: worksMovementSummary(),
+          worksLabel: text.labels.works,
+          movementLabel: text.labels.movement,
+          worksDataKeys: worksMovementFields.some(({ key }) => key === "works")
+            ? ["work", "musicbrainz_workid"]
+            : undefined,
+          movementDataKeys: worksMovementFields.some(
+            ({ key }) => key === "movement",
+          )
+            ? ["movementname", "movementtotal", "movement"]
+            : [],
+          worksContent: worksMovementFields.some(({ key }) => key === "works")
+            ? renderWorksMovementField("works")
+            : undefined,
+          movementContent: worksMovementFields.some(
+            ({ key }) => key === "movement",
+          )
+            ? renderWorksMovementField("movement")
+            : undefined,
+        }
+      : undefined;
+  const sections = groupNames
+    .filter((group) => group !== "worksMovement" && group !== "contributors")
+    .flatMap((group) => {
+      const groupFields = genreFields.filter(
+        (field) => field.group === group && !basicFieldKeySet.has(field.key),
+      );
+      const descriptors = scalarDescriptors(groupFields);
+      if (!descriptors.length) return [];
+      return [
+        {
+          key: group,
+          label: text.groups[group as keyof typeof text.groups],
+          summary: metadataFilledSummary(
+            locale,
+            descriptors.filter((field) => field.populated).length,
+          ),
+          fields: descriptors,
+        },
+      ];
+    });
+  const editorLabels: MetadataEditorLabels = {
+    foreignFields: "",
+    noCredits: "",
+    linkedArtist: "",
+    unlinked: "",
+    creditName: "",
+    artistMusicBrainz: "",
+    joinPhrase: "",
+    artistSort: "",
+    moveUp: text.moveUp,
+    moveDown: text.moveDown,
+    remove: text.remove,
+    addArtist: "",
+    contributorName: text.contributorName,
+    contributorMusicBrainz: text.contributorMusicBrainzID,
+    instrument: text.contributorInstrument,
+    addContributor: text.addContributor,
+    addRole: text.addRole,
+    selectRole: text.selectRole,
+    nameRequired: text.contributorNameRequired,
+  };
+
+  useEffect(() => {
+    if (!visible || !contributorFocus) return;
+    const element = document.getElementById(
+      `${contributorControlPrefix}-${contributorFocus.uiKey}-${contributorFocus.field}`,
+    );
+    if (element instanceof HTMLElement) {
+      element.focus();
+      setContributorFocus(null);
+    }
+  }, [contributorControlPrefix, contributorFocus, visible]);
+
   // Keep revisions and drafts route-scoped, but detach portaled pickers when
   // this editor is not on the active surface.
   if (!visible) return null;
 
   return (
-    <section
-      ref={editorRef}
-      aria-label={title}
-      tabIndex={-1}
-      className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3 text-[var(--ink)]"
+    <MetadataEditorView
+      locale={locale}
+      labels={editorLabels}
+      label={title}
+      editing={editing}
+      saving={saving}
+      readOnly={false}
+      editOrSaveDisabled={
+        loading ||
+        !!readError ||
+        refreshConflict ||
+        (editing && !dirtyFields.size)
+      }
+      hideActions={false}
+      editorRef={editorRef}
+      actionsRef={actionsRef}
+      onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
+      onCancel={cancelEdit}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !editing || saving) return;
         event.preventDefault();
         event.stopPropagation();
         cancelEdit();
       }}
-    >
-      <MetadataCardActions
-        locale={locale}
-        title={title}
-        editing={editing}
-        saving={saving}
-        actionsRef={actionsRef}
-        editOrSaveDisabled={
-          loading ||
-          !!readError ||
-          refreshConflict ||
-          (editing && !dirtyFields.size)
-        }
-        onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
-        onCancel={cancelEdit}
-      />
-      <div className="grid min-w-0 gap-2">
-        <MetadataBasicsSection
-          locale={locale}
-          fields={scalarDescriptors(
-            genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
-          )}
-        >
-          {genres && genreValue && (
+      showForeignFieldsNotice={false}
+      basics={{
+        fields: scalarDescriptors(
+          genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
+        ),
+        genreKey: "genre",
+        genreControl:
+          genres && genreValue ? (
             <section
               aria-label={genreCopy.label.release}
               className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
@@ -1618,14 +1742,12 @@ function LibraryScopedMetadataEditorSession({
                 </div>
               )}
             </section>
-          )}
-        </MetadataBasicsSection>
-        {genres && genreValue && (
-          <ProviderGenreBaselineRow
-            baseline={providerGenreBaseline ?? null}
-            locale={locale}
-          />
-        )}
+          ) : undefined,
+      }}
+      providerGenreBaseline={
+        scope === "release" ? (providerGenreBaseline ?? null) : undefined
+      }
+      artistCredits={
         <details className="min-w-0 rounded border border-[var(--line)]">
           <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
             {text.groups.artistCredits}
@@ -1648,106 +1770,51 @@ function LibraryScopedMetadataEditorSession({
             />
           </div>
         </details>
-        {groupNames.map((group) => {
-          const groupFields = genreFields.filter(
-            (field) =>
-              field.group === group && !basicFieldKeySet.has(field.key),
-          );
-          const label = text.groups[group as keyof typeof text.groups];
-          const structuredFields = groupFields.filter(
-            (field) => !isScalarField(field),
-          );
-          const descriptors = scalarDescriptors(groupFields);
-          if (group === "worksMovement") {
-            return (
-              <WorksMovementSectionView
-                key={group}
-                label={label}
-                summary={worksMovementSummary()}
-                worksLabel={text.labels.works}
-                movementLabel={text.labels.movement}
-                works={
-                  groupFields.some((field) => field.key === "works")
-                    ? renderWorksMovementField("works")
-                    : undefined
-                }
-                movement={
-                  groupFields.some((field) => field.key === "movement")
-                    ? renderWorksMovementField("movement")
-                    : undefined
-                }
-              />
-            );
-          }
-          if (!structuredFields.length) {
-            return (
-              <MetadataFieldGroup
-                key={group}
-                label={label}
-                summary={metadataFilledSummary(
-                  locale,
-                  descriptors.filter((field) => field.populated).length,
-                )}
-                fields={descriptors}
-                columns={4}
-                heading
-              />
-            );
-          }
-          return (
-            <details
-              key={group}
-              className="min-w-0 rounded border border-[var(--line)]"
-            >
-              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                {label}
-              </summary>
-              <div className="grid min-w-0 gap-2 p-2">
-                <MetadataFieldsGrid columns={3} fields={descriptors} />
-                <dl className="m-0 grid min-w-0 grid-cols-1 gap-2">
-                  {structuredFields.map(renderStructuredField)}
-                </dl>
-              </div>
-            </details>
-          );
-        })}
-      </div>
-      {loading ? (
-        <p role="status" className="m-0 text-sm text-[var(--muted)]">
-          {text.loading}
-        </p>
-      ) : null}
-      {saving ? (
-        <p role="status" className="m-0 text-sm text-[var(--muted)]">
-          {text.saving}
-        </p>
-      ) : null}
-      {readError ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <p role="alert" className="m-0 text-sm text-[var(--error)]">
-            {text.readError} {readError}
-          </p>
-          <AppButton
-            type="button"
-            isDisabled={loading || saving}
-            onPress={() => void loadMetadata()}
-            className="min-w-0 justify-center"
-          >
-            {text.retry}
-          </AppButton>
-        </div>
-      ) : null}
-      {saveError ? (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
-          {refreshConflict ? text.conflict : text.saveError} {saveError}{" "}
-          {text.draftRetained}
-        </p>
-      ) : null}
-      {refreshConflict && !saveError ? (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
-          {text.conflict}
-        </p>
-      ) : null}
-    </section>
+      }
+      roles={rolesViewWithEmpty}
+      worksMovement={worksMovementView}
+      sections={sections}
+      lyrics={[]}
+      notices={
+        <>
+          {loading ? (
+            <p role="status" className="m-0 text-sm text-[var(--muted)]">
+              {text.loading}
+            </p>
+          ) : null}
+          {saving ? (
+            <p role="status" className="m-0 text-sm text-[var(--muted)]">
+              {text.saving}
+            </p>
+          ) : null}
+          {readError ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="m-0 text-sm text-[var(--error)]">
+                {text.readError} {readError}
+              </p>
+              <AppButton
+                type="button"
+                isDisabled={loading || saving}
+                onPress={() => void loadMetadata()}
+                className="min-w-0 justify-center"
+              >
+                {text.retry}
+              </AppButton>
+            </div>
+          ) : null}
+          {saveError ? (
+            <p role="alert" className="m-0 text-sm text-[var(--error)]">
+              {refreshConflict ? text.conflict : text.saveError} {saveError}{" "}
+              {text.draftRetained}
+            </p>
+          ) : null}
+          {refreshConflict && !saveError ? (
+            <p role="alert" className="m-0 text-sm text-[var(--error)]">
+              {text.conflict}
+            </p>
+          ) : null}
+        </>
+      }
+    />
   );
 }

@@ -1,7 +1,7 @@
 import {
 	MetadataEditorView,
 	type MetadataEditorViewProps,
-} from "./MetadataEditorView";
+} from "../features/library/MetadataEditorView";
 
 type ProviderFact = { label: string; value: string };
 

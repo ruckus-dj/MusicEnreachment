@@ -69,12 +69,9 @@ source channel, а fixture макета такого происхождения 
 
 В макете отделено представление публикации из сохранённых связей
 (`MatchingReceiptPublicationReadyView.tsx`).
-Разметка редактора метаданных,
-выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
-полей и сохранения (`MetadataEditorView.tsx`, `GenrePickerView.tsx`,
-`ReleaseMetadataEditorView.tsx`, `TrackMetadataEditorsView.tsx`). Провайдеры
-макета готовят данные и обработчики; эти представления ещё не входят в реестр
-пар с приложением.
+В макете отдельно собраны выбор жанров и внешние оболочки редакторов релиза
+и позиции (`GenrePickerView.tsx`, `ReleaseMetadataEditorView.tsx`,
+`TrackMetadataEditorsView.tsx`). Они не входят в реестр пар с приложением.
 
 Дополнительные действия позиции (`TrackActionsView.tsx`) отделены в макете.
 Независимые редакторы и диалоги подключаются к представлениям отдельно и
@@ -111,12 +108,14 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, вкладки, поиск, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogControls.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Медиатека: весь экран списка — шапка, вкладки, поиск, результаты и пустое состояние, пагинация, панель выбора и предпросмотр | `features/library/LibraryCatalogPageView.tsx` | Тот же путь. Поиск и страницы читает серверный провайдер; приложение дополнительно показывает ожидание, ошибки чтения и сводку сервера. Макет использует свои данные без сетевых запросов |
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
+| Медиатека: композиция редакторов метаданных издания, общей записи и позиции | `features/library/MetadataEditorView.tsx` | Тот же путь. Каждый блок сохраняет свой черновик отдельно; режимы переопределения, ревизии и связанные записи передаёт серверный провайдер |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |
 | Медиатека: раскрытие произведений и частей, строки произведений, название, всего частей и номер | `features/library/WorksMovementSectionView.tsx`, `WorkRowsView.tsx`, `MovementFieldsView.tsx` | Те же пути |
 | Медиатека: группы ролей участников, поля строки, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Медиатека: экран артиста — заголовок, фильтры, список изданий, раскрытие позиций и пагинация | `features/library/ArtistScreenView.tsx`, `catalogueMessages.ts`, `catalogueStyles.ts` | Те же пути; порядок серверной страницы и ленивое чтение сохраняются, действия доступны только там, где их предоставляет провайдер |
 | Медиатека: экран позиции — источники, редакторы, публикация, технические сведения и сравнение тегов | `features/library/TrackScreenView.tsx` | Тот же путь. В приложении план читается по запросу; наличие сохранённого пути не доказывает состояние файла или совпадение метаданных |
+| Медиатека: экран точного издания — участники, носители и позиции, редактор, общий предпросмотр и действия с изданием | `features/library/ReleaseOverviewView.tsx` | Тот же путь. У артиста остаётся раскрытие позиций, а ссылка на название ведёт к точному изданию. Обложка, основной исполнитель и обновление MusicBrainz появляются при наличии таких действий у провайдера |
 | Медиатека: рамка диалога удаления артиста, релиза и публикации, заголовок и название удаляемого объекта, список затронутых файлов и пустое состояние | `features/library/LibraryDeletionDialogView.tsx` | Тот же путь; приложение показывает серверные сведения о позициях и допустимости захвата файлов, которых нет в демоданных |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 | Публикация: весь предпросмотр одной позиции | `features/publication/ContextPublicationPreviewView.tsx` | Тот же путь; реальные режимы, чтение плана и допуск остаются в провайдере. При понижении качества макет сохраняет отдельный флажок, приложение — предупреждение и кнопку подтверждения |

@@ -9,6 +9,8 @@ export type ContributorRowField = {
   dataKeys?: string[];
   disabled?: boolean;
   readOnly?: boolean;
+  required?: boolean;
+  error?: string;
   /** Static text keeps the read-only presentation of the application editor. */
   display?: "input" | "text";
   emptyValue?: string;
@@ -53,7 +55,10 @@ function ContributorFieldView({ field }: { field: ContributorRowField }) {
   }
   return (
     <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-      <label htmlFor={inputId}>{field.label}</label>
+      <label htmlFor={inputId}>
+        {field.label}
+        {field.required && <span aria-hidden="true"> *</span>}
+      </label>
       <input
         {...dataAttributes(field.dataKeys)}
         id={inputId}
@@ -61,8 +66,20 @@ function ContributorFieldView({ field }: { field: ContributorRowField }) {
         value={field.value}
         disabled={field.disabled}
         readOnly={field.readOnly}
+        required={field.required}
+        aria-invalid={field.error ? true : undefined}
+        aria-describedby={field.error ? `${inputId}-error` : undefined}
         onChange={(event) => field.onChange?.(event.currentTarget.value)}
       />
+      {field.error && (
+        <p
+          id={`${inputId}-error`}
+          role="alert"
+          className="m-0 text-xs text-[var(--error)]"
+        >
+          {field.error}
+        </p>
+      )}
     </div>
   );
 }

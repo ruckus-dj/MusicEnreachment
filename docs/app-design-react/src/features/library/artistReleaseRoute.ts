@@ -1,5 +1,10 @@
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
 
+/** Exact local release destination; the identity is the local release ID. */
+export function releaseHref(releaseId: string) {
+	return `#release/${encodeURIComponent(releaseId)}`;
+}
+
 export function artistReleaseHref(
 	release: Pick<OriginalRelease, "id" | "artistId" | "credits">,
 	artists: CatalogArtist[],

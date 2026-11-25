@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n/I18nProvider";
 import { audioProperties } from "../../metadata/audioProperties";
-import { artistReleaseHref } from "./artistReleaseRoute";
+import { releaseHref } from "./artistReleaseRoute";
 import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import type {
 	CatalogArtist,
@@ -211,7 +211,7 @@ export function LibraryCatalogRows({
 					track.duration === null ? null : Math.round(track.duration) * 1000,
 				href: `#track/${track.id}`,
 				releaseTitle: release.title,
-				releaseHref: artistReleaseHref(release, artists),
+				releaseHref: releaseHref(release.id),
 				releaseSubtitle: `${originalArtistName(release.artistId, artists)} · ${release.year}`,
 				recordingTitle: track.recordingTitle,
 				credits,
@@ -364,7 +364,7 @@ export function LibraryCatalogRows({
 				return {
 					id: release.id,
 					title: release.title,
-					href: artistReleaseHref(release, artists),
+					href: releaseHref(release.id),
 					artist: credits.length ? undefined : m("artistNotSpecified"),
 					artistCredits: credits,
 					date: release.year || m("dateNotSpecified"),

@@ -1,10 +1,25 @@
 import {
+	createElement,
 	type KeyboardEvent,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
+import type {
+	MetadataEditorArtistsView,
+	MetadataEditorBasicsView,
+	MetadataEditorContributorView,
+	MetadataEditorCreditView,
+	MetadataEditorExtrasView,
+	MetadataEditorLabels,
+	MetadataEditorRolesView,
+	MetadataEditorRoleView,
+	MetadataEditorSectionView,
+	MetadataEditorViewProps,
+	MetadataEditorWorksMovementView,
+} from "../features/library/MetadataEditorView";
 import {
 	type MetadataFieldDescriptor,
 	metadataListActions,
@@ -13,8 +28,7 @@ import type { WorkRowDraft } from "../features/library/WorkRowsView";
 import { useI18n } from "../i18n";
 import { audioMeasurementKeys } from "./audioMeasurements";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
-import type { GenreReference } from "./GenrePickerView";
-import { useGenrePickerDemoProvider } from "./useGenrePickerDemoProvider";
+import { GenrePickerView, type GenreReference } from "./GenrePickerView";
 import {
 	type MetadataMessageKey,
 	metadataExtraFieldLabel,
@@ -45,18 +59,7 @@ import {
 	metadataFieldLabel,
 	metadataGroupLabel,
 } from "./registry";
-import type {
-	MetadataEditorArtistsView,
-	MetadataEditorBasicsView,
-	MetadataEditorContributorView,
-	MetadataEditorCreditView,
-	MetadataEditorExtrasView,
-	MetadataEditorRolesView,
-	MetadataEditorRoleView,
-	MetadataEditorSectionView,
-	MetadataEditorViewProps,
-	MetadataEditorWorksMovementView,
-} from "./MetadataEditorView";
+import { useGenrePickerDemoProvider } from "./useGenrePickerDemoProvider";
 
 type ArtistOption = {
 	id: string;
@@ -66,6 +69,10 @@ type ArtistOption = {
 };
 type Genre = { id?: string; name?: string };
 type ExtraField = { key: string; label: string; value: string };
+type ContributorDraft = MetadataContributor & {
+	uiKey: string;
+	isNew?: boolean;
+};
 export type SaveDetails = {
 	credits?: MetadataCredit[];
 	genres?: Genre[];
@@ -116,6 +123,36 @@ function rows(values: MetadataValues, key: string) {
 	return values[key] ?? [];
 }
 
+function savedContributors(
+	values: MetadataValues,
+	role: string,
+	sortKey?: string,
+): ContributorDraft[] {
+	return readMetadataContributors(values, role).map((row, index) => ({
+		...row,
+		uiKey: `${role}-${index}`,
+		sortName: sortKey ? rows(values, sortKey)[index] : undefined,
+	}));
+}
+
+function sameContributors(
+	baseline: MetadataContributor[],
+	draftRows: MetadataContributor[],
+) {
+	return (
+		baseline.length === draftRows.length &&
+		baseline.every((row, index) => {
+			const draft = draftRows[index];
+			return (
+				row.name === draft.name &&
+				(row.mbid ?? "") === (draft.mbid ?? "") &&
+				(row.sortName ?? "") === (draft.sortName ?? "") &&
+				(row.instrument ?? "") === (draft.instrument ?? "")
+			);
+		})
+	);
+}
+
 function creditsWithMbids(
 	credits: MetadataCredit[],
 	values: MetadataValues,
@@ -139,10 +176,12 @@ function creditRows(
 	credits: MetadataCredit[],
 	artists: ArtistOption[],
 	noArtist: string,
+	rowKeys: readonly string[],
 ): MetadataEditorCreditView[] {
-	return credits.map((credit) => {
+	return credits.map((credit, index) => {
 		const linked = artists.find((artist) => artist.id === credit.artistId);
 		return {
+			uiKey: rowKeys[index] ?? `credit-${index}`,
 			artistId: credit.artistId,
 			creditName: credit.creditName,
 			joinPhrase: credit.joinPhrase,
@@ -180,12 +219,38 @@ export function useMetadataEditorProvider({
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
 	const m = (key: MetadataMessageKey) => metadataMessage(locale, key);
+	const labels: MetadataEditorLabels = {
+		foreignFields: m("label.foreignFields"),
+		noCredits: m("state.noCredits"),
+		linkedArtist: m("label.linkedArtist"),
+		unlinked: m("label.unlinked"),
+		creditName: m("label.creditName"),
+		artistMusicBrainz: m("label.artistMusicBrainz"),
+		joinPhrase: m("label.joinPhrase"),
+		artistSort: m("label.artistSort"),
+		moveUp: m("action.moveUp"),
+		moveDown: m("action.moveDown"),
+		remove: m("action.remove"),
+		addArtist: m("action.addArtist"),
+		contributorName: m("label.contributorName"),
+		contributorMusicBrainz: m("label.contributorMusicBrainz"),
+		instrument: m("label.instrument"),
+		addContributor: m("action.addContributor"),
+		addRole: m("label.addRole"),
+		selectRole: m("label.selectRole"),
+		nameRequired: m("error.required").replace(
+			"{field}",
+			m("label.contributorName"),
+		),
+	};
 	const [internalEditing, setInternalEditing] = useState(false);
 	const editing = controlledEditing ?? internalEditing;
 	const controlled = controlledEditing !== undefined;
 	const [draft, setDraft] = useState<MetadataValues>({});
 	const [dirty, setDirty] = useState<Set<string>>(new Set());
 	const [draftCredits, setDraftCredits] = useState<MetadataCredit[]>([]);
+	const [draftCreditKeys, setDraftCreditKeys] = useState<string[]>();
+	const nextCreditKey = useRef(0);
 	const [draftGenres, setDraftGenres] = useState<Genre[]>([]);
 	const [dirtyGenres, setDirtyGenres] = useState(false);
 	const [draftExtras, setDraftExtras] = useState<Record<string, string>>({});
@@ -200,12 +265,20 @@ export function useMetadataEditorProvider({
 		| { kind: "external"; message: string }
 	>();
 	const [saving, setSaving] = useState(false);
-	const [addedRoles, setAddedRoles] = useState<string[]>([]);
+	const [contributorDrafts, setContributorDrafts] = useState<
+		Record<string, ContributorDraft[]>
+	>({});
+	const contributorBaseline = useRef(values);
+	const contributorIdBase = useId();
+	const nextContributor = useRef(0);
+	const contributorInputId = (key: string) =>
+		`${contributorIdBase}-contributor-${key}`;
 	const [workRowKeys, setWorkRowKeys] = useState<string[]>([]);
 	const nextAddedWork = useRef(0);
 	useEffect(() => {
 		if (!editing) {
-			setAddedRoles([]);
+			setContributorDrafts({});
+			setDraftCreditKeys(undefined);
 			setWorkRowKeys([]);
 		}
 	}, [editing]);
@@ -287,7 +360,8 @@ export function useMetadataEditorProvider({
 	};
 	const begin = () => {
 		if (controlled) return;
-		setAddedRoles([]);
+		setContributorDrafts({});
+		contributorBaseline.current = values;
 		setDraft({ ...values });
 		const context = scope === "release" ? "albumartist" : "artist";
 		setDraftCredits(
@@ -318,7 +392,7 @@ export function useMetadataEditorProvider({
 		setDirtyGenres(false);
 		setDraftExtras({});
 		setDirtyExtras(new Set());
-		setAddedRoles([]);
+		setContributorDrafts({});
 		focusMetadataAction(actionRef);
 	};
 	const complete = async (next: MetadataValues, details?: SaveDetails) => {
@@ -346,6 +420,13 @@ export function useMetadataEditorProvider({
 		}
 	};
 	const save = () => {
+		const missingName = roles
+			.flatMap((field) => contributorDrafts[field.role ?? field.key] ?? [])
+			.find((row) => row.isNew && !row.name.trim());
+		if (missingName) {
+			focusMetadataKey(editorRef, contributorInputId(missingName.uiKey));
+			return;
+		}
 		const changedValues = Object.fromEntries(
 			[...dirty]
 				.filter((key) => fieldByKey(key)?.scope === scope)
@@ -404,7 +485,7 @@ export function useMetadataEditorProvider({
 					`musicbrainz_${field.role}id`,
 					...(field.role === "performer" ? ["performerinstrument"] : []),
 				];
-				keys.forEach((key) => consumed.add(key));
+				for (const key of keys) consumed.add(key);
 			}
 			if (field.kind === "identity" || field.key.endsWith("sort"))
 				consumed.add(field.key);
@@ -470,16 +551,27 @@ export function useMetadataEditorProvider({
 				] as [string, MetadataField[]],
 		)
 		.filter(([, groupFields]) => groupFields.length > 0);
-	const roleOptions = roles.filter(
-		(field) => !addedRoles.includes(field.role ?? field.key),
-	);
+	const contributorsForRole = (
+		role: string,
+		sortKey?: string,
+	): ContributorDraft[] =>
+		(editing ? contributorDrafts[role] : undefined) ??
+		savedContributors(current, role, sortKey);
 	const activeRoles = roles.filter((field) => {
 		const role = field.role ?? field.key;
-		return (
-			addedRoles.includes(role) ||
-			readMetadataContributors(current, role).length > 0
-		);
+		return contributorsForRole(role).length > 0;
 	});
+	const roleOptions = roles.filter((field) => !activeRoles.includes(field));
+	const newContributor = (): ContributorDraft => ({
+		uiKey: `new-${++nextContributor.current}`,
+		name: "",
+		isNew: true,
+	});
+	const addContributor = (role: string, existing: ContributorDraft[]) => {
+		const row = newContributor();
+		setContributorDrafts((state) => ({ ...state, [role]: [...existing, row] }));
+		focusMetadataKey(editorRef, contributorInputId(row.uiKey));
+	};
 	const editedCredits =
 		editing && !controlled
 			? draftCredits
@@ -492,6 +584,9 @@ export function useMetadataEditorProvider({
 					current,
 					scope === "release" ? "albumartist" : "artist",
 				);
+	const creditRowKeys =
+		(editing ? draftCreditKeys : undefined) ??
+		editedCredits.map((_, index) => `credit-${index}`);
 	const writeArtistCredits = (next: MetadataCredit[]) => {
 		if (controlled) {
 			const written = writeMetadataCredits(
@@ -513,6 +608,7 @@ export function useMetadataEditorProvider({
 	const setCredit = (index: number, patch: Partial<MetadataCredit>) => {
 		const next = [...editedCredits];
 		next[index] = { ...next[index], ...patch };
+		if (!editedCredits.length) setDraftCreditKeys(["credit-empty"]);
 		writeArtistCredits(next);
 	};
 	const genresValue: GenreReference[] = (
@@ -609,8 +705,9 @@ export function useMetadataEditorProvider({
 						!editing || (field.kind === "identity" && field.key !== "asin"),
 					),
 				),
-				genre: showGenre
-					? { key: genreField?.key, picker: genrePicker }
+				genreKey: genreField?.key,
+				genreControl: showGenre
+					? createElement(GenrePickerView, genrePicker)
 					: undefined,
 			}
 		: undefined;
@@ -619,6 +716,7 @@ export function useMetadataEditorProvider({
 		editedCredits,
 		artists,
 		m("state.noArtist"),
+		creditRowKeys,
 	);
 	const compositionCredits = creditRows(
 		editedCredits.length
@@ -626,6 +724,7 @@ export function useMetadataEditorProvider({
 			: [{ artistId: "", creditName: "", joinPhrase: "" }],
 		artists,
 		m("state.noArtist"),
+		editedCredits.length ? creditRowKeys : ["credit-empty"],
 	);
 	const changeCreditArtist = (index: number, selectedId: string) => {
 		const credit = (editedCredits.length
@@ -665,15 +764,24 @@ export function useMetadataEditorProvider({
 						setCredit(index, { creditName: value }),
 					onChangeJoinPhrase: (index, value) =>
 						setCredit(index, { joinPhrase: value }),
-					onMove: (index, delta) =>
-						writeArtistCredits(move(editedCredits, index, delta)),
-					onRemove: (index) =>
-						writeArtistCredits(editedCredits.filter((_, row) => row !== index)),
-					onAdd: () =>
+					onMove: (index, delta) => {
+						setDraftCreditKeys(move(creditRowKeys, index, delta));
+						writeArtistCredits(move(editedCredits, index, delta));
+					},
+					onRemove: (index) => {
+						setDraftCreditKeys(creditRowKeys.filter((_, row) => row !== index));
+						writeArtistCredits(editedCredits.filter((_, row) => row !== index));
+					},
+					onAdd: () => {
+						setDraftCreditKeys([
+							...creditRowKeys,
+							`added-credit-${++nextCreditKey.current}`,
+						]);
 						writeArtistCredits([
 							...editedCredits,
 							{ artistId: "", creditName: "", joinPhrase: "" },
-						]),
+						]);
+					},
 				}
 			: undefined;
 
@@ -683,41 +791,72 @@ export function useMetadataEditorProvider({
 			const sortField = fields.find(
 				(field) => field.role === role && field.key.endsWith("sort"),
 			);
-			const roleContributors = readMetadataContributors(current, role).map(
-				(contributor, index) => ({
-					...contributor,
-					...(sortField?.key && rows(current, sortField.key)[index]
-						? { sortName: rows(current, sortField.key)[index] }
-						: {}),
-				}),
-			);
+			const roleContributors = contributorsForRole(role, sortField?.key);
 			const idKey = `musicbrainz_${role}id`;
-			const writeRole = (next: MetadataContributor[]) => {
-				const written = writeMetadataContributors(current, role, next);
-				setValue(roleField.key, written[roleField.key] ?? []);
-				setValue(idKey, written[idKey] ?? []);
-				if (role === "performer")
-					setDraft((state) => {
-						const cleaned = { ...state };
-						delete cleaned.performerinstrument;
-						return cleaned;
-					});
+			const writeRole = (next: ContributorDraft[]) => {
+				setContributorDrafts((state) => ({ ...state, [role]: next }));
+				const ready = next.filter((row) => !row.isNew || row.name.trim());
+				const baseline = controlled ? values : contributorBaseline.current;
+				const unchanged = sameContributors(
+					savedContributors(baseline, role, sortField?.key),
+					ready,
+				);
+				if (controlled && unchanged) return;
+
+				const written = writeMetadataContributors(current, role, ready);
 				if (sortField)
-					setValue(
-						sortField.key,
-						next.map((item) => item.sortName ?? ""),
-					);
+					written[sortField.key] = ready.map((item) => item.sortName ?? "");
+				if (controlled) {
+					if (role !== "performer" && current.performerinstrument !== undefined)
+						written.performerinstrument = current.performerinstrument;
+					controlledValues.current = written;
+					onDraftChange?.(written);
+					setError(undefined);
+					return;
+				}
+
+				const keys = [
+					roleField.key,
+					idKey,
+					...(sortField ? [sortField.key] : []),
+				];
+				setDraft((state) => {
+					const updated = { ...state };
+					for (const key of keys) {
+						const next = unchanged ? baseline[key] : (written[key] ?? []);
+						if (next === undefined) delete updated[key];
+						else updated[key] = next;
+					}
+					if (role === "performer") {
+						if (unchanged && baseline.performerinstrument !== undefined)
+							updated.performerinstrument = baseline.performerinstrument;
+						else delete updated.performerinstrument;
+					}
+					return updated;
+				});
+				setDirty((state) => {
+					const updated = new Set(state);
+					for (const key of keys) {
+						if (unchanged) updated.delete(key);
+						else updated.add(key);
+					}
+					return updated;
+				});
+				setError(undefined);
 			};
 			const idField = fields.find(
 				(field) => field.role === role && field.kind === "identity",
 			);
-			const displayContributors: MetadataContributor[] = roleContributors.length
-				? roleContributors
-				: [{ name: "" }];
 			const contributors: MetadataEditorContributorView[] =
-				displayContributors.map((contributor, index) => ({
-					uiKey: `${role}-${index}`,
+				roleContributors.map((contributor) => ({
+					uiKey: contributor.uiKey,
 					name: contributor.name,
+					nameInputId: contributorInputId(contributor.uiKey),
+					nameRequired: Boolean(contributor.isNew),
+					nameError:
+						contributor.isNew && !contributor.name.trim()
+							? labels.nameRequired
+							: undefined,
 					...(contributor.mbid !== undefined ? { mbid: contributor.mbid } : {}),
 					...(contributor.sortName !== undefined
 						? { sortName: contributor.sortName }
@@ -748,7 +887,7 @@ export function useMetadataEditorProvider({
 					writeRole(move(roleContributors, index, delta)),
 				onRemove: (index) =>
 					writeRole(roleContributors.filter((_, row) => row !== index)),
-				onAdd: () => writeRole([...roleContributors, { name: "" }]),
+				onAdd: () => addContributor(role, roleContributors),
 			};
 		},
 	);
@@ -770,7 +909,7 @@ export function useMetadataEditorProvider({
 					addRoleLabel: m("label.addRole"),
 					selectRoleLabel: m("label.selectRole"),
 					editing,
-					onAddRole: (role) => setAddedRoles((items) => [...items, role]),
+					onAddRole: (role) => addContributor(role, []),
 				}
 			: undefined;
 
@@ -889,6 +1028,7 @@ export function useMetadataEditorProvider({
 
 	return {
 		locale,
+		labels,
 		label,
 		editing,
 		saving,

@@ -6,7 +6,7 @@ import {
 	MetadataDiff,
 	publicationMetadataDiff,
 } from "../publication/publicationMetadataDiff";
-import { artistReleaseHref } from "./artistReleaseRoute";
+import { releaseHref } from "./artistReleaseRoute";
 import {
 	type CatalogArtist,
 	catalogData,
@@ -141,8 +141,7 @@ export function useTrackScreenDemoProvider({
 			title: track.title,
 			artist: originalArtistName(track.artistId, artists),
 			releaseTitle: release.title,
-			releaseHref:
-				artistReleaseHref(release, artists ?? catalogData.artists) ?? undefined,
+			releaseHref: releaseHref(release.id),
 			libraryHref: "#library",
 		},
 		editors:

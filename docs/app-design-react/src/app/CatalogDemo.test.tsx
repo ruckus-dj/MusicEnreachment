@@ -25,6 +25,32 @@ it("renders one keyboard-operable four-option filter radio group", () => {
 	expect(radios[3]).toBeChecked();
 });
 
+it("opens the exact release destination from an album row", () => {
+	window.history.replaceState(null, "", "#library?tab=albums");
+	render(<CatalogDemo />);
+	const grid = screen.getByRole("grid", { name: "Альбомы медиатеки" });
+	const links = within(grid).getAllByRole("link", {
+		name: "Открыть релиз: Northern Lines",
+	});
+	expect(
+		links.some((link) => link.getAttribute("href") === "#release/north"),
+	).toBe(true);
+});
+
+it("renders the focused release destination without artist management", () => {
+	window.history.replaceState(null, "", "#release/north");
+	render(<CatalogDemo />);
+	expect(
+		screen.getByRole("heading", { name: "Northern Lines" }),
+	).toBeInTheDocument();
+	expect(
+		screen.getByRole("heading", { name: "Носители и позиции" }),
+	).toBeInTheDocument();
+	expect(
+		screen.queryByRole("heading", { name: "Сведения об артисте" }),
+	).not.toBeInTheDocument();
+});
+
 it("shows a read-only preview of the selected library position", async () => {
 	window.history.replaceState(
 		null,

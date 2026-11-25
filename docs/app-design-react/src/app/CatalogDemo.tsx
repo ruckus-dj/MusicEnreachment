@@ -18,7 +18,10 @@ import {
 	useLibraryRouteState,
 } from "../features/library";
 import { ArtistScreen } from "../features/library/ArtistScreen";
-import { artistReleaseHref } from "../features/library/artistReleaseRoute";
+import {
+	artistReleaseHref,
+	releaseHref,
+} from "../features/library/artistReleaseRoute";
 import {
 	applyMetadataPreview,
 	type CatalogArtist,
@@ -30,6 +33,8 @@ import {
 	originalReleases,
 	recoveryFixture,
 } from "../features/library/catalogData";
+import { ReleaseOverviewScreen } from "../features/library/ReleaseOverviewScreen";
+import { ReleaseOverviewView } from "../features/library/ReleaseOverviewView";
 import { catalogMessage } from "../features/library/catalogMessages";
 import { catalogueStyles } from "../features/library/catalogueStyles";
 import {
@@ -257,26 +262,6 @@ export function CatalogDemo({
 	const [artists, setArtists] = useState<CatalogArtist[]>(() =>
 		structuredClone(catalogData.artists),
 	);
-	useEffect(() => {
-		let target: string | null = null;
-		if (routePath.startsWith("release/")) {
-			const release = releases.find(
-				(item) => item.id === routePath.slice("release/".length),
-			);
-			target = release ? artistReleaseHref(release, artists) : null;
-		} else if (routePath.startsWith("tags/")) {
-			const [, trackId, scope] = routePath.split("/");
-			if (scope === "artist" || scope === "release") {
-				const release = releases.find((item) =>
-					item.tracks.some((track) => track.id === trackId),
-				);
-				target = release
-					? artistReleaseHref(release, artists, { tags: scope })
-					: null;
-			}
-		}
-		if (target) window.location.hash = target.slice(1);
-	}, [routePath, releases, artists]);
 	const providers = [
 		...originalProviders,
 		...localProviderReleases(localProvider),
@@ -350,19 +335,10 @@ export function CatalogDemo({
 			item.tracks.some((track) => track.id === trackId),
 		);
 		if (!release) return;
-		const href = artistReleaseHref(
-			release,
-			artists,
-			scope === "release" ? { tags: "release" } : { tags: "artist" },
-		);
-		if (href) window.location.hash = href.slice(1);
-	}, [route, releases, artists]);
-	useEffect(() => {
-		const match = route.match(/^release\/([^/?]+)/);
-		if (!match) return;
-		const release = releases.find((item) => item.id === match[1]);
-		if (!release) return;
-		const href = artistReleaseHref(release, artists);
+		const href =
+			scope === "release"
+				? `${releaseHref(release.id)}?tags=release`
+				: artistReleaseHref(release, artists, { tags: "artist" });
 		if (href) window.location.hash = href.slice(1);
 	}, [route, releases, artists]);
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
@@ -855,27 +831,12 @@ export function CatalogDemo({
 							),
 						)
 					}
-					onUpdateRelease={(updated) =>
-						setReleases((current) =>
-							current.map((release) =>
-								release.id === updated.id ? updated : release,
-							),
-						)
-					}
 					initialTags={
 						initialTagsScope
 							? { scope: initialTagsScope, releaseId }
 							: undefined
 					}
 					initialReleaseId={releaseId}
-					publication={{
-						catalog: publicationCatalog,
-						pending: publicationJobs.filter((job) => {
-							const state = operationsProvider.publicationStates?.get(job.id);
-							return !state || state === "queued" || state === "running";
-						}),
-						onQueue: queuePublications,
-					}}
 				/>
 				<SelectionDock
 					selected={selected}
@@ -918,19 +879,57 @@ export function CatalogDemo({
 			</section>
 		);
 	if (route.startsWith("release/")) {
-		const release = releases.find(
-			(item) => item.id === route.slice("release/".length),
-		);
+		const [releasePath, releaseQuery = ""] = route.split("?");
+		const releaseId = routeId(releasePath.slice("release/".length));
+		const initialTagFocus =
+			new URLSearchParams(releaseQuery).get("tags") === "release";
+		const release = releases.find((item) => item.id === releaseId);
+		if (!release)
+			return (
+				<section className={screenLayout}>
+					<ReleaseOverviewView
+						locale={locale}
+						libraryHref="#library"
+						heading={null}
+					/>
+				</section>
+			);
 		return (
-			<section className={screenLayout}>
-				<h1>
-					{!release
-						? msg("libraryNotFound")
-						: artistReleaseHref(release, artists)
-							? msg("redirectingArtist")
-							: msg("artistMissing")}
-				</h1>
-				<a href="#library">{msg("goToLibrary")}</a>
+			<section className={`demo-shell ${catalogueStyles.dockScreen}`}>
+				<ReleaseOverviewScreen
+					key={release.id}
+					release={release}
+					artists={artists}
+					files={files}
+					selected={selected}
+					onSelect={update}
+					onUpdateRelease={(updated) =>
+						setReleases((current) =>
+							current.map((item) => (item.id === updated.id ? updated : item)),
+						)
+					}
+					onQueueDeletion={queueDeletion}
+					publication={{
+						catalog: publicationCatalog,
+						pending: publicationJobs.filter((job) => {
+							const state = operationsProvider.publicationStates?.get(job.id);
+							return !state || state === "queued" || state === "running";
+						}),
+						onQueue: queuePublications,
+					}}
+					genresLoaded={settings.genresLoaded}
+					onLoadGenres={loadGenres}
+					initialTagFocus={initialTagFocus}
+				/>
+				<SelectionDock
+					selected={selected}
+					visiblePositionIds={new Set(release.tracks.map((track) => track.id))}
+					releases={releases}
+					onSelect={update}
+					onPreview={openSelectionPreview}
+					onQueueDeletion={queueDeletion}
+				/>
+				{selectionPreviewDialog}
 			</section>
 		);
 	}

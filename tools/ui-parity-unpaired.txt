@@ -21,6 +21,7 @@ docs/app-design-react/src/features/library/CatalogFilter.tsx
 docs/app-design-react/src/features/library/LibraryCatalogRows.tsx
 docs/app-design-react/src/features/library/LibraryMissingEditionDemo.tsx
 docs/app-design-react/src/features/library/LibraryPagination.tsx
+docs/app-design-react/src/features/library/ReleaseOverviewScreen.tsx
 docs/app-design-react/src/features/library/SelectionDock.tsx
 docs/app-design-react/src/features/library/TagsComparison.tsx
 docs/app-design-react/src/features/library/TagsScreen.tsx
@@ -127,7 +128,6 @@ docs/app-design-react/src/infrastructure/uiNotice.ts
 docs/app-design-react/src/metadata/GenrePicker.tsx
 docs/app-design-react/src/metadata/GenrePickerView.tsx
 docs/app-design-react/src/metadata/MetadataEditor.tsx
-docs/app-design-react/src/metadata/MetadataEditorView.tsx
 docs/app-design-react/src/metadata/ReleaseMetadataEditor.tsx
 docs/app-design-react/src/metadata/ReleaseMetadataEditorView.tsx
 docs/app-design-react/src/metadata/TrackMetadataEditors.tsx

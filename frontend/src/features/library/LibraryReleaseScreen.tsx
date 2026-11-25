@@ -27,12 +27,12 @@ import {
 } from "./FirstPublicationPreview";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
-import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import { LibraryPositionTagEvidence } from "./LibraryPositionTagEvidence";
 import {
   positionSourceItems,
   ReleaseCreditList,
-  ReleaseMediaSummary,
+  releaseOverviewCredits,
+  releaseOverviewMedia,
 } from "./LibraryReleaseFacts";
 import {
   releaseControlAlertClass,
@@ -53,6 +53,10 @@ import {
   ReleaseMetadataEditor,
   ScopedLibraryMetadataEditor,
 } from "./ReleaseMetadataEditor";
+import {
+  type ReleaseOverviewHeading,
+  ReleaseOverviewView,
+} from "./ReleaseOverviewView";
 import {
   type TrackProviderRefreshModel,
   TrackProviderRefreshView,
@@ -1428,24 +1432,32 @@ export function LibraryReleaseScreen({
 
   if (error)
     return (
-      <section>
-        <h1>{text("library")}</h1>
-        <p role="alert" className={releaseControlAlertClass}>
-          {displayText(error)}
-        </p>
-        <button
-          type="button"
-          className={releaseControlButtonClass}
-          onClick={() => {
-            window.location.hash = "/incoming-groups";
-          }}
-        >
-          {text("incoming")}
-        </button>
-      </section>
+      <ReleaseOverviewView
+        locale={locale}
+        libraryHref="#/library"
+        heading={null}
+        unavailable={{
+          status: "error",
+          title: text("library"),
+          message: displayText(error),
+          action: {
+            label: text("incoming"),
+            onPress: () => {
+              window.location.hash = "/incoming-groups";
+            },
+          },
+        }}
+      />
     );
   if (!release || loadedReleaseID !== releaseId)
-    return <p role="status">{text("loadingRelease")}</p>;
+    return (
+      <ReleaseOverviewView
+        locale={locale}
+        libraryHref="#/library"
+        heading={null}
+        unavailable={{ status: "loading", message: text("loadingRelease") }}
+      />
+    );
   const releaseRenderScope = scope.current;
   const selectedCoverGeneration =
     selectedCover?.scope === releaseRenderScope &&
@@ -1497,146 +1509,154 @@ export function LibraryReleaseScreen({
       : undefined,
     genreError: genreRefreshError ? displayText(genreRefreshError) : undefined,
   };
+  const overviewMedia = releaseOverviewMedia(release);
+  const overviewTracks = release.tracks ?? [];
+  const overviewDurationSeconds =
+    overviewTracks.length > 0 &&
+    overviewTracks.every((track) => track.duration_ms != null)
+      ? overviewTracks.reduce(
+          (total, track) => total + (track.duration_ms ?? 0),
+          0,
+        ) / 1000
+      : null;
+  const overviewArtistHref = release.primary_artist.effective_artist_id
+    ? `#/library/artists/${encodeURIComponent(release.primary_artist.effective_artist_id)}`
+    : undefined;
+  const overviewHeading: ReleaseOverviewHeading = {
+    title: release.title,
+    artwork: {
+      imageSrc: selectedCoverGeneration
+        ? getGetLibraryReleaseCoverImageUrl(releaseId, selectedCoverGeneration)
+        : undefined,
+      imageAlt: text("selectedReleaseCover"),
+    },
+    counts: {
+      positions: overviewTracks.length,
+      published: overviewTracks.filter((track) => Boolean(track.publication))
+        .length,
+    },
+    durationSeconds: overviewDurationSeconds,
+  };
+  const overviewPrimaryArtist =
+    (release.artists?.length ?? 0) > 1 ? (
+      <label className="block">
+        {text("primaryReleaseArtist")}
+        <select
+          className={releaseControlSelectClass}
+          aria-label={text("primaryReleaseArtist")}
+          value={release.primary_artist.selected_artist_id || ""}
+          disabled={releasePrimaryArtistSaving}
+          onChange={(event) =>
+            void selectReleasePrimaryArtist(event.target.value || null)
+          }
+        >
+          <option value="">{text("notSelected")}</option>
+          {uniqueArtists(release.artists).map((artist) => (
+            <option key={artist.artist_id} value={artist.artist_id}>
+              {artist.credit_name || artist.artist_name}
+            </option>
+          ))}
+        </select>
+        {releasePrimaryArtistError && (
+          <p role="alert" className={releaseControlAlertClass}>
+            {displayText(releasePrimaryArtistError)}
+          </p>
+        )}
+      </label>
+    ) : undefined;
+  const overviewProviderRefresh = !showPosition ? (
+    <TrackProviderRefreshView {...providerRefresh} />
+  ) : undefined;
+  const overviewPublication = !positionId ? (
+    <AggregatePublicationPreview
+      key={releaseId}
+      positions={visibleTracks.map((track) => ({
+        id: track.id,
+        label: `${track.displayed_number.trim() || track.position}. ${track.title}`,
+        current: Boolean(
+          positions[track.id]?.publication?.current_path ||
+            positions[track.id]?.publication?.current_generation,
+        ),
+      }))}
+      controllers={aggregateControllers.current}
+      states={aggregateStates}
+    />
+  ) : undefined;
+  const overviewDeletion = !positionId ? (
+    <LibraryDeletionControl
+      target={{ type: "release", releaseId }}
+      releaseTitle={release.title}
+      positionLabels={positionLabels}
+      onSnapshot={(snapshot) =>
+        handleDeletionSnapshot("release", snapshot, releaseRenderScope)
+      }
+    />
+  ) : undefined;
   const body = (
     <section
       className={`grid min-w-0 gap-3 text-[13px] leading-[18px] text-ink ${showPosition ? "" : "mx-auto max-w-5xl"}`}
     >
-      <nav
-        className="flex flex-wrap gap-x-4 gap-y-2"
-        aria-label={text("libraryNavigation")}
-        hidden={showPosition}
-      >
-        <a className="underline" href="#/library">
-          {text("libraryCatalog")}
-        </a>
-        {positionId ? (
-          <a className="underline" href="#/incoming-groups">
-            {text("incoming")}
-          </a>
-        ) : null}
-      </nav>
-      <header hidden={showPosition}>
-        <div className="flex min-w-0 items-center gap-[13px] max-[600px]:gap-[9px]">
-          <LibraryEditionArtwork
-            title={release.title}
-            imageSrc={
-              !showPosition && selectedCoverGeneration
-                ? getGetLibraryReleaseCoverImageUrl(
-                    releaseId,
-                    selectedCoverGeneration,
-                  )
-                : undefined
-            }
-            imageAlt={text("selectedReleaseCover")}
-          />
-          <div className="min-w-0 wrap-anywhere">
-            <h1 className="text-xl leading-[26px] font-semibold">
-              {release.title}
-            </h1>
-            <ReleaseCreditList credits={release.artists} />
-          </div>
-        </div>
-        {(release.artists?.length ?? 0) > 1 && (
-          <label className="block">
-            {text("primaryReleaseArtist")}
-            <select
-              className={releaseControlSelectClass}
-              aria-label={text("primaryReleaseArtist")}
-              value={release.primary_artist.selected_artist_id || ""}
-              disabled={releasePrimaryArtistSaving}
-              onChange={(event) =>
-                void selectReleasePrimaryArtist(event.target.value || null)
-              }
-            >
-              <option value="">{text("notSelected")}</option>
-              {uniqueArtists(release.artists).map((artist) => (
-                <option key={artist.artist_id} value={artist.artist_id}>
-                  {artist.credit_name || artist.artist_name}
-                </option>
-              ))}
-            </select>
-            {releasePrimaryArtistError && (
-              <p role="alert" className={releaseControlAlertClass}>
-                {displayText(releasePrimaryArtistError)}
-              </p>
-            )}
-          </label>
-        )}
-        {!positionId ? (
-          <div className="mt-3">
-            <LibraryDeletionControl
-              target={{ type: "release", releaseId }}
-              releaseTitle={release.title}
-              positionLabels={positionLabels}
-              onSnapshot={(snapshot) =>
-                handleDeletionSnapshot("release", snapshot, releaseRenderScope)
-              }
+      <div hidden={showPosition}>
+        <ReleaseOverviewView
+          locale={locale}
+          libraryHref="#/library"
+          heading={overviewHeading}
+          artistHref={overviewArtistHref}
+          credentials={releaseOverviewCredits(release.artists)}
+          media={overviewMedia.media}
+          fallbackTracks={overviewMedia.fallbackTracks}
+          unassignedTracks={overviewMedia.unassignedTracks}
+          primaryArtist={overviewPrimaryArtist}
+          providerRefresh={overviewProviderRefresh}
+          metadataEditor={
+            <ReleaseMetadataEditor
+              releaseId={releaseId}
+              refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+              onSaved={refreshAfterMetadataSave}
+              visible={!showPosition}
             />
-          </div>
-        ) : null}
-      </header>
-      {!showPosition && <TrackProviderRefreshView {...providerRefresh} />}
-      <div className="grid gap-3" hidden={showPosition} data-release-only>
-        <ReleaseMetadataEditor
-          releaseId={releaseId}
-          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-          onSaved={refreshAfterMetadataSave}
-          visible={!showPosition}
-        />
-        <ReleaseMediaSummary release={release} />
-      </div>
-      {!positionId && (
-        <AggregatePublicationPreview
-          key={releaseId}
-          positions={visibleTracks.map((track) => ({
-            id: track.id,
-            label: `${track.displayed_number.trim() || track.position}. ${track.title}`,
-            current: Boolean(
-              positions[track.id]?.publication?.current_path ||
-                positions[track.id]?.publication?.current_generation,
-            ),
-          }))}
-          controllers={aggregateControllers.current}
-          states={aggregateStates}
-        />
-      )}
-      <div className="grid gap-3" hidden={showPosition} data-release-only>
-        <ReleaseCoverEditor
-          releaseId={releaseId}
-          epoch={
-            Object.values(positions).find(
-              (position) => position.publication?.active_epoch,
-            )?.publication?.active_epoch
           }
-          onOperationsAdmitted={(operations) => {
-            const requestScope = scope.current;
-            setPositions((current) => {
-              if (!mounted.current || scope.current !== requestScope)
-                return current;
-              const next = { ...current };
-              for (const operation of operations) {
-                next[operation.position_id] = {
-                  ...next[operation.position_id],
-                  applyOperationID: operation.operation_id,
-                  applying: true,
-                  notice: libraryReleaseText("coverApplyAdmitted"),
-                };
+          publication={overviewPublication}
+          deletion={overviewDeletion}
+          cover={
+            <ReleaseCoverEditor
+              releaseId={releaseId}
+              epoch={
+                Object.values(positions).find(
+                  (position) => position.publication?.active_epoch,
+                )?.publication?.active_epoch
               }
-              return next;
-            });
-          }}
-          onCoverSnapshot={(snapshotReleaseID, generation) => {
-            if (
-              scope.current !== releaseRenderScope ||
-              snapshotReleaseID !== releaseId
-            )
-              return;
-            setSelectedCover({
-              scope: releaseRenderScope,
-              releaseID: snapshotReleaseID,
-              generation,
-            });
-          }}
+              onOperationsAdmitted={(operations) => {
+                const requestScope = scope.current;
+                setPositions((current) => {
+                  if (!mounted.current || scope.current !== requestScope)
+                    return current;
+                  const next = { ...current };
+                  for (const operation of operations) {
+                    next[operation.position_id] = {
+                      ...next[operation.position_id],
+                      applyOperationID: operation.operation_id,
+                      applying: true,
+                      notice: libraryReleaseText("coverApplyAdmitted"),
+                    };
+                  }
+                  return next;
+                });
+              }}
+              onCoverSnapshot={(snapshotReleaseID, generation) => {
+                if (
+                  scope.current !== releaseRenderScope ||
+                  snapshotReleaseID !== releaseId
+                )
+                  return;
+                setSelectedCover({
+                  scope: releaseRenderScope,
+                  releaseID: snapshotReleaseID,
+                  generation,
+                });
+              }}
+            />
+          }
         />
       </div>
       {positionId && !selectedTrack ? (

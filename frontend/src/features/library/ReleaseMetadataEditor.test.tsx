@@ -306,76 +306,81 @@ it("saves recording and position title overrides through their own scopes", asyn
   expect(
     within(position).getByRole("heading", { name: "Композитор" }),
   ).toBeVisible();
-  const originalFirstContributor = within(position).getByRole("textbox", {
-    name: "Имя участника 1",
-  });
+  const contributorNames = () =>
+    within(position).getAllByRole("textbox", { name: "Имя участника" });
+  const originalFirstContributor = contributorNames()[1];
+  expect(
+    within(position).getByRole("button", { name: "Выше: Композитор 1" }),
+  ).toBeDisabled();
+  expect(
+    within(position).getByRole("button", { name: "Ниже: Композитор 1" }),
+  ).toBeDisabled();
   expect(
     within(position).getByRole("button", {
-      name: "Переместить участника вверх 1",
+      name: "Выше: Исполнитель / инструмент 1",
     }),
   ).toBeDisabled();
   expect(
     within(position).getByRole("button", {
-      name: "Переместить участника вниз 3",
+      name: "Ниже: Исполнитель / инструмент 1",
     }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   expect(
     within(position).getByRole("button", {
-      name: "Переместить участника вверх 2",
+      name: "Выше: Исполнитель / инструмент 2",
     }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   expect(
     within(position).getByRole("button", {
-      name: "Переместить участника вниз 2",
+      name: "Ниже: Исполнитель / инструмент 2",
     }),
   ).toBeDisabled();
   fireEvent.click(
     within(position).getByRole("button", {
-      name: "Переместить участника вниз 1",
+      name: "Ниже: Исполнитель / инструмент 1",
     }),
   );
-  expect(
-    within(position).getByRole("textbox", { name: "Имя участника 3" }),
-  ).toBe(originalFirstContributor);
+  expect(contributorNames()[2]).toBe(originalFirstContributor);
   fireEvent.change(
-    within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 2",
-    }),
+    within(position).getAllByRole("textbox", {
+      name: "MusicBrainz ID участника",
+    })[0],
     { target: { value: "723e4567-e89b-42d3-a456-426614174000" } },
   );
-  fireEvent.change(
-    within(position).getByRole("textbox", { name: "Имя участника 3" }),
-    { target: { value: "Doe, Jane (live)" } },
-  );
+  fireEvent.change(contributorNames()[2], {
+    target: { value: "Doe, Jane (live)" },
+  });
   const oldRole = within(position).getByRole("combobox", { name: "Роль 3" });
   oldRole.focus();
   fireEvent.change(oldRole, {
     target: { value: "composer" },
   });
+  await waitFor(() =>
+    expect(
+      within(position).getByRole("combobox", { name: "Роль 3" }),
+    ).toHaveFocus(),
+  );
   expect(
-    within(position).getByRole("combobox", { name: "Роль 3" }),
-  ).toHaveFocus();
-  expect(
-    within(position).getByRole("textbox", { name: "Инструмент 3" }),
-  ).toHaveValue("Piano");
+    within(position)
+      .getAllByRole("textbox", { name: "Инструмент" })
+      .some((input) => (input as HTMLInputElement).value === "Piano"),
+  ).toBe(true);
   fireEvent.change(within(position).getByRole("combobox", { name: "Роль 3" }), {
     target: { value: "performer" },
   });
   fireEvent.change(
-    within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 3",
-    }),
+    within(position).getByDisplayValue("223e4567-e89b-42d3-a456-426614174000"),
     { target: { value: "623e4567-e89b-42d3-a456-426614174000" } },
   );
   fireEvent.change(
-    within(position).getByRole("textbox", {
-      name: "MusicBrainz ID участника 1",
-    }),
+    within(position).getByDisplayValue("523e4567-e89b-42d3-a456-426614174000"),
     { target: { value: "" } },
   );
   expect(
-    within(position).getByRole("textbox", { name: "Инструмент 3" }),
-  ).toHaveValue("Piano");
+    within(position)
+      .getAllByRole("textbox", { name: "Инструмент" })
+      .some((input) => (input as HTMLInputElement).value === "Piano"),
+  ).toBe(true);
   expect(
     within(position).queryByDisplayValue(
       "523e4567-e89b-42d3-a456-426614174000",
@@ -986,5 +991,129 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
     expect(within(release).getByText("clean")).toBeInTheDocument();
     expect(within(recording).getByText("128.75")).toBeInTheDocument();
     expect(within(position).getByText("3")).toBeInTheDocument();
+  });
+});
+
+it("requires a name for a newly added contributor before saving that draft", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+  const releaseId = "contributor-required-release";
+  const positionId = "contributor-required-position";
+  const patchBodies: unknown[] = [];
+  let current = metadata(3, "position");
+  server.use(
+    http.get(
+      `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
+      () => HttpResponse.json(current),
+    ),
+    http.patch(
+      `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
+      async ({ request }) => {
+        patchBodies.push(await request.json());
+        current = metadata(3 + patchBodies.length, "position");
+        return HttpResponse.json(current);
+      },
+    ),
+  );
+
+  renderMetadataEditor(
+    <ScopedLibraryMetadataEditor
+      scope="position"
+      ownerId={positionId}
+      releaseId={releaseId}
+    />,
+  );
+
+  const position = screen.getByRole("region", { name: "Метаданные позиции" });
+  const edit = within(position).getByRole("button", { name: "Изменить" });
+  await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit);
+  openGroup(position, "Участники");
+
+  fireEvent.change(
+    within(position).getByRole("combobox", { name: "Добавить роль" }),
+    { target: { value: "composer" } },
+  );
+
+  const name = await within(position).findByRole("textbox", {
+    name: "Имя участника",
+  });
+  await waitFor(() => expect(name).toHaveFocus());
+  expect(name).toBeRequired();
+  expect(name).toHaveAccessibleDescription("Укажите имя участника.");
+  expect(
+    within(position).getByText("Укажите имя участника."),
+  ).toBeInTheDocument();
+
+  fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
+  expect(patchBodies).toHaveLength(0);
+  expect(
+    (await within(position).findAllByRole("alert")).some((alert) =>
+      alert.textContent?.includes("Укажите имя участника."),
+    ),
+  ).toBe(true);
+
+  fireEvent.click(
+    within(position).getByRole("button", { name: "Убрать Композитор 1" }),
+  );
+  expect(
+    within(position).queryByRole("textbox", { name: "Имя участника" }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(
+    within(position).getByRole("combobox", {
+      name: "Номер дорожки — Состояние переопределения",
+    }),
+    { target: { value: "value" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Номер дорожки" }),
+    { target: { value: "4" } },
+  );
+  fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
+
+  await waitFor(() => {
+    expect(patchBodies).toEqual([
+      {
+        expected_revision: 3,
+        changes: { track_number: { state: "value", value: 4 } },
+      },
+    ]);
+  });
+
+  await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit);
+  const rolesSummary = within(position).getByText(
+    (value) => value.startsWith("Участники · "),
+    { selector: "summary" },
+  );
+  if (!rolesSummary.parentElement?.hasAttribute("open"))
+    fireEvent.click(rolesSummary);
+  fireEvent.change(
+    within(position).getByRole("combobox", { name: "Добавить роль" }),
+    { target: { value: "composer" } },
+  );
+  fireEvent.change(
+    await within(position).findByRole("textbox", { name: "Имя участника" }),
+    { target: { value: "New composer" } },
+  );
+  fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
+
+  await waitFor(() => {
+    expect(patchBodies).toEqual([
+      {
+        expected_revision: 3,
+        changes: { track_number: { state: "value", value: 4 } },
+      },
+      {
+        expected_revision: 4,
+        changes: {
+          contributors: {
+            state: "value",
+            value: [{ name: "New composer", role: "composer" }],
+          },
+        },
+      },
+    ]);
   });
 });
