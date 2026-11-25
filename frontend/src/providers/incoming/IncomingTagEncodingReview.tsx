@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   confirmIncomingGroupTagEncoding,
   getGetIncomingGroupsQueryKey,
@@ -10,14 +10,13 @@ import type {
   IncomingTagEncodingBody,
   IncomingTagEncodingCorrectionBody,
 } from "../../api/generated/client.schemas";
-import { useI18n } from "../../app/i18n/host";
-import {
-  type IncomingTagEncodingReviewEntry,
-  type IncomingTagEncodingReviewFailure,
-  IncomingTagEncodingReviewView,
+import { IncomingTagEncodingReviewDataBinder } from "../../ui/features/incoming/IncomingTagEncodingReviewOutlet";
+import type {
+  IncomingTagEncodingReviewEntry,
+  IncomingTagEncodingReviewFailure,
 } from "../../ui/features/incoming/IncomingTagEncodingReviewView";
 
-interface Props {
+export interface IncomingTagEncodingReviewProps {
   groupId: string;
   disabled?: boolean;
 }
@@ -84,8 +83,11 @@ function tagEncodingEntries(
   );
 }
 
-export function IncomingTagEncodingReview({ groupId, disabled }: Props) {
-  const { locale } = useI18n();
+export function IncomingTagEncodingReview({
+  groupId,
+  disabled,
+  children,
+}: IncomingTagEncodingReviewProps & { children: ReactNode }) {
   const queryClient = useQueryClient();
   const queryKey = getGetIncomingGroupTagEncodingQueryKey(groupId);
   const [open, setOpen] = useState(false);
@@ -126,27 +128,33 @@ export function IncomingTagEncodingReview({ groupId, disabled }: Props) {
         }
       : undefined;
   return (
-    <IncomingTagEncodingReviewView
-      locale={locale}
-      open={open}
-      loading={preview.isPending}
-      failure={failure}
-      done={correction.isSuccess}
-      available={Boolean(data)}
-      entries={tagEncodingEntries(data)}
-      canApply={
-        data ? groupCorrection(data, "apply").members.length > 0 : false
-      }
-      canUndo={data ? groupCorrection(data, "undo").members.length > 0 : false}
-      blocked={disabled || correction.isPending || preview.isFetching || stale}
-      onToggle={setOpen}
-      onReload={() => {
-        void preview.refetch().then((result) => {
-          if (result.isSuccess) correction.reset();
-        });
+    <IncomingTagEncodingReviewDataBinder
+      model={{
+        open,
+        loading: preview.isPending,
+        failure,
+        done: correction.isSuccess,
+        available: Boolean(data),
+        entries: tagEncodingEntries(data),
+        canApply: data
+          ? groupCorrection(data, "apply").members.length > 0
+          : false,
+        canUndo: data
+          ? groupCorrection(data, "undo").members.length > 0
+          : false,
+        blocked:
+          disabled || correction.isPending || preview.isFetching || stale,
+        onToggle: setOpen,
+        onReload: () => {
+          void preview.refetch().then((result) => {
+            if (result.isSuccess) correction.reset();
+          });
+        },
+        onApply: () => correction.mutate("apply"),
+        onUndo: () => correction.mutate("undo"),
       }}
-      onApply={() => correction.mutate("apply")}
-      onUndo={() => correction.mutate("undo")}
-    />
+    >
+      {children}
+    </IncomingTagEncodingReviewDataBinder>
   );
 }

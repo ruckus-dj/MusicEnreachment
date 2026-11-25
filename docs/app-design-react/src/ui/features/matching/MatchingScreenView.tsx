@@ -1,6 +1,10 @@
 import type { ReactNode, Ref } from "react";
 import { Input, Label, TextField } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import {
+  IncomingTagEncodingReviewOutlet,
+  type IncomingTagEncodingReviewSource,
+} from "../incoming/IncomingTagEncodingReviewOutlet";
 import type { ManualReleasePreparationSource } from "./ManualReleasePreparationOutlet";
 import type { ManualSearchSource } from "./ManualSearchOutlet";
 import { MatchingBoard, type MatchingBoardProps } from "./MatchingBoard";
@@ -206,7 +210,7 @@ export type MatchingScreenViewWorkspace = {
     options: readonly MatchingScreenViewOption[];
     onChange: (value: string) => void;
   };
-  encoding?: ReactNode;
+  encoding?: IncomingTagEncodingReviewSource;
   evaluation?: {
     loading?: string;
     error?: { text: string; retry: MatchingScreenViewAction };
@@ -693,7 +697,12 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
           </select>
         </label>
       ) : null}
-      {model.encoding}
+      {model.encoding ? (
+        <IncomingTagEncodingReviewOutlet
+          source={model.encoding}
+          locale={model.locale}
+        />
+      ) : null}
       {model.evaluation?.loading ? (
         <p role="status">{model.evaluation.loading}</p>
       ) : null}

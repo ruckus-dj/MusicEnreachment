@@ -1584,13 +1584,17 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               onChange: (value: string) => changeGroup(value),
             }
           : undefined,
-      encoding: (
-        <IncomingTagEncodingReview
-          key={group.id}
-          groupId={group.id}
-          disabled={sameGroupInFlight}
-        />
-      ),
+      encoding: {
+        bind: (children: ReactNode) => (
+          <IncomingTagEncodingReview
+            key={group.id}
+            groupId={group.id}
+            disabled={sameGroupInFlight}
+          >
+            {children}
+          </IncomingTagEncodingReview>
+        ),
+      },
       evaluation: evaluationModel,
       authority: authorityModel,
       search: {
