@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { usePreviewHeadingFocus } from "../../../ui/components/useViewFocus";
 import type { MatchingPreviewRow } from "../../../ui/features/matching/MatchingPreview";
@@ -339,24 +339,28 @@ export function useMatchingScreenDemoProvider({
 			},
 			feedback: { text: "", visible: false },
 			status: { error: matchingMessage(locale, "targetNotFound") },
-			search: (
-				<MatchingSearchPicker
-					artists={artists}
-					releases={searchableEditions}
-					selectedReleaseId={null}
-					onSelectRelease={(release) => {
-						const targetId =
-							release.provider === "Local"
-								? release.id
-								: resolveMusicBrainzEdition(release.id);
-						if (!targetId) return false;
-						if (release.provider === "Local")
-							onSelectLocalRelease?.(String(targetId));
-						else onSelectProviderRelease?.(String(targetId));
-						return true;
-					}}
-				/>
-			),
+			search: {
+				bind: (children: ReactNode) => (
+					<MatchingSearchPicker
+						artists={artists}
+						releases={searchableEditions}
+						selectedReleaseId={null}
+						onSelectRelease={(release) => {
+							const targetId =
+								release.provider === "Local"
+									? release.id
+									: resolveMusicBrainzEdition(release.id);
+							if (!targetId) return false;
+							if (release.provider === "Local")
+								onSelectLocalRelease?.(String(targetId));
+							else onSelectProviderRelease?.(String(targetId));
+							return true;
+						}}
+					>
+						{children}
+					</MatchingSearchPicker>
+				),
+			},
 			preparation: (
 				<MatchingReleasePreparation
 					key={group.id}
@@ -703,26 +707,30 @@ export function useMatchingScreenDemoProvider({
 		setRecordingQuery(String(track.title));
 		commitState();
 	};
-	const search = (
-		<MatchingSearchPicker
-			artists={artists}
-			releases={searchableEditions}
-			selectedReleaseId={
-				activeMode === "provider" ? String(activeTarget.id) : null
-			}
-			onSelectRelease={(release) => {
-				const targetId =
-					release.provider === "Local"
-						? release.id
-						: resolveMusicBrainzEdition(release.id);
-				if (!targetId) return false;
-				setCandidate(targetId, {
-					writeRoute: release.provider !== "Local",
-				});
-				return true;
-			}}
-		/>
-	);
+	const search = {
+		bind: (children: ReactNode) => (
+			<MatchingSearchPicker
+				artists={artists}
+				releases={searchableEditions}
+				selectedReleaseId={
+					activeMode === "provider" ? String(activeTarget.id) : null
+				}
+				onSelectRelease={(release) => {
+					const targetId =
+						release.provider === "Local"
+							? release.id
+							: resolveMusicBrainzEdition(release.id);
+					if (!targetId) return false;
+					setCandidate(targetId, {
+						writeRoute: release.provider !== "Local",
+					});
+					return true;
+				}}
+			>
+				{children}
+			</MatchingSearchPicker>
+		),
+	};
 	const preparation = (
 		<MatchingReleasePreparation
 			key={group.id}

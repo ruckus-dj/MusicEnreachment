@@ -14,7 +14,11 @@ import type { ManualPickerSearchBody } from "../../api/generated/client.schemas"
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { ManualSearchPicker } from "./ManualSearchPicker";
+import { ManualSearchOutlet } from "../../ui/features/matching/ManualSearchOutlet";
+import {
+  ManualSearchPicker,
+  type ManualSearchPickerProps,
+} from "./ManualSearchPicker";
 
 const { unsubscribe } = vi.hoisted(() => ({ unsubscribe: vi.fn() }));
 
@@ -33,6 +37,20 @@ function LocaleToggle() {
     >
       Switch locale
     </button>
+  );
+}
+
+function PickerMount(props: ManualSearchPickerProps) {
+  const { locale } = useI18n();
+  return (
+    <ManualSearchOutlet
+      locale={locale}
+      source={{
+        bind: (children) => (
+          <ManualSearchPicker {...props}>{children}</ManualSearchPicker>
+        ),
+      }}
+    />
   );
 }
 
@@ -147,7 +165,7 @@ it("sends the freeform release query unchanged and keeps pagination, results, an
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
         <LocaleToggle />
-        <ManualSearchPicker
+        <PickerMount
           groupId="group-1"
           groupRevision="revision-1"
           onSelectRelease={onSelectRelease}
@@ -369,7 +387,7 @@ it("shows a localized fallback for a detail-less rejection without extra request
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
         <LocaleToggle />
-        <ManualSearchPicker
+        <PickerMount
           groupId="group-1"
           groupRevision="revision-1"
           onSelectRelease={vi.fn()}
@@ -475,7 +493,7 @@ it("shows Local and MusicBrainz editions with shared metadata and no relevance s
   render(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualSearchPicker
+        <PickerMount
           groupId="group-1"
           groupRevision="revision-1"
           onSelectRelease={onSelectRelease}

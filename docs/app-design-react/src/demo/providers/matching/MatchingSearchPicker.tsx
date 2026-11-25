@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
-import { ManualSearchView } from "../../../ui/features/matching/ManualSearchView";
+import { ManualSearchDataBinder } from "../../../ui/features/matching/ManualSearchOutlet";
 import {
 	type ManualSearchSelection,
 	type ManualSearchViewItem,
@@ -15,7 +15,7 @@ import {
 	searchMatchingReleases,
 } from "./matchingSearch";
 
-type Props = {
+export type MatchingSearchPickerProps = {
 	artists: CatalogArtist[];
 	releases: OriginalRelease[];
 	selectedReleaseId: string | null;
@@ -57,7 +57,8 @@ export function MatchingSearchPicker({
 	selectedReleaseId,
 	onSelectRelease,
 	pageSize = DEFAULT_MATCHING_PAGE_SIZE,
-}: Props) {
+	children,
+}: MatchingSearchPickerProps & { children: ReactNode }) {
 	const { locale } = useI18n();
 	const [query, setQuery] = useState("");
 	const [submittedQuery, setSubmittedQuery] = useState("");
@@ -101,56 +102,57 @@ export function MatchingSearchPicker({
 	};
 
 	return (
-		<ManualSearchView
-			locale={locale}
-			query={query}
-			limit={limit}
-			offset={pageResult.page * pageLimit}
-			pending={status === "loading"}
-			results={
-				results
+		<ManualSearchDataBinder
+			model={{
+				query,
+				limit,
+				offset: pageResult.page * pageLimit,
+				pending: status === "loading",
+				results: results
 					? {
 							count: results.length,
 							items: pageResult.items.map((release) =>
 								viewItem(release, artists),
 							),
 						}
-					: undefined
-			}
-			errors={[
-				...(status === "error" ? [{ id: "search", message: error }] : []),
-				...(selectionError
-					? [
-							{
-								id: "prepare",
-								message: manualSearchMessage(locale, "prepareFailed"),
-							},
-						]
-					: []),
-			]}
-			selectedItem={selectedItem}
-			onQueryChange={(value) => {
-				setQuery(value);
-				setPage(0);
-				setStatus("idle");
-				setSelectionError(false);
+					: undefined,
+				errors: [
+					...(status === "error" ? [{ id: "search", message: error }] : []),
+					...(selectionError
+						? [
+								{
+									id: "prepare",
+									message: manualSearchMessage(locale, "prepareFailed"),
+								},
+							]
+						: []),
+				],
+				selectedItem,
+				onQueryChange: (value) => {
+					setQuery(value);
+					setPage(0);
+					setStatus("idle");
+					setSelectionError(false);
+				},
+				onLimitChange: (value) => {
+					setLimit(value);
+					setPage(0);
+					setStatus("idle");
+					setSelectionError(false);
+				},
+				onSearch: () => void submit(),
+				onSelectItem: ({ id, provider }) => {
+					const release = pageResult.items.find(
+						(item) => item.id === id && searchProvider(item) === provider,
+					);
+					if (release) setSelectionError(!onSelectRelease(release));
+				},
+				onPrevious: () => setPage(Math.max(0, pageResult.page - 1)),
+				onNext: () => setPage(pageResult.page + 1),
 			}}
-			onLimitChange={(value) => {
-				setLimit(value);
-				setPage(0);
-				setStatus("idle");
-				setSelectionError(false);
-			}}
-			onSearch={() => void submit()}
-			onSelectItem={({ id, provider }) => {
-				const release = pageResult.items.find(
-					(item) => item.id === id && searchProvider(item) === provider,
-				);
-				if (release) setSelectionError(!onSelectRelease(release));
-			}}
-			onPrevious={() => setPage(Math.max(0, pageResult.page - 1))}
-			onNext={() => setPage(pageResult.page + 1)}
-		/>
+		>
+			{children}
+		</ManualSearchDataBinder>
 	);
 }
 

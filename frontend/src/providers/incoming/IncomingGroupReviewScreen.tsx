@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ComponentProps,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -1592,37 +1593,41 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       ),
       evaluation: evaluationModel,
       authority: authorityModel,
-      search: (
-        <ManualSearchPicker
-          groupId={groupId}
-          groupRevision={group.revision}
-          disabled={!review || releaseSelectionLocked}
-          selectedReleaseId={localMode ? undefined : release?.release_id}
-          selectedLocalReleaseId={preferredLocalReleaseId}
-          onSelectLocalRelease={(id) => {
-            if (releaseSelectionLocked || id === preferredLocalReleaseId)
-              return;
-            applyReleaseSelection("");
-            window.location.hash = incomingGroupMatchingHref(groupId, "", {
-              localReleaseId: id,
-            });
-          }}
-          onSelectRelease={(id) => {
-            if (releaseSelectionLocked) return;
-            const existing = releases.find((item) => item.release_id === id);
-            if (existing) {
-              changeRelease(existing.provider_release_id);
-              return;
-            }
-            preparationRoute.current = window.location.hash;
-            setRequestedRelease({
-              groupId,
-              id,
-              sequence: ++preparationSequence.current,
-            });
-          }}
-        />
-      ),
+      search: {
+        bind: (children: ReactNode) => (
+          <ManualSearchPicker
+            groupId={groupId}
+            groupRevision={group.revision}
+            disabled={!review || releaseSelectionLocked}
+            selectedReleaseId={localMode ? undefined : release?.release_id}
+            selectedLocalReleaseId={preferredLocalReleaseId}
+            onSelectLocalRelease={(id) => {
+              if (releaseSelectionLocked || id === preferredLocalReleaseId)
+                return;
+              applyReleaseSelection("");
+              window.location.hash = incomingGroupMatchingHref(groupId, "", {
+                localReleaseId: id,
+              });
+            }}
+            onSelectRelease={(id) => {
+              if (releaseSelectionLocked) return;
+              const existing = releases.find((item) => item.release_id === id);
+              if (existing) {
+                changeRelease(existing.provider_release_id);
+                return;
+              }
+              preparationRoute.current = window.location.hash;
+              setRequestedRelease({
+                groupId,
+                id,
+                sequence: ++preparationSequence.current,
+              });
+            }}
+          >
+            {children}
+          </ManualSearchPicker>
+        ),
+      },
       preparation: (
         <ManualReleasePicker
           groupId={groupId}

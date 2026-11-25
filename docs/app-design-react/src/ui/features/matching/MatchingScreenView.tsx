@@ -1,6 +1,7 @@
 import type { ReactNode, Ref } from "react";
 import { Input, Label, TextField } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import type { ManualSearchSource } from "./ManualSearchOutlet";
 import { MatchingBoard, type MatchingBoardProps } from "./MatchingBoard";
 import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
 import { MatchingLinkResultView } from "./MatchingLinkResultView";
@@ -221,7 +222,7 @@ export type MatchingScreenViewWorkspace = {
     returnToAutomatic?: MatchingScreenViewAction;
     refresh?: MatchingScreenViewAction;
   };
-  search: ReactNode;
+  search: ManualSearchSource;
   preparation: ReactNode;
   createLocalReleaseHref?: string;
   review?: MatchingScreenViewReview;

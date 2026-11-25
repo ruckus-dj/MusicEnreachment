@@ -1,10 +1,14 @@
 import { type ReactNode, useId } from "react";
 import { localReleaseMessages } from "../local-release/localReleaseMessages";
+import {
+  ManualSearchOutlet,
+  type ManualSearchSource,
+} from "./ManualSearchOutlet";
 import { matchingCandidatesPanel } from "./MatchingWorkspaceLayout";
 
 export type MatchingReviewSearchViewProps = {
   locale: "en" | "ru";
-  search: ReactNode;
+  search: ManualSearchSource;
   preparation: ReactNode;
   createLocalReleaseHref?: string;
   children?: ReactNode;
@@ -12,8 +16,9 @@ export type MatchingReviewSearchViewProps = {
 
 /**
  * Shared shell for the manual release search and preparation pair. Queries,
- * drafts, pending operations and selection authority stay with the supplied
- * pickers; this module only owns the heading and the two-column layout.
+ * drafts, pending operations and selection authority stay with the bound
+ * search controller; this module owns the heading, the portable search mount
+ * and the two-column layout.
  */
 export function MatchingReviewSearchView({
   locale,
@@ -37,7 +42,7 @@ export function MatchingReviewSearchView({
         {locale === "ru" ? "Найти издание" : "Find a release"}
       </h2>
       <div className="grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        {search}
+        <ManualSearchOutlet source={search} locale={locale} />
         <div className="grid min-w-0 gap-2">
           {preparation}
           {createLocalReleaseHref && (

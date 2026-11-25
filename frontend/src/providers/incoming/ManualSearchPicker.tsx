@@ -1,5 +1,5 @@
 import { useQueries } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   getGetIncomingGroupManualPickerSearchQueryKey,
   getIncomingGroupManualPickerSearch,
@@ -11,7 +11,7 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { ManualSearchView } from "../../ui/features/matching/ManualSearchView";
+import { ManualSearchDataBinder } from "../../ui/features/matching/ManualSearchOutlet";
 import {
   type ManualSearchMessageKey,
   type ManualSearchSelection,
@@ -26,7 +26,7 @@ import {
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
 
-type Props = {
+export type ManualSearchPickerProps = {
   groupId: string;
   groupRevision: string;
   disabled?: boolean;
@@ -305,7 +305,8 @@ export function ManualSearchPicker({
   selectedLocalReleaseId,
   onSelectRelease,
   onSelectLocalRelease,
-}: Props) {
+  children,
+}: ManualSearchPickerProps & { children: ReactNode }) {
   const { locale } = useI18n();
   const [states, setStates] = useState<Record<string, GroupState>>({});
   const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
@@ -733,30 +734,33 @@ export function ManualSearchPicker({
           }
         />
       ))}
-      <ManualSearchView
-        locale={locale}
-        variant={localEnabled ? "editions" : "musicbrainz"}
-        query={state.query}
-        limit={state.limit}
-        offset={state.offset}
-        disabled={disabled}
-        pending={pending}
-        results={results}
-        errors={errors}
-        selectedItem={selectedItem}
-        onQueryChange={changeQuery}
-        onLimitChange={changeLimit}
-        onSearch={() => void submit(0)}
-        onSelectItem={(item) => {
-          if (item.provider === "Local") {
-            onSelectLocalRelease?.(item.id);
-            return;
-          }
-          onSelectRelease(item.id);
+      <ManualSearchDataBinder
+        model={{
+          variant: localEnabled ? "editions" : "musicbrainz",
+          query: state.query,
+          limit: state.limit,
+          offset: state.offset,
+          disabled,
+          pending,
+          results,
+          errors,
+          selectedItem,
+          onQueryChange: changeQuery,
+          onLimitChange: changeLimit,
+          onSearch: () => void submit(0),
+          onSelectItem: (item) => {
+            if (item.provider === "Local") {
+              onSelectLocalRelease?.(item.id);
+              return;
+            }
+            onSelectRelease(item.id);
+          },
+          onPrevious: () => void submit(Math.max(0, state.offset - pageLimit)),
+          onNext: () => void submit(state.offset + pageLimit),
         }}
-        onPrevious={() => void submit(Math.max(0, state.offset - pageLimit))}
-        onNext={() => void submit(state.offset + pageLimit)}
-      />
+      >
+        {children}
+      </ManualSearchDataBinder>
     </>
   );
 }
