@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   getGetIncomingGroupMatchingQueryKey,
   getGetIncomingGroupsQueryKey,
@@ -7,7 +7,7 @@ import {
 } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { ManualReleasePreparationView } from "../../ui/features/matching/ManualReleasePreparationView";
+import { ManualReleasePreparationDataBinder } from "../../ui/features/matching/ManualReleasePreparationOutlet";
 import {
   type ManualReleasePreparationError,
   type ManualReleasePreparationMessageKey,
@@ -19,7 +19,7 @@ import {
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
 
-type Props = {
+export type ManualReleasePickerProps = {
   groupId: string;
   groupRevision: string;
   evaluationRevision?: string;
@@ -113,7 +113,8 @@ export function ManualReleasePicker({
   requestedRelease,
   onPendingChange,
   onPrepared,
-}: Props) {
+  children,
+}: ManualReleasePickerProps & { children: ReactNode }) {
   const { locale } = useI18n();
   const message = (
     key: ManualReleasePreparationMessageKey,
@@ -473,30 +474,32 @@ export function ManualReleasePicker({
           }
         />
       ))}
-      <ManualReleasePreparationView
-        locale={locale}
-        value={state.value}
-        disabled={disabled}
-        pending={operationPending}
-        prepared={Boolean(state.finished)}
-        prepareDisabled={operation?.state === "failed"}
-        errors={errors}
-        onValueChange={(value) =>
-          setStates((current) => ({
-            ...current,
-            [groupId]: {
-              ...current[groupId],
-              value,
-              body: undefined,
-              error: undefined,
-              errorKey: undefined,
-              errorStatus: undefined,
-              finished: false,
-            },
-          }))
-        }
-        onPrepare={() => void submit()}
-      />
+      <ManualReleasePreparationDataBinder
+        model={{
+          value: state.value,
+          disabled,
+          pending: operationPending,
+          prepared: Boolean(state.finished),
+          prepareDisabled: operation?.state === "failed",
+          errors,
+          onValueChange: (value) =>
+            setStates((current) => ({
+              ...current,
+              [groupId]: {
+                ...current[groupId],
+                value,
+                body: undefined,
+                error: undefined,
+                errorKey: undefined,
+                errorStatus: undefined,
+                finished: false,
+              },
+            })),
+          onPrepare: () => void submit(),
+        }}
+      >
+        {children}
+      </ManualReleasePreparationDataBinder>
     </>
   );
 }

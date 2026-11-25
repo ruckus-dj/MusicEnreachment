@@ -361,15 +361,19 @@ export function useMatchingScreenDemoProvider({
 					</MatchingSearchPicker>
 				),
 			},
-			preparation: (
-				<MatchingReleasePreparation
-					key={group.id}
-					releaseId={prepareReleaseId}
-					selectionKey={activeTargetKey}
-					resolveRelease={resolveMusicBrainzEdition}
-					onPrepared={(id) => onSelectProviderRelease?.(id)}
-				/>
-			),
+			preparation: {
+				bind: (children) => (
+					<MatchingReleasePreparation
+						key={group.id}
+						releaseId={prepareReleaseId}
+						selectionKey={activeTargetKey}
+						resolveRelease={resolveMusicBrainzEdition}
+						onPrepared={(id) => onSelectProviderRelease?.(id)}
+					>
+						{children}
+					</MatchingReleasePreparation>
+				),
+			},
 			createLocalReleaseHref,
 			board: null,
 			emptyBoard: {
@@ -731,15 +735,19 @@ export function useMatchingScreenDemoProvider({
 			</MatchingSearchPicker>
 		),
 	};
-	const preparation = (
-		<MatchingReleasePreparation
-			key={group.id}
-			releaseId={prepareReleaseId}
-			selectionKey={activeTargetKey}
-			resolveRelease={resolveMusicBrainzEdition}
-			onPrepared={(id) => setCandidate(id, { forceRoute: true })}
-		/>
-	);
+	const preparation = {
+		bind: (children: ReactNode) => (
+			<MatchingReleasePreparation
+				key={group.id}
+				releaseId={prepareReleaseId}
+				selectionKey={activeTargetKey}
+				resolveRelease={resolveMusicBrainzEdition}
+				onPrepared={(id) => setCandidate(id, { forceRoute: true })}
+			>
+				{children}
+			</MatchingReleasePreparation>
+		),
+	};
 	const previewModel: MatchingScreenViewPreview | null = preview
 		? {
 				headingRef: previewHeadingRef,

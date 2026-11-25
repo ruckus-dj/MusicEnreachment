@@ -1628,24 +1628,30 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
           </ManualSearchPicker>
         ),
       },
-      preparation: (
-        <ManualReleasePicker
-          groupId={groupId}
-          groupRevision={group.revision}
-          evaluationRevision={review?.evaluation_revision || undefined}
-          disabled={!review || releaseSelectionLocked}
-          searchRelease={prepareReleaseId}
-          requestedRelease={
-            requestedRelease?.groupId === groupId ? requestedRelease : undefined
-          }
-          onPendingChange={onPreparationPendingChange}
-          onPrepared={(id) => {
-            if (preparationRoute.current === window.location.hash) {
-              setPreparedReleaseMBID(id);
+      preparation: {
+        bind: (children: ReactNode) => (
+          <ManualReleasePicker
+            groupId={groupId}
+            groupRevision={group.revision}
+            evaluationRevision={review?.evaluation_revision || undefined}
+            disabled={!review || releaseSelectionLocked}
+            searchRelease={prepareReleaseId}
+            requestedRelease={
+              requestedRelease?.groupId === groupId
+                ? requestedRelease
+                : undefined
             }
-          }}
-        />
-      ),
+            onPendingChange={onPreparationPendingChange}
+            onPrepared={(id) => {
+              if (preparationRoute.current === window.location.hash) {
+                setPreparedReleaseMBID(id);
+              }
+            }}
+          >
+            {children}
+          </ManualReleasePicker>
+        ),
+      },
       createLocalReleaseHref: releaseSelectionLocked
         ? undefined
         : incomingGroupMatchingHref(group.id, routeReleaseId, {

@@ -1,6 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useI18n } from "../../../app/i18n";
-import { ManualReleasePreparationView } from "../../../ui/features/matching/ManualReleasePreparationView";
+import { ManualReleasePreparationDataBinder } from "../../../ui/features/matching/ManualReleasePreparationOutlet";
 import {
 	type ManualReleasePreparationMessageKey,
 	manualReleasePreparationMessage,
@@ -35,7 +41,8 @@ export function MatchingReleasePreparation({
 	disabled = false,
 	resolveRelease,
 	onPrepared,
-}: MatchingReleasePreparationProps) {
+	children,
+}: MatchingReleasePreparationProps & { children: ReactNode }) {
 	const { locale } = useI18n();
 	const [value, setValue] = useState(releaseId ?? "");
 	const [pending, setPending] = useState(false);
@@ -91,19 +98,22 @@ export function MatchingReleasePreparation({
 	};
 
 	return (
-		<ManualReleasePreparationView
-			locale={locale}
-			value={value}
-			disabled={disabled}
-			pending={pending}
-			prepared={prepared}
-			errors={errorKey ? [{ id: "prepare", message: message(errorKey) }] : []}
-			onValueChange={(next) => {
-				setValue(next);
-				setPrepared(false);
-				setErrorKey(undefined);
+		<ManualReleasePreparationDataBinder
+			model={{
+				value,
+				disabled,
+				pending,
+				prepared,
+				errors: errorKey ? [{ id: "prepare", message: message(errorKey) }] : [],
+				onValueChange: (next) => {
+					setValue(next);
+					setPrepared(false);
+					setErrorKey(undefined);
+				},
+				onPrepare: () => void prepare(),
 			}}
-			onPrepare={() => void prepare()}
-		/>
+		>
+			{children}
+		</ManualReleasePreparationDataBinder>
 	);
 }

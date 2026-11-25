@@ -1,13 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { subscribeToOperation } from "../../api/client/operations";
 import type { ManualReleaseSelectionBody } from "../../api/generated/client.schemas";
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { ManualReleasePicker } from "./ManualReleasePicker";
+import { ManualReleasePreparationOutlet } from "../../ui/features/matching/ManualReleasePreparationOutlet";
+import {
+  ManualReleasePicker,
+  type ManualReleasePickerProps,
+} from "./ManualReleasePicker";
 
 const { unsubscribe } = vi.hoisted(() => ({ unsubscribe: vi.fn() }));
 
@@ -32,6 +36,20 @@ function LocaleToggle() {
   );
 }
 
+function PreparationMount(props: ManualReleasePickerProps) {
+  const { locale } = useI18n();
+  return (
+    <ManualReleasePreparationOutlet
+      locale={locale}
+      source={{
+        bind: (children) => (
+          <ManualReleasePicker {...props}>{children}</ManualReleasePicker>
+        ),
+      }}
+    />
+  );
+}
+
 function renderPicker(onPrepared = vi.fn()) {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
@@ -43,7 +61,7 @@ function renderPicker(onPrepared = vi.fn()) {
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
         <LocaleToggle />
-        <ManualReleasePicker
+        <PreparationMount
           groupId="group-1"
           groupRevision="revision-1"
           evaluationRevision="evaluation-1"
@@ -230,7 +248,7 @@ it("does not reuse an uncertain submission for a different release", async () =>
   const { rerender } = render(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualReleasePicker
+        <PreparationMount
           groupId="group-1"
           groupRevision="revision-1"
           evaluationRevision="evaluation-1"
@@ -249,7 +267,7 @@ it("does not reuse an uncertain submission for a different release", async () =>
   rerender(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualReleasePicker
+        <PreparationMount
           groupId="group-1"
           groupRevision="revision-1"
           evaluationRevision="evaluation-1"
@@ -336,7 +354,7 @@ it("keeps an in-flight result from the previous selection off the new input", as
   const { rerender } = render(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualReleasePicker {...props} searchRelease={officialURL} />
+        <PreparationMount {...props} searchRelease={officialURL} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -347,7 +365,7 @@ it("keeps an in-flight result from the previous selection off the new input", as
   rerender(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualReleasePicker {...props} searchRelease={otherMBID} />
+        <PreparationMount {...props} searchRelease={otherMBID} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -376,11 +394,13 @@ it("keeps an in-flight result from the previous selection off the new input", as
 });
 
 it("prefills the explicit selection from the release search without preparing it", async () => {
-  const submit = vi.fn();
+  const request = vi.spyOn(globalThis, "fetch");
+  onTestFinished(() => {
+    request.mockRestore();
+  });
   const onPrepared = vi.fn();
   server.use(
     http.post("/api/incoming-groups/prefill/matching/manual-release", () => {
-      submit();
       return HttpResponse.json(
         { operation_id: "prefill-operation" },
         { status: 202 },
@@ -396,7 +416,7 @@ it("prefills the explicit selection from the release search without preparing it
   render(
     <I18nProvider>
       <QueryClientProvider client={queryClient}>
-        <ManualReleasePicker
+        <PreparationMount
           groupId="prefill"
           groupRevision="revision-1"
           searchRelease={releaseMBID}
@@ -411,7 +431,10 @@ it("prefills the explicit selection from the release search without preparing it
       screen.getByRole("textbox", { name: "Release MBID or official URL" }),
     ).toHaveValue(releaseMBID),
   );
-  expect(submit).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalledWith(
+    "/api/incoming-groups/prefill/matching/manual-release",
+    expect.objectContaining({ method: "POST" }),
+  );
   expect(onPrepared).not.toHaveBeenCalled();
   expect(
     vi.mocked(subscribeToOperation).mock.calls.map(([id]) => id),
