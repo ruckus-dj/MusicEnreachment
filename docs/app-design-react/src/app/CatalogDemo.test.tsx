@@ -147,3 +147,25 @@ it("keeps a CURRENT comparison inside the position publication panel", () => {
 	).toBeEnabled();
 	expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("opens the publication preview inline without changing the route", async () => {
+	const hash = "#track/north-t1";
+	window.history.replaceState(null, "", hash);
+	render(<CatalogDemo />);
+	const publication = within(
+		screen.getByRole("region", { name: "Публикация" }),
+	);
+	fireEvent.click(
+		publication.getByRole("button", { name: "Обновить метаданные" }),
+	);
+	expect(window.location.hash).toBe(hash);
+	const preview = await screen.findByRole("heading", {
+		name: "Предпросмотр публикации",
+	});
+	expect(preview.tagName).toBe("H3");
+	fireEvent.click(screen.getByRole("button", { name: "Закрыть предпросмотр" }));
+	expect(
+		screen.queryByRole("heading", { name: "Предпросмотр публикации" }),
+	).not.toBeInTheDocument();
+	expect(window.location.hash).toBe(hash);
+});

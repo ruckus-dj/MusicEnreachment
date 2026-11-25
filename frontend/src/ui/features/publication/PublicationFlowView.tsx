@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Heading } from "react-aria-components";
 import { ActionDialog, ActionModal } from "../../components/ActionModal";
 import { AppButton as Button } from "../../components/AppButton";
+import { useViewFocus } from "../../components/useViewFocus";
 import type { Locale } from "../../i18n/types";
 import {
   type PublicationInspection,
@@ -47,11 +48,15 @@ export function PublicationFlowView({
   onConfirm: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  useViewFocus(titleRef, true);
   return (
     <section className="min-w-0 px-3 py-3" aria-label={title}>
       <header className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0 [overflow-wrap:anywhere]">
-          <h1 className="m-0 text-[20px]">{title}</h1>
+          <h3 ref={titleRef} tabIndex={-1} className="m-0 text-[20px]">
+            {title}
+          </h3>
           {description && (
             <p className="m-0 mt-1 text-xs text-[var(--muted)]">
               {description}

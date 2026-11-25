@@ -65,6 +65,7 @@ export const publicationMessages = createNamespace({
       "Existing positions from the selected objects are shown; duplicate tracks are combined. New entities and alternate sources are not selected.",
     previewContext: "Preview context",
     returnToLibrary: "Return to library",
+    closePreview: "Close preview",
     stalePreview:
       "The preview is out of date: the source inventory or context changed. Return and open the preview again.",
     actionSummary: "Action summary",
@@ -238,6 +239,7 @@ export const publicationMessages = createNamespace({
       "Показаны существующие позиции выбранных объектов; повторяющиеся треки объединены. Новые сущности и альтернативные источники не выбираются.",
     previewContext: "Контекст предпросмотра",
     returnToLibrary: "Вернуться в медиатеку",
+    closePreview: "Закрыть предпросмотр",
     stalePreview:
       "Снимок предпросмотра устарел: изменился инвентарь источников или контекст. Вернитесь и откройте предпросмотр заново.",
     actionSummary: "Сводка действий",

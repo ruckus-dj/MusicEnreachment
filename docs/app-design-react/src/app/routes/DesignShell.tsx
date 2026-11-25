@@ -23,7 +23,6 @@ const libraryRoutes = [
 	"release",
 	"track",
 	"tags",
-	"publication-preview",
 	"publication-list",
 ];
 

@@ -173,8 +173,7 @@ export function PublicationPreview({
 		"Невозможно обработать",
 		"Пропустить",
 	] as const;
-	const returnText =
-		returnLabel ?? publicationMessage(locale, "returnToLibrary");
+	const returnText = returnLabel ?? publicationMessage(locale, "closePreview");
 	const inspections: PublicationInspection[] = rows.map(
 		({ release, track, file, action, reason, artistNotices }) => {
 			const output = track.published

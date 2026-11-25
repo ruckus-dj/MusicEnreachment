@@ -1,9 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
+import { focusView, focusViewById } from "../ui/components/useViewFocus";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
+import { libraryPositionTitleId } from "../ui/features/library/LibraryPositionHeadingView";
 import { LibraryReleaseWorkspaceView } from "../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	type LibrarySelectionPreviewPosition,
@@ -177,6 +179,17 @@ const routeId = (value: string) => {
 
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
+type InlinePublicationPreview = {
+	originRoute: string;
+	mode: PublicationPreviewMode;
+	ids: string[];
+	token: MetadataPreviewToken;
+	originControl: HTMLElement | null;
+};
+type PreviewFocusReturn = {
+	control: HTMLElement | null;
+	originRoute: string;
+};
 
 const recordingIdentity = (track: OriginalTrack) =>
 	track.localRecordingId
@@ -364,23 +377,27 @@ export function CatalogDemo({
 		positionId: string;
 		notice: UiNotice;
 	} | null>(null);
+	const [inlinePreview, setInlinePreview] =
+		useState<InlinePublicationPreview | null>(null);
+	const [previewFocusReturn, setPreviewFocusReturn] =
+		useState<PreviewFocusReturn | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
 		setPositionNotice(null);
+		setInlinePreview(null);
 	}, [route]);
-	const [preview, setPreview] = useState(false);
-	const [previewMode, setPreviewMode] =
-		useState<PublicationPreviewMode>("metadata");
 	useEffect(() => {
-		if (route !== "publication-preview") setPreview(false);
-	}, [route]);
-	const [contextIds, setContextIds] = useState<string[] | null>(null);
-	const [previewOriginRoute, setPreviewOriginRoute] = useState(() =>
-		libraryRootHref().slice(1),
-	);
-	const [previewToken, setPreviewToken] = useState<MetadataPreviewToken | null>(
-		null,
-	);
+		if (!previewFocusReturn) return;
+		const { control, originRoute } = previewFocusReturn;
+		setPreviewFocusReturn(null);
+		if (originRoute !== route || window.location.hash.slice(1) !== originRoute)
+			return;
+		if (control?.isConnected) {
+			focusView(control);
+			if (document.activeElement === control) return;
+		}
+		focusViewById(libraryPositionTitleId);
+	}, [previewFocusReturn, route]);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
 	const publicationCatalog: DemoPublicationCatalog = {
@@ -551,8 +568,8 @@ export function CatalogDemo({
 		return next.status;
 	};
 	useShellPageEffects({
-		focusKey: `${headingRoute}:${preview}`,
-		titleKey: `${route}:${preview}`,
+		focusKey: headingRoute,
+		titleKey: route,
 		titleSuffix: msg("documentTitleSuffix"),
 		scrollResetKey: incomingRoute ? routeName : undefined,
 	});
@@ -711,26 +728,49 @@ export function CatalogDemo({
 		mode: PublicationPreviewMode = "metadata",
 	) => {
 		const frozenIds = [...ids];
-		setPreviewMode(mode);
-		setPreviewOriginRoute(route);
-		setContextIds(frozenIds);
-		setPreviewToken(
-			captureMetadataPreview(
+		const activeElement = document.activeElement;
+		setInlinePreview({
+			originRoute: route,
+			mode,
+			ids: frozenIds,
+			token: captureMetadataPreview(
 				incoming.inventoryVersion,
 				previewScopeKey(route, frozenIds),
 				frozenIds,
 			),
-		);
-		setPreview(true);
-		window.location.hash = "publication-preview";
+			originControl:
+				activeElement instanceof HTMLElement &&
+				activeElement !== document.body &&
+				activeElement !== document.documentElement
+					? activeElement
+					: null,
+		});
+	};
+	const closeInlinePreview = (restoreFocus: boolean) => {
+		if (restoreFocus && inlinePreview) {
+			setPreviewFocusReturn({
+				control: inlinePreview.originControl,
+				originRoute: inlinePreview.originRoute,
+			});
+		}
+		setInlinePreview(null);
 	};
 	const applyPreview = (token: MetadataPreviewToken) => {
-		const activeIds = contextIds ?? [...selected];
-		const activeScope = previewScopeKey(previewOriginRoute, activeIds);
-		if (!isMetadataPreviewFresh(token, incoming.inventoryVersion, activeScope))
+		if (!inlinePreview) return false;
+		const activeScope = previewScopeKey(
+			inlinePreview.originRoute,
+			inlinePreview.ids,
+		);
+		const frozenIds = new Set(inlinePreview.token.selectedIds);
+		if (
+			window.location.hash.slice(1) !== inlinePreview.originRoute ||
+			token.selectedIds.length === 0 ||
+			token.selectedIds.some((id) => !frozenIds.has(id)) ||
+			!isMetadataPreviewFresh(token, incoming.inventoryVersion, activeScope)
+		)
 			return false;
 		setReleases((previous) =>
-			previewMode === "audioUpgrade"
+			inlinePreview.mode === "audioUpgrade"
 				? applyAudioUpgradePreview(previous, token.selectedIds, files)
 				: applyMetadataPreview(
 						previous,
@@ -758,42 +798,6 @@ export function CatalogDemo({
 				sourcesHref={demoSourcesHref}
 				onOpenIncoming={openIncomingFromHome}
 			/>
-		);
-	if (preview || route === "publication-preview")
-		return (
-			<>
-				{previewToken ? (
-					<PublicationPreview
-						mode={previewMode}
-						destination={publicationDestination}
-						token={previewToken}
-						inventoryVersion={incoming.inventoryVersion}
-						scopeKey={previewScopeKey(
-							previewOriginRoute,
-							contextIds ?? [...selected],
-						)}
-						files={files}
-						releases={releases}
-						artists={artists}
-						onApply={applyPreview}
-						onBack={() => {
-							setPreview(false);
-							window.location.hash = previewOriginRoute;
-						}}
-						returnLabel={
-							previewOriginRoute.startsWith("track/")
-								? msg("backToTrack")
-								: msg("backToLibrary")
-						}
-					/>
-				) : (
-					<ScreenFeedbackView
-						title={msg("previewTitle")}
-						message={msg("noSavedPreview")}
-						link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
-					/>
-				)}
-			</>
 		);
 	if (route.startsWith("artist/")) {
 		const [artistPath, queryString = ""] = route.split("?");
@@ -922,6 +926,10 @@ export function CatalogDemo({
 			positionNotice.positionId === track.id
 				? positionNotice.notice
 				: null;
+		const activePreview =
+			inlinePreview && inlinePreview.originRoute === route
+				? inlinePreview
+				: null;
 		const publicationPreview = (
 			<>
 				{activePositionNotice && (
@@ -929,25 +937,43 @@ export function CatalogDemo({
 						{formatUiNotice(locale, activePositionNotice)}
 					</ScreenStatus>
 				)}
-				<DemoPositionPublication
-					key={`${release.id}:${track.id}`}
-					destination={publicationDestination}
-					release={release}
-					positionId={track.id}
-					state={incoming}
-					files={files}
-					releases={releases}
-					providers={providers}
-					artists={providerArtists}
-					onReleases={setImportedReleases}
-					onSuccess={(notice) => {
-						setPositionNotice({
-							releaseId: release.id,
-							positionId: track.id,
-							notice,
-						});
-					}}
-				/>
+				{activePreview ? (
+					<PublicationPreview
+						mode={activePreview.mode}
+						destination={publicationDestination}
+						token={activePreview.token}
+						inventoryVersion={incoming.inventoryVersion}
+						scopeKey={previewScopeKey(
+							activePreview.originRoute,
+							activePreview.ids,
+						)}
+						files={files}
+						releases={releases}
+						artists={artists}
+						onApply={applyPreview}
+						onBack={() => closeInlinePreview(true)}
+					/>
+				) : (
+					<DemoPositionPublication
+						key={`${release.id}:${track.id}`}
+						destination={publicationDestination}
+						release={release}
+						positionId={track.id}
+						state={incoming}
+						files={files}
+						releases={releases}
+						providers={providers}
+						artists={providerArtists}
+						onReleases={setImportedReleases}
+						onSuccess={(notice) => {
+							setPositionNotice({
+								releaseId: release.id,
+								positionId: track.id,
+								notice,
+							});
+						}}
+					/>
+				)}
 			</>
 		);
 		return (
@@ -964,7 +990,8 @@ export function CatalogDemo({
 					initialTagsOpen={openTags}
 					genresLoaded={settings.genresLoaded}
 					onLoadGenres={loadGenres}
-					onRecordingChange={(updateTrack) =>
+					onRecordingChange={(updateTrack) => {
+						closeInlinePreview(false);
 						setReleases((previous) =>
 							previous.map((item) => ({
 								...item,
@@ -975,9 +1002,10 @@ export function CatalogDemo({
 										: candidate,
 								),
 							})),
-						)
-					}
-					onMutate={(updateTrack) =>
+						);
+					}}
+					onMutate={(updateTrack) => {
+						closeInlinePreview(false);
 						setReleases((previous) =>
 							previous.map((item) => ({
 								...item,
@@ -987,15 +1015,16 @@ export function CatalogDemo({
 										: candidate,
 								),
 							})),
-						)
-					}
+						);
+					}}
 					onAudioUpgrade={() => {
 						openPreview([track.id], "audioUpgrade");
 					}}
 					onMetadataPreview={(ids) => {
 						openPreview(ids);
 					}}
-					onSource={(id) =>
+					onSource={(id) => {
+						closeInlinePreview(false);
 						setReleases((previous) =>
 							previous.map((item) => ({
 								...item,
@@ -1009,8 +1038,8 @@ export function CatalogDemo({
 										: candidate,
 								),
 							})),
-						)
-					}
+						);
+					}}
 				/>
 			</>
 		);
