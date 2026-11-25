@@ -20,8 +20,8 @@ import {
 } from "./catalogData";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
-import { formatTrackMessage, trackMessage } from "./trackMessages";
 import type { TrackScreenViewProps } from "./TrackScreenView";
+import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 export type TrackScreenProps = {
 	release: OriginalRelease;
@@ -167,6 +167,7 @@ export function useTrackScreenDemoProvider({
 			},
 		},
 		publication: {
+			published: Boolean(track.published),
 			status: metadataStatus,
 			diff: track.published ? <MetadataDiff groups={changes} /> : undefined,
 			outputStatus: outputStatus ?? undefined,
@@ -214,6 +215,7 @@ export function useTrackScreenDemoProvider({
 				providerTrack?.title ||
 				trackMessage(locale, "noProviderHint"),
 			externalChangeTime: track.observedFile?.mtime,
+			help: trackMessage(locale, "localChangesHelp"),
 			current: track.published
 				? {
 						details: {

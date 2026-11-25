@@ -9,12 +9,7 @@ import {
   type LibraryArtistReleaseTrackRow,
   LibraryArtistReleaseTracksView,
 } from "./LibraryArtistReleaseTracksView";
-import { LibraryPositionIdentityView } from "./LibraryPositionIdentityView";
-import { LibraryPositionSourcesView } from "./LibraryPositionSourcesView";
-
-function positionNumber(track: LibraryReleaseTrackResponse) {
-  return track.displayed_number.trim() || String(track.position);
-}
+import type { LibraryPositionSource } from "./LibraryPositionSourcesView";
 
 export function ReleaseCreditList({
   credits,
@@ -193,23 +188,6 @@ export function ReleaseMediaSummary({
   );
 }
 
-export function PositionIdentity({
-  track,
-}: {
-  track: LibraryReleaseTrackResponse;
-}) {
-  const { locale } = useI18n();
-  return (
-    <LibraryPositionIdentityView
-      locale={locale}
-      position={positionNumber(track)}
-      title={track.title}
-      durationMs={track.duration_ms}
-      recordingTitle={track.recording_title}
-    />
-  );
-}
-
 function rootStatusLabel(status: string, locale: "en" | "ru") {
   switch (status) {
     case "available":
@@ -234,14 +212,10 @@ function probeStatusLabel(status: string, locale: "en" | "ru") {
   }
 }
 
-export function PositionSources({
-  track,
-  inspection,
-}: {
-  track: LibraryReleaseTrackResponse;
-  inspection?: { value?: string; onChange: (variantId: string) => void };
-}) {
-  const { locale } = useI18n();
+export function positionSourceItems(
+  track: LibraryReleaseTrackResponse,
+  locale: "en" | "ru",
+): readonly LibraryPositionSource[] {
   const copy =
     locale === "ru"
       ? {
@@ -264,32 +238,25 @@ export function PositionSources({
           size: "size",
           bytes: "bytes",
         };
-  return (
-    <LibraryPositionSourcesView
-      locale={locale}
-      position={positionNumber(track)}
-      inspection={inspection}
-      sources={(track.sources ?? []).map((source, index) => ({
-        id: source.media_variant_id,
-        label: String(index + 1),
-        selected: source.selected,
-        authority: {
-          decision: source.decision_method,
-          compatible: source.compatible,
-          policy: source.policy_version ?? "",
-          locations: (source.locations ?? []).map((location) => ({
-            id: location.location_id,
-            path: location.relative_path,
-            href: `#/sources/${encodeURIComponent(location.root_id)}`,
-            details: [
-              `${copy.root} ${rootStatusLabel(location.root_status, locale)} (${location.root_enabled ? copy.enabled : copy.disabled})`,
-              `${copy.probe} ${probeStatusLabel(location.probe_status, locale)}`,
-              `${copy.modified} ${location.mtime || copy.unspecified}`,
-              `${copy.size} ${location.size_bytes} ${copy.bytes}`,
-            ].join(" · "),
-          })),
-        },
-      }))}
-    />
-  );
+  return (track.sources ?? []).map((source, index) => ({
+    id: source.media_variant_id,
+    label: String(index + 1),
+    selected: source.selected,
+    authority: {
+      decision: source.decision_method,
+      compatible: source.compatible,
+      policy: source.policy_version ?? "",
+      locations: (source.locations ?? []).map((location) => ({
+        id: location.location_id,
+        path: location.relative_path,
+        href: `#/sources/${encodeURIComponent(location.root_id)}`,
+        details: [
+          `${copy.root} ${rootStatusLabel(location.root_status, locale)} (${location.root_enabled ? copy.enabled : copy.disabled})`,
+          `${copy.probe} ${probeStatusLabel(location.probe_status, locale)}`,
+          `${copy.modified} ${location.mtime || copy.unspecified}`,
+          `${copy.size} ${location.size_bytes} ${copy.bytes}`,
+        ].join(" · "),
+      })),
+    },
+  }));
 }

@@ -76,11 +76,10 @@ source channel, а fixture макета такого происхождения 
 макета готовят данные и обработчики; эти представления ещё не входят в реестр
 пар с приложением.
 
-В медиатеке отдельно собраны представления артиста с его изданиями и позиции
-с источниками, действиями и техническими данными (`ArtistScreenView.tsx`,
-`TrackScreenView.tsx`, `TrackActionsView.tsx`). Независимые
-редакторы и диалоги подключаются к этим представлениям отдельно; они не
-передают экрану доступ к данным или полномочия записи.
+В медиатеке отдельно собраны представление артиста с его изданиями
+(`ArtistScreenView.tsx`) и дополнительные действия позиции (`TrackActionsView.tsx`).
+Независимые редакторы и диалоги подключаются к представлениям отдельно;
+они не передают экрану доступ к данным или полномочия записи.
 
 | Область | Файлы макета относительно `src/` | Копии в `frontend/src/` |
 | --- | --- | --- |
@@ -116,6 +115,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: раскрытие произведений и частей, строки произведений, название, всего частей и номер | `features/library/WorksMovementSectionView.tsx`, `WorkRowsView.tsx`, `MovementFieldsView.tsx` | Те же пути |
 | Медиатека: группы ролей участников, поля строки, перемещение и удаление | `features/library/ContributorRowView.tsx` | Тот же путь |
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
+| Медиатека: экран позиции — источники, редакторы, публикация, технические сведения и сравнение тегов | `features/library/TrackScreenView.tsx` | Тот же путь. В приложении план читается по запросу; наличие сохранённого пути не доказывает состояние файла или совпадение метаданных |
 | Медиатека: рамка диалога удаления артиста, релиза и публикации, заголовок и название удаляемого объекта, список затронутых файлов и пустое состояние | `features/library/LibraryDeletionDialogView.tsx` | Тот же путь; приложение показывает серверные сведения о позициях и допустимости захвата файлов, которых нет в демоданных |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
 | Публикация: весь предпросмотр одной позиции | `features/publication/ContextPublicationPreviewView.tsx` | Тот же путь; реальные режимы, чтение плана и допуск остаются в провайдере. При понижении качества макет сохраняет отдельный флажок, приложение — предупреждение и кнопку подтверждения |

@@ -28,7 +28,6 @@ docs/app-design-react/src/features/library/TagsScreen.tsx
 docs/app-design-react/src/features/library/TrackActions.tsx
 docs/app-design-react/src/features/library/TrackActionsView.tsx
 docs/app-design-react/src/features/library/TrackScreen.tsx
-docs/app-design-react/src/features/library/TrackScreenView.tsx
 docs/app-design-react/src/features/library/artistReleaseRoute.ts
 docs/app-design-react/src/features/library/availabilityRows.ts
 docs/app-design-react/src/features/library/catalogData.ts
