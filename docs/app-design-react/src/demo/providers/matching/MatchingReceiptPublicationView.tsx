@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { MatchingReceiptPublicationDataBinder } from "../../../ui/features/matching/MatchingReceiptPublicationOutlet";
 import type { Locale } from "../../../ui/i18n/types";
 import type {
 	IncomingFiles,
@@ -6,7 +8,6 @@ import type {
 } from "../incoming/incomingModel";
 import type { CatalogArtist } from "../library/catalogData";
 import type { PublicationDestination } from "../publication/publicationOutput";
-import { MatchingReceiptPublicationReadyView } from "./MatchingReceiptPublicationReadyView";
 import { useMatchingReceiptPublication } from "./matchingReceiptPublicationController";
 import { buildMatchingReceiptPublicationReady } from "./matchingReceiptPublicationReady";
 
@@ -19,14 +20,14 @@ export type MatchingReceiptPublicationViewProps = {
 	savedReceipts: readonly MatchingLinkReceipt[];
 	destination?: PublicationDestination;
 	onReleases: (releases: IncomingReleases) => void;
-	onBack: () => void;
 };
 
 /**
  * Saved-result publication provider boundary.
  *
- * Keeps the existing facade API for matching callers, owns the per-receipt
- * controller and hands only render-ready values to the pure view.
+ * Mounts the per-receipt controller and binds only render-ready values into
+ * the portable outlet frame. The controller is mounted with this binder, so
+ * the host keeps it alive only while the publication surface is open.
  */
 export function MatchingReceiptPublicationView({
 	locale,
@@ -37,8 +38,8 @@ export function MatchingReceiptPublicationView({
 	savedReceipts,
 	destination,
 	onReleases,
-	onBack,
-}: MatchingReceiptPublicationViewProps) {
+	children,
+}: MatchingReceiptPublicationViewProps & { children: ReactNode }) {
 	const controller = useMatchingReceiptPublication({
 		receipt,
 		releases,
@@ -53,7 +54,10 @@ export function MatchingReceiptPublicationView({
 		receipt,
 		files,
 		controller,
-		onBack,
 	});
-	return <MatchingReceiptPublicationReadyView model={model} />;
+	return (
+		<MatchingReceiptPublicationDataBinder model={model}>
+			{children}
+		</MatchingReceiptPublicationDataBinder>
+	);
 }

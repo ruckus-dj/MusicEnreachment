@@ -59,9 +59,13 @@ function MatchingHarness({
 
 function LinkSaveHarness({
 	initialReleases,
+	providers,
+	releaseId,
 	onReleases,
 }: {
 	initialReleases: IncomingReleases;
+	providers?: IncomingReleases;
+	releaseId?: string;
 	onReleases?: (releases: IncomingReleases) => void;
 }) {
 	const [state, setState] = useState(createIncomingState);
@@ -71,6 +75,8 @@ function LinkSaveHarness({
 			state={state}
 			onState={setState}
 			releases={releases}
+			providers={providers}
+			releaseId={releaseId}
 			onReleases={(next) => {
 				setReleases(next);
 				onReleases?.(next);
@@ -430,11 +436,17 @@ it("blocks saving a stale link preview without a confirmation dialog", () => {
 it("saves only matching links and leaves published objects byte-identical", () => {
 	const initialReleases = structuredClone(incomingFixtures.releases);
 	const publishedBefore = publishedSnapshot(initialReleases);
+	const projectNorth = incomingFixtures.releases.find(
+		(release) => release.id === "north",
+	);
+	if (!projectNorth) throw new Error("Missing project north fixture");
+	const providers = [...incomingFixtures.providerReleases, projectNorth];
 	let savedReleases: IncomingReleases | undefined;
 
-	render(
+	const { rerender } = render(
 		<LinkSaveHarness
 			initialReleases={initialReleases}
+			providers={providers}
 			onReleases={(next) => {
 				savedReleases = next;
 			}}
@@ -474,6 +486,29 @@ it("saves only matching links and leaves published objects byte-identical", () =
 	expect(
 		screen.getByRole("button", { name: "Проверить публикацию" }),
 	).toHaveFocus();
+
+	fireEvent.click(screen.getByRole("button", { name: "Проверить публикацию" }));
+	expect(
+		screen.getByRole("heading", { name: "Публикация по сохранённым связям" }),
+	).toHaveFocus();
+	rerender(
+		<LinkSaveHarness
+			initialReleases={initialReleases}
+			providers={providers}
+			releaseId="north"
+			onReleases={(next) => {
+				savedReleases = next;
+			}}
+		/>,
+	);
+	expect(
+		screen.queryByRole("heading", {
+			name: "Публикация по сохранённым связям",
+		}),
+	).not.toBeInTheDocument();
+	expect(
+		screen.getByRole("heading", { name: "Связи сопоставления сохранены" }),
+	).toBeInTheDocument();
 
 	fireEvent.click(
 		screen.getByRole("button", { name: "Продолжить сопоставление" }),

@@ -3,17 +3,17 @@ import type {
 	AggregateInspectorPresentation,
 	AggregatePositionView,
 } from "../../../ui/features/library/AggregatePublicationPreviewView";
-import { matchingReceiptFileChoiceLabels } from "../../../ui/features/matching/MatchingReceiptPublicationFrame";
+import type { MatchingReceiptPublicationModel } from "../../../ui/features/matching/MatchingReceiptPublicationOutlet";
+import {
+	type MatchingReceiptPublicationOutcomeModel,
+	matchingReceiptFileChoiceLabels,
+} from "../../../ui/features/matching/matchingReceiptPublicationModel";
 import type { Locale } from "../../../ui/i18n/types";
 import type {
 	IncomingFiles,
 	MatchingLinkReceipt,
 } from "../incoming/incomingModel";
 import { individualPublicationDetails } from "../publication/individualPublicationDetails";
-import type {
-	MatchingReceiptPublicationOutcomeModel,
-	MatchingReceiptPublicationReady,
-} from "./MatchingReceiptPublicationReadyView";
 import type {
 	MatchingReceiptPublicationNotice,
 	MatchingReceiptPublicationRow,
@@ -225,22 +225,20 @@ function detailsFor(
 /**
  * Derives localized labels, counts, inspector state and the outcome summary
  * from the saved-result controller. The provider keeps preparation and the
- * confirmation write boundary; the returned model is what the pure view
- * renders without inspecting publication rules.
+ * confirmation write boundary; the returned model is what the portable outlet
+ * frame renders without inspecting publication rules.
  */
 export function buildMatchingReceiptPublicationReady({
 	locale,
 	receipt,
 	files,
 	controller,
-	onBack,
 }: {
 	locale: Locale;
 	receipt: MatchingLinkReceipt;
 	files: IncomingFiles;
 	controller: MatchingReceiptPublicationController;
-	onBack: () => void;
-}): MatchingReceiptPublicationReady {
+}): MatchingReceiptPublicationModel {
 	const text = copy[locale];
 	const counts: Record<AggregateDisposition, number> = {
 		create: 0,
@@ -324,8 +322,6 @@ export function buildMatchingReceiptPublicationReady({
 			: null;
 
 	return {
-		locale,
-		releaseTitle: receipt.releaseTitle,
 		counts,
 		positions,
 		included: controller.included,
@@ -335,7 +331,6 @@ export function buildMatchingReceiptPublicationReady({
 		preparing: false,
 		inspector,
 		outcome,
-		onBack,
 		onToggleInclude: controller.toggleInclude,
 		onSelectPosition: controller.selectPosition,
 		onPrepare: controller.refresh,

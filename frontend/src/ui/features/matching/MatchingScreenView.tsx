@@ -9,9 +9,12 @@ import type { ManualReleasePreparationSource } from "./ManualReleasePreparationO
 import type { ManualSearchSource } from "./ManualSearchOutlet";
 import { MatchingBoard, type MatchingBoardProps } from "./MatchingBoard";
 import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
-import { MatchingLinkResultView } from "./MatchingLinkResultView";
 import { MatchingPreview, type MatchingPreviewRow } from "./MatchingPreview";
 import { MatchingReviewSearchView } from "./MatchingReviewSearchView";
+import {
+  type MatchingSavedReceiptModel,
+  MatchingSavedReceiptView,
+} from "./MatchingSavedReceiptView";
 import {
   MatchingWorkspaceLayout,
   matchingInspectorActions,
@@ -43,18 +46,6 @@ export type MatchingScreenViewHeading = {
   hint?: string;
   id?: string;
   headingRef?: Ref<HTMLHeadingElement>;
-};
-
-export type MatchingScreenViewLink = {
-  key: string;
-  source: string;
-  positionId: string;
-  position: string;
-};
-
-export type MatchingScreenViewRemainingFile = {
-  key: string;
-  name: string;
 };
 
 export type MatchingScreenViewOption = {
@@ -241,28 +232,13 @@ export type MatchingScreenViewWorkspace = {
   onEscape?: () => void;
 };
 
-export type MatchingScreenViewReceiptBody =
-  | { kind: "publication"; content: ReactNode }
-  | { kind: "savedReceipt"; content: ReactNode }
-  | {
-      kind: "links";
-      releaseTitle: string;
-      links: readonly MatchingScreenViewLink[];
-      remaining: readonly MatchingScreenViewRemainingFile[];
-      publicationDisabled: boolean;
-      onOpenPublication: () => void;
-      onContinue?: () => void;
-      headingRef?: Ref<HTMLHeadingElement>;
-      publicationButtonRef?: Ref<HTMLButtonElement>;
-    };
-
 export type MatchingScreenViewModel =
   | {
       kind: "receipt";
       locale: MatchingWorkspaceLocale;
       hidden?: boolean;
       heading: MatchingScreenViewHeading;
-      body: MatchingScreenViewReceiptBody;
+      body: MatchingSavedReceiptModel;
     }
   | {
       kind: "loading";
@@ -625,22 +601,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
   }
 
   if (model.kind === "receipt") {
-    return model.body.kind === "publication" ||
-      model.body.kind === "savedReceipt" ? (
-      model.body.content
-    ) : (
-      <MatchingLinkResultView
-        locale={model.locale}
-        releaseTitle={model.body.releaseTitle}
-        links={model.body.links}
-        remaining={model.body.remaining}
-        headingRef={model.body.headingRef}
-        publicationButtonRef={model.body.publicationButtonRef}
-        publicationDisabled={model.body.publicationDisabled}
-        onOpenPublication={model.body.onOpenPublication}
-        onContinue={model.body.onContinue}
-      />
-    );
+    return <MatchingSavedReceiptView key={model.body.key} model={model.body} />;
   }
 
   const { inspector, recording, footer, preview } = model;

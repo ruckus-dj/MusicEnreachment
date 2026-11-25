@@ -1,5 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   type AggregateDisposition,
@@ -11,14 +17,12 @@ import {
 } from "../../ui/features/library/AggregatePublicationPreviewView";
 import { firstPublicationPreviewMessages } from "../../ui/features/library/firstPublicationPreviewMessages";
 import type { PublicationPreviewDetailsState } from "../../ui/features/library/PublicationPreviewDetailsView";
+import type { MatchingReceiptPublicationIssue } from "../../ui/features/matching/MatchingReceiptPublicationOutcomeView";
 import {
-  MatchingReceiptPublicationFrame,
-  matchingReceiptFileChoiceLabels,
-} from "../../ui/features/matching/MatchingReceiptPublicationFrame";
-import {
-  type MatchingReceiptPublicationIssue,
-  MatchingReceiptPublicationOutcomeView,
-} from "../../ui/features/matching/MatchingReceiptPublicationOutcomeView";
+  MatchingReceiptPublicationDataBinder,
+  type MatchingReceiptPublicationModel,
+} from "../../ui/features/matching/MatchingReceiptPublicationOutlet";
+import { matchingReceiptFileChoiceLabels } from "../../ui/features/matching/matchingReceiptPublicationModel";
 import {
   FirstPublicationPreview,
   type PublicationMatchingReceipt,
@@ -56,10 +60,9 @@ export type IncomingReceiptPublicationPosition = {
 
 export type IncomingReceiptPublicationProps = {
   locale: "en" | "ru";
-  releaseTitle: string;
   releaseId: string;
   positions: readonly IncomingReceiptPublicationPosition[];
-  onBack: () => void;
+  children: ReactNode;
 };
 
 /**
@@ -411,10 +414,9 @@ function ReceiptPublicationFollower({
 
 export function IncomingReceiptPublication({
   locale,
-  releaseTitle,
   releaseId,
   positions,
-  onBack,
+  children,
 }: IncomingReceiptPublicationProps) {
   const queryClient = useQueryClient();
   const attemptStates = useReceiptPublicationAdmissions();
@@ -798,24 +800,23 @@ export function IncomingReceiptPublication({
   }
 
   const outcome = completedBatch(batch ?? null, attemptStates);
+  const model: MatchingReceiptPublicationModel = {
+    counts,
+    positions: positionViews,
+    included,
+    selectedPositionId: selectedPosition?.id ?? "",
+    canPrepare,
+    canConfirm: admissions.length > 0,
+    preparing,
+    inspector,
+    outcome: outcome ?? null,
+    onToggleInclude: toggleInclude,
+    onSelectPosition: (positionID) => setSelectedPositionID(positionID),
+    onPrepare: prepareScope,
+    onConfirm: confirm,
+  };
   return (
-    <MatchingReceiptPublicationFrame
-      locale={locale}
-      releaseTitle={releaseTitle}
-      onBack={onBack}
-      counts={counts}
-      positions={positionViews}
-      included={included}
-      selectedPositionId={selectedPosition?.id ?? ""}
-      canPrepare={canPrepare}
-      canConfirm={admissions.length > 0}
-      preparing={preparing}
-      inspector={inspector}
-      onToggleInclude={toggleInclude}
-      onSelectPosition={(positionID) => setSelectedPositionID(positionID)}
-      onPrepare={prepareScope}
-      onConfirm={confirm}
-    >
+    <>
       {positions.map((position) => {
         const callbacks = callbacksFor(position.id);
         return (
@@ -846,9 +847,9 @@ export function IncomingReceiptPublication({
           />
         ) : null;
       })}
-      {outcome && (
-        <MatchingReceiptPublicationOutcomeView locale={locale} {...outcome} />
-      )}
-    </MatchingReceiptPublicationFrame>
+      <MatchingReceiptPublicationDataBinder model={model}>
+        {children}
+      </MatchingReceiptPublicationDataBinder>
+    </>
   );
 }

@@ -1,9 +1,11 @@
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { AppButton } from "../../components/AppButton";
 import {
   AggregatePublicationPreviewView,
   type AggregatePublicationPreviewViewProps,
 } from "../library/AggregatePublicationPreviewView";
+import { MatchingReceiptPublicationOutcomeView } from "./MatchingReceiptPublicationOutcomeView";
+import type { MatchingReceiptPublicationOutcomeModel } from "./matchingReceiptPublicationModel";
 
 const copy = {
   en: {
@@ -11,23 +13,14 @@ const copy = {
     title: "Publication from saved matching links",
     prepare: "Prepare preview",
     confirm: "Publish ready positions",
-    sourceLegend: "Linked file for publication",
-    sourceNone: "No file selected",
   },
   ru: {
     back: "К сохранённым связям",
     title: "Публикация по сохранённым связям",
     prepare: "Подготовить предпросмотр",
     confirm: "Опубликовать готовые позиции",
-    sourceLegend: "Связанный файл для публикации",
-    sourceNone: "Файл не выбран",
   },
 } as const;
-
-export function matchingReceiptFileChoiceLabels(locale: keyof typeof copy) {
-  const { sourceLegend: legend, sourceNone: emptyLabel } = copy[locale];
-  return { legend, emptyLabel };
-}
 
 type MatchingReceiptPublicationFrameProps = Omit<
   AggregatePublicationPreviewViewProps,
@@ -40,13 +33,13 @@ type MatchingReceiptPublicationFrameProps = Omit<
 > & {
   releaseTitle: string;
   onBack: () => void;
-  children?: ReactNode;
+  outcome?: MatchingReceiptPublicationOutcomeModel | null;
 };
 
 export function MatchingReceiptPublicationFrame({
   releaseTitle,
   onBack,
-  children,
+  outcome,
   ...preview
 }: MatchingReceiptPublicationFrameProps) {
   const text = copy[preview.locale];
@@ -70,7 +63,12 @@ export function MatchingReceiptPublicationFrame({
         prepareLabel={text.prepare}
         confirmLabel={text.confirm}
       />
-      {children}
+      {outcome ? (
+        <MatchingReceiptPublicationOutcomeView
+          locale={preview.locale}
+          {...outcome}
+        />
+      ) : null}
     </section>
   );
 }

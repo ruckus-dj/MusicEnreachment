@@ -10,7 +10,6 @@ import type {
 import { matchingBoardMessages } from "../../../ui/features/matching/matchingBoardMessages";
 import { matchingLinksCopy } from "../../../ui/features/matching/matchingLinksCopy";
 import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
-import { useMatchingLinkResultFocus } from "../../../ui/features/matching/useMatchingLinkResultFocus";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
 import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import {
@@ -105,17 +104,8 @@ export function useMatchingScreenDemoProvider({
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [previewOpenSequence, setPreviewOpenSequence] = useState(0);
 	const [dismissedReceiptId, setDismissedReceiptId] = useState("");
-	const [publicationReceiptId, setPublicationReceiptId] = useState("");
 	const [focusReceiptId, setFocusReceiptId] = useState("");
 	const previewHeadingRef = useRef<HTMLHeadingElement>(null);
-	const {
-		headingRef: receiptHeadingRef,
-		publicationButtonRef,
-		restorePublicationButtonOnReturn,
-	} = useMatchingLinkResultFocus({
-		focusHeadingKey: focusReceiptId,
-		publicationOpen: Boolean(publicationReceiptId),
-	});
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
@@ -214,7 +204,6 @@ export function useMatchingScreenDemoProvider({
 		if (previous === activeTargetKey) return;
 		if (!previous && !releaseId && !localReleaseId) return;
 		setInspectedPair(undefined);
-		setPublicationReceiptId("");
 		setFocusReceiptId("");
 		setDismissedReceiptId("");
 		if (
@@ -244,7 +233,6 @@ export function useMatchingScreenDemoProvider({
 	]);
 
 	if (receipt && dismissedReceiptId !== receipt.id) {
-		const publicationOpen = publicationReceiptId === receipt.id;
 		return {
 			kind: "receipt",
 			locale,
@@ -255,52 +243,46 @@ export function useMatchingScreenDemoProvider({
 					group: receipt.groupTitle,
 				}),
 			},
-			body: publicationOpen
-				? {
-						kind: "publication",
-						content: (
-							<MatchingReceiptPublicationView
-								key={receipt.id}
-								locale={locale}
-								receipt={receipt}
-								releases={releases}
-								files={files}
-								artists={artists}
-								savedReceipts={state.receipts}
-								destination={destination}
-								onReleases={setReleases}
-								onBack={() => {
-									restorePublicationButtonOnReturn();
-									setPublicationReceiptId("");
-								}}
-							/>
-						),
-					}
-				: {
-						kind: "links",
-						releaseTitle: receipt.releaseTitle,
-						links: receipt.positions.flatMap((position) =>
-							position.sourceIds.map((sourceId) => ({
-								key: `${position.trackId}:${sourceId}`,
-								source: files[sourceId]?.name ?? sourceId,
-								positionId: position.trackId,
-								position: `${position.displayedNumber ?? position.position} · ${position.title}`,
-							})),
-						),
-						remaining: receipt.remainingFileIds.map((id, index) => ({
-							key: id,
-							name: receipt.remainingFileNames[index] ?? id,
-						})),
-						headingRef: receiptHeadingRef,
-						publicationButtonRef,
-						publicationDisabled: !receipt.positions.some(
-							(position) => position.sourceIds.length,
-						),
-						onOpenPublication: () => setPublicationReceiptId(receipt.id),
-						onContinue: group?.fileIds.length
-							? () => setDismissedReceiptId(receipt.id)
-							: undefined,
-					},
+			body: {
+				key: `${activeTargetKey}:${receipt.id}`,
+				locale,
+				releaseTitle: receipt.releaseTitle,
+				links: receipt.positions.flatMap((position) =>
+					position.sourceIds.map((sourceId) => ({
+						key: `${position.trackId}:${sourceId}`,
+						source: files[sourceId]?.name ?? sourceId,
+						positionId: position.trackId,
+						position: `${position.displayedNumber ?? position.position} · ${position.title}`,
+					})),
+				),
+				remaining: receipt.remainingFileIds.map((id, index) => ({
+					key: id,
+					name: receipt.remainingFileNames[index] ?? id,
+				})),
+				focusIntent: focusReceiptId === receipt.id ? focusReceiptId : "",
+				publicationDisabled: !receipt.positions.some(
+					(position) => position.sourceIds.length,
+				),
+				publication: {
+					bind: (children) => (
+						<MatchingReceiptPublicationView
+							locale={locale}
+							receipt={receipt}
+							releases={releases}
+							files={files}
+							artists={artists}
+							savedReceipts={state.receipts}
+							destination={destination}
+							onReleases={setReleases}
+						>
+							{children}
+						</MatchingReceiptPublicationView>
+					),
+				},
+				onContinue: group?.fileIds.length
+					? () => setDismissedReceiptId(receipt.id)
+					: undefined,
+			},
 		};
 	}
 	if (!group)

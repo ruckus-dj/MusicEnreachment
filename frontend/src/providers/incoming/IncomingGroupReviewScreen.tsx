@@ -68,7 +68,7 @@ import {
   saveIncomingConfirmReceipt,
   useIncomingConfirmReceipts,
 } from "./confirmReceipts";
-import { IncomingSavedMatchingResult } from "./IncomingSavedMatchingResult";
+import { incomingSavedReceiptModel } from "./IncomingSavedMatchingResult";
 import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
 import {
   incomingGroupNames,
@@ -1509,21 +1509,13 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       locale,
       hidden: !matchingActive,
       heading: matchingHeading,
-      body: {
-        kind: "savedReceipt",
-        content: (
-          <IncomingSavedMatchingResult
-            key={savedReceipt.requestId}
-            receipt={savedReceipt}
-            locale={locale}
-            onContinue={
-              canContinueMatching
-                ? () => setDismissedReceiptId(savedReceipt.requestId)
-                : undefined
-            }
-          />
-        ),
-      },
+      body: incomingSavedReceiptModel({
+        receipt: savedReceipt,
+        locale,
+        onContinue: canContinueMatching
+          ? () => setDismissedReceiptId(savedReceipt.requestId)
+          : undefined,
+      }),
     };
   } else if (!group) {
     matchingModel = groupsQuery.isLoading

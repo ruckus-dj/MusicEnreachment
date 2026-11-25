@@ -1,7 +1,5 @@
-import { useMemo, useState } from "react";
 import { incomingMessages } from "../../ui/features/incoming/incomingReviewMessages";
-import { MatchingLinkResultView } from "../../ui/features/matching/MatchingLinkResultView";
-import { useMatchingLinkResultFocus } from "../../ui/features/matching/useMatchingLinkResultFocus";
+import type { MatchingSavedReceiptModel } from "../../ui/features/matching/MatchingSavedReceiptView";
 import { incomingSourceFileName } from "./apiMatchingSources";
 import type { IncomingConfirmReceipt } from "./confirmReceipts";
 import {
@@ -53,16 +51,21 @@ function receiptPresentation(
     }
   }
 
+  const namesByPosition = new Map<string, Map<string, number>>();
+  for (const source of sourceRows) {
+    const name = names.get(source.file_member_id) ?? text.file;
+    const counts =
+      namesByPosition.get(source.position_id) ?? new Map<string, number>();
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+    namesByPosition.set(source.position_id, counts);
+  }
+
   for (const source of sourceRows) {
     const name = names.get(source.file_member_id) ?? text.file;
     const label = labels.get(source.file_member_id) ?? text.unknown;
     const existing = positions.get(source.position_id);
-    const duplicateName = sourceRows.some(
-      (other) =>
-        other.position_id === source.position_id &&
-        other.track_source_id !== source.track_source_id &&
-        (names.get(other.file_member_id) ?? text.file) === name,
-    );
+    const duplicateName =
+      (namesByPosition.get(source.position_id)?.get(name) ?? 0) > 1;
     const file = {
       id: source.track_source_id,
       label: duplicateName ? `${name} · ${source.media_variant_id}` : name,
@@ -110,7 +113,14 @@ function receiptPresentation(
   };
 }
 
-export function IncomingSavedMatchingResult({
+/**
+ * Projects one saved matching receipt onto the portable saved-result model.
+ *
+ * The model keeps the exact confirmed sources as links and positions. The
+ * publication controller is mounted lazily by the portable view only while
+ * its publication surface is open.
+ */
+export function incomingSavedReceiptModel({
   receipt,
   locale,
   onContinue,
@@ -118,42 +128,30 @@ export function IncomingSavedMatchingResult({
   receipt: IncomingConfirmReceipt;
   locale: "en" | "ru";
   onContinue?: () => void;
-}) {
-  const [publicationOpen, setPublicationOpen] = useState(false);
-  const { headingRef, publicationButtonRef, restorePublicationButtonOnReturn } =
-    useMatchingLinkResultFocus({
-      focusHeadingKey: publicationOpen ? undefined : "result",
-      publicationOpen,
-    });
-  const model = useMemo(
-    () => receiptPresentation(receipt, locale),
-    [receipt, locale],
-  );
-  if (publicationOpen && model.releaseId)
-    return (
-      <IncomingReceiptPublication
-        locale={locale}
-        releaseId={model.releaseId}
-        releaseTitle={model.releaseTitle}
-        positions={model.positions}
-        onBack={() => {
-          restorePublicationButtonOnReturn();
-          setPublicationOpen(false);
-        }}
-      />
-    );
-
-  return (
-    <MatchingLinkResultView
-      locale={locale}
-      releaseTitle={model.releaseTitle}
-      links={model.links}
-      remaining={model.remaining}
-      headingRef={headingRef}
-      publicationButtonRef={publicationButtonRef}
-      publicationDisabled={!model.releaseId || !model.positions.length}
-      onOpenPublication={() => setPublicationOpen(true)}
-      onContinue={onContinue}
-    />
-  );
+}): MatchingSavedReceiptModel {
+  const model = receiptPresentation(receipt, locale);
+  const releaseId = model.releaseId;
+  return {
+    key: receipt.requestId,
+    locale,
+    releaseTitle: model.releaseTitle,
+    links: model.links,
+    remaining: model.remaining,
+    focusIntent: receipt.requestId,
+    onContinue,
+    publicationDisabled: !model.positions.length,
+    publication: releaseId
+      ? {
+          bind: (children) => (
+            <IncomingReceiptPublication
+              locale={locale}
+              releaseId={releaseId}
+              positions={model.positions}
+            >
+              {children}
+            </IncomingReceiptPublication>
+          ),
+        }
+      : undefined,
+  };
 }
