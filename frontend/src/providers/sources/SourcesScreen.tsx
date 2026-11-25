@@ -4,7 +4,6 @@ import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import { useViewFocus } from "../../ui/components/useViewFocus";
-import { SourceListPageView } from "../../ui/features/sources/SourceListPageView";
 import {
   type SourceRegistrationErrorKey,
   sourceRegistrationMessage,
@@ -28,6 +27,7 @@ import {
   sourceFailure,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
+import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import {
   parseSourcesRoute,
   type SourcesRoute,
@@ -239,23 +239,24 @@ function SourceListScreen() {
     : undefined;
 
   return (
-    <SourceListPageView
-      locale={locale}
-      ariaBusy={scans.checking}
-      heading={{
-        headingRef: heading,
-        registration: creating
-          ? undefined
-          : {
-              id: registrationFocus.triggerId,
-              onPress: () => {
-                setFormError(null);
-                setCreating(true);
+    <SourcesBinder
+      page={{
+        view: "list",
+        locale,
+        ariaBusy: scans.checking,
+        heading: {
+          headingRef: heading,
+          registration: creating
+            ? undefined
+            : {
+                id: registrationFocus.triggerId,
+                onPress: () => {
+                  setFormError(null);
+                  setCreating(true);
+                },
               },
-            },
-      }}
-      registration={
-        creating
+        },
+        registration: creating
           ? {
               name,
               path,
@@ -269,37 +270,39 @@ function SourceListScreen() {
               onSubmit: () => void register(),
               onCancel: cancelCreate,
             }
-          : undefined
-      }
-      feedback={{
-        status: busy && sources ? t("requestRunning") : undefined,
-        listError:
-          error && sources
+          : undefined,
+        feedback: {
+          status: busy && sources ? t("requestRunning") : undefined,
+          listError:
+            error && sources
+              ? {
+                  message: renderSourceError(error, locale),
+                  retry: () => void load(),
+                }
+              : undefined,
+          scanErrors: scanErrors.map(({ root, scanError }) => ({
+            id: root.id,
+            name: root.display_name,
+            message: renderSourceError(scanError, locale),
+          })),
+          discoveryError: scans.discoveryError
             ? {
-                message: renderSourceError(error, locale),
-                retry: () => void load(),
+                message: renderSourceError(scans.discoveryError, locale),
+                retry: () => void scans.discover(),
               }
             : undefined,
-        scanErrors: scanErrors.map(({ root, scanError }) => ({
-          id: root.id,
-          name: root.display_name,
-          message: renderSourceError(scanError, locale),
-        })),
-        discoveryError: scans.discoveryError
-          ? {
-              message: renderSourceError(scans.discoveryError, locale),
-              retry: () => void scans.discover(),
-            }
-          : undefined,
-        retryLabel: t("retryLoad"),
+          retryLabel: t("retryLoad"),
+        },
+        rows,
+        listState,
+        onScan: startScan,
+        listDisabled: scanUnavailable && listState === undefined,
+        loaded: sources !== undefined,
+        cleanup: { Component: SourceArtifactCleanupPanel },
       }}
-      rows={rows}
-      listState={listState}
-      onScan={startScan}
-      listDisabled={scanUnavailable && listState === undefined}
-      loaded={sources !== undefined}
-      cleanup={{ Component: SourceArtifactCleanupPanel }}
-    />
+    >
+      <SourcesOutlet />
+    </SourcesBinder>
   );
 }
 

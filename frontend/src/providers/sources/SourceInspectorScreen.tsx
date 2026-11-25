@@ -1,6 +1,5 @@
 import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { SourceInspectorView } from "../../ui/features/sources/SourceInspectorView";
 import {
   type SourceInspectorStepName,
   type SourceInspectorTechnicalResult,
@@ -9,6 +8,7 @@ import {
 } from "../../ui/features/sources/sourceInspectorModel";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { renderSourceError } from "./sourcesApi";
+import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import { useSourceInspector } from "./useSourceInspector";
 
 export function SourceInspectorScreen({
@@ -101,45 +101,38 @@ export function SourceInspectorScreen({
     : undefined;
 
   return (
-    <SourceInspectorView
-      locale={locale}
-      sourcesHref="#/sources"
-      sourceHref={`#/sources/${encodeURIComponent(sourceId)}`}
-      file={file}
-      steps={steps}
-      sha256={
-        sha256 && {
+    <SourcesBinder
+      page={{
+        view: "location",
+        locale,
+        sourcesHref: "#/sources",
+        sourceHref: `#/sources/${encodeURIComponent(sourceId)}`,
+        file,
+        steps,
+        sha256: sha256 && {
           value: sha256.value,
           provenance: getStep("sha256")?.reuse_origin,
-        }
-      }
-      probe={
-        detail?.result && {
+        },
+        probe: detail?.result && {
           result: technicalResult(detail.result),
           provenance: getStep("probe")?.reuse_origin,
-        }
-      }
-      fingerprint={
-        fingerprint && {
+        },
+        fingerprint: fingerprint && {
           value: fingerprint.value,
           version: fingerprint.version,
           provenance: getStep("fingerprint")?.reuse_origin,
-        }
-      }
-      metadata={
-        metadata && {
+        },
+        metadata: metadata && {
           tags: metadata.tags,
           provenance: metadata.provenance,
-        }
-      }
-      artifact={artifact}
-      retryAvailable={retryAvailable}
-      onRetryStep={(name) => void inspector.action("retry", name)}
-      fingerprintRerunAvailable={fingerprintRerunAvailable}
-      onRerunFingerprint={() => void inspector.action("rerun")}
-      activeFingerprintVersion={activeFingerprintVersion}
-      matching={
-        detail && {
+        },
+        artifact,
+        retryAvailable,
+        onRetryStep: (name) => void inspector.action("retry", name),
+        fingerprintRerunAvailable,
+        onRerunFingerprint: () => void inspector.action("rerun"),
+        activeFingerprintVersion,
+        matching: detail && {
           eligible: detail.matching_eligible,
           reason: !detail.matching_eligible
             ? detail.result?.streams?.length === 0
@@ -148,17 +141,19 @@ export function SourceInspectorScreen({
                 ? t("multipleAudioSupport")
                 : undefined
             : undefined,
-        }
-      }
-      loading={loading}
-      busy={busy}
-      pending={pending}
-      operationState={operation?.state}
-      operationStage={operation?.stage}
-      streamInterrupted={!!streamError}
-      error={error ? renderSourceError(error, locale) : undefined}
-      onRetryLoad={() => void inspector.load()}
-    />
+        },
+        loading,
+        busy,
+        pending,
+        operationState: operation?.state,
+        operationStage: operation?.stage,
+        streamInterrupted: !!streamError,
+        error: error ? renderSourceError(error, locale) : undefined,
+        onRetryLoad: () => void inspector.load(),
+      }}
+    >
+      <SourcesOutlet />
+    </SourcesBinder>
   );
 }
 

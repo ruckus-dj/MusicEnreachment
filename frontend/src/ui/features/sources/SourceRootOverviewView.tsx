@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { AppButton } from "../../components/AppButton";
+import { SourceWorkDirectoryView } from "./SourcePageFeedbackView";
 
 export type SourceRootOverviewTone = "available" | "unavailable" | "unknown";
 
@@ -15,7 +16,7 @@ export type SourceRootOverviewViewProps = {
 	name: string;
 	path: string;
 	mode: "in_place" | "staged";
-	modeNote?: ReactNode;
+	modeNote?: Omit<ComponentProps<typeof SourceWorkDirectoryView>, "inline">;
 	availability: SourceRootOverviewTone;
 	availabilityNote?: string;
 	lastScan: { label: string; dateTime?: string };
@@ -105,7 +106,11 @@ export function SourceRootOverviewView({
 			value: (
 				<>
 					{text[mode]}
-					{modeNote && <span className={note}>{modeNote}</span>}
+					{modeNote && (
+						<span className={note}>
+							<SourceWorkDirectoryView {...modeNote} inline />
+						</span>
+					)}
 				</>
 			),
 		},

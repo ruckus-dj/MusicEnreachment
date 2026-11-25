@@ -7,18 +7,11 @@ import {
 } from "react";
 import { type Locale, useI18n } from "../../../app/i18n";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
-import { SourceInspectorView } from "../../../ui/features/sources/SourceInspectorView";
-import { SourceListPageView } from "../../../ui/features/sources/SourceListPageView";
-import {
-	MissingSourceView,
-	SourceWorkDirectoryView,
-} from "../../../ui/features/sources/SourcePageFeedbackView";
 import {
 	type SourceRegistrationErrorKey,
 	sourceRegistrationMessage,
 	useSourceRegistrationFocus,
 } from "../../../ui/features/sources/SourceRegistrationView";
-import { SourceRootDetailView } from "../../../ui/features/sources/SourceRootDetailView";
 import type { SourceRootListRow } from "../../../ui/features/sources/SourceRootList";
 import type { SourceRootChange } from "../../../ui/features/sources/SourceRootSettingsView";
 import {
@@ -49,6 +42,7 @@ import {
 	removeRootProcessingState,
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
+import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import type { SourceScanDemoProvider } from "./useSourceScanDemoProvider";
 
 type Mode = "in_place" | "staged";
@@ -326,188 +320,210 @@ export function SourcesScreen({
 
 	if (selectedRootId && selectedLocationId)
 		return (
-			<SourceInspectorView
+			<SourcesBinder
 				key={`${selectedRootId}:${selectedLocationId}`}
-				{...sourceInspectorDemoProvider({
-					locale,
-					rootId: selectedRootId,
-					locationId: selectedLocationId,
-					root,
-					files,
-					processing,
-					updateProcessing,
-					workDirectory,
-					scanning: scans.active(selectedRootId),
-				})}
-			/>
+				page={{
+					view: "location",
+					...sourceInspectorDemoProvider({
+						locale,
+						rootId: selectedRootId,
+						locationId: selectedLocationId,
+						root,
+						files,
+						processing,
+						updateProcessing,
+						workDirectory,
+						scanning: scans.active(selectedRootId),
+					}),
+				}}
+			>
+				<SourcesOutlet />
+			</SourcesBinder>
 		);
 
 	return (
 		<>
 			{selectedRootId ? (
 				root ? (
-					<SourceRootDetailView
+					<SourcesBinder
 						key={root.id}
-						locale={locale}
-						headingId="source-title"
-						heading={{
-							title: root.name,
-							path: root.path,
+						page={{
+							view: "detail",
+							detail: "root",
+							locale,
 							headingId: "source-title",
-							headingRef: rootHeading,
-							sourcesHref: demoSourcesHref,
-							incomingHref:
-								root.available === true ? incomingGroupsListHref() : undefined,
-						}}
-						feedback={noticeMessage}
-						scan={{
-							state:
-								demoScanState?.kind === "fixtureFailure"
-									? { kind: "failed", message: m("scanFailedFixture") }
-									: (demoScanState ?? { kind: "idle" }),
-							onStart: () => startScan(root),
-							onRetry: () => startScan(root),
-							startDisabled: root.available === false,
-						}}
-						inventory={{
-							path: inventoryPath,
-							unpublished: !root.lastSuccessfulScanAt,
-							rows: inventoryLocations.map((location) => {
-								const observed = rootFiles.find(
-									(item) => item.id === `${root.id}:${location.id}`,
-								);
-								const step = observed?.steps.find(
-									(item) => item.id === "audio_inspection",
-								);
-								return {
-									id: location.id,
-									path:
-										inventoryPrefix && location.path.startsWith(inventoryPrefix)
-											? location.path.slice(inventoryPrefix.length)
-											: location.path,
-									href: demoSourceLocationHref(root.id, location.id),
-									sizeBytes: location.size,
-									modifiedAt: location.mtime,
-									status:
-										step?.status === "succeeded"
-											? "audio"
-											: step?.status === "failed"
-												? "probe_error"
-												: "not_analyzed",
-								};
-							}),
-						}}
-						overview={{
-							name: root.name,
-							path: root.path,
-							mode: root.mode,
-							modeNote:
-								root.mode === "staged" ? (
-									<SourceWorkDirectoryView
-										inline
-										label={m("workDirectory")}
-										path={workDirectory}
-										link={{ href: "#/settings", label: m("configure") }}
-									/>
-								) : undefined,
-							availability:
-								root.available === true
-									? "available"
-									: root.available === false
-										? "unavailable"
-										: "unknown",
-							availabilityNote:
-								root.available === false ? m("checkUnavailable") : undefined,
-							lastScan: {
-								label: scanLabel,
-								dateTime: root.lastSuccessfulScanAt,
-							},
-							inventory: {
-								label: inventoryLabel,
-								path: root.inventoryPath,
-								stale: inventoryPathStale(root),
-								notes:
-									root.lastSuccessfulScanAt && root.inventoryCount === 0
-										? [m("noInventory")]
+							heading: {
+								title: root.name,
+								path: root.path,
+								headingId: "source-title",
+								headingRef: rootHeading,
+								sourcesHref: demoSourcesHref,
+								incomingHref:
+									root.available === true
+										? incomingGroupsListHref()
 										: undefined,
 							},
-							onRemove: () => requestRootRemoval(root),
-						}}
-						settings={{
-							name: root.name,
-							path: root.path,
-							mode: root.mode,
-							browse: browseDemoDirectory,
-							resolveInitialPath: demoDirectoryStart,
-							error:
-								settingsError?.rootId === root.id
-									? settingsError.key === "pathOverlap"
-										? sourceRegistrationMessage(locale, "pathOverlap")
-										: m(settingsError.key)
+							feedback: noticeMessage,
+							scan: {
+								state:
+									demoScanState?.kind === "fixtureFailure"
+										? { kind: "failed", message: m("scanFailedFixture") }
+										: (demoScanState ?? { kind: "idle" }),
+								onStart: () => startScan(root),
+								onRetry: () => startScan(root),
+								startDisabled: root.available === false,
+							},
+							inventory: {
+								path: inventoryPath,
+								unpublished: !root.lastSuccessfulScanAt,
+								rows: inventoryLocations.map((location) => {
+									const observed = rootFiles.find(
+										(item) => item.id === `${root.id}:${location.id}`,
+									);
+									const step = observed?.steps.find(
+										(item) => item.id === "audio_inspection",
+									);
+									return {
+										id: location.id,
+										path:
+											inventoryPrefix &&
+											location.path.startsWith(inventoryPrefix)
+												? location.path.slice(inventoryPrefix.length)
+												: location.path,
+										href: demoSourceLocationHref(root.id, location.id),
+										sizeBytes: location.size,
+										modifiedAt: location.mtime,
+										status:
+											step?.status === "succeeded"
+												? "audio"
+												: step?.status === "failed"
+													? "probe_error"
+													: "not_analyzed",
+									};
+								}),
+							},
+							overview: {
+								name: root.name,
+								path: root.path,
+								mode: root.mode,
+								modeNote:
+									root.mode === "staged"
+										? {
+												label: m("workDirectory"),
+												path: workDirectory,
+												link: { href: "#/settings", label: m("configure") },
+											}
+										: undefined,
+								availability:
+									root.available === true
+										? "available"
+										: root.available === false
+											? "unavailable"
+											: "unknown",
+								availabilityNote:
+									root.available === false ? m("checkUnavailable") : undefined,
+								lastScan: {
+									label: scanLabel,
+									dateTime: root.lastSuccessfulScanAt,
+								},
+								inventory: {
+									label: inventoryLabel,
+									path: root.inventoryPath,
+									stale: inventoryPathStale(root),
+									notes:
+										root.lastSuccessfulScanAt && root.inventoryCount === 0
+											? [m("noInventory")]
+											: undefined,
+								},
+								onRemove: () => requestRootRemoval(root),
+							},
+							settings: {
+								name: root.name,
+								path: root.path,
+								mode: root.mode,
+								browse: browseDemoDirectory,
+								resolveInitialPath: demoDirectoryStart,
+								error:
+									settingsError?.rootId === root.id
+										? settingsError.key === "pathOverlap"
+											? sourceRegistrationMessage(locale, "pathOverlap")
+											: m(settingsError.key)
+										: undefined,
+								onSave: saveRoot,
+							},
+							removal:
+								removal?.id === root.id
+									? {
+											path: removal.path,
+											count: removal.locations.length,
+											onCancel: () => setRemoval(null),
+											onConfirm: () => {
+												if (hasActiveRootWork(removal.id)) {
+													notify("rootActive");
+													setRemoval(null);
+													return;
+												}
+												const currentLocations = rootLocations(
+													files,
+													removal.id,
+												)
+													.map((location) => location.id)
+													.sort();
+												if (
+													currentLocations.join("|") !==
+													removal.locations.join("|")
+												) {
+													notify("rootChanged");
+													setRemoval(null);
+													return;
+												}
+												updateProcessing(
+													removeRootProcessingState(processing, removal.id),
+												);
+												onRemove(removal.id);
+												notify("rootRemoved");
+												setRemoval(null);
+												window.location.hash = demoSourcesHref;
+											},
+										}
 									: undefined,
-							onSave: saveRoot,
 						}}
-						removal={
-							removal?.id === root.id
-								? {
-										path: removal.path,
-										count: removal.locations.length,
-										onCancel: () => setRemoval(null),
-										onConfirm: () => {
-											if (hasActiveRootWork(removal.id)) {
-												notify("rootActive");
-												setRemoval(null);
-												return;
-											}
-											const currentLocations = rootLocations(files, removal.id)
-												.map((location) => location.id)
-												.sort();
-											if (
-												currentLocations.join("|") !==
-												removal.locations.join("|")
-											) {
-												notify("rootChanged");
-												setRemoval(null);
-												return;
-											}
-											updateProcessing(
-												removeRootProcessingState(processing, removal.id),
-											);
-											onRemove(removal.id);
-											notify("rootRemoved");
-											setRemoval(null);
-											window.location.hash = demoSourcesHref;
-										},
-									}
-								: undefined
-						}
-					/>
+					>
+						<SourcesOutlet />
+					</SourcesBinder>
 				) : (
-					<MissingSourceView
-						title={m("sourceNotFound")}
-						id={selectedRootId}
-						back={{ href: demoSourcesHref, label: m("backToSources") }}
-					/>
+					<SourcesBinder
+						page={{
+							view: "detail",
+							detail: "missing",
+							title: m("sourceNotFound"),
+							id: selectedRootId,
+							back: { href: demoSourcesHref, label: m("backToSources") },
+						}}
+					>
+						<SourcesOutlet />
+					</SourcesBinder>
 				)
 			) : (
-				<SourceListPageView
-					locale={locale}
-					heading={{
-						registration: adding
-							? undefined
-							: {
-									id: registrationFocus.triggerId,
-									onPress: () => {
-										setAdding(true);
-										setName("");
-										setPath("/mnt/music");
-										setMode("");
-										setRegistrationError(null);
+				<SourcesBinder
+					page={{
+						view: "list",
+						locale,
+						heading: {
+							registration: adding
+								? undefined
+								: {
+										id: registrationFocus.triggerId,
+										onPress: () => {
+											setAdding(true);
+											setName("");
+											setPath("/mnt/music");
+											setMode("");
+											setRegistrationError(null);
+										},
 									},
-								},
-					}}
-					registration={
-						adding
+						},
+						registration: adding
 							? {
 									name,
 									path,
@@ -527,17 +543,19 @@ export function SourcesScreen({
 										setRegistrationError(null);
 									},
 								}
-							: undefined
-					}
-					feedback={noticeMessage}
-					rows={rows}
-					onScan={(id) => {
-						const source = roots.find((item) => item.id === id);
-						if (source) startScan(source);
+							: undefined,
+						feedback: noticeMessage,
+						rows,
+						onScan: (id) => {
+							const source = roots.find((item) => item.id === id);
+							if (source) startScan(source);
+						},
+						loaded: true,
+						cleanup,
 					}}
-					loaded
-					cleanup={cleanup}
-				/>
+				>
+					<SourcesOutlet />
+				</SourcesBinder>
 			)}
 		</>
 	);

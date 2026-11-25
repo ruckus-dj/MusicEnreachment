@@ -13,12 +13,11 @@ import {
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
 import { useViewFocus } from "../../ui/components/useViewFocus";
-import { SourceRootDetailView } from "../../ui/features/sources/SourceRootDetailView";
 import type { SourceRootChange } from "../../ui/features/sources/SourceRootSettingsView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
-import { SourceLocations, type SourceLocationsProps } from "./SourceLocations";
+import { SourceLocations } from "./SourceLocations";
 import { useSourceScanPanel } from "./SourceScanControl";
 import { useSourceScans } from "./sourceScans";
 import {
@@ -31,6 +30,7 @@ import {
   sourceResponseError,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
+import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const { locale } = useI18n();
@@ -172,28 +172,30 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   return (
-    <SourceRootDetailView<SourceLocationsProps>
-      locale={locale}
-      headingId="source-title"
-      heading={{
-        title: root ? root.display_name : t("sourceTitle"),
-        path: root?.configured_path,
-        headingRef: heading,
+    <SourcesBinder
+      page={{
+        view: "detail",
+        detail: "root",
+        locale,
         headingId: "source-title",
-        sourcesHref: "#/sources",
-        incomingHref:
-          root?.status === "available" ? "#/incoming-groups" : undefined,
-      }}
-      feedback={{
-        requestRunning: Boolean(root) && (reading || deleting),
-        loading: !root && !error,
-        error: error ? renderSourceError(message(error), locale) : undefined,
-        retryDisabled: saving,
-        onRetry: () => void rootQuery.refetch(),
-      }}
-      scan={scanModel}
-      inventory={
-        root
+        heading: {
+          title: root ? root.display_name : t("sourceTitle"),
+          path: root?.configured_path,
+          headingRef: heading,
+          headingId: "source-title",
+          sourcesHref: "#/sources",
+          incomingHref:
+            root?.status === "available" ? "#/incoming-groups" : undefined,
+        },
+        feedback: {
+          requestRunning: Boolean(root) && (reading || deleting),
+          loading: !root && !error,
+          error: error ? renderSourceError(message(error), locale) : undefined,
+          retryDisabled: saving,
+          onRetry: () => void rootQuery.refetch(),
+        },
+        scan: scanModel,
+        inventory: root
           ? {
               Component: SourceLocations,
               props: {
@@ -202,10 +204,8 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 refreshToken: rootQuery.dataUpdatedAt,
               },
             }
-          : undefined
-      }
-      overview={
-        root
+          : undefined,
+        overview: root
           ? {
               titleId: "source-summary-title",
               name: root.display_name,
@@ -232,10 +232,8 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 });
               },
             }
-          : undefined
-      }
-      settings={
-        root
+          : undefined,
+        settings: root
           ? {
               name: root.display_name,
               path: root.configured_path,
@@ -247,10 +245,8 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 : undefined,
               onSave: save,
             }
-          : undefined
-      }
-      removal={
-        removal
+          : undefined,
+        removal: removal
           ? {
               path: removal.path,
               count: removal.locationCount,
@@ -261,8 +257,10 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
               onCancel: closeDelete,
               onConfirm: () => void confirmDelete(),
             }
-          : undefined
-      }
-    />
+          : undefined,
+      }}
+    >
+      <SourcesOutlet />
+    </SourcesBinder>
   );
 }
