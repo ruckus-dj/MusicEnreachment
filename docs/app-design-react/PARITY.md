@@ -68,10 +68,9 @@ source channel, а fixture макета такого происхождения 
 не считается парой файлов и не означает, что приложение уже его использует.
 
 В макете отделены представления «Настроек», первого запуска и «Сопоставления»
-(`SettingsScreenView.tsx`, `SetupScreenView.tsx`, `MatchingScreenView.tsx`),
-предпросмотр позиции и
-публикация из сохранённых связей (`ContextPublicationPreviewView.tsx`,
-`MatchingReceiptPublicationReadyView.tsx`). Разметка редактора метаданных,
+(`SettingsScreenView.tsx`, `SetupScreenView.tsx`, `MatchingScreenView.tsx`)
+и публикации из сохранённых связей (`MatchingReceiptPublicationReadyView.tsx`).
+Разметка редактора метаданных,
 выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
 полей и сохранения (`MetadataEditorView.tsx`, `GenrePickerView.tsx`,
 `ReleaseMetadataEditorView.tsx`, `TrackMetadataEditorsView.tsx`). Провайдеры
@@ -119,6 +118,7 @@ source channel, а fixture макета такого происхождения 
 | Медиатека: заголовки артиста и позиции, композиция карточки позиции, сведения о позиции и её источниках, простые поля метаданных и снимок тегов | `features/library/LibraryArtistHeadingView.tsx`, `LibraryPositionHeadingView.tsx`, `LibraryPositionWorkspace.tsx`, `LibraryPositionIdentityView.tsx`, `LibraryPositionSourcesView.tsx`, `MetadataFieldPresentation.tsx`, `TagSnapshotView.tsx` | Те же пути |
 | Медиатека: рамка диалога удаления артиста, релиза и публикации, заголовок и название удаляемого объекта, список затронутых файлов и пустое состояние | `features/library/LibraryDeletionDialogView.tsx` | Тот же путь; приложение показывает серверные сведения о позициях и допустимости захвата файлов, которых нет в демоданных |
 | Публикация: сводка по выбору, детали плана релиза, трека и входящих, сведения, снимок тегов и измерения громкости CURRENT | `features/library/LibrarySelectionPreviewView.tsx`, `AggregatePublicationPreviewView.tsx`, `PublicationPreviewDetailsView.tsx`, `firstPublicationPreviewMessages.ts`, `PublicationCurrentSummaryView.tsx`, `PublicationTagSnapshotView.tsx`, `PublicationAudioMeasurementsView.tsx` | Те же пути |
+| Публикация: весь предпросмотр одной позиции | `features/publication/ContextPublicationPreviewView.tsx` | Тот же путь; реальные режимы, чтение плана и допуск остаются в провайдере. При понижении качества макет сохраняет отдельный флажок, приложение — предупреждение и кнопку подтверждения |
 
 ### Где ещё есть расхождения
 

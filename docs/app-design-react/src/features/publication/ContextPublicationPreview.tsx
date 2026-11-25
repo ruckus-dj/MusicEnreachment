@@ -203,15 +203,23 @@ export function ContextPublicationPreview({
 			notices={notices}
 			details={details}
 			sourceGroupName={`demo-publication-source-${positionId}`}
-			downgrade={downgrade}
-			downgradeLabel={formatPublicationMessage(locale, "confirmDowngrade", {
-				count: 1,
-			})}
-			confirmDowngrade={confirmDowngrade}
-			canConfirm={canConfirm}
-			hasCurrentPublication={Boolean(current)}
-			onDowngradeChange={(checked) => onPlan(plan, checked)}
-			onConfirm={confirm}
+			downgradeControl={
+				downgrade
+					? {
+							checked: confirmDowngrade,
+							disabled: Boolean(error),
+							label: formatPublicationMessage(locale, "confirmDowngrade", {
+								count: 1,
+							}),
+							onChange: (checked) => onPlan(plan, checked),
+						}
+					: undefined
+			}
+			confirmControl={{
+				label: current ? "retainedRepublish" : "publish",
+				disabled: !canConfirm,
+				onConfirm: confirm,
+			}}
 		/>
 	);
 }

@@ -9,13 +9,8 @@ import type {
   LibraryFirstPublicationPreviewResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ContextPublicationPreviewView } from "../publication/ContextPublicationPreviewView";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
-import {
-  LibraryPositionConfirmButton,
-  LibraryPositionPreviewButton,
-} from "./LibraryPositionWorkspace";
-import { releaseControlFieldsetClass } from "./libraryReleaseControlStyles";
-import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 export type SourceChoice = Pick<
   FirstPublicationPreviewSource,
@@ -1009,112 +1004,52 @@ export function FirstPublicationPreview({
   if (aggregateManaged) return null;
 
   return (
-    <section className="min-w-0 space-y-3" aria-label={copy.section}>
-      {comparisonOnly && (
-        <>
-          <fieldset
-            className={`${releaseControlFieldsetClass} space-y-2`}
-            disabled={loading}
-          >
-            <legend className="font-medium">{copy.currentWorkflow}</legend>
-            <label className="block">
-              <input
-                type="radio"
-                className="accent-[var(--accent)]"
-                name={`current-workflow-${releaseId}-${positionId}`}
-                checked={workflow === "comparison"}
-                onChange={() => changeWorkflow("comparison")}
-              />{" "}
-              {copy.currentCompare}
-            </label>
-            <label className="block">
-              <input
-                type="radio"
-                className="accent-[var(--accent)]"
-                name={`current-workflow-${releaseId}-${positionId}`}
-                checked={workflow === "retained_same_path"}
-                onChange={() => changeWorkflow("retained_same_path")}
-              />{" "}
-              {copy.retainedRepublish}
-            </label>
-          </fieldset>
-          {workflow === "comparison" && (
-            <p role="note">{copy.comparisonReadOnly}</p>
-          )}
-          <fieldset
-            className={`${releaseControlFieldsetClass} space-y-2`}
-            disabled={loading}
-          >
-            <legend className="font-medium">{copy.mode}</legend>
-            <label className="block">
-              <input
-                type="radio"
-                className="accent-[var(--accent)]"
-                name={`comparison-mode-${releaseId}-${positionId}`}
-                checked={mode === "ordinary"}
-                onChange={() => changeMode("ordinary")}
-              />{" "}
-              {copy.ordinary}
-            </label>
-            <label className="block">
-              <input
-                type="radio"
-                className="accent-[var(--accent)]"
-                name={`comparison-mode-${releaseId}-${positionId}`}
-                checked={mode === "forced"}
-                onChange={() => changeMode("forced")}
-              />{" "}
-              {copy.forced}
-            </label>
-          </fieldset>
-        </>
-      )}
-      <LibraryPositionPreviewButton
-        locale={locale}
-        pending={loading}
-        disabled={
+    <ContextPublicationPreviewView
+      locale={locale}
+      details={aggregateState}
+      sourceGroupName={`publication-source-${releaseId}-${positionId}`}
+      onSourceChoice={changeChoice}
+      onRefresh={onRefresh}
+      workflowControl={
+        comparisonOnly
+          ? {
+              disabled: loading,
+              mode,
+              namePrefix: `${releaseId}-${positionId}`,
+              onChange: changeWorkflow,
+              onModeChange: changeMode,
+              workflow,
+            }
+          : undefined
+      }
+      planControl={{
+        pending: loading,
+        disabled:
           confirming ||
           Boolean(admittedOperationID) ||
           admissionUncertain ||
           confirmationPending.current ||
-          admissionLocked.current
-        }
-        onPreview={() => void loadPreview(selectedChoice)}
-      />
-      <PublicationPreviewDetails
-        state={aggregateState}
-        sourceGroupName={`publication-source-${releaseId}-${positionId}`}
-        onSourceChoice={changeChoice}
-        onRefresh={onRefresh}
-      />
-      {!comparisonOnly && workflow === "first" && (
-        <LibraryPositionConfirmButton
-          locale={locale}
-          label="publish"
-          pending={confirming}
-          disabled={
-            !canConfirm ||
-            admissionUncertain ||
-            confirmationPending.current ||
-            admissionLocked.current
-          }
-          onConfirm={() => void confirmPreview()}
-        />
-      )}
-      {workflow === "retained_same_path" && (
-        <LibraryPositionConfirmButton
-          locale={locale}
-          label="retainedRepublish"
-          pending={confirming}
-          disabled={
-            !canConfirm ||
-            admissionUncertain ||
-            confirmationPending.current ||
-            admissionLocked.current
-          }
-          onConfirm={() => void confirmPreview()}
-        />
-      )}
-    </section>
+          admissionLocked.current,
+        onPreview: () => void loadPreview(selectedChoice),
+      }}
+      confirmControl={
+        (!comparisonOnly && workflow === "first") ||
+        workflow === "retained_same_path"
+          ? {
+              label:
+                workflow === "retained_same_path"
+                  ? "retainedRepublish"
+                  : "publish",
+              pending: confirming,
+              disabled:
+                !canConfirm ||
+                admissionUncertain ||
+                confirmationPending.current ||
+                admissionLocked.current,
+              onConfirm: () => void confirmPreview(),
+            }
+          : undefined
+      }
+    />
   );
 }

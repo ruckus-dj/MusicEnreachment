@@ -76,7 +76,6 @@ docs/app-design-react/src/features/matching/useMatchingScreenDemoProvider.tsx
 docs/app-design-react/src/features/operations/OperationsScreen.tsx
 docs/app-design-react/src/features/operations/operationMessages.ts
 docs/app-design-react/src/features/publication/ContextPublicationPreview.tsx
-docs/app-design-react/src/features/publication/ContextPublicationPreviewView.tsx
 docs/app-design-react/src/features/publication/PublicationFlow.tsx
 docs/app-design-react/src/features/publication/PublicationInspector.tsx
 docs/app-design-react/src/features/publication/PublicationPreview.tsx
@@ -204,7 +203,6 @@ frontend/src/features/library/LibrarySelectionDock.tsx
 frontend/src/features/library/LibrarySelectionPreview.tsx
 frontend/src/features/library/LibraryTrackArtistRows.tsx
 frontend/src/features/library/MissingReleaseGroupRow.tsx
-frontend/src/features/library/PublicationPreviewDetails.tsx
 frontend/src/features/library/ReleaseMetadataEditor.tsx
 frontend/src/features/library/StructuredMetadataFields.tsx
 frontend/src/features/library/artistCreditDraft.ts
