@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ComponentsScreen } from "../components/ComponentsScreen";
 import type { DeletionOperation } from "../components/DeletionRequest";
-import { Button, TabPanel, Tabs } from "../components/ui";
+import { Button } from "../components/ui";
 import { IncomingScreen } from "../features/incoming/IncomingScreen";
 import {
 	createIncomingState,
@@ -10,7 +10,6 @@ import {
 } from "../features/incoming/incomingModel";
 import {
 	combineLibraryAlbumEntries,
-	LibraryPagination,
 	libraryArtistPositionIds,
 	libraryPageCount,
 	libraryPageSlice,
@@ -42,10 +41,9 @@ import {
 	trackSearchText,
 } from "../features/library/catalogViewModel";
 import {
-	LibraryCatalogQueryControls,
-	LibraryCatalogTabList,
-	libraryViewLabel,
-} from "../features/library/LibraryCatalogControls";
+	type LibraryCatalogPageState,
+	LibraryCatalogPageView,
+} from "../features/library/LibraryCatalogPageView";
 import { LibraryCatalogRows } from "../features/library/LibraryCatalogRows";
 import {
 	type LibrarySelectionPreviewPosition,
@@ -154,7 +152,6 @@ const routeId = (value: string) => {
 	}
 };
 
-type View = "artists" | "albums" | "tracks";
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
 
@@ -250,6 +247,7 @@ export function CatalogDemo({
 		setFilter,
 		setPage,
 		setSearch,
+		reset: resetLibrarySearch,
 	} = useLibraryRouteState(route);
 	const headingRoute =
 		routeName === "library" || routeName === "settings" ? routeName : route;
@@ -1362,19 +1360,33 @@ export function CatalogDemo({
 				</p>
 			</section>
 		);
+	const libraryPageState: LibraryCatalogPageState =
+		libraryTotalItems > 0
+			? { status: "results" }
+			: {
+					status: "empty",
+					reason:
+						filter === "published" &&
+						!releases.some(({ tracks }) =>
+							tracks.some((track) => track.published),
+						)
+							? "unpublished"
+							: query || filter !== "all"
+								? "filtered"
+								: "view",
+					onReset: query || filter !== "all" ? resetLibrarySearch : undefined,
+				};
+
 	return (
-		<section
-			className={`demo-shell ${catalogueStyles.shell} ${catalogueStyles.dockScreen}`}
-		>
-			<header className={catalogueStyles.pageHeader}>
-				<h1 className={catalogueStyles.pageTitle}>
-					{artistId
-						? artistName(artistId) || msg("artistNotSpecified")
-						: msg("library")}
-				</h1>
-				{artistId && (
+		<LibraryCatalogPageView
+			locale={locale}
+			view={view}
+			title={
+				artistId ? artistName(artistId) || msg("artistNotSpecified") : undefined
+			}
+			headerAction={
+				artistId ? (
 					<Button
-						className={catalogueStyles.pageHeaderAction}
 						onPress={() => {
 							setArtistId(null);
 							setView("artists");
@@ -1382,84 +1394,74 @@ export function CatalogDemo({
 					>
 						{msg("backToLibrary")}
 					</Button>
-				)}
-			</header>
-			<div className={catalogueStyles.controls}>
-				<Tabs
-					selectedKey={view}
-					onSelectionChange={(key) => {
-						setView(key as View);
-						setArtistId(null);
-						setExpanded(null);
-					}}
-				>
-					<LibraryCatalogTabList locale={locale} />
-					<TabPanel id={view} className={catalogueStyles.tabsPanel}>
-						<LibraryCatalogQueryControls
-							locale={locale}
-							search={searchInput}
-							onSearch={setSearch}
-							filter={filter}
-							onFilter={setFilter}
-						/>
-						<section
-							className={catalogueStyles.list}
-							aria-label={libraryViewLabel(locale, view)}
-						>
-							<LibraryCatalogRows
-								view={view}
-								artists={view === "artists" ? pageArtists : fixture.artists}
-								releases={
-									view === "albums"
-										? pageAlbumReleases
-										: view === "tracks"
-											? pageTrackReleases
-											: releases
-								}
-								albumEntries={view === "albums" ? pageAlbumEntries : undefined}
-								selectedEditions={editions}
-								onSelectEdition={(groupId, editionKey) =>
-									setEditions((previous) => ({
-										...previous,
-										[groupId]: editionKey,
-									}))
-								}
-								missingCounts={
-									new Map(
-										fixture.artists.map((artist) => [
-											artist.id,
-											unrepresentedMissingGroups.filter(
-												(group) => group.artistId === artist.id,
-											).length,
-										]),
-									)
-								}
-								hasAudio={(track) => hasAudio(track as Track)}
-								files={files}
-								filter={filter}
-								expanded={expanded}
-								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-								pageSelection={{ selectedIds: selected, onChange: update }}
-							/>
-						</section>
-						<LibraryPagination
-							page={currentPage}
-							totalPages={totalPages}
-							totalItems={libraryTotalItems}
-							onPageChange={(next) => setPage(next, totalPages)}
-						/>
-					</TabPanel>
-				</Tabs>
-			</div>
-			<SelectionDock
-				selected={selected}
-				visiblePositionIds={visiblePositionIds}
-				releases={releases}
-				onSelect={update}
-				onPreview={openSelectionPreview}
-				onQueueDeletion={queueDeletion}
-			/>
-			{selectionPreviewDialog}
-		</section>
+				) : undefined
+			}
+			className="demo-shell"
+			search={searchInput}
+			onSearch={setSearch}
+			filter={filter}
+			onFilter={setFilter}
+			onViewChange={(nextView) => {
+				setView(nextView);
+				setArtistId(null);
+				setExpanded(null);
+			}}
+			state={libraryPageState}
+			results={
+				<LibraryCatalogRows
+					view={view}
+					artists={view === "artists" ? pageArtists : fixture.artists}
+					releases={
+						view === "albums"
+							? pageAlbumReleases
+							: view === "tracks"
+								? pageTrackReleases
+								: releases
+					}
+					albumEntries={view === "albums" ? pageAlbumEntries : undefined}
+					selectedEditions={editions}
+					onSelectEdition={(groupId, editionKey) =>
+						setEditions((previous) => ({
+							...previous,
+							[groupId]: editionKey,
+						}))
+					}
+					missingCounts={
+						new Map(
+							fixture.artists.map((artist) => [
+								artist.id,
+								unrepresentedMissingGroups.filter(
+									(group) => group.artistId === artist.id,
+								).length,
+							]),
+						)
+					}
+					hasAudio={(track) => hasAudio(track as Track)}
+					files={files}
+					filter={filter}
+					expanded={expanded}
+					onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+					pageSelection={{ selectedIds: selected, onChange: update }}
+				/>
+			}
+			page={currentPage}
+			totalPages={totalPages}
+			totalItems={libraryTotalItems}
+			hasPrevious={currentPage > 1}
+			hasNext={currentPage < totalPages}
+			onPageChange={(next) => setPage(next, totalPages)}
+			selectionDock={
+				<SelectionDock
+					selected={selected}
+					visiblePositionIds={visiblePositionIds}
+					releases={releases}
+					onSelect={update}
+					onPreview={openSelectionPreview}
+					onQueueDeletion={queueDeletion}
+				/>
+			}
+			selectionPreview={selectionPreviewDialog ?? undefined}
+			dockSpace
+		/>
 	);
 }

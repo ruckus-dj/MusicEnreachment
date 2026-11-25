@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, TabPanel, Tabs } from "react-aria-components";
 import { apiResponseError } from "../../api/client/errors";
 import {
   useListLibraryArtists,
@@ -14,14 +13,13 @@ import {
   LibraryArtistCards,
 } from "./LibraryArtistCards";
 import {
-  LibraryCatalogQueryControls,
-  LibraryCatalogTabList,
-} from "./LibraryCatalogControls";
-import {
   type LibraryStateFilter,
   libraryFilterOptions,
 } from "./LibraryCatalogFilterView";
-import { LibraryPaginationView } from "./LibraryPaginationView";
+import {
+  type LibraryCatalogPageState,
+  LibraryCatalogPageView,
+} from "./LibraryCatalogPageView";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
 import { librarySelectionButtonClass } from "./LibrarySelectionPreviewView";
@@ -37,8 +35,6 @@ import { useLibrarySelection } from "./useLibrarySelection";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
-const statePanelClass =
-  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm";
 
 const fallbackRoute: LibraryRoute = {
   view: "artists",
@@ -49,7 +45,6 @@ const fallbackRoute: LibraryRoute = {
 };
 const screenCopy = {
   en: {
-    title: "Library",
     summaryFallback: "Releases and positions in your library",
     artistCount: {
       en: ["artist", "artists"],
@@ -64,20 +59,8 @@ const screenCopy = {
       ru: ["позиция", "позиции", "позиций"],
     },
     incoming: "Review incoming groups",
-    loading: "Loading library…",
     requestError: "Could not load the library (HTTP {status}).",
     error: "Could not load the library.",
-    retry: "Retry",
-    emptyLibrary: "Your library is empty",
-    noResults: "No results",
-    addAndMatch:
-      "Add and analyze a source, then match provider records into the library.",
-    noPublished:
-      "There are no published positions in the library yet. Unpublished releases are available under All.",
-    changeSearch: "Change the search query or reset the filters.",
-    noViewRecords: "There are no records in this view yet.",
-    resetFilters: "Reset filters",
-    addSource: "Add a source",
     countPublished: "published",
     countAvailable: "with audio",
     completenessUnknown: "completeness unknown",
@@ -105,7 +88,6 @@ const screenCopy = {
     unknownArtist: "Unnamed artist",
   },
   ru: {
-    title: "Медиатека",
     summaryFallback: "Релизы и позиции медиатеки",
     artistCount: {
       en: ["artist", "artists"],
@@ -120,20 +102,8 @@ const screenCopy = {
       ru: ["позиция", "позиции", "позиций"],
     },
     incoming: "Разобрать входящие группы",
-    loading: "Загрузка медиатеки…",
     requestError: "Не удалось загрузить медиатеку (HTTP {status}).",
     error: "Не удалось загрузить медиатеку.",
-    retry: "Повторить",
-    emptyLibrary: "Медиатека пока пуста",
-    noResults: "Ничего не найдено",
-    addAndMatch:
-      "Добавьте источник и проанализируйте файлы, затем сопоставьте записи провайдера с медиатекой.",
-    noPublished:
-      "В медиатеке пока нет опубликованных позиций. Неопубликованные релизы доступны в режиме «Все».",
-    changeSearch: "Измените поисковый запрос или сбросьте фильтры.",
-    noViewRecords: "В этом разделе пока нет записей.",
-    resetFilters: "Сбросить фильтры",
-    addSource: "Добавить источник",
     countPublished: "опубликовано",
     countAvailable: "с аудио",
     completenessUnknown: "полнота неизвестна",
@@ -521,162 +491,112 @@ export function LibraryScreen() {
     void activeQuery.refetch();
   }
 
+  const pageState: LibraryCatalogPageState = activeQuery.isLoading
+    ? { status: "loading" }
+    : error
+      ? {
+          status: "error",
+          message: error,
+          onRetry: retry,
+        }
+      : !hasResults
+        ? {
+            status: "empty",
+            reason:
+              catalogIsEmpty && isPristine
+                ? "library"
+                : filter === "published" &&
+                    summary?.published_position_count === 0
+                  ? "unpublished"
+                  : !isPristine
+                    ? "filtered"
+                    : "view",
+            onReset: isPristine ? undefined : reset,
+            addSourceHref:
+              catalogIsEmpty && isPristine ? "#/sources" : undefined,
+          }
+        : {
+            status: "results",
+            membershipError: selection.membershipError
+              ? {
+                  message: selection.membershipError,
+                  onRetry: selection.retryMembership,
+                }
+              : undefined,
+          };
+
   return (
-    <section
-      className={`min-w-0 max-w-none px-[clamp(16px,2.2vw,34px)] py-[clamp(16px,2.2vw,34px)] text-[var(--ink)] max-[600px]:px-[10px] max-[600px]:py-[14px] ${selection.positions.length ? "pb-[calc(136px+env(safe-area-inset-bottom))]! max-[600px]:pb-[calc(190px+env(safe-area-inset-bottom))]!" : ""}`}
-      aria-labelledby="catalog-title"
-    >
-      <header className="mb-[18px] grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-6 gap-y-3 border-b border-[var(--line)] pb-4 max-[600px]:grid-cols-1 max-[600px]:items-start">
-        <div>
-          <h1
-            id="catalog-title"
-            tabIndex={-1}
-            className="m-0 text-[20px] font-semibold leading-[1.3] tracking-[-.02em] wrap-anywhere"
-          >
-            {copy.title}
-          </h1>
-          <p
-            className="mt-[5px] text-xs text-[var(--muted)]"
-            aria-live="polite"
-          >
-            {summary
-              ? `${countLabel(summary.artist_count, locale, copy.artistCount)} · ${countLabel(summary.release_count, locale, copy.releaseCount)} · ${countLabel(summary.position_count, locale, copy.positionCount)} · ${summary.published_position_count} ${copy.countPublished}`
-              : copy.summaryFallback}
-          </p>
-        </div>
-        <div className="justify-self-end max-[600px]:justify-self-start">
-          <a
-            className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
-            href="#/incoming-groups"
-          >
-            {copy.incoming}
-          </a>
-        </div>
-      </header>
-
-      <Tabs
-        selectedKey={view}
-        onSelectionChange={(key) => setView(key as LibraryView)}
-      >
-        <LibraryCatalogTabList locale={locale} />
-        <TabPanel id={view} className="min-w-0">
-          <LibraryCatalogQueryControls
-            locale={locale}
-            search={searchInput}
-            onSearch={setSearch}
-            filter={filter}
-            onFilter={setFilter}
-          />
-
-          {activeQuery.isLoading ? (
-            <p className={statePanelClass} role="status">
-              {copy.loading}
-            </p>
-          ) : error ? (
-            <section
-              className={`${statePanelClass} text-[var(--error)]`}
-              role="alert"
-            >
-              <p>{error}</p>
-              <Button className={librarySelectionButtonClass} onPress={retry}>
-                {copy.retry}
-              </Button>
-            </section>
-          ) : !hasResults ? (
-            <section className={statePanelClass} aria-live="polite">
-              <h2 className="font-semibold">
-                {catalogIsEmpty && isPristine
-                  ? copy.emptyLibrary
-                  : copy.noResults}
-              </h2>
-              <p>
-                {catalogIsEmpty && isPristine
-                  ? copy.addAndMatch
-                  : filter === "published" &&
-                      summary?.published_position_count === 0
-                    ? copy.noPublished
-                    : route.query || filter !== "all"
-                      ? copy.changeSearch
-                      : copy.noViewRecords}
-              </p>
-              {(route.query || filter !== "all") && (
-                <Button className={librarySelectionButtonClass} onPress={reset}>
-                  {copy.resetFilters}
-                </Button>
-              )}
-              {catalogIsEmpty && isPristine && (
-                <a
-                  className="text-[var(--accent)] hover:underline"
-                  href="#/sources"
-                >
-                  {copy.addSource}
-                </a>
-              )}
-            </section>
-          ) : (
-            <>
-              {selection.membershipError && (
-                <div
-                  role="alert"
-                  className="my-2 flex flex-wrap items-center gap-2 text-sm"
-                >
-                  {selection.membershipError}
-                  <button
-                    type="button"
-                    className={librarySelectionButtonClass}
-                    onClick={selection.retryMembership}
-                  >
-                    {copy.retry}
-                  </button>
-                </div>
-              )}
-              {view === "artists" && artistsBody && (
-                <LibraryArtistCards
-                  locale={locale}
-                  artists={artistCards}
-                  pageSelectionControl={selection.selectionControl({
-                    kind: "page",
-                  })}
-                />
-              )}
-              {view === "albums" && releasesBody && (
-                <LibraryAlbumRows
-                  items={releasesBody.items}
-                  selectionControl={selection.selectionControl}
-                />
-              )}
-              {view === "tracks" && positionsBody && (
-                <LibraryPositionRows
-                  items={positionsBody.items}
-                  selectionControl={selection.selectionControl}
-                />
-              )}
-              <LibraryPaginationView
-                locale={locale}
-                page={currentPage}
-                totalPages={totalPages}
-                totalItems={total}
-                hasPrevious={route.offset !== 0}
-                hasNext={route.offset + PAGE_SIZE < total}
-                onPageChange={(next) => setPage(next, totalPages)}
-              />
-            </>
+    <LibraryCatalogPageView
+      locale={locale}
+      view={view}
+      summary={
+        summary
+          ? `${countLabel(summary.artist_count, locale, copy.artistCount)} · ${countLabel(summary.release_count, locale, copy.releaseCount)} · ${countLabel(summary.position_count, locale, copy.positionCount)} · ${summary.published_position_count} ${copy.countPublished}`
+          : copy.summaryFallback
+      }
+      headerAction={
+        <a
+          className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
+          href="#/incoming-groups"
+        >
+          {copy.incoming}
+        </a>
+      }
+      search={searchInput}
+      onSearch={setSearch}
+      filter={filter}
+      onFilter={setFilter}
+      onViewChange={setView}
+      state={pageState}
+      results={
+        <>
+          {view === "artists" && artistsBody && (
+            <LibraryArtistCards
+              locale={locale}
+              artists={artistCards}
+              pageSelectionControl={selection.selectionControl({
+                kind: "page",
+              })}
+            />
           )}
-        </TabPanel>
-      </Tabs>
-      <LibrarySelectionDock
-        positions={selection.positions}
-        hiddenCount={selection.hiddenCount}
-        onDeselect={selection.deselect}
-        onClear={selection.clear}
-        onPreview={selection.setFrozen}
-      />
-      {selection.frozen && (
-        <LibrarySelectionPreview
-          positions={selection.frozen}
-          onClose={() => selection.setFrozen(undefined)}
+          {view === "albums" && releasesBody && (
+            <LibraryAlbumRows
+              items={releasesBody.items}
+              selectionControl={selection.selectionControl}
+            />
+          )}
+          {view === "tracks" && positionsBody && (
+            <LibraryPositionRows
+              items={positionsBody.items}
+              selectionControl={selection.selectionControl}
+            />
+          )}
+        </>
+      }
+      page={currentPage}
+      totalPages={totalPages}
+      totalItems={total}
+      hasPrevious={route.offset !== 0}
+      hasNext={route.offset + PAGE_SIZE < total}
+      onPageChange={(next) => setPage(next, totalPages)}
+      selectionDock={
+        <LibrarySelectionDock
+          positions={selection.positions}
+          hiddenCount={selection.hiddenCount}
+          onDeselect={selection.deselect}
+          onClear={selection.clear}
+          onPreview={selection.setFrozen}
         />
-      )}
-    </section>
+      }
+      selectionPreview={
+        selection.frozen ? (
+          <LibrarySelectionPreview
+            positions={selection.frozen}
+            onClose={() => selection.setFrozen(undefined)}
+          />
+        ) : undefined
+      }
+      dockSpace={selection.positions.length > 0}
+    />
   );
 }

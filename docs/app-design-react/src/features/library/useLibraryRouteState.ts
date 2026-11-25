@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CatalogFilter } from "./availabilityRows";
 import {
 	buildLibraryRouteHref,
-	parseLibraryRoute,
 	type LibraryRouteState,
 	type LibraryView,
+	parseLibraryRoute,
 } from "./libraryRoute";
 
 export const LIBRARY_SEARCH_DEBOUNCE_MS = 250;
@@ -111,6 +111,12 @@ export function useLibraryRouteState(route: string) {
 		[clearPendingSearch],
 	);
 
+	const reset = useCallback(() => {
+		clearPendingSearch();
+		setSearchInput("");
+		setState((current) => ({ ...current, query: "", filter: "all", page: 1 }));
+	}, [clearPendingSearch]);
+
 	return {
 		view: state.view,
 		query: state.query,
@@ -122,5 +128,6 @@ export function useLibraryRouteState(route: string) {
 		setFilter,
 		setPage,
 		setSearch,
+		reset,
 	};
 }

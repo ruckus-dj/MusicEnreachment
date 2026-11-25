@@ -98,6 +98,7 @@ const pairs = [
       "LibraryEditionCard.tsx",
       "LibraryCatalogFilterView.tsx",
       "LibraryCatalogControls.tsx",
+      "LibraryCatalogPageView.tsx",
       "LibraryDeletionDialogView.tsx",
       "LibraryMissingEditionView.tsx",
       "LibraryPaginationView.tsx",
