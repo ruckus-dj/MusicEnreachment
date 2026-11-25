@@ -23,11 +23,7 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import {
-  ApplicationIncomingListBinder,
-  type ApplicationIncomingListModel,
-  ApplicationRouteOutlet,
-} from "../../ui/app/ApplicationRouteOutlet";
+import type { ApplicationIncomingListModel } from "../../ui/app/ApplicationRouteOutlet";
 import { focusView } from "../../ui/components/useViewFocus";
 import {
   IncomingCreationFallbackView,
@@ -41,13 +37,12 @@ import {
   incomingMessages,
 } from "../../ui/features/incoming/incomingReviewMessages";
 import { localMatchingMessages } from "../../ui/features/incoming/localMatchingMessages";
-import {
-  MatchingScreenView,
-  type MatchingScreenViewAction,
-  type MatchingScreenViewBoard,
-  type MatchingScreenViewCandidateRow,
-  type MatchingScreenViewModel,
-  type MatchingScreenViewPreview,
+import type {
+  MatchingScreenViewAction,
+  MatchingScreenViewBoard,
+  MatchingScreenViewCandidateRow,
+  MatchingScreenViewModel,
+  MatchingScreenViewPreview,
 } from "../../ui/features/matching/MatchingScreenView";
 import { matchingLinksCopy } from "../../ui/features/matching/matchingLinksCopy";
 import {
@@ -1669,60 +1664,57 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     panel: groupsPanel,
   };
 
-  return (
-    <IncomingWorkspaceView>
-      {creatingLocalRelease &&
-        (group && groupsQuery.data ? (
-          <IncomingLocalReleaseCreation
-            key={group.id}
-            group={group}
-            files={files.filter((file) =>
-              [
-                ...(group.members ?? []),
-                ...(group.unready_members ?? []),
-              ].includes(file.variant_id),
-            )}
-            label={incomingGroupNameText(groupNames.get(group.id), locale)}
-            onCancel={() => window.location.replace(matchingHref)}
-            onSelect={(id, kind) => {
-              if (window.location.hash !== creationHash) return;
-              const next = incomingGroupMatchingHref(
-                group.id,
-                kind === "local" ? "" : routeReleaseId,
-                {
-                  localReleaseId: kind === "local" ? id : undefined,
-                  prepareReleaseId: kind === "musicbrainz" ? id : undefined,
-                },
-              );
-              window.location.replace(next);
-            }}
-          />
-        ) : (
-          <IncomingCreationFallbackView
-            backHref={matchingHref}
-            backLabel={copy.tabMatching}
-            feedback={
-              groupsQuery.isLoading
-                ? { kind: "loading", message: copy.loadingGroups }
-                : {
-                    kind: "error",
-                    message: groupsQuery.isError
-                      ? incomingFeedbackText(
-                          locale,
-                          errorText(groupsQuery.error, "groupsLoadError"),
-                        )
-                      : copy.groupNotFound,
-                  }
-            }
-          />
-        ))}
-      <ApplicationRouteOutlet
-        route="incoming-list"
-        provider={ApplicationIncomingListBinder}
-        providerProps={{ model: listModel }}
+  const creation = creatingLocalRelease ? (
+    group && groupsQuery.data ? (
+      <IncomingLocalReleaseCreation
+        key={group.id}
+        group={group}
+        files={files.filter((file) =>
+          [...(group.members ?? []), ...(group.unready_members ?? [])].includes(
+            file.variant_id,
+          ),
+        )}
+        label={incomingGroupNameText(groupNames.get(group.id), locale)}
+        onCancel={() => window.location.replace(matchingHref)}
+        onSelect={(id, kind) => {
+          if (window.location.hash !== creationHash) return;
+          const next = incomingGroupMatchingHref(
+            group.id,
+            kind === "local" ? "" : routeReleaseId,
+            {
+              localReleaseId: kind === "local" ? id : undefined,
+              prepareReleaseId: kind === "musicbrainz" ? id : undefined,
+            },
+          );
+          window.location.replace(next);
+        }}
       />
+    ) : (
+      <IncomingCreationFallbackView
+        backHref={matchingHref}
+        backLabel={copy.tabMatching}
+        feedback={
+          groupsQuery.isLoading
+            ? { kind: "loading", message: copy.loadingGroups }
+            : {
+                kind: "error",
+                message: groupsQuery.isError
+                  ? incomingFeedbackText(
+                      locale,
+                      errorText(groupsQuery.error, "groupsLoadError"),
+                    )
+                  : copy.groupNotFound,
+              }
+        }
+      />
+    )
+  ) : null;
 
-      {groupId ? <MatchingScreenView model={matchingModel} /> : null}
-    </IncomingWorkspaceView>
+  return (
+    <IncomingWorkspaceView
+      creation={creation}
+      list={listModel}
+      matching={groupId ? matchingModel : null}
+    />
   );
 }

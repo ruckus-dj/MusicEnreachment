@@ -1,4 +1,4 @@
-import { MatchingScreenView } from "../../../ui/features/matching/MatchingScreenView";
+import { IncomingWorkspaceView } from "../../../ui/features/incoming/IncomingWorkspaceView";
 import {
 	type MatchingScreenProps,
 	useMatchingScreenDemoProvider,
@@ -8,5 +8,5 @@ export type { MatchingScreenProps };
 
 export function MatchingScreen(props: MatchingScreenProps) {
 	const model = useMatchingScreenDemoProvider(props);
-	return <MatchingScreenView model={model} />;
+	return <IncomingWorkspaceView matching={model} />;
 }

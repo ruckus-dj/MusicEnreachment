@@ -1,8 +1,30 @@
 import type { ReactNode } from "react";
+import {
+  MatchingScreenView,
+  type MatchingScreenViewModel,
+} from "../matching/MatchingScreenView";
+import {
+  IncomingScreenView,
+  type IncomingScreenViewProps,
+} from "./IncomingScreenView";
 import { incomingScreenClass } from "./incomingStyles";
 
-export function IncomingWorkspaceView({ children }: { children: ReactNode }) {
-  return <section className={incomingScreenClass}>{children}</section>;
+export function IncomingWorkspaceView({
+  creation,
+  list,
+  matching,
+}: {
+  creation?: ReactNode;
+  list?: IncomingScreenViewProps | null;
+  matching: MatchingScreenViewModel | null;
+}) {
+  return (
+    <section className={incomingScreenClass}>
+      {creation}
+      {list ? <IncomingScreenView {...list} /> : null}
+      {matching ? <MatchingScreenView model={matching} /> : null}
+    </section>
+  );
 }
 
 export function IncomingCreationFallbackView({

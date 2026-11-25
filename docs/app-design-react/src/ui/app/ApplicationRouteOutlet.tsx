@@ -4,10 +4,8 @@ import {
   type ReactNode,
   useContext,
 } from "react";
-import {
-  IncomingScreenView,
-  type IncomingScreenViewProps,
-} from "../features/incoming/IncomingScreenView";
+import type { IncomingScreenViewProps } from "../features/incoming/IncomingScreenView";
+import { IncomingWorkspaceView } from "../features/incoming/IncomingWorkspaceView";
 import {
   ArtistScreenView,
   type ArtistScreenViewProps,
@@ -179,7 +177,7 @@ export function ApplicationSettingsBinder({
 function IncomingListRoute() {
   const model = useContext(IncomingListModelContext);
   if (!model) throw new Error("missing incoming list view model");
-  return <IncomingScreenView {...model} />;
+  return <IncomingWorkspaceView list={model} matching={null} />;
 }
 
 function LibraryArtistRoute() {
