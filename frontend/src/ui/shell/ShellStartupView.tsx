@@ -1,8 +1,13 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { AppButton } from "../components/AppButton";
+import type { ThemePreferenceStore } from "../components/themePreference";
 import { shell } from "../i18n/namespaces/shell";
 import type { Locale } from "../i18n/types";
-import type { ShellControls } from "./ShellView";
+import {
+  ProductShell,
+  type ProductShellProps,
+  shellControls,
+} from "./ShellView";
 import { shellStartupMessages } from "./shellStartupMessages";
 
 const focusSkipClass =
@@ -12,17 +17,59 @@ const alertClass =
 const actionClass =
   "inline-flex min-h-[34px] items-center rounded border border-[var(--button)] bg-[var(--button)] px-3.5 py-1.5 font-semibold text-[var(--button-text)] no-underline hover:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 
-export function ShellStartupFrame({
+export type ApplicationFrameState =
+  | { kind: "startup" }
+  | ({
+      kind: "product";
+    } & Omit<ProductShellProps, "locale" | "themeStore" | "children">);
+
+export function ApplicationFrame({
   locale,
-  controls,
+  themeStore,
+  state,
   children,
 }: {
   locale: Locale;
-  controls: ShellControls;
+  themeStore: ThemePreferenceStore;
+  state: ApplicationFrameState;
+  children: ReactNode;
+}) {
+  if (state.kind === "startup") {
+    return (
+      <ShellStartupFrame locale={locale} themeStore={themeStore}>
+        {children}
+      </ShellStartupFrame>
+    );
+  }
+  return (
+    <ProductShell
+      locale={locale}
+      themeStore={themeStore}
+      brandHref={state.brandHref}
+      activeSection={state.activeSection}
+      sectionLinks={state.sectionLinks}
+      incomingCount={state.incomingCount}
+      footer={state.footer}
+      setupHref={state.setupHref}
+      fallbackSection={state.fallbackSection}
+    >
+      {children}
+    </ProductShell>
+  );
+}
+
+function ShellStartupFrame({
+  locale,
+  themeStore,
+  children,
+}: {
+  locale: Locale;
+  themeStore: ThemePreferenceStore;
   children: ReactNode;
 }) {
   const content = useRef<HTMLElement>(null);
   const text = shell[locale];
+  const controls = shellControls(themeStore);
   return (
     <main className="min-h-dvh bg-[var(--canvas)] p-3 text-[var(--ink)]">
       <button

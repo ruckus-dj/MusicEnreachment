@@ -105,7 +105,6 @@ export type SetupScreenViewProps = {
     disabled?: boolean;
     onPress: () => void;
   };
-  confirmation?: ComponentProps<typeof SetupToolConfirmationView>;
 };
 
 /** Pure tools step content shared by the demo provider and the app controller. */
@@ -240,47 +239,43 @@ export function SetupScreenView({
   summary,
   summaryMounted,
   summaryRecheck,
-  confirmation,
 }: SetupScreenViewProps) {
   return (
-    <>
-      <SetupWizard
-        locale={locale}
-        step={wizard.step}
-        help={wizard.help}
-        error={wizard.error}
-        notice={wizard.notice}
-        pending={wizard.pending}
-        onBack={wizard.onBack}
-        onNext={wizard.onNext}
-        nextDisabled={wizard.nextDisabled}
-        backDisabled={wizard.backDisabled}
-      >
-        {wizard.step === 0 && (
-          <>
-            {platform && <SetupPlatformStep {...platform} />}
-            <SetupDirectoryStepBody {...directories} />
-          </>
-        )}
-        {wizard.step === 1 &&
-          (toolsMounted ?? (tools ? <SetupToolsStepBody {...tools} /> : null))}
-        {wizard.step === 2 && <SetupPublicationStepBody {...publication} />}
-        {wizard.step === 3 && (
-          <div>
-            {summaryMounted ??
-              (summary ? <SetupSummaryStepBody {...summary} /> : null)}
-            {summaryRecheck && (
-              <AppButton
-                isDisabled={summaryRecheck.disabled}
-                onPress={summaryRecheck.onPress}
-              >
-                {summaryRecheck.label}
-              </AppButton>
-            )}
-          </div>
-        )}
-      </SetupWizard>
-      {confirmation && <SetupToolConfirmationView {...confirmation} />}
-    </>
+    <SetupWizard
+      locale={locale}
+      step={wizard.step}
+      help={wizard.help}
+      error={wizard.error}
+      notice={wizard.notice}
+      pending={wizard.pending}
+      onBack={wizard.onBack}
+      onNext={wizard.onNext}
+      nextDisabled={wizard.nextDisabled}
+      backDisabled={wizard.backDisabled}
+    >
+      {wizard.step === 0 && (
+        <>
+          {platform && <SetupPlatformStep {...platform} />}
+          <SetupDirectoryStepBody {...directories} />
+        </>
+      )}
+      {wizard.step === 1 &&
+        (toolsMounted ?? (tools ? <SetupToolsStepBody {...tools} /> : null))}
+      {wizard.step === 2 && <SetupPublicationStepBody {...publication} />}
+      {wizard.step === 3 && (
+        <div>
+          {summaryMounted ??
+            (summary ? <SetupSummaryStepBody {...summary} /> : null)}
+          {summaryRecheck && (
+            <AppButton
+              isDisabled={summaryRecheck.disabled}
+              onPress={summaryRecheck.onPress}
+            >
+              {summaryRecheck.label}
+            </AppButton>
+          )}
+        </div>
+      )}
+    </SetupWizard>
   );
 }

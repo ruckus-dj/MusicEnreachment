@@ -3,6 +3,8 @@ import { useI18n } from "../../../app/i18n";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import type { SetupScreenViewProps } from "../../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../../ui/features/setup/SetupToolCardsView";
+import { setupMessages } from "../../../ui/features/setup/setupMessages";
+import { useSetupTriggerFocus } from "../../../ui/features/setup/useSetupTriggerFocus";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -17,8 +19,10 @@ import type {
 } from "../settings/SettingsScreen";
 import {
 	activateOrCreateDemoInstallation,
+	type DemoInstallPreflight,
+	initialDemoUnmanagedToolFiles,
+	installPreflightDemo,
 	isAbsoluteDemoServerPath,
-	type ManagedToolPackage,
 } from "../settings/ToolLifecycleDemo";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
 import {
@@ -97,6 +101,7 @@ export function useSetupScreenDemoProvider({
 }: SetupScreenProps): SetupScreenViewProps {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
+	const setupCopy = setupMessages[locale];
 	const [localStep, setLocalStep] = useState(0);
 	const step = savedStep ?? localStep;
 	const [notice, setNotice] = useState<NoticeKey | "">("");
@@ -104,17 +109,17 @@ export function useSetupScreenDemoProvider({
 		settings.lrclibEnabled ?? true,
 	);
 	const [musicBrainzChanged, setMusicBrainzChanged] = useState(false);
-	const [installTarget, setInstallTarget] = useState<ManagedToolPackage | null>(
+	const [installPlan, setInstallPlan] = useState<DemoInstallPreflight | null>(
 		null,
 	);
-	const [installToken, setInstallToken] = useState("");
+	const [installPlanChanged, setInstallPlanChanged] = useState(false);
+	const installTriggerFocus = useSetupTriggerFocus();
 	const update = (values: Partial<DemoSettings>) =>
 		onSettings({ ...settings, ...values });
 	const toolSelection = settings.selectedRelease ?? {};
 	const installations = settings.installations ?? [];
-	const installRelease = installTarget
-		? toolSelection[installTarget]
-		: undefined;
+	const unmanagedToolFiles =
+		settings.unmanagedToolFiles ?? initialDemoUnmanagedToolFiles;
 	const activeInstallation = (kind: SetupToolKind) =>
 		installations.find(
 			(item) => item.package === kind && item.status === "active",
@@ -194,40 +199,76 @@ export function useSetupScreenDemoProvider({
 			setNotice(accepted ? "" : "missingPublication");
 		}
 	};
-	const requestInstall = (kind: SetupToolKind) => {
-		const release = toolSelection[kind];
-		if (!release || platformMismatch) return;
-		setInstallTarget(kind);
-		setInstallToken([kind, release, settings.toolsPath].join("|"));
-	};
-	const installTool = () => {
-		if (!installTarget) return;
-		const release = toolSelection[installTarget];
-		const token = [installTarget, release, settings.toolsPath].join("|");
-		if (
-			!release ||
-			token !== installToken ||
-			!isAbsoluteDemoServerPath(settings.toolsPath)
-		) {
-			setInstallTarget(null);
-			setNotice("staleMove");
-			return;
-		}
-		const outcome = setupToolStateAfterAttempt(release, true);
+	const preflightInstall = (kind: SetupToolKind, release: string) =>
+		// Mirror the server: a clean preflight starts directly, and only exact
+		// conflicts retain a plan for explicit approval.
+		installPreflightDemo(
+			settings.toolsPath,
+			kind,
+			release,
+			installations,
+			unmanagedToolFiles,
+		);
+	const beginInstall = (preflight: DemoInstallPreflight) => {
+		const outcome = setupToolStateAfterAttempt(preflight.release, true);
 		update({
 			installations: activateOrCreateDemoInstallation(
 				installations,
-				installTarget,
-				release,
+				preflight.kind,
+				preflight.release,
 			),
 			setupVerified: {
 				...settings.setupVerified,
-				[installTarget]: outcome.release,
+				[preflight.kind]: outcome.release,
 			},
-			setupFailures: { ...settings.setupFailures, [installTarget]: undefined },
+			setupFailures: {
+				...settings.setupFailures,
+				[preflight.kind]: undefined,
+			},
+			...(preflight.conflicts.length > 0 && {
+				unmanagedToolFiles: unmanagedToolFiles.filter(
+					(path) => !preflight.conflicts.includes(path),
+				),
+			}),
 		});
-		setInstallTarget(null);
+		setInstallPlan(null);
 		setNotice("");
+	};
+	const requestInstall = (kind: SetupToolKind, target: EventTarget | null) => {
+		const release = toolSelection[kind];
+		if (!release || platformMismatch || installPlan) return;
+		if (!isAbsoluteDemoServerPath(settings.toolsPath)) {
+			setNotice("missingPath");
+			return;
+		}
+		setInstallPlanChanged(false);
+		installTriggerFocus.capture(target);
+		const preflight = preflightInstall(kind, release);
+		if (!preflight.conflicts.length) {
+			beginInstall(preflight);
+			return;
+		}
+		setInstallPlan(preflight);
+	};
+	const confirmInstall = () => {
+		if (!installPlan) return;
+		const release = toolSelection[installPlan.kind];
+		const fresh =
+			!platformMismatch &&
+			release &&
+			isAbsoluteDemoServerPath(settings.toolsPath)
+				? preflightInstall(installPlan.kind, release)
+				: undefined;
+		if (!fresh || fresh.token !== installPlan.token) {
+			setInstallPlanChanged(true);
+			return;
+		}
+		beginInstall(fresh);
+	};
+	const cancelInstall = () => {
+		setInstallPlan(null);
+		setInstallPlanChanged(false);
+		installTriggerFocus.restore();
 	};
 	const next = () => {
 		if (platformMismatch) return;
@@ -380,8 +421,8 @@ export function useSetupScreenDemoProvider({
 								},
 							}),
 						action: {
-							disabled: !selected || platformMismatch,
-							onPress: () => requestInstall(kind),
+							disabled: !selected || platformMismatch || Boolean(installPlan),
+							onPress: (event) => requestInstall(kind, event.target),
 						},
 						verification: verified
 							? {
@@ -394,6 +435,20 @@ export function useSetupScreenDemoProvider({
 				}),
 				nextTool: toolsReady ? undefined : nextTool,
 			},
+			confirmation: installPlan
+				? {
+						title: setupCopy.confirmOverwrite,
+						packageName: setupCopy[installPlan.kind],
+						release: installPlan.release,
+						executables: setupToolExecutables(installPlan.kind),
+						conflicts: installPlan.conflicts,
+						confirmLabel: setupCopy.confirmOverwriteButton,
+						cancelLabel: setupCopy.cancel,
+						error: installPlanChanged ? copy.staleInstall : undefined,
+						onConfirm: confirmInstall,
+						onCancel: cancelInstall,
+					}
+				: undefined,
 			token: githubToken,
 		},
 		publication: {
@@ -495,18 +550,5 @@ export function useSetupScreenDemoProvider({
 				},
 			},
 		},
-		confirmation:
-			installTarget && installRelease
-				? {
-						title: copy.installVerify,
-						packageName: installTarget,
-						release: installRelease,
-						executables: setupToolExecutables(installTarget),
-						confirmLabel: copy.installVerify,
-						cancelLabel: copy.cancel,
-						onConfirm: installTool,
-						onCancel: () => setInstallTarget(null),
-					}
-				: undefined,
 	};
 }

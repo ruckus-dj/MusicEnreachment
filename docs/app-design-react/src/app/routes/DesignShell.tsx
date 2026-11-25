@@ -1,24 +1,28 @@
 import { type ReactNode, useSyncExternalStore } from "react";
-import { LanguageControl } from "../../ui/components/LanguageControl";
-import { ThemeControl } from "../../ui/components/ThemeControl";
-import { shell } from "../../ui/i18n/namespaces/shell";
-import { ShellStartupFrame } from "../../ui/shell/ShellStartupView";
-import { ProductShellView } from "../../ui/shell/ShellView";
+import { ApplicationFrame } from "../../ui/shell/ShellStartupView";
+import { type ShellSectionId, shellSections } from "../../ui/shell/ShellView";
 import { useI18n } from "../i18n";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
 
-const sections = [
-	["review", "review"],
-	["library", "library"],
-	["local", "local"],
-	["sources", "sources"],
-	["operations", "operations"],
-	["settings", "settings"],
-] as const;
+const libraryRoutes = [
+	"artist",
+	"release",
+	"track",
+	"tags",
+	"create-release",
+	"publication-preview",
+	"publication-list",
+];
 const subscribe = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
 	return () => window.removeEventListener("hashchange", listener);
 };
+
+function sectionForRoute(section: string): ShellSectionId | undefined {
+	return shellSections.some((id) => id === section)
+		? (section as ShellSectionId)
+		: undefined;
+}
 
 export function DesignShell({
 	children,
@@ -28,55 +32,42 @@ export function DesignShell({
 	incomingCount?: number;
 }) {
 	const { locale } = useI18n();
-	const copy = shell[locale];
 	const route = useSyncExternalStore(
 		subscribe,
 		() => window.location.hash.slice(1).split("/")[0] || "library",
 		() => "library",
 	);
-	const section = [
-		"artist",
-		"release",
-		"track",
-		"tags",
-		"create-release",
-		"publication-preview",
-		"publication-list",
-	].includes(route)
+	const section = libraryRoutes.includes(route)
 		? "library"
 		: route === "match"
 			? "review"
 			: route;
-	const controls = {
-		language: <LanguageControl />,
-		theme: <ThemeControl store={themePreferenceStore} />,
-	};
-	if (route === "setup")
-		return (
-			<ShellStartupFrame locale={locale} controls={controls}>
-				{children}
-			</ShellStartupFrame>
-		);
 	return (
-		<ProductShellView
-			brand={{ href: "#review", label: "MeloTrove", mark: "mt" }}
-			skipLabel={copy.skip}
-			navigationLabel={copy.navigation}
-			sectionLabel={
-				copy[sections.find(([id]) => id === section)?.[1] ?? "library"]
+		<ApplicationFrame
+			locale={locale}
+			themeStore={themePreferenceStore}
+			state={
+				route === "setup"
+					? { kind: "startup" }
+					: {
+							kind: "product",
+							brandHref: "#review",
+							activeSection: sectionForRoute(section),
+							sectionLinks: {
+								review: "#review",
+								library: "#library",
+								local: "#local",
+								sources: "#sources",
+								operations: "#operations",
+								settings: "#settings",
+							},
+							incomingCount,
+							footer: { kind: "prototype" },
+							setupHref: "#setup",
+						}
 			}
-			navigation={sections.map(([id, label]) => ({
-				id,
-				label: copy[label],
-				href: `#${id}`,
-				current: section === id,
-				count: id === "review" ? incomingCount : undefined,
-			}))}
-			controls={controls}
-			footerText={copy.prototypeFooter}
-			setupLink={{ href: "#setup", label: copy.setup }}
 		>
 			{children}
-		</ProductShellView>
+		</ApplicationFrame>
 	);
 }

@@ -30,18 +30,11 @@ import { SettingsScreen } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
 import { SourcesScreen } from "../../providers/sources/SourcesScreen";
 import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
-import { LanguageControl } from "../../ui/components/LanguageControl";
-import { ThemeControl } from "../../ui/components/ThemeControl";
-import { shell } from "../../ui/i18n/namespaces/shell";
 import {
-  ShellStartupFrame,
+  ApplicationFrame,
   ShellStartupView,
 } from "../../ui/shell/ShellStartupView";
-import {
-  ProductShellView,
-  type ShellNavigationItem,
-} from "../../ui/shell/ShellView";
-import { shellStartupMessages } from "../../ui/shell/shellStartupMessages";
+import type { ShellSectionId } from "../../ui/shell/ShellView";
 import { useI18n } from "../i18n/host";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
@@ -143,18 +136,18 @@ export function AppShell() {
   const content = renderRouteContent();
 
   if (productAvailable)
-    return <ProductShell route={route}>{content}</ProductShell>;
+    return (
+      <ApplicationProductShell route={route}>{content}</ApplicationProductShell>
+    );
 
   return (
-    <ShellStartupFrame
+    <ApplicationFrame
       locale={locale}
-      controls={{
-        language: <LanguageControl />,
-        theme: <ThemeControl store={themePreferenceStore} />,
-      }}
+      themeStore={themePreferenceStore}
+      state={{ kind: "startup" }}
     >
       {content}
-    </ShellStartupFrame>
+    </ApplicationFrame>
   );
 
   function renderRouteContent() {
@@ -213,7 +206,7 @@ export function AppShell() {
   }
 }
 
-function ProductShell({
+function ApplicationProductShell({
   route,
   children,
 }: {
@@ -221,9 +214,8 @@ function ProductShell({
   children: ReactNode;
 }) {
   const { locale } = useI18n();
-  const copy = shell[locale];
-  const incomingActive =
-    route === "/incoming-groups" || route.startsWith("/incoming-groups/");
+  const activeSection = sectionForRoute(route);
+  const incomingActive = activeSection === "review";
   // Observe the shared group-list cache without fetching: the Incoming review
   // screen owns that request, so the shell only mirrors it while an Incoming
   // route is active. The separate count query key extends the generated
@@ -259,66 +251,30 @@ function ProductShell({
       ? undefined
       : (incomingGroups.data.groups?.length ?? 0)
     : incomingGroupCount.data;
-  const navigation: ShellNavigationItem[] = [
-    {
-      id: "incoming",
-      label: copy.review,
-      href: "#/incoming-groups",
-      current:
-        route === "/incoming-groups" || route.startsWith("/incoming-groups/"),
-      count: incomingCount,
-    },
-    {
-      id: "library",
-      label: copy.library,
-      href: "#/library",
-      current: route === "/library" || route.startsWith("/library/"),
-    },
-    {
-      id: "own-catalog",
-      label: copy.local,
-      href: "#/own-catalog",
-      current: route === "/own-catalog",
-    },
-    {
-      id: "sources",
-      label: copy.sources,
-      href: "#/sources",
-      current: route === "/sources",
-    },
-    {
-      id: "operations",
-      label: copy.operations,
-      href: "#/operations",
-      current: route === "/operations",
-    },
-    {
-      id: "settings",
-      label: copy.settings,
-      href: "#/settings",
-      current: route === "/settings",
-    },
-  ];
 
   return (
-    <ProductShellView
-      brand={{ href: "#/", label: "MeloTrove", mark: "mt" }}
-      skipLabel={copy.skip}
-      navigationLabel={copy.navigation}
-      sectionLabel={sectionLabel(
-        route,
-        copy,
-        shellStartupMessages[locale].home,
-      )}
-      navigation={navigation}
-      controls={{
-        language: <LanguageControl />,
-        theme: <ThemeControl store={themePreferenceStore} />,
+    <ApplicationFrame
+      locale={locale}
+      themeStore={themePreferenceStore}
+      state={{
+        kind: "product",
+        brandHref: "#/",
+        activeSection,
+        sectionLinks: {
+          review: "#/incoming-groups",
+          library: "#/library",
+          local: "#/own-catalog",
+          sources: "#/sources",
+          operations: "#/operations",
+          settings: "#/settings",
+        },
+        incomingCount,
+        fallbackSection: "home",
+        footer: { kind: "version", version: packageMetadata.version },
       }}
-      footerText={`v${packageMetadata.version}`}
     >
       {children}
-    </ProductShellView>
+    </ApplicationFrame>
   );
 }
 
@@ -375,18 +331,13 @@ function RootLanding() {
   );
 }
 
-function sectionLabel(
-  route: Route,
-  copy: (typeof shell)["en" | "ru"],
-  home: string,
-): string {
+function sectionForRoute(route: Route): ShellSectionId | undefined {
   if (route === "/incoming-groups" || route.startsWith("/incoming-groups/"))
-    return copy.review;
-  if (route === "/library" || route.startsWith("/library/"))
-    return copy.library;
-  if (route === "/own-catalog") return copy.local;
-  if (route === "/sources") return copy.sources;
-  if (route === "/operations") return copy.operations;
-  if (route === "/settings") return copy.settings;
-  return home;
+    return "review";
+  if (route === "/library" || route.startsWith("/library/")) return "library";
+  if (route === "/own-catalog") return "local";
+  if (route === "/sources") return "sources";
+  if (route === "/operations") return "operations";
+  if (route === "/settings") return "settings";
+  return undefined;
 }

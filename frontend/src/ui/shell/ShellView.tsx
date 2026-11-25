@@ -1,4 +1,10 @@
 import { type ReactNode, useRef } from "react";
+import { LanguageControl } from "../components/LanguageControl";
+import { ThemeControl } from "../components/ThemeControl";
+import type { ThemePreferenceStore } from "../components/themePreference";
+import { shell } from "../i18n/namespaces/shell";
+import type { Locale } from "../i18n/types";
+import { shellStartupMessages } from "./shellStartupMessages";
 
 export interface ShellNavigationItem {
 	id: string;
@@ -19,6 +25,32 @@ export interface ShellControls {
 	theme: ReactNode;
 }
 
+export const shellSections = [
+	"review",
+	"library",
+	"local",
+	"sources",
+	"operations",
+	"settings",
+] as const;
+
+export type ShellSectionId = (typeof shellSections)[number];
+
+export type ShellSectionLinks = Record<ShellSectionId, string>;
+
+export interface ProductShellProps {
+	locale: Locale;
+	brandHref: string;
+	activeSection?: ShellSectionId;
+	sectionLinks: ShellSectionLinks;
+	incomingCount?: number;
+	footer: { kind: "prototype" } | { kind: "version"; version: string };
+	setupHref?: string;
+	themeStore: ThemePreferenceStore;
+	fallbackSection?: "home" | "library";
+	children: ReactNode;
+}
+
 export interface ShellViewProps {
 	brand: ShellBrand;
 	skipLabel: string;
@@ -29,6 +61,13 @@ export interface ShellViewProps {
 	footerText: string;
 	setupLink?: { href: string; label: string };
 	children: ReactNode;
+}
+
+export function shellControls(themeStore: ThemePreferenceStore): ShellControls {
+	return {
+		language: <LanguageControl />,
+		theme: <ThemeControl store={themeStore} />,
+	};
 }
 
 export function ShellContent({ children }: { children: ReactNode }) {
@@ -46,6 +85,57 @@ export function ProductShellView({ children, ...props }: ShellViewProps) {
 				<ShellContent>{children}</ShellContent>
 			</ShellView>
 		</div>
+	);
+}
+
+/**
+ * Portable product shell: canonical section order, default labels and
+ * theme/locale controls. Links, active section, counts, footer and setup
+ * capability are caller data; host routing stays outside this tree.
+ */
+export function ProductShell({
+	locale,
+	brandHref,
+	activeSection,
+	sectionLinks,
+	incomingCount,
+	footer,
+	setupHref,
+	themeStore,
+	fallbackSection = "library",
+	children,
+}: ProductShellProps) {
+	const copy = shell[locale];
+	const navigation: ShellNavigationItem[] = shellSections.map((id) => ({
+		id,
+		label: copy[id],
+		href: sectionLinks[id],
+		current: activeSection === id,
+		count: id === "review" ? incomingCount : undefined,
+	}));
+	return (
+		<ProductShellView
+			brand={{ href: brandHref, label: "MeloTrove", mark: "mt" }}
+			skipLabel={copy.skip}
+			navigationLabel={copy.navigation}
+			sectionLabel={
+				activeSection
+					? copy[activeSection]
+					: fallbackSection === "home"
+						? shellStartupMessages[locale].home
+						: copy.library
+			}
+			navigation={navigation}
+			controls={shellControls(themeStore)}
+			footerText={
+				footer.kind === "prototype"
+					? copy.prototypeFooter
+					: `v${footer.version}`
+			}
+			setupLink={setupHref ? { href: setupHref, label: copy.setup } : undefined}
+		>
+			{children}
+		</ProductShellView>
 	);
 }
 

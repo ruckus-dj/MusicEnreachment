@@ -28,6 +28,25 @@ const TEST_LIBRARIES = new Set([
   "@testing-library/jest-dom",
 ]);
 const CSS_LIBRARIES = new Set(["tailwindcss"]);
+// Portable UI behavior is only equivalent at equal resolved versions. Keep the
+// explicit shared runtime and build set; this is not a full resolver.
+export const SHARED_DEPENDENCY_PACKAGES = [
+  "react",
+  "react-dom",
+  "react-aria-components",
+  "react-aria",
+  "react-stately",
+  "@react-types/shared",
+  "@internationalized/date",
+  "@internationalized/number",
+  "@internationalized/string",
+  "tailwindcss",
+  "@tailwindcss/vite",
+  "@tailwindcss/node",
+  "@tailwindcss/oxide",
+  "vite",
+  "@vitejs/plugin-react",
+];
 const HOST_ALIASES = [
   /^\//,
   /^@\//,
@@ -68,6 +87,23 @@ const COPY_JSX_PROPS = new Set([
 const ELEMENT_FACTORIES = new Set(["createElement", "cloneElement", "jsx", "jsxs", "jsxDEV"]);
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+export function compareDependencyVersions(designLock, applicationLock) {
+  const versionOf = (lock, name) => lock?.packages?.[`node_modules/${name}`]?.version;
+  const errors = [];
+  for (const name of SHARED_DEPENDENCY_PACKAGES) {
+    const design = versionOf(designLock, name);
+    const application = versionOf(applicationLock, name);
+    if (!design || !application) {
+      errors.push(`Missing shared dependency lock entry: ${name}`);
+    } else if (design !== application) {
+      errors.push(
+        `Shared dependency drift: ${name} (design ${design}, application ${application})`,
+      );
+    }
+  }
+  return errors;
+}
 
 export function compareUiSources(pairs, receipts, readSource, readCopy) {
   const leads = new Map();
@@ -739,8 +775,25 @@ function main() {
     (path) => readFileSync(new URL(path, prototypeUi)),
     (path) => readFileSync(new URL(path, applicationUi)),
   );
+  let dependencyErrors;
+  try {
+    dependencyErrors = compareDependencyVersions(
+      JSON.parse(
+        readFileSync(
+          new URL("../docs/app-design-react/package-lock.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+      JSON.parse(
+        readFileSync(new URL("../frontend/package-lock.json", import.meta.url), "utf8"),
+      ),
+    );
+  } catch (error) {
+    dependencyErrors = [`Cannot compare dependency locks: ${error.message}`];
+  }
   const errors = [
     ...result.errors,
+    ...dependencyErrors,
     ...prototypeTree.symlinks.map(
       (path) => `Cross UI symlink is not allowed: ${prototypeLabel}/${path}`,
     ),

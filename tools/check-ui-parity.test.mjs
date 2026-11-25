@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   checkHostBoundaries,
   checkUiBoundaries,
+  compareDependencyVersions,
   compareUiDirectories,
   compareUiSources,
   enumerateUiPairs,
+  SHARED_DEPENDENCY_PACKAGES,
 } from "./check-ui-parity.mjs";
 
 test("a prototype lead permits only the named source versions and expires on port", () => {
@@ -236,4 +238,26 @@ test("host boundary permits only checked JSX wiring and bootstrap CSS", () => {
   assert.match(text, /Host CSS may only bootstrap UI styles, not declare styles: body/);
   assert.match(text, /Host must not re-export external runtime components/);
   assert.match(text, /unapproved @source: inline/);
+});
+
+test("shared dependency guard compares resolved lock versions", () => {
+  const lock = (versions = {}) => ({
+    packages: Object.fromEntries(
+      SHARED_DEPENDENCY_PACKAGES.map((name) => [
+        `node_modules/${name}`,
+        { version: versions[name] ?? "1.0.0" },
+      ]),
+    ),
+  });
+  assert.deepEqual(compareDependencyVersions(lock(), lock()), []);
+  assert.deepEqual(
+    compareDependencyVersions(lock({ vite: "7.3.6" }), lock({ vite: "7.3.7" })),
+    ["Shared dependency drift: vite (design 7.3.6, application 7.3.7)"],
+  );
+  assert.deepEqual(
+    compareDependencyVersions(lock(), { packages: {} }),
+    SHARED_DEPENDENCY_PACKAGES.map(
+      (name) => `Missing shared dependency lock entry: ${name}`,
+    ),
+  );
 });
