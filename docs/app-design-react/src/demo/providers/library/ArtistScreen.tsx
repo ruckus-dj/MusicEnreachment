@@ -37,11 +37,12 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
+import { libraryRootHref } from "./libraryRoute";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import { audioProperties } from "./metadata/audioProperties";
 import type { TagScope } from "./TagsComparison";
 
-const libraryHref = "#library";
+const libraryHref = libraryRootHref();
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;

@@ -25,6 +25,7 @@ import {
 } from "../../fixtures/operationsQueueFixtures";
 import { recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
+import { libraryRootHref } from "../library/libraryRoute";
 import type {
 	DemoOperationStatus,
 	OperationsDemoProvider,
@@ -236,7 +237,7 @@ function useDemoOperationsModel({
 									{
 										id: "review",
 										label: copy.returnAndConfirm,
-										href: "#library",
+										href: libraryRootHref(),
 									},
 								]
 							: [

@@ -3,6 +3,7 @@ import {
 	incomingGroupsListHref,
 	parseIncomingGroupsRoute,
 } from "../../demo/providers/incoming/incomingGroupsRoute";
+import { libraryRootHref } from "../../demo/providers/library/libraryRoute";
 import {
 	demoSourcesHref,
 	parseDemoSourceRoute,
@@ -28,6 +29,7 @@ const libraryRoutes = [
 
 function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (!path || path === "/") return "home";
+	if (path === "/library") return "library";
 	if (path === "/setup") return "setup";
 	if (path === "/operations") return "operations";
 	if (path === "/settings") return "settings";
@@ -68,7 +70,7 @@ export function DesignShell({
 					brandHref: "#/",
 					sectionLinks: {
 						review: incomingGroupsListHref(),
-						library: "#library",
+						library: libraryRootHref(),
 						local: "#/own-catalog",
 						sources: demoSourcesHref,
 						operations: "#/operations",

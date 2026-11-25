@@ -45,9 +45,11 @@ import { createIncomingState } from "./providers/incoming/incomingModel";
 import {
 	combineLibraryAlbumEntries,
 	libraryArtistPositionIds,
+	libraryOffsetSlice,
 	libraryPageCount,
-	libraryPageSlice,
+	libraryRootHref,
 	libraryTrackPositionIds,
+	parseLibraryRoute,
 	sliceTrackReleasePage,
 	useLibraryRouteState,
 } from "./providers/library";
@@ -70,9 +72,11 @@ import {
 } from "./providers/library/catalogData";
 import {
 	albumSearchText,
-	catalogArtistMatches,
-	missingCatalogGroups,
+	catalogArtistMatchesForAxes,
+	missingCatalogGroupsForAxes,
 	normalizeCatalogSearch,
+	releaseMatchesFilterAxes,
+	trackMatchesFilterAxes,
 	trackSearchText,
 } from "./providers/library/catalogViewModel";
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
@@ -240,9 +244,9 @@ export function CatalogDemo({
 		subscribeRoute,
 		() => {
 			const hash = window.location.hash.slice(1);
-			return hash === "publication-list" ? "library" : hash;
+			return hash === "publication-list" ? "/library" : hash;
 		},
-		() => "library",
+		() => "/library",
 	);
 	const route = routePath;
 	const [routeName] = route.split("?", 1);
@@ -252,6 +256,9 @@ export function CatalogDemo({
 		query,
 		filter,
 		page,
+		offset,
+		publication,
+		availability,
 		searchInput,
 		isLibraryRoute,
 		setView,
@@ -261,7 +268,7 @@ export function CatalogDemo({
 		reset: resetLibrarySearch,
 	} = useLibraryRouteState(route);
 	const headingRoute =
-		routeName === "library" ||
+		routeName === "/library" ||
 		routeName === "/settings" ||
 		routeName === "/operations" ||
 		routeName === "/own-catalog"
@@ -368,7 +375,9 @@ export function CatalogDemo({
 		if (route !== "publication-preview") setPreview(false);
 	}, [route]);
 	const [contextIds, setContextIds] = useState<string[] | null>(null);
-	const [previewOriginRoute, setPreviewOriginRoute] = useState("library");
+	const [previewOriginRoute, setPreviewOriginRoute] = useState(() =>
+		libraryRootHref().slice(1),
+	);
 	const [previewToken, setPreviewToken] = useState<MetadataPreviewToken | null>(
 		null,
 	);
@@ -552,36 +561,32 @@ export function CatalogDemo({
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [editions, setEditions] = useState<Record<string, string>>({});
 	const normalized = normalizeCatalogSearch(query);
-	const matchesGroup = (tracks: Track[]) =>
-		filter === "all" ||
-		tracks.some((track) =>
-			filter === "published"
-				? Boolean(track.published)
-				: filter === "available"
-					? hasAudio(track)
-					: !hasAudio(track),
-		);
-	const missingGroups = missingCatalogGroups(
+	const filterAxes = { publication, availability };
+	const matchesTrack = (track: Track) =>
+		trackMatchesFilterAxes(track, filterAxes, hasAudio);
+	const matchesRelease = (tracks: Track[]) =>
+		releaseMatchesFilterAxes(tracks, filterAxes, hasAudio);
+	const missingGroups = missingCatalogGroupsForAxes(
 		fixture.absentGroups,
 		fixture.releases,
 		fixture.artists,
 		query,
-		filter,
+		filterAxes,
 	);
-	const unrepresentedMissingGroups = missingCatalogGroups(
+	const unrepresentedMissingGroups = missingCatalogGroupsForAxes(
 		fixture.absentGroups,
 		fixture.releases,
 		fixture.artists,
 		"",
-		"all",
+		{ publication: "all", availability: "all" },
 	);
 	const visibleArtists = fixture.artists.filter((artist) =>
-		catalogArtistMatches(
+		catalogArtistMatchesForAxes(
 			artist,
 			fixture.releases,
 			missingGroups,
 			query,
-			filter,
+			filterAxes,
 			(track) => hasAudio(track as Track),
 		),
 	);
@@ -591,7 +596,7 @@ export function CatalogDemo({
 				(release) =>
 					normalizeCatalogSearch(
 						albumSearchText(release, fixture.artists),
-					).includes(normalized) && matchesGroup(release.tracks),
+					).includes(normalized) && matchesRelease(release.tracks),
 			)
 			.map((release) => release.id),
 	);
@@ -605,7 +610,7 @@ export function CatalogDemo({
 					(track) =>
 						normalizeCatalogSearch(
 							trackSearchText(track, release, fixture.artists),
-						).includes(normalized) && matchesGroup([track]),
+						).includes(normalized) && matchesTrack(track),
 				)
 				.map((track) => track.id),
 		),
@@ -627,12 +632,12 @@ export function CatalogDemo({
 				: visibleTrackRefs.length;
 	const totalPages = libraryPageCount(libraryTotalItems);
 	const currentPage = Math.min(page, totalPages);
-	const pageArtists = libraryPageSlice(visibleArtists, currentPage);
-	const pageAlbumEntries = libraryPageSlice(albumEntries, currentPage);
+	const pageArtists = libraryOffsetSlice(visibleArtists, offset);
+	const pageAlbumEntries = libraryOffsetSlice(albumEntries, offset);
 	const pageAlbumReleases = pageAlbumEntries.flatMap((entry) =>
 		entry.kind === "release" ? [entry.release] : [],
 	);
-	const pageTracks = libraryPageSlice(visibleTrackRefs, currentPage);
+	const pageTracks = libraryOffsetSlice(visibleTrackRefs, offset);
 	const pageTrackReleases = sliceTrackReleasePage(releases, pageTracks);
 	const visiblePositionIds = new Set(
 		view === "artists"
@@ -645,8 +650,29 @@ export function CatalogDemo({
 	);
 	useEffect(() => {
 		if (!isLibraryRoute) return;
-		setPage(currentPage, totalPages);
-	}, [currentPage, isLibraryRoute, setPage, totalPages]);
+		// Wait for the hook to adopt the whole route before clamping its offset.
+		const adopted = parseLibraryRoute(route);
+		if (
+			adopted.view !== view ||
+			adopted.query !== query ||
+			adopted.offset !== offset ||
+			adopted.publication !== publication ||
+			adopted.availability !== availability
+		)
+			return;
+		if (page > totalPages) setPage(totalPages, totalPages);
+	}, [
+		availability,
+		isLibraryRoute,
+		offset,
+		page,
+		publication,
+		query,
+		route,
+		setPage,
+		totalPages,
+		view,
+	]);
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
 			const next = new Set(previous);
@@ -764,7 +790,7 @@ export function CatalogDemo({
 					<ScreenFeedbackView
 						title={msg("previewTitle")}
 						message={msg("noSavedPreview")}
-						link={{ href: "#library", label: msg("goToLibrary") }}
+						link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
 					/>
 				)}
 			</>
@@ -831,7 +857,7 @@ export function CatalogDemo({
 				<>
 					<ReleaseOverviewView
 						locale={locale}
-						libraryHref="#library"
+						libraryHref={libraryRootHref()}
 						heading={null}
 					/>
 				</>
@@ -886,7 +912,7 @@ export function CatalogDemo({
 			return (
 				<ScreenFeedbackView
 					title={msg("trackNotFound")}
-					link={{ href: "#library", label: msg("goToLibrary") }}
+					link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
 				/>
 			);
 		const identity = recordingIdentity(track);
@@ -1299,30 +1325,54 @@ export function CatalogDemo({
 				}}
 			/>
 		);
-	if (route && routeName !== "library")
+	if (route && routeName !== "/library")
 		return (
 			<ScreenFeedbackView
 				title={msg("screenNotMoved")}
 				message={msg("routeNotMoved", { route })}
-				link={{ href: "#library", label: msg("goToReactLibrary") }}
+				link={{ href: libraryRootHref(), label: msg("goToReactLibrary") }}
 			/>
 		);
-	const libraryPageState: LibraryCatalogPageState =
-		libraryTotalItems > 0
-			? { status: "results" }
-			: {
-					status: "empty",
-					reason:
-						filter === "published" &&
-						!releases.some(({ tracks }) =>
-							tracks.some((track) => track.published),
-						)
+	const librarySummary = {
+		artists: fixture.artists.length,
+		releases: releases.length,
+		positions: releases.reduce(
+			(total, release) => total + release.tracks.length,
+			0,
+		),
+		published: releases.reduce(
+			(total, release) =>
+				total + release.tracks.filter((track) => track.published).length,
+			0,
+		),
+	};
+	const catalogIsEmpty =
+		librarySummary.artists === 0 &&
+		librarySummary.releases === 0 &&
+		librarySummary.positions === 0;
+	const isPristine = query === "" && filter === "all";
+	const hasResults =
+		view === "artists"
+			? pageArtists.length > 0
+			: view === "albums"
+				? pageAlbumEntries.length > 0
+				: pageTracks.length > 0;
+	const libraryPageState: LibraryCatalogPageState = hasResults
+		? { status: "results" }
+		: {
+				status: "empty",
+				reason:
+					catalogIsEmpty && isPristine
+						? "library"
+						: filter === "published" && librarySummary.published === 0
 							? "unpublished"
-							: query || filter !== "all"
-								? "filtered"
-								: "view",
-					onReset: query || filter !== "all" ? resetLibrarySearch : undefined,
-				};
+							: isPristine
+								? "view"
+								: "filtered",
+				onReset: !isPristine ? resetLibrarySearch : undefined,
+					addSourceHref:
+						catalogIsEmpty && isPristine ? demoSourcesHref : undefined,
+			};
 
 	const missingCounts = new Map(
 		fixture.artists.map((artist) => [
@@ -1389,6 +1439,8 @@ export function CatalogDemo({
 			provider={DemoLibraryCatalogBinder}
 			providerProps={{
 				locale,
+				summary: librarySummary,
+				incomingHref: incomingGroupsListHref(),
 				view,
 				search: searchInput,
 				onSearch: setSearch,

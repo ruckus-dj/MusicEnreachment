@@ -277,7 +277,11 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			/concurrent files|одновременные файлы/i,
 		);
 		fireEvent.change(input, { target: { value: "" } });
-		window.history.pushState(null, "", "#library");
+		window.history.pushState(
+			null,
+			"",
+			"#/library?view=artists&publication=all&availability=all",
+		);
 		fireEvent(window, new PopStateEvent("popstate"));
 		await screen.findByRole("dialog");
 		expect(window.location.hash).toBe("#/settings");
@@ -286,7 +290,11 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 				name: /leave and keep draft|уйти, сохранив черновик/i,
 			}),
 		);
-		await waitFor(() => expect(window.location.hash).toBe("#library"));
+		await waitFor(() =>
+			expect(window.location.hash).toBe(
+				"#/library?view=artists&publication=all&availability=all",
+			),
+		);
 		expect(readSettingsDraft(window.sessionStorage)?.value.concurrency).toBe(
 			"",
 		);
@@ -521,7 +529,8 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 				<SettingsScreen settings={latest} onSettings={onSettings} />
 			</I18nProvider>,
 		);
-		window.location.hash = "#library";
+		window.location.hash =
+			"#/library?view=artists&publication=all&availability=all";
 		await screen.findByRole("dialog");
 		fireEvent.click(
 			screen.getByRole("button", {
@@ -602,7 +611,8 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		await screen.findByText(
 			/browser storage is unavailable|хранилище браузера недоступно/i,
 		);
-		window.location.hash = "#library";
+		window.location.hash =
+			"#/library?view=artists&publication=all&availability=all";
 		await screen.findByRole("dialog");
 		fireEvent.click(
 			screen.getByRole("button", {

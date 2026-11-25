@@ -15,14 +15,27 @@ export const libraryPageCount = (
 	pageSize = LIBRARY_PAGE_SIZE,
 ) => Math.max(1, Math.ceil(totalItems / pageSize));
 
+/** A slice at the exact server offset; copied links may be page-unaligned. */
+export function libraryOffsetSlice<T>(
+	items: readonly T[],
+	offset: number,
+	pageSize = LIBRARY_PAGE_SIZE,
+): T[] {
+	const start = Number.isSafeInteger(offset) && offset > 0 ? offset : 0;
+	return items.slice(start, start + pageSize);
+}
+
 /** A one-based page slice; the caller clamps the requested page for display. */
 export function libraryPageSlice<T>(
 	items: readonly T[],
 	page: number,
 	pageSize = LIBRARY_PAGE_SIZE,
 ): T[] {
-	const start = (Math.max(1, page) - 1) * pageSize;
-	return items.slice(start, start + pageSize);
+	return libraryOffsetSlice(
+		items,
+		(Math.max(1, page) - 1) * pageSize,
+		pageSize,
+	);
 }
 
 /**

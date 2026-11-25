@@ -20,6 +20,7 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
+import { libraryRootHref } from "./libraryRoute";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
@@ -147,7 +148,7 @@ export function useTrackScreenDemoProvider({
 			artist: originalArtistName(track.artistId, artists),
 			releaseTitle: release.title,
 			releaseHref: releaseHref(release.id),
-			libraryHref: "#library",
+			libraryHref: libraryRootHref(),
 		},
 		editors:
 			onMutate || onRecordingChange ? (

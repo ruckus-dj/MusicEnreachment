@@ -21,6 +21,7 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
+import { libraryRootHref } from "./libraryRoute";
 import { audioProperties } from "./metadata/audioProperties";
 import { ReleaseMetadataEditor } from "./metadata/ReleaseMetadataEditor";
 
@@ -191,7 +192,7 @@ export function ReleaseOverviewScreen({
 	return (
 		<ReleaseOverviewView
 			locale={locale}
-			libraryHref="#library"
+			libraryHref={libraryRootHref()}
 			artistHref={
 				artist ? `#artist/${encodeURIComponent(artist.id)}` : undefined
 			}

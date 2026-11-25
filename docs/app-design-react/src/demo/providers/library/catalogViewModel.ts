@@ -1,4 +1,5 @@
 import type { CatalogFilter } from "./availabilityRows";
+import type { AvailabilityFilter, PublicationFilter } from "./libraryRoute";
 import type {
 	CatalogArtist,
 	OriginalRelease,
@@ -10,6 +11,57 @@ export type CatalogTrack = Pick<OriginalTrack, "id" | "title" | "artistId"> & {
 };
 export type CatalogRelease = Omit<OriginalRelease, "tracks"> & {
 	tracks: CatalogTrack[];
+};
+
+export interface CatalogFilterAxes {
+	publication: PublicationFilter;
+	availability: AvailabilityFilter;
+}
+
+/** One position must satisfy both canonical axes at once. */
+export function trackMatchesFilterAxes<T extends { published: unknown }>(
+	track: T,
+	axes: CatalogFilterAxes,
+	hasAudio: (track: T) => boolean,
+): boolean {
+	const published = Boolean(track.published);
+	const matchesPublication =
+		axes.publication === "all" ||
+		(axes.publication === "published" ? published : !published);
+	const matchesAvailability =
+		axes.availability === "all" ||
+		(axes.availability === "available" ? hasAudio(track) : !hasAudio(track));
+	return matchesPublication && matchesAvailability;
+}
+
+/** Local release rows count each axis independently, matching the API page. */
+export function releaseMatchesFilterAxes<T extends { published: unknown }>(
+	tracks: readonly T[],
+	axes: CatalogFilterAxes,
+	hasAudio: (track: T) => boolean,
+): boolean {
+	if (axes.publication === "all" && axes.availability === "all") return true;
+	const matchesPublication =
+		axes.publication === "all" ||
+		(axes.publication === "published"
+			? tracks.some((track) => Boolean(track.published))
+			: tracks.some((track) => !track.published));
+	const matchesAvailability =
+		axes.availability === "all" ||
+		(axes.availability === "available"
+			? tracks.some(hasAudio)
+			: tracks.some((track) => !hasAudio(track)));
+	return matchesPublication && matchesAvailability;
+}
+
+const axesForFilter = (filter: CatalogFilter): CatalogFilterAxes => {
+	if (filter === "published")
+		return { publication: "published", availability: "all" };
+	if (filter === "available")
+		return { publication: "all", availability: "available" };
+	if (filter === "missing")
+		return { publication: "all", availability: "missing" };
+	return { publication: "all", availability: "all" };
 };
 
 export interface AbsentCatalogEdition {
@@ -47,15 +99,12 @@ export function artistReleases<T extends CatalogRelease>(
 	);
 }
 
-export function missingCatalogGroups(
+function searchMissingCatalogGroups(
 	groups: AbsentCatalogGroup[],
 	releases: CatalogRelease[],
 	artists: CatalogArtist[],
 	query: string,
-	filter: CatalogFilter,
 ) {
-	if (filter !== "all" && filter !== "missing") return [];
-
 	const search = normalizeCatalogSearch(query);
 	return groups.filter((group) => {
 		if (releases.some((release) => release.releaseGroupId === group.groupId))
@@ -80,6 +129,35 @@ export function missingCatalogGroups(
 	});
 }
 
+export function missingCatalogGroups(
+	groups: AbsentCatalogGroup[],
+	releases: CatalogRelease[],
+	artists: CatalogArtist[],
+	query: string,
+	filter: CatalogFilter,
+) {
+	return missingCatalogGroupsForAxes(
+		groups,
+		releases,
+		artists,
+		query,
+		axesForFilter(filter),
+	);
+}
+
+/** Missing provider groups only exist outside published and available axes. */
+export function missingCatalogGroupsForAxes(
+	groups: AbsentCatalogGroup[],
+	releases: CatalogRelease[],
+	artists: CatalogArtist[],
+	query: string,
+	axes: CatalogFilterAxes,
+) {
+	if (axes.publication === "published" || axes.availability === "available")
+		return [];
+	return searchMissingCatalogGroups(groups, releases, artists, query);
+}
+
 export function catalogArtistMatches(
 	artist: CatalogArtist,
 	releases: CatalogRelease[],
@@ -88,30 +166,51 @@ export function catalogArtistMatches(
 	filter: CatalogFilter,
 	hasAudio: (track: CatalogTrack) => boolean,
 ) {
+	return catalogArtistMatchesForAxes(
+		artist,
+		releases,
+		missingGroups,
+		query,
+		axesForFilter(filter),
+		hasAudio,
+	);
+}
+
+/** Artist rows combine each canonical axis across all owned positions. */
+export function catalogArtistMatchesForAxes(
+	artist: CatalogArtist,
+	releases: CatalogRelease[],
+	missingGroups: AbsentCatalogGroup[],
+	query: string,
+	axes: CatalogFilterAxes,
+	hasAudio: (track: CatalogTrack) => boolean,
+) {
 	const search = normalizeCatalogSearch(query);
-	const matchingRelease = releases
-		.filter((release) => release.artistId === artist.id)
-		.some((release) => {
-			return (
-				filter === "all" ||
-				release.tracks.some((track) =>
-					filter === "published"
-						? Boolean(track.published)
-						: filter === "available"
-							? hasAudio(track)
-							: !hasAudio(track),
-				)
-			);
-		});
+	const artistReleases = releases.filter(
+		(release) => release.artistId === artist.id,
+	);
+	const tracks = artistReleases.flatMap((release) => release.tracks);
 	const hasMissingGroup = missingGroups.some(
 		(group) => group.artistId === artist.id,
 	);
+	const matchesPublication =
+		axes.publication === "all" ||
+		(axes.publication === "published"
+			? tracks.some((track) => Boolean(track.published))
+			: tracks.some((track) => !track.published) || hasMissingGroup);
+	const matchesAvailability =
+		axes.availability === "all" ||
+		(axes.availability === "available"
+			? tracks.some(hasAudio)
+			: tracks.some((track) => !hasAudio(track)) || hasMissingGroup);
 	return (
 		(normalizeCatalogSearch(`${artist.name} ${artist.genre ?? ""}`).includes(
 			search,
 		) ||
 			hasMissingGroup) &&
-		(matchingRelease || hasMissingGroup)
+		(artistReleases.length > 0 || hasMissingGroup) &&
+		matchesPublication &&
+		matchesAvailability
 	);
 }
 

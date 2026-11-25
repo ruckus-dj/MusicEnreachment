@@ -4,11 +4,19 @@ import { CatalogDemo } from "../demo/CatalogDemo";
 import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
 
 afterEach(() => {
-	window.history.replaceState(null, "", "#library");
+	window.history.replaceState(
+		null,
+		"",
+		"#/library?view=artists&publication=all&availability=all",
+	);
 });
 
 it("renders one keyboard-operable four-option filter radio group", () => {
-	window.history.replaceState(null, "", "#library");
+	window.history.replaceState(
+		null,
+		"",
+		"#/library?view=artists&publication=all&availability=all",
+	);
 	render(<CatalogDemo />);
 	const group = screen.getByRole("radiogroup", { name: "Состояние" });
 	const labels = ["Все", "Не хватает", "В наличии", "Опубликовано"];
@@ -33,7 +41,11 @@ it("opens Incoming from the root when the fixture has registered sources", () =>
 });
 
 it("opens the exact release destination from an album row", () => {
-	window.history.replaceState(null, "", "#library?tab=albums");
+	window.history.replaceState(
+		null,
+		"",
+		"#/library?view=albums&publication=all&availability=all",
+	);
 	render(<CatalogDemo />);
 	const grid = screen.getByRole("grid", { name: "Альбомы медиатеки" });
 	const links = within(grid).getAllByRole("link", {
@@ -42,6 +54,18 @@ it("opens the exact release destination from an album row", () => {
 	expect(
 		links.some((link) => link.getAttribute("href") === "#release/north"),
 	).toBe(true);
+});
+
+it("keeps a copied exact offset instead of snapping to the page start", () => {
+	const hash =
+		"#/library?view=artists&publication=all&availability=all&offset=1";
+	window.history.replaceState(null, "", hash);
+	render(<CatalogDemo />);
+	expect(
+		screen.queryByRole("link", { name: /Mira Vale/ }),
+	).not.toBeInTheDocument();
+	expect(screen.getByRole("link", { name: /Arden Trio/ })).toBeInTheDocument();
+	expect(window.location.hash).toBe(hash);
 });
 
 it("renders the focused release destination without artist management", () => {
@@ -62,7 +86,7 @@ it("shows a read-only preview of the selected library position", async () => {
 	window.history.replaceState(
 		null,
 		"",
-		"#library?tab=tracks&q=First%20Light&filter=all",
+		"#/library?view=tracks&q=First%20Light&publication=all&availability=all",
 	);
 	render(<CatalogDemo />);
 	const grid = screen.getByRole("grid", { name: "Треки медиатеки" });

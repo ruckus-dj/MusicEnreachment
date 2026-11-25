@@ -2,18 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CatalogFilter } from "./availabilityRows";
 import {
 	buildLibraryRouteHref,
+	LIBRARY_PAGE_SIZE,
+	libraryFilterFor,
 	type LibraryRouteState,
 	type LibraryView,
 	parseLibraryRoute,
+	withLibraryFilter,
 } from "./libraryRoute";
 
 export const LIBRARY_SEARCH_DEBOUNCE_MS = 250;
+
+const pageForOffset = (offset: number) =>
+	Math.floor(offset / LIBRARY_PAGE_SIZE) + 1;
 
 /**
  * Keeps the paged library controls and the hash route in sync. Search input is
  * immediate while the effective query, page and URL settle after the debounce.
  */
 export function useLibraryRouteState(route: string) {
+	const routeHash = route.startsWith("#") ? route : `#${route}`;
 	const [state, setState] = useState<LibraryRouteState>(() =>
 		parseLibraryRoute(route),
 	);
@@ -23,7 +30,7 @@ export function useLibraryRouteState(route: string) {
 	const lastHref = useRef(buildLibraryRouteHref(state));
 	const pendingSearch = useRef<number | null>(null);
 	const skipNextUrlWrite = useRef(false);
-	const isLibraryRoute = route.split("?")[0] === "library";
+	const isLibraryRoute = routeHash.split("?", 1)[0] === "#/library";
 
 	const clearPendingSearch = useCallback(() => {
 		if (pendingSearch.current !== null) {
@@ -37,13 +44,13 @@ export function useLibraryRouteState(route: string) {
 		if (!isLibraryRoute) return;
 		const next = parseLibraryRoute(route);
 		const href = buildLibraryRouteHref(next);
-		if (route === lastHref.current || href === lastHref.current) return;
+		if (routeHash === lastHref.current || href === lastHref.current) return;
 		lastHref.current = href;
 		skipNextUrlWrite.current = true;
 		clearPendingSearch();
 		setSearchInput(next.query);
 		setState(next);
-	}, [route, isLibraryRoute, clearPendingSearch]);
+	}, [route, routeHash, isLibraryRoute, clearPendingSearch]);
 
 	useEffect(() => {
 		if (isLibraryRoute) return;
@@ -72,14 +79,20 @@ export function useLibraryRouteState(route: string) {
 
 	const setView = useCallback((view: LibraryView) => {
 		setState((current) =>
-			current.view === view ? current : { ...current, view, page: 1 },
+			current.view === view ? current : { ...current, view, offset: 0 },
 		);
 	}, []);
 
 	const setFilter = useCallback((filter: CatalogFilter) => {
-		setState((current) =>
-			current.filter === filter ? current : { ...current, filter, page: 1 },
-		);
+		setState((current) => {
+			const next = withLibraryFilter(current, filter);
+			if (
+				next.publication === current.publication &&
+				next.availability === current.availability
+			)
+				return current;
+			return { ...next, offset: 0 };
+		});
 	}, []);
 
 	const setPage = useCallback(
@@ -88,8 +101,9 @@ export function useLibraryRouteState(route: string) {
 				1,
 				Math.min(Math.trunc(page), Math.max(1, totalPages)),
 			);
+			const offset = (nextPage - 1) * LIBRARY_PAGE_SIZE;
 			setState((current) =>
-				current.page === nextPage ? current : { ...current, page: nextPage },
+				current.offset === offset ? current : { ...current, offset },
 			);
 		},
 		[],
@@ -104,7 +118,7 @@ export function useLibraryRouteState(route: string) {
 				setState((current) =>
 					current.query === value
 						? current
-						: { ...current, query: value, page: 1 },
+						: { ...current, query: value, offset: 0 },
 				);
 			}, LIBRARY_SEARCH_DEBOUNCE_MS);
 		},
@@ -114,14 +128,23 @@ export function useLibraryRouteState(route: string) {
 	const reset = useCallback(() => {
 		clearPendingSearch();
 		setSearchInput("");
-		setState((current) => ({ ...current, query: "", filter: "all", page: 1 }));
+		setState((current) => ({
+			...current,
+			query: "",
+			publication: "all",
+			availability: "all",
+			offset: 0,
+		}));
 	}, [clearPendingSearch]);
 
 	return {
 		view: state.view,
 		query: state.query,
-		filter: state.filter,
-		page: state.page,
+		filter: libraryFilterFor(state),
+		page: pageForOffset(state.offset),
+		offset: state.offset,
+		publication: state.publication,
+		availability: state.availability,
 		searchInput,
 		isLibraryRoute,
 		setView,
