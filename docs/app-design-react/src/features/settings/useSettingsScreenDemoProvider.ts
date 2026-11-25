@@ -1682,7 +1682,7 @@ export function useSettingsScreenDemoProvider({
 		locale,
 		notices,
 		conflicts: conflictNotices,
-		tabs,
+		ready: { tabs },
 		dialogs,
 	};
 }

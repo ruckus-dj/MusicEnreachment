@@ -67,8 +67,8 @@ source channel, а fixture макета такого происхождения 
 рассчитывает допустимость и меняет данные. Отделение представления в макете
 не считается парой файлов и не означает, что приложение уже его использует.
 
-В макете отделены представления «Настроек», первого запуска и «Сопоставления»
-(`SettingsScreenView.tsx`, `SetupScreenView.tsx`, `MatchingScreenView.tsx`)
+В макете отделены представления первого запуска и «Сопоставления»
+(`SetupScreenView.tsx`, `MatchingScreenView.tsx`)
 и публикации из сохранённых связей (`MatchingReceiptPublicationReadyView.tsx`).
 Разметка редактора метаданных,
 выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
@@ -105,6 +105,7 @@ source channel, а fixture макета такого происхождения 
 | Собственный каталог: списки, карточки записей и поля форм артиста и композиции | `features/local-catalog/`: `OwnCatalogList.tsx`, `OwnCatalogPagination.tsx`, `OwnCatalogEditorShell.tsx`, `OwnCatalogDetailsView.tsx`, `OwnCatalogRecordFieldsView.tsx` | `features/own-catalog/` |
 | Настройки: вкладки, общие параметры, папки, подтверждение сброса, провайдеры, каталог жанров | `features/settings/SettingsTabs.tsx`, `SettingsGeneralSection.tsx`, `SettingsFoldersSection.tsx`, `SettingsOutputResetDialog.tsx`, `SettingsProvidersSection.tsx`, `GenreCatalogView.tsx` | Те же пути |
 | Настройки: каркас страницы, заголовок и подзаголовок | `features/settings/SettingsPageFrame.tsx` | Тот же путь |
+| Настройки: весь экран — загрузка, состояние конфигурации, вкладки, обратная связь и диалоги | `features/settings/SettingsScreenView.tsx` | Тот же путь; приложение сохраняет черновик токена при смене вкладки, макет сбрасывает его. Запись и повторное чтение состояния остаются в провайдерах |
 | Настройки: раздел инструментов, карточки пакетов, подтверждение загрузки, поля и подтверждение переноса | `features/settings/SettingsToolsOverview.tsx`, `SettingsManagedPackageCards.tsx`, `SettingsToolInstallDialog.tsx`, `SettingsToolsMoveEditor.tsx`, `SettingsToolsMoveReview.tsx`, `SettingsToolsMoveReviewDialog.tsx` | Те же пути |
 | Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки: предупреждение о конфликте черновика над вкладками, сохранённое значение и действия для конкретной настройки | `features/settings/SettingsDraftConflictNotice.tsx` | Тот же путь |

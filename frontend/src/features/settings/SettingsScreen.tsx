@@ -39,7 +39,6 @@ import type {
   UpdateSettingsBodyPublicationFormat,
   UpdateSettingsExpectedBody,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -55,31 +54,17 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
-import { SettingsConflictDialog } from "./SettingsConflictDialog";
-import { SettingsDraftConflictNotice } from "./SettingsDraftConflictNotice";
-import { SettingsFoldersSection } from "./SettingsFoldersSection";
-import {
-  type SettingsGeneralFailureModel,
-  SettingsGeneralSection,
-} from "./SettingsGeneralSection";
-import { SettingsLeaveDialog } from "./SettingsLeaveDialog";
-import {
-  type ManagedPackageCardModel,
-  type ManagedPackageCatalog,
-  type ManagedPackageLifeState,
-  SettingsManagedPackageCards,
+import type { SettingsGeneralFailureModel } from "./SettingsGeneralSection";
+import type {
+  ManagedPackageCardModel,
+  ManagedPackageCatalog,
+  ManagedPackageLifeState,
 } from "./SettingsManagedPackageCards";
-import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
-import { SettingsPageFrame } from "./SettingsPageFrame";
-import { SettingsProvidersSection } from "./SettingsProvidersSection";
-import { SettingsTabPanel, SettingsTabs } from "./SettingsTabs";
-import { SettingsToolInstallDialog } from "./SettingsToolInstallDialog";
-import { SettingsToolsMoveEditor } from "./SettingsToolsMoveEditor";
-import { SettingsToolsMoveReviewDialog } from "./SettingsToolsMoveReviewDialog";
 import {
-  SettingsToolsCatalogSummary,
-  SettingsToolsRootHeader,
-} from "./SettingsToolsOverview";
+  type SettingsConflictNoticeView,
+  SettingsScreenView,
+  type SettingsScreenViewProps,
+} from "./SettingsScreenView";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -3157,168 +3142,149 @@ export function SettingsScreen() {
     }
     setActiveConflicts((previous) => ({ ...previous, [group]: false }));
   }
-  return (
-    <SettingsPageFrame locale={locale} headingRef={heading}>
-      {effectiveBusy && <p role="status">{t("requestInProgress")}</p>}
-      {draftStorageWarning && <p role="status">{t("draftMemoryWarning")}</p>}
-      {!initialLoadComplete && !loadError && (
-        <p role="status">{t("loadingSettings")}</p>
-      )}
-      {loadError && (
-        <>
-          <p ref={loadErrorAlert} tabIndex={-1} role="alert">
-            {t("loadSettingsError")} {feedbackText(loadError, locale)}
-          </p>
-          <AppButton
-            isDisabled={effectiveBusy}
-            onPress={() => void loadScreen()}
-          >
-            {t("retryLoading")}
-          </AppButton>
-        </>
-      )}
-      {Object.entries(conflictValues).map(([rawGroup, currentValue]) => {
+  const view: SettingsScreenViewProps = {
+    locale,
+    headingRef: heading,
+    notices: [
+      ...(effectiveBusy
+        ? [{ key: "request-in-progress", text: t("requestInProgress") }]
+        : []),
+      ...(draftStorageWarning
+        ? [{ key: "draft-storage", text: t("draftMemoryWarning") }]
+        : []),
+      ...(!initialLoadComplete && !loadError
+        ? [{ key: "loading", text: t("loadingSettings") }]
+        : []),
+    ],
+    loadError: loadError
+      ? {
+          message: `${t("loadSettingsError")} ${feedbackText(loadError, locale)}`,
+          retryLabel: t("retryLoading"),
+          retryDisabled: effectiveBusy,
+          alertRef: loadErrorAlert,
+          onRetry: () => void loadScreen(),
+        }
+      : undefined,
+    conflicts: Object.entries(conflictValues).flatMap(
+      ([rawGroup, currentValue]): SettingsConflictNoticeView[] => {
         const group = rawGroup as ConflictGroup;
-        if (!activeConflicts[group]) return null;
+        if (!activeConflicts[group]) return [];
         const label = conflictLabel(group, locale);
-        return (
-          <SettingsDraftConflictNotice
-            key={group}
-            label={t("settingsConflict", { label })}
-            announcement="status"
-            summary={`${t("changedSavedValue", { label })} ${displaySettingValue(currentValue)}.`}
-            disabled={effectiveBusy}
-            takeSaved={{
+        return [
+          {
+            key: group,
+            label: t("settingsConflict", { label }),
+            announcement: "status",
+            summary: `${t("changedSavedValue", { label })} ${displaySettingValue(currentValue)}.`,
+            disabled: effectiveBusy,
+            takeSaved: {
               label: t("takeSavedValue", { label }),
               onPress: () => takeSavedConflict(group),
-            }}
-            continueEditing={{
+            },
+            continueEditing: {
               label: t("continueEditing", { label }),
               onPress: () => continueEditingConflict(group),
-            }}
-          />
-        );
-      })}
-      {initialLoadComplete && state && (
-        <>
-          <section
-            aria-labelledby="health-title"
-            className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
-          >
-            <h2 id="health-title" className="m-0 text-sm font-semibold">
-              {t("configurationHealth")}
-            </h2>
-            <p
-              className={
-                state.configuration_health.healthy
-                  ? "m-0"
-                  : "m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-              }
-              role={state.configuration_health.healthy ? "status" : "alert"}
-            >
-              {state.configuration_health.healthy
-                ? t("healthyConfiguration")
-                : t("unhealthyConfiguration")}
-            </p>
-            {!!state.configuration_health.problems?.length && (
-              <ul className="m-0 grid list-disc gap-1 pl-5 wrap-anywhere">
-                {state.configuration_health.problems.map((problem) => (
-                  <li key={problem}>{problem}</li>
-                ))}
-              </ul>
-            )}
-            {!platformReady && (
-              <p
-                role="alert"
-                className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-              >
-                {t("platformUnavailable")}
-              </p>
-            )}
-          </section>
-          <SettingsTabs
-            locale={locale}
-            selectedKey={activeSettingsTab}
-            onSelectionChange={(key) => selectSettingsTab(String(key))}
-          >
-            <SettingsTabPanel id="general" forceMount>
-              <SettingsGeneralSection
-                model={{
-                  locale,
-                  format: {
-                    value: publicationFormat.value ?? "mka",
-                    choices: ["source", "mka", "m4a"],
-                    onChange: savePublicationFormat,
-                  },
-                  concurrency: {
-                    value:
-                      sourceFileConcurrency.value ??
-                      String(state.settings.source_file_concurrency),
-                    invalid:
-                      sourceFileConcurrency.value !== undefined &&
-                      !validConcurrency(sourceFileConcurrency.value),
-                    dirty: sourceFileConcurrency.dirty,
-                    saveDisabled:
-                      effectiveBusy ||
-                      (sourceFileConcurrency.value !== undefined &&
-                        !validConcurrency(sourceFileConcurrency.value)) ||
-                      !sourceFileConcurrency.value,
-                    onChange: sourceFileConcurrency.update,
-                    onSave: saveConcurrency,
-                  },
-                  matchingThreshold: {
-                    value:
-                      matchingThreshold.value ??
-                      formatMatchingThreshold(
-                        state.settings.matching_pair_threshold,
-                      ),
-                    invalid:
-                      matchingThreshold.value !== undefined &&
+            },
+          },
+        ];
+      },
+    ),
+    ready:
+      initialLoadComplete && state
+        ? {
+            health: {
+              title: t("configurationHealth"),
+              healthy: state.configuration_health.healthy,
+              healthyText: t("healthyConfiguration"),
+              unhealthyText: t("unhealthyConfiguration"),
+              problems: state.configuration_health.problems ?? [],
+              unavailableText: platformReady
+                ? undefined
+                : t("platformUnavailable"),
+            },
+            tabs: {
+              selectedKey: activeSettingsTab,
+              onSelectionChange: (key) => selectSettingsTab(String(key)),
+              forceMount: [
+                "general",
+                "folders",
+                "tools",
+                "providers",
+                "genres",
+              ] as const,
+              general: {
+                locale,
+                format: {
+                  value: publicationFormat.value ?? "mka",
+                  choices: ["source", "mka", "m4a"],
+                  onChange: savePublicationFormat,
+                },
+                concurrency: {
+                  value:
+                    sourceFileConcurrency.value ??
+                    String(state.settings.source_file_concurrency),
+                  invalid:
+                    sourceFileConcurrency.value !== undefined &&
+                    !validConcurrency(sourceFileConcurrency.value),
+                  dirty: sourceFileConcurrency.dirty,
+                  saveDisabled:
+                    effectiveBusy ||
+                    (sourceFileConcurrency.value !== undefined &&
+                      !validConcurrency(sourceFileConcurrency.value)) ||
+                    !sourceFileConcurrency.value,
+                  onChange: sourceFileConcurrency.update,
+                  onSave: saveConcurrency,
+                },
+                matchingThreshold: {
+                  value:
+                    matchingThreshold.value ??
+                    formatMatchingThreshold(
+                      state.settings.matching_pair_threshold,
+                    ),
+                  invalid:
+                    matchingThreshold.value !== undefined &&
+                    matchingThresholdNumber(matchingThreshold.value) ===
+                      undefined,
+                  dirty: matchingThreshold.dirty,
+                  saveDisabled:
+                    effectiveBusy ||
+                    (matchingThreshold.value !== undefined &&
                       matchingThresholdNumber(matchingThreshold.value) ===
-                        undefined,
-                    dirty: matchingThreshold.dirty,
-                    saveDisabled:
-                      effectiveBusy ||
-                      (matchingThreshold.value !== undefined &&
-                        matchingThresholdNumber(matchingThreshold.value) ===
-                          undefined) ||
-                      !matchingThreshold.value,
-                    onChange: matchingThreshold.update,
-                    onSave: saveMatchingThreshold,
-                  },
-                  sha256: {
-                    enabled: sha256.value ?? state.settings.sha256_enabled,
-                    onChange: saveSha256,
-                  },
-                  logLevel: {
-                    value: logLevel.value ?? "info",
-                    onChange: (value) =>
-                      saveLogLevel(value as UpdateLogLevelBodyLevel),
-                  },
-                  cleanup: {
-                    enabled:
-                      publicationRemoveSources.value ??
-                      state.settings.publication_remove_sources,
-                    dirty: publicationRemoveSources.dirty,
-                    onChange: savePublicationRemoveSources,
-                  },
-                  albumCompletion: {
-                    enabled:
-                      publicationAutoCompleteAlbums.value ??
-                      state.settings.publication_auto_complete_albums,
-                    dirty: publicationAutoCompleteAlbums.dirty,
-                    onChange: savePublicationAutoCompleteAlbums,
-                  },
-                  failures: generalFailurePresentations(),
-                }}
-              />
-            </SettingsTabPanel>
-            <SettingsTabPanel id="folders" forceMount>
-              <SettingsFoldersSection
-                locale={locale}
-                browse={browseServerDirectory}
-                busy={effectiveBusy}
-                output={{
+                        undefined) ||
+                    !matchingThreshold.value,
+                  onChange: matchingThreshold.update,
+                  onSave: saveMatchingThreshold,
+                },
+                sha256: {
+                  enabled: sha256.value ?? state.settings.sha256_enabled,
+                  onChange: saveSha256,
+                },
+                logLevel: {
+                  value: logLevel.value ?? "info",
+                  onChange: (value) =>
+                    saveLogLevel(value as UpdateLogLevelBodyLevel),
+                },
+                cleanup: {
+                  enabled:
+                    publicationRemoveSources.value ??
+                    state.settings.publication_remove_sources,
+                  dirty: publicationRemoveSources.dirty,
+                  onChange: savePublicationRemoveSources,
+                },
+                albumCompletion: {
+                  enabled:
+                    publicationAutoCompleteAlbums.value ??
+                    state.settings.publication_auto_complete_albums,
+                  dirty: publicationAutoCompleteAlbums.dirty,
+                  onChange: savePublicationAutoCompleteAlbums,
+                },
+                failures: generalFailurePresentations(),
+              },
+              folders: {
+                locale,
+                browse: browseServerDirectory,
+                busy: effectiveBusy,
+                output: {
                   value: outputDirectory.value ?? "",
                   dirty: outputDirectory.dirty,
                   matchesSaved:
@@ -3330,49 +3296,51 @@ export function SettingsScreen() {
                     setOutputDialogError("");
                     setOutputDialog(true);
                   },
-                }}
-                template={{
+                },
+                template: {
                   value:
                     publicationPathTemplate.value ??
                     state.settings.publication_path_template,
                   dirty: publicationPathTemplate.dirty,
                   onChange: publicationPathTemplate.update,
                   onSave: savePublicationTemplate,
-                }}
-                work={{
+                },
+                work: {
                   value: workDirectory.value ?? "",
                   dirty: workDirectory.dirty,
                   onChange: workDirectory.update,
                   onSave: saveWorkDirectory,
-                }}
-              />
-            </SettingsTabPanel>
-            <SettingsTabPanel id="tools" className="grid gap-4" forceMount>
-              {operations.map((operation) =>
-                operation.state === "queued" ||
-                operation.state === "running" ? (
-                  <ToolOperationFollower
-                    key={operation.id}
-                    operation={operation}
-                    onSnapshot={onOperation}
+                },
+              },
+              tools: {
+                operations: operations.map((operation) =>
+                  operation.state === "queued" ||
+                  operation.state === "running" ? (
+                    <ToolOperationFollower
+                      key={operation.id}
+                      operation={operation}
+                      onSnapshot={onOperation}
+                    />
+                  ) : null,
+                ),
+                root: {
+                  locale,
+                  savedDirectory: state.settings.tools_directory,
+                  operationsHref: operations.length
+                    ? "#/operations"
+                    : undefined,
+                },
+                tokenSlot: (
+                  <GitHubTokenForm
+                    hasToken={state.settings.has_github_token}
+                    onChanged={async () => {
+                      await refreshState();
+                    }}
                   />
-                ) : null,
-              )}
-              <SettingsToolsRootHeader
-                locale={locale}
-                savedDirectory={state.settings.tools_directory}
-                operationsHref={operations.length ? "#/operations" : undefined}
-              />
-              <section aria-labelledby="managed-title" className="grid gap-3">
-                <GitHubTokenForm
-                  hasToken={state.settings.has_github_token}
-                  onChanged={async () => {
-                    await refreshState();
-                  }}
-                />
-                <SettingsToolsCatalogSummary
-                  locale={locale}
-                  refresh={{
+                ),
+                catalog: {
+                  locale,
+                  refresh: {
                     checkedAt,
                     busy: catalogBusy,
                     onRefresh: loadCatalogNow,
@@ -3380,11 +3348,11 @@ export function SettingsScreen() {
                       ? feedbackText(catalogError, locale)
                       : undefined,
                     errorRef: catalogAlert,
-                  }}
-                />
-                <SettingsManagedPackageCards
-                  locale={locale}
-                  packages={(["ffmpeg", "fpcalc"] as const).map(
+                  },
+                },
+                packages: {
+                  locale,
+                  packages: (["ffmpeg", "fpcalc"] as const).map(
                     (kind): ManagedPackageCardModel => {
                       const installed = installations.filter(
                         (item) => item.package_kind === kind,
@@ -3470,43 +3438,39 @@ export function SettingsScreen() {
                         },
                       };
                     },
-                  )}
-                />
-                <SettingsToolsMoveEditor
-                  locale={locale}
-                  destination={{
+                  ),
+                },
+                move: {
+                  locale,
+                  destination: {
                     value: moveDirectory,
                     onChange: (directory) => {
                       setMoveDialogError("");
                       setMoveDirectoryValue(directory);
                     },
                     browse: browseServerDirectory,
-                  }}
-                  removeOld={{
+                  },
+                  removeOld: {
                     checked: removeOld,
                     onChange: setRemoveOldValue,
-                  }}
-                  error={
-                    moveDialogError
-                      ? feedbackText(moveDialogError, locale)
-                      : undefined
-                  }
-                  errorRef={moveDialogAlert}
-                  preflight={{
+                  },
+                  error: moveDialogError
+                    ? feedbackText(moveDialogError, locale)
+                    : undefined,
+                  errorRef: moveDialogAlert,
+                  preflight: {
                     disabled: !platformReady || effectiveBusy,
                     onPress: (opener) => {
                       void preflightMove(
                         opener instanceof HTMLElement ? opener : null,
                       );
                     },
-                  }}
-                />
-              </section>
-            </SettingsTabPanel>
-            <SettingsTabPanel id="providers" forceMount>
-              <SettingsProvidersSection
-                locale={locale}
-                snapshot={{
+                  },
+                },
+              },
+              providers: {
+                locale,
+                snapshot: {
                   busy: effectiveBusy,
                   acoustID: {
                     applicationKey: acoustIDApplicationKey,
@@ -3525,8 +3489,8 @@ export function SettingsScreen() {
                     enabled: lrclib.value ?? state.settings.lrclib_enabled,
                     dirty: lrclib.dirty,
                   },
-                }}
-                actions={{
+                },
+                actions: {
                   onAcoustIDApplicationKeyChange: setAcoustIDApplicationKey,
                   onSaveAcoustIDApplicationKey: () =>
                     void saveAcoustIDApplicationKey(),
@@ -3549,86 +3513,84 @@ export function SettingsScreen() {
                   },
                   onSaveAndCheckMusicBrainz: () => void checkMusicBrainz(),
                   onLrclibEnabledChange: saveLrclib,
-                }}
-              />
-            </SettingsTabPanel>
-            <SettingsTabPanel id="genres" forceMount>
-              <GenreCatalogPanel />
-            </SettingsTabPanel>
-          </SettingsTabs>
-        </>
-      )}
-      {error && (
-        <p ref={alert} tabIndex={-1} role="alert">
-          {feedbackText(error, locale)}
-        </p>
-      )}
-      {notice && <p role="status">{t(notice.key, notice.values)}</p>}
-      {state && (
-        <AppButton isDisabled={effectiveBusy} onPress={() => void loadScreen()}>
-          {t("refreshState")}
-        </AppButton>
-      )}
-      {navigationAttempt && (
-        <SettingsLeaveDialog
-          dialogRef={navigationDialogRef}
-          title={t("unsavedSettings")}
-          description={t("navigationPrompt")}
-          error={
-            navigationError ? feedbackText(navigationError, locale) : undefined
+                },
+              },
+              genresSlot: <GenreCatalogPanel />,
+            },
           }
-          actions={{
-            stay: {
-              label: t("stay"),
-              onPress: () => resolveNavigation(navigationAttempt, "stay"),
-            },
-            keepDraft: {
-              label: t("leaveKeepDraft"),
-              onPress: () => keepDraftAndLeave(navigationAttempt),
-            },
-            discardDraft: {
-              label: t("discardDraftLeave"),
-              onPress: () => discardDraftAndLeave(navigationAttempt),
-            },
-            save: {
-              label: t("saveLeave"),
-              onPress: () => void saveDraftAndLeave(navigationAttempt),
-            },
-          }}
-        />
-      )}
-      {conflictConfirmation && (
-        <SettingsConflictDialog
-          title={t("replaceSavedTitle")}
-          message={t("replaceSavedDescription", {
-            label: conflictLabel(conflictConfirmation.group, locale),
-            value: displaySettingValue(conflictConfirmation.currentValue),
-          })}
-          onDismiss={() => setConflictConfirmation(undefined)}
-          actions={{
-            confirm: {
-              label: t("replaceSaved"),
-              onPress: () => {
-                authorizedConflictExpected.current[conflictConfirmation.group] =
-                  conflictConfirmation.currentValue;
-                const confirm = conflictConfirmation.onConfirm;
-                setConflictConfirmation(undefined);
-                confirm();
+        : undefined,
+    feedback: error
+      ? { message: feedbackText(error, locale), alertRef: alert }
+      : undefined,
+    notice: notice ? t(notice.key, notice.values) : undefined,
+    refresh: state
+      ? {
+          label: t("refreshState"),
+          disabled: effectiveBusy,
+          onPress: () => void loadScreen(),
+        }
+      : undefined,
+    dialogs: {
+      leave: navigationAttempt
+        ? {
+            dialogRef: navigationDialogRef,
+            title: t("unsavedSettings"),
+            description: t("navigationPrompt"),
+            error: navigationError
+              ? feedbackText(navigationError, locale)
+              : undefined,
+            actions: {
+              stay: {
+                label: t("stay"),
+                onPress: () => resolveNavigation(navigationAttempt, "stay"),
+              },
+              keepDraft: {
+                label: t("leaveKeepDraft"),
+                onPress: () => keepDraftAndLeave(navigationAttempt),
+              },
+              discardDraft: {
+                label: t("discardDraftLeave"),
+                onPress: () => discardDraftAndLeave(navigationAttempt),
+              },
+              save: {
+                label: t("saveLeave"),
+                onPress: () => void saveDraftAndLeave(navigationAttempt),
               },
             },
-            cancel: {
-              label: t("cancel"),
-              onPress: () => setConflictConfirmation(undefined),
+          }
+        : undefined,
+      conflict: conflictConfirmation
+        ? {
+            title: t("replaceSavedTitle"),
+            message: t("replaceSavedDescription", {
+              label: conflictLabel(conflictConfirmation.group, locale),
+              value: displaySettingValue(conflictConfirmation.currentValue),
+            }),
+            onDismiss: () => setConflictConfirmation(undefined),
+            actions: {
+              confirm: {
+                label: t("replaceSaved"),
+                onPress: () => {
+                  authorizedConflictExpected.current[
+                    conflictConfirmation.group
+                  ] = conflictConfirmation.currentValue;
+                  const confirm = conflictConfirmation.onConfirm;
+                  setConflictConfirmation(undefined);
+                  confirm();
+                },
+              },
+              cancel: {
+                label: t("cancel"),
+                onPress: () => setConflictConfirmation(undefined),
+              },
             },
-          }}
-        />
-      )}
-      {outputDialog && (
-        <SettingsOutputResetDialog
-          locale={locale}
-          busy={effectiveBusy}
-          feedback={
-            !outputDialogError
+          }
+        : undefined,
+      outputReset: outputDialog
+        ? {
+            locale,
+            busy: effectiveBusy,
+            feedback: !outputDialogError
               ? undefined
               : typeof outputDialogError !== "string" &&
                   outputDialogError.key === "waitForRunningOperations"
@@ -3636,42 +3598,42 @@ export function SettingsScreen() {
                 : {
                     kind: "error",
                     detail: feedbackText(outputDialogError, locale),
-                  }
+                  },
+            onConfirm: () => void confirmOutputDirectory(),
+            onDismiss: closeOutputDialog,
           }
-          onConfirm={() => void confirmOutputDirectory()}
-          onDismiss={closeOutputDialog}
-        />
-      )}
-      {installDialog && (
-        <SettingsToolInstallDialog
-          locale={locale}
-          release={installDialog.release}
-          targets={installDialog.plan.targets || []}
-          conflicts={installDialog.plan.conflicts || []}
-          busy={effectiveBusy}
-          {...(installDialogError
-            ? { error: feedbackText(installDialogError, locale) }
-            : {})}
-          onConfirm={() => void confirmInstall()}
-          onDismiss={closeInstallDialog}
-        />
-      )}
-      {movePlan && (
-        <SettingsToolsMoveReviewDialog
-          locale={locale}
-          sourceDirectory={movePlan.sourceDirectory}
-          destinationDirectory={movePlan.directory}
-          removeOld={movePlan.removeOld}
-          managedCount={movePlan.plan.managed_file_count}
-          conflicts={movePlan.plan.conflicts || []}
-          busy={effectiveBusy}
-          confirmDisabled={!platformReady}
-          onConfirm={() => void confirmMove()}
-          onDismiss={closeMoveDialog}
-        />
-      )}
-    </SettingsPageFrame>
-  );
+        : undefined,
+      install: installDialog
+        ? {
+            locale,
+            release: installDialog.release,
+            targets: installDialog.plan.targets || [],
+            conflicts: installDialog.plan.conflicts || [],
+            busy: effectiveBusy,
+            ...(installDialogError
+              ? { error: feedbackText(installDialogError, locale) }
+              : {}),
+            onConfirm: () => void confirmInstall(),
+            onDismiss: closeInstallDialog,
+          }
+        : undefined,
+      move: movePlan
+        ? {
+            locale,
+            sourceDirectory: movePlan.sourceDirectory,
+            destinationDirectory: movePlan.directory,
+            removeOld: movePlan.removeOld,
+            managedCount: movePlan.plan.managed_file_count,
+            conflicts: movePlan.plan.conflicts || [],
+            busy: effectiveBusy,
+            confirmDisabled: !platformReady,
+            onConfirm: () => void confirmMove(),
+            onDismiss: closeMoveDialog,
+          }
+        : undefined,
+    },
+  };
+  return <SettingsScreenView {...view} />;
 }
 
 // Follows only tool operations for automatic settings refresh; progress,

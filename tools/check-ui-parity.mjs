@@ -67,6 +67,7 @@ const pairs = [
       "SettingsOutputResetDialog.tsx",
       "SettingsPageFrame.tsx",
       "SettingsProvidersSection.tsx",
+      "SettingsScreenView.tsx",
       "SettingsTabs.tsx",
       "SettingsToolInstallDialog.tsx",
       "SettingsToolsMoveReview.tsx",

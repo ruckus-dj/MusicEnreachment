@@ -89,7 +89,6 @@ docs/app-design-react/src/features/publication/publicationMessages.ts
 docs/app-design-react/src/features/publication/publicationMetadataDiff.tsx
 docs/app-design-react/src/features/publication/publicationOutput.ts
 docs/app-design-react/src/features/settings/SettingsScreen.tsx
-docs/app-design-react/src/features/settings/SettingsScreenView.tsx
 docs/app-design-react/src/features/settings/ToolLifecycleDemo.ts
 docs/app-design-react/src/features/settings/publicationTemplateDemo.ts
 docs/app-design-react/src/features/settings/settingsDraft.ts
