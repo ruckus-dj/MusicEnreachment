@@ -124,7 +124,10 @@ import {
 	initialSourceRoots,
 	SourcesScreen,
 } from "./providers/sources/SourcesScreen";
-import { parseDemoSourceRoute } from "./providers/sources/sourceDemoRoute";
+import {
+	demoSourcesHref,
+	parseDemoSourceRoute,
+} from "./providers/sources/sourceDemoRoute";
 import { removeRootFromInventory } from "./providers/sources/sourceInventory";
 import {
 	initialSourceProcessingState,
@@ -727,7 +730,7 @@ export function CatalogDemo({
 			<ShellHomeView
 				locale={locale}
 				sources={{ kind: "ready", count: sourceRoots.length }}
-				sourcesHref="#sources"
+				sourcesHref={demoSourcesHref}
 				onOpenIncoming={openIncomingFromHome}
 			/>
 		);

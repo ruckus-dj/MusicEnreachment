@@ -4,12 +4,9 @@ import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import { useViewFocus } from "../../ui/components/useViewFocus";
-import { SourceListHeadingView } from "../../ui/features/sources/SourceListHeadingView";
 import { SourceListPageView } from "../../ui/features/sources/SourceListPageView";
-import { SourcePageFeedbackView } from "../../ui/features/sources/SourcePageFeedbackView";
 import {
   type SourceRegistrationErrorKey,
-  SourceRegistrationView,
   sourceRegistrationMessage,
   useSourceRegistrationFocus,
 } from "../../ui/features/sources/SourceRegistrationView";
@@ -245,74 +242,63 @@ function SourceListScreen() {
     <SourceListPageView
       locale={locale}
       ariaBusy={scans.checking}
-      heading={
-        <SourceListHeadingView
-          locale={locale}
-          headingRef={heading}
-          registration={
-            creating
-              ? undefined
-              : {
-                  id: registrationFocus.triggerId,
-                  onPress: () => {
-                    setFormError(null);
-                    setCreating(true);
-                  },
-                }
-          }
-        />
-      }
+      heading={{
+        headingRef: heading,
+        registration: creating
+          ? undefined
+          : {
+              id: registrationFocus.triggerId,
+              onPress: () => {
+                setFormError(null);
+                setCreating(true);
+              },
+            },
+      }}
       registration={
-        creating && (
-          <SourceRegistrationView
-            locale={locale}
-            name={name}
-            path={path}
-            mode={processingMode}
-            saving={saving}
-            error={registrationError}
-            browse={browseServerDirectory}
-            onNameChange={setName}
-            onPathChange={setPath}
-            onModeChange={setProcessingMode}
-            onSubmit={() => void register()}
-            onCancel={cancelCreate}
-          />
-        )
+        creating
+          ? {
+              name,
+              path,
+              mode: processingMode,
+              saving,
+              error: registrationError,
+              browse: browseServerDirectory,
+              onNameChange: setName,
+              onPathChange: setPath,
+              onModeChange: setProcessingMode,
+              onSubmit: () => void register(),
+              onCancel: cancelCreate,
+            }
+          : undefined
       }
-      feedback={
-        <SourcePageFeedbackView
-          status={busy && sources ? t("requestRunning") : undefined}
-          listError={
-            error && sources
-              ? {
-                  message: renderSourceError(error, locale),
-                  retry: () => void load(),
-                }
-              : undefined
-          }
-          scanErrors={scanErrors.map(({ root, scanError }) => ({
-            id: root.id,
-            name: root.display_name,
-            message: renderSourceError(scanError, locale),
-          }))}
-          discoveryError={
-            scans.discoveryError
-              ? {
-                  message: renderSourceError(scans.discoveryError, locale),
-                  retry: () => void scans.discover(),
-                }
-              : undefined
-          }
-          retryLabel={t("retryLoad")}
-        />
-      }
+      feedback={{
+        status: busy && sources ? t("requestRunning") : undefined,
+        listError:
+          error && sources
+            ? {
+                message: renderSourceError(error, locale),
+                retry: () => void load(),
+              }
+            : undefined,
+        scanErrors: scanErrors.map(({ root, scanError }) => ({
+          id: root.id,
+          name: root.display_name,
+          message: renderSourceError(scanError, locale),
+        })),
+        discoveryError: scans.discoveryError
+          ? {
+              message: renderSourceError(scans.discoveryError, locale),
+              retry: () => void scans.discover(),
+            }
+          : undefined,
+        retryLabel: t("retryLoad"),
+      }}
       rows={rows}
       listState={listState}
       onScan={startScan}
       listDisabled={scanUnavailable && listState === undefined}
       loaded={sources !== undefined}
-      cleanup={sources ? <SourceArtifactCleanupPanel /> : undefined}
+      cleanup={{ Component: SourceArtifactCleanupPanel }}
     />
   );
 }

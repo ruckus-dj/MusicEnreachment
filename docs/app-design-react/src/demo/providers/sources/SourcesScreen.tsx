@@ -7,10 +7,8 @@ import {
 } from "react";
 import { type Locale, useI18n } from "../../../app/i18n";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
-import { SourceArtifactCleanupView } from "../../../ui/features/sources/SourceArtifactCleanupView";
 import { SourceInspectorView } from "../../../ui/features/sources/SourceInspectorView";
 import { SourceInventoryPanel } from "../../../ui/features/sources/SourceInventoryPanel";
-import { SourceListHeadingView } from "../../../ui/features/sources/SourceListHeadingView";
 import { SourceListPageView } from "../../../ui/features/sources/SourceListPageView";
 import {
 	MissingSourceView,
@@ -19,7 +17,6 @@ import {
 } from "../../../ui/features/sources/SourcePageFeedbackView";
 import {
 	type SourceRegistrationErrorKey,
-	SourceRegistrationView,
 	sourceRegistrationMessage,
 	useSourceRegistrationFocus,
 } from "../../../ui/features/sources/SourceRegistrationView";
@@ -43,7 +40,11 @@ import {
 import type { SourceFiles } from "../library/catalogData";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
 import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
-import { demoSourceLocationHref } from "./sourceDemoRoute";
+import {
+	demoSourceLocationHref,
+	demoSourceRootHref,
+	demoSourcesHref,
+} from "./sourceDemoRoute";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
 import {
 	inventoryPathStale,
@@ -245,7 +246,7 @@ export function SourcesScreen({
 		notify("sourceAdded");
 		// Registration only opens the root. Registering never scans, processes,
 		// or invents scan results.
-		window.location.hash = `sources/${encodeURIComponent(id)}`;
+		window.location.hash = demoSourceRootHref(id);
 	};
 	const saveRoot = async (change: SourceRootChange): Promise<boolean> => {
 		if (!root) return false;
@@ -320,11 +321,12 @@ export function SourcesScreen({
 					notes: item.inventoryCount === 0 ? [m("noInventory")] : undefined,
 				}
 			: { label: m("neverScanned") },
-		href: `#sources/${encodeURIComponent(item.id)}`,
+		href: demoSourceRootHref(item.id),
 	}));
 
-	const noticeNode = notice ? (
-		<SourceNoticeView message={m(notice.key, notice.values)} />
+	const noticeMessage = notice ? m(notice.key, notice.values) : undefined;
+	const noticeNode = noticeMessage ? (
+		<SourceNoticeView message={noticeMessage} />
 	) : null;
 
 	if (selectedRootId && selectedLocationId)
@@ -359,7 +361,7 @@ export function SourcesScreen({
 								path={root.path}
 								headingId="source-title"
 								headingRef={rootHeading}
-								sourcesHref="#sources"
+								sourcesHref={demoSourcesHref}
 								incomingHref={root.available === true ? "#review" : undefined}
 							/>
 						}
@@ -468,72 +470,57 @@ export function SourcesScreen({
 					<MissingSourceView
 						title={m("sourceNotFound")}
 						id={selectedRootId}
-						back={{ href: "#sources", label: m("backToSources") }}
+						back={{ href: demoSourcesHref, label: m("backToSources") }}
 					/>
 				)
 			) : (
 				<SourceListPageView
 					locale={locale}
-					heading={
-						<SourceListHeadingView
-							locale={locale}
-							registration={
-								adding
-									? undefined
-									: {
-											id: registrationFocus.triggerId,
-											onPress: () => {
-												setAdding(true);
-												setName("");
-												setPath("/mnt/music");
-												setMode("");
-												setRegistrationError(null);
-											},
-										}
-							}
-						/>
-					}
+					heading={{
+						registration: adding
+							? undefined
+							: {
+									id: registrationFocus.triggerId,
+									onPress: () => {
+										setAdding(true);
+										setName("");
+										setPath("/mnt/music");
+										setMode("");
+										setRegistrationError(null);
+									},
+								},
+					}}
 					registration={
-						adding && (
-							<SourceRegistrationView
-								locale={locale}
-								name={name}
-								path={path}
-								mode={mode}
-								error={
-									registrationError
+						adding
+							? {
+									name,
+									path,
+									mode,
+									error: registrationError
 										? sourceRegistrationMessage(locale, registrationError)
-										: undefined
+										: undefined,
+									browse: browseDemoDirectory,
+									resolveInitialPath: demoDirectoryStart,
+									onNameChange: setName,
+									onPathChange: setPath,
+									onModeChange: setMode,
+									onSubmit: register,
+									onCancel: () => {
+										registrationFocus.restoreOnClose();
+										setAdding(false);
+										setRegistrationError(null);
+									},
 								}
-								browse={browseDemoDirectory}
-								resolveInitialPath={demoDirectoryStart}
-								onNameChange={setName}
-								onPathChange={setPath}
-								onModeChange={setMode}
-								onSubmit={register}
-								onCancel={() => {
-									registrationFocus.restoreOnClose();
-									setAdding(false);
-									setRegistrationError(null);
-								}}
-							/>
-						)
+							: undefined
 					}
-					feedback={noticeNode}
+					feedback={noticeMessage}
 					rows={rows}
 					onScan={(id) => {
 						const source = roots.find((item) => item.id === id);
 						if (source) startScan(source);
 					}}
 					loaded
-					cleanup={<SourceArtifactCleanupView {...cleanup} />}
-					footer={
-						<SourceWorkDirectoryView
-							label={m("workDirectory")}
-							path={workDirectory}
-							link={{ href: "#/settings", label: m("configureInSettings") }}
-						/>
-					}
+					cleanup={cleanup}
 				/>
 			)}
 			{removal && (
@@ -560,7 +547,7 @@ export function SourcesScreen({
 						onRemove(removal.id);
 						notify("rootRemoved");
 						setRemoval(null);
-						window.location.hash = "sources";
+						window.location.hash = demoSourcesHref;
 					}}
 				/>
 			)}

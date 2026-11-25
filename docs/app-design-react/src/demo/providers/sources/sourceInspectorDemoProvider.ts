@@ -7,6 +7,7 @@ import type {
 import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import type { SourceFiles } from "../library/catalogData";
 import type { SourceRoot } from "./SourcesScreen";
+import { demoSourceRootHref, demoSourcesHref } from "./sourceDemoRoute";
 import {
 	inventoryPathStale,
 	retainedInventoryLocations,
@@ -100,8 +101,8 @@ export function sourceInspectorDemoProvider({
 			: undefined;
 	return {
 		locale,
-		sourcesHref: "#sources",
-		sourceHref: `#sources/${encodeURIComponent(rootId)}`,
+		sourcesHref: demoSourcesHref,
+		sourceHref: demoSourceRootHref(rootId),
 		file:
 			root && location
 				? {

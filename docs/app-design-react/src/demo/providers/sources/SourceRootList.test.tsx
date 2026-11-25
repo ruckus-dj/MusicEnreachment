@@ -23,7 +23,7 @@ it("shows saved inventory independently from directory availability", () => {
 						label: "12 files",
 						notes: ["From the last successful scan"],
 					},
-					href: "#sources/archive",
+					href: "#/sources/archive",
 				},
 			]}
 		/>,
@@ -33,7 +33,7 @@ it("shows saved inventory independently from directory availability", () => {
 	);
 	expect(grid.getByRole("link", { name: "Archive" })).toHaveAttribute(
 		"href",
-		"#sources/archive",
+		"#/sources/archive",
 	);
 	expect(grid.getByText("Unavailable")).toBeInTheDocument();
 	expect(grid.getByText("12 files")).toBeInTheDocument();

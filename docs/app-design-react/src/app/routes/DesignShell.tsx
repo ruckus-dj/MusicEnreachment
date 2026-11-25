@@ -1,4 +1,8 @@
 import type { ReactNode } from "react";
+import {
+	demoSourcesHref,
+	parseDemoSourceRoute,
+} from "../../demo/providers/sources/sourceDemoRoute";
 import { ApplicationFrame } from "../../ui/shell/ShellStartupView";
 import {
 	type ShellRouteFamily,
@@ -24,8 +28,10 @@ function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (path === "/setup") return "setup";
 	if (path === "/operations") return "operations";
 	if (path === "/settings") return "settings";
+	if (parseDemoSourceRoute(path)) return "sources";
 	const route = path.split("/", 1)[0];
-	if (route === "operations" || route === "settings") return undefined;
+	if (route === "operations" || route === "settings" || route === "sources")
+		return undefined;
 	if (libraryRoutes.includes(route)) return "library";
 	if (route === "match") return "review";
 	return shellSectionId(route);
@@ -54,7 +60,7 @@ export function DesignShell({
 						review: "#review",
 						library: "#library",
 						local: "#local",
-						sources: "#sources",
+						sources: demoSourcesHref,
 						operations: "#/operations",
 						settings: "#/settings",
 					},

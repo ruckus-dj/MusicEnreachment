@@ -110,7 +110,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	const libraryLink = within(
 		screen.getByRole("grid", { name: "Connected directories" }),
 	).getByRole("link", { name: /Музыкальная библиотека/ });
-	expect(libraryLink).toHaveAttribute("href", "#sources/root-library");
+	expect(libraryLink).toHaveAttribute("href", "#/sources/root-library");
 	expect(lastProcessing()?.files).toEqual([]);
 
 	// Registration: create a source and submit.
@@ -127,7 +127,9 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	);
 	if (!added) throw new Error("Registration did not add a source root");
 	// Opening the new root is the whole result of registration.
-	expect(window.location.hash).toBe(`#sources/${encodeURIComponent(added.id)}`);
+	expect(window.location.hash).toBe(
+		`#/sources/${encodeURIComponent(added.id)}`,
+	);
 	expect(added.available).toBeNull();
 	expect(added.lastSuccessfulScanAt).toBeUndefined();
 	expect(added.inventoryCount).toBeUndefined();
@@ -184,7 +186,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(lastProcessing()?.files).toEqual([]);
 
 	// Start from the list without navigating; the detail adopts the same scan.
-	window.location.hash = "sources";
+	window.location.hash = "/sources";
 	view.rerender(element(undefined, onRoots, onProcessingState));
 	const grid = within(
 		screen.getByRole("grid", { name: "Connected directories" }),
@@ -200,7 +202,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(
 		grid.getByRole("button", { name: "Scan: Резервный источник" }),
 	).toBeEnabled();
-	expect(window.location.hash).toBe("#sources");
+	expect(window.location.hash).toBe("#/sources");
 	view.rerender(element("root-library", onRoots, onProcessingState));
 	expect(screen.getByText("Scan queued.")).toBeInTheDocument();
 	expect(lastProcessing()?.files).toEqual([]);
@@ -225,7 +227,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 			"link",
 			{ name: "01 - First Light.flac" },
 		),
-	).toHaveAttribute("href", "#sources/root-library/locations/loc-1");
+	).toHaveAttribute("href", "#/sources/root-library/locations/loc-1");
 	expect(
 		screen.queryByRole("heading", { name: "File processing" }),
 	).not.toBeInTheDocument();
