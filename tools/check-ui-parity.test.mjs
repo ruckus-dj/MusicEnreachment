@@ -289,6 +289,16 @@ test("hosts can import route model types but not bypass the portable outlet", ()
       model: "SettingsScreenViewProps",
       component: "SettingsScreenView",
     },
+    {
+      view: "../ui/features/sources/SourceListPageView",
+      model: "SourceListPageViewProps",
+      component: "SourceListPageView",
+    },
+    {
+      view: "../ui/features/sources/SourceRootDetailView",
+      model: "SourceRootDetailViewProps",
+      component: "SourceRootDetailView",
+    },
   ]) {
     const typeOnly = {
       path: "app/model.ts",

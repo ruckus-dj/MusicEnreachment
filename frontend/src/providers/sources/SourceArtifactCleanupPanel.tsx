@@ -1,6 +1,6 @@
 import { type ReactNode, useMemo } from "react";
 import { useI18n } from "../../app/i18n/host";
-import { SourceCleanupDataBinder } from "../../ui/features/sources/SourceListPageView";
+import { SourceCleanupDataBinder } from "../../ui/features/sources/SourceCleanupOutlet";
 import { renderSourceError } from "./sourcesApi";
 import { useSourceArtifactCleanup } from "./useSourceArtifactCleanup";
 

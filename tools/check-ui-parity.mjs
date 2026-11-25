@@ -35,6 +35,9 @@ const OUTLET_OWNED_VIEWS = new Set([
   "ui/features/local-catalog/LocalCatalogScreenView",
   "ui/features/operations/OperationsScreenView",
   "ui/features/settings/SettingsScreenView",
+  "ui/features/sources/SourceInspectorView",
+  "ui/features/sources/SourceListPageView",
+  "ui/features/sources/SourceRootDetailView",
 ]);
 // Portable UI behavior is only equivalent at equal resolved versions. Keep the
 // explicit shared runtime and build set; this is not a full resolver.

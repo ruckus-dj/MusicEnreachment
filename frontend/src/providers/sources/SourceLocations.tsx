@@ -11,11 +11,11 @@ import type {
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import type { SourceInventoryStatus } from "../../ui/features/sources/SourceInventoryView";
 import {
   SourceInventoryDataBinder,
   type SourceInventoryModel,
-} from "../../ui/features/sources/SourceRootDetailView";
+} from "../../ui/features/sources/SourceInventoryOutlet";
+import type { SourceInventoryStatus } from "../../ui/features/sources/SourceInventoryView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import {
   inventoryAvailabilityNote,
