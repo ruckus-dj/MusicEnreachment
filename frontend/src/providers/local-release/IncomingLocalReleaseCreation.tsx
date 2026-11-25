@@ -14,6 +14,10 @@ import { useI18n } from "../../app/i18n/host";
 import { IncomingCreationDataBinder } from "../../ui/features/incoming/IncomingCreationOutlet";
 import type { LocalReleaseEditorProps } from "../../ui/features/local-release/LocalReleaseEditor";
 import {
+  LocalReleaseGenreCatalogBinder,
+  type LocalReleaseGenreCatalogProviderProps,
+} from "../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
+import {
   checkLocalReleaseEditions,
   findLocalReleaseArtists,
   findLocalReleaseRecordings,
@@ -23,7 +27,7 @@ import {
   catalogCreateIdentity,
   writeCatalogRecord,
 } from "./localReleaseWrites";
-import { ProviderCatalogReleaseGenreField } from "./ProviderCatalogReleaseGenreField";
+import { useProviderGenreCatalog } from "./ProviderCatalogGenreField";
 
 function uniqueTag(files: readonly IncomingFileResponse[], key: string) {
   const distinct = new Map<string, string>();
@@ -43,6 +47,18 @@ const options = (signal?: AbortSignal): RequestInit => ({
   cache: "no-store",
   signal,
 });
+
+function LiveLocalReleaseGenreCatalogProvider({
+  children,
+}: LocalReleaseGenreCatalogProviderProps) {
+  const { locale } = useI18n();
+  const catalog = useProviderGenreCatalog(locale);
+  return (
+    <LocalReleaseGenreCatalogBinder catalog={catalog}>
+      {children}
+    </LocalReleaseGenreCatalogBinder>
+  );
+}
 
 export function IncomingLocalReleaseCreation({
   group,
@@ -110,9 +126,7 @@ export function IncomingLocalReleaseCreation({
     },
     findRecordings: findLocalReleaseRecordings,
     findArtists: findLocalReleaseArtists,
-    renderGenreField: (props) => (
-      <ProviderCatalogReleaseGenreField {...props} />
-    ),
+    genreCatalogProvider: LiveLocalReleaseGenreCatalogProvider,
     saveArtist: async (data) => {
       const artist = formProviderRecord(
         await writeCatalogRecord(

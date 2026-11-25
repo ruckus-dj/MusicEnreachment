@@ -3,10 +3,9 @@ import type { Locale } from "../../i18n/types";
 import type { GenrePickerCatalog } from "../library/GenrePicker";
 import { LocalReleaseCancelDialog } from "../local-release/LocalReleaseCancelDialog";
 import { LocalReleaseForm } from "../local-release/LocalReleaseForm";
-import {
-  LocalReleaseGenreCatalogOutlet,
-  type LocalReleaseGenreCatalogProviderProps,
-  type LocalReleaseGenreSelectionAdapter,
+import type {
+  LocalReleaseGenreCatalogProviderProps,
+  LocalReleaseGenreSelectionAdapter,
 } from "../local-release/LocalReleaseGenreCatalogOutlet";
 import type {
   FindLocalArtists,
@@ -96,27 +95,24 @@ export function OwnCatalogReleaseEditor({
         backDisabled={form.savingRelease || form.writingCatalogRecord}
         onBack={requestBack}
       >
-        <LocalReleaseForm
-          locale={locale}
-          form={form}
-          heading={m("recordDetails")}
-          suggestedArtist=""
-          artists={artists}
-          recordings={recordings}
-          findRecordings={findRecordings}
-          saveRecording={saveRecording}
-          findArtists={findArtists}
-          saveArtist={saveArtist}
-          renderGenreField={(props) => (
-            <GenreCatalogProvider
-              model={genreCatalogModel}
-              selection={genreCatalogSelection}
-            >
-              <LocalReleaseGenreCatalogOutlet {...props} />
-            </GenreCatalogProvider>
-          )}
-          saveLabel={m("save")}
-        />
+        <GenreCatalogProvider
+          model={genreCatalogModel}
+          selection={genreCatalogSelection}
+        >
+          <LocalReleaseForm
+            locale={locale}
+            form={form}
+            heading={m("recordDetails")}
+            suggestedArtist=""
+            artists={artists}
+            recordings={recordings}
+            findRecordings={findRecordings}
+            saveRecording={saveRecording}
+            findArtists={findArtists}
+            saveArtist={saveArtist}
+            saveLabel={m("save")}
+          />
+        </GenreCatalogProvider>
       </OwnCatalogEditorShell>
       <LocalReleaseCancelDialog
         copy={copy}

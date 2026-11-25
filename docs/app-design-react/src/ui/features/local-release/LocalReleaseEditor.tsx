@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type ComponentType, useEffect, useRef, useState } from "react";
 import { Button } from "react-aria-components";
 import { LocalReleaseCancelDialog } from "./LocalReleaseCancelDialog";
-import {
-	LocalReleaseForm,
-	type RenderLocalReleaseGenreField,
-} from "./LocalReleaseForm";
+import { LocalReleaseForm } from "./LocalReleaseForm";
+import type { LocalReleaseGenreCatalogProviderProps } from "./LocalReleaseGenreCatalogOutlet";
 import type {
 	FindLocalArtists,
 	LocalRecordingDraft,
@@ -56,7 +54,8 @@ export type LocalReleaseEditorProps = {
 	) => LocalReleaseRecording | Promise<LocalReleaseRecording>;
 	findArtists: FindLocalArtists;
 	saveArtist: SaveLocalArtist;
-	renderGenreField: RenderLocalReleaseGenreField;
+	/** Stable host provider mounted with the edit form. */
+	genreCatalogProvider: ComponentType<LocalReleaseGenreCatalogProviderProps>;
 	onUseRelease: (id: string) => void;
 	onSave: (data: LocalReleaseDraft) => void | Promise<void>;
 	onCancel: () => void;
@@ -65,6 +64,7 @@ export type LocalReleaseEditorProps = {
 export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 	const { locale, incomingLabel, onCancel } = props;
 	const copy = localReleaseMessages[locale];
+	const GenreCatalogProvider = props.genreCatalogProvider;
 	const lookup = useLookup<ReleaseCheckHit>();
 	const [step, setStep] = useState<"check" | "edit">("check");
 	const [returningToCheck, setReturningToCheck] = useState(false);
@@ -205,24 +205,25 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 						</Button>
 					</section>
 				) : (
-					<LocalReleaseForm
-						locale={locale}
-						form={form}
-						heading={copy.editStep}
-						titleReadOnly
-						onRecheck={() => {
-							setReturningToCheck(true);
-							setStep("check");
-						}}
-						suggestedArtist={props.suggestedArtist}
-						artists={props.artists}
-						recordings={props.recordings}
-						findRecordings={props.findRecordings}
-						saveRecording={props.saveRecording}
-						findArtists={props.findArtists}
-						saveArtist={props.saveArtist}
-						renderGenreField={props.renderGenreField}
-					/>
+					<GenreCatalogProvider>
+						<LocalReleaseForm
+							locale={locale}
+							form={form}
+							heading={copy.editStep}
+							titleReadOnly
+							onRecheck={() => {
+								setReturningToCheck(true);
+								setStep("check");
+							}}
+							suggestedArtist={props.suggestedArtist}
+							artists={props.artists}
+							recordings={props.recordings}
+							findRecordings={props.findRecordings}
+							saveRecording={props.saveRecording}
+							findArtists={props.findArtists}
+							saveArtist={props.saveArtist}
+						/>
+					</GenreCatalogProvider>
 				)}
 			</section>
 			<LocalReleaseCancelDialog

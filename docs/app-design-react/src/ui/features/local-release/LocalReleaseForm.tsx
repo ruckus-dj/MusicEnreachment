@@ -1,6 +1,7 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Checkbox } from "react-aria-components";
 import { LocalRecordingArtistField } from "./LocalRecordingArtistField";
+import { LocalReleaseGenreCatalogOutlet } from "./LocalReleaseGenreCatalogOutlet";
 import { LocalReleaseRecordingPicker } from "./LocalReleaseRecordingPicker";
 import {
 	type FindLocalArtists,
@@ -8,7 +9,6 @@ import {
 	formatLocalDuration,
 	type LocalRecordingDraft,
 	type LocalReleaseArtist,
-	type LocalReleaseGenre,
 	type LocalReleaseRecording,
 	parseLocalDuration,
 	type SaveLocalArtist,
@@ -26,17 +26,6 @@ import {
 	secondary,
 } from "./localReleaseUi";
 import type { LocalReleaseFormController } from "./useLocalReleaseForm";
-
-export type LocalReleaseGenreFieldProps = {
-	locale: "ru" | "en";
-	value: readonly LocalReleaseGenre[];
-	onChange: (next: LocalReleaseGenre[]) => void;
-	disabled?: boolean;
-};
-
-export type RenderLocalReleaseGenreField = (
-	props: LocalReleaseGenreFieldProps,
-) => ReactNode;
 
 export type LocalReleaseFormProps = {
 	locale: "ru" | "en";
@@ -56,7 +45,6 @@ export type LocalReleaseFormProps = {
 	) => LocalReleaseRecording | Promise<LocalReleaseRecording>;
 	findArtists: FindLocalArtists;
 	saveArtist: SaveLocalArtist;
-	renderGenreField: RenderLocalReleaseGenreField;
 	saveLabel?: string;
 };
 
@@ -73,7 +61,6 @@ export function LocalReleaseForm({
 	saveRecording,
 	findArtists,
 	saveArtist,
-	renderGenreField,
 	saveLabel,
 }: LocalReleaseFormProps) {
 	const copy = localReleaseMessages[locale];
@@ -288,12 +275,12 @@ export function LocalReleaseForm({
 					</div>
 				</details>
 				<div className="grid gap-2 border-t border-[var(--line)] pt-2">
-					{renderGenreField({
-						locale,
-						value: form.genres,
-						onChange: form.setGenres,
-						disabled: form.savingRelease,
-					})}
+					<LocalReleaseGenreCatalogOutlet
+						locale={locale}
+						value={form.genres}
+						onChange={form.setGenres}
+						disabled={form.savingRelease}
+					/>
 					<small>{copy.releaseGenreExplanation}</small>
 				</div>
 			</section>

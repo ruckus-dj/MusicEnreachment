@@ -1,9 +1,38 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import type { GenrePickerCatalog } from "../../../ui/features/library/GenrePicker";
 import {
 	LocalReleaseEditor,
 	type LocalReleaseEditorProps,
 } from "../../../ui/features/local-release/LocalReleaseEditor";
+import {
+	LocalReleaseGenreCatalogBinder,
+	type LocalReleaseGenreCatalogProviderProps,
+} from "../../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
+
+const genreCatalog: GenrePickerCatalog = {
+	options: [],
+	query: "",
+	onQueryChange: () => undefined,
+	loading: false,
+	catalogError: "",
+	onClearCatalogError: () => undefined,
+	onRetryCatalog: () => undefined,
+	catalogStatusLoading: false,
+	catalogStatusError: "",
+	onOpenCatalog: () => undefined,
+	onRetryStatus: () => undefined,
+};
+
+function TestGenreCatalogProvider({
+	children,
+}: LocalReleaseGenreCatalogProviderProps) {
+	return (
+		<LocalReleaseGenreCatalogBinder catalog={genreCatalog}>
+			{children}
+		</LocalReleaseGenreCatalogBinder>
+	);
+}
 
 it("requires a successful search and saves a missing recording separately from the release", async () => {
 	const onCancel = vi.fn();
@@ -32,7 +61,7 @@ it("requires a successful search and saves a missing recording separately from t
 			checkRelease={checkRelease}
 			findRecordings={async () => []}
 			findArtists={async () => []}
-			renderGenreField={() => null}
+			genreCatalogProvider={TestGenreCatalogProvider}
 			saveArtist={(data) => ({
 				id: "new-artist",
 				name: data.name,
@@ -147,7 +176,7 @@ it("preserves provider credits and uses commas for new Local recording artists",
 			locale="en"
 			incomingLabel="Northern Lines"
 			suggestedArtist="Various Artists"
-			renderGenreField={() => null}
+			genreCatalogProvider={TestGenreCatalogProvider}
 			suggestedTitle="Northern Lines"
 			artists={artists}
 			recordings={[]}

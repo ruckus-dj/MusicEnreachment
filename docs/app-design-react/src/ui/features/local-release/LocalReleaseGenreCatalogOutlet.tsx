@@ -6,8 +6,14 @@ import {
   type GenreReference,
 } from "../library/GenrePicker";
 import { genreMessages } from "../library/genreMessages";
-import type { LocalReleaseGenreFieldProps } from "./LocalReleaseForm";
 import type { LocalReleaseGenre } from "./localReleaseFormModel";
+
+export type LocalReleaseGenreFieldProps = {
+  locale: "ru" | "en";
+  value: readonly LocalReleaseGenre[];
+  onChange: (next: LocalReleaseGenre[]) => void;
+  disabled?: boolean;
+};
 
 /**
  * Optional host projection for stored draft rows. The demo host uses it to
