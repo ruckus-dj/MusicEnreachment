@@ -18,6 +18,7 @@ import {
 	type SourceMessageKey,
 	sourceMessage,
 } from "../../../ui/features/sources/sourceInventoryMessages";
+import { sourceMessage as sharedSourceMessage } from "../../../ui/features/sources/sourceMessages";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -105,6 +106,22 @@ const scanDate = (locale: Locale, value: string) =>
 		dateStyle: "short",
 		timeStyle: "short",
 	}).format(new Date(value));
+
+function countLabel(locale: Locale, count: number) {
+	const language = locale === "ru" ? "ru-RU" : "en-US";
+	const category = new Intl.PluralRules(language).select(count);
+	const key =
+		category === "one"
+			? "fileCountOne"
+			: locale !== "ru"
+				? "fileCountOther"
+				: category === "few"
+					? "fileCountFew"
+					: "fileCountMany";
+	return sharedSourceMessage(locale, key, {
+		count: new Intl.NumberFormat(language).format(count),
+	});
+}
 
 export function SourcesScreen({
 	roots,
@@ -284,10 +301,10 @@ export function SourcesScreen({
 
 	const scanLabel = root?.lastSuccessfulScanAt
 		? scanDate(locale, root.lastSuccessfulScanAt)
-		: m("neverScanned");
+		: sharedSourceMessage(locale, "neverScanned");
 	const inventoryLabel = root?.lastSuccessfulScanAt
-		? m("inventoryCount", { count: root.inventoryCount ?? 0 })
-		: m("neverScanned");
+		? countLabel(locale, root.inventoryCount ?? 0)
+		: sharedSourceMessage(locale, "neverScanned");
 
 	const rows: SourceRootListRow[] = roots.map((item) => ({
 		id: item.id,
@@ -309,10 +326,10 @@ export function SourcesScreen({
 			: undefined,
 		inventory: item.lastSuccessfulScanAt
 			? {
-					label: m("inventoryCount", { count: item.inventoryCount ?? 0 }),
+					label: countLabel(locale, item.inventoryCount ?? 0),
 					notes: item.inventoryCount === 0 ? [m("noInventory")] : undefined,
 				}
-			: { label: m("neverScanned") },
+			: { label: sharedSourceMessage(locale, "neverScanned") },
 		href: demoSourceRootHref(item.id),
 	}));
 
@@ -371,7 +388,6 @@ export function SourcesScreen({
 										: (demoScanState ?? { kind: "idle" }),
 								onStart: () => startScan(root),
 								onRetry: () => startScan(root),
-								startDisabled: root.available === false,
 							},
 							inventory: {
 								path: inventoryPath,

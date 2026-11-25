@@ -163,7 +163,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	expect(
 		screen.getByRole("heading", { name: "Новый источник" }),
 	).toBeInTheDocument();
-	expect(screen.getAllByText("Not scanned yet").length).toBeGreaterThan(0);
+	expect(screen.getAllByText("Never scanned").length).toBeGreaterThan(0);
 	expect(
 		screen.queryByRole("table", { name: "Inventory files" }),
 	).not.toBeInTheDocument();
@@ -229,7 +229,7 @@ it("registers without scanning, opens its route, and scans only on explicit star
 	const scannedRoot = lastRoots().find((root) => root.id === "root-library");
 	expect(scannedRoot?.lastSuccessfulScanAt).toBeTruthy();
 	expect(scannedRoot?.inventoryCount).toBe(1);
-	expect(screen.getByText("Inventory records: 1")).toBeInTheDocument();
+	expect(screen.getByText("1 file")).toBeInTheDocument();
 	// The removed scan-started notice is not fabricated by the adapter.
 	expect(screen.queryByText(/processing started for/)).not.toBeInTheDocument();
 	const processing = lastProcessing();

@@ -51,8 +51,13 @@ export function useSourceScanDemoProvider({
 	}, [workDirectory, updateProcessing]);
 
 	function start(root: SourceRoot) {
-		if (root.available === false || active.current.has(root.id)) return;
-		const fail = root.id === "root-backup" && !attempts.current.has(root.id);
+		if (active.current.has(root.id)) return;
+		// The last availability check is informational: an enabled root may still
+		// start a scan. An unavailable fixture root deterministically fails instead
+		// of replacing its retained inventory with invented results.
+		const fail =
+			root.available === false ||
+			(root.id === "root-backup" && !attempts.current.has(root.id));
 		attempts.current.add(root.id);
 		active.current.add(root.id);
 		const report = (state: DemoScanState) =>
