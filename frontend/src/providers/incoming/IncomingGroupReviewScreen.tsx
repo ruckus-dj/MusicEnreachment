@@ -1,5 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
@@ -25,10 +32,8 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import type { ApplicationIncomingListModel } from "../../ui/app/ApplicationRouteOutlet";
 import { focusView } from "../../ui/components/useViewFocus";
-import {
-  IncomingCreationFallbackView,
-  IncomingWorkspaceView,
-} from "../../ui/features/incoming/IncomingWorkspaceView";
+import type { IncomingCreationSource } from "../../ui/features/incoming/IncomingCreationOutlet";
+import { IncomingWorkspaceView } from "../../ui/features/incoming/IncomingWorkspaceView";
 import {
   type IncomingFeedback,
   type IncomingMessageKey,
@@ -110,6 +115,11 @@ type AuthorityIntent = {
   action: "automatic";
   body: MatchingReturnAutomaticBody;
 };
+
+type IncomingCreationEditorProps = Omit<
+  ComponentProps<typeof IncomingLocalReleaseCreation>,
+  "children"
+>;
 
 type IncomingError = Error & {
   incomingMessageKey?: IncomingMessageKey;
@@ -1664,54 +1674,59 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     panel: groupsPanel,
   };
 
-  const creation = creatingLocalRelease ? (
-    group && groupsQuery.data ? (
-      <IncomingLocalReleaseCreation
-        key={group.id}
-        group={group}
-        files={files.filter((file) =>
-          [...(group.members ?? []), ...(group.unready_members ?? [])].includes(
-            file.variant_id,
-          ),
-        )}
-        label={incomingGroupNameText(groupNames.get(group.id), locale)}
-        onCancel={() => window.location.replace(matchingHref)}
-        onSelect={(id, kind) => {
-          if (window.location.hash !== creationHash) return;
-          const next = incomingGroupMatchingHref(
-            group.id,
-            kind === "local" ? "" : routeReleaseId,
-            {
-              localReleaseId: kind === "local" ? id : undefined,
-              prepareReleaseId: kind === "musicbrainz" ? id : undefined,
+  const creation: IncomingCreationSource<IncomingCreationEditorProps> | null =
+    creatingLocalRelease
+      ? group && groupsQuery.data
+        ? {
+            kind: "editor",
+            key: group.id,
+            Component: IncomingLocalReleaseCreation,
+            props: {
+              group,
+              files: files.filter((file) =>
+                [
+                  ...(group.members ?? []),
+                  ...(group.unready_members ?? []),
+                ].includes(file.variant_id),
+              ),
+              label: incomingGroupNameText(groupNames.get(group.id), locale),
+              onCancel: () => window.location.replace(matchingHref),
+              onSelect: (id, kind) => {
+                if (window.location.hash !== creationHash) return;
+                const next = incomingGroupMatchingHref(
+                  group.id,
+                  kind === "local" ? "" : routeReleaseId,
+                  {
+                    localReleaseId: kind === "local" ? id : undefined,
+                    prepareReleaseId: kind === "musicbrainz" ? id : undefined,
+                  },
+                );
+                window.location.replace(next);
+              },
             },
-          );
-          window.location.replace(next);
-        }}
-      />
-    ) : (
-      <IncomingCreationFallbackView
-        backHref={matchingHref}
-        backLabel={copy.tabMatching}
-        feedback={
-          groupsQuery.isLoading
-            ? { kind: "loading", message: copy.loadingGroups }
-            : {
-                kind: "error",
-                message: groupsQuery.isError
-                  ? incomingFeedbackText(
-                      locale,
-                      errorText(groupsQuery.error, "groupsLoadError"),
-                    )
-                  : copy.groupNotFound,
-              }
-        }
-      />
-    )
-  ) : null;
+          }
+        : {
+            kind: "fallback",
+            fallback: {
+              backHref: matchingHref,
+              backLabel: copy.tabMatching,
+              feedback: groupsQuery.isLoading
+                ? { kind: "loading", message: copy.loadingGroups }
+                : {
+                    kind: "error",
+                    message: groupsQuery.isError
+                      ? incomingFeedbackText(
+                          locale,
+                          errorText(groupsQuery.error, "groupsLoadError"),
+                        )
+                      : copy.groupNotFound,
+                  },
+            },
+          }
+      : null;
 
   return (
-    <IncomingWorkspaceView
+    <IncomingWorkspaceView<IncomingCreationEditorProps>
       creation={creation}
       list={listModel}
       matching={groupId ? matchingModel : null}

@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import { focusView, focusViewById } from "../ui/components/useViewFocus";
+import { IncomingWorkspaceView } from "../ui/features/incoming/IncomingWorkspaceView";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
@@ -14,7 +15,6 @@ import {
 	maxLibraryPreviewPositions,
 } from "../ui/features/library/LibrarySelectionPreviewView";
 import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelectionScreenFrame";
-import { LocalReleaseEditor } from "../ui/features/local-release/LocalReleaseEditor";
 import {
 	ScreenFeedbackView,
 	ScreenStatus,
@@ -1097,94 +1097,101 @@ export function CatalogDemo({
 		};
 		const suggested = localReleaseSuggestions(group, files, providerArtists);
 		return (
-			<LocalReleaseEditor
-				key={group.id}
-				locale={locale}
-				incomingLabel={group.title}
-				suggestedArtist={suggested.artist}
-				suggestedTitle={suggested.title}
-				renderGenreField={(props) => (
-					<LocalReleaseDemoGenres
-						{...props}
-						loaded={settings.genresLoaded}
-						onLoad={loadGenres}
-					/>
-				)}
-				artists={localProvider.items.artists}
-				recordings={localProvider.items.recordings.map((recording) =>
-					demoRecordingWithCredits(recording, localProvider.items.artists),
-				)}
-				checkRelease={async (artist, title) =>
-					checkDemoReleases(providers, providerArtists, artist, title)
-				}
-				findRecordings={async (query) =>
-					findDemoRecordings(localProvider.items.recordings, query).map(
-						(recording) =>
-							demoRecordingWithCredits(recording, localProvider.items.artists),
-					)
-				}
-				findArtists={async (query) =>
-					findDemoArtists(localProvider.items.artists, query)
-				}
-				saveArtist={(data) => {
-					const artist = newDemoLocalRecord(data);
-					setLocalProvider((current) =>
-						appendDemoLocalRecord(current, "artists", artist),
-					);
-					return artist;
-				}}
-				saveRecording={(data) => {
-					const recording = newDemoLocalRecord({
-						...data,
-						artistIds: data.credits?.map((credit) => credit.artistId),
-					});
-					setLocalProvider((current) =>
-						appendDemoLocalRecord(current, "recordings", recording),
-					);
-					return recording;
-				}}
-				onUseRelease={(id) => {
-					const candidate = providers.find((item) => item.id === id);
-					if (!candidate) return;
-					if (candidate.provider !== "Local") {
-						returnToMatching(
-							{ prepareReleaseId: candidate.providerId ?? candidate.id },
-							incomingRoute.releaseId,
-						);
-						return;
-					}
-					setIncoming((current) =>
-						selectDemoRelease(current, group.id, candidate),
-					);
-					returnToMatching({ localReleaseId: candidate.id });
-				}}
-				onSave={(draft) => {
-					const release = releaseDraftToRecord(
-						draft,
-						undefined,
-						localProvider.items.artists,
-					);
-					setLocalProvider((current) =>
-						appendDemoLocalRecord(current, "releases", release),
-					);
-					setIncoming((current) =>
-						selectDemoRelease(
-							current,
-							group.id,
-							{ id: release.id, title: draft.title },
-							true,
+			<IncomingWorkspaceView
+				creation={{
+					kind: "editor",
+					key: group.id,
+					editor: {
+						locale,
+						incomingLabel: group.title,
+						suggestedArtist: suggested.artist,
+						suggestedTitle: suggested.title,
+						renderGenreField: (props) => (
+							<LocalReleaseDemoGenres
+								{...props}
+								loaded={settings.genresLoaded}
+								onLoad={loadGenres}
+							/>
 						),
-					);
-					returnToMatching({ localReleaseId: release.id });
+						artists: localProvider.items.artists,
+						recordings: localProvider.items.recordings.map((recording) =>
+							demoRecordingWithCredits(recording, localProvider.items.artists),
+						),
+						checkRelease: async (artist, title) =>
+							checkDemoReleases(providers, providerArtists, artist, title),
+						findRecordings: async (query) =>
+							findDemoRecordings(localProvider.items.recordings, query).map(
+								(recording) =>
+									demoRecordingWithCredits(
+										recording,
+										localProvider.items.artists,
+									),
+							),
+						findArtists: async (query) =>
+							findDemoArtists(localProvider.items.artists, query),
+						saveArtist: (data) => {
+							const artist = newDemoLocalRecord(data);
+							setLocalProvider((current) =>
+								appendDemoLocalRecord(current, "artists", artist),
+							);
+							return artist;
+						},
+						saveRecording: (data) => {
+							const recording = newDemoLocalRecord({
+								...data,
+								artistIds: data.credits?.map((credit) => credit.artistId),
+							});
+							setLocalProvider((current) =>
+								appendDemoLocalRecord(current, "recordings", recording),
+							);
+							return recording;
+						},
+						onUseRelease: (id) => {
+							const candidate = providers.find((item) => item.id === id);
+							if (!candidate) return;
+							if (candidate.provider !== "Local") {
+								returnToMatching(
+									{
+										prepareReleaseId: candidate.providerId ?? candidate.id,
+									},
+									incomingRoute.releaseId,
+								);
+								return;
+							}
+							setIncoming((current) =>
+								selectDemoRelease(current, group.id, candidate),
+							);
+							returnToMatching({ localReleaseId: candidate.id });
+						},
+						onSave: (draft) => {
+							const release = releaseDraftToRecord(
+								draft,
+								undefined,
+								localProvider.items.artists,
+							);
+							setLocalProvider((current) =>
+								appendDemoLocalRecord(current, "releases", release),
+							);
+							setIncoming((current) =>
+								selectDemoRelease(
+									current,
+									group.id,
+									{ id: release.id, title: draft.title },
+									true,
+								),
+							);
+							returnToMatching({ localReleaseId: release.id });
+						},
+						onCancel: () =>
+							window.location.replace(
+								incomingGroupMatchingHref(group.id, incomingRoute.releaseId, {
+									localReleaseId: incomingRoute.localReleaseId,
+									prepareReleaseId: incomingRoute.prepareReleaseId,
+								}),
+							),
+					},
 				}}
-				onCancel={() =>
-					window.location.replace(
-						incomingGroupMatchingHref(group.id, incomingRoute.releaseId, {
-							localReleaseId: incomingRoute.localReleaseId,
-							prepareReleaseId: incomingRoute.prepareReleaseId,
-						}),
-					)
-				}
+				matching={null}
 			/>
 		);
 	}
