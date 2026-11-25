@@ -7,6 +7,7 @@ import {
 	readSourceTrackOrder,
 } from "../matching/sourceFileOrder";
 import type { IncomingGroupViewRow } from "./IncomingGroupsOverviewView";
+import { incomingGroupsEmpty } from "./IncomingGroupsPanel";
 import { IncomingScreenView } from "./IncomingScreenView";
 import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import {
@@ -266,21 +267,42 @@ export function IncomingScreen({
 				: state.noticeDescriptor
 					? msg("noAutomaticNotice")
 					: "");
+	const labels = {
+		caption: msg("overviewCaption"),
+		group: msg("group"),
+		filesPaths: msg("uniqueFilesPaths"),
+		ready: msg("readyTotal"),
+		status: msg("evaluationState"),
+		empty: incomingGroupsEmpty(locale),
+		number: msg("columnNumber"),
+		title: msg("columnTitle"),
+		artist: msg("columnArtist"),
+		album: msg("columnAlbum"),
+		actions: msg("columnActions"),
+		noTitle: msg("missingFileTitle"),
+		noValue: msg("noValue"),
+		expand: (name: string) => msg("filesIn", { name }),
+		openGroup: (name: string) => msg("openGroup", { name }),
+	};
 	return (
 		<IncomingScreenView
 			locale={locale}
-			rows={viewRows}
+			headingAction={{ label: msg("process"), onPress: runAuto }}
 			notice={notice}
-			onProcess={runAuto}
-			onToggleGroup={toggleGroup}
-			onMove={(groupId, memberId, targetGroupId, focus) => {
-				if (focus) commitMove(groupId, memberId, targetGroupId);
-				else moveFile(groupId, memberId, targetGroupId);
-			}}
-			onSplit={(groupId, memberId) => commitSplit(groupId, memberId)}
-			disclosureRef={(groupId, node) => {
-				if (node) groupDisclosureRefs.current.set(groupId, node);
-				else groupDisclosureRefs.current.delete(groupId);
+			showProcessingStages
+			panel={{
+				labels,
+				rows: viewRows,
+				onToggle: toggleGroup,
+				onMove: (groupId, memberId, targetGroupId, focus) => {
+					if (focus) commitMove(groupId, memberId, targetGroupId);
+					else moveFile(groupId, memberId, targetGroupId);
+				},
+				onSplit: (groupId, memberId) => commitSplit(groupId, memberId),
+				disclosureRef: (groupId, node) => {
+					if (node) groupDisclosureRefs.current.set(groupId, node);
+					else groupDisclosureRefs.current.delete(groupId);
+				},
 			}}
 		/>
 	);

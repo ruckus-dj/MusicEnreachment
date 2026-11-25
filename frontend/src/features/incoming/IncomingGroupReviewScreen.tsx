@@ -47,9 +47,8 @@ import {
   useIncomingConfirmReceipts,
 } from "./confirmReceipts";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
-import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
-import { IncomingPageHeading } from "./IncomingGroupsPanel";
 import { IncomingSavedMatchingResult } from "./IncomingSavedMatchingResult";
+import { IncomingScreenView } from "./IncomingScreenView";
 import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
 import {
   incomingGroupNames,
@@ -87,6 +86,7 @@ import {
   type TrackTagOverrideDraft,
   TrackTagOverrides,
 } from "./TrackTagOverrides";
+import { useIncomingGroupsPanel } from "./useIncomingGroupsPanel";
 
 type ProposalFile = {
   file_member_id: string;
@@ -271,6 +271,12 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       ),
     [groupsQuery.data],
   );
+  const groupsPanel = useIncomingGroupsPanel({
+    snapshot: groupsQuery.data,
+    groupNames,
+    expandedGroupIds:
+      route.view === "list" ? route.expandedGroupIds : undefined,
+  });
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
   const [inspectedMemberId, setInspectedMemberId] = useState("");
   const [inspectedTrackId, setInspectedTrackId] = useState("");
@@ -1078,39 +1084,24 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             )}
           </section>
         ))}
-      <section
+      <IncomingScreenView
+        locale={locale}
         hidden={matchingActive || creatingLocalRelease}
-        aria-labelledby="incoming-title"
-      >
-        <IncomingPageHeading
-          locale={locale}
-          action={{
-            label: copy.refreshGroups,
-            onPress: () => void groupsQuery.refetch(),
-          }}
-        />
-
-        {groupsQuery.isLoading ? (
-          <p role="status">{copy.loadingGroups}</p>
-        ) : null}
-        {groupsQuery.isError ? (
-          <p role="alert">
-            {incomingFeedbackText(
-              locale,
-              errorText(groupsQuery.error, "groupsLoadError"),
-            )}
-          </p>
-        ) : null}
-        {groupsQuery.data ? (
-          <IncomingGroupsOverview
-            snapshot={groupsQuery.data}
-            groupNames={groupNames}
-            expandedGroupIds={
-              route.view === "list" ? route.expandedGroupIds : undefined
-            }
-          />
-        ) : null}
-      </section>
+        headingAction={{
+          label: copy.refreshGroups,
+          onPress: () => void groupsQuery.refetch(),
+        }}
+        loading={groupsQuery.isLoading ? copy.loadingGroups : undefined}
+        error={
+          groupsQuery.isError
+            ? incomingFeedbackText(
+                locale,
+                errorText(groupsQuery.error, "groupsLoadError"),
+              )
+            : undefined
+        }
+        panel={groupsPanel}
+      />
 
       {groupId ? (
         <section

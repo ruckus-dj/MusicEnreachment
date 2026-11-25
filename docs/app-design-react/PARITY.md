@@ -67,9 +67,9 @@ source channel, а fixture макета такого происхождения 
 рассчитывает допустимость и меняет данные. Отделение представления в макете
 не считается парой файлов и не означает, что приложение уже его использует.
 
-В макете отделены представления «Входящих», «Настроек», первого запуска и
-«Сопоставления» (`IncomingScreenView.tsx`, `SettingsScreenView.tsx`,
-`SetupScreenView.tsx`, `MatchingScreenView.tsx`), предпросмотр позиции и
+В макете отделены представления «Настроек», первого запуска и «Сопоставления»
+(`SettingsScreenView.tsx`, `SetupScreenView.tsx`, `MatchingScreenView.tsx`),
+предпросмотр позиции и
 публикация из сохранённых связей (`ContextPublicationPreviewView.tsx`,
 `MatchingReceiptPublicationReadyView.tsx`), а также общий редактор метаданных
 с выбором жанров (`MetadataEditorView.tsx`, `GenrePickerView.tsx`). Провайдеры
@@ -89,7 +89,7 @@ source channel, а fixture макета такого происхождения 
 | Источники: сводка корня, действие и подтверждение удаления | `features/sources/SourceRootOverviewView.tsx`, `SourceRootRemovalDialog.tsx` | Те же пути |
 | Источники: пакетный выбор, подтверждение и результаты очистки временных копий | `features/sources/SourceArtifactCleanupView.tsx` | Тот же путь |
 | Операции: список, фильтры, поиск, пагинация, раскрытие и подтверждение прерывания перепубликаций | `features/operations/OperationsList.tsx`, `OperationsScreenView.tsx`, `operationsScreenCopy.ts`, `MatchingRecheckAbandonDialog.tsx` | Те же пути |
-| Входящие: заголовок, обзор групп, счётчик, пустое состояние и действия с файлами | `features/incoming/IncomingGroupsPanel.tsx`, `IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx`, `components/AppButton.tsx` | Те же пути; обновление списка сервером и демонстрационный запуск обработки остаются разными действиями |
+| Входящие: вся страница списка — заголовок, ожидание, ошибка, обзор групп, счётчик, пустое состояние и действия с файлами | `features/incoming/IncomingScreenView.tsx`, `IncomingGroupsPanel.tsx`, `IncomingGroupsOverviewView.tsx`, `IncomingFileActions.tsx` | Те же пути. Приложение обновляет серверный список, макет показывает этапы и даёт запустить обработку в памяти. Рабочая область сопоставления переносится отдельно |
 | Выбор папки | `components/DirectoryPathFieldView.tsx`, `components/DirectoryPickerView.tsx`, `components/DirectoryPickerMessages.ts` | Те же пути |
 | Сопоставление | `features/matching/`: `MatchingBoard.tsx`, `MatchingDnD.tsx`, `MatchingWorkspaceLayout.tsx`, `MatchingEvidenceInspector.tsx`, `MatchingPreview.tsx`, `ManualSearchView.tsx`, `ManualReleasePreparationView.tsx`, `evidenceOverrideMessages.ts`, `index.ts`, `manualReleasePreparationContract.ts`, `manualSearchContract.ts`, `matchingBoardMessages.ts`, `matchingBoardStyles.ts`, `matchingSourcePath.ts`, `scoring.ts`, `sourceFileOrder.ts`, `types.ts` | `features/matchingWorkspace/` |
 | Сопоставление: секция поиска, подготовки и создания издания | `features/matching/MatchingReviewSearchView.tsx` | `features/matchingWorkspace/MatchingReviewSearchView.tsx` |

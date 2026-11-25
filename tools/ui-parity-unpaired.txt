@@ -11,7 +11,6 @@ docs/app-design-react/src/components/styles/matchingStyles.ts
 docs/app-design-react/src/components/themePreferenceConfig.ts
 docs/app-design-react/src/components/ui/index.tsx
 docs/app-design-react/src/features/incoming/IncomingScreen.tsx
-docs/app-design-react/src/features/incoming/IncomingScreenView.tsx
 docs/app-design-react/src/features/incoming/incomingMessages.ts
 docs/app-design-react/src/features/incoming/incomingModel.ts
 docs/app-design-react/src/features/incoming/incomingOverview.ts
@@ -155,7 +154,6 @@ frontend/src/components/DirectoryPathField.tsx
 frontend/src/components/DirectoryPicker.tsx
 frontend/src/components/themePreferenceConfig.ts
 frontend/src/features/incoming/IncomingGroupReviewScreen.tsx
-frontend/src/features/incoming/IncomingGroupsOverview.tsx
 frontend/src/features/incoming/IncomingReceiptPublication.tsx
 frontend/src/features/incoming/IncomingSavedMatchingResult.tsx
 frontend/src/features/incoming/IncomingOperationFollower.tsx
@@ -178,6 +176,7 @@ frontend/src/features/incoming/incomingStyles.ts
 frontend/src/features/incoming/localMatchingMessages.ts
 frontend/src/features/incoming/receiptPublicationAdmissions.ts
 frontend/src/features/incoming/savedAutomaticAssignments.ts
+frontend/src/features/incoming/useIncomingGroupsPanel.ts
 frontend/src/features/library/AggregatePublicationPreview.tsx
 frontend/src/features/library/ArtistCreditRowsEditor.tsx
 frontend/src/features/library/FirstPublicationPreview.tsx

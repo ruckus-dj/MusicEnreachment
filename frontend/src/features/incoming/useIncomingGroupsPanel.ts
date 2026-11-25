@@ -18,14 +18,9 @@ import {
   incomingSourceFileName,
   readIncomingSourceTrackOrder,
 } from "./apiMatchingSources";
-import {
-  IncomingGroupsOverviewView,
-  type IncomingGroupViewRow,
-} from "./IncomingGroupsOverviewView";
-import {
-  IncomingGroupsPanel,
-  incomingGroupsEmpty,
-} from "./IncomingGroupsPanel";
+import type { IncomingGroupViewRow } from "./IncomingGroupsOverviewView";
+import { incomingGroupsEmpty } from "./IncomingGroupsPanel";
+import type { IncomingScreenViewProps } from "./IncomingScreenView";
 import {
   type IncomingGroupName,
   incomingGroupNameText,
@@ -105,15 +100,23 @@ function groupContaining(
   );
 }
 
-export function IncomingGroupsOverview({
+/**
+ * Incoming groups model and regrouping workflow, without markup.
+ *
+ * The hook is called unconditionally even when no snapshot is loaded or the
+ * list view is hidden behind matching. It returns the overview table props
+ * once a snapshot exists; preview, confirmation, cache reconciliation and
+ * focus restoration remain in this module.
+ */
+export function useIncomingGroupsPanel({
   snapshot,
   groupNames,
   expandedGroupIds = [],
 }: {
-  snapshot: IncomingGroupsBody;
+  snapshot?: IncomingGroupsBody;
   groupNames: ReadonlyMap<string, IncomingGroupName>;
   expandedGroupIds?: readonly string[];
-}) {
+}): IncomingScreenViewProps["panel"] {
   const { locale } = useI18n();
   const copy = incomingMessages[locale];
   const ui = overviewCopy[locale];
@@ -129,12 +132,12 @@ export function IncomingGroupsOverview({
   >();
   const files = useMemo(
     () =>
-      new Map((snapshot.files ?? []).map((file) => [file.variant_id, file])),
-    [snapshot.files],
+      new Map((snapshot?.files ?? []).map((file) => [file.variant_id, file])),
+    [snapshot?.files],
   );
   const { groups, folderPaths } = useMemo(
-    () => incomingOverviewOrder(snapshot.groups ?? [], files),
-    [snapshot.groups, files],
+    () => incomingOverviewOrder(snapshot?.groups ?? [], files),
+    [snapshot?.groups, files],
   );
   const labels = useMemo(() => {
     const base = new Map(
@@ -176,7 +179,8 @@ export function IncomingGroupsOverview({
     const pending = pendingGroupFocus.current;
     if (!pending) return;
     // Wait for the confirmed snapshot that actually renders the target row.
-    if (!snapshot.groups?.some((group) => group.id === pending.groupId)) return;
+    if (!snapshot?.groups?.some((group) => group.id === pending.groupId))
+      return;
     pendingGroupFocus.current = null;
     groupDisclosureRefs.current.get(pending.groupId)?.focus({
       preventScroll: pending.preventScroll,
@@ -184,6 +188,7 @@ export function IncomingGroupsOverview({
   }, [snapshot]);
 
   async function previewAndConfirm(actions: IncomingGroupingActionInput[]) {
+    if (!snapshot) return { status: "failed" as const };
     const request = {
       epoch: snapshot.epoch,
       base_revision: snapshot.revision,
@@ -432,42 +437,36 @@ export function IncomingGroupsOverview({
     };
   });
 
-  return (
-    <IncomingGroupsPanel
-      locale={locale}
-      count={rows.length}
-      status={feedback ? ui[feedback] : ""}
-    >
-      <IncomingGroupsOverviewView
-        labels={{
-          caption: copy.overviewCaption,
-          group: copy.group,
-          filesPaths: copy.uniqueFilesPaths,
-          ready: copy.readyTotal,
-          status: copy.evaluationState,
-          number: ui.number,
-          title: ui.title,
-          artist: ui.artist,
-          album: ui.album,
-          actions: ui.actions,
-          noTitle: ui.noTitle,
-          noValue: copy.noValue,
-          empty: incomingGroupsEmpty(locale),
-          expand: ui.expand,
-          openGroup: copy.openGroup,
-        }}
-        rows={rows}
-        onToggle={toggle}
-        onMove={(groupId, memberId, targetGroupId, focus) =>
-          void move(groupId, memberId, targetGroupId, focus)
-        }
-        onSplit={(groupId, memberId) => void split(groupId, memberId)}
-        disclosureRef={(groupId, node) => {
-          if (node) groupDisclosureRefs.current.set(groupId, node);
-          else groupDisclosureRefs.current.delete(groupId);
-        }}
-        disabled={feedback === "moving"}
-      />
-    </IncomingGroupsPanel>
-  );
+  if (!snapshot) return undefined;
+
+  return {
+    labels: {
+      caption: copy.overviewCaption,
+      group: copy.group,
+      filesPaths: copy.uniqueFilesPaths,
+      ready: copy.readyTotal,
+      status: copy.evaluationState,
+      number: ui.number,
+      title: ui.title,
+      artist: ui.artist,
+      album: ui.album,
+      actions: ui.actions,
+      noTitle: ui.noTitle,
+      noValue: copy.noValue,
+      empty: incomingGroupsEmpty(locale),
+      expand: ui.expand,
+      openGroup: copy.openGroup,
+    },
+    rows,
+    onToggle: toggle,
+    onMove: (groupId, memberId, targetGroupId, focus) =>
+      void move(groupId, memberId, targetGroupId, focus),
+    onSplit: (groupId, memberId) => void split(groupId, memberId),
+    disclosureRef: (groupId, node) => {
+      if (node) groupDisclosureRefs.current.set(groupId, node);
+      else groupDisclosureRefs.current.delete(groupId);
+    },
+    disabled: feedback === "moving",
+    status: feedback ? ui[feedback] : "",
+  };
 }
