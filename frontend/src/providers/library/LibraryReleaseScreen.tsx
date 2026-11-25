@@ -26,6 +26,7 @@ import {
   type LibraryReleaseWorkspaceSelection,
   LibraryReleaseWorkspaceView,
 } from "../../ui/features/library/LibraryReleaseWorkspaceView";
+import { libraryReleaseHref } from "../../ui/features/library/libraryDetailRoute";
 import {
   type LibraryReleaseMessage,
   type LibraryReleaseText,
@@ -1593,7 +1594,7 @@ export function LibraryReleaseScreen({
           kind: "missing",
           notFound: {
             message: text("positionNotFound"),
-            releaseHref: `#/library/releases/${releaseId}`,
+            releaseHref: libraryReleaseHref(releaseId),
             releaseLabel: text("fullRelease"),
           },
         }
@@ -1898,7 +1899,7 @@ export function LibraryReleaseScreen({
                     title: track.title,
                     artist,
                     releaseTitle: release.title,
-                    releaseHref: `#/library/releases/${encodeURIComponent(release.id)}`,
+                    releaseHref: libraryReleaseHref(release.id),
                     libraryHref: "#/library",
                   }
                 : undefined,

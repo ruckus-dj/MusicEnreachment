@@ -18,6 +18,10 @@ import {
   LibraryAlbumDataBinder,
   type LibraryCatalogAlbumModel,
 } from "../../ui/features/library/LibraryCatalogResults";
+import {
+  libraryPositionHref,
+  libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
@@ -29,10 +33,6 @@ type SelectionControl = (
 export interface LibraryAlbumRowsData {
   items: LibraryReleaseItem[];
   selectionControl: SelectionControl;
-}
-
-function releaseHref(id: string) {
-  return `#/library/releases/${encodeURIComponent(id)}`;
 }
 
 function creditsText(credits: LibraryArtistCreditResponse[]) {
@@ -93,7 +93,7 @@ function albumEntry(
     row: {
       id: release ? `local:${release.id}` : `provider:${group?.provider_key}`,
       title: release?.title || group?.title || "",
-      href: release ? releaseHref(release.id) : null,
+      href: release ? libraryReleaseHref(release.id) : null,
       missing: !release,
       artist: creditsText(release?.artists ?? group?.artists ?? []),
       date: release
@@ -134,7 +134,7 @@ function releasePositions(
         ),
       ),
     ];
-    const href = `${releaseHref(release.id)}/positions/${encodeURIComponent(track.id)}`;
+    const href = libraryPositionHref(release.id, track.id);
     return {
       id: track.id,
       numberLabel: `${track.medium}.${track.displayed_number || track.position}`,

@@ -1,3 +1,9 @@
+import {
+  type LibraryPositionAddress,
+  type LibraryReleaseAddress,
+  parseLibraryPositionAddress,
+  parseLibraryReleaseAddress,
+} from "../../ui/features/library/libraryDetailRoute";
 import type { LibraryView } from "../../ui/features/library/libraryView";
 
 export type { LibraryView } from "../../ui/features/library/libraryView";
@@ -16,13 +22,9 @@ export interface LibraryArtistRoute extends LibraryRoute {
   artistId: string;
 }
 
-export interface LibraryReleaseRoute {
-  releaseId: string;
-}
+export type LibraryReleaseRoute = LibraryReleaseAddress;
 
-export interface LibraryPositionRoute extends LibraryReleaseRoute {
-  positionId: string;
-}
+export type LibraryPositionRoute = LibraryPositionAddress;
 
 const views = new Set<LibraryView>(["artists", "albums", "tracks"]);
 const publications = new Set<PublicationFilter>([
@@ -36,29 +38,19 @@ const availabilities = new Set<AvailabilityFilter>([
   "missing",
 ]);
 const uuidPattern =
-  "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (rawId: string) => uuidPattern.test(rawId);
 
 export function parseLibraryReleaseRoute(
   hash: string,
 ): LibraryReleaseRoute | undefined {
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  const [pathname] = path.split("?", 2);
-  const match = new RegExp(`^/library/releases/(${uuidPattern})$`, "i").exec(
-    pathname,
-  );
-  return match ? { releaseId: match[1] } : undefined;
+  return parseLibraryReleaseAddress(hash, isUuid);
 }
 
 export function parseLibraryPositionRoute(
   hash: string,
 ): LibraryPositionRoute | undefined {
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  const [pathname] = path.split("?", 2);
-  const match = new RegExp(
-    `^/library/releases/(${uuidPattern})/positions/(${uuidPattern})$`,
-    "i",
-  ).exec(pathname);
-  return match ? { releaseId: match[1], positionId: match[2] } : undefined;
+  return parseLibraryPositionAddress(hash, isUuid);
 }
 
 export function parseLibraryRoute(hash: string): LibraryRoute | undefined {

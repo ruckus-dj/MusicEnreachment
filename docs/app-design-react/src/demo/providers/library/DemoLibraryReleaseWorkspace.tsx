@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { LibraryReleaseWorkspaceView } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
+import type { TrackScreenNotFoundView } from "../../../ui/features/library/TrackScreenView";
 import {
 	type ReleaseOverviewScreenProps,
 	useReleaseOverviewDemoModel,
@@ -15,6 +16,8 @@ export type DemoLibraryReleaseWorkspaceProps = {
 	overview: ReleaseOverviewScreenProps;
 	/** Active position actors; `null` (or omitted) selects the edition. */
 	position?: TrackScreenProps | null;
+	/** Requested position absent from the selected release; keeps its overview. */
+	notFound?: TrackScreenNotFoundView;
 };
 
 /**
@@ -23,33 +26,33 @@ export type DemoLibraryReleaseWorkspaceProps = {
  * stays retained while that release's positions are selected. The retained
  * overview keeps its metadata draft provider alive but hides its DOM and
  * portals behind a position, while the single active position gets its own
- * session that resets on every track/tag entry or return to the edition.
+ * session that resets on every position entry or return to the edition.
  */
 function DemoLibraryReleaseWorkspaceForRelease({
 	overview,
 	position = null,
+	notFound,
 }: DemoLibraryReleaseWorkspaceProps) {
 	const { locale } = useI18n();
 	const showPosition = position !== null;
 	const [visitedEdition, setVisitedEdition] = useState(!showPosition);
 	if (!showPosition && !visitedEdition) setVisitedEdition(true);
-	const positionKey = position
-		? `${position.track.id}:${position.initialTagsOpen ? "tags" : "track"}`
-		: null;
+	const positionKey = position ? position.track.id : null;
 	const overviewModel = useReleaseOverviewDemoModel({
 		...overview,
-		editionControls: !showPosition,
+		editionControls: !showPosition && notFound === undefined,
 		visible: !showPosition,
-		initialTagFocus: !showPosition && Boolean(overview.initialTagFocus),
 	});
 	const positionModel = useTrackScreenDemoProvider(position);
 	return (
 		<LibraryReleaseWorkspaceView
 			locale={locale}
 			selection={
-				positionKey
-					? { kind: "position", positionId: positionKey }
-					: { kind: "edition" }
+				notFound
+					? { kind: "missing", notFound }
+					: positionKey
+						? { kind: "position", positionId: positionKey }
+						: { kind: "edition" }
 			}
 			overview={visitedEdition ? overviewModel : null}
 			positions={

@@ -16,6 +16,13 @@ import {
 } from "../ui/features/library/LibrarySelectionPreviewView";
 import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelectionScreenFrame";
 import {
+	libraryPositionHref,
+	libraryReleaseHref,
+	parseLibraryPositionAddress,
+	parseLibraryReleaseAddress,
+} from "../ui/features/library/libraryDetailRoute";
+import { libraryReleaseMessage } from "../ui/features/library/libraryReleaseMessages";
+import {
 	ScreenFeedbackView,
 	ScreenStatus,
 } from "../ui/shell/ScreenFeedbackView";
@@ -57,10 +64,6 @@ import {
 } from "./providers/library";
 import { ArtistScreen } from "./providers/library/ArtistScreen";
 import {
-	artistReleaseHref,
-	releaseHref,
-} from "./providers/library/artistReleaseRoute";
-import {
 	applyMetadataPreview,
 	type CatalogArtist,
 	catalogData,
@@ -81,21 +84,21 @@ import {
 	trackSearchText,
 } from "./providers/library/catalogViewModel";
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
+import { DemoLibraryReleaseWorkspace } from "./providers/library/DemoLibraryReleaseWorkspace";
 import {
 	DemoLibraryAlbumRowsProvider,
 	libraryCatalogArtistResults,
 	libraryCatalogTrackResults,
 } from "./providers/library/LibraryCatalogRows";
 import { DemoLibraryCatalogBinder } from "./providers/library/LibraryCatalogScreen";
-import { DemoLibraryReleaseWorkspace } from "./providers/library/DemoLibraryReleaseWorkspace";
 import {
 	completeManagedLibraryDeletion,
 	managedDeletionObservation,
 } from "./providers/library/libraryDeletionModel";
 import { SelectionDock } from "./providers/library/SelectionDock";
+import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
 import type { ReleaseOverviewScreenProps } from "./providers/library/useReleaseOverviewDemoModel";
 import type { TrackScreenProps } from "./providers/library/useTrackScreenDemoProvider";
-import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
 import { DemoLocalCatalogBinder } from "./providers/local-catalog";
 import { releaseDraftToRecord } from "./providers/local-catalog/localCatalogModel";
 import { localProviderReleases } from "./providers/local-catalog/localProviderModel";
@@ -355,20 +358,6 @@ export function CatalogDemo({
 			})),
 		})),
 	};
-	useEffect(() => {
-		const match = route.match(/^tags\/([^/?]+)\/(artist|release)$/);
-		if (!match) return;
-		const [, trackId, scope] = match;
-		const release = releases.find((item) =>
-			item.tracks.some((track) => track.id === trackId),
-		);
-		if (!release) return;
-		const href =
-			scope === "release"
-				? `${releaseHref(release.id)}?tags=release`
-				: artistReleaseHref(release, artists, { tags: "artist" });
-		if (href) window.location.hash = href.slice(1);
-	}, [route, releases, artists]);
 	const [selectionPreview, setSelectionPreview] = useState<{
 		positions: LibrarySelectionPreviewPosition[];
 		state: LibrarySelectionPreviewState;
@@ -801,14 +790,7 @@ export function CatalogDemo({
 			/>
 		);
 	if (route.startsWith("artist/")) {
-		const [artistPath, queryString = ""] = route.split("?");
-		const params = new URLSearchParams(queryString);
-		const initialTags = params.get("tags");
-		const initialTagsScope =
-			initialTags === "artist" || initialTags === "release"
-				? initialTags
-				: undefined;
-		const releaseId = params.get("release") ?? undefined;
+		const artistId = routeId(routeName.slice("artist/".length));
 		return (
 			<LibrarySelectionScreenFrame>
 				<ApplicationRouteOutlet
@@ -816,7 +798,7 @@ export function CatalogDemo({
 					route="library-artist"
 					provider={ArtistScreen}
 					providerProps={{
-						artistId: artistPath.slice(7),
+						artistId,
 						artists,
 						releases,
 						files,
@@ -835,10 +817,6 @@ export function CatalogDemo({
 									artist.id === updated.id ? updated : artist,
 								),
 							),
-						initialTags: initialTagsScope
-							? { scope: initialTagsScope, releaseId }
-							: undefined,
-						initialReleaseId: releaseId,
 					}}
 				/>
 				<SelectionDock
@@ -852,27 +830,13 @@ export function CatalogDemo({
 			</LibrarySelectionScreenFrame>
 		);
 	}
-	const isReleaseRoute = route.startsWith("release/");
-	const isPositionRoute =
-		routeName.startsWith("track/") || routeName.startsWith("tags/");
-	if (isReleaseRoute || isPositionRoute) {
-		const [releasePath, releaseQuery = ""] = route.split("?");
-		const openTags = routeName.startsWith("tags/");
-		const positionId = isPositionRoute ? routeName.split("/")[1] : undefined;
-		const release = isPositionRoute
-			? releases.find((item) =>
-					item.tracks.some((track) => track.id === positionId),
-				)
-			: releases.find(
-					(item) => item.id === routeId(releasePath.slice("release/".length)),
-				);
+	const positionAddress = parseLibraryPositionAddress(route);
+	const releaseAddress = parseLibraryReleaseAddress(route);
+	const address = positionAddress ?? releaseAddress;
+	if (address) {
+		const release = releases.find((item) => item.id === address.releaseId);
 		if (!release)
-			return isPositionRoute ? (
-				<ScreenFeedbackView
-					title={msg("trackNotFound")}
-					link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
-				/>
-			) : (
+			return (
 				<LibraryReleaseWorkspaceView
 					locale={locale}
 					selection={{ kind: "unavailable" }}
@@ -880,19 +844,17 @@ export function CatalogDemo({
 					positions={[]}
 				/>
 			);
-		const track = positionId
-			? release.tracks.find((item) => item.id === positionId)
+		const track = positionAddress
+			? release.tracks.find((item) => item.id === positionAddress.positionId)
 			: undefined;
-		if (isPositionRoute && !track)
-			return (
-				<ScreenFeedbackView
-					title={msg("trackNotFound")}
-					link={{ href: libraryRootHref(), label: msg("goToLibrary") }}
-				/>
-			);
-		const initialTagFocus =
-			!isPositionRoute &&
-			new URLSearchParams(releaseQuery).get("tags") === "release";
+		const missingPosition =
+			positionAddress && !track
+				? {
+						message: libraryReleaseMessage(locale, "positionNotFound"),
+						releaseHref: libraryReleaseHref(release.id),
+						releaseLabel: libraryReleaseMessage(locale, "fullRelease"),
+					}
+				: undefined;
 		const overview: ReleaseOverviewScreenProps = {
 			release,
 			artists,
@@ -914,7 +876,6 @@ export function CatalogDemo({
 			},
 			genresLoaded: settings.genresLoaded,
 			onLoadGenres: loadGenres,
-			initialTagFocus,
 		};
 		let position: TrackScreenProps | null = null;
 		if (track) {
@@ -983,7 +944,6 @@ export function CatalogDemo({
 				onQueueDeletion: queueDeletion,
 				release,
 				track,
-				initialTagsOpen: openTags,
 				genresLoaded: settings.genresLoaded,
 				onLoadGenres: loadGenres,
 				onRecordingChange: (updateTrack) => {
@@ -1037,9 +997,13 @@ export function CatalogDemo({
 			};
 		}
 		return (
-			<LibrarySelectionScreenFrame dockSpace={!track}>
-				<DemoLibraryReleaseWorkspace overview={overview} position={position} />
-				{!track && (
+			<LibrarySelectionScreenFrame dockSpace={!track && !missingPosition}>
+				<DemoLibraryReleaseWorkspace
+					overview={overview}
+					position={position}
+					notFound={missingPosition}
+				/>
+				{!track && !missingPosition && (
 					<>
 						<SelectionDock
 							selected={selected}
@@ -1365,6 +1329,14 @@ export function CatalogDemo({
 				providerProps={{
 					deletions,
 					provider: operationsProvider,
+					positionHrefForTrack: (positionId) => {
+						const release = releases.find((item) =>
+							item.tracks.some((track) => track.id === positionId),
+						);
+						return release
+							? libraryPositionHref(release.id, positionId)
+							: undefined;
+					},
 					isTargetCurrent: (href) => {
 						const incomingTarget = parseIncomingGroupsRoute(href);
 						if (incomingTarget?.view === "matching")
@@ -1372,19 +1344,24 @@ export function CatalogDemo({
 								(group) =>
 									group.id === incomingTarget.groupId && !group.processed,
 							);
+						const positionAddress = parseLibraryPositionAddress(href);
+						if (positionAddress)
+							return releases.some(
+								(release) =>
+									release.id === positionAddress.releaseId &&
+									release.tracks.some(
+										(track) => track.id === positionAddress.positionId,
+									),
+							);
+						const releaseAddress = parseLibraryReleaseAddress(href);
+						if (releaseAddress)
+							return releases.some(
+								(release) => release.id === releaseAddress.releaseId,
+							);
 						const [route, id] = href.slice(1).split("/");
-						switch (route) {
-							case "track":
-								return releases.some((release) =>
-									release.tracks.some((track) => track.id === id),
-								);
-							case "release":
-								return releases.some((release) => release.id === id);
-							case "artist":
-								return artists.some((artist) => artist.id === id);
-							default:
-								return false;
-						}
+						if (route === "artist")
+							return artists.some((artist) => artist.id === id);
+						return false;
 					},
 				}}
 			/>

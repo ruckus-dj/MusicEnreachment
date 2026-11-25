@@ -41,6 +41,16 @@ it("does not accept malformed UUIDs or extra path segments", () => {
       `#/library/releases/${releaseId}/positions/${positionId}/extra`,
     ),
   ).toBeUndefined();
+  expect(
+    parseLibraryReleaseRoute(
+      "#/library/releases/%33f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f",
+    ),
+  ).toBeUndefined();
+  expect(
+    parseLibraryPositionRoute(
+      `#/library/releases/${releaseId}/positions/%34f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f`,
+    ),
+  ).toBeUndefined();
 });
 
 it("keeps the library landing and artist route parsers unchanged", () => {

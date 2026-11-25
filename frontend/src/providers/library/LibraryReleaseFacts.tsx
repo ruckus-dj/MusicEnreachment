@@ -5,6 +5,7 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import type { LibraryArtistReleaseTrackRow } from "../../ui/features/library/LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "../../ui/features/library/LibraryPositionSourcesView";
+import { libraryPositionHref } from "../../ui/features/library/libraryDetailRoute";
 import { ReleaseCreditListView } from "../../ui/features/library/ReleaseCreditListView";
 import type {
   ReleaseOverviewCredit,
@@ -60,7 +61,7 @@ export function releaseOverviewMedia(release: LibraryReleaseDetailResponse): {
     numberLabel:
       track.displayed_number.trim() || String(track.position).padStart(2, "0"),
     title: track.title,
-    href: `#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`,
+    href: libraryPositionHref(release.id, track.id),
     durationMs: track.duration_ms,
     sourceCount: track.sources?.length ?? 0,
     isNewRecording: !track.recording_id,

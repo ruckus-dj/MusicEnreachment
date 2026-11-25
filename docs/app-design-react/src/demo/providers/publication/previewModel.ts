@@ -1,3 +1,5 @@
+import { parseLibraryPositionAddress } from "../../../ui/features/library/libraryDetailRoute";
+
 export type MetadataPreviewToken = {
 	inventoryVersion: number;
 	scopeKey: string;
@@ -9,8 +11,8 @@ export function canonicalPreviewIds(ids: Iterable<string>) {
 }
 
 export function previewScopeKey(route: string, ids: Iterable<string>) {
-	if (route.startsWith("track/"))
-		return `track:${route.slice("track/".length)}`;
+	const position = parseLibraryPositionAddress(route);
+	if (position) return `position:${position.releaseId}:${position.positionId}`;
 	return `selection:${canonicalPreviewIds(ids).join("|")}`;
 }
 

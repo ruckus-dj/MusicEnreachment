@@ -33,6 +33,10 @@ import type {
 import { catalogueMessage } from "../../ui/features/library/catalogueMessages";
 import type { LibraryStateFilter } from "../../ui/features/library/LibraryCatalogFilterView";
 import { LibraryMissingEditionView } from "../../ui/features/library/LibraryMissingEditionView";
+import {
+  libraryPositionHref,
+  libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
@@ -321,7 +325,7 @@ function useLibraryArtistModel(
     return {
       key: release.id,
       title,
-      titleHref: `#/library/releases/${encodeURIComponent(release.id)}`,
+      titleHref: libraryReleaseHref(release.id),
       year: date,
       catalog,
       ariaLabel: `${title} · ${date} · ${catalog || "—"}`,
@@ -514,7 +518,7 @@ function ReleasePositions({
                     id: position.id,
                     numberLabel,
                     title: position.title,
-                    href: `#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`,
+                    href: libraryPositionHref(releaseId, position.id),
                     durationMs: position.provider_duration_ms,
                     hasAudio: position.audio_available,
                     sourceCount: position.source_variant_count,

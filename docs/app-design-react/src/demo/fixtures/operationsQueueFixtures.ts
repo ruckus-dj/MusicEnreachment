@@ -1,3 +1,7 @@
+import {
+	libraryPositionHref,
+	libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import { incomingGroupMatchingHref } from "../providers/incoming/incomingGroupsRoute";
 import {
 	originalArtistName,
@@ -67,7 +71,7 @@ for (const release of originalReleases) {
 			operation: "publishPositions",
 			target: `${release.title} · ${trackNumberLabel(release, track)} · ${track.title}`,
 			targetDetail: artist,
-			targetHref: `#track/${track.id}`,
+			targetHref: libraryPositionHref(release.id, track.id),
 		});
 	}
 	queueObjects.push({
@@ -75,7 +79,7 @@ for (const release of originalReleases) {
 		operation: "removeLibrary",
 		target: release.title,
 		targetDetail: artist,
-		targetHref: `#release/${release.id}`,
+		targetHref: libraryReleaseHref(release.id),
 	});
 }
 

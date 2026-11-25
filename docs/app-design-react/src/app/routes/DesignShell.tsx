@@ -8,6 +8,10 @@ import {
 	demoSourcesHref,
 	parseDemoSourceRoute,
 } from "../../demo/providers/sources/sourceDemoRoute";
+import {
+	parseLibraryPositionAddress,
+	parseLibraryReleaseAddress,
+} from "../../ui/features/library/libraryDetailRoute";
 import { ApplicationFrame } from "../../ui/shell/ShellStartupView";
 import {
 	type ShellRouteFamily,
@@ -18,17 +22,13 @@ import { useI18n } from "../i18n";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
 
-const libraryRoutes = [
-	"artist",
-	"release",
-	"track",
-	"tags",
-	"publication-list",
-];
+const libraryRoutes = ["artist", "publication-list"];
 
 function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (!path || path === "/") return "home";
 	if (path === "/library") return "library";
+	if (parseLibraryReleaseAddress(path) || parseLibraryPositionAddress(path))
+		return "library";
 	if (path === "/setup") return "setup";
 	if (path === "/operations") return "operations";
 	if (path === "/settings") return "settings";

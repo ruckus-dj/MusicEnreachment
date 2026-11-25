@@ -1,6 +1,7 @@
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type { Locale } from "../../../ui/i18n/types";
-import original from "../../fixtures/original-fixtures.json";
 import { applyDemoLocalMatchingBindings } from "../../fixtures/localMatchingBindings";
+import original from "../../fixtures/original-fixtures.json";
 import {
 	resolveCatalogGenreName,
 	resolveCatalogGenreValue,
@@ -149,6 +150,19 @@ export const originalReleases: OriginalRelease[] =
 		})),
 	);
 export const recoveryFixture = original.recoveryFixture;
+
+/**
+ * Resolves a known fixture position to its owning release before building the
+ * exact canonical position address. Unknown positions stay linkless instead of
+ * fabricating a release/position pair.
+ */
+export function originalPositionHref(positionId: string) {
+	const release = originalReleases.find((item) =>
+		item.tracks.some((track) => track.id === positionId),
+	);
+	return release ? libraryPositionHref(release.id, positionId) : undefined;
+}
+
 export type CatalogArtist = {
 	id: string;
 	name: string;

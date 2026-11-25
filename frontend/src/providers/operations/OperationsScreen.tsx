@@ -27,6 +27,10 @@ import {
   type ApplicationOperationsModel,
   type ApplicationRouteProviderProps,
 } from "../../ui/app/ApplicationRouteOutlet";
+import {
+  libraryPositionHref,
+  libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import type { MatchingRecheckAbandonPosition } from "../../ui/features/operations/MatchingRecheckAbandonDialog";
 import type {
   OperationsListAction,
@@ -190,9 +194,8 @@ function targetHref(ref: OperationTargetRef | undefined) {
   if (ref.kind === "group" && groupId)
     return incomingGroupMatchingHref(groupId);
   if (ref.kind === "position" && releaseId && positionId)
-    return `#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(positionId)}`;
-  if (ref.kind === "release" && releaseId)
-    return `#/library/releases/${encodeURIComponent(releaseId)}`;
+    return libraryPositionHref(releaseId, positionId);
+  if (ref.kind === "release" && releaseId) return libraryReleaseHref(releaseId);
   if (ref.kind === "artist" && artistId)
     return `#/library/artists/${encodeURIComponent(artistId)}`;
   if (ref.kind === "source_location" && rootId && locationId)

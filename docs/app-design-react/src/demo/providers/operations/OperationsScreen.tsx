@@ -11,6 +11,7 @@ import {
 	type ApplicationOperationsModel,
 	type ApplicationRouteProviderProps,
 } from "../../../ui/app/ApplicationRouteOutlet";
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type { OperationsListRow } from "../../../ui/features/operations/OperationsList";
 import { operationMessages } from "../../../ui/features/operations/operationMessages";
 import type {
@@ -23,7 +24,7 @@ import {
 	type QueuedOperationFixture,
 	queuedOperationFixtures,
 } from "../../fixtures/operationsQueueFixtures";
-import { recoveryFixture } from "../library/catalogData";
+import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
 import type {
@@ -59,6 +60,8 @@ export interface DemoOperationsScreenProps {
 	deletions: DeletionOperation[];
 	provider: OperationsDemoProvider;
 	isTargetCurrent?: (href: string) => boolean;
+	/** Resolves a removal's track to its owning release in the current catalog. */
+	positionHrefForTrack?: (positionId: string) => string | undefined;
 	queue?: readonly QueuedOperationFixture[];
 }
 
@@ -78,6 +81,7 @@ function useDemoOperationsModel({
 	deletions,
 	provider,
 	isTargetCurrent,
+	positionHrefForTrack,
 	queue = queuedOperationFixtures,
 }: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
@@ -176,7 +180,7 @@ function useDemoOperationsModel({
 		addRow(provider.recovery, "publication", {
 			id: "recovery",
 			target: copy.recoveryTrack,
-			targetHref: `#track/${recoveryFixture.trackId}`,
+			targetHref: originalPositionHref(recoveryFixture.trackId),
 			operation: copy.publishPositions,
 			error: copy.knownTargetMissingResult,
 			actions: [
@@ -210,7 +214,9 @@ function useDemoOperationsModel({
 					id: identity.id,
 					target: operation.target || copy.unknownTarget,
 					targetDetail: operation.scope,
-					targetHref: singleTrackId ? `#track/${singleTrackId}` : undefined,
+					targetHref: singleTrackId
+						? positionHrefForTrack?.(singleTrackId)
+						: undefined,
 					operation:
 						operation.kind === "publication"
 							? copy.removePublications
@@ -259,7 +265,7 @@ function useDemoOperationsModel({
 				{
 					id: job.id,
 					target: job.title,
-					targetHref: `#track/${job.positionId}`,
+					targetHref: libraryPositionHref(job.releaseId, job.positionId),
 					operation: copy.publishPositions,
 					error: `${copy.staleScope} ${copy.prepareAgain}`,
 				},

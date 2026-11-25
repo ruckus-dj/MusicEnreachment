@@ -3,6 +3,9 @@ import { afterEach, expect, it } from "vitest";
 import { CatalogDemo } from "../demo/CatalogDemo";
 import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
 
+const northernReleaseHref = "#/library/releases/north";
+const northernPositionHref = "#/library/releases/north/positions/north-t1";
+
 afterEach(() => {
 	window.history.replaceState(
 		null,
@@ -52,7 +55,7 @@ it("opens the exact release destination from an album row", () => {
 		name: "Открыть релиз: Northern Lines",
 	});
 	expect(
-		links.some((link) => link.getAttribute("href") === "#release/north"),
+		links.some((link) => link.getAttribute("href") === northernReleaseHref),
 	).toBe(true);
 });
 
@@ -69,8 +72,8 @@ it("keeps a copied exact offset instead of snapping to the page start", () => {
 });
 
 it("renders the focused release destination without artist management", () => {
-	window.history.replaceState(null, "", "#release/north");
-	render(<CatalogDemo />);
+	window.history.replaceState(null, "", northernReleaseHref);
+	const view = render(<CatalogDemo />);
 	expect(
 		screen.getByRole("heading", { name: "Northern Lines" }),
 	).toBeInTheDocument();
@@ -80,15 +83,31 @@ it("renders the focused release destination without artist management", () => {
 	expect(
 		screen.queryByRole("heading", { name: "Сведения об артисте" }),
 	).not.toBeInTheDocument();
+	view.unmount();
+
+	window.history.replaceState(
+		null,
+		"",
+		"#/library/releases/hours/positions/north-t1",
+	);
+	render(<CatalogDemo />);
+	expect(
+		screen.getByRole("heading", { name: "Small Hours" }),
+	).toBeInTheDocument();
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"Позиция не найдена в этом релизе.",
+	);
+	expect(screen.getByRole("link", { name: "← Полный релиз" })).toHaveAttribute(
+		"href",
+		"#/library/releases/hours",
+	);
 });
 
 it("retains an unsaved release title draft across a position visit", async () => {
-	window.history.replaceState(null, "", "#release/north");
+	window.history.replaceState(null, "", northernReleaseHref);
 	render(<CatalogDemo />);
 	const editor = screen.getByRole("region", { name: "Сведения об издании" });
-	fireEvent.click(
-		within(editor).getByRole("button", { name: "Изменить" }),
-	);
+	fireEvent.click(within(editor).getByRole("button", { name: "Изменить" }));
 	const title = editor.querySelector<HTMLInputElement>(
 		'input[data-metadata-keys~="album"]',
 	);
@@ -96,11 +115,11 @@ it("retains an unsaved release title draft across a position visit", async () =>
 	fireEvent.change(title, { target: { value: "Northern Lines draft" } });
 	const trackLink = screen
 		.getAllByRole("link", { name: /First Light/ })
-		.find((link) => link.getAttribute("href") === "#track/north-t1");
+		.find((link) => link.getAttribute("href") === northernPositionHref);
 	if (!trackLink) throw new Error("Missing Northern Lines position link");
 	fireEvent.click(trackLink);
 	await screen.findByRole("heading", { level: 1, name: /First Light$/ });
-	expect(window.location.hash).toBe("#track/north-t1");
+	expect(window.location.hash).toBe(northernPositionHref);
 
 	window.history.back();
 	await screen.findByRole("heading", { name: "Northern Lines" });
@@ -119,7 +138,7 @@ it("shows a read-only preview of the selected library position", async () => {
 	const grid = screen.getByRole("grid", { name: "Треки медиатеки" });
 	const track = within(grid)
 		.getAllByRole("link", { name: "First Light" })
-		.find((link) => link.getAttribute("href") === "#track/north-t1")
+		.find((link) => link.getAttribute("href") === northernPositionHref)
 		?.closest("tr");
 	if (!track) throw new Error("Missing Northern Lines position");
 	const checkbox = within(track).getByRole("checkbox", {
@@ -143,14 +162,14 @@ it("shows a read-only preview of the selected library position", async () => {
 });
 
 it("keeps a CURRENT comparison inside the position publication panel", () => {
-	window.history.replaceState(null, "", "#track/north-t1");
+	window.history.replaceState(null, "", northernPositionHref);
 	render(<CatalogDemo />);
 	const publication = within(
 		screen.getByRole("region", { name: "Публикация" }),
 	);
 	const copy = firstPublicationPreviewMessages.ru;
 	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
-	expect(window.location.hash).toBe("#track/north-t1");
+	expect(window.location.hash).toBe(northernPositionHref);
 	expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
 	expect(publication.queryByRole("button", { name: copy.publish })).toBeNull();
 	expect(
@@ -176,7 +195,7 @@ it("keeps a CURRENT comparison inside the position publication panel", () => {
 });
 
 it("opens the publication preview inline without changing the route", async () => {
-	const hash = "#track/north-t1";
+	const hash = northernPositionHref;
 	window.history.replaceState(null, "", hash);
 	render(<CatalogDemo />);
 	const publication = within(

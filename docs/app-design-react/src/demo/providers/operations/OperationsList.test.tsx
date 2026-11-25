@@ -36,7 +36,7 @@ const copy: OperationsListCopy = {
 const row: OperationsListRow = {
 	id: "publication-1",
 	target: "Northern Lines · position 01",
-	targetHref: "#track/north-t1",
+	targetHref: "#/library/releases/north/positions/north-t1",
 	operation: "Publish position",
 	state: "Running",
 	stateTone: "info",
@@ -52,7 +52,7 @@ it("renders an operation row and forwards row actions and refresh", () => {
 	render(<OperationsList copy={copy} rows={[row]} onRefresh={onRefresh} />);
 	expect(
 		screen.getByRole("link", { name: "Northern Lines · position 01" }),
-	).toHaveAttribute("href", "#track/north-t1");
+	).toHaveAttribute("href", "#/library/releases/north/positions/north-t1");
 	expect(screen.getByText("Preparing result")).toBeVisible();
 	expect(screen.queryByText("42%")).not.toBeInTheDocument();
 	expect(screen.queryByText(row.error ?? "")).not.toBeInTheDocument();

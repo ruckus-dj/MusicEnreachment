@@ -23,6 +23,7 @@ import {
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "../../../ui/features/library/LibraryTrackListView";
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import {
 	type LibraryRowsMessage,
 	libraryRowsMessage,
@@ -211,7 +212,7 @@ export function libraryCatalogTrackResults({
 			title: track.title,
 			durationMs:
 				track.duration === null ? null : Math.round(track.duration) * 1000,
-			href: `#track/${track.id}`,
+			href: libraryPositionHref(release.id, track.id),
 			releaseTitle: release.title,
 			releaseHref: releaseHref(release.id),
 			releaseSubtitle: `${originalArtistName(release.artistId, artists)} · ${release.year}`,
@@ -236,7 +237,7 @@ export function libraryCatalogTrackResults({
 						tagsTitle: pub.tags.TITLE?.join(", ") || track.title,
 					}
 				: {}),
-			tagsHref: `#tags/${track.id}/track`,
+			tagsHref: libraryPositionHref(release.id, track.id),
 			...(filterState ? { filterState } : {}),
 			selection: selectionControl([track.id], pageSelection),
 		};
@@ -319,8 +320,8 @@ export function libraryCatalogAlbumResults({
 				id: track.id,
 				numberLabel: trackNumberLabel(release, track),
 				title: track.title,
-				recordingHref: `#track/${track.id}`,
-				tagsHref: `#tags/${track.id}/track`,
+				recordingHref: libraryPositionHref(release.id, track.id),
+				tagsHref: libraryPositionHref(release.id, track.id),
 				artist: originalArtistName(track.artistId, artists),
 				recordingTitle: track.recordingTitle,
 				durationMs:

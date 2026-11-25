@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
 import type { LibraryReleaseOverviewModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
-import { MetadataEditorFocusView } from "../../../ui/features/library/metadata/MetadataEditorFocusView";
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type {
 	ReleaseOverviewCredit,
 	ReleaseOverviewMedia,
@@ -38,8 +38,8 @@ export type ReleaseOverviewScreenProps = {
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 	/**
-	 * Edition-only aggregate selection/publication, deletion and tag focus. A
-	 * host that retains this overview behind an active position passes `false`;
+	 * Edition-only aggregate selection/publication and deletion. A host that
+	 * retains this overview behind an active position passes `false`;
 	 * the metadata editor stays mounted so its draft survives same-release
 	 * navigation.
 	 * @default true
@@ -52,8 +52,6 @@ export type ReleaseOverviewScreenProps = {
 	 * @default true
 	 */
 	visible?: boolean;
-	/** Release-scope tag links focus the metadata editor region on arrival. */
-	initialTagFocus?: boolean;
 };
 
 /** Resolved facts and narrow actors for one release overview projection. */
@@ -73,7 +71,6 @@ export type ReleaseOverviewDemoModelInput = {
 	local: boolean;
 	editionControls: boolean;
 	visible: boolean;
-	initialTagFocus: boolean;
 };
 
 const sourceIds = (track: OriginalTrack) => [
@@ -103,7 +100,6 @@ export function buildReleaseOverviewDemoModel({
 	local,
 	editionControls,
 	visible,
-	initialTagFocus,
 }: ReleaseOverviewDemoModelInput): LibraryReleaseOverviewModel {
 	const m = (
 		key: Parameters<typeof catalogueMessage>[1],
@@ -119,7 +115,7 @@ export function buildReleaseOverviewDemoModel({
 		id: track.id,
 		numberLabel: trackNumberLabel(release, track),
 		title: track.title,
-		href: `#track/${track.id}`,
+		href: libraryPositionHref(release.id, track.id),
 		durationMs: track.duration == null ? null : track.duration * 1000,
 		properties: audioProperties(
 			track.sourceId ? files[track.sourceId] : undefined,
@@ -259,18 +255,16 @@ export function buildReleaseOverviewDemoModel({
 		fallbackTracks,
 		unassignedTracks,
 		metadataEditor: (
-			<MetadataEditorFocusView focus={editionControls && initialTagFocus}>
-				<ReleaseMetadataEditor
-					key={release.id}
-					release={release}
-					artists={artists}
-					genresLoaded={genresLoaded}
-					onLoadGenres={onLoadGenres}
-					local={local}
-					visible={visible}
-					onSave={saveRelease}
-				/>
-			</MetadataEditorFocusView>
+			<ReleaseMetadataEditor
+				key={release.id}
+				release={release}
+				artists={artists}
+				genresLoaded={genresLoaded}
+				onLoadGenres={onLoadGenres}
+				local={local}
+				visible={visible}
+				onSave={saveRelease}
+			/>
 		),
 		publication:
 			editionControls && publication ? (
@@ -299,8 +293,8 @@ export function buildReleaseOverviewDemoModel({
  * Release overview demo provider. The host mounts one instance per release id
  * and keeps it mounted while that release's positions are selected, so the
  * metadata actor owns one draft across same-release navigation. Edition-only
- * aggregate publication, deletion and tag focus disappear for a retained
- * overview; the metadata editor itself stays mounted.
+ * aggregate publication and deletion disappear for a retained overview; the
+ * metadata editor itself stays mounted.
  */
 export function useReleaseOverviewDemoModel({
 	release: givenRelease,
@@ -315,7 +309,6 @@ export function useReleaseOverviewDemoModel({
 	onLoadGenres,
 	editionControls = true,
 	visible = true,
-	initialTagFocus = false,
 }: ReleaseOverviewScreenProps): LibraryReleaseOverviewModel {
 	const { locale } = useI18n();
 	const [localRelease, setLocalRelease] = useState(givenRelease);
@@ -340,6 +333,5 @@ export function useReleaseOverviewDemoModel({
 		local: !onUpdateRelease,
 		editionControls,
 		visible,
-		initialTagFocus,
 	});
 }

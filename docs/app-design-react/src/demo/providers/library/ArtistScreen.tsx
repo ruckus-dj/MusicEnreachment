@@ -1,11 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import {
 	ApplicationLibraryArtistBinder,
 	type ApplicationLibraryArtistModel,
 	type ApplicationRouteProviderProps,
 } from "../../../ui/app/ApplicationRouteOutlet";
-import { useViewFocus } from "../../../ui/components/useViewFocus";
 import {
 	ArtistMetadataCard,
 	type ArtistMetadataValues,
@@ -16,12 +15,12 @@ import type {
 	ArtistHeadingModel,
 	ArtistMissingGroupModel,
 	ArtistReleaseRowModel,
-	ArtistTagFocus,
 } from "../../../ui/features/library/ArtistScreenView";
 import {
 	type CatalogueMessage,
 	catalogueMessage,
 } from "../../../ui/features/library/catalogueMessages";
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import { genreCatalog as demoGenres } from "../genres/catalogue";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import { releaseHref } from "./artistReleaseRoute";
@@ -41,10 +40,9 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
-import { libraryRootHref } from "./libraryRoute";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
+import { libraryRootHref } from "./libraryRoute";
 import { audioProperties } from "./metadata/audioProperties";
-import type { TagScope } from "./TagsComparison";
 
 const libraryHref = libraryRootHref();
 
@@ -81,8 +79,6 @@ export function ArtistScreen({
 	onDeleteArtist,
 	onQueueDeletion,
 	onUpdateArtist,
-	initialTags,
-	initialReleaseId,
 	genresLoaded = false,
 	onLoadGenres,
 	children,
@@ -100,8 +96,6 @@ export function ArtistScreen({
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	onUpdateArtist?: (artist: CatalogArtist) => void;
-	initialTags?: { scope: TagScope; releaseId?: string };
-	initialReleaseId?: string;
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 } & ApplicationRouteProviderProps) {
@@ -134,14 +128,6 @@ export function ArtistScreen({
 		artists.find((item) => item.id === artistId);
 	const [absentEdition, setAbsentEdition] = useState<Record<string, string>>(
 		{},
-	);
-	const initialTagsTarget = useRef<HTMLDivElement | null>(null);
-	useViewFocus(
-		initialTagsTarget,
-		initialTags?.scope
-			? `${initialTags.scope}:${initialTags.releaseId ?? ""}`
-			: undefined,
-		true,
 	);
 	const artistReleases = useMemo(
 		() =>
@@ -207,8 +193,6 @@ export function ArtistScreen({
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
 		tracks.filter(predicate).length;
-	const expandedReleaseId =
-		initialTags?.scope === "release" ? initialTags.releaseId : initialReleaseId;
 	const selectedGenres = (artist.genres ?? []).flatMap((genre) => {
 		if (!genre.id) return [];
 		const known = demoGenres.find((item) => item.id === genre.id);
@@ -420,7 +404,7 @@ export function ArtistScreen({
 				id: track.id,
 				numberLabel: trackNumberLabel(release, track),
 				title: track.title,
-				href: `#track/${track.id}`,
+				href: libraryPositionHref(release.id, track.id),
 				durationMs: track.duration == null ? null : track.duration * 1000,
 				properties: audioProperties(
 					track.sourceId ? files[track.sourceId] : undefined,
@@ -479,15 +463,6 @@ export function ArtistScreen({
 			group,
 		})),
 	];
-	const tagFocus: ArtistTagFocus | undefined = initialTags
-		? {
-				scope: initialTags.scope === "artist" ? "artist" : "release",
-				releaseId: initialTags.releaseId,
-				ref: (node: HTMLDivElement | null) => {
-					initialTagsTarget.current = node;
-				},
-			}
-		: undefined;
 	const model: ApplicationLibraryArtistModel = {
 		locale,
 		libraryHref,
@@ -500,8 +475,6 @@ export function ArtistScreen({
 		onFilterChange: changeFilter,
 		editionsKey: artistId,
 		releases: { state: "ready", rows: releaseRows },
-		expandedReleaseId,
-		tagFocus,
 	};
 	return (
 		<ApplicationLibraryArtistBinder model={model}>

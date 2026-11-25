@@ -30,7 +30,6 @@ export type TrackScreenProps = {
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview?: () => void;
-	initialTagsOpen?: boolean;
 	onRepublish?: () => void;
 	publicationPreview?: ReactNode;
 	onAudioUpgrade?: () => void;
@@ -56,25 +55,21 @@ const duration = (seconds: number) =>
  * view. Nested domain actors are supplied as narrow composition slots.
  *
  * The host may call it with `null` when no position is selected. Its state
- * hooks still run, and a change of track/tag entry identity (or leaving to the
+ * hooks still run, and a change of position identity (or leaving to the
  * edition) resets the inspection and tag-comparison session.
  */
 export function useTrackScreenDemoProvider(
 	props?: TrackScreenProps | null,
 ): LibraryReleasePositionModel | null {
 	const { locale } = useI18n();
-	const entryIdentity = props
-		? `${props.release.id}:${props.track.id}:${props.initialTagsOpen ? "tags" : "track"}`
-		: null;
+	const entryIdentity = props ? `${props.release.id}:${props.track.id}` : null;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
-	const [tagComparisonOpen, setTagComparisonOpen] = useState(() =>
-		Boolean(props?.initialTagsOpen),
-	);
+	const [tagComparisonOpen, setTagComparisonOpen] = useState(false);
 	const [lastEntryIdentity, setLastEntryIdentity] = useState(entryIdentity);
 	if (lastEntryIdentity !== entryIdentity) {
 		setLastEntryIdentity(entryIdentity);
 		setInspectionFileId(undefined);
-		setTagComparisonOpen(Boolean(props?.initialTagsOpen));
+		setTagComparisonOpen(false);
 	}
 	if (!props) return null;
 	const {

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n";
 import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
+import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import { originalReleases } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
@@ -24,10 +25,21 @@ afterEach(() => {
 	window.location.hash = "";
 });
 
+function fixturePositionHref(positionId: string) {
+	const release = originalReleases.find((item) =>
+		item.tracks.some((track) => track.id === positionId),
+	);
+	return release ? libraryPositionHref(release.id, positionId) : undefined;
+}
+
 function OperationsHarness({
 	queue,
+	positionHrefForTrack = fixturePositionHref,
 	...props
-}: OperationsDemoProviderOptions & { queue?: typeof queuedOperationFixtures }) {
+}: OperationsDemoProviderOptions & {
+	queue?: typeof queuedOperationFixtures;
+	positionHrefForTrack?: (positionId: string) => string | undefined;
+}) {
 	const provider = useOperationsDemoProvider(props);
 	return (
 		<ApplicationRouteOutlet
@@ -35,6 +47,7 @@ function OperationsHarness({
 			provider={DemoOperationsBinder}
 			providerProps={{
 				deletions: props.deletions,
+				positionHrefForTrack,
 				provider,
 				queue,
 			}}
@@ -136,6 +149,36 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 		screen.getByText("The confirmed removal scope was completed."),
 	).toBeVisible();
 	expect(dismissDeletion).not.toHaveBeenCalled();
+});
+
+it("links a runtime publication target by its own release and position", () => {
+	render(
+		<I18nProvider>
+			<OperationsHarness
+				deletions={[]}
+				publicationJobs={[
+					{
+						id: "runtime-job",
+						releaseId: "runtime-release",
+						positionId: "runtime-position",
+						title: "Runtime target",
+						createdAt: 0,
+					},
+				]}
+				queue={[]}
+				settleDeletion={() => "completed"}
+				recover={() => false}
+				initialState={{ signals: "succeeded", recovery: "succeeded" }}
+			/>
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: /status/i }));
+	fireEvent.click(screen.getByRole("option", { name: "Queued" }));
+	syncLocation();
+	expect(screen.getByRole("link", { name: "Runtime target" })).toHaveAttribute(
+		"href",
+		"#/library/releases/runtime-release/positions/runtime-position",
+	);
 });
 
 it("sorts the whole filtered queue before pagination and returns to page one", () => {

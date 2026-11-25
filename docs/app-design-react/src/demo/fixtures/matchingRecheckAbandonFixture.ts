@@ -1,4 +1,7 @@
-import { originalReleases } from "../providers/library/catalogData";
+import {
+	originalPositionHref,
+	originalReleases,
+} from "../providers/library/catalogData";
 import { fixturePublicationDestination } from "../providers/publication/publicationOutput";
 
 /**
@@ -20,7 +23,7 @@ const recheckRelease = originalReleases.find(
 );
 
 export const matchingRecheckAbandonFixture = {
-	targetHref: `#track/${unfinishedMatchingRecheckTrackId}`,
+	targetHref: originalPositionHref(unfinishedMatchingRecheckTrackId),
 	positions: (recheckRelease?.tracks ?? []).flatMap((track) => {
 		const path = track.published?.path;
 		if (!path) return [];

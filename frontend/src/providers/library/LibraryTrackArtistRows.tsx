@@ -6,6 +6,10 @@ import {
   LibraryTrackListView,
   type LibraryTrackRow,
 } from "../../ui/features/library/LibraryTrackListView";
+import {
+  libraryPositionHref,
+  libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
 type SelectionControl = (
@@ -15,14 +19,6 @@ type SelectionControl = (
 type Position = LibraryPositionPage["items"][number];
 
 const untitledTitle = { en: "Untitled", ru: "Без названия" } as const;
-
-function positionHref(position: Position) {
-  return `#/library/releases/${encodeURIComponent(position.release.id)}/positions/${encodeURIComponent(position.id)}`;
-}
-
-function releaseHref(position: Position) {
-  return `#/library/releases/${encodeURIComponent(position.release.id)}`;
-}
 
 function positionCredits(position: Position): LibraryTrackRow["credits"] {
   return position.artists.map((credit) => ({
@@ -56,9 +52,9 @@ export function libraryPositionRowsModel({
       id: position.id,
       title,
       durationMs: position.provider_duration_ms,
-      href: positionHref(position),
+      href: libraryPositionHref(position.release.id, position.id),
       releaseTitle: position.release.title,
-      releaseHref: releaseHref(position),
+      releaseHref: libraryReleaseHref(position.release.id),
       credits: positionCredits(position),
       positionLabel: `${position.medium} · ${position.displayed_number || position.position}`,
       hasAudio: position.audio_available,
