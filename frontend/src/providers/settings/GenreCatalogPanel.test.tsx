@@ -8,7 +8,8 @@ import {
   refreshGenreCatalog,
 } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
-import { GenreCatalogPanel } from "./GenreCatalogPanel";
+import { SettingsGenreOutlet } from "../../ui/features/settings/SettingsGenreOutlet";
+import { GenreCatalogPanelProvider } from "./GenreCatalogPanel";
 
 vi.mock("../../api/generated/client", () => ({
   getGenreCatalog: vi.fn(),
@@ -46,6 +47,14 @@ const terminal: OperationResponse = {
   updated_at: "2026-11-06T12:01:00Z",
   finished_at: "2026-11-06T12:01:00Z",
 };
+
+function GenreCatalogPanel() {
+  return (
+    <SettingsGenreOutlet
+      source={{ Component: GenreCatalogPanelProvider, props: {} }}
+    />
+  );
+}
 
 describe("GenreCatalogPanel", () => {
   let wake: ((id: string) => Promise<void>) | undefined;

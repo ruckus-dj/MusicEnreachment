@@ -75,7 +75,7 @@ import {
   preflightManagedToolInstall,
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
-import { GenreCatalogPanel } from "./GenreCatalogPanel";
+import { GenreCatalogPanelProvider } from "./GenreCatalogPanel";
 import {
   getSettingsDraftStorage,
   readSettingsDraft,
@@ -459,18 +459,34 @@ function activeOperation(operation: OperationResponse) {
   );
 }
 
+type SettingsScreenData = {
+  model: ApplicationSettingsModel;
+  operations: OperationResponse[];
+  onOperation: (snapshot: OperationResponse) => void | Promise<void>;
+};
+
 export function ProductionSettingsBinder({
   children,
 }: ApplicationRouteProviderProps) {
-  const model = useSettingsModel();
+  const { model, operations, onOperation } = useSettingsModel();
   return (
     <ApplicationSettingsBinder model={model}>
+      {model.ready &&
+        operations.map((operation) =>
+          operation.state === "queued" || operation.state === "running" ? (
+            <ToolOperationFollower
+              key={operation.id}
+              operation={operation}
+              onSnapshot={onOperation}
+            />
+          ) : null,
+        )}
       {children}
     </ApplicationSettingsBinder>
   );
 }
 
-function useSettingsModel(): ApplicationSettingsModel {
+function useSettingsModel(): SettingsScreenData {
   const { locale } = useI18n();
   const hash = useHashLocation();
   const t = (
@@ -3212,13 +3228,6 @@ function useSettingsModel(): ApplicationSettingsModel {
             tabs: {
               selectedKey: activeSettingsTab,
               onSelectionChange: (key) => selectSettingsTab(String(key)),
-              forceMount: [
-                "general",
-                "folders",
-                "tools",
-                "providers",
-                "genres",
-              ] as const,
               general: {
                 locale,
                 format: {
@@ -3320,16 +3329,6 @@ function useSettingsModel(): ApplicationSettingsModel {
                 },
               },
               tools: {
-                operations: operations.map((operation) =>
-                  operation.state === "queued" ||
-                  operation.state === "running" ? (
-                    <ToolOperationFollower
-                      key={operation.id}
-                      operation={operation}
-                      onSnapshot={onOperation}
-                    />
-                  ) : null,
-                ),
                 root: {
                   locale,
                   savedDirectory: state.settings.tools_directory,
@@ -3523,7 +3522,10 @@ function useSettingsModel(): ApplicationSettingsModel {
                   onLrclibEnabledChange: saveLrclib,
                 },
               },
-              genresSlot: <GenreCatalogPanel />,
+              genres: {
+                Component: GenreCatalogPanelProvider,
+                props: {},
+              },
             },
           }
         : undefined,
@@ -3541,27 +3543,22 @@ function useSettingsModel(): ApplicationSettingsModel {
     dialogs: {
       leave: navigationAttempt
         ? {
+            locale,
             dialogRef: navigationDialogRef,
-            title: t("unsavedSettings"),
-            description: t("navigationPrompt"),
             error: navigationError
               ? feedbackText(navigationError, locale)
               : undefined,
             actions: {
               stay: {
-                label: t("stay"),
                 onPress: () => resolveNavigation(navigationAttempt, "stay"),
               },
               keepDraft: {
-                label: t("leaveKeepDraft"),
                 onPress: () => keepDraftAndLeave(navigationAttempt),
               },
               discardDraft: {
-                label: t("discardDraftLeave"),
                 onPress: () => discardDraftAndLeave(navigationAttempt),
               },
               save: {
-                label: t("saveLeave"),
                 onPress: () => void saveDraftAndLeave(navigationAttempt),
               },
             },
@@ -3641,7 +3638,7 @@ function useSettingsModel(): ApplicationSettingsModel {
         : undefined,
     },
   };
-  return view;
+  return { model: view, operations, onOperation };
 }
 
 // Follows only tool operations for automatic settings refresh; progress,

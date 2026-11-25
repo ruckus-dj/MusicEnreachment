@@ -1554,9 +1554,7 @@ export function useSettingsScreenDemoProvider({
 	const dialogs: SettingsScreenDialogsViewProps = {
 		leave: leavePrompt
 			? {
-					title: copy.leaveSettingsTitle,
-					description: copy.leaveSettingsText,
-					dismissOnBackdrop: true,
+					locale,
 					error:
 						notice === "invalidTemplate" ||
 						notice === "invalidPath" ||
@@ -1566,17 +1564,14 @@ export function useSettingsScreenDemoProvider({
 							: undefined,
 					status: draftStorageWarning ? copy.draftStorageWarning : undefined,
 					actions: {
-						stay: { label: copy.stay, onPress: () => setLeavePrompt(false) },
+						stay: { onPress: () => setLeavePrompt(false) },
 						keepDraft: {
-							label: copy.leaveKeepDraft,
 							onPress: () => leaveWithDraft(false),
 						},
 						discardDraft: {
-							label: copy.leaveDiscard,
 							onPress: () => leaveWithDraft(true),
 						},
 						save: {
-							label: copy.leaveSave,
 							isHidden: draftConflicts.length > 0,
 							onPress: () => {
 								if (outputDirty) {

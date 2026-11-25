@@ -39,13 +39,6 @@ export const settingsMessages = createNamespace({
       "To edit the draft URL or request interval, select Self-hosted in Providers.",
     staleSettings:
       "The saved value or draft changed again. Review the values and confirm again.",
-    leaveSettingsTitle: "Leave settings?",
-    leaveSettingsText:
-      "Your unsaved text changes are kept in this tab unless you explicitly discard them.",
-    stay: "Stay",
-    leaveKeepDraft: "Leave and keep draft",
-    leaveDiscard: "Discard draft and leave",
-    leaveSave: "Save valid changes and leave",
     replaceSettingsTitle: "Replace saved value?",
     replaceSettingsText:
       "The saved values changed while you were editing. Confirm to replace those newer values with your draft.",
@@ -173,13 +166,6 @@ export const settingsMessages = createNamespace({
       "Чтобы вернуться к черновику адреса или интервала запросов, выберите собственный сервер на вкладке «Провайдеры».",
     staleSettings:
       "Сохранённое значение или черновик изменились. Проверьте значения и подтвердите ещё раз.",
-    leaveSettingsTitle: "Выйти из настроек?",
-    leaveSettingsText:
-      "Несохранённые текстовые изменения останутся в этой вкладке, если вы явно не удалите черновик.",
-    stay: "Остаться",
-    leaveKeepDraft: "Выйти, сохранив черновик",
-    leaveDiscard: "Удалить черновик и выйти",
-    leaveSave: "Сохранить корректные изменения и выйти",
     replaceSettingsTitle: "Заменить сохранённое значение?",
     replaceSettingsText:
       "Сохранённые значения изменились во время редактирования. Подтвердите замену новых значений вашим черновиком.",

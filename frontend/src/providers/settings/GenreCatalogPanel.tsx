@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { OperationSnapshotSource } from "../../api/client/useOperationFollower";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
@@ -10,10 +17,11 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import type { GenreCatalogFeedback } from "../../ui/features/settings/GenreCatalogView";
 import {
-  type GenreCatalogFeedback,
-  GenreCatalogView,
-} from "../../ui/features/settings/GenreCatalogView";
+  SettingsGenreDataBinder,
+  type SettingsGenreModel,
+} from "../../ui/features/settings/SettingsGenreOutlet";
 import {
   SettingsMessageError,
   settingsHttpError,
@@ -37,7 +45,7 @@ function genreFeedback(
     : { kind: fallback };
 }
 
-export function GenreCatalogPanel() {
+function useGenreCatalogModel(): SettingsGenreModel {
   const { locale } = useI18n();
   const [status, setStatus] = useState<GenreCatalogStatus>();
   const [loading, setLoading] = useState(true);
@@ -147,36 +155,39 @@ export function GenreCatalogPanel() {
     }
   }
 
+  return {
+    locale,
+    items,
+    status: status && {
+      count: status.count,
+      available: status.count > 0,
+      updatedAt: status.updated_at,
+      attemptedAt: status.last_attempt_at,
+      lastError: status.last_error,
+    },
+    loading,
+    refreshState: refreshing ? "submitting" : operationId ? "admitted" : "idle",
+    operation: operation && {
+      active:
+        operation.state === "queued" || operation.state === "running"
+          ? operation.state
+          : undefined,
+      stage: operation.stage,
+      error: operation.safe_error,
+    },
+    refreshRequested,
+    error,
+    onRefresh: () => void refresh(),
+  };
+}
+
+export function GenreCatalogPanelProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const model = useGenreCatalogModel();
   return (
-    <GenreCatalogView
-      locale={locale}
-      items={items}
-      status={
-        status && {
-          count: status.count,
-          available: status.count > 0,
-          updatedAt: status.updated_at,
-          attemptedAt: status.last_attempt_at,
-          lastError: status.last_error,
-        }
-      }
-      loading={loading}
-      refreshState={
-        refreshing ? "submitting" : operationId ? "admitted" : "idle"
-      }
-      operation={
-        operation && {
-          active:
-            operation.state === "queued" || operation.state === "running"
-              ? operation.state
-              : undefined,
-          stage: operation.stage,
-          error: operation.safe_error,
-        }
-      }
-      refreshRequested={refreshRequested}
-      error={error}
-      onRefresh={() => void refresh()}
-    />
+    <SettingsGenreDataBinder model={model}>{children}</SettingsGenreDataBinder>
   );
 }

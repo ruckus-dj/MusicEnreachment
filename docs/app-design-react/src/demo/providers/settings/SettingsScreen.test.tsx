@@ -283,7 +283,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		expect(window.location.hash).toBe("#/settings");
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /leave and keep draft|выйти, сохранив черновик/i,
+				name: /leave and keep draft|уйти, сохранив черновик/i,
 			}),
 		);
 		await waitFor(() => expect(window.location.hash).toBe("#library"));
@@ -525,7 +525,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		await screen.findByRole("dialog");
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /save valid changes and leave|сохранить корректные изменения и выйти/i,
+				name: /save and leave|сохранить и уйти/i,
 			}),
 		);
 		expect(onSettings).toHaveBeenLastCalledWith(
@@ -606,7 +606,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		await screen.findByRole("dialog");
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: /leave and keep draft|выйти, сохранив черновик/i,
+				name: /leave and keep draft|уйти, сохранив черновик/i,
 			}),
 		);
 		first.unmount();

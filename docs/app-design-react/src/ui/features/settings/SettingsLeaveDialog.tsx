@@ -1,16 +1,16 @@
 import type { RefObject } from "react";
 import { useCallback, useId, useLayoutEffect, useRef } from "react";
 import { AppButton } from "../../components/AppButton";
+import type { Locale } from "../../i18n/types";
+import { settingsMessage } from "./settingsMessages";
 
 export type SettingsLeaveAction = {
-  label: string;
   onPress: () => void;
   isDisabled?: boolean;
 };
 
 export type SettingsLeaveDialogProps = {
-  title: string;
-  description: string;
+  locale: Locale;
   actions: {
     stay: SettingsLeaveAction;
     keepDraft: SettingsLeaveAction;
@@ -19,7 +19,6 @@ export type SettingsLeaveDialogProps = {
   };
   error?: string;
   status?: string;
-  dismissOnBackdrop?: boolean;
   dialogRef?: RefObject<HTMLDialogElement | null>;
 };
 
@@ -30,12 +29,10 @@ const focusableSelector =
   'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])';
 
 export function SettingsLeaveDialog({
-  title,
-  description,
+  locale,
   actions,
   error,
   status,
-  dismissOnBackdrop,
   dialogRef,
 }: SettingsLeaveDialogProps) {
   const titleID = useId();
@@ -69,18 +66,6 @@ export function SettingsLeaveDialog({
       aria-labelledby={titleID}
       aria-describedby={descriptionID}
       className={dialogClassName}
-      onClick={(event) => {
-        if (!dismissOnBackdrop || event.target !== event.currentTarget) return;
-        const { left, right, top, bottom } =
-          event.currentTarget.getBoundingClientRect();
-        if (
-          event.clientX < left ||
-          event.clientX >= right ||
-          event.clientY < top ||
-          event.clientY >= bottom
-        )
-          stay();
-      }}
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -117,10 +102,10 @@ export function SettingsLeaveDialog({
       }}
     >
       <h2 id={titleID} className="m-0 text-base font-semibold">
-        {title}
+        {settingsMessage(locale, "unsavedSettings")}
       </h2>
       <p id={descriptionID} className="m-0">
-        {description}
+        {settingsMessage(locale, "navigationPrompt")}
       </p>
       {error !== undefined && error !== "" && (
         <p role="alert" className="m-0 wrap-anywhere text-[var(--error)]">
@@ -137,19 +122,19 @@ export function SettingsLeaveDialog({
           isDisabled={actions.stay.isDisabled}
           onPress={actions.stay.onPress}
         >
-          {actions.stay.label}
+          {settingsMessage(locale, "stay")}
         </AppButton>
         <AppButton
           isDisabled={actions.keepDraft.isDisabled}
           onPress={actions.keepDraft.onPress}
         >
-          {actions.keepDraft.label}
+          {settingsMessage(locale, "leaveKeepDraft")}
         </AppButton>
         <AppButton
           isDisabled={actions.discardDraft.isDisabled}
           onPress={actions.discardDraft.onPress}
         >
-          {actions.discardDraft.label}
+          {settingsMessage(locale, "discardDraftLeave")}
         </AppButton>
         {!actions.save.isHidden && (
           <AppButton
@@ -157,7 +142,7 @@ export function SettingsLeaveDialog({
             isDisabled={actions.save.isDisabled}
             onPress={actions.save.onPress}
           >
-            {actions.save.label}
+            {settingsMessage(locale, "saveLeave")}
           </AppButton>
         )}
       </div>

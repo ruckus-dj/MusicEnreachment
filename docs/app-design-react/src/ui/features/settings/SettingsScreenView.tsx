@@ -1,6 +1,5 @@
-import type { ComponentProps, Key, ReactNode, Ref } from "react";
+import type { ComponentProps, Key, Ref } from "react";
 import { AppButton } from "../../components/AppButton";
-import { GenreCatalogView } from "./GenreCatalogView";
 import { SettingsConflictDialog } from "./SettingsConflictDialog";
 import { SettingsDraftConflictNotice } from "./SettingsDraftConflictNotice";
 import { SettingsFoldersSection } from "./SettingsFoldersSection";
@@ -8,6 +7,10 @@ import {
   type SettingsGeneralModel,
   SettingsGeneralSection,
 } from "./SettingsGeneralSection";
+import {
+  SettingsGenreOutlet,
+  type SettingsGenreSource,
+} from "./SettingsGenreOutlet";
 import { SettingsLeaveDialog } from "./SettingsLeaveDialog";
 import { SettingsManagedPackageCards } from "./SettingsManagedPackageCards";
 import { SettingsOutputResetDialog } from "./SettingsOutputResetDialog";
@@ -83,23 +86,17 @@ export type SettingsToolsTabViewProps = {
   catalog: ComponentProps<typeof SettingsToolsCatalogSummary>;
   packages: ComponentProps<typeof SettingsManagedPackageCards>;
   move: ComponentProps<typeof SettingsToolsMoveEditor>;
-  /** Narrow slot for production operation followers. */
-  operations?: ReactNode;
 };
 
 export type SettingsScreenTabsViewProps = {
   selectedKey: SettingsTabKey;
   onSelectionChange: (key: Key) => void;
-  /** Panels kept mounted while hidden; prototype defaults to folders and genres. */
-  forceMount?: readonly SettingsTabKey[];
   general: SettingsGeneralModel;
   folders: ComponentProps<typeof SettingsFoldersSection>;
   tools: SettingsToolsTabViewProps;
   providers: SettingsProvidersSectionProps;
-  /** Pure genre catalog used by a provider that owns the catalog model. */
-  genres?: ComponentProps<typeof GenreCatalogView>;
-  /** Narrow slot for the application's existing genre controller. */
-  genresSlot?: ReactNode;
+  /** Pure genre model or a mounted controller that owns the catalog state. */
+  genres?: SettingsGenreSource;
 };
 
 export type SettingsScreenReadyViewProps = {
@@ -138,9 +135,8 @@ const unhealthyTextClass =
 /**
  * Settings screen composition. Providers own lifecycle, validation, drafts,
  * preflights and transport; this view renders their typed models in the
- * established order. A mounted token controller enters through its typed
- * provider boundary and stays mounted with the Tools panel; the operation
- * follower and genre controllers still use narrow render slots.
+ * established order and keeps every panel mounted while hidden. Mounted token
+ * and genre controllers enter through their typed provider boundaries.
  */
 export function SettingsScreenView({
   locale,
@@ -154,9 +150,6 @@ export function SettingsScreenView({
   refresh,
   dialogs,
 }: SettingsScreenViewProps) {
-  const forceMount = (tab: SettingsTabKey) =>
-    ready?.tabs.forceMount?.includes(tab) ??
-    (tab === "folders" || tab === "genres");
   return (
     <SettingsPageFrame locale={locale} headingRef={headingRef}>
       {notices.map((item) => (
@@ -222,18 +215,13 @@ export function SettingsScreenView({
             selectedKey={ready.tabs.selectedKey}
             onSelectionChange={ready.tabs.onSelectionChange}
           >
-            <SettingsTabPanel id="general" forceMount={forceMount("general")}>
+            <SettingsTabPanel id="general" forceMount>
               <SettingsGeneralSection model={ready.tabs.general} />
             </SettingsTabPanel>
-            <SettingsTabPanel id="folders" forceMount={forceMount("folders")}>
+            <SettingsTabPanel id="folders" forceMount>
               <SettingsFoldersSection {...ready.tabs.folders} />
             </SettingsTabPanel>
-            <SettingsTabPanel
-              id="tools"
-              className="grid gap-4"
-              forceMount={forceMount("tools")}
-            >
-              {ready.tabs.tools.operations}
+            <SettingsTabPanel id="tools" className="grid gap-4" forceMount>
               <SettingsToolsRootHeader {...ready.tabs.tools.root} />
               <section aria-labelledby="managed-title" className="grid gap-3">
                 {ready.tabs.tools.token && (
@@ -244,17 +232,13 @@ export function SettingsScreenView({
                 <SettingsToolsMoveEditor {...ready.tabs.tools.move} />
               </section>
             </SettingsTabPanel>
-            <SettingsTabPanel
-              id="providers"
-              forceMount={forceMount("providers")}
-            >
+            <SettingsTabPanel id="providers" forceMount>
               <SettingsProvidersSection {...ready.tabs.providers} />
             </SettingsTabPanel>
-            <SettingsTabPanel id="genres" forceMount={forceMount("genres")}>
-              {ready.tabs.genresSlot ??
-                (ready.tabs.genres && (
-                  <GenreCatalogView {...ready.tabs.genres} />
-                ))}
+            <SettingsTabPanel id="genres" forceMount>
+              {ready.tabs.genres && (
+                <SettingsGenreOutlet source={ready.tabs.genres} />
+              )}
             </SettingsTabPanel>
           </SettingsTabs>
         </>
