@@ -11,7 +11,7 @@ import type {
 } from "../../../ui/features/local-release/localReleaseFormModel";
 import { localReleaseMessages } from "../../../ui/features/local-release/localReleaseMessages";
 import { useLocalReleaseForm } from "../../../ui/features/local-release/useLocalReleaseForm";
-import { LocalReleaseDemoGenres } from "../../fixtures/LocalReleaseDemoGenres";
+import { LocalReleaseDemoGenres } from "../local-release/LocalReleaseDemoGenres";
 import {
 	type LocalCatalogMessage,
 	localCatalogMessage,

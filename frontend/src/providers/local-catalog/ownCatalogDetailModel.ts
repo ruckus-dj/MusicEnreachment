@@ -1,11 +1,11 @@
 import type { LocalProviderItem } from "../../api/generated/client.schemas";
 import type { OwnCatalogDetailsViewProps } from "../../ui/features/local-catalog/OwnCatalogDetailsView";
-import { formatLocalDuration } from "../../ui/features/local-release/localReleaseFormModel";
-import type { Locale } from "../../ui/i18n/locale";
 import {
   type OwnCatalogMessage,
   ownCatalogMessage,
-} from "./ownCatalogMessages";
+} from "../../ui/features/local-catalog/ownCatalogMessages";
+import { formatLocalDuration } from "../../ui/features/local-release/localReleaseFormModel";
+import type { Locale } from "../../ui/i18n/locale";
 import {
   type OwnCatalogType,
   ownCatalogArtistCredit,

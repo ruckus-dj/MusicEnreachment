@@ -14,7 +14,10 @@ import {
   type GenreCatalogFeedback,
   GenreCatalogView,
 } from "../../ui/features/settings/GenreCatalogView";
-import { SettingsMessageError, settingsHttpError } from "./settingsMessages";
+import {
+  SettingsMessageError,
+  settingsHttpError,
+} from "../../ui/features/settings/settingsMessages";
 
 function genreFeedback(
   reason: unknown,

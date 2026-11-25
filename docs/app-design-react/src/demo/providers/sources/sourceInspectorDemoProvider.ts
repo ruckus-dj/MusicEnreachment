@@ -4,13 +4,13 @@ import type {
 	SourceInspectorStepStatus,
 	SourceInspectorViewProps,
 } from "../../../ui/features/sources/sourceInspectorModel";
+import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import type { SourceFiles } from "../library/catalogData";
 import type { SourceRoot } from "./SourcesScreen";
 import {
 	inventoryPathStale,
 	retainedInventoryLocations,
 } from "./sourceInventory";
-import { sourceMessage } from "./sourceMessages";
 import {
 	processSourceQueue,
 	retrySourceStep,

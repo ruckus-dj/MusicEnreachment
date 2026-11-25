@@ -6,8 +6,8 @@ import {
 	type GenreMessages,
 	genreMessages,
 } from "../../../../ui/features/library/genreMessages";
+import { metadataMessage } from "../../../../ui/features/library/metadata/metadataFieldMessages";
 import { genreCatalog, resolveCatalogGenreName } from "../../genres/catalogue";
-import { metadataMessage } from "./messages";
 
 export type GenreReference = { id?: string; name: string };
 export type GenreOption = { id: string; name: string };

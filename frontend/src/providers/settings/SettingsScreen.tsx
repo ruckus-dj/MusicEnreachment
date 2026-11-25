@@ -57,6 +57,13 @@ import {
   SettingsScreenView,
   type SettingsScreenViewProps,
 } from "../../ui/features/settings/SettingsScreenView";
+import {
+  SettingsMessageError,
+  type SettingsMessageKey,
+  type SettingsMessageValues,
+  settingsHttpError,
+  settingsMessage,
+} from "../../ui/features/settings/settingsMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
@@ -73,13 +80,6 @@ import {
   settingsDraftIsDirty,
   writeSettingsDraft,
 } from "./settingsDraft";
-import {
-  SettingsMessageError,
-  type SettingsMessageKey,
-  type SettingsMessageValues,
-  settingsHttpError,
-  settingsMessage,
-} from "./settingsMessages";
 import {
   isSettingsTabID,
   parseSettingsRoute,
@@ -647,15 +647,14 @@ export function SettingsScreen() {
   const focusSettingsTarget = useCallback(
     (target: HTMLElement | null) => {
       if (!target) return;
-      const panel = target.closest<HTMLElement>("[data-settings-tab]");
-      const targetTab = panel?.dataset.settingsTab;
+      const targetTab = settingsTargetTab(target);
       if (isSettingsTabID(targetTab) && targetTab !== activeSettingsTab) {
         pendingTabFocusTarget.current = target;
         showSettingsTab(targetTab);
         return;
       }
       pendingTabFocusTarget.current = null;
-      target.focus();
+      requestSettingsFocus(target);
     },
     [activeSettingsTab, showSettingsTab],
   );
@@ -1015,24 +1014,24 @@ export function SettingsScreen() {
     };
   }, []);
   useEffect(() => {
-    heading.current?.focus();
+    requestSettingsFocus(heading.current);
     void loadScreen();
   }, [loadScreen]);
   useEffect(() => {
-    if (error && !installDialog && !movePlan) alert.current?.focus();
+    if (error && !installDialog && !movePlan)
+      requestSettingsFocus(alert.current);
   }, [error, installDialog, movePlan]);
   useLayoutEffect(() => {
     if (moveDialogError && activeSettingsTab === "tools" && !navigationAttempt)
-      moveDialogAlert.current?.focus();
+      requestSettingsFocus(moveDialogAlert.current);
   }, [activeSettingsTab, moveDialogError, navigationAttempt]);
   useLayoutEffect(() => {
     const target = pendingTabFocusTarget.current;
     if (!target) return;
-    const targetTab = target.closest<HTMLElement>("[data-settings-tab]")
-      ?.dataset.settingsTab;
+    const targetTab = settingsTargetTab(target);
     if (targetTab && targetTab === activeSettingsTab) {
       pendingTabFocusTarget.current = null;
-      target.focus();
+      requestSettingsFocus(target);
     }
   }, [activeSettingsTab]);
   useLayoutEffect(() => {
@@ -1056,7 +1055,7 @@ export function SettingsScreen() {
   useLayoutEffect(() => {
     if (navigationAttempt || !navigationFocusRestorePending.current) return;
     navigationFocusRestorePending.current = false;
-    if (document.querySelector("dialog[open]")) return;
+    if (settingsDialogIsOpen()) return;
     const target = [
       navigationReturnFocus.current,
       navigationEditedControl.current,
@@ -1066,10 +1065,10 @@ export function SettingsScreen() {
     focusSettingsTarget(target ?? null);
   }, [focusSettingsTarget, navigationAttempt]);
   useEffect(() => {
-    if (catalogError) catalogAlert.current?.focus();
+    if (catalogError) requestSettingsFocus(catalogAlert.current);
   }, [catalogError]);
   useEffect(() => {
-    if (loadError) loadErrorAlert.current?.focus();
+    if (loadError) requestSettingsFocus(loadErrorAlert.current);
   }, [loadError]);
 
   const requestCatalog = useCallback(async () => {
@@ -1246,12 +1245,9 @@ export function SettingsScreen() {
           new URL(anchor.href, window.location.href).hash === attempt.to
             ? anchor
             : null;
-        const activeControl =
-          document.activeElement instanceof HTMLElement &&
-          document.activeElement !== document.body &&
-          !navigationDialogRef.current?.contains(document.activeElement)
-            ? document.activeElement
-            : null;
+        const activeControl = settingsFocusedControl(
+          navigationDialogRef.current,
+        );
         const templateDraft = publicationPathTemplate.snapshot();
         const templateDirty =
           templateDraft.value !== undefined &&
@@ -1260,9 +1256,7 @@ export function SettingsScreen() {
         navigationEditedControl.current =
           activeControl ??
           (templateDirty
-            ? document.querySelector<HTMLElement>(
-                '[aria-describedby="publication-template-help"]',
-              )
+            ? resolveSettingsFocusTarget("publicationTemplate")
             : null);
         latestNavigationAttempt.current = attempt;
         setNavigationAttempt(attempt);
@@ -2470,9 +2464,8 @@ export function SettingsScreen() {
       };
     if (outputDirectory.dirty) {
       dialogReturnFocusRef.current =
-        navigationDialogRef.current?.querySelector(
-          "button[data-settings-navigation-save]",
-        ) ?? heading.current;
+        settingsNavigationSaveControl(navigationDialogRef.current) ??
+        heading.current;
       setError("");
       setOutputDialogError("");
       setOutputDialog(true);
@@ -2483,9 +2476,8 @@ export function SettingsScreen() {
       moveDirectoryRef.current !== moveDirectoryBaseline.current
     ) {
       const opener =
-        navigationDialogRef.current?.querySelector<HTMLButtonElement>(
-          "button[data-settings-navigation-save]",
-        ) ?? heading.current;
+        settingsNavigationSaveControl(navigationDialogRef.current) ??
+        heading.current;
       return preflightMove(opener, attempt);
     }
 
@@ -3655,3 +3647,12 @@ function ToolOperationFollower({
   });
   return null;
 }
+
+import {
+  requestSettingsFocus,
+  resolveSettingsFocusTarget,
+  settingsDialogIsOpen,
+  settingsFocusedControl,
+  settingsNavigationSaveControl,
+  settingsTargetTab,
+} from "../../ui/features/settings/settingsFocus";

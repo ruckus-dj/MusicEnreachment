@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { operationMessage as message } from "../operations/operationMessages";
+import type { TrackActionsViewProps } from "../../../ui/features/library/TrackActionsView";
+import { operationMessage as message } from "../../../ui/features/operations/operationMessages";
 import {
 	type OriginalRelease,
 	type OriginalTrack,
 	originalFiles,
 	type SourceFiles,
 } from "./catalogData";
-import type { TrackActionsViewProps } from "./TrackActionsView";
+import type { DeletionOperation } from "./DeletionRequest";
 import { refreshProviderHint, renameLocalTrack } from "./trackActionModel";
 
 export type TrackActionsProps = {
@@ -17,7 +17,7 @@ export type TrackActionsProps = {
 	onMutate: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
-	onRepublish: () => void;
+	onRepublish?: () => void;
 	onAudioUpgrade?: () => void;
 };
 
@@ -69,10 +69,11 @@ export function useTrackActionsDemoProvider({
 			track.published?.codec === "MP3" && file?.codec === "FLAC"
 				? onAudioUpgrade
 				: undefined,
-		onRepublish: track.published
-			? () =>
-					file ? onRepublish() : setNotice(message(locale, "chooseSource"))
-			: undefined,
+		onRepublish:
+			track.published && onRepublish
+				? () =>
+						file ? onRepublish() : setNotice(message(locale, "chooseSource"))
+				: undefined,
 		deletion:
 			track.published && onQueueDeletion
 				? { release, track, onQueue: onQueueDeletion }

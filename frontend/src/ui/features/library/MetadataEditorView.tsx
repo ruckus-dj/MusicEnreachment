@@ -190,7 +190,7 @@ export type MetadataEditorViewProps = {
   basics?: MetadataEditorBasicsView;
   providerGenreBaseline?: ProviderGenreBaselineValue | null;
   artists?: MetadataEditorArtistsView;
-  artistCredits?: ReactNode;
+  artistCredits?: { label: string; content: ReactNode };
   roles?: MetadataEditorRolesView;
   worksMovement?: MetadataEditorWorksMovementView;
   sections: readonly MetadataEditorSectionView[];
@@ -316,7 +316,14 @@ export function MetadataEditorView({
         baseline={providerGenreBaseline}
         locale={locale}
       />
-      {artistCredits}
+      {artistCredits && (
+        <details className="min-w-0 rounded border border-[var(--line)]">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+            {artistCredits.label}
+          </summary>
+          <div className="grid min-w-0 gap-2 p-2">{artistCredits.content}</div>
+        </details>
+      )}
       {artists && (
         <div className="grid gap-2 rounded border border-[var(--line)] p-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">

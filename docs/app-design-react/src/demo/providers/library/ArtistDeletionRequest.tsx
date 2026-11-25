@@ -1,142 +1,55 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
-import { AppButton } from "../../../ui/components/AppButton";
+import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
+import { LibraryDeletionControlView } from "../../../ui/features/library/LibraryDeletionControlView";
+import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import {
-	type CatalogueMessage,
-	catalogueMessage,
-} from "../../../ui/features/library/catalogueMessages";
-import {
-	LibraryDeletionDialogView,
-	LibraryDeletionOutputsView,
-} from "../../../ui/features/library/LibraryDeletionDialogView";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { Button } from "../../components/ui";
-import type {
-	CatalogArtist,
-	OriginalRelease,
-	OriginalTrack,
-} from "./catalogData";
-
-type DependencySection = {
-	title: CatalogueMessage;
-	releaseTitle?: string;
-	items: {
-		label: string;
-		position?: number;
-		published?: boolean;
-		state?: "deleted" | "kept";
-	}[];
-};
-
-type ArtistDeletionPlan = DeletionOperation & {
-	dependencies: DependencySection[];
-	summary: { releases: number; recordings: number; positions: number };
-};
+	artistCoartistWarnings,
+	buildDeletionDialog,
+	buildDeletionPreview,
+	type DeletionOperation,
+	publicationOutputs,
+	trackLabel,
+} from "./DeletionRequest";
 
 export function artistDeletionPlan(
 	artistId: string,
 	artists: CatalogArtist[],
 	releases: OriginalRelease[],
-): ArtistDeletionPlan | null {
+	locale: "en" | "ru" = "ru",
+) {
 	const artist = artists.find((item) => item.id === artistId);
 	if (!artist) return null;
 
-	const relatedReleases = releases.filter(
-		(release) =>
-			release.artistId === artistId ||
-			release.credits?.some((credit) => credit.artistId === artistId),
+	const owned = releases.filter((release) => release.artistId === artistId);
+	const tracks = owned.flatMap((release) => release.tracks);
+	const retainedRecordingIds = new Set(
+		releases
+			.filter((release) => release.artistId !== artistId)
+			.flatMap((release) => release.tracks.map((track) => track.recordingId)),
 	);
-	const allTracks = releases.flatMap((release) =>
-		release.tracks.map((track) => ({ release, track })),
+	const removedRecordingIds = new Set(
+		tracks.flatMap(({ recordingId }) =>
+			recordingId && !retainedRecordingIds.has(recordingId)
+				? [recordingId]
+				: [],
+		),
 	);
-	const directRecordingIds = new Set(
-		allTracks
-			.filter(({ track }) => track.artistId === artistId)
-			.map(({ track }) => track.recordingId)
-			.filter((id): id is string => Boolean(id)),
-	);
-	const affectedTracks = new Map<
-		string,
-		{ release: OriginalRelease; track: OriginalTrack }
-	>();
-	for (const release of relatedReleases)
-		for (const track of release.tracks)
-			affectedTracks.set(track.id, { release, track });
-	for (const item of allTracks)
-		if (
-			item.track.recordingId &&
-			directRecordingIds.has(item.track.recordingId)
-		)
-			affectedTracks.set(item.track.id, item);
-
-	const affected = [...affectedTracks.values()];
-	const publications = affected.filter(({ track }) => track.published);
-	const recordings = [
-		...new Map(
-			affected
-				.filter(({ track }) => track.recordingId)
-				.map(({ track }) => [track.recordingId, track] as const),
-		).values(),
-	];
-	const dependencies: DependencySection[] = [
-		{
-			title: "artistDeletionRelatedReleases",
-			items: relatedReleases.map((release) => ({ label: release.title })),
-		},
-		{
-			title: "artistDeletionRecordings",
-			items: recordings.map((track) => ({
-				label: `${track.title} · ${track.recordingId}`,
-				state: directRecordingIds.has(track.recordingId ?? "")
-					? "deleted"
-					: "kept",
-			})),
-		},
-		...relatedReleases.map((release) => ({
-			title: "releasePositionsWillBeDeleted" as const,
-			releaseTitle: release.title,
-			items: release.tracks.map((track) => ({
-				label: track.title,
-				position: track.position,
-				published: Boolean(track.published),
-			})),
-		})),
-		{
-			title: "artistDeletionPositionsInSavedReleases",
-			items: affected
-				.filter(
-					({ release, track }) =>
-						!relatedReleases.includes(release) &&
-						directRecordingIds.has(track.recordingId ?? ""),
-				)
-				.map(({ release, track }) => ({
-					label: `${release.title} · ${track.title}`,
-					position: track.position,
-					published: Boolean(track.published),
-				})),
-		},
-	] satisfies DependencySection[];
-	const visibleDependencies = dependencies.filter(
-		(section) => section.items.length,
+	const paths = tracks.flatMap(({ published }) =>
+		published ? [published.path] : [],
 	);
 
 	return {
-		kind: "artist",
+		kind: "artist" as const,
 		libraryArtistId: artistId,
-		libraryReleaseIds: relatedReleases.map((release) => release.id),
-		libraryTrackIds: affected.map(({ track }) => track.id),
+		libraryReleaseIds: owned.map((release) => release.id),
+		libraryTrackIds: tracks.map((track) => track.id),
 		target: artist.name,
-		scope: `${relatedReleases.length} связанных релизов; ${directRecordingIds.size} напрямую связанных композиций; ${affectedTracks.size} позиций (включая позиции этих композиций в сохраняемых релизах). Остальные сущности медиатеки и все записи провайдера сохраняются.`,
-		publications: publications.length,
-		paths: publications.flatMap(({ track }) =>
-			track.published ? [track.published.path] : [],
-		),
-		dependencies: visibleDependencies,
-		summary: {
-			releases: relatedReleases.length,
-			recordings: directRecordingIds.size,
-			positions: affectedTracks.size,
-		},
+		scope: catalogueMessage(locale, "deleteArtistScope"),
+		publications: paths.length,
+		paths,
+		removedRecordings: removedRecordingIds.size,
+		owned,
 	};
 }
 
@@ -151,90 +64,70 @@ export function ArtistDeletionRequest({
 	releases: OriginalRelease[];
 	onQueue: (operation: DeletionOperation) => void;
 }) {
-	const [open, setOpen] = useState(false);
 	const { locale } = useI18n();
-	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
-		catalogueMessage(locale, key, values);
-	const plan = artistDeletionPlan(artistId, artists, releases);
+	const [frozen, setFrozen] =
+		useState<NonNullable<ReturnType<typeof artistDeletionPlan>>>();
+	const plan = artistDeletionPlan(artistId, artists, releases, locale);
 	if (!plan) return null;
-
+	const m = (key: Parameters<typeof catalogueMessage>[1]) =>
+		catalogueMessage(locale, key);
+	const warnings = frozen
+		? artistCoartistWarnings(artistId, frozen.target, frozen.owned, artists)
+		: [];
 	return (
-		<>
-			<Button
-				className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
-				onPress={() => setOpen(true)}
-			>
-				{m("deleteArtist")}
-			</Button>
-			<LibraryDeletionDialogView
-				locale={locale}
-				kind="artist"
-				targetLabel={plan.target}
-				open={open}
-				onOpenChange={setOpen}
-				dismissable
-				actions={
-					<>
-						<AppButton onPress={() => setOpen(false)}>{m("cancel")}</AppButton>
-						<AppButton
-							className="border-[var(--error)]! text-[var(--error)]!"
-							onPress={() => {
-								setOpen(false);
-								onQueue({
-									libraryArtistId: plan.libraryArtistId,
-									libraryReleaseIds: plan.libraryReleaseIds,
-									libraryTrackIds: plan.libraryTrackIds,
-									kind: "artist",
-									target: plan.target,
-									scope: plan.scope,
-									publications: plan.publications,
-									paths: plan.paths,
-								});
-							}}
-						>
-							{m("confirm")}
-						</AppButton>
-					</>
-				}
-			>
-				<p>
-					{m("artistDeletionSummary", {
-						releases: plan.summary.releases,
-						recordings: plan.summary.recordings,
-						positions: plan.summary.positions,
-					})}
-				</p>
-				<p>{m("artistDeletionSafety", { count: plan.publications })}</p>
-				{plan.dependencies.map((section) => (
-					<section key={`${section.title}:${section.releaseTitle ?? ""}`}>
-						<h3 className="mt-1.5 mb-0 text-xs">
-							{m(section.title)}
-							{section.releaseTitle ? ` · ${section.releaseTitle}` : ""}
-						</h3>
-						<ul className="m-0 pl-5">
-							{section.items.map((item, index) => (
-								<li
-									className="my-[3px] [overflow-wrap:anywhere]"
-									key={`${item.label}:${index}`}
-								>
-									{item.position === undefined
-										? item.label || m("unnamedRelease")
-										: `${item.position.toString().padStart(2, "0")} · ${item.label}`}
-									{item.published !== undefined &&
-										` · ${m(item.published ? "published" : "unpublished")}`}
-									{item.state &&
-										` · ${m(item.state === "deleted" ? "willBeDeleted" : "willBeKept")}`}
-								</li>
-							))}
-						</ul>
-					</section>
-				))}
-				<LibraryDeletionOutputsView
-					locale={locale}
-					rows={plan.paths.map((path) => ({ id: path, path }))}
-				/>
-				<p>{m("deletionRequestNotice")}</p>
-			</LibraryDeletionDialogView>
-		</>
+		<LibraryDeletionControlView
+			locale={locale}
+			kind="artist"
+			trigger={{ label: m("deleteArtist"), onPress: () => setFrozen(plan) }}
+			dialog={buildDeletionDialog({
+				locale,
+				targetLabel: frozen?.target ?? plan.target,
+				scope: m("deleteArtistScope"),
+				open: Boolean(frozen),
+				onOpenChange: (open) => {
+					if (!open) setFrozen(undefined);
+				},
+				onConfirm: () => {
+					if (!frozen) return;
+					const {
+						owned: _owned,
+						removedRecordings: _recordings,
+						...operation
+					} = frozen;
+					onQueue(operation);
+					setFrozen(undefined);
+				},
+				preview: frozen
+					? buildDeletionPreview({
+							locale,
+							title: frozen.target,
+							positions: frozen.libraryTrackIds.length,
+							files: frozen.publications,
+							recordings: frozen.removedRecordings,
+							outputs: publicationOutputs(frozen.owned, frozen.paths),
+							positionRows: frozen.owned.flatMap((release) =>
+								release.tracks.map((track) => ({
+									id: track.id,
+									label: trackLabel(release, track),
+								})),
+							),
+							artistReleases: {
+								title: m("deletionArtistReleases"),
+								items: frozen.owned.map(({ id, title }) => ({
+									id,
+									label: title,
+								})),
+							},
+							coartistWarnings: warnings.length
+								? {
+										title: m("deletionCoartistWarnings"),
+										namesLabel: m("deletionCoartistNames"),
+										items: warnings,
+									}
+								: undefined,
+						})
+					: undefined,
+			})}
+		/>
 	);
 }

@@ -6,11 +6,17 @@ import {
 	useState,
 } from "react";
 import { type Locale, useI18n } from "../../../app/i18n";
+import { useViewFocus } from "../../../ui/components/useViewFocus";
 import { SourceArtifactCleanupView } from "../../../ui/features/sources/SourceArtifactCleanupView";
 import { SourceInspectorView } from "../../../ui/features/sources/SourceInspectorView";
 import { SourceInventoryPanel } from "../../../ui/features/sources/SourceInventoryPanel";
 import { SourceListHeadingView } from "../../../ui/features/sources/SourceListHeadingView";
 import { SourceListPageView } from "../../../ui/features/sources/SourceListPageView";
+import {
+	MissingSourceView,
+	SourceNoticeView,
+	SourceWorkDirectoryView,
+} from "../../../ui/features/sources/SourcePageFeedbackView";
 import {
 	type SourceRegistrationErrorKey,
 	SourceRegistrationView,
@@ -26,7 +32,10 @@ import {
 	SourceRootSettingsView,
 } from "../../../ui/features/sources/SourceRootSettingsView";
 import { SourceScanPanel } from "../../../ui/features/sources/SourceScanPanel";
-import { formStyles as styles } from "../../components/styles/formStyles";
+import {
+	type SourceMessageKey,
+	sourceMessage,
+} from "../../../ui/features/sources/sourceInventoryMessages";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -41,7 +50,6 @@ import {
 	retainedInventoryLocations,
 	rootLocations,
 } from "./sourceInventory";
-import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
 	canRemoveSourceRoot,
 	removeRootProcessingState,
@@ -142,9 +150,7 @@ export function SourcesScreen({
 		sourceMessage(locale, key, values);
 	const [adding, setAdding] = useState(false);
 	const rootHeading = useRef<HTMLHeadingElement>(null);
-	useEffect(() => {
-		if (selectedRootId && !selectedLocationId) rootHeading.current?.focus();
-	}, [selectedRootId, selectedLocationId]);
+	useViewFocus(rootHeading, selectedLocationId ? undefined : selectedRootId);
 	const registrationFocus = useSourceRegistrationFocus(adding);
 	const [name, setName] = useState("");
 	const [path, setPath] = useState("/mnt/music");
@@ -318,9 +324,7 @@ export function SourcesScreen({
 	}));
 
 	const noticeNode = notice ? (
-		<p className={styles.formNotice} role="status">
-			{m(notice.key, notice.values)}
-		</p>
+		<SourceNoticeView message={m(notice.key, notice.values)} />
 	) : null;
 
 	if (selectedRootId && selectedLocationId)
@@ -342,7 +346,7 @@ export function SourcesScreen({
 		);
 
 	return (
-		<section className={selectedRootId ? styles.page : undefined}>
+		<>
 			{selectedRootId ? (
 				root ? (
 					<SourceRootDetailView
@@ -411,10 +415,12 @@ export function SourcesScreen({
 							mode: root.mode,
 							modeNote:
 								root.mode === "staged" ? (
-									<>
-										{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-										<a href="#settings">{m("configure")}</a>
-									</>
+									<SourceWorkDirectoryView
+										inline
+										label={m("workDirectory")}
+										path={workDirectory}
+										link={{ href: "#settings", label: m("configure") }}
+									/>
 								) : undefined,
 							availability:
 								root.available === true
@@ -459,21 +465,11 @@ export function SourcesScreen({
 						/>
 					</SourceRootDetailView>
 				) : (
-					<>
-						<header className={styles.pageHeader}>
-							<div>
-								<h1 className={styles.pageTitle}>{m("sourceNotFound")}</h1>
-								<p className={styles.pageDescription}>
-									<code className="[overflow-wrap:anywhere]">
-										{selectedRootId}
-									</code>
-								</p>
-							</div>
-						</header>
-						<p>
-							<a href="#sources">{m("backToSources")}</a>
-						</p>
-					</>
+					<MissingSourceView
+						title={m("sourceNotFound")}
+						id={selectedRootId}
+						back={{ href: "#sources", label: m("backToSources") }}
+					/>
 				)
 			) : (
 				<SourceListPageView
@@ -532,10 +528,11 @@ export function SourcesScreen({
 					loaded
 					cleanup={<SourceArtifactCleanupView {...cleanup} />}
 					footer={
-						<p>
-							{m("workDirectory")}: {workDirectory || "—"} ·{" "}
-							<a href="#settings">{m("configureInSettings")}</a>
-						</p>
+						<SourceWorkDirectoryView
+							label={m("workDirectory")}
+							path={workDirectory}
+							link={{ href: "#settings", label: m("configureInSettings") }}
+						/>
 					}
 				/>
 			)}
@@ -567,6 +564,6 @@ export function SourcesScreen({
 					}}
 				/>
 			)}
-		</section>
+		</>
 	);
 }

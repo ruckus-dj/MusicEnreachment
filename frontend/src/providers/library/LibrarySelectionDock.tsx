@@ -42,10 +42,7 @@ export function LibrarySelectionDock({
             onOpen: () => setReviewOpen(true),
           }}
           onPreview={() => onPreview([...positions])}
-          onClear={() => {
-            onClear();
-            document.querySelector<HTMLElement>("main h1")?.focus();
-          }}
+          onClear={onClear}
         />
       )}
       <LibrarySelectionReviewView

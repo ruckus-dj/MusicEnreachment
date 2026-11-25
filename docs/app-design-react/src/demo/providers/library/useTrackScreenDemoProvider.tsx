@@ -1,11 +1,12 @@
 import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import type { TrackScreenViewProps } from "../../../ui/features/library/TrackScreenView";
-import type { DeletionOperation } from "../../components/DeletionRequest";
 import {
-	MetadataDiff,
-	publicationMetadataDiff,
-} from "../publication/publicationMetadataDiff";
+	formatTrackMessage,
+	trackMessage,
+} from "../../../ui/features/library/trackMessages";
+import { PublicationMetadataChanges } from "../../../ui/features/publication/PublicationInspector";
+import { publicationMetadataDiff } from "../publication/publicationMetadataDiff";
 import { releaseHref } from "./artistReleaseRoute";
 import {
 	type CatalogArtist,
@@ -18,16 +19,17 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
+import type { DeletionOperation } from "./DeletionRequest";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
 import { TagsComparison } from "./TagsComparison";
 import { TrackActions } from "./TrackActions";
-import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 export type TrackScreenProps = {
 	release: OriginalRelease;
 	track: OriginalTrack;
 	onSource: (id: string) => void;
-	onPreview: () => void;
+	onPreview?: () => void;
+	initialTagsOpen?: boolean;
 	onRepublish?: () => void;
 	publicationPreview?: ReactNode;
 	onAudioUpgrade?: () => void;
@@ -57,6 +59,7 @@ export function useTrackScreenDemoProvider({
 	track,
 	onSource,
 	onPreview,
+	initialTagsOpen,
 	onRepublish,
 	publicationPreview,
 	onAudioUpgrade,
@@ -72,7 +75,9 @@ export function useTrackScreenDemoProvider({
 }: TrackScreenProps): TrackScreenViewProps {
 	const { locale } = useI18n();
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
-	const [tagComparisonOpen, setTagComparisonOpen] = useState(false);
+	const [tagComparisonOpen, setTagComparisonOpen] = useState(
+		Boolean(initialTagsOpen),
+	);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const inspectedFileId =
@@ -168,12 +173,15 @@ export function useTrackScreenDemoProvider({
 		publication: {
 			published: Boolean(track.published),
 			status: metadataStatus,
-			diff: track.published ? <MetadataDiff groups={changes} /> : undefined,
+			diff: track.published ? (
+				<PublicationMetadataChanges locale={locale} groups={changes} compact />
+			) : undefined,
 			outputStatus: outputStatus ?? undefined,
 			onPreview,
-			onUpdateMetadata: track.published
-				? () => onMetadataPreview([track.id])
-				: undefined,
+			onUpdateMetadata:
+				track.published && onMetadataPreview
+					? () => onMetadataPreview([track.id])
+					: undefined,
 			preview: publicationPreview,
 		},
 		actions: onMutate ? (
@@ -235,15 +243,11 @@ export function useTrackScreenDemoProvider({
 			onOpenChange: setTagComparisonOpen,
 			comparison: (
 				<TagsComparison
-					releases={[release]}
-					artists={artists}
+					release={release}
+					track={track}
 					files={files}
 					providers={providers}
-					scope="track"
-					initialTrackId={track.id}
-					initialFileId={inspectedFileId}
-					onPreview={onMetadataPreview}
-					fixedContext
+					fileId={inspectedFileId}
 				/>
 			),
 		},

@@ -5,6 +5,7 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import type { LibraryArtistReleaseTrackRow } from "../../ui/features/library/LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "../../ui/features/library/LibraryPositionSourcesView";
+import { ReleaseCreditListView } from "../../ui/features/library/ReleaseCreditListView";
 import type {
   ReleaseOverviewCredit,
   ReleaseOverviewMedia,
@@ -18,51 +19,18 @@ export function ReleaseCreditList({
   credits: LibraryReleaseDetailResponse["artists"];
 }) {
   const { locale } = useI18n();
-  if (!credits?.length)
-    return (
-      <span>
-        {locale === "ru" ? "Исполнители не указаны" : "No artists specified"}
-      </span>
-    );
-  const creditKeyCounts = new Map<string, number>();
   return (
-    <ul className="my-1 flex list-none flex-wrap gap-x-4 gap-y-2 p-0">
-      {credits.map((credit) => {
-        const signature = `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`;
-        const occurrence = creditKeyCounts.get(signature) ?? 0;
-        creditKeyCounts.set(signature, occurrence + 1);
-        const displayName = credit.credit_name || credit.artist_name;
-        const canonicalName =
-          credit.artist_name && credit.artist_name !== displayName
-            ? credit.artist_name
-            : null;
-        return (
-          <li key={`${signature}-${occurrence}`}>
-            <a
-              href={`#/library/artists/${encodeURIComponent(credit.artist_id)}`}
-            >
-              {displayName}
-            </a>
-            {canonicalName ? (
-              <>
-                {" ("}
-                <span className="text-[.85em] text-[color-mix(in_srgb,currentColor_68%,transparent)]">
-                  {canonicalName}
-                </span>
-                {")"}
-              </>
-            ) : null}
-            {credit.join_phrase}
-            {credit.role ? (
-              <span className="text-[color-mix(in_srgb,currentColor_68%,transparent)]">
-                {" "}
-                · {credit.role}
-              </span>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+    <ReleaseCreditListView
+      locale={locale}
+      credits={(credits ?? []).map((credit) => ({
+        key: `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`,
+        name: credit.credit_name || credit.artist_name || "",
+        canonicalName: credit.artist_name,
+        href: `#/library/artists/${encodeURIComponent(credit.artist_id)}`,
+        joinPhrase: credit.join_phrase,
+        role: credit.role,
+      }))}
+    />
   );
 }
 

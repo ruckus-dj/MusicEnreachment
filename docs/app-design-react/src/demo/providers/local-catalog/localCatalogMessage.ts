@@ -1,5 +1,5 @@
+import { localCatalogMessages } from "../../../ui/features/local-catalog/localCatalogMessages";
 import type { Locale } from "../../../ui/i18n/types";
-import { localCatalogMessages } from "./localCatalogMessages";
 
 export type LocalCatalogMessage = keyof typeof localCatalogMessages.en;
 

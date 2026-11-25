@@ -9,18 +9,20 @@ import {
 	type OperationsSortDirection,
 	type OperationsStatusFilter,
 } from "../../../ui/features/operations/OperationsScreenView";
-import type { DeletionOperation } from "../../components/DeletionRequest";
+import { operationMessages } from "../../../ui/features/operations/operationMessages";
 import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
-import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
+import {
+	type QueuedOperationFixture,
+	queuedOperationFixtures,
+} from "../../fixtures/operationsQueueFixtures";
 import { recoveryFixture } from "../library/catalogData";
-import { operationMessages } from "./operationMessages";
+import type { DeletionOperation } from "../library/DeletionRequest";
 import type {
 	DemoOperationStatus,
 	OperationsDemoProvider,
 } from "./useOperationsDemoProvider";
 
 const pageSize = 50;
-const latestQueueSample = queuedOperationFixtures[0]?.createdAt ?? 0;
 
 type VisibleOperationStatus = Exclude<DemoOperationStatus, "succeeded">;
 
@@ -55,10 +57,12 @@ export function OperationsScreen({
 	deletions,
 	provider,
 	isTargetCurrent,
+	queue = queuedOperationFixtures,
 }: {
 	deletions: DeletionOperation[];
 	provider: OperationsDemoProvider;
 	isTargetCurrent?: (href: string) => boolean;
+	queue?: readonly QueuedOperationFixture[];
 }) {
 	const { locale } = useI18n();
 	const copy = operationMessages[locale];
@@ -69,7 +73,7 @@ export function OperationsScreen({
 	const [sort, setSort] = useState(defaultSort);
 	const [abandonOpen, setAbandonOpen] = useState(false);
 	const [demoStartedAt] = useState(() =>
-		Math.max(Date.now(), latestQueueSample + 60_000),
+		Math.max(Date.now(), (queue[0]?.createdAt ?? 0) + 60_000),
 	);
 	const deletionRows = useRef(
 		new WeakMap<DeletionOperation, { id: string; createdAt: number }>(),
@@ -228,7 +232,7 @@ export function OperationsScreen({
 			);
 		}
 
-		for (const fixture of queuedOperationFixtures) {
+		for (const fixture of queue) {
 			result.push({
 				status: "queued",
 				kind: fixture.kind,
@@ -253,6 +257,7 @@ export function OperationsScreen({
 		demoStartedAt,
 		deletions,
 		isTargetCurrent,
+		queue,
 		provider.deletionStates,
 		provider.publicationJobs,
 		provider.publicationStates,

@@ -1,11 +1,11 @@
 import { expect, it } from "vitest";
-import type { DeletionOperation } from "../../components/DeletionRequest";
 import { artistDeletionPlan } from "./ArtistDeletionRequest";
 import {
 	originalArtists,
 	originalProviders,
 	originalReleases,
 } from "./catalogData";
+import type { DeletionOperation } from "./DeletionRequest";
 import {
 	completeLibraryDeletion,
 	completeManagedLibraryDeletion,
@@ -96,10 +96,20 @@ it("deletes a release and its positions while retaining other releases", () => {
 	expect(releases.some((release) => release.id === target.id)).toBe(true);
 });
 
-it("applies the artist deletion plan across releases, including shared-recording positions", () => {
+it("deletes the artist's primary releases without removing guest positions or shared recordings", () => {
 	const releases = clone(originalReleases);
 	const artists = clone(originalArtists);
-	const artist = artists[0];
+	const owned = releases.find(({ id }) => id === "north");
+	const guest = releases
+		.find(({ id }) => id === "mix")
+		?.tracks.find(({ id }) => id === "mix-t1");
+	if (!owned?.artistId || !guest?.recordingId)
+		throw new Error("Missing guest recording fixture");
+	expect(
+		owned.tracks.some(({ recordingId }) => recordingId === guest.recordingId),
+	).toBe(true);
+	const artist = artists.find(({ id }) => id === owned.artistId);
+	if (!artist) throw new Error("Missing primary artist fixture");
 	const plan = artistDeletionPlan(artist.id, artists, releases);
 	if (!plan) throw new Error("Missing artist deletion plan");
 	const result = completeLibraryDeletion(plan, releases, artists);
@@ -115,16 +125,9 @@ it("applies the artist deletion plan across releases, including shared-recording
 	for (const id of removedPositionIds) {
 		expect(remainingTracks.some((track) => track.id === id)).toBe(false);
 	}
-	const directRecordingIds = new Set(
-		releases
-			.flatMap((release) => release.tracks)
-			.filter((track) => track.artistId === artist.id)
-			.map((track) => track.recordingId)
-			.filter((id): id is string => Boolean(id)),
-	);
-	for (const track of remainingTracks) {
-		expect(directRecordingIds.has(track.recordingId ?? "")).toBe(false);
-	}
+	expect(plan.libraryReleaseIds).toContain("north");
+	expect(plan.libraryReleaseIds).not.toContain("mix");
+	expect(remainingTracks.find(({ id }) => id === guest.id)).toEqual(guest);
 	// Related releases can contain positions unrelated to the artist; they are
 	// removed with the release, while unrelated releases/positions stay intact.
 	for (const release of result?.releases ?? []) {

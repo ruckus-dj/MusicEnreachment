@@ -9,6 +9,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n/host";
 import { firstPublicationPreviewMessages } from "../../../ui/features/library/firstPublicationPreviewMessages";
 import {
+	formatPublicationMessage,
+	publicationMessage,
+} from "../../../ui/features/publication/publicationMessages";
+import {
 	createIncomingState,
 	makeReleasePlan,
 	providerReleases,
@@ -22,10 +26,6 @@ import { applyAudioUpgradePreview } from "../library/trackActionModel";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import { PublicationPreview } from "./PublicationPreview";
 import { captureMetadataPreview } from "./previewModel";
-import {
-	formatPublicationMessage,
-	publicationMessage,
-} from "./publicationMessages";
 import {
 	fixturePublicationDestination,
 	type PublicationDestination,

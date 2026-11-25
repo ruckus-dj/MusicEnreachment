@@ -10,7 +10,7 @@ import {
   setupFeedback,
   setupFeedbackText,
   setupHttpError,
-} from "./setupMessages";
+} from "../../ui/features/setup/setupMessages";
 
 type Props = {
   hasKey: boolean;

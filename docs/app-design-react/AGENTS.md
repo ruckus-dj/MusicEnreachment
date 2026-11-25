@@ -150,3 +150,7 @@ unavailable.
   their container and use the desktop's actual `grid` role, not `table`. Keep
   browser checks for visibility, reflow and focus across breakpoints; a duplicate
   label in JSDOM is not evidence that both surfaces are visible in the browser.
+- Keep the full synthetic operations queue in the sort/pagination regression.
+  Lifecycle tests supply an empty queue and use fake time for their one
+  operation; rendering the full fixture on every filter/retry can time out
+  under the normal parallel test gate even with fake timers.

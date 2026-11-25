@@ -1,19 +1,9 @@
 import { useState } from "react";
-import { Button } from "react-aria-components";
-import { OwnCatalogRecordFieldsView } from "../../../ui/features/local-catalog/OwnCatalogRecordFieldsView";
+import { OwnCatalogRecordEditorView } from "../../../ui/features/local-catalog/OwnCatalogRecordEditorView";
 import {
 	formatLocalDuration,
 	parseLocalDuration,
 } from "../../../ui/features/local-release/localReleaseFormModel";
-import {
-	actions,
-	errorClass,
-	muted,
-	panel,
-	primary,
-	secondary,
-} from "../../../ui/features/local-release/localReleaseUi";
-import { Checkbox } from "../../components/ui";
 import {
 	GenrePicker,
 	type GenreReference,
@@ -35,30 +25,6 @@ function genreReferences(record: LocalProviderRecord | undefined) {
 		id,
 		name: record?.genreNamesById?.[id] ?? id,
 	}));
-}
-
-function ArtistGenres({
-	genres,
-	onGenres,
-	genresLoaded,
-	onLoadGenres,
-	genreOptions,
-}: {
-	genres: GenreReference[];
-	onGenres: (next: GenreReference[]) => void;
-	genresLoaded: boolean;
-	onLoadGenres?: () => void | Promise<void>;
-	genreOptions?: readonly GenreOption[];
-}) {
-	return (
-		<GenrePicker
-			value={genres}
-			onChange={onGenres}
-			loaded={genresLoaded}
-			onLoad={onLoadGenres}
-			options={genreOptions}
-		/>
-	);
 }
 
 export function LocalCatalogArtistForm({
@@ -89,61 +55,54 @@ export function LocalCatalogArtistForm({
 		genreReferences(record),
 	);
 	return (
-		<section className={`${panel} grid gap-3`}>
-			<OwnCatalogRecordFieldsView
-				notice={m("formRequiredNotice")}
-				fields={[
-					{
-						label: `${m("name")} · ${m("required")}`,
-						value: name,
-						onChange: setName,
-						required: true,
-					},
-					{
-						label: `${m("sortName")} · ${m("optional")}`,
-						value: sortName,
-						onChange: setSortName,
-					},
-					{
-						label: `${m("disambiguation")} · ${m("optional")}`,
-						value: disambiguation,
-						onChange: setDisambiguation,
-					},
-					{
-						label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
-						value: tags,
-						onChange: setTags,
-					},
-				]}
-			/>
-			<ArtistGenres
-				genres={genres}
-				onGenres={setGenres}
-				genresLoaded={genresLoaded}
-				onLoadGenres={onLoadGenres}
-				genreOptions={genreOptions}
-			/>
-			<div className={actions}>
-				<Button
-					className={primary}
-					isDisabled={!name.trim()}
-					onPress={() =>
-						onSave({
-							name: name.trim(),
-							sortName: sortName.trim(),
-							disambiguation: disambiguation.trim(),
-							tags,
-							genres,
-						})
-					}
-				>
-					{m("save")}
-				</Button>
-				<Button className={secondary} onPress={onBack}>
-					{m("cancel")}
-				</Button>
-			</div>
-		</section>
+		<OwnCatalogRecordEditorView
+			notice={m("formRequiredNotice")}
+			fields={[
+				{
+					label: `${m("name")} · ${m("required")}`,
+					value: name,
+					onChange: setName,
+					required: true,
+				},
+				{
+					label: `${m("sortName")} · ${m("optional")}`,
+					value: sortName,
+					onChange: setSortName,
+				},
+				{
+					label: `${m("disambiguation")} · ${m("optional")}`,
+					value: disambiguation,
+					onChange: setDisambiguation,
+				},
+				{
+					label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+					value: tags,
+					onChange: setTags,
+				},
+			]}
+			genre={
+				<GenrePicker
+					value={genres}
+					onChange={setGenres}
+					loaded={genresLoaded}
+					onLoad={onLoadGenres}
+					options={genreOptions}
+				/>
+			}
+			save={{
+				label: m("save"),
+				disabled: !name.trim(),
+				onPress: () =>
+					onSave({
+						name: name.trim(),
+						sortName: sortName.trim(),
+						disambiguation: disambiguation.trim(),
+						tags,
+						genres,
+					}),
+			}}
+			cancel={{ label: m("cancel"), onPress: onBack }}
+		/>
 	);
 }
 
@@ -203,104 +162,86 @@ export function LocalCatalogRecordingForm({
 		});
 	}
 	return (
-		<section className={`${panel} grid gap-3`}>
-			<OwnCatalogRecordFieldsView
-				notice={m("formRequiredNotice")}
-				help={m("durationHelp")}
-				fields={[
-					{
-						label: `${m("titleField")} · ${m("required")}`,
-						value: title,
-						onChange: setTitle,
-						required: true,
+		<OwnCatalogRecordEditorView
+			notice={m("formRequiredNotice")}
+			help={m("durationHelp")}
+			fields={[
+				{
+					label: `${m("titleField")} · ${m("required")}`,
+					value: title,
+					onChange: setTitle,
+					required: true,
+				},
+				{
+					label: `${m("durationField")} · ${m("optional")}`,
+					value: duration,
+					onChange: (value) => {
+						setDuration(value);
+						setBadDuration(false);
 					},
-					{
-						label: `${m("durationField")} · ${m("optional")}`,
-						value: duration,
-						onChange: (value) => {
-							setDuration(value);
-							setBadDuration(false);
-						},
-						placeholder: "3:24",
-					},
-					{
-						label: `${m("disambiguation")} · ${m("optional")}`,
-						value: disambiguation,
-						onChange: setDisambiguation,
-					},
-					{
-						label: `${m("isrcCommaSeparated")} · ${m("optional")}`,
-						value: isrcs,
-						onChange: setIsrcs,
-					},
-					{
-						label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
-						value: tags,
-						onChange: setTags,
-					},
-				]}
-				choice={{
-					label: `${m("explicit")} · ${m("optional")}`,
-					value: explicit,
-					onChange: setExplicit,
-					options: [
-						{ id: "", label: m("unspecified") },
-						{ id: "true", label: m("yes") },
-						{ id: "false", label: m("no") },
-					],
-				}}
-			/>
-			{badDuration && (
-				<p className={errorClass} role="alert">
-					{m("badDuration")}
-				</p>
-			)}
-			<ArtistGenres
-				genres={genres}
-				onGenres={setGenres}
-				genresLoaded={genresLoaded}
-				onLoadGenres={onLoadGenres}
-				genreOptions={genreOptions}
-			/>
-			<fieldset className="m-0 grid min-w-0 gap-1 border-0 p-0">
-				<legend className="mb-1 p-0 text-xs font-semibold">
-					{m("artistLinks")}
-				</legend>
-				<p className={muted}>{m("artistLinkExplanation")}</p>
-				<div className="flex flex-wrap gap-2">
-					{artists.map((artist) => (
-						<div className="flex items-center gap-1" key={artist.id}>
-							<Checkbox
-								isSelected={artistIds.includes(artist.id)}
-								onChange={(selected) =>
-									setArtistIds((current) =>
-										selected
-											? [...current, artist.id]
-											: current.filter((id) => id !== artist.id),
-									)
-								}
-							>
-								{artist.name}
-							</Checkbox>
-							<span className={muted}>
-								· {artist.provider}
-								{artist.provider !== "Local"
-									? ` · ${m("externalReadonly")}`
-									: ""}{" "}
-								· <code>{artist.key}</code>
-							</span>
-						</div>
-					))}
-				</div>
-			</fieldset>
-			<div className={actions}>
-				<Button className={primary} isDisabled={!title.trim()} onPress={save}>
-					{m("save")}
-				</Button>
-				<Button className={secondary} onPress={onBack}>
-					{m("cancel")}
-				</Button>
-			</div>
-		</section>
+					placeholder: "3:24",
+				},
+				{
+					label: `${m("disambiguation")} · ${m("optional")}`,
+					value: disambiguation,
+					onChange: setDisambiguation,
+				},
+				{
+					label: `${m("isrcCommaSeparated")} · ${m("optional")}`,
+					value: isrcs,
+					onChange: setIsrcs,
+				},
+				{
+					label: `${m("tagsCommaSeparated")} · ${m("optional")}`,
+					value: tags,
+					onChange: setTags,
+				},
+			]}
+			choice={{
+				label: `${m("explicit")} · ${m("optional")}`,
+				value: explicit,
+				onChange: setExplicit,
+				options: [
+					{ id: "", label: m("unspecified") },
+					{ id: "true", label: m("yes") },
+					{ id: "false", label: m("no") },
+				],
+			}}
+			fieldError={badDuration ? m("badDuration") : undefined}
+			genre={
+				<GenrePicker
+					value={genres}
+					onChange={setGenres}
+					loaded={genresLoaded}
+					onLoad={onLoadGenres}
+					options={genreOptions}
+				/>
+			}
+			artistLinks={{
+				legend: m("artistLinks"),
+				explanation: m("artistLinkExplanation"),
+				artists: artists.map((artist) => ({
+					id: artist.id,
+					name: artist.name ?? artist.key,
+					provider: artist.provider,
+					providerKey: artist.key,
+					externalNotice:
+						artist.provider !== "Local" ? m("externalReadonly") : undefined,
+				})),
+				selectedIds: artistIds,
+				onChange: (id, selected) =>
+					setArtistIds((current) =>
+						selected
+							? [...current, id]
+							: current.filter((artistId) => artistId !== id),
+					),
+			}}
+			save={{
+				label: m("save"),
+				disabled: !title.trim(),
+				onPress: save,
+			}}
+			cancel={{ label: m("cancel"), onPress: onBack }}
+		/>
 	);
 }

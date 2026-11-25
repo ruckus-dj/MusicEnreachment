@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
+import { MetadataEditorFocusView } from "../../../ui/features/library/metadata/MetadataEditorFocusView";
 import {
 	type ReleaseOverviewCredit,
 	type ReleaseOverviewMedia,
 	ReleaseOverviewView,
 } from "../../../ui/features/library/ReleaseOverviewView";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { DeletionRequest } from "../../components/DeletionRequest";
 import {
 	ReleasePublicationDemo,
 	type ReleasePublicationDemoProvider,
@@ -21,6 +20,7 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
+import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
 import { audioProperties } from "./metadata/audioProperties";
 import { ReleaseMetadataEditor } from "./metadata/ReleaseMetadataEditor";
 
@@ -73,14 +73,6 @@ export function ReleaseOverviewScreen({
 	const [localRelease, setLocalRelease] = useState(givenRelease);
 	const release = onUpdateRelease ? givenRelease : localRelease;
 	const artist = artists.find((item) => item.id === release.artistId);
-	const editorFocusTarget = useRef<HTMLDivElement | null>(null);
-	useEffect(() => {
-		if (!initialTagFocus) return;
-		const target = editorFocusTarget.current;
-		if (!target) return;
-		target.focus({ preventScroll: true });
-		target.scrollIntoView?.({ block: "start" });
-	}, [initialTagFocus]);
 	const hasAudio = (track: OriginalTrack) =>
 		Boolean(track.published) ||
 		sourceIds(track).some(
@@ -236,11 +228,7 @@ export function ReleaseOverviewScreen({
 			fallbackTracks={fallbackTracks}
 			unassignedTracks={unassignedTracks}
 			metadataEditor={
-				<div
-					ref={editorFocusTarget}
-					tabIndex={initialTagFocus ? -1 : undefined}
-					className="grid min-w-0 gap-3"
-				>
+				<MetadataEditorFocusView focus={initialTagFocus}>
 					<ReleaseMetadataEditor
 						key={release.id}
 						release={release}
@@ -250,7 +238,7 @@ export function ReleaseOverviewScreen({
 						local={!onUpdateRelease}
 						onSave={saveRelease}
 					/>
-				</div>
+				</MetadataEditorFocusView>
 			}
 			publication={
 				publication ? (

@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
+import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../../ui/features/incoming/IncomingGroupsPanel";
 import { IncomingScreenView } from "../../../ui/features/incoming/IncomingScreenView";
+import {
+	type IncomingMessage,
+	incomingMessage,
+} from "../../../ui/features/incoming/incomingOverviewMessages";
 import {
 	compareSourceFiles,
 	readSourceTrackOrder,
 } from "../../../ui/features/matching/sourceFileOrder";
 import type { CatalogArtist } from "../library/catalogData";
 import { formatUiNotice } from "../notices/uiNotice";
-import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import {
 	artistName,
 	createIncomingState,
@@ -178,9 +182,9 @@ export function IncomingScreen({
 		const pending = pendingGroupFocus.current;
 		if (!pending) return;
 		pendingGroupFocus.current = null;
-		groupDisclosureRefs.current
-			.get(pending.groupId)
-			?.focus({ preventScroll: pending.preventScroll });
+		focusView(groupDisclosureRefs.current.get(pending.groupId), {
+			preventScroll: pending.preventScroll,
+		});
 	}, [groups]);
 	const rows = incomingOverviewRows(
 		groups,

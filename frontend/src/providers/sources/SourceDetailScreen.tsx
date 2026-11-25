@@ -12,7 +12,8 @@ import {
   updateSource,
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
+import { useViewFocus } from "../../ui/components/useViewFocus";
+import { SourceDetailFeedbackView } from "../../ui/features/sources/SourceDetailFeedbackView";
 import { SourceRootDetailView } from "../../ui/features/sources/SourceRootDetailView";
 import { SourceRootHeadingView } from "../../ui/features/sources/SourceRootHeadingView";
 import { SourceRootRemovalDialog } from "../../ui/features/sources/SourceRootRemovalDialog";
@@ -20,11 +21,11 @@ import {
   type SourceRootChange,
   SourceRootSettingsView,
 } from "../../ui/features/sources/SourceRootSettingsView";
+import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
 import { SourceLocations } from "./SourceLocations";
 import { SourceScanControl } from "./SourceScanControl";
-import { sourceMessage } from "./sourceMessages";
 import { useSourceScans } from "./sourceScans";
 import {
   inventoryLabel,
@@ -62,7 +63,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     typeof message
   > | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const alert = useRef<HTMLParagraphElement>(null);
 
   function refreshIncomingGroupCount() {
     void queryClient.invalidateQueries({
@@ -127,9 +127,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     },
   });
 
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
+  useViewFocus(heading, true);
   useEffect(() => {
     if (scanRevision === previousScanRevision.current) return;
     previousScanRevision.current = scanRevision;
@@ -138,9 +136,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       exact: true,
     });
   }, [queryClient, scanRevision, sourceId]);
-  useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
   function backToList() {
     window.location.hash = "/sources";
   }
@@ -200,30 +195,16 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
           />
         }
         status={
-          <>
-            {(reading || deleting) && root && (
-              <p role="status">{t("requestRunning")}</p>
-            )}
-            {!root && !error && <p role="status">{t("loadingLocations")}</p>}
-            {error && (
-              <>
-                <p
-                  ref={alert}
-                  tabIndex={-1}
-                  role="alert"
-                  className="rounded border border-[var(--line)] bg-[var(--error-soft)] p-2 text-[var(--error)]"
-                >
-                  {renderSourceError(message(error), locale)}
-                </p>
-                <AppButton
-                  isDisabled={saving}
-                  onPress={() => void rootQuery.refetch()}
-                >
-                  {t("retryLoad")}
-                </AppButton>
-              </>
-            )}
-          </>
+          <SourceDetailFeedbackView
+            locale={locale}
+            requestRunning={Boolean(root) && (reading || deleting)}
+            loading={!root && !error}
+            error={
+              error ? renderSourceError(message(error), locale) : undefined
+            }
+            retryDisabled={saving}
+            onRetry={() => void rootQuery.refetch()}
+          />
         }
         scan={
           root && <SourceScanControl root={root} admissionDisabled={saving} />

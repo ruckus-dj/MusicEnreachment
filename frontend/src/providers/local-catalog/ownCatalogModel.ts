@@ -4,6 +4,7 @@ import type {
   LocalProviderItem,
   LocalProviderWrite,
 } from "../../api/generated/client.schemas";
+import type { OwnCatalogMessage } from "../../ui/features/local-catalog/ownCatalogMessages";
 import {
   formatLocalDuration,
   type LocalRecordingCreditSelection,
@@ -13,7 +14,6 @@ import {
 } from "../../ui/features/local-release/localReleaseFormModel";
 import type { LocalReleaseFormInitialValues } from "../../ui/features/local-release/useLocalReleaseForm";
 import type { GenreReference } from "../library/GenreMetadataEditor";
-import type { OwnCatalogMessage } from "./ownCatalogMessages";
 
 export const OWN_CATALOG_PAGE_SIZE = 50;
 

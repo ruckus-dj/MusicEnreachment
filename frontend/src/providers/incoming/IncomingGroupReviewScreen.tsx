@@ -23,7 +23,20 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import { focusView } from "../../ui/components/useViewFocus";
 import { IncomingScreenView } from "../../ui/features/incoming/IncomingScreenView";
+import {
+  IncomingCreationFallbackView,
+  IncomingWorkspaceView,
+} from "../../ui/features/incoming/IncomingWorkspaceView";
+import {
+  type IncomingFeedback,
+  type IncomingMessageKey,
+  type IncomingMessages,
+  incomingFeedbackText,
+  incomingMessages,
+} from "../../ui/features/incoming/incomingReviewMessages";
+import { localMatchingMessages } from "../../ui/features/incoming/localMatchingMessages";
 import {
   MatchingScreenView,
   type MatchingScreenViewAction,
@@ -33,6 +46,11 @@ import {
   type MatchingScreenViewPreview,
 } from "../../ui/features/matching/MatchingScreenView";
 import { matchingLinksCopy } from "../../ui/features/matching/matchingLinksCopy";
+import {
+  emptyTrackTagOverride,
+  type TrackTagOverrideDraft,
+  TrackTagOverrides,
+} from "../../ui/features/matching/TrackTagOverrides";
 import type {
   MatchingWorkspacePosition,
   MatchingWorkspacePositionContext,
@@ -45,7 +63,6 @@ import {
   saveIncomingConfirmReceipt,
   useIncomingConfirmReceipts,
 } from "./confirmReceipts";
-import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingSavedMatchingResult } from "./IncomingSavedMatchingResult";
 import { IncomingTagEncodingReview } from "./IncomingTagEncodingReview";
 import {
@@ -58,25 +75,11 @@ import {
   incomingGroupMatchingHref,
   incomingGroupsListHref,
 } from "./incomingGroupsRoute";
-import {
-  type IncomingFeedback,
-  type IncomingMessageKey,
-  type IncomingMessages,
-  incomingFeedbackText,
-  incomingMessages,
-} from "./incomingMessages";
-import { incomingScreenClass } from "./incomingStyles";
 import { useLocalMatching } from "./LocalReleaseEditor";
-import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
 import { matchingBoardScoresFromCandidates } from "./MatchingBoard";
 import { savedAutomaticAssignments } from "./savedAutomaticAssignments";
-import {
-  emptyTrackTagOverride,
-  type TrackTagOverrideDraft,
-  TrackTagOverrides,
-} from "./TrackTagOverrides";
 import { useIncomingGroupsPanel } from "./useIncomingGroupsPanel";
 
 type ProposalFile = {
@@ -410,12 +413,11 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
 
   useEffect(() => {
     if (!matchingActive || !routeGroupId) return;
-    const heading = matchingHeadingRef.current;
-    if (!heading) return;
-    if (typeof heading.scrollIntoView === "function") {
-      heading.scrollIntoView({ block: "start", inline: "nearest" });
-    }
-    heading.focus({ preventScroll: true });
+    focusView(matchingHeadingRef.current, {
+      scroll: { block: "start", inline: "nearest" },
+      scrollFirst: true,
+      preventScroll: true,
+    });
   }, [matchingActive, routeGroupId]);
 
   const reviewQuery = useQuery({
@@ -767,12 +769,11 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
     if (!currentPreview || focusedPreview.current === currentPreview) return;
     focusedPreview.current = currentPreview;
     if (!matchingActive) return;
-    const heading = previewHeadingRef.current;
-    if (!heading) return;
-    if (typeof heading.scrollIntoView === "function") {
-      heading.scrollIntoView({ block: "start", inline: "nearest" });
-    }
-    heading.focus({ preventScroll: true });
+    focusView(previewHeadingRef.current, {
+      scroll: { block: "start", inline: "nearest" },
+      scrollFirst: true,
+      preventScroll: true,
+    });
   }, [currentPreview, matchingActive]);
 
   const currentRetryIntent =
@@ -1122,25 +1123,18 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         renderPositionMeta: localMode
           ? undefined
           : ({ position }: MatchingWorkspacePositionContext) => (
-              <details className="mt-1">
-                <summary className="cursor-pointer text-xs text-stone-700">
-                  {evidenceOverrideMessages[locale].tagOverridesLegend(
-                    positionLabel(position, copy),
-                  )}
-                </summary>
-                <TrackTagOverrides
-                  title={positionLabel(position, copy)}
-                  trackId={position.track_id}
-                  override={
-                    tagOverridesByTrack[position.track_id] ??
-                    emptyTrackTagOverride()
-                  }
-                  disabled={busy || authorityBusy || sameGroupInFlight}
-                  onChange={(override) =>
-                    updateTrackTagOverride(position.track_id, override)
-                  }
-                />
-              </details>
+              <TrackTagOverrides
+                title={positionLabel(position, copy)}
+                locale={locale}
+                override={
+                  tagOverridesByTrack[position.track_id] ??
+                  emptyTrackTagOverride()
+                }
+                disabled={busy || authorityBusy || sameGroupInFlight}
+                onChange={(override) =>
+                  updateTrackTagOverride(position.track_id, override)
+                }
+              />
             ),
       }
     : null;
@@ -1655,7 +1649,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   }
 
   return (
-    <section className={incomingScreenClass}>
+    <IncomingWorkspaceView>
       {creatingLocalRelease &&
         (group && groupsQuery.data ? (
           <IncomingLocalReleaseCreation
@@ -1683,23 +1677,23 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             }}
           />
         ) : (
-          <section className="space-y-2">
-            <a href={matchingHref} className="underline">
-              {copy.tabMatching}
-            </a>
-            {groupsQuery.isLoading ? (
-              <p role="status">{copy.loadingGroups}</p>
-            ) : groupsQuery.isError ? (
-              <p role="alert">
-                {incomingFeedbackText(
-                  locale,
-                  errorText(groupsQuery.error, "groupsLoadError"),
-                )}
-              </p>
-            ) : (
-              <p role="alert">{copy.groupNotFound}</p>
-            )}
-          </section>
+          <IncomingCreationFallbackView
+            backHref={matchingHref}
+            backLabel={copy.tabMatching}
+            feedback={
+              groupsQuery.isLoading
+                ? { kind: "loading", message: copy.loadingGroups }
+                : {
+                    kind: "error",
+                    message: groupsQuery.isError
+                      ? incomingFeedbackText(
+                          locale,
+                          errorText(groupsQuery.error, "groupsLoadError"),
+                        )
+                      : copy.groupNotFound,
+                  }
+            }
+          />
         ))}
       <IncomingScreenView
         locale={locale}
@@ -1721,6 +1715,6 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       />
 
       {groupId ? <MatchingScreenView model={matchingModel} /> : null}
-    </section>
+    </IncomingWorkspaceView>
   );
 }

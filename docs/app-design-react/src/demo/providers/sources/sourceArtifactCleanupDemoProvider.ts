@@ -5,10 +5,13 @@ import type {
 	SourceArtifactCleanupResult,
 	SourceArtifactCleanupViewProps,
 } from "../../../ui/features/sources/SourceArtifactCleanupView";
+import {
+	type SourceMessageKey,
+	sourceMessage,
+} from "../../../ui/features/sources/sourceInventoryMessages";
 import type { SourceFiles } from "../library/catalogData";
 import { retainedCopyLabel } from "./retainedCopyPath";
 import type { SourceRoot } from "./SourcesScreen";
-import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 import {
 	eligibleSourceCopies,
 	type SourceProcessingState,

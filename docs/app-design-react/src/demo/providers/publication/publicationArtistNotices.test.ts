@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
+import { publicationMessage } from "../../../ui/features/publication/publicationMessages";
 import { originalReleases } from "../library/catalogData";
 import { publicationArtistNotices } from "./publicationArtistNotices";
-import { publicationMessage } from "./publicationMessages";
 
 function baseline() {
 	const release = structuredClone(

@@ -1,4 +1,5 @@
 import { useI18n } from "../../../../app/i18n/host";
+import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { TrackMetadataEditorsViewProps } from "../../../../ui/features/library/metadata/TrackMetadataEditorsView";
 import {
 	type CatalogArtist,
@@ -7,7 +8,6 @@ import {
 	type SourceFiles,
 } from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
-import { metadataEditorMessages } from "./editorMessages";
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";

@@ -2,7 +2,8 @@ import { type ReactNode, useSyncExternalStore } from "react";
 import { LanguageControl } from "../../ui/components/LanguageControl";
 import { ThemeControl } from "../../ui/components/ThemeControl";
 import { shell } from "../../ui/i18n/namespaces/shell";
-import { ShellView } from "../../ui/shell/ShellView";
+import { ShellStartupFrame } from "../../ui/shell/ShellStartupView";
+import { ProductShellView } from "../../ui/shell/ShellView";
 import { useI18n } from "../i18n";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
 
@@ -46,8 +47,18 @@ export function DesignShell({
 		: route === "match"
 			? "review"
 			: route;
+	const controls = {
+		language: <LanguageControl />,
+		theme: <ThemeControl store={themePreferenceStore} />,
+	};
+	if (route === "setup")
+		return (
+			<ShellStartupFrame locale={locale} controls={controls}>
+				{children}
+			</ShellStartupFrame>
+		);
 	return (
-		<ShellView
+		<ProductShellView
 			brand={{ href: "#review", label: "MeloTrove", mark: "mt" }}
 			skipLabel={copy.skip}
 			navigationLabel={copy.navigation}
@@ -61,14 +72,11 @@ export function DesignShell({
 				current: section === id,
 				count: id === "review" ? incomingCount : undefined,
 			}))}
-			controls={{
-				language: <LanguageControl />,
-				theme: <ThemeControl store={themePreferenceStore} />,
-			}}
+			controls={controls}
 			footerText={copy.prototypeFooter}
 			setupLink={{ href: "#setup", label: copy.setup }}
 		>
 			{children}
-		</ShellView>
+		</ProductShellView>
 	);
 }

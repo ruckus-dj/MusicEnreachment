@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DeletionOperation } from "../../components/DeletionRequest";
+import type { OperationMessage } from "../../../ui/features/operations/operationMessages";
 import {
 	type OriginalTrack,
 	originalReleases,
 	recoveryFixture,
 } from "../library/catalogData";
+import type { DeletionOperation } from "../library/DeletionRequest";
 import type { ManagedPublicationDeletionResult } from "../publication/managedPublicationDeletionModel";
-import type { OperationMessage } from "./operationMessages";
 
 /** Demo scheduling: admission is visible before the provider settles the work. */
 export const demoOperationStartDelayMs = 400;

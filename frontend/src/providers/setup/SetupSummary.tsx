@@ -12,7 +12,7 @@ import {
   setupFeedbackText,
   setupHttpError,
   setupMessages,
-} from "./setupMessages";
+} from "../../ui/features/setup/setupMessages";
 
 function knownFormat(format: string) {
   return format === "source" || format === "mka" || format === "m4a"

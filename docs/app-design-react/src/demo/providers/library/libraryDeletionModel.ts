@@ -1,4 +1,3 @@
-import type { DeletionOperation } from "../../components/DeletionRequest";
 import {
 	type ManagedPathObservation,
 	type ManagedPublicationDeletionResult,
@@ -10,6 +9,7 @@ import type {
 	OriginalRelease,
 	OriginalTrack,
 } from "./catalogData";
+import type { DeletionOperation } from "./DeletionRequest";
 
 /** The demo applies only the identities and publication paths confirmed by the operator. */
 export function completeLibraryDeletion(

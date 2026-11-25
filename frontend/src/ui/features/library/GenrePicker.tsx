@@ -63,6 +63,7 @@ export function GenrePicker({
   onOpenCatalog,
   onRetryStatus,
   disabled,
+  showLabel,
 }: {
   value: GenreReference[];
   onChange: (next: GenreReference[]) => void;
@@ -70,6 +71,7 @@ export function GenrePicker({
   label: string;
   copy: GenreMessages;
   disabled: boolean;
+  showLabel?: boolean;
 } & GenrePickerCatalog) {
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(60);
@@ -112,6 +114,9 @@ export function GenrePicker({
 
   return (
     <div className="grid min-w-0 gap-1 text-sm">
+      {showLabel && (
+        <span className="text-xs text-[var(--muted)]">{label}</span>
+      )}
       {editing ? (
         <>
           <AppButton

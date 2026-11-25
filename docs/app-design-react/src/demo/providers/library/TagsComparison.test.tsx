@@ -10,7 +10,7 @@ it("hides empty fields until show all and keeps an explicit clear visible", () =
 	delete track.published?.tags.COMMENT;
 
 	const view = render(
-		<TagsComparison releases={[release]} files={{}} scope="track" />,
+		<TagsComparison release={release} track={track} files={{}} />,
 	);
 	expect(screen.queryByRole("row", { name: /COMMENT/ })).toBeNull();
 	expect(
@@ -26,7 +26,7 @@ it("hides empty fields until show all and keeps an explicit clear visible", () =
 	view.unmount();
 
 	track.recordingComparisonOverrides = { comment: [] };
-	render(<TagsComparison releases={[release]} files={{}} scope="track" />);
+	render(<TagsComparison release={release} track={track} files={{}} />);
 	const overrideCell = within(
 		screen.getByRole("row", { name: /COMMENT/ }),
 	).getAllByRole("cell")[2];

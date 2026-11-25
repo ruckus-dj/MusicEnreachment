@@ -24,7 +24,7 @@ import type {
   OperationsListStatus,
 } from "../../ui/features/operations/OperationsList";
 import { OperationsScreenView } from "../../ui/features/operations/OperationsScreenView";
-import { operationsScreenCopy } from "../../ui/features/operations/operationsScreenCopy";
+import { operationsControllerCopy as messages } from "../../ui/features/operations/operationsScreenCopy";
 import type { Locale } from "../../ui/i18n/locale";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
 import {
@@ -74,31 +74,6 @@ const GENERIC_RETRY_KINDS = new Set([
   "provider_acoustid_lookup",
   "scan_source",
 ]);
-
-const messages = {
-  en: {
-    ...operationsScreenCopy.en,
-    retryHttpError: (status: number) =>
-      `Could not retry operation (HTTP ${status}).`,
-    dismissHttpError: (status: number) =>
-      `Could not dismiss operation (HTTP ${status}).`,
-    abandonHttpError: (status: number) =>
-      `Could not abandon unfinished republications (HTTP ${status}).`,
-    loadHttpError: (status: number) =>
-      `Could not load operations (HTTP ${status}).`,
-  },
-  ru: {
-    ...operationsScreenCopy.ru,
-    retryHttpError: (status: number) =>
-      `Не удалось повторить операцию (HTTP ${status}).`,
-    dismissHttpError: (status: number) =>
-      `Не удалось скрыть операцию (HTTP ${status}).`,
-    abandonHttpError: (status: number) =>
-      `Не удалось прервать незавершённые перепубликации (HTTP ${status}).`,
-    loadHttpError: (status: number) =>
-      `Не удалось загрузить операции (HTTP ${status}).`,
-  },
-} as const;
 
 type Copy = (typeof messages)[Locale];
 
@@ -415,7 +390,8 @@ export function OperationsScreen() {
   const queryClient = useQueryClient();
   const hash = useHashLocation();
   const route = parseOperationsRoute(hash);
-  const heading = useRef<HTMLHeadingElement>(null);
+  const { headingRef, focusHeading, restoreHeadingFocus } =
+    useOperationsHeadingFocus();
   const pendingGuard = useRef(false);
   const manualRefreshGuard = useRef(false);
   const lastGood = useRef<
@@ -557,14 +533,6 @@ export function OperationsScreen() {
     }
   }
 
-  function restoreHeadingFocus(trigger: Element) {
-    const owner = trigger.closest("button") ?? trigger;
-    const active = document.activeElement;
-    if (owner.isConnected && active !== owner && !owner.contains(active))
-      return;
-    heading.current?.focus({ preventScroll: true });
-  }
-
   async function perform(
     id: string,
     action: "retry" | "dismiss",
@@ -662,7 +630,7 @@ export function OperationsScreen() {
       setAbandonPreview(undefined);
       await reconcileCachedPages(id, null);
       setNotice("abandoned");
-      heading.current?.focus({ preventScroll: true });
+      focusHeading();
       await queryClient.invalidateQueries({ queryKey: operationsListQueryKey });
     } catch (reason) {
       setAbandonError(errorMessage(reason, copy.abandonError));
@@ -728,7 +696,7 @@ export function OperationsScreen() {
       error={loadError}
       notice={notice ? copy[notice] : undefined}
       actionError={actionErrorText(actionError, copy)}
-      headingRef={heading}
+      headingRef={headingRef}
       sortColumn={route.sort}
       sortDirection={route.direction}
       onSortChange={(sort, direction) =>
@@ -774,3 +742,5 @@ export function OperationsScreen() {
     />
   );
 }
+
+import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";

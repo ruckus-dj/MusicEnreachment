@@ -318,6 +318,8 @@ export type IncomingPlan = {
 	positionId?: string;
 	/** Rebuild the selected source even when the current snapshot is unchanged. */
 	force?: boolean;
+	/** Retained-position workflow replaces the output without changing its path. */
+	retainCurrentPath?: boolean;
 };
 
 export function makePlan(
@@ -472,6 +474,7 @@ import {
 	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
+	retainedOutputIssue,
 } from "../publication/publicationOutput";
 
 export function applyPlan(
@@ -527,6 +530,13 @@ export function applyPlan(
 			(item) => item.position === row.targetTrack.position,
 		);
 		if (!track) continue;
+		if (
+			plan.retainCurrentPath &&
+			(!track.published ||
+				!row.file ||
+				retainedOutputIssue(track.published, row.file, destination))
+		)
+			continue;
 		if (
 			row.assignment?.included &&
 			row.file &&
@@ -605,7 +615,12 @@ export function applyPlan(
 				rebuildSource || !published ? output.container : published.container,
 			sourceId: row.file.id,
 			readAt: "Только что · демо",
-			path: rebuildSource || !published ? output.path : published.path,
+			path:
+				published && plan.retainCurrentPath
+					? published.path
+					: rebuildSource || !published
+						? output.path
+						: published.path,
 		};
 		track.metadataBaseline = structuredClone(row.nextTags);
 		track.metadataBaselineExtras = {

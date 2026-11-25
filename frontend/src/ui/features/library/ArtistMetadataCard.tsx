@@ -20,6 +20,11 @@ const copy = {
     tags: "Tags",
     nameRequired: "Enter the artist’s name.",
     saveError: "Could not save artist metadata.",
+    loading: "Loading artist metadata…",
+    readError: "Could not load artist metadata.",
+    retry: "Retry",
+    conflict:
+      "Artist metadata changed. Your draft is preserved. Cancel and reopen the editor to use the current revision.",
   },
   ru: {
     title: "Метаданные артиста",
@@ -32,8 +37,15 @@ const copy = {
     tags: "Теги",
     nameRequired: "Укажите имя артиста.",
     saveError: "Не удалось сохранить метаданные артиста.",
+    loading: "Загрузка метаданных артиста…",
+    readError: "Не удалось загрузить метаданные артиста.",
+    retry: "Повторить",
+    conflict:
+      "Метаданные артиста изменились. Черновик сохранён. Отмените правки и откройте редактор заново, чтобы использовать актуальную версию.",
   },
 } as const;
+
+export const artistMetadataCardMessages = copy;
 
 export type ArtistMetadataValues = {
   name: string;

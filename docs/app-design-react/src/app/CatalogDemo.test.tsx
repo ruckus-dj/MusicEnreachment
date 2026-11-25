@@ -98,5 +98,21 @@ it("keeps a CURRENT comparison inside the position publication panel", () => {
 	expect(
 		publication.queryByRole("button", { name: copy.retainedRepublish }),
 	).toBeNull();
+	fireEvent.click(publication.getByRole("radio", { name: copy.forced }));
+	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
+	expect(
+		publication.queryByRole("button", { name: copy.retainedRepublish }),
+	).toBeNull();
+
+	fireEvent.click(
+		publication.getByRole("radio", { name: copy.retainedRepublish }),
+	);
+	expect(
+		publication.getByRole("button", { name: copy.retainedRepublish }),
+	).toBeDisabled();
+	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
+	expect(
+		publication.getByRole("button", { name: copy.retainedRepublish }),
+	).toBeEnabled();
 	expect(screen.queryByRole("dialog")).toBeNull();
 });

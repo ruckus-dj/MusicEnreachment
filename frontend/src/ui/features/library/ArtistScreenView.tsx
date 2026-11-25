@@ -10,13 +10,11 @@ import {
 } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
 import type { Locale } from "../../i18n/types";
+import { ArtistReleasePositionsView } from "./ArtistReleasePositionsView";
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
-import {
-  type LibraryArtistReleaseTrackRow,
-  LibraryArtistReleaseTracksView,
-} from "./LibraryArtistReleaseTracksView";
+import type { LibraryArtistReleaseTrackRow } from "./LibraryArtistReleaseTracksView";
 import { LibraryCatalogQueryControls } from "./LibraryCatalogControls";
 import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
 import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
@@ -526,11 +524,14 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
                       {row.edition.positions ? (
                         <ExpandedOnly>{row.edition.positions}</ExpandedOnly>
                       ) : (
-                        <LibraryArtistReleaseTracksView
+                        <ArtistReleasePositionsView
                           locale={locale}
                           releaseTitle={row.edition.title}
                           releaseSelection={row.edition.trackSelection}
-                          tracks={row.edition.tracks ?? []}
+                          positions={{
+                            state: "ready",
+                            tracks: row.edition.tracks ?? [],
+                          }}
                         />
                       )}
                     </DisclosurePanel>

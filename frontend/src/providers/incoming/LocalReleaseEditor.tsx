@@ -17,6 +17,11 @@ import type {
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  type LocalMatchingMessages,
+  type LocalMatchingNotice,
+  localMatchingMessages,
+} from "../../ui/features/incoming/localMatchingMessages";
 import { compareSourceFiles } from "../../ui/features/matching/sourceFileOrder";
 import type { MatchingWorkspaceRelease } from "../../ui/features/matching/types";
 import {
@@ -24,11 +29,6 @@ import {
   readIncomingSourceTrackOrder,
 } from "./apiMatchingSources";
 import { nextIncomingConfirmOrder } from "./confirmReceipts";
-import {
-  type LocalMatchingMessages,
-  type LocalMatchingNotice,
-  localMatchingMessages,
-} from "./localMatchingMessages";
 
 type Assignment = { file_member_id: string; provider_track_id: string };
 type PreviewBody = {

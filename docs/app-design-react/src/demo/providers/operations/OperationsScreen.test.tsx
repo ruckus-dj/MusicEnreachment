@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n";
-import type { DeletionOperation } from "../../components/DeletionRequest";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";
 import { originalReleases } from "../library/catalogData";
+import type { DeletionOperation } from "../library/DeletionRequest";
 import { OperationsScreen } from "./OperationsScreen";
 import {
 	demoOperationSettleDelayMs,
@@ -21,9 +21,12 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-function OperationsHarness(props: OperationsDemoProviderOptions) {
+function OperationsHarness({
+	queue,
+	...props
+}: OperationsDemoProviderOptions & { queue?: typeof queuedOperationFixtures }) {
 	const provider = useOperationsDemoProvider(props);
-	return <OperationsScreen deletions={props.deletions} provider={provider} />;
+	return <OperationsScreen deletions={props.deletions} provider={provider} queue={queue} />;
 }
 
 function advance(delay: number) {
@@ -55,6 +58,7 @@ it("settles removal automatically and keeps failed attempts retryable until comp
 		<I18nProvider>
 			<OperationsHarness
 				deletions={[operation]}
+				queue={[]}
 				settleDeletion={settleDeletion}
 				dismissDeletion={dismissDeletion}
 				recover={() => false}

@@ -1,4 +1,11 @@
-import { type Ref, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
 import {
   type PublicationPreviewDetailsState,
@@ -36,6 +43,7 @@ export type AggregatePositionStatus =
   | { kind: "loading" }
   | { kind: "queued" }
   | { kind: "operation"; label: string }
+  | { kind: "label"; label: string }
   | { kind: "not-prepared" };
 
 /**
@@ -73,13 +81,13 @@ export interface AggregateInspectorFileChoice {
 }
 
 /**
- * Selected-position inspector. Publication details are a portable inspection
- * model owned by `PublicationPreviewDetailsView`; the aggregate view only
- * places them in the desktop panel or the mobile dialog.
+ * Selected-position inspector. The aggregate view places either shared
+ * publication details or a summary of the available facts in the same board.
  */
 export type AggregateInspectorPresentation =
   | { kind: "empty" }
   | { kind: "not-prepared" }
+  | { kind: "summary"; content: ReactNode }
   | {
       kind: "publication";
       details: PublicationPreviewDetailsState;
@@ -93,15 +101,16 @@ export interface AggregatePublicationPreviewViewProps {
   locale: AggregatePublicationPreviewLocale;
   /** REQUIRED only when `onModeChange` is supplied. */
   mode?: AggregatePublicationMode;
-  counts: Readonly<Record<AggregateDisposition, number>>;
+  /** Omit when inspecting saved facts without per-position admissions. */
+  counts?: Readonly<Record<AggregateDisposition, number>>;
   positions: readonly AggregatePositionView[];
-  included: ReadonlySet<string>;
+  included?: ReadonlySet<string>;
   /** Requested selection; falls back to the first position like the host. */
   selectedPositionId: string;
   /** False when no included position has a controller or while preparing. */
-  canPrepare: boolean;
-  canConfirm: boolean;
-  preparing: boolean;
+  canPrepare?: boolean;
+  canConfirm?: boolean;
+  preparing?: boolean;
   inspector: AggregateInspectorPresentation;
   title?: string;
   headingRef?: Ref<HTMLHeadingElement>;
@@ -109,10 +118,10 @@ export interface AggregatePublicationPreviewViewProps {
   confirmLabel?: string;
   /** Omit to hide the CURRENT republish mode selector. */
   onModeChange?: (mode: AggregatePublicationMode) => void;
-  onToggleInclude: (positionId: string) => void;
+  onToggleInclude?: (positionId: string) => void;
   onSelectPosition: (positionId: string) => void;
-  onPrepare: () => void;
-  onConfirm: () => void;
+  onPrepare?: () => void;
+  onConfirm?: () => void;
 }
 
 const copy = {
@@ -215,7 +224,8 @@ function statusLabel(
   if (status.kind === "loading") return text.loading;
   if (status.kind === "queued")
     return firstPublicationPreviewMessages[locale].queued;
-  if (status.kind === "operation") return status.label;
+  if (status.kind === "operation" || status.kind === "label")
+    return status.label;
   if (status.kind === "not-prepared") return text.notPrepared;
   return text.dispositions[status.disposition];
 }
@@ -287,7 +297,9 @@ export function AggregatePublicationPreviewView({
   const fileChoice =
     inspector.kind === "publication" ? inspector.fileChoice : undefined;
   const inspectorContent =
-    inspector.kind === "publication" ? (
+    inspector.kind === "summary" ? (
+      inspector.content
+    ) : inspector.kind === "publication" ? (
       <>
         {inspector.fileLabel ? (
           <p className="wrap-anywhere">
@@ -338,15 +350,19 @@ export function AggregatePublicationPreviewView({
       <h2 className={styles.title} ref={headingRef} tabIndex={-1}>
         {title ?? text.title}
       </h2>
-      <p role="note">{text.independentAdmissions}</p>
-      <dl className={styles.summary}>
-        {aggregateDispositions.map((disposition) => (
-          <div className={styles.summaryRow} key={disposition}>
-            <dt>{text.dispositions[disposition]}</dt>
-            <dd>{counts[disposition]}</dd>
-          </div>
-        ))}
-      </dl>
+      {counts && (
+        <>
+          <p role="note">{text.independentAdmissions}</p>
+          <dl className={styles.summary}>
+            {aggregateDispositions.map((disposition) => (
+              <div className={styles.summaryRow} key={disposition}>
+                <dt>{text.dispositions[disposition]}</dt>
+                <dd>{counts[disposition]}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
       {onModeChange ? (
         <fieldset className={styles.modes}>
           <legend className={styles.modesLegend}>{text.modeLegend}</legend>
@@ -378,7 +394,7 @@ export function AggregatePublicationPreviewView({
             <h3 className="sr-only">{text.select}</h3>
             <ul className={styles.positionsList}>
               {positions.map((position) => {
-                const isIncluded = included.has(position.id);
+                const isIncluded = included?.has(position.id) ?? true;
                 const status = statusLabel(position.status, text, locale);
                 const diagnostic = diagnosticLabel(
                   position.diagnostic,
@@ -412,15 +428,17 @@ export function AggregatePublicationPreviewView({
                           {isIncluded && diagnostic ? ` · ${diagnostic}` : ""}
                         </span>
                       </button>
-                      <label className={styles.includeLabel}>
-                        <input
-                          type="checkbox"
-                          checked={isIncluded}
-                          aria-label={`${text.include}: ${position.label}`}
-                          onChange={() => onToggleInclude(position.id)}
-                        />
-                        {text.include}
-                      </label>
+                      {onToggleInclude && (
+                        <label className={styles.includeLabel}>
+                          <input
+                            type="checkbox"
+                            checked={isIncluded}
+                            aria-label={`${text.include}: ${position.label}`}
+                            onChange={() => onToggleInclude(position.id)}
+                          />
+                          {text.include}
+                        </label>
+                      )}
                     </div>
                   </li>
                 );
@@ -456,18 +474,24 @@ export function AggregatePublicationPreviewView({
         </div>
         {mobileInspectorOpen && inspectorContent}
       </dialog>
-      <div className={styles.actions}>
-        <button
-          type="button"
-          disabled={!canPrepare || preparing}
-          onClick={onPrepare}
-        >
-          {prepareLabel ?? text.prepare}
-        </button>
-        <button type="button" disabled={!canConfirm} onClick={onConfirm}>
-          {confirmLabel ?? text.confirm}
-        </button>
-      </div>
+      {(onPrepare || onConfirm) && (
+        <div className={styles.actions}>
+          {onPrepare && (
+            <button
+              type="button"
+              disabled={!canPrepare || preparing}
+              onClick={onPrepare}
+            >
+              {prepareLabel ?? text.prepare}
+            </button>
+          )}
+          {onConfirm && (
+            <button type="button" disabled={!canConfirm} onClick={onConfirm}>
+              {confirmLabel ?? text.confirm}
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }

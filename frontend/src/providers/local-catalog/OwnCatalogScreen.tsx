@@ -30,6 +30,10 @@ import type {
   OwnCatalogListRow,
   OwnCatalogListTab,
 } from "../../ui/features/local-catalog/OwnCatalogList";
+import {
+  type OwnCatalogMessage,
+  ownCatalogMessage,
+} from "../../ui/features/local-catalog/ownCatalogMessages";
 import type {
   LocalRecordingDraft,
   LocalReleaseArtist,
@@ -51,10 +55,6 @@ import {
 import { OwnCatalogReleaseEditor } from "./OwnCatalogReleaseEditor";
 import { ownCatalogDetailsViewProps } from "./ownCatalogDetailModel";
 import { saveLocalArtist, saveLocalRecording } from "./ownCatalogLookups";
-import {
-  type OwnCatalogMessage,
-  ownCatalogMessage,
-} from "./ownCatalogMessages";
 import {
   type ArtistFormDraft,
   artistDraftToWrite,

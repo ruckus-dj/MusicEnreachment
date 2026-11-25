@@ -37,17 +37,15 @@ export function ProviderCatalogGenreField({
   const catalog = useProviderGenreCatalog(locale);
   const copy = genreMessages[locale];
   return (
-    <div className="grid gap-1">
-      <GenrePicker
-        {...catalog}
-        value={[...value]}
-        onChange={onChange}
-        editing
-        label={copy.label[owner]}
-        copy={copy}
-        disabled={Boolean(disabled)}
-      />
-    </div>
+    <GenrePicker
+      {...catalog}
+      value={[...value]}
+      onChange={onChange}
+      editing
+      label={copy.label[owner]}
+      copy={copy}
+      disabled={Boolean(disabled)}
+    />
   );
 }
 

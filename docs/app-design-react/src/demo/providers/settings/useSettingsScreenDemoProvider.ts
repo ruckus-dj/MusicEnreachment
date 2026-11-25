@@ -1,6 +1,5 @@
 import { type Key, useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import { settingsMessages } from "../../../app/i18n/namespaces/settings";
 import type { BrowseDirectory } from "../../../ui/components/DirectoryPickerView";
 import type {
 	ManagedPackageCardModel,
@@ -18,6 +17,7 @@ import {
 	type SettingsTabKey,
 	settingsTabKeys,
 } from "../../../ui/features/settings/SettingsTabs";
+import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import { genreCatalog } from "../genres/catalogue";
 import { overlapsAnyDemoPath } from "../sources/demoPathValidation";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
@@ -624,15 +624,15 @@ export function useSettingsScreenDemoProvider({
 		setFieldErrors(errors);
 		if (Object.keys(errors).length) {
 			const first = errors.concurrency
-				? "settings-concurrency"
+				? "concurrency"
 				: errors.matchingPairThreshold
-					? "settings-matching-threshold"
+					? "matchingThreshold"
 					: errors.musicBrainzMode
-						? "settings-musicBrainzMode"
+						? "musicBrainzMode"
 						: errors.musicBrainzURL
-							? "settings-musicBrainzURL"
-							: "settings-musicBrainzDelay";
-			document.getElementById(first)?.focus();
+							? "musicBrainzURL"
+							: "musicBrainzDelay";
+			requestSettingsFocus(first);
 		}
 		return Object.keys(errors).length === 0;
 	};
@@ -673,7 +673,7 @@ export function useSettingsScreenDemoProvider({
 				...current,
 				[field]: copy.invalidProvider,
 			}));
-			document.getElementById(`settings-${field}`)?.focus();
+			requestSettingsFocus(field);
 			return false;
 		}
 		const baseline = {
@@ -730,7 +730,7 @@ export function useSettingsScreenDemoProvider({
 				...current,
 				concurrency: "invalid",
 			}));
-			document.getElementById("settings-concurrency")?.focus();
+			requestSettingsFocus("concurrency");
 			return;
 		}
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
@@ -756,7 +756,7 @@ export function useSettingsScreenDemoProvider({
 				...current,
 				matchingPairThreshold: "invalid",
 			}));
-			document.getElementById("settings-matching-threshold")?.focus();
+			requestSettingsFocus("matchingThreshold");
 			return;
 		}
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
@@ -884,7 +884,7 @@ export function useSettingsScreenDemoProvider({
 				...current,
 				[field]: copy.invalidProvider,
 			}));
-			document.getElementById(`settings-${field}`)?.focus();
+			requestSettingsFocus(field);
 			return;
 		}
 		onSettings({
@@ -951,15 +951,13 @@ export function useSettingsScreenDemoProvider({
 			musicBrainzDelay: errors.musicBrainzDelay,
 		}));
 		if (Object.keys(errors).length) {
-			document
-				.getElementById(
-					errors.musicBrainzMode
-						? "settings-musicBrainzMode"
-						: errors.musicBrainzURL
-							? "settings-musicBrainzURL"
-							: "settings-musicBrainzDelay",
-				)
-				?.focus();
+			requestSettingsFocus(
+				errors.musicBrainzMode
+					? "musicBrainzMode"
+					: errors.musicBrainzURL
+						? "musicBrainzURL"
+						: "musicBrainzDelay",
+			);
 			return;
 		}
 		if (
@@ -1689,3 +1687,5 @@ export function useSettingsScreenDemoProvider({
 		dialogs,
 	};
 }
+
+import { requestSettingsFocus } from "../../../ui/features/settings/settingsFocus";

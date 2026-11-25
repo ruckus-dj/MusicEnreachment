@@ -11,8 +11,8 @@ import type {
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
+import { localMatchingMessages } from "../../ui/features/incoming/localMatchingMessages";
 import { useLocalMatching } from "./LocalReleaseEditor";
-import { localMatchingMessages } from "./localMatchingMessages";
 
 const releaseID = "local-provider-release";
 const fileID = "incoming-member";

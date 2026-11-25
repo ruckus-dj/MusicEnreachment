@@ -16,6 +16,10 @@ import {
 	LibraryTrackListView,
 	type LibraryTrackRow,
 } from "../../../ui/features/library/LibraryTrackListView";
+import {
+	type LibraryRowsMessage,
+	libraryRowsMessage,
+} from "../../../ui/features/library/libraryRowsMessages";
 import { releaseHref } from "./artistReleaseRoute";
 import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import type {
@@ -32,10 +36,6 @@ import {
 import type { AbsentCatalogGroup } from "./catalogViewModel";
 import { missingEditionChooserProps } from "./LibraryMissingEditionDemo";
 import type { LibraryAlbumEntry } from "./libraryCatalogPage";
-import {
-	type LibraryRowsMessage,
-	libraryRowsMessage,
-} from "./libraryRowsMessages";
 import { audioProperties } from "./metadata/audioProperties";
 
 type View = "artists" | "albums" | "tracks";

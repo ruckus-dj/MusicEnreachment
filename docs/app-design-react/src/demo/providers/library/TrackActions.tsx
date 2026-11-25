@@ -1,5 +1,5 @@
-import { DeletionRequest } from "../../components/DeletionRequest";
-import { TrackActionsView } from "./TrackActionsView";
+import { TrackActionsView } from "../../../ui/features/library/TrackActionsView";
+import { DeletionRequest } from "./DeletionRequest";
 import {
 	type TrackActionsProps,
 	useTrackActionsDemoProvider,

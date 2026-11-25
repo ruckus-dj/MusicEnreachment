@@ -11,14 +11,14 @@ import type {
   ReleaseCoverSummary,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { ReleaseCoverEditorView } from "../../ui/features/library/ReleaseCoverEditorView";
 import {
   type LibraryReleaseText,
   LocalizedLibraryReleaseError,
   libraryReleaseError,
   libraryReleaseText,
   renderLibraryReleaseText,
-} from "./libraryReleaseMessages";
+} from "../../ui/features/library/libraryReleaseMessages";
+import { ReleaseCoverEditorView } from "../../ui/features/library/ReleaseCoverEditorView";
 
 type Props = {
   releaseId: string;

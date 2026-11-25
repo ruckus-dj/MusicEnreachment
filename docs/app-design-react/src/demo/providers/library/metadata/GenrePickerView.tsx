@@ -14,10 +14,5 @@ export type { GenreReference } from "./useGenrePickerDemoProvider";
  */
 export function GenrePickerView(props: GenrePickerProps) {
 	const picker = useGenrePickerDemoProvider(props);
-	return (
-		<div className="grid min-w-0 content-start gap-1 text-xs text-[var(--muted)]">
-			<span>{picker.label}</span>
-			<LibraryGenrePicker {...picker} />
-		</div>
-	);
+	return <LibraryGenrePicker {...picker} showLabel />;
 }

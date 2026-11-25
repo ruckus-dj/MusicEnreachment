@@ -11,6 +11,16 @@ import { useI18n } from "../../app/i18n/host";
 import { SetupToolsStepBody } from "../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../ui/features/setup/SetupToolCardsView";
 import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupHttpError,
+  setupMessage,
+  setupMessages,
+} from "../../ui/features/setup/setupMessages";
+import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
+import { useSetupTriggerFocus } from "../../ui/features/setup/useSetupTriggerFocus";
+import {
   operationKindLabel,
   operationProgressLabel,
   operationStageLabel,
@@ -25,14 +35,6 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
-import {
-  type SetupFeedback,
-  setupFeedback,
-  setupFeedbackText,
-  setupHttpError,
-  setupMessage,
-  setupMessages,
-} from "./setupMessages";
 
 type Kind = ManagedToolKind;
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
@@ -79,7 +81,7 @@ export function SetupTools({
     plan: InstallPreflightBody;
   }>();
   const [confirmError, setConfirmError] = useState<SetupFeedback | null>(null);
-  const installTrigger = useRef<HTMLElement | null>(null);
+  const installTriggerFocus = useSetupTriggerFocus();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [operationsError, setOperationsError] = useState<SetupFeedback | null>(
@@ -96,16 +98,12 @@ export function SetupTools({
       (item) => item.package_kind === kind && item.state === "ready",
     );
   const legacyConflict = kinds.some((kind) => readyByKind(kind).length > 1);
+  useSetupAlertFocus(alert, error);
+  useSetupAlertFocus(alert, legacyConflict);
   useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
-  useEffect(() => {
-    if (legacyConflict) alert.current?.focus();
     onBlockedChangeRef.current?.(legacyConflict);
   }, [legacyConflict]);
-  useEffect(() => {
-    if (operationsError) operationsAlert.current?.focus();
-  }, [operationsError]);
+  useSetupAlertFocus(operationsAlert, operationsError);
   const discover = useCallback(async () => {
     setDiscovering(true);
     setOperationsError(null);
@@ -265,8 +263,7 @@ export function SetupTools({
       action: {
         disabled: pending || !selected[kind],
         onPress: ({ target }) => {
-          installTrigger.current =
-            target instanceof HTMLElement ? target : null;
+          installTriggerFocus.capture(target);
           void install(kind);
         },
       },
@@ -308,12 +305,9 @@ export function SetupTools({
                 void confirm();
               },
               onCancel: () => {
-                const trigger = installTrigger.current;
                 setPreflight(undefined);
                 setConfirmError(null);
-                requestAnimationFrame(() => {
-                  if (trigger?.isConnected) trigger.focus();
-                });
+                installTriggerFocus.restore();
               },
             }
           : undefined

@@ -1,5 +1,9 @@
 import type { LocalProviderItem } from "../../api/generated/client.schemas";
 import { OwnCatalogEditorShell } from "../../ui/features/local-catalog/OwnCatalogEditorShell";
+import {
+  type OwnCatalogMessage,
+  ownCatalogMessage,
+} from "../../ui/features/local-catalog/ownCatalogMessages";
 import { LocalReleaseCancelDialog } from "../../ui/features/local-release/LocalReleaseCancelDialog";
 import { LocalReleaseForm } from "../../ui/features/local-release/LocalReleaseForm";
 import type {
@@ -14,10 +18,6 @@ import { localReleaseMessages } from "../../ui/features/local-release/localRelea
 import { useLocalReleaseForm } from "../../ui/features/local-release/useLocalReleaseForm";
 import type { Locale } from "../../ui/i18n/locale";
 import { ProviderCatalogReleaseGenreField } from "../local-release/ProviderCatalogReleaseGenreField";
-import {
-  type OwnCatalogMessage,
-  ownCatalogMessage,
-} from "./ownCatalogMessages";
 import { releaseRecordToFormValues } from "./ownCatalogModel";
 
 export function OwnCatalogReleaseEditor({

@@ -14,7 +14,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
-import { AppButton } from "../../ui/components/AppButton";
+import { ArtistReleasePositionsView } from "../../ui/features/library/ArtistReleasePositionsView";
 import {
   type ArtistDeletionAction,
   type ArtistEditionModel,
@@ -26,10 +26,9 @@ import {
   type ArtistReleasesModel,
   ArtistScreenView,
 } from "../../ui/features/library/ArtistScreenView";
-import { LibraryArtistReleaseTracksView } from "../../ui/features/library/LibraryArtistReleaseTracksView";
+import { catalogueMessage } from "../../ui/features/library/catalogueMessages";
 import type { LibraryStateFilter } from "../../ui/features/library/LibraryCatalogFilterView";
 import { LibraryMissingEditionView } from "../../ui/features/library/LibraryMissingEditionView";
-import { LibraryPaginationControls } from "../../ui/features/library/LibraryPaginationView";
 import { LibraryArtistMetadataCard } from "./LibraryArtistMetadataCard";
 import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
@@ -42,71 +41,6 @@ import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
-
-const artistScreenCopy = {
-  en: {
-    backToLibrary: "← Back to library",
-    loadingArtist: "Loading artist…",
-    artistLoadFailed: (status: number) =>
-      `Could not load artist (HTTP ${status}).`,
-    retry: "Retry",
-    loadingReleases: "Loading releases…",
-    releaseLoadFailed: (status: number) =>
-      `Could not load releases (HTTP ${status}).`,
-    artistReleases: "Artist releases",
-    untitledRelease: "Untitled release",
-    untitledReleaseGroup: "Untitled release group",
-    unnamedArtist: "Unnamed artist",
-    localRelease: "Local release",
-    dateNotSpecified: "Date not specified",
-    withAudio: "with audio",
-    published: "published",
-    hidePositions: "Hide positions",
-    showPositions: "Show positions",
-    noReleasesFound: "No releases found",
-    changeFilters: "Try changing the filters.",
-    artistHasNoReleases: "This artist has no releases yet.",
-    releasePages: "Release pages",
-    of: "of",
-    previous: "Previous",
-    next: "Next",
-    loadingPositions: "Loading positions…",
-    positionLoadFailed: (status: number) =>
-      `Could not load positions (HTTP ${status}).`,
-    positionPages: "Position pages",
-  },
-  ru: {
-    backToLibrary: "← К медиатеке",
-    loadingArtist: "Загрузка артиста…",
-    artistLoadFailed: (status: number) =>
-      `Не удалось загрузить артиста (HTTP ${status}).`,
-    retry: "Повторить",
-    loadingReleases: "Загрузка релизов…",
-    releaseLoadFailed: (status: number) =>
-      `Не удалось загрузить релизы (HTTP ${status}).`,
-    artistReleases: "Релизы артиста",
-    untitledRelease: "Релиз без названия",
-    untitledReleaseGroup: "Группа релизов без названия",
-    unnamedArtist: "Артист не указан",
-    localRelease: "Локальное издание",
-    dateNotSpecified: "Дата не указана",
-    withAudio: "с аудио",
-    published: "опубликовано",
-    hidePositions: "Скрыть позиции",
-    showPositions: "Показать позиции",
-    noReleasesFound: "Релизы не найдены",
-    changeFilters: "Попробуйте изменить фильтры.",
-    artistHasNoReleases: "У этого артиста пока нет релизов.",
-    releasePages: "Страницы релизов",
-    of: "из",
-    previous: "Назад",
-    next: "Далее",
-    loadingPositions: "Загрузка позиций…",
-    positionLoadFailed: (status: number) =>
-      `Не удалось загрузить позиции (HTTP ${status}).`,
-    positionPages: "Страницы позиций",
-  },
-} as const;
 
 function stateFilterFor(route: LibraryRoute): LibraryStateFilter {
   if (route.publication === "published") return "published";
@@ -179,7 +113,10 @@ function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
 
 export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   const { locale } = useI18n();
-  const copy = artistScreenCopy[locale];
+  const copy = (
+    key: Parameters<typeof catalogueMessage>[1],
+    values?: Record<string, string | number>,
+  ) => catalogueMessage(locale, key, values);
   const queryClient = useQueryClient();
   const hash = useHashLocation();
   const route = parseLibraryArtistRoute(hash) ?? {
@@ -283,7 +220,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     artistQuery.data?.status !== undefined && artistQuery.data.status !== 200
       ? apiResponseError(
           artistQuery.data,
-          copy.artistLoadFailed(artistQuery.data.status),
+          copy("artistLoadFailed", { status: artistQuery.data.status }),
         ).message
       : artistQuery.error instanceof Error
         ? artistQuery.error.message
@@ -295,7 +232,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     releasesQuery.data.status !== 200
       ? apiResponseError(
           releasesQuery.data,
-          copy.releaseLoadFailed(releasesQuery.data.status),
+          copy("releaseLoadFailed", { status: releasesQuery.data.status }),
         ).message
       : releasesQuery.error instanceof Error
         ? releasesQuery.error.message
@@ -311,12 +248,12 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         heading={null}
         status={
           artistQuery.isLoading
-            ? { state: "loading", message: copy.loadingArtist }
+            ? { state: "loading", message: copy("loadingArtist") }
             : error
               ? {
                   state: "error",
                   message: error,
-                  retryLabel: copy.retry,
+                  retryLabel: copy("retry"),
                   onRetry: () => void artistQuery.refetch(),
                 }
               : undefined
@@ -359,11 +296,11 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   );
 
   function editionModel(release: LibraryReleaseSummary): ArtistEditionModel {
-    const title = release.title.trim() ? release.title : copy.untitledRelease;
+    const title = release.title.trim() ? release.title : copy("unnamedRelease");
     const date =
       release.edition.release_date ??
       release.edition.original_release_date ??
-      copy.dateNotSpecified;
+      copy("dateNotSpecified");
     const catalog = release.edition.catalog_numbers[0] ?? "";
     const generation = release.cover?.selected_generation;
     const provider = release.provider_links[0];
@@ -382,7 +319,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
       },
       providerText: provider
         ? `${provider.provider_code} · ${provider.provider_key}`
-        : copy.localRelease,
+        : copy("localRelease"),
       positionCount: release.counts.position_count,
       availableCount: release.counts.available_position_count,
       publishedCount: release.counts.published_position_count,
@@ -405,11 +342,11 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   ): ArtistMissingGroupModel {
     return {
       key: group.provider_key,
-      title: group.title.trim() ? group.title : copy.untitledReleaseGroup,
-      artistName: creditNames(group.artists) || copy.unnamedArtist,
+      title: group.title.trim() ? group.title : copy("unnamedReleaseGroup"),
+      artistName: creditNames(group.artists) || copy("unnamedArtist"),
       originalReleaseDate: group.original_release_date,
       providerKey: group.provider_key,
-      artistCredits: creditLinks(group.artists, copy.unnamedArtist),
+      artistCredits: creditLinks(group.artists, copy("unnamedArtist")),
       chooser: <MissingGroupChooser group={group} />,
     };
   }
@@ -434,12 +371,12 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   const pagination =
     releases && (route.offset > 0 || releases.total > PAGE_SIZE)
       ? {
-          label: copy.releasePages,
+          label: copy("releasePages"),
           status: rows.length
-            ? `${route.offset + 1}–${Math.min(route.offset + PAGE_SIZE, releases.total)} ${copy.of} ${releases.total}`
-            : `0 ${copy.of} ${releases.total}`,
+            ? `${route.offset + 1}–${Math.min(route.offset + PAGE_SIZE, releases.total)} ${copy("of")} ${releases.total}`
+            : `0 ${copy("of")} ${releases.total}`,
           previous: {
-            label: copy.previous,
+            label: copy("previous"),
             disabled: route.offset === 0,
             href: libraryArtistRouteHref(artistId, {
               ...route,
@@ -447,7 +384,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             }),
           },
           next: {
-            label: copy.next,
+            label: copy("next"),
             disabled: route.offset + PAGE_SIZE >= releases.total,
             href: libraryArtistRouteHref(artistId, {
               ...route,
@@ -457,24 +394,24 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         }
       : null;
   const releaseState: ArtistReleasesModel = releasesQuery.isLoading
-    ? { state: "loading", message: copy.loadingReleases }
+    ? { state: "loading", message: copy("loadingReleases") }
     : releasesError
       ? {
           state: "error",
           message: releasesError,
-          retryLabel: copy.retry,
+          retryLabel: copy("retry"),
           onRetry: () => void releasesQuery.refetch(),
         }
       : rows.length === 0
         ? {
             state: "empty",
-            title: copy.noReleasesFound,
+            title: copy("noReleasesFound"),
             description:
               route.query ||
               route.publication !== "all" ||
               route.availability !== "all"
-                ? copy.changeFilters
-                : copy.artistHasNoReleases,
+                ? copy("changeFilters")
+                : copy("artistHasNoReleases"),
             pagination,
           }
         : {
@@ -509,7 +446,10 @@ function ReleasePositions({
   releaseTitle: string;
   locale: "en" | "ru";
 }) {
-  const copy = artistScreenCopy[locale];
+  const copy = (
+    key: Parameters<typeof catalogueMessage>[1],
+    values?: Record<string, string | number>,
+  ) => catalogueMessage(locale, key, values);
   const [offset, setOffset] = useState(0);
   const query = useListLibraryPositions({
     release_id: releaseId,
@@ -520,22 +460,13 @@ function ReleasePositions({
   });
   const failure =
     query.data?.status !== undefined && query.data.status !== 200
-      ? apiResponseError(query.data, copy.positionLoadFailed(query.data.status))
-          .message
+      ? apiResponseError(
+          query.data,
+          copy("positionLoadFailed", { status: query.data.status }),
+        ).message
       : query.error instanceof Error
         ? query.error.message
         : "";
-  if (query.isLoading) return <p role="status">{copy.loadingPositions}</p>;
-  if (failure)
-    return (
-      <section
-        className="grid justify-items-start gap-2 rounded-md border border-[var(--error)] bg-[var(--surface)] p-4 text-sm text-[var(--error)] [&>p]:m-0"
-        role="alert"
-      >
-        <p>{failure}</p>
-        <AppButton onPress={() => void query.refetch()}>{copy.retry}</AppButton>
-      </section>
-    );
   const page = query.data?.status === 200 ? query.data.data : undefined;
   const positions = page?.items ?? [];
   // An incomplete page cannot prove that this is a single-medium edition.
@@ -543,55 +474,68 @@ function ReleasePositions({
     (page?.total ?? 0) > positions.length ||
     new Set(positions.map(({ medium }) => medium)).size > 1;
   return (
-    <div className="mt-2.5 min-w-0">
-      <LibraryArtistReleaseTracksView
-        locale={locale}
-        releaseTitle={releaseTitle}
-        tracks={positions.map((position) => {
-          const display =
-            position.displayed_number.trim() ||
-            String(position.position).padStart(2, "0");
-          // Numeric labels may repeat across media. Qualified labels (A1,
-          // DVD1-3, etc.) are already the intended display value.
-          const numberLabel =
-            showMedium && position.medium && /^\d+$/.test(display)
-              ? `${position.medium}.${display}`
-              : display;
-          return {
-            id: position.id,
-            numberLabel,
-            title: position.title,
-            href: `#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`,
-            durationMs: position.provider_duration_ms,
-            hasAudio: position.audio_available,
-            sourceCount: position.source_variant_count,
-            isNewRecording: !position.recording_id,
-            publication: position.publication
-              ? {
-                  state: "published",
-                  codec: position.publication.audio?.codec,
-                  container: position.publication.audio?.container,
-                }
-              : { state: "not-published" },
-          };
-        })}
-      />
-      {positions.length > 0 && page && page.total > PAGE_SIZE && (
-        <LibraryPaginationControls
-          label={copy.positionPages}
-          status={`${offset + 1}–${Math.min(offset + PAGE_SIZE, page.total)} ${copy.of} ${page.total}`}
-          previous={{
-            label: copy.previous,
-            disabled: offset === 0,
-            onPress: () => setOffset(Math.max(0, offset - PAGE_SIZE)),
-          }}
-          next={{
-            label: copy.next,
-            disabled: offset + PAGE_SIZE >= page.total,
-            onPress: () => setOffset(offset + PAGE_SIZE),
-          }}
-        />
-      )}
-    </div>
+    <ArtistReleasePositionsView
+      locale={locale}
+      releaseTitle={releaseTitle}
+      positions={
+        query.isLoading
+          ? { state: "loading" }
+          : failure
+            ? {
+                state: "error",
+                message: failure,
+                onRetry: () => void query.refetch(),
+              }
+            : {
+                state: "ready",
+                tracks: positions.map((position) => {
+                  const display =
+                    position.displayed_number.trim() ||
+                    String(position.position).padStart(2, "0");
+                  // Numeric labels may repeat across media. Qualified labels (A1,
+                  // DVD1-3, etc.) are already the intended display value.
+                  const numberLabel =
+                    showMedium && position.medium && /^\d+$/.test(display)
+                      ? `${position.medium}.${display}`
+                      : display;
+                  return {
+                    id: position.id,
+                    numberLabel,
+                    title: position.title,
+                    href: `#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`,
+                    durationMs: position.provider_duration_ms,
+                    hasAudio: position.audio_available,
+                    sourceCount: position.source_variant_count,
+                    isNewRecording: !position.recording_id,
+                    publication: position.publication
+                      ? {
+                          state: "published",
+                          codec: position.publication.audio?.codec,
+                          container: position.publication.audio?.container,
+                        }
+                      : { state: "not-published" },
+                  };
+                }),
+                pagination:
+                  positions.length > 0 && page && page.total > PAGE_SIZE
+                    ? {
+                        label: copy("positionPages"),
+                        status: `${offset + 1}–${Math.min(offset + PAGE_SIZE, page.total)} ${copy("of")} ${page.total}`,
+                        previous: {
+                          label: copy("previous"),
+                          disabled: offset === 0,
+                          onPress: () =>
+                            setOffset(Math.max(0, offset - PAGE_SIZE)),
+                        },
+                        next: {
+                          label: copy("next"),
+                          disabled: offset + PAGE_SIZE >= page.total,
+                          onPress: () => setOffset(offset + PAGE_SIZE),
+                        },
+                      }
+                    : undefined,
+              }
+      }
+    />
   );
 }

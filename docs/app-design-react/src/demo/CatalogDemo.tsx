@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
-import { catalogueStyles } from "../ui/features/library/catalogueStyles";
+import { catalogMessage } from "../ui/features/library/catalogMessages";
 import {
 	type LibraryCatalogPageState,
 	LibraryCatalogPageView,
@@ -11,16 +11,18 @@ import {
 	LibrarySelectionPreviewView,
 	maxLibraryPreviewPositions,
 } from "../ui/features/library/LibrarySelectionPreviewView";
+import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelectionScreenFrame";
 import { ReleaseOverviewView } from "../ui/features/library/ReleaseOverviewView";
 import { LocalReleaseEditor } from "../ui/features/local-release/LocalReleaseEditor";
-import { ShellContent } from "../ui/shell/ShellView";
-import { ComponentsScreen } from "./components/ComponentsScreen";
-import type { DeletionOperation } from "./components/DeletionRequest";
+import {
+	ScreenFeedbackView,
+	ScreenStatus,
+} from "../ui/shell/ScreenFeedbackView";
+import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
 } from "./fixtures/directoryBrowseDemo";
-import { LocalReleaseDemoGenres } from "./fixtures/LocalReleaseDemoGenres";
 import { createLocalCatalogDemoState } from "./fixtures/localCatalogDemo";
 import {
 	appendDemoLocalRecord,
@@ -33,11 +35,7 @@ import {
 	selectDemoRelease,
 } from "./fixtures/localReleaseDemo";
 import { IncomingScreen } from "./providers/incoming/IncomingScreen";
-import {
-	createIncomingState,
-	type IncomingPlan,
-	makeReleasePlan,
-} from "./providers/incoming/incomingModel";
+import { createIncomingState } from "./providers/incoming/incomingModel";
 import {
 	combineLibraryAlbumEntries,
 	libraryArtistPositionIds,
@@ -63,7 +61,6 @@ import {
 	originalReleases,
 	recoveryFixture,
 } from "./providers/library/catalogData";
-import { catalogMessage } from "./providers/library/catalogMessages";
 import {
 	albumSearchText,
 	catalogArtistMatches,
@@ -71,6 +68,7 @@ import {
 	normalizeCatalogSearch,
 	trackSearchText,
 } from "./providers/library/catalogViewModel";
+import type { DeletionOperation } from "./providers/library/DeletionRequest";
 import { LibraryCatalogRows } from "./providers/library/LibraryCatalogRows";
 import {
 	completeManagedLibraryDeletion,
@@ -78,12 +76,12 @@ import {
 } from "./providers/library/libraryDeletionModel";
 import { ReleaseOverviewScreen } from "./providers/library/ReleaseOverviewScreen";
 import { SelectionDock } from "./providers/library/SelectionDock";
-import { TagsScreen } from "./providers/library/TagsScreen";
 import { TrackScreen } from "./providers/library/TrackScreen";
 import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
 import { LocalCatalogScreen } from "./providers/local-catalog";
 import { releaseDraftToRecord } from "./providers/local-catalog/localCatalogModel";
 import { localProviderReleases } from "./providers/local-catalog/localProviderModel";
+import { LocalReleaseDemoGenres } from "./providers/local-release/LocalReleaseDemoGenres";
 import { MatchingScreen } from "./providers/matching/MatchingScreen";
 import { formatUiNotice, type UiNotice } from "./providers/notices/uiNotice";
 import { OperationsScreen } from "./providers/operations/OperationsScreen";
@@ -91,7 +89,7 @@ import {
 	type DemoPublicationJob,
 	useOperationsDemoProvider,
 } from "./providers/operations/useOperationsDemoProvider";
-import { ContextPublicationPreview } from "./providers/publication/ContextPublicationPreview";
+import { DemoPositionPublication } from "./providers/publication/ContextPublicationPreview";
 import {
 	type DemoPublicationCatalog,
 	type DemoPublicationRow,
@@ -164,9 +162,6 @@ const recordingIdentity = (track: OriginalTrack) =>
 		: track.recordingId
 			? `musicbrainz:${track.recordingId}`
 			: null;
-
-const screenLayout =
-	"demo-shell max-w-none p-3 [&_h1]:my-[2px] [&_h1]:text-[20px] [&_header_p]:my-1 [&_header_p]:text-[var(--muted)] [&_a]:text-[var(--accent)] [&_a:hover]:underline";
 
 export function CatalogDemo({
 	onIncomingCount,
@@ -341,10 +336,6 @@ export function CatalogDemo({
 		positions: LibrarySelectionPreviewPosition[];
 		state: LibrarySelectionPreviewState;
 	} | null>(null);
-	const [positionPreview, setPositionPreview] = useState<{
-		plan: IncomingPlan;
-		confirmDowngrade: boolean;
-	} | null>(null);
 	const [positionNotice, setPositionNotice] = useState<{
 		releaseId: string;
 		positionId: string;
@@ -352,7 +343,6 @@ export function CatalogDemo({
 	} | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
-		setPositionPreview(null);
 		setPositionNotice(null);
 	}, [route]);
 	const [preview, setPreview] = useState(false);
@@ -535,30 +525,15 @@ export function CatalogDemo({
 		);
 		return next.status;
 	};
-	useEffect(() => {
-		if (routeName !== "review" && !routeName.startsWith("match/")) return;
-		const content = document.querySelector<HTMLElement>("#content");
-		if (content) content.scrollTop = 0;
-		if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
-	}, [routeName]);
-	useEffect(() => {
-		const heading =
-			document.querySelector<HTMLElement>("#content h1") ??
-			document.querySelector<HTMLElement>("h1");
-		if (heading) {
-			heading.tabIndex = -1;
-			heading.focus({ preventScroll: true });
-		}
-		const main = document.querySelector<HTMLElement>(".demo-shell");
-		if (main) main.tabIndex = -1;
-	}, [headingRoute, preview]);
-	useEffect(() => {
-		const heading =
-			document.querySelector<HTMLElement>("#content h1") ??
-			document.querySelector<HTMLElement>("h1");
-		if (heading)
-			document.title = `${heading.textContent} · ${msg("documentTitleSuffix")}`;
-	}, [route, preview, locale]);
+	useShellPageEffects({
+		focusKey: `${headingRoute}:${preview}`,
+		titleKey: `${route}:${preview}`,
+		titleSuffix: msg("documentTitleSuffix"),
+		scrollResetKey:
+			routeName === "review" || routeName.startsWith("match/")
+				? routeName
+				: undefined,
+	});
 	const [artistQuery, setArtistQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
@@ -728,17 +703,6 @@ export function CatalogDemo({
 		);
 		return true;
 	};
-	const openPositionPreview = (
-		release: (typeof releases)[number],
-		trackId: string,
-		force = false,
-	) => {
-		setPositionNotice(null);
-		setPositionPreview({
-			plan: { ...makeReleasePlan(incoming, release, files, trackId), force },
-			confirmDowngrade: false,
-		});
-	};
 	const selectionPreviewDialog = selectionPreview && (
 		<LibrarySelectionPreviewView
 			locale={locale}
@@ -749,7 +713,7 @@ export function CatalogDemo({
 	);
 	if (preview || route === "publication-preview")
 		return (
-			<section className={screenLayout}>
+			<>
 				{previewToken ? (
 					<PublicationPreview
 						mode={previewMode}
@@ -775,13 +739,13 @@ export function CatalogDemo({
 						}
 					/>
 				) : (
-					<>
-						<h1>{msg("previewTitle")}</h1>
-						<p>{msg("noSavedPreview")}</p>
-						<a href="#library">{msg("goToLibrary")}</a>
-					</>
+					<ScreenFeedbackView
+						title={msg("previewTitle")}
+						message={msg("noSavedPreview")}
+						link={{ href: "#library", label: msg("goToLibrary") }}
+					/>
 				)}
-			</section>
+			</>
 		);
 	if (route.startsWith("artist/")) {
 		const [artistPath, queryString = ""] = route.split("?");
@@ -793,7 +757,7 @@ export function CatalogDemo({
 				: undefined;
 		const releaseId = params.get("release") ?? undefined;
 		return (
-			<section className={`demo-shell ${catalogueStyles.dockScreen}`}>
+			<LibrarySelectionScreenFrame>
 				<ArtistScreen
 					key={route}
 					artistId={artistPath.slice(7)}
@@ -831,38 +795,9 @@ export function CatalogDemo({
 					onQueueDeletion={queueDeletion}
 				/>
 				{selectionPreviewDialog}
-			</section>
+			</LibrarySelectionScreenFrame>
 		);
 	}
-	if (route.startsWith("tags/")) {
-		const [, id, requestedScope] = route.split("/");
-		const scope =
-			requestedScope === "artist" || requestedScope === "release"
-				? requestedScope
-				: "track";
-		return (
-			<section className={screenLayout}>
-				<TagsScreen
-					key={route}
-					trackId={id}
-					scope={scope}
-					releases={releases}
-					providers={providers}
-					artists={artists}
-					files={files}
-					onPreview={(ids) => {
-						openPreview(ids);
-					}}
-				/>
-			</section>
-		);
-	}
-	if (route === "components")
-		return (
-			<section className={screenLayout}>
-				<ComponentsScreen />
-			</section>
-		);
 	if (route.startsWith("release/")) {
 		const [releasePath, releaseQuery = ""] = route.split("?");
 		const releaseId = routeId(releasePath.slice("release/".length));
@@ -871,16 +806,16 @@ export function CatalogDemo({
 		const release = releases.find((item) => item.id === releaseId);
 		if (!release)
 			return (
-				<section className={screenLayout}>
+				<>
 					<ReleaseOverviewView
 						locale={locale}
 						libraryHref="#library"
 						heading={null}
 					/>
-				</section>
+				</>
 			);
 		return (
-			<section className={`demo-shell ${catalogueStyles.dockScreen}`}>
+			<LibrarySelectionScreenFrame>
 				<ReleaseOverviewScreen
 					key={release.id}
 					release={release}
@@ -915,79 +850,62 @@ export function CatalogDemo({
 					onQueueDeletion={queueDeletion}
 				/>
 				{selectionPreviewDialog}
-			</section>
+			</LibrarySelectionScreenFrame>
 		);
 	}
-	if (route.startsWith("track/")) {
-		const trackId = route.slice("track/".length);
+	if (routeName.startsWith("track/") || routeName.startsWith("tags/")) {
+		const [, trackId] = routeName.split("/");
+		const openTags = routeName.startsWith("tags/");
 		const release = releases.find((item) =>
 			item.tracks.some((track) => track.id === trackId),
 		);
 		const track = release?.tracks.find((item) => item.id === trackId);
 		if (!release || !track)
 			return (
-				<section className={screenLayout}>
-					<h1>{msg("trackNotFound")}</h1>
-					<a href="#library">{msg("goToLibrary")}</a>
-				</section>
+				<ScreenFeedbackView
+					title={msg("trackNotFound")}
+					link={{ href: "#library", label: msg("goToLibrary") }}
+				/>
 			);
 		const identity = recordingIdentity(track);
-		const activePositionPreview =
-			positionPreview &&
-			positionPreview.plan.positionId === track.id &&
-			positionPreview.plan.localReleaseId === release.id
-				? positionPreview
-				: null;
 		const activePositionNotice =
 			positionNotice &&
 			positionNotice.releaseId === release.id &&
 			positionNotice.positionId === track.id
 				? positionNotice.notice
 				: null;
-		const publicationPreview =
-			activePositionPreview || activePositionNotice ? (
-				<>
-					{activePositionNotice && (
-						<p role="status">{formatUiNotice(locale, activePositionNotice)}</p>
-					)}
-					{activePositionPreview && (
-						<ContextPublicationPreview
-							destination={publicationDestination}
-							plan={activePositionPreview.plan}
-							files={files}
-							releases={releases}
-							providers={providers}
-							artists={providerArtists}
-							inventoryVersion={incoming.inventoryVersion}
-							confirmDowngrade={activePositionPreview.confirmDowngrade}
-							onPlan={(plan, confirmDowngrade) => {
-								setPositionPreview((current) =>
-									current?.plan === activePositionPreview.plan
-										? plan
-											? {
-													plan,
-													confirmDowngrade:
-														confirmDowngrade ?? current.confirmDowngrade,
-												}
-											: null
-										: current,
-								);
-							}}
-							onReleases={setImportedReleases}
-							onSuccess={(notice) => {
-								setPositionNotice({
-									releaseId: release.id,
-									positionId: track.id,
-									notice,
-								});
-							}}
-						/>
-					)}
-				</>
-			) : undefined;
+		const publicationPreview = (
+			<>
+				{activePositionNotice && (
+					<ScreenStatus>
+						{formatUiNotice(locale, activePositionNotice)}
+					</ScreenStatus>
+				)}
+				<DemoPositionPublication
+					key={`${release.id}:${track.id}`}
+					destination={publicationDestination}
+					release={release}
+					positionId={track.id}
+					state={incoming}
+					files={files}
+					releases={releases}
+					providers={providers}
+					artists={providerArtists}
+					onReleases={setImportedReleases}
+					onSuccess={(notice) => {
+						setPositionNotice({
+							releaseId: release.id,
+							positionId: track.id,
+							notice,
+						});
+					}}
+				/>
+			</>
+		);
 		return (
-			<section className={screenLayout}>
+			<>
 				<TrackScreen
+					key={`${release.id}:${track.id}:${openTags}`}
 					files={files}
 					providers={providers}
 					artists={artists}
@@ -995,6 +913,7 @@ export function CatalogDemo({
 					onQueueDeletion={queueDeletion}
 					release={release}
 					track={track}
+					initialTagsOpen={openTags}
 					genresLoaded={settings.genresLoaded}
 					onLoadGenres={loadGenres}
 					onRecordingChange={(updateTrack) =>
@@ -1022,12 +941,6 @@ export function CatalogDemo({
 							})),
 						)
 					}
-					onPreview={() => {
-						openPositionPreview(release, track.id);
-					}}
-					onRepublish={() => {
-						openPositionPreview(release, track.id, true);
-					}}
 					onAudioUpgrade={() => {
 						openPreview([track.id], "audioUpgrade");
 					}}
@@ -1051,7 +964,7 @@ export function CatalogDemo({
 						)
 					}
 				/>
-			</section>
+			</>
 		);
 	}
 	if (route === "local")
@@ -1200,7 +1113,7 @@ export function CatalogDemo({
 		);
 	if (routeName === "settings")
 		return (
-			<ShellContent>
+			<>
 				<SettingsScreen
 					settings={settings}
 					sourceRoots={sourceRoots.map((root) => root.path)}
@@ -1235,18 +1148,18 @@ export function CatalogDemo({
 						}));
 					}}
 				/>
-			</ShellContent>
+			</>
 		);
 	if (route === "setup")
 		return (
-			<section className={screenLayout}>
+			<>
 				<SetupScreen
 					settings={settings}
 					onSettings={setSettings}
 					step={setupStep}
 					onStepChange={setSetupStep}
 				/>
-			</section>
+			</>
 		);
 	const sourceRoute = parseDemoSourceRoute(routeName);
 	if (sourceRoute) {
@@ -1300,15 +1213,11 @@ export function CatalogDemo({
 				}}
 			/>
 		);
-		return sourceRoute.view === "location" ? (
-			<ShellContent>{sourceScreen}</ShellContent>
-		) : (
-			<section className={screenLayout}>{sourceScreen}</section>
-		);
+		return sourceScreen;
 	}
 	if (route === "operations")
 		return (
-			<section className={screenLayout}>
+			<>
 				<OperationsScreen
 					deletions={deletions}
 					provider={operationsProvider}
@@ -1332,17 +1241,15 @@ export function CatalogDemo({
 						}
 					}}
 				/>
-			</section>
+			</>
 		);
 	if (route && routeName !== "library")
 		return (
-			<section className={screenLayout}>
-				<h1>{msg("screenNotMoved")}</h1>
-				<p>{msg("routeNotMoved", { route })}</p>
-				<p>
-					<a href="#library">{msg("goToReactLibrary")}</a>
-				</p>
-			</section>
+			<ScreenFeedbackView
+				title={msg("screenNotMoved")}
+				message={msg("routeNotMoved", { route })}
+				link={{ href: "#library", label: msg("goToReactLibrary") }}
+			/>
 		);
 	const libraryPageState: LibraryCatalogPageState =
 		libraryTotalItems > 0
@@ -1365,7 +1272,6 @@ export function CatalogDemo({
 		<LibraryCatalogPageView
 			locale={locale}
 			view={view}
-			className="demo-shell"
 			search={searchInput}
 			onSearch={setSearch}
 			filter={filter}

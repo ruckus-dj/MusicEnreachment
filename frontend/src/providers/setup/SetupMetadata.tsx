@@ -16,14 +16,15 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { SetupMetadataStepBody } from "../../ui/features/setup/SetupScreenView";
-import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
 import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
   setupHttpError,
   setupMessage,
-} from "./setupMessages";
+} from "../../ui/features/setup/setupMessages";
+import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
+import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
 
 export interface SetupMetadataAction {
   continue: () => Promise<boolean>;
@@ -65,9 +66,7 @@ export function SetupMetadata({
     mode !== state.settings.musicbrainz_mode ||
     (mode === "self-hosted" ? baseURL : "") !==
       state.settings.musicbrainz_base_url;
-  useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
+  useSetupAlertFocus(alert, error);
   useEffect(() => {
     onConfigurationDirtyChange?.(changed);
   }, [changed, onConfigurationDirtyChange]);

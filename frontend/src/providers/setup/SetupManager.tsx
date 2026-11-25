@@ -12,10 +12,6 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { SetupScreenView } from "../../ui/features/setup/SetupScreenView";
 import { setupSteps } from "../../ui/features/setup/SetupWizard";
-import { browseServerDirectory } from "../components/DirectoryPicker";
-import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
-import { SetupSummary } from "./SetupSummary";
-import { SetupTools } from "./SetupTools";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -23,7 +19,11 @@ import {
   setupHttpError,
   setupMessage,
   setupMessages,
-} from "./setupMessages";
+} from "../../ui/features/setup/setupMessages";
+import { browseServerDirectory } from "../components/DirectoryPicker";
+import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
+import { SetupSummary } from "./SetupSummary";
+import { SetupTools } from "./SetupTools";
 import { useSetupGenreCatalogProvider } from "./useSetupGenreCatalogProvider";
 
 const stepKey = "melotrove.setup.step";

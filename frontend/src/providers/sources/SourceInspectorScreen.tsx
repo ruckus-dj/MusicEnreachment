@@ -7,7 +7,7 @@ import {
   type SourceInspectorViewProps,
   sourceInspectorStepNames,
 } from "../../ui/features/sources/sourceInspectorModel";
-import { sourceMessage } from "./sourceMessages";
+import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { renderSourceError } from "./sourcesApi";
 import { useSourceInspector } from "./useSourceInspector";
 

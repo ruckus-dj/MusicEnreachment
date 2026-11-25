@@ -7,7 +7,7 @@ import {
   SourceScanPanel,
   type SourceScanState,
 } from "../../ui/features/sources/SourceScanPanel";
-import { sourceMessage } from "./sourceMessages";
+import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { useSourceScans } from "./sourceScans";
 import { renderSourceError } from "./sourcesApi";
 
@@ -78,23 +78,21 @@ export function SourceScanControl({
   }
 
   return (
-    <div className="grid min-w-0 gap-1">
-      <SourceScanPanel
-        locale={locale}
-        state={state}
-        onStart={() => void start(root.id)}
-        onRetry={() => void retry(root.id)}
-        onRecheck={discoveryFailure ? () => void discover() : undefined}
-        startDisabled={!root.enabled || admissionDisabled}
-      />
-      {!root.enabled && (
-        <p className="m-0 text-xs text-[var(--muted)]">
-          {sourceMessage(locale, "disabledScan")}
-        </p>
-      )}
-      {following && streamError(root.id) && (
-        <p role="status">{sourceMessage(locale, "scanStreamError")}</p>
-      )}
-    </div>
+    <SourceScanPanel
+      locale={locale}
+      state={state}
+      onStart={() => void start(root.id)}
+      onRetry={() => void retry(root.id)}
+      onRecheck={discoveryFailure ? () => void discover() : undefined}
+      startDisabled={!root.enabled || admissionDisabled}
+      disabledNote={
+        root.enabled ? undefined : sourceMessage(locale, "disabledScan")
+      }
+      streamNotice={
+        following && streamError(root.id)
+          ? sourceMessage(locale, "scanStreamError")
+          : undefined
+      }
+    />
   );
 }

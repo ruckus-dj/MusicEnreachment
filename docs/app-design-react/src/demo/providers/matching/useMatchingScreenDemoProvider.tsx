@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
+import { usePreviewHeadingFocus } from "../../../ui/components/useViewFocus";
 import type { MatchingPreviewRow } from "../../../ui/features/matching/MatchingPreview";
 import type {
 	MatchingScreenViewModel,
@@ -7,6 +8,7 @@ import type {
 	MatchingScreenViewWorkspace,
 } from "../../../ui/features/matching/MatchingScreenView";
 import { matchingLinksCopy } from "../../../ui/features/matching/matchingLinksCopy";
+import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
 import { useMatchingLinkResultFocus } from "../../../ui/features/matching/useMatchingLinkResultFocus";
 import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
 import {
@@ -34,7 +36,6 @@ import { MatchingReceiptPublicationView } from "./MatchingReceiptPublicationView
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
 import { saveMatchingLinks } from "./matchingLinks";
-import { matchingMessage } from "./matchingMessages";
 
 export type MatchingScreenProps = {
 	destination?: import("../publication/publicationOutput").PublicationDestination;
@@ -93,19 +94,7 @@ export function useMatchingScreenDemoProvider({
 	}>();
 	const { locale } = useI18n();
 	const linkCopy = matchingLinksCopy[locale];
-	useLayoutEffect(() => {
-		if (!previewOpenSequence) return;
-		const heading = previewHeadingRef.current;
-		if (!heading) return;
-		heading.focus();
-		const reduceMotion = window.matchMedia?.(
-			"(prefers-reduced-motion: reduce)",
-		).matches;
-		heading.scrollIntoView?.({
-			behavior: reduceMotion ? "auto" : "smooth",
-			block: "start",
-		});
-	}, [previewOpenSequence]);
+	usePreviewHeadingFocus(previewHeadingRef, previewOpenSequence);
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;

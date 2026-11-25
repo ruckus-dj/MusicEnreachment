@@ -1,6 +1,9 @@
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
+import {
+  type SourceMessageKey,
+  sourceMessage,
+} from "../../ui/features/sources/sourceMessages";
 import type { Locale } from "../../ui/i18n/locale";
-import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
 
 export type SourceError =
   | {

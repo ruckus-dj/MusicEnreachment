@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
+import { libraryRowsMessages } from "./libraryRowsMessages";
 
 export type LibraryDeletionDialogViewProps = {
   locale: "ru" | "en";
@@ -18,11 +19,13 @@ const dialogTitles = {
     artist: "Delete artist",
     release: "Delete release",
     publication: "Delete publication",
+    selection: libraryRowsMessages.en.deleteSelectedPublicationsQuestion,
   },
   ru: {
     artist: "Удаление артиста",
     release: "Удаление релиза",
     publication: "Удаление публикации",
+    selection: libraryRowsMessages.ru.deleteSelectedPublicationsQuestion,
   },
 } as const;
 

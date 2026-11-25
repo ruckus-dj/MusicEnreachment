@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
+import { useViewFocus } from "../../../ui/components/useViewFocus";
 import {
 	ArtistMetadataCard,
 	type ArtistMetadataValues,
@@ -17,8 +18,7 @@ import {
 	type CatalogueMessage,
 	catalogueMessage,
 } from "../../../ui/features/library/catalogueMessages";
-import type { DeletionOperation } from "../../components/DeletionRequest";
-import { demoGenres } from "../../components/GenreLibrary";
+import { genreCatalog as demoGenres } from "../genres/catalogue";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import { releaseHref } from "./artistReleaseRoute";
 import {
@@ -36,6 +36,7 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
+import type { DeletionOperation } from "./DeletionRequest";
 import { LibraryMissingEditionDemo } from "./LibraryMissingEditionDemo";
 import { audioProperties } from "./metadata/audioProperties";
 import type { TagScope } from "./TagsComparison";
@@ -129,13 +130,13 @@ export function ArtistScreen({
 		{},
 	);
 	const initialTagsTarget = useRef<HTMLDivElement | null>(null);
-	useEffect(() => {
-		if (!initialTags?.scope) return;
-		const target = initialTagsTarget.current;
-		if (!target) return;
-		target.focus({ preventScroll: true });
-		target.scrollIntoView?.({ block: "start" });
-	}, [initialTags?.scope, initialTags?.releaseId]);
+	useViewFocus(
+		initialTagsTarget,
+		initialTags?.scope
+			? `${initialTags.scope}:${initialTags.releaseId ?? ""}`
+			: undefined,
+		true,
+	);
 	const artistReleases = useMemo(
 		() =>
 			releases.filter(

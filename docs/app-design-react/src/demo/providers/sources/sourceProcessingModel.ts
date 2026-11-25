@@ -1,5 +1,5 @@
+import type { SourceMessageKey } from "../../../ui/features/sources/sourceInventoryMessages";
 import type { SourceFiles } from "../library/catalogData";
-import type { SourceMessageKey } from "./sourceMessages";
 
 export type DemoStepStatus = "queued" | "running" | "succeeded" | "failed";
 

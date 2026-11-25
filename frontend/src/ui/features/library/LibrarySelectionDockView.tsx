@@ -75,7 +75,13 @@ export function LibrarySelectionDockView({
             {text.remove}
           </Button>
         )}
-        <Button className={librarySelectionButtonClass} onPress={onClear}>
+        <Button
+          className={librarySelectionButtonClass}
+          onPress={() => {
+            onClear();
+            document.querySelector<HTMLElement>("main h1")?.focus();
+          }}
+        >
           {text.clear}
         </Button>
       </div>

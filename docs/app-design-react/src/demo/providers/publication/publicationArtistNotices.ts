@@ -1,3 +1,4 @@
+import { publicationMessage } from "../../../ui/features/publication/publicationMessages";
 import type { Locale } from "../../../ui/i18n/types";
 import {
 	type CatalogArtist,
@@ -6,7 +7,6 @@ import {
 	publicationSortTagCollisions,
 } from "../library/catalogData";
 import { projectArtistCreditGroup } from "../library/metadata/artistProjection";
-import { publicationMessage } from "./publicationMessages";
 
 export function publicationArtistNotices(
 	release: OriginalRelease,

@@ -3,9 +3,10 @@ import { createSource, listSources } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
-import { AppButton } from "../../ui/components/AppButton";
+import { useViewFocus } from "../../ui/components/useViewFocus";
 import { SourceListHeadingView } from "../../ui/features/sources/SourceListHeadingView";
 import { SourceListPageView } from "../../ui/features/sources/SourceListPageView";
+import { SourcePageFeedbackView } from "../../ui/features/sources/SourcePageFeedbackView";
 import {
   type SourceRegistrationErrorKey,
   SourceRegistrationView,
@@ -13,11 +14,11 @@ import {
   useSourceRegistrationFocus,
 } from "../../ui/features/sources/SourceRegistrationView";
 import type { SourceRootListRow } from "../../ui/features/sources/SourceRootList";
+import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
-import { sourceMessage } from "./sourceMessages";
 import { SourceScansProvider, useSourceScans } from "./sourceScans";
 import {
   inventoryAvailabilityNote,
@@ -122,9 +123,7 @@ function SourceListScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
+  useViewFocus(heading, true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A scan revision explicitly requests an authoritative reread.
   useEffect(() => {
     // Returning from the detail screen during a PATCH must not leave this
@@ -282,49 +281,31 @@ function SourceListScreen() {
         )
       }
       feedback={
-        <>
-          {busy && sources && (
-            <p role="status" className="m-0 text-xs text-[var(--muted)]">
-              {t("requestRunning")}
-            </p>
-          )}
-          {error && sources && (
-            <div
-              role="alert"
-              className="my-2 flex flex-wrap items-center gap-2 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-            >
-              <p className="m-0">{renderSourceError(error, locale)}</p>
-              <AppButton onPress={() => void load()}>
-                {t("retryLoad")}
-              </AppButton>
-            </div>
-          )}
-          {scanErrors.length > 0 && (
-            <div
-              role="alert"
-              className="my-2 grid gap-1 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-            >
-              {scanErrors.map(({ root, scanError }) => (
-                <p key={root.id} className="m-0">
-                  {root.display_name}: {renderSourceError(scanError, locale)}
-                </p>
-              ))}
-            </div>
-          )}
-          {scans.discoveryError && (
-            <div className="flex flex-wrap items-center gap-2">
-              <p
-                role="alert"
-                className="m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]"
-              >
-                {renderSourceError(scans.discoveryError, locale)}
-              </p>
-              <AppButton onPress={() => void scans.discover()}>
-                {t("retryLoad")}
-              </AppButton>
-            </div>
-          )}
-        </>
+        <SourcePageFeedbackView
+          status={busy && sources ? t("requestRunning") : undefined}
+          listError={
+            error && sources
+              ? {
+                  message: renderSourceError(error, locale),
+                  retry: () => void load(),
+                }
+              : undefined
+          }
+          scanErrors={scanErrors.map(({ root, scanError }) => ({
+            id: root.id,
+            name: root.display_name,
+            message: renderSourceError(scanError, locale),
+          }))}
+          discoveryError={
+            scans.discoveryError
+              ? {
+                  message: renderSourceError(scans.discoveryError, locale),
+                  retry: () => void scans.discover(),
+                }
+              : undefined
+          }
+          retryLabel={t("retryLoad")}
+        />
       }
       rows={rows}
       listState={listState}

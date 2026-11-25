@@ -1,5 +1,8 @@
+import {
+	type IncomingMessage,
+	incomingMessage,
+} from "../../../ui/features/incoming/incomingOverviewMessages";
 import type { Locale } from "../../../ui/i18n/types";
-import { type IncomingMessage, incomingMessage } from "./incomingMessages";
 import type { IncomingFiles, IncomingGroup } from "./incomingModel";
 
 export type IncomingOverviewPath = {

@@ -1,10 +1,21 @@
+import { useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import { ContextPublicationPreviewView } from "../../../ui/features/publication/ContextPublicationPreviewView";
+import {
+	type ContextPublicationPreviewMode,
+	ContextPublicationPreviewView,
+	type ContextPublicationPreviewViewProps,
+} from "../../../ui/features/publication/ContextPublicationPreviewView";
+import {
+	formatPublicationMessage,
+	publicationMessage,
+} from "../../../ui/features/publication/publicationMessages";
 import {
 	applyPlan,
 	type IncomingFiles,
 	type IncomingPlan,
 	type IncomingReleases,
+	type IncomingState,
+	makeReleasePlan,
 	planRows,
 	selectedSourceId,
 	sourceIds,
@@ -21,13 +32,10 @@ import { demoPathInside } from "../sources/demoPathValidation";
 import { individualPublicationDetails } from "./individualPublicationDetails";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
-	formatPublicationMessage,
-	publicationMessage,
-} from "./publicationMessages";
-import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
 	type PublicationDestination,
+	retainedOutputIssue,
 } from "./publicationOutput";
 
 function capturePosition(release: OriginalRelease, positionId: string) {
@@ -50,6 +58,8 @@ export function ContextPublicationPreview({
 	onPlan,
 	onReleases,
 	onSuccess,
+	controls,
+	comparisonOnly = false,
 }: {
 	destination?: PublicationDestination;
 	plan: IncomingPlan;
@@ -62,6 +72,11 @@ export function ContextPublicationPreview({
 	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
 	onReleases: (releases: OriginalRelease[]) => void;
 	onSuccess: (notice: UiNotice) => void;
+	controls?: Pick<
+		ContextPublicationPreviewViewProps,
+		"workflowControl" | "planControl"
+	>;
+	comparisonOnly?: boolean;
 }) {
 	const { locale } = useI18n();
 	const positionId = plan.positionId;
@@ -78,7 +93,7 @@ export function ContextPublicationPreview({
 	).find((item) => item.targetTrack.id === positionId);
 	const track = row?.track;
 	const current = row?.previous;
-	const readOnly = Boolean(current && !plan.force);
+	const readOnly = comparisonOnly || Boolean(current && !plan.force);
 	const positionChanged =
 		!release ||
 		track?.id !== positionId ||
@@ -86,11 +101,13 @@ export function ContextPublicationPreview({
 			capturePosition(release, positionId);
 	const inventoryChanged = plan.inventoryVersion !== inventoryVersion;
 	const currentOutsideOutput = Boolean(
-		plan.force &&
+		!readOnly &&
+			plan.force &&
 			current &&
 			!demoPathInside(destination.outputDirectory, current.path),
 	);
 	const sourceId = selectedSourceId(row?.assignment);
+	const source = row?.file;
 	const metadataIssues =
 		release && track
 			? publicationMetadataIssueMessages(release, track, locale, sourceId)
@@ -101,8 +118,12 @@ export function ContextPublicationPreview({
 			? publicationMessage(locale, "inventoryChanged")
 			: currentOutsideOutput
 				? publicationMessage(locale, "currentOutsideOutput")
-				: "";
-	const source = row?.file;
+				: plan.retainCurrentPath && current && source
+					? (() => {
+							const issue = retainedOutputIssue(current, source, destination);
+							return issue ? publicationMessage(locale, issue) : "";
+						})()
+					: "";
 	const output =
 		source && row
 			? choosePublicationOutput(source, {
@@ -157,7 +178,12 @@ export function ContextPublicationPreview({
 		individualPublicationDetails({
 			current: current ?? null,
 			tags: row.nextTags,
-			path: rebuildSource ? output?.path : (current?.path ?? output?.path),
+			path:
+				plan.retainCurrentPath && current
+					? current.path
+					: rebuildSource
+						? output?.path
+						: (current?.path ?? output?.path),
 			renderedPath: output?.path,
 			source: source ? { codec: source.codec, path: source.path } : undefined,
 			coverHash: track?.coverHash ?? null,
@@ -196,6 +222,7 @@ export function ContextPublicationPreview({
 
 	return (
 		<ContextPublicationPreviewView
+			{...controls}
 			locale={locale}
 			error={error}
 			readOnly={readOnly}
@@ -220,6 +247,118 @@ export function ContextPublicationPreview({
 				disabled: !canConfirm,
 				onConfirm: confirm,
 			}}
+		/>
+	);
+}
+
+export function DemoPositionPublication({
+	destination,
+	release,
+	positionId,
+	state,
+	files,
+	releases,
+	providers,
+	artists,
+	onReleases,
+	onSuccess,
+}: {
+	destination: PublicationDestination;
+	release: OriginalRelease;
+	positionId: string;
+	state: IncomingState;
+	files: IncomingFiles;
+	releases: IncomingReleases;
+	providers: IncomingReleases;
+	artists: CatalogArtist[];
+	onReleases: (releases: OriginalRelease[]) => void;
+	onSuccess: (notice: UiNotice) => void;
+}) {
+	const { locale } = useI18n();
+	const [prepared, setPrepared] = useState<{
+		plan: IncomingPlan;
+		confirmDowngrade: boolean;
+	}>();
+	const [workflow, setWorkflow] = useState<"comparison" | "retained_same_path">(
+		"comparison",
+	);
+	const [mode, setMode] = useState<ContextPublicationPreviewMode>("ordinary");
+	const hasCurrent = Boolean(
+		release.tracks.find(({ id }) => id === positionId)?.published,
+	);
+	const compare = hasCurrent && workflow === "comparison";
+	const confirmable = !hasCurrent || !compare;
+	const planControl = {
+		disabled: false,
+		onPreview: () => {
+			const plan = makeReleasePlan(state, release, files, positionId);
+			setPrepared({
+				plan: {
+					...plan,
+					force: hasCurrent && (!compare || mode === "forced"),
+					retainCurrentPath: hasCurrent && !compare,
+				},
+				confirmDowngrade: false,
+			});
+		},
+	};
+	const controls = {
+		planControl,
+		workflowControl: hasCurrent
+			? {
+					disabled: false,
+					namePrefix: `${release.id}-${positionId}`,
+					workflow,
+					mode,
+					onChange: (next: typeof workflow) => {
+						setWorkflow(next);
+						setPrepared(undefined);
+					},
+					onModeChange: (next: ContextPublicationPreviewMode) => {
+						setMode(next);
+						setPrepared(undefined);
+					},
+				}
+			: undefined,
+	};
+	if (!prepared) {
+		return (
+			<ContextPublicationPreviewView
+				{...controls}
+				locale={locale}
+				sourceGroupName={`demo-publication-source-${positionId}`}
+				readOnly={compare}
+				confirmControl={
+					confirmable
+						? {
+								label: hasCurrent ? "retainedRepublish" : "publish",
+								disabled: true,
+								onConfirm: () => {},
+							}
+						: undefined
+				}
+			/>
+		);
+	}
+	return (
+		<ContextPublicationPreview
+			destination={destination}
+			plan={prepared.plan}
+			files={files}
+			releases={releases}
+			providers={providers}
+			artists={artists}
+			inventoryVersion={state.inventoryVersion}
+			confirmDowngrade={prepared.confirmDowngrade}
+			onPlan={(plan, confirmed) =>
+				setPrepared(
+					plan ? { plan, confirmDowngrade: Boolean(confirmed) } : undefined,
+				)
+			}
+			onReleases={onReleases}
+			onSuccess={onSuccess}
+			comparisonOnly={compare}
+			controls={controls}
 		/>
 	);
 }

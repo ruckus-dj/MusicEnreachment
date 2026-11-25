@@ -16,13 +16,13 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
 import {
-  LibraryDeletionDialogView,
-  LibraryDeletionOutputsView,
-  libraryDeletionDialogTitle,
-} from "../../ui/features/library/LibraryDeletionDialogView";
-import { releaseControlAlertClass } from "../../ui/features/library/libraryReleaseControlStyles";
+  LibraryDeletionControlView,
+  type LibraryDeletionDialogModel,
+  type LibraryDeletionOperationModel,
+  type LibraryDeletionPreviewModel,
+  type LibraryDeletionViewAction,
+} from "../../ui/features/library/LibraryDeletionControlView";
 
 type DeletionTarget =
   | { type: "artist"; artistId: string }
@@ -503,23 +503,134 @@ export function LibraryDeletionControl({
         ? text.deleteRelease
         : text.deletePublication;
 
-  return (
-    <>
-      {!state.operation && showButton ? (
-        <AppButton
-          className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
-          onPress={() => setOpen(true)}
-        >
-          {buttonLabel}
-        </AppButton>
-      ) : null}
-      {state.operation ? (
-        <section
-          className="mt-3 space-y-2 rounded border border-[var(--line)] p-3"
-          aria-label={libraryDeletionDialogTitle(locale, target.type)}
-        >
-          <p role="status">
-            {state.operation.state === "succeeded"
+  const dialogActions: LibraryDeletionViewAction[] = [
+    {
+      id: "cancel",
+      label: text.cancel,
+      isDisabled: state.confirmationPending || state.confirmationUncertain,
+      onPress: () => setOpen(false),
+    },
+  ];
+  if (!preview) {
+    dialogActions.push({
+      id: "prepare",
+      label: state.previewPending ? text.loading : text.prepare,
+      isDisabled: state.previewPending || state.confirmationUncertain,
+      onPress: () => void preparePreview(),
+    });
+  } else {
+    if (!state.operation && !state.confirmationUncertain) {
+      dialogActions.push({
+        id: "refresh",
+        label: state.previewPending ? text.loading : text.refreshPreview,
+        isDisabled: state.previewPending || state.confirmationPending,
+        onPress: () => void preparePreview(),
+      });
+    }
+    dialogActions.push({
+      id: "confirm",
+      label: state.confirmationPending
+        ? text.loading
+        : state.confirmationUncertain
+          ? text.confirmAgain
+          : text.confirm,
+      danger: true,
+      isDisabled:
+        isBlocked || state.previewPending || state.confirmationPending,
+      onPress: () => void confirmPreview(),
+    });
+  }
+
+  const previewModel: LibraryDeletionPreviewModel | undefined = preview
+    ? {
+        title: preview.title,
+        artistReleases:
+          target.type === "artist" && preview.artist_releases?.length
+            ? {
+                title: text.artistReleases,
+                items: preview.artist_releases.map((release, index) => ({
+                  id: `${release.title}:${index}`,
+                  label: release.title,
+                })),
+              }
+            : undefined,
+        coartistWarnings:
+          target.type === "artist" && preview.coartist_warnings?.length
+            ? {
+                title: text.coartistWarnings,
+                namesLabel: text.coartistNames,
+                items: preview.coartist_warnings.map((warning) => ({
+                  id: `${warning.release_title}:${(warning.artist_names ?? []).join("\u0000")}`,
+                  releaseTitle: warning.release_title,
+                  artistNames: warning.artist_names ?? undefined,
+                })),
+              }
+            : undefined,
+        positions:
+          positionLabels && preview.position_ids?.length
+            ? {
+                title: text.positions,
+                items: preview.position_ids.map((id) => ({
+                  id,
+                  label: positionLabels.get(id) ?? id,
+                })),
+              }
+            : undefined,
+        facts: [
+          {
+            id: "positions",
+            label: text.positions,
+            value: (preview.position_ids ?? []).length.toLocaleString(locale),
+          },
+          {
+            id: "files",
+            label: text.files,
+            value: (preview.outputs ?? []).length.toLocaleString(locale),
+          },
+          ...(target.type !== "publication"
+            ? [
+                {
+                  id: "recordings",
+                  label: text.recordings,
+                  value: preview.recording_count.toLocaleString(locale),
+                },
+              ]
+            : []),
+        ],
+        outputs: (preview.outputs ?? []).map((output) => ({
+          id: `${output.position_id}:${output.relative_path}`,
+          path: output.relative_path,
+          label:
+            positionLabels?.get(output.position_id) ??
+            (target.type === "publication" &&
+            output.position_id === target.positionId
+              ? positionLabel
+              : undefined) ??
+            (locale === "ru" ? "Позиция" : "Position"),
+          status: output.capturable ? text.capturable : text.notCapturable,
+        })),
+        blockers: preview.blockers?.length
+          ? {
+              title: text.blockers,
+              items: preview.blockers.map((blocker, index) => ({
+                id: `${blocker.code}:${blocker.position_id ?? index}`,
+                text: `${
+                  blocker.position_id
+                    ? `${positionLabels?.get(blocker.position_id) ?? (locale === "ru" ? "Позиция" : "Position")}: `
+                    : ""
+                }${blockerLabel(blocker.code, blocker.message, locale)}`,
+              })),
+            }
+          : undefined,
+        frozen: state.confirmationUncertain ? text.frozen : undefined,
+      }
+    : undefined;
+
+  const operationModel: LibraryDeletionOperationModel | undefined =
+    state.operation
+      ? {
+          status:
+            state.operation.state === "succeeded"
               ? text.succeeded
               : state.operation.state === "failed"
                 ? text.failed
@@ -527,234 +638,83 @@ export function LibraryDeletionControl({
                   ? text.cancelled
                   : state.operation.state === "queued"
                     ? text.queued
-                    : text.running}
-          </p>
-          {target.type !== "publication" &&
-          state.operation.state !== "succeeded" ? (
-            <p>
-              {target.type === "artist" ? text.artistPartial : text.partial}
-            </p>
-          ) : null}
-          {!terminal ? (
-            <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
-              <dt className="text-[var(--muted)]">{text.stage}</dt>
-              <dd className="break-words">
-                {deletionStageLabel(state.operation.stage, locale)}
-              </dd>
-              <dt className="text-[var(--muted)]">{text.progress}</dt>
-              <dd className="space-y-1">
-                <span>
-                  {state.operation.bytes_completed.toLocaleString(locale)}
-                  {state.operation.bytes_total == null
+                    : text.running,
+          partial:
+            target.type !== "publication" &&
+            state.operation.state !== "succeeded"
+              ? target.type === "artist"
+                ? text.artistPartial
+                : text.partial
+              : undefined,
+          progress: terminal
+            ? undefined
+            : {
+                stageLabel: text.stage,
+                stageValue: deletionStageLabel(state.operation.stage, locale),
+                progressLabel: text.progress,
+                progressValue:
+                  state.operation.bytes_completed.toLocaleString(locale) +
+                  (state.operation.bytes_total == null
                     ? ""
-                    : ` / ${state.operation.bytes_total.toLocaleString(locale)}`}
-                </span>
-                {state.operation.bytes_total != null &&
-                state.operation.bytes_total > 0 ? (
-                  <progress
-                    className="block w-full"
-                    aria-label={text.progress}
-                    max={state.operation.bytes_total}
-                    value={Math.min(
-                      state.operation.bytes_completed,
-                      state.operation.bytes_total,
-                    )}
-                  />
-                ) : null}
-              </dd>
-            </dl>
-          ) : null}
-          {state.operation.state === "failed" ? (
-            <>
-              {state.operation.safe_error ? (
-                <p role="alert" className={releaseControlAlertClass}>
-                  {redactIdentifiers(state.operation.safe_error, locale)}
-                </p>
-              ) : null}
-              <AppButton
-                isDisabled={state.confirmationPending}
-                onPress={() => void retryFailedOperation()}
-              >
-                {state.confirmationPending ? text.loading : text.retry}
-              </AppButton>
-            </>
-          ) : null}
-          {state.actionError ? (
-            <p role="alert" className={releaseControlAlertClass}>
-              {state.actionError}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-      <LibraryDeletionDialogView
-        locale={locale}
-        kind={target.type}
-        targetLabel={text.target}
-        open={open}
-        onOpenChange={(nextOpen) => {
-          if (
-            !state.confirmationPending &&
-            !(state.confirmationUncertain && nextOpen === false)
-          )
-            setOpen(nextOpen);
-        }}
-        dismissable={!state.confirmationPending && !state.confirmationUncertain}
-        actions={
-          <>
-            <AppButton
-              isDisabled={
-                state.confirmationPending || state.confirmationUncertain
-              }
-              onPress={() => setOpen(false)}
-            >
-              {text.cancel}
-            </AppButton>
-            {!preview ? (
-              <AppButton
-                isDisabled={state.previewPending || state.confirmationUncertain}
-                onPress={() => void preparePreview()}
-              >
-                {state.previewPending ? text.loading : text.prepare}
-              </AppButton>
-            ) : (
-              <>
-                {!state.operation && !state.confirmationUncertain ? (
-                  <AppButton
-                    isDisabled={
-                      state.previewPending || state.confirmationPending
-                    }
-                    onPress={() => void preparePreview()}
-                  >
-                    {state.previewPending ? text.loading : text.refreshPreview}
-                  </AppButton>
-                ) : null}
-                <AppButton
-                  className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
-                  isDisabled={
-                    isBlocked ||
-                    state.previewPending ||
-                    state.confirmationPending
-                  }
-                  onPress={() => void confirmPreview()}
-                >
-                  {state.confirmationPending
-                    ? text.loading
-                    : state.confirmationUncertain
-                      ? text.confirmAgain
-                      : text.confirm}
-                </AppButton>
-              </>
-            )}
-          </>
+                    : ` / ${state.operation.bytes_total.toLocaleString(locale)}`),
+                progressMax: state.operation.bytes_total ?? undefined,
+                progressNow: state.operation.bytes_completed,
+              },
+          safeError:
+            state.operation.state === "failed" && state.operation.safe_error
+              ? redactIdentifiers(state.operation.safe_error, locale)
+              : undefined,
+          actionError: state.actionError,
+          retry:
+            state.operation.state === "failed"
+              ? {
+                  label: state.confirmationPending ? text.loading : text.retry,
+                  isDisabled: state.confirmationPending,
+                  onPress: () => void retryFailedOperation(),
+                }
+              : undefined,
         }
-      >
-        <p>
-          {target.type === "release"
-            ? text.scopeRelease
-            : target.type === "artist"
-              ? text.scopeArtist
-              : text.scopePublication}
-        </p>
-        {state.confirmationUncertain ? (
-          <p role="alert" className={releaseControlAlertClass}>
-            {text.uncertain}
-          </p>
-        ) : null}
-        {preview ? (
-          <div className="space-y-3 rounded border border-[var(--line)] p-3">
-            <p className="wrap-anywhere">{preview.title}</p>
-            {target.type === "artist" && preview.artist_releases?.length ? (
-              <section aria-label={text.artistReleases}>
-                <h3 className="font-semibold">{text.artistReleases}</h3>
-                <ul className="list-disc pl-5">
-                  {preview.artist_releases.map((release) => (
-                    <li key={release.title}>{release.title}</li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-            {target.type === "artist" && preview.coartist_warnings?.length ? (
-              <section aria-label={text.coartistWarnings} role="note">
-                <h3 className="font-semibold">{text.coartistWarnings}</h3>
-                <ul className="list-disc space-y-1 pl-5">
-                  {preview.coartist_warnings.map((warning) => (
-                    <li
-                      key={`${warning.release_title}:${(warning.artist_names ?? []).join("\u0000")}`}
-                    >
-                      <span className="font-medium">
-                        {warning.release_title}
-                      </span>
-                      {warning.artist_names?.length ? (
-                        <span>
-                          {` — ${text.coartistNames}: ${warning.artist_names.join(", ")}`}
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-            <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
-              <dt>{text.positions}</dt>
-              <dd>
-                {(preview.position_ids ?? []).length.toLocaleString(locale)}
-              </dd>
-              <dt>{text.files}</dt>
-              <dd>{(preview.outputs ?? []).length.toLocaleString(locale)}</dd>
-              {target.type !== "publication" ? (
-                <>
-                  <dt>{text.recordings}</dt>
-                  <dd>{preview.recording_count.toLocaleString(locale)}</dd>
-                </>
-              ) : null}
-            </dl>
-            <LibraryDeletionOutputsView
-              locale={locale}
-              rows={(preview.outputs ?? []).map((output) => ({
-                id: `${output.position_id}:${output.relative_path}`,
-                path: output.relative_path,
-                label:
-                  positionLabels?.get(output.position_id) ??
-                  (target.type === "publication" &&
-                  output.position_id === target.positionId
-                    ? positionLabel
-                    : undefined) ??
-                  (locale === "ru" ? "Позиция" : "Position"),
-                status: output.capturable
-                  ? text.capturable
-                  : text.notCapturable,
-              }))}
-            />
-            {preview.blockers?.length ? (
-              <div role="alert" className={releaseControlAlertClass}>
-                <h3 className="font-semibold">{text.blockers}</h3>
-                <ul className="list-disc pl-5">
-                  {preview.blockers.map((blocker, index) => (
-                    <li key={`${blocker.code}:${blocker.position_id ?? index}`}>
-                      {blocker.position_id
-                        ? `${positionLabels?.get(blocker.position_id) ?? (locale === "ru" ? "Позиция" : "Position")}: `
-                        : ""}
-                      {blockerLabel(blocker.code, blocker.message, locale)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {state.confirmationUncertain ? <p>{text.frozen}</p> : null}
-          </div>
-        ) : null}
-        {state.previewError ? (
-          <p role="alert" className={releaseControlAlertClass}>
-            {state.previewError}
-          </p>
-        ) : null}
-        {state.actionError && !state.confirmationUncertain ? (
-          <p role="alert" className={releaseControlAlertClass}>
-            {state.actionError}
-          </p>
-        ) : null}
-        {isBlocked ? <p role="status">{text.blocked}</p> : null}
-      </LibraryDeletionDialogView>
-    </>
+      : undefined;
+
+  const dialog: LibraryDeletionDialogModel = {
+    targetLabel: text.target,
+    open,
+    onOpenChange: (nextOpen) => {
+      if (
+        !state.confirmationPending &&
+        !(state.confirmationUncertain && nextOpen === false)
+      )
+        setOpen(nextOpen);
+    },
+    dismissable: !state.confirmationPending && !state.confirmationUncertain,
+    actions: dialogActions,
+    scope:
+      target.type === "release"
+        ? text.scopeRelease
+        : target.type === "artist"
+          ? text.scopeArtist
+          : text.scopePublication,
+    uncertain: state.confirmationUncertain ? text.uncertain : undefined,
+    preview: previewModel,
+    previewError: state.previewError,
+    actionError:
+      state.actionError && !state.confirmationUncertain
+        ? state.actionError
+        : undefined,
+    blockedNotice: isBlocked ? text.blocked : undefined,
+  };
+
+  return (
+    <LibraryDeletionControlView
+      locale={locale}
+      kind={target.type}
+      trigger={
+        !state.operation && showButton
+          ? { label: buttonLabel, onPress: () => setOpen(true) }
+          : undefined
+      }
+      operation={operationModel}
+      dialog={dialog}
+    />
   );
 }

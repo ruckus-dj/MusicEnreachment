@@ -39,6 +39,16 @@ export function ShellContent({ children }: { children: ReactNode }) {
 	);
 }
 
+export function ProductShellView({ children, ...props }: ShellViewProps) {
+	return (
+		<div className="font-[system-ui,sans-serif] text-[13px]/[1.4]">
+			<ShellView {...props}>
+				<ShellContent>{children}</ShellContent>
+			</ShellView>
+		</div>
+	);
+}
+
 /**
  * Portable shell presentation: navigation, chrome and keyboard skip target.
  * Copy, controls, counts, links and footer identity come from the caller.

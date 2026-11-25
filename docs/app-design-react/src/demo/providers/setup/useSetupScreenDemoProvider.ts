@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import { settingsMessages } from "../../../app/i18n/namespaces/settings";
+import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import type { SetupScreenViewProps } from "../../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../../ui/features/setup/SetupToolCardsView";
 import {

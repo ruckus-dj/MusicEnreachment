@@ -1,5 +1,5 @@
+import { metadataMessage } from "../../../../ui/features/library/metadata/metadataFieldMessages";
 import type { Locale } from "../../../../ui/i18n/types";
-import { metadataMessage } from "./messages";
 import {
 	fieldByKey,
 	type MetadataScope,

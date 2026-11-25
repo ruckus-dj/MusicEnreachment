@@ -7,7 +7,7 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { SourceInventoryPanel } from "../../ui/features/sources/SourceInventoryPanel";
 import type { SourceInventoryStatus } from "../../ui/features/sources/SourceInventoryView";
-import { sourceMessage } from "./sourceMessages";
+import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import {
   inventoryAvailabilityNote,
   inventoryScopeNote,

@@ -10,12 +10,13 @@ import type {
   LibraryMetadataResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
 import {
   ArtistMetadataCard,
   type ArtistMetadataValues,
+  artistMetadataCardMessages,
 } from "../../ui/features/library/ArtistMetadataCard";
 import type { GenreReference } from "../../ui/features/library/GenrePicker";
+import { ArtistMetadataCardLoaderView } from "../../ui/features/library/metadata/ArtistMetadataCardLoaderView";
 import { useProviderGenreCatalog } from "../local-release/ProviderCatalogGenreField";
 
 type Baseline = {
@@ -23,25 +24,6 @@ type Baseline = {
   revision: number;
   providerGenres: GenreReference[] | null;
 };
-
-const copy = {
-  en: {
-    loading: "Loading artist metadata…",
-    readError: "Could not load artist metadata.",
-    retry: "Retry",
-    saveError: "Could not save artist metadata.",
-    conflict:
-      "Artist metadata changed. Your draft is preserved. Cancel and reopen the editor to use the current revision.",
-  },
-  ru: {
-    loading: "Загрузка метаданных артиста…",
-    readError: "Не удалось загрузить метаданные артиста.",
-    retry: "Повторить",
-    saveError: "Не удалось сохранить метаданные артиста.",
-    conflict:
-      "Метаданные артиста изменились. Черновик сохранён. Отмените правки и откройте редактор заново, чтобы использовать актуальную версию.",
-  },
-} as const;
 
 function desired(metadata: LibraryMetadataResponse) {
   const { sort_name: sortName, genre } = metadata.envelope.desired;
@@ -79,7 +61,7 @@ export function LibraryArtistMetadataCard({
   onSaved: () => void;
 }) {
   const { locale } = useI18n();
-  const text = copy[locale];
+  const text = artistMetadataCardMessages[locale];
   const genreCatalog = useProviderGenreCatalog(locale);
   const client = useQueryClient();
   const queryKey = [
@@ -171,29 +153,24 @@ export function LibraryArtistMetadataCard({
   }
 
   return (
-    <div className="grid gap-2">
-      {baseline && (
-        <ArtistMetadataCard
-          locale={locale}
-          values={baseline.values}
-          revision={baseline.revision}
-          providerGenres={baseline.providerGenres}
-          genreCatalog={genreCatalog}
-          onSave={save}
-          disabled={query.isFetching || query.isError}
-        />
-      )}
-      {query.isFetching && <p role="status">{text.loading}</p>}
-      {query.isError && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p role="alert">
-            {text.readError} {errorMessage(query.error, "")}
-          </p>
-          <AppButton onPress={() => void query.refetch()}>
-            {text.retry}
-          </AppButton>
-        </div>
-      )}
-    </div>
+    <ArtistMetadataCardLoaderView
+      locale={locale}
+      card={
+        baseline ? (
+          <ArtistMetadataCard
+            locale={locale}
+            values={baseline.values}
+            revision={baseline.revision}
+            providerGenres={baseline.providerGenres}
+            genreCatalog={genreCatalog}
+            onSave={save}
+            disabled={query.isFetching || query.isError}
+          />
+        ) : undefined
+      }
+      loading={query.isFetching}
+      readError={query.isError ? errorMessage(query.error, "") : undefined}
+      onRetry={() => void query.refetch()}
+    />
   );
 }

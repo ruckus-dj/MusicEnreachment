@@ -9,42 +9,16 @@ import type {
   MissingReleaseGroupSummary,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
-import {
-  type LibraryEditionPagination,
-  type LibraryEditionsStatus,
-  type LibraryEditionTracks,
-  type LibraryEditionTracksStatus,
-  LibraryMissingEditionView,
-  type LibraryMissingEditionViewProps,
+import { catalogueMessage } from "../../ui/features/library/catalogueMessages";
+import type {
+  LibraryEditionPagination,
+  LibraryEditionsStatus,
+  LibraryEditionTracks,
+  LibraryEditionTracksStatus,
+  LibraryMissingEditionViewProps,
 } from "../../ui/features/library/LibraryMissingEditionView";
 
 const EDITION_PAGE_SIZE = 50;
-
-const messages = {
-  en: {
-    artist: "Artist",
-    dateUnknown: "Date not specified",
-    titleUnknown: "Untitled edition",
-    groupTitleUnknown: "Untitled release group",
-    editions: "Choose an edition",
-    loadEditions: "Browse editions",
-    mbid: "MusicBrainz ID",
-    cacheNotice:
-      "Known MusicBrainz cache entries only; this may not be a complete discography.",
-  },
-  ru: {
-    artist: "Артист",
-    dateUnknown: "Дата не указана",
-    titleUnknown: "Издание без названия",
-    groupTitleUnknown: "Группа релизов без названия",
-    editions: "Выберите издание",
-    loadEditions: "Показать издания",
-    mbid: "MusicBrainz ID",
-    cacheNotice:
-      "Показаны только известные записи кэша MusicBrainz; это может быть не полная дискография.",
-  },
-} as const;
 
 function creditNames(credits: LibraryArtistCreditResponse[]) {
   return credits
@@ -53,36 +27,6 @@ function creditNames(credits: LibraryArtistCreditResponse[]) {
       return `${name}${credit.join_phrase ?? (index < credits.length - 1 ? " " : "")}`;
     })
     .join("");
-}
-
-function CreditNames({ credits }: { credits: LibraryArtistCreditResponse[] }) {
-  const { locale } = useI18n();
-  const unnamed = locale === "ru" ? "Без имени" : "Unnamed artist";
-  const occurrences = new Map<string, number>();
-  return (
-    <span>
-      {credits.map((credit, index) => {
-        const identity = JSON.stringify(credit);
-        const occurrence = occurrences.get(identity) ?? 0;
-        occurrences.set(identity, occurrence + 1);
-        const name = credit.credit_name || credit.artist_name || unnamed;
-        return (
-          <span key={`${identity}-${occurrence}`}>
-            {credit.artist_id ? (
-              <a
-                href={`#/library/artists/${encodeURIComponent(credit.artist_id)}`}
-              >
-                {name}
-              </a>
-            ) : (
-              name
-            )}
-            {credit.join_phrase ?? (index < credits.length - 1 ? " " : "")}
-          </span>
-        );
-      })}
-    </span>
-  );
 }
 
 function editionLabel(
@@ -138,7 +82,7 @@ function resetEditionSelection(
  * Headless MusicBrainz edition projection for one missing release group.
  * Editions load only while the picker is visible; the read-only track list is
  * fetched only after an explicit edition choice and stays visible when the
- * picker closes. The host owns rendering and every control label.
+ * picker closes. The shared picker owns rendering and control labels.
  */
 export function useMissingReleaseGroupEditions(
   group: MissingReleaseGroupSummary | null,
@@ -148,7 +92,6 @@ export function useMissingReleaseGroupEditions(
   }: { enabled?: boolean; initialPickerOpen?: boolean } = {},
 ) {
   const { locale } = useI18n();
-  const text = messages[locale];
   const groupKey = group?.provider_key ?? "";
   const [state, setState] = useState<EditionSelectionState>(() =>
     resetEditionSelection(groupKey, initialPickerOpen),
@@ -229,7 +172,7 @@ export function useMissingReleaseGroupEditions(
       : "ready";
   const editionChoices = editionOptions.map((edition) => ({
     key: edition.provider_key,
-    label: editionLabel(edition, text.titleUnknown),
+    label: editionLabel(edition, catalogueMessage(locale, "unnamedEdition")),
     trackCount: edition.track_count,
   }));
   const tracks: LibraryEditionTracks | null =
@@ -286,7 +229,7 @@ export function useMissingReleaseGroupEditions(
 
   return {
     locale,
-    title: group?.title || text.groupTitleUnknown,
+    title: group?.title || catalogueMessage(locale, "unnamedReleaseGroup"),
     credits: creditNames(group?.artists ?? []),
     originalReleaseDate: group?.original_release_date ?? null,
     pickerOpen: active.pickerOpen,
@@ -294,68 +237,4 @@ export function useMissingReleaseGroupEditions(
     showEditionView: active.pickerOpen || selectedEditionID !== "",
     viewProps,
   };
-}
-
-/**
- * Artist-screen missing release group. The album host projects editions
- * through `useMissingReleaseGroupEditions` instead of rendering this row.
- */
-export function MissingReleaseGroupRow({
-  group,
-}: {
-  group: MissingReleaseGroupSummary;
-}) {
-  const { locale } = useI18n();
-  const text = messages[locale];
-  const projection = useMissingReleaseGroupEditions(group);
-  const { pickerOpen, showEditionView, viewProps } = projection;
-  const credits = creditNames(group.artists);
-  const title = group.title || text.groupTitleUnknown;
-
-  const details = (
-    <div>
-      <p>
-        {group.original_release_date ?? text.dateUnknown}
-        {credits ? (
-          <>
-            {" · "}
-            <CreditNames credits={group.artists} />
-          </>
-        ) : null}
-      </p>
-      <p className="block text-[var(--muted)]">{text.cacheNotice}</p>
-      <AppButton aria-expanded={pickerOpen} onPress={projection.togglePicker}>
-        {pickerOpen ? text.editions : text.loadEditions}
-      </AppButton>
-      {showEditionView && (
-        <div>
-          <LibraryMissingEditionView locale={locale} {...viewProps} />
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <article className="my-3 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-[10px]">
-      <div className="flex flex-wrap items-center gap-2.5 max-[720px]:items-start">
-        <span
-          className="grid size-[46px] flex-[0_0_46px] place-items-center rounded-[5px] bg-[var(--raised)] text-[20px] font-[650] text-[var(--ink)]"
-          aria-hidden="true"
-        >
-          {title.trim().charAt(0).toLocaleUpperCase() || "M"}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="m-0 text-base leading-[22px]">{title}</h2>
-          <p className="m-0">
-            {group.original_release_date ?? text.dateUnknown} ·{" "}
-            {credits ? <CreditNames credits={group.artists} /> : text.artist}
-          </p>
-          <p className="m-0 block text-[var(--muted)]">
-            {text.mbid}: {group.provider_key}
-          </p>
-        </div>
-      </div>
-      {details}
-    </article>
-  );
 }

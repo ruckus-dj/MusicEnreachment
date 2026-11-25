@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  checkHostBoundaries,
   checkUiBoundaries,
   compareUiDirectories,
   compareUiSources,
@@ -133,4 +134,106 @@ test("UI boundary resolves extensionless modules and rejects host discovery", ()
   assert.match(errors.join("\n"), /@source escapes the UI boundary/);
   assert.match(errors.join("\n"), /computed module reference/);
   assert.match(errors.join("\n"), /module loader on import\.meta/);
+});
+
+test("host boundary permits only checked JSX wiring and bootstrap CSS", () => {
+  const allowed = checkHostBoundaries("host", [
+    {
+      path: "app/App.tsx",
+      text:
+        'import { QueryClientProvider } from "@tanstack/react-query";\n' +
+        'import { StrictMode } from "react";\n' +
+        'import { LocalList, LocalRow } from "./components";\n' +
+        'import { AppShell } from "./routes/AppShell";\n' +
+        'import { I18nProvider } from "./i18n/host";\n' +
+        "export function App({ client }: { client: unknown }) {\n" +
+        "  return (\n" +
+        "    <StrictMode>\n" +
+        "      <QueryClientProvider client={client}>\n" +
+        "        <I18nProvider>\n" +
+        "          <AppShell />\n" +
+        "        </I18nProvider>\n" +
+        "        <LocalList\n" +
+        "          renderItem={(item) => <LocalRow item={item} />}\n" +
+        "        />\n" +
+        "      </QueryClientProvider>\n" +
+        "    </StrictMode>\n" +
+        "  );\n" +
+        "}\n",
+    },
+    {
+      path: "app/styles.css",
+      text: '@import "../ui/styles/index.css";\n',
+    },
+  ]);
+  assert.deepEqual(allowed, []);
+
+  const errors = checkHostBoundaries("host", [
+    {
+      path: "app/Visual.tsx",
+      text:
+        'import { Button as HostButton } from "react-aria-components";\n' +
+        "export function Visual({ title }: { title: string }) {\n" +
+        '  return <div className="shell">{title}Hello</div>;\n' +
+        "}\n" +
+        "export function Outside() { return <HostButton />; }\n",
+    },
+    {
+      path: "app/Factory.tsx",
+      text:
+        'import { createElement } from "react";\n' +
+        'import { LocalRow } from "./components";\n' +
+        "export const row = createElement(LocalRow, { item });\n",
+    },
+    {
+      path: "app/Callback.tsx",
+      text:
+        'import { LocalList, LocalRow } from "./components";\n' +
+        "export function Callback() {\n" +
+        "  return (\n" +
+        "    <LocalList\n" +
+        "      renderItem={(item) => {\n" +
+        "        const label = item;\n" +
+        "        return <LocalRow label={label} />;\n" +
+        "      }}\n" +
+        "    />\n" +
+        "  );\n" +
+        "}\n",
+    },
+    {
+      path: "app/Unknown.tsx",
+      text: "export function MysteryView() { return <Mystery />; }\n",
+    },
+    {
+      path: "app/Glyph.tsx",
+      text: 'export function Glyph() { return <svg><path d="M0 0" /></svg>; }\n',
+    },
+    {
+      path: "app/Barrel.ts",
+      text: 'export { Button as HostButton } from "react-aria-components";',
+    },
+    {
+      path: "app/styles.css",
+      text: '@source inline("text-red-500");',
+    },
+    {
+      path: "styles/theme.css",
+      text:
+        '@import "tailwindcss";\n' +
+        '@source "../**/*.tsx";\n' +
+        "body { color: red; }\n",
+    },
+  ]);
+  const text = errors.join("\n");
+  assert.match(text, /Native or SVG JSX element is not allowed: <div>/);
+  assert.match(text, /Host JSX must not set className/);
+  assert.match(text, /Host JSX must not contain copy/);
+  assert.match(text, /Visual third-party JSX is not allowed: <HostButton>/);
+  assert.match(text, /element factory: createElement/);
+  assert.doesNotMatch(text, /app\/Callback\.tsx/);
+  assert.match(text, /Custom JSX element is not a checked local component: <Mystery>/);
+  assert.match(text, /Host CSS may only import portable UI styles: tailwindcss/);
+  assert.match(text, /Host CSS may only bootstrap UI styles, not declare styles: body/);
+  assert.match(text, /Host must not re-export external runtime components/);
+  assert.match(text, /unapproved @source: inline/);
 });

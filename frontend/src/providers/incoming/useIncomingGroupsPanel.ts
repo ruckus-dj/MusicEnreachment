@@ -13,9 +13,14 @@ import type {
   IncomingGroupsBody,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import { focusView } from "../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../ui/features/incoming/IncomingGroupsPanel";
 import type { IncomingScreenViewProps } from "../../ui/features/incoming/IncomingScreenView";
+import {
+  incomingMessages,
+  incomingOverviewCopy as overviewCopy,
+} from "../../ui/features/incoming/incomingReviewMessages";
 import { compareSourceFiles } from "../../ui/features/matching/sourceFileOrder";
 import {
   incomingSourceFileName,
@@ -31,46 +36,7 @@ import {
   incomingGroupsListHref,
   parseIncomingGroupsRoute,
 } from "./incomingGroupsRoute";
-import { incomingMessages } from "./incomingMessages";
 import { incomingOverviewOrder } from "./incomingOverviewOrder";
-
-const overviewCopy = {
-  en: {
-    expand: (name: string) => `Files in ${name}`,
-    number: "No.",
-    title: "Title",
-    artist: "Artist",
-    album: "Album",
-    actions: "Actions",
-    noTitle: "No title tag",
-    moving: "Moving file…",
-    moved: "File moved to the other group.",
-    split: "File split into a new group.",
-    stale:
-      "The groups changed on the server. The list was refreshed; try again.",
-    failed:
-      "Could not confirm the change. Check the refreshed list before retrying.",
-    repeatedGroupName: (name: string, number: number) =>
-      `${name} · group ${number}`,
-  },
-  ru: {
-    expand: (name: string) => `Файлы группы «${name}»`,
-    number: "№",
-    title: "Название",
-    artist: "Исполнитель",
-    album: "Альбом",
-    actions: "Действия",
-    noTitle: "Нет тега названия",
-    moving: "Перемещаем файл…",
-    moved: "Файл перемещён в другую группу.",
-    split: "Файл отделён в новую группу.",
-    stale: "Группы изменились на сервере. Список обновлён; повторите действие.",
-    failed:
-      "Не удалось подтвердить изменение. Проверьте обновлённый список перед повтором.",
-    repeatedGroupName: (name: string, number: number) =>
-      `${name} · группа ${number}`,
-  },
-};
 
 function tag(file: IncomingFileResponse | undefined, ...keys: string[]) {
   for (const key of keys) {
@@ -182,7 +148,7 @@ export function useIncomingGroupsPanel({
     if (!snapshot?.groups?.some((group) => group.id === pending.groupId))
       return;
     pendingGroupFocus.current = null;
-    groupDisclosureRefs.current.get(pending.groupId)?.focus({
+    focusView(groupDisclosureRefs.current.get(pending.groupId), {
       preventScroll: pending.preventScroll,
     });
   }, [snapshot]);

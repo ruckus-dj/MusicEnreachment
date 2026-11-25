@@ -1,11 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import packageMetadata from "../../../package.json";
 import {
   getGetIncomingGroupsQueryKey,
@@ -36,16 +30,18 @@ import { SettingsScreen } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
 import { SourcesScreen } from "../../providers/sources/SourcesScreen";
 import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
-import { AppButton } from "../../ui/components/AppButton";
 import { LanguageControl } from "../../ui/components/LanguageControl";
 import { ThemeControl } from "../../ui/components/ThemeControl";
 import { shell } from "../../ui/i18n/namespaces/shell";
 import {
-  ShellContent,
+  ShellStartupFrame,
+  ShellStartupView,
+} from "../../ui/shell/ShellStartupView";
+import {
+  ProductShellView,
   type ShellNavigationItem,
-  ShellView,
 } from "../../ui/shell/ShellView";
-import { appShellMessages } from "../i18n/appShellMessages";
+import { shellStartupMessages } from "../../ui/shell/shellStartupMessages";
 import { useI18n } from "../i18n/host";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
@@ -65,11 +61,6 @@ type Route =
   | `/library/artists/${string}`
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
-
-const skipLinkClass =
-  "fixed left-3 top-[-80px] z-[200] border-0 bg-[var(--surface)] p-2 focus:top-2";
-const rootLandingActionClass =
-  "inline-flex min-h-[34px] items-center rounded border border-[var(--button)] bg-[var(--button)] px-3.5 py-1.5 font-semibold text-[var(--button-text)] no-underline hover:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 
 function currentRoute(
   hash: string,
@@ -102,8 +93,6 @@ function currentRoute(
 }
 export function AppShell() {
   const { locale } = useI18n();
-  const copy = shell[locale];
-  const appCopy = appShellMessages[locale];
   const hash = useHashLocation();
   const sourcesRoute = parseSourcesRoute(hash);
   const incomingGroupsRoute = parseIncomingGroupsRoute(hash);
@@ -117,9 +106,6 @@ export function AppShell() {
   const [loading, setLoading] = useState(true);
   const productAvailable =
     state?.completed && !state.platform.diagnostic && state.platform.supported;
-  const errorRef = useRef<HTMLDivElement>(null);
-  const diagnosticRef = useRef<HTMLHeadingElement>(null);
-  const contentRef = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -154,90 +140,45 @@ export function AppShell() {
     if (state.completed && route === "/setup") window.location.hash = "/";
   }, [state, route]);
 
-  useEffect(() => {
-    if (!loading && error) errorRef.current?.focus();
-  }, [loading, error]);
-  useEffect(() => {
-    if (
-      !loading &&
-      (state?.platform.diagnostic || state?.platform.supported === false)
-    )
-      diagnosticRef.current?.focus();
-  }, [loading, state]);
-
   const content = renderRouteContent();
 
   if (productAvailable)
     return <ProductShell route={route}>{content}</ProductShell>;
 
   return (
-    <main className="min-h-dvh bg-[var(--canvas)] p-3 text-[var(--ink)]">
-      <button
-        type="button"
-        className={skipLinkClass}
-        onClick={() => {
-          contentRef.current?.focus();
-        }}
-      >
-        {copy.skip}
-      </button>
-      <header className="m-0 flex flex-wrap items-center justify-between gap-3 bg-[var(--surface)] px-3 py-2">
-        <div className="flex min-w-0 flex-col gap-px p-1">
-          <strong className="text-[15px] leading-5">MeloTrove</strong>
-          <span className="text-[11px] leading-4 text-[var(--muted)]">
-            {copy.library}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <LanguageControl />
-          <ThemeControl store={themePreferenceStore} />
-        </div>
-      </header>
-      <section
-        ref={contentRef}
-        id="app-content"
-        className="min-w-0 pt-3"
-        tabIndex={-1}
-      >
-        {content}
-      </section>
-    </main>
+    <ShellStartupFrame
+      locale={locale}
+      controls={{
+        language: <LanguageControl />,
+        theme: <ThemeControl store={themePreferenceStore} />,
+      }}
+    >
+      {content}
+    </ShellStartupFrame>
   );
 
   function renderRouteContent() {
     return loading ? (
-      <p role="status">{appCopy.loadingServer}</p>
+      <ShellStartupView locale={locale} state={{ kind: "loading-server" }} />
     ) : error ? (
-      <div
-        ref={errorRef}
-        tabIndex={-1}
-        role="alert"
-        className="wrap-anywhere bg-[var(--error-soft)] p-2 text-[var(--error)]"
-      >
-        {"fallback" in error ? appCopy.loadError : error.message}{" "}
-        <AppButton onPress={load}>{appCopy.retry}</AppButton>
-      </div>
+      <ShellStartupView
+        locale={locale}
+        state={{
+          kind: "setup-error",
+          message: "message" in error ? error.message : undefined,
+          retry: load,
+        }}
+      />
     ) : state && (state.platform.diagnostic || !state.platform.supported) ? (
-      <section aria-labelledby="diagnostic-title">
-        <h1
-          ref={diagnosticRef}
-          tabIndex={-1}
-          id="diagnostic-title"
-          className="text-xl leading-[26px] font-[650]"
-        >
-          {appCopy.diagnose}
-        </h1>
-        <p
-          role="alert"
-          className="wrap-anywhere bg-[var(--error-soft)] p-2 text-[var(--error)]"
-        >
-          {state.platform.reason || appCopy.unsupportedPlatform}
-        </p>
-        <p>
-          {state.platform.goos}/{state.platform.goarch}
-        </p>
-        <AppButton onPress={load}>{appCopy.refreshDiagnostics}</AppButton>
-      </section>
+      <ShellStartupView
+        locale={locale}
+        state={{
+          kind: "diagnostic",
+          message: state.platform.reason,
+          platform: `${state.platform.goos}/${state.platform.goarch}`,
+          retry: load,
+        }}
+      />
     ) : state && !state.completed ? (
       <SetupManager
         initialState={state}
@@ -281,7 +222,6 @@ function ProductShell({
 }) {
   const { locale } = useI18n();
   const copy = shell[locale];
-  const appCopy = appShellMessages[locale];
   const incomingActive =
     route === "/incoming-groups" || route.startsWith("/incoming-groups/");
   // Observe the shared group-list cache without fetching: the Incoming review
@@ -361,28 +301,29 @@ function ProductShell({
   ];
 
   return (
-    <div className="font-[system-ui,sans-serif] text-[13px]/[1.4]">
-      <ShellView
-        brand={{ href: "#/", label: "MeloTrove", mark: "mt" }}
-        skipLabel={copy.skip}
-        navigationLabel={copy.navigation}
-        sectionLabel={sectionLabel(route, copy, appCopy.home)}
-        navigation={navigation}
-        controls={{
-          language: <LanguageControl />,
-          theme: <ThemeControl store={themePreferenceStore} />,
-        }}
-        footerText={`v${packageMetadata.version}`}
-      >
-        <ShellContent>{children}</ShellContent>
-      </ShellView>
-    </div>
+    <ProductShellView
+      brand={{ href: "#/", label: "MeloTrove", mark: "mt" }}
+      skipLabel={copy.skip}
+      navigationLabel={copy.navigation}
+      sectionLabel={sectionLabel(
+        route,
+        copy,
+        shellStartupMessages[locale].home,
+      )}
+      navigation={navigation}
+      controls={{
+        language: <LanguageControl />,
+        theme: <ThemeControl store={themePreferenceStore} />,
+      }}
+      footerText={`v${packageMetadata.version}`}
+    >
+      {children}
+    </ProductShellView>
   );
 }
 
 function RootLanding() {
   const { locale } = useI18n();
-  const copy = appShellMessages[locale];
   const sourcesQuery = useListSources({
     fetch: { cache: "no-store" },
     query: { retry: false, refetchOnMount: "always" },
@@ -405,29 +346,32 @@ function RootLanding() {
   }, [currentFetchSettled, sourceCount, sourcesQuery.isError]);
 
   if (sourcesQuery.isPending || !currentFetchSettled)
-    return <p role="status">{copy.loadingSources}</p>;
+    return (
+      <ShellStartupView locale={locale} state={{ kind: "loading-sources" }} />
+    );
 
   if (sourcesQuery.isError || sources === null)
     return (
-      <section aria-labelledby="home-title">
-        <h1 id="home-title">{copy.homeTitle}</h1>
-        <p role="alert">{errorMessage ?? copy.sourcesLoadError}</p>
-        <AppButton onPress={() => void sourcesQuery.refetch()}>
-          {copy.retry}
-        </AppButton>
-      </section>
+      <ShellStartupView
+        locale={locale}
+        state={{
+          kind: "sources-error",
+          message: errorMessage ?? undefined,
+          retry: () => void sourcesQuery.refetch(),
+        }}
+      />
     );
 
-  if (sources.length > 0) return <p role="status">{copy.loadingIncoming}</p>;
+  if (sources.length > 0)
+    return (
+      <ShellStartupView locale={locale} state={{ kind: "opening-incoming" }} />
+    );
 
   return (
-    <section aria-labelledby="home-title">
-      <h1 id="home-title">{copy.addSourceTitle}</h1>
-      <p>{copy.addSourceDescription}</p>
-      <a className={rootLandingActionClass} href="#/sources">
-        {copy.addSource}
-      </a>
-    </section>
+    <ShellStartupView
+      locale={locale}
+      state={{ kind: "add-source", sourcesHref: "#/sources" }}
+    />
   );
 }
 

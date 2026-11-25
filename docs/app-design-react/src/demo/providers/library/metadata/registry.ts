@@ -1,10 +1,10 @@
-import type { Locale } from "../../../../ui/i18n/types";
 import {
 	type MetadataMessageKey,
 	metadataFieldMessageKey,
 	metadataMessage,
 	metadataMessageKeyFor,
-} from "./messages";
+} from "../../../../ui/features/library/metadata/metadataFieldMessages";
+import type { Locale } from "../../../../ui/i18n/types";
 
 export type {
 	MetadataField,

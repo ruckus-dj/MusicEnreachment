@@ -1,11 +1,11 @@
-import type { Locale } from "../../../ui/i18n/types";
-import { incomingMessage } from "../incoming/incomingMessages";
-import { catalogMessage } from "../library/catalogMessages";
-import { matchingMessage } from "../matching/matchingMessages";
+import { incomingMessage } from "../../../ui/features/incoming/incomingOverviewMessages";
+import { catalogMessage } from "../../../ui/features/library/catalogMessages";
+import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
 import {
 	formatPublicationMessage,
 	publicationMessage,
-} from "../publication/publicationMessages";
+} from "../../../ui/features/publication/publicationMessages";
+import type { Locale } from "../../../ui/i18n/types";
 
 type NoticeParams = Record<string, string | number>;
 

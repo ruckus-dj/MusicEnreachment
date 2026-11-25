@@ -155,7 +155,9 @@ export function ContextPublicationPreviewView({
           {error}
         </p>
       )}
-      {readOnly && <p role="note">{copy.comparisonReadOnly}</p>}
+      {readOnly && workflowControl?.workflow !== "comparison" && (
+        <p role="note">{copy.comparisonReadOnly}</p>
+      )}
       {(reason || notices?.length) && (
         <p>{[reason, ...(notices ?? [])].join(" · ")}</p>
       )}

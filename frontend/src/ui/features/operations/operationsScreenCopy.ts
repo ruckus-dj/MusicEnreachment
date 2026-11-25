@@ -6,8 +6,7 @@ import type { OperationsListCopy } from "./OperationsList";
  * The colocated Operations list already receives every row, filter and action
  * through props. This catalog covers only the parts both hosts render the same
  * way: list chrome, status/kind filter labels, row action labels and the
- * pagination range. Server-scope and demo-specific wording stays with each
- * host adapter.
+ * pagination range. Transport-specific notices are below.
  */
 export interface OperationsScreenCopy extends OperationsListCopy {
   attention: string;
@@ -138,3 +137,28 @@ export const operationsScreenCopy = {
     dismissError: "Не удалось скрыть операцию.",
   },
 } as const satisfies Record<"en" | "ru", OperationsScreenCopy>;
+
+export const operationsControllerCopy = {
+  en: {
+    ...operationsScreenCopy.en,
+    retryHttpError: (status: number) =>
+      `Could not retry operation (HTTP ${status}).`,
+    dismissHttpError: (status: number) =>
+      `Could not dismiss operation (HTTP ${status}).`,
+    abandonHttpError: (status: number) =>
+      `Could not abandon unfinished republications (HTTP ${status}).`,
+    loadHttpError: (status: number) =>
+      `Could not load operations (HTTP ${status}).`,
+  },
+  ru: {
+    ...operationsScreenCopy.ru,
+    retryHttpError: (status: number) =>
+      `Не удалось повторить операцию (HTTP ${status}).`,
+    dismissHttpError: (status: number) =>
+      `Не удалось скрыть операцию (HTTP ${status}).`,
+    abandonHttpError: (status: number) =>
+      `Не удалось прервать незавершённые перепубликации (HTTP ${status}).`,
+    loadHttpError: (status: number) =>
+      `Не удалось загрузить операции (HTTP ${status}).`,
+  },
+} as const;

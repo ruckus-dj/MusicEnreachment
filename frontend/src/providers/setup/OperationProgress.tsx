@@ -3,8 +3,17 @@ import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { AppButton } from "../../ui/components/AppButton";
-import { SetupFeedbackView } from "../../ui/features/setup/SetupFeedbackView";
+import {
+  type OperationProgressStatus,
+  OperationProgressView,
+} from "../../ui/features/setup/OperationProgressView";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupHttpError,
+} from "../../ui/features/setup/setupMessages";
+import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
 import {
   operationKindLabel,
   operationProgressLabel,
@@ -12,13 +21,6 @@ import {
   operationStateLabel,
   operationTargetLabel,
 } from "../operations/operationPresentation";
-import {
-  type SetupFeedback,
-  setupFeedback,
-  setupFeedbackText,
-  setupHttpError,
-  setupMessages,
-} from "./setupMessages";
 
 export function OperationProgress({
   id,
@@ -32,7 +34,6 @@ export function OperationProgress({
   onFinished: (id: string, snapshot: OperationResponse) => void;
 }) {
   const { locale } = useI18n();
-  const messages = setupMessages[locale];
   const [snapshot, setSnapshot] = useState(initial);
   const [error, setError] = useState<SetupFeedback | null>(null);
   const [refreshError, setRefreshError] = useState<SetupFeedback | null>(null);
@@ -42,12 +43,8 @@ export function OperationProgress({
   const completion = useRef("");
   const alert = useRef<HTMLParagraphElement>(null);
   const refreshAlert = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
-  useEffect(() => {
-    if (refreshError) refreshAlert.current?.focus();
-  }, [refreshError]);
+  useSetupAlertFocus(alert, error);
+  useSetupAlertFocus(refreshAlert, refreshError);
   const refreshInstallations = useCallback(
     async (next: OperationResponse) => {
       if (refreshing.current) return;
@@ -116,64 +113,65 @@ export function OperationProgress({
   }
   const failedError =
     snapshot?.state === "failed" ? snapshot.safe_error : undefined;
+  const status: OperationProgressStatus | undefined = snapshot
+    ? {
+        text: `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`,
+        stage: operationStageLabel(snapshot.stage, locale) || undefined,
+        progress: operationProgressLabel(snapshot, locale),
+        warning:
+          snapshot.state !== "failed"
+            ? snapshot.safe_error || undefined
+            : undefined,
+      }
+    : undefined;
+  const completed = snapshot?.state === "succeeded" ? snapshot : undefined;
+  const refreshToolInventory = () => {
+    if (completed) void refreshInstallations(completed);
+  };
   return (
-    <div className="wrap-anywhere bg-[var(--accent-soft)] p-2 my-2">
-      <p role="status">
-        {snapshot
-          ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`
-          : messages.toolDownload}
-        {snapshot &&
-          operationStageLabel(snapshot.stage, locale) &&
-          ` · ${operationStageLabel(snapshot.stage, locale)}`}
-        {snapshot && ` · ${operationProgressLabel(snapshot, locale)}`}
-        {snapshot?.safe_error &&
-          snapshot.state !== "failed" &&
-          ` · ${snapshot.safe_error}`}
-        {!snapshot && messages.operationStatusLoading}
-      </p>
-      <SetupFeedbackView error={failedError} />
-      {error && (
-        <AppButton isDisabled={snapshotPending} onPress={refreshSnapshot}>
-          {messages.retryOperationStatus}
-        </AppButton>
-      )}
-      <SetupFeedbackView
-        pending={snapshotPending ? messages.refreshOperationStatus : null}
-      />
-      {snapshot?.state === "failed" && (
-        <AppButton isDisabled={pending} onPress={retry}>
-          {messages.retryDownload}
-        </AppButton>
-      )}
-      {snapshot?.state === "succeeded" && refreshError && (
-        <AppButton
-          isDisabled={pending}
-          onPress={() => {
-            void refreshInstallations(snapshot);
-          }}
-        >
-          {messages.retryToolList}
-        </AppButton>
-      )}
-      <SetupFeedbackView
-        pending={
-          pending
+    <OperationProgressView
+      locale={locale}
+      status={status}
+      failure={failedError}
+      statusRead={
+        error
+          ? {
+              message: setupFeedbackText(error, locale),
+              alertRef: alert,
+              pending: snapshotPending,
+              onRetry: refreshSnapshot,
+            }
+          : undefined
+      }
+      toolsRefresh={
+        refreshError
+          ? {
+              message: setupFeedbackText(refreshError, locale),
+              alertRef: refreshAlert,
+              pending,
+              onRetry: refreshToolInventory,
+            }
+          : undefined
+      }
+      retryDownload={
+        snapshot?.state === "failed"
+          ? { disabled: pending, onPress: retry }
+          : undefined
+      }
+      retryToolList={
+        completed && refreshError
+          ? { disabled: pending, onPress: refreshToolInventory }
+          : undefined
+      }
+      pending={
+        snapshotPending
+          ? "status"
+          : pending
             ? snapshot?.state === "succeeded"
-              ? messages.refreshTools
-              : messages.retryingDownload
-            : null
-        }
-      />
-      <SetupFeedbackView
-        error={
-          refreshError ? setupFeedbackText(refreshError, locale) : undefined
-        }
-        errorRef={refreshAlert}
-      />
-      <SetupFeedbackView
-        error={error ? setupFeedbackText(error, locale) : undefined}
-        errorRef={alert}
-      />
-    </div>
+              ? "tools"
+              : "download"
+            : undefined
+      }
+    />
   );
 }

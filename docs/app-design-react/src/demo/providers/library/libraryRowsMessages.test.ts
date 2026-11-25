@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { catalog } from "../../../app/i18n/catalog";
-import { libraryRowsMessage, libraryRowsMessages } from "./libraryRowsMessages";
+import {
+	libraryRowsMessage,
+	libraryRowsMessages,
+} from "../../../ui/features/library/libraryRowsMessages";
 
 describe("library row localization", () => {
 	it("registers the namespace in the primary i18n catalog", () => {

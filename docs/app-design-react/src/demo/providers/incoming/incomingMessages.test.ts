@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { incomingGroupsCount } from "../../../ui/features/incoming/IncomingGroupsPanel";
-import { incomingMessage } from "./incomingMessages";
+import { incomingMessage } from "../../../ui/features/incoming/incomingOverviewMessages";
 
 it("translates descriptor-based incoming reasons and notices in both locales", () => {
 	expect(incomingMessage("en", "incompleteReason")).toBe(

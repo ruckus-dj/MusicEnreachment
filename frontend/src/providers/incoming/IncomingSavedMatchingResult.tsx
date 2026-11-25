@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { incomingMessages } from "../../ui/features/incoming/incomingReviewMessages";
 import { MatchingLinkResultView } from "../../ui/features/matching/MatchingLinkResultView";
 import { useMatchingLinkResultFocus } from "../../ui/features/matching/useMatchingLinkResultFocus";
 import { incomingSourceFileName } from "./apiMatchingSources";
@@ -7,7 +8,6 @@ import {
   IncomingReceiptPublication,
   type IncomingReceiptPublicationPosition,
 } from "./IncomingReceiptPublication";
-import { incomingMessages } from "./incomingMessages";
 
 function receiptPresentation(
   receipt: IncomingConfirmReceipt,

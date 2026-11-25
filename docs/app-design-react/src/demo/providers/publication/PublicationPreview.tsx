@@ -1,5 +1,11 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n";
+import { PublicationFlowView } from "../../../ui/features/publication/PublicationFlowView";
+import type { PublicationInspection } from "../../../ui/features/publication/PublicationInspector";
+import {
+	formatPublicationMessage,
+	publicationMessage,
+} from "../../../ui/features/publication/publicationMessages";
 import {
 	type CatalogArtist,
 	catalogData,
@@ -14,17 +20,11 @@ import {
 } from "../library/catalogData";
 import { upgradeAudioOnly } from "../library/trackActionModel";
 import { individualPublicationDetails } from "./individualPublicationDetails";
-import { PublicationFlow } from "./PublicationFlow";
-import type { PublicationInspection } from "./PublicationInspector";
 import {
 	isMetadataPreviewFresh,
 	type MetadataPreviewToken,
 } from "./previewModel";
 import { publicationArtistNotices } from "./publicationArtistNotices";
-import {
-	formatPublicationMessage,
-	publicationMessage,
-} from "./publicationMessages";
 import {
 	metadataSnapshotDiff,
 	publicationMetadataDiff,
@@ -270,7 +270,8 @@ export function PublicationPreview({
 		if (onApply && !onApply(applicableToken)) setParentRejected(true);
 	};
 	return (
-		<PublicationFlow
+		<PublicationFlowView
+			locale={locale}
 			title={publicationMessage(locale, "previewTitle")}
 			description={publicationMessage(
 				locale,
@@ -284,21 +285,13 @@ export function PublicationPreview({
 				count: rows.filter((row) => row.action === action).length,
 			}))}
 			items={inspections}
-			footer={
-				<>
-					<strong>
-						{
-							rows.filter((row) => row.action === "Невозможно обработать")
-								.length
-						}{" "}
-						{publicationMessage(locale, "unprocessed")}
-					</strong>{" "}
-					{publicationMessage(
-						locale,
-						mode === "audioUpgrade" ? "unselectedUnchanged" : "previewPolicy",
-					)}
-				</>
-			}
+			footer={{
+				unprocessed: `${rows.filter((row) => row.action === "Невозможно обработать").length} ${publicationMessage(locale, "unprocessed")}`,
+				policy: publicationMessage(
+					locale,
+					mode === "audioUpgrade" ? "unselectedUnchanged" : "previewPolicy",
+				),
+			}}
 			primaryLabel={formatPublicationMessage(locale, "applyCount", {
 				create: rows.filter((row) => row.action === "Создать").length,
 				update: rows.filter((row) => row.action === "Обновить").length,
@@ -307,21 +300,12 @@ export function PublicationPreview({
 			confirmationTitle={formatPublicationMessage(locale, "applyTitle", {
 				count: applicableRows.length,
 			})}
-			confirmationDetails={
-				<>
-					<p>
-						{mode === "audioUpgrade" ? (
-							publicationMessage(locale, "audioUpgradeDescription")
-						) : (
-							<>
-								{publicationMessage(locale, "newSourceConfirmation")}{" "}
-								{publicationMessage(locale, "existingMetadataConfirmation")}
-							</>
-						)}
-					</p>
-					<p>{publicationMessage(locale, "prototypeMemoryOnly")}</p>
-				</>
-			}
+			confirmationDetails={[
+				mode === "audioUpgrade"
+					? publicationMessage(locale, "audioUpgradeDescription")
+					: `${publicationMessage(locale, "newSourceConfirmation")} ${publicationMessage(locale, "existingMetadataConfirmation")}`,
+				publicationMessage(locale, "prototypeMemoryOnly"),
+			]}
 			confirmLabel={publicationMessage(locale, "confirm")}
 			onConfirm={apply}
 		/>

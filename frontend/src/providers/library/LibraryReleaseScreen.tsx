@@ -21,7 +21,15 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { LibraryPrimaryArtistControl } from "../../ui/features/library/LibraryPrimaryArtistControl";
 import { LibraryReleaseWorkspaceView } from "../../ui/features/library/LibraryReleaseWorkspaceView";
-import { releaseControlButtonClass } from "../../ui/features/library/libraryReleaseControlStyles";
+import {
+  type LibraryReleaseMessage,
+  type LibraryReleaseText,
+  LocalizedLibraryReleaseError,
+  libraryReleaseError,
+  libraryReleaseMessage,
+  libraryReleaseText,
+  renderLibraryReleaseText,
+} from "../../ui/features/library/libraryReleaseMessages";
 import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/LibraryPositionLyricsView";
 import { ReleaseMetadataEditorView } from "../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
@@ -30,6 +38,7 @@ import {
   type ReleaseOverviewHeading,
   ReleaseOverviewView,
 } from "../../ui/features/library/ReleaseOverviewView";
+import { TrackReadErrorNoticeView } from "../../ui/features/library/TrackReadErrorNoticeView";
 import {
   type TrackProviderRefreshModel,
   TrackProviderRefreshView,
@@ -52,15 +61,6 @@ import {
   releaseOverviewCredits,
   releaseOverviewMedia,
 } from "./LibraryReleaseFacts";
-import {
-  type LibraryReleaseMessage,
-  type LibraryReleaseText,
-  LocalizedLibraryReleaseError,
-  libraryReleaseError,
-  libraryReleaseMessage,
-  libraryReleaseText,
-  renderLibraryReleaseText,
-} from "./libraryReleaseMessages";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 import {
   ReleaseMetadataEditor,
@@ -2084,19 +2084,11 @@ export function LibraryReleaseScreen({
               }
             />
             {!positionId && position?.readError ? (
-              <div
-                className="flex flex-wrap items-center gap-2 rounded border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2 text-error wrap-anywhere"
-                role="alert"
-              >
-                {displayText(position.readError)}{" "}
-                <button
-                  type="button"
-                  className={releaseControlButtonClass}
-                  onClick={refreshReadState}
-                >
-                  {text("refreshData")}
-                </button>
-              </div>
+              <TrackReadErrorNoticeView
+                locale={locale}
+                message={displayText(position.readError)}
+                onRefresh={refreshReadState}
+              />
             ) : null}
           </Fragment>
         );

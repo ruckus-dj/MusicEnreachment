@@ -6,7 +6,7 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import type { SetupGenreCatalogState } from "../../ui/features/setup/SetupGenreCatalogView";
-import { setupHttpError } from "./setupMessages";
+import { setupHttpError } from "../../ui/features/setup/setupMessages";
 
 const pollIntervalMs = 2000;
 

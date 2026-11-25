@@ -54,6 +54,8 @@ export function SourceScanPanel({
 	onRetry,
 	onRecheck,
 	startDisabled,
+	disabledNote,
+	streamNotice,
 }: {
 	locale: "en" | "ru";
 	state: SourceScanState;
@@ -61,6 +63,8 @@ export function SourceScanPanel({
 	onRetry: () => void;
 	onRecheck?: () => void;
 	startDisabled?: boolean;
+	disabledNote?: string;
+	streamNotice?: string;
 }) {
 	const copy = messages[locale];
 	const active = [
@@ -71,45 +75,51 @@ export function SourceScanPanel({
 		"applying",
 	].includes(state.kind);
 	return (
-		<section className="grid min-w-0 gap-x-4 gap-y-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs wrap-anywhere sm:grid-cols-[minmax(0,1fr)_auto]">
-			<div className="min-w-0 space-y-1">
-				<h2 className="text-sm font-semibold">{copy.title}</h2>
-				<p className="text-[var(--muted)]">{copy.manual}</p>
-				{"message" in state ? (
-					<p className="text-[var(--error)]" role="alert">
-						{state.message}
-					</p>
-				) : (
-					state.kind !== "idle" && (
-						<p className="font-medium" role="status">
-							{copy[state.kind]}
+		<div className="grid min-w-0 gap-1">
+			<section className="grid min-w-0 gap-x-4 gap-y-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs wrap-anywhere sm:grid-cols-[minmax(0,1fr)_auto]">
+				<div className="min-w-0 space-y-1">
+					<h2 className="text-sm font-semibold">{copy.title}</h2>
+					<p className="text-[var(--muted)]">{copy.manual}</p>
+					{"message" in state ? (
+						<p className="text-[var(--error)]" role="alert">
+							{state.message}
 						</p>
-					)
-				)}
-			</div>
-			<div className="flex items-start">
-				{state.kind === "failed" ? (
-					<Button
-						className={action}
-						isDisabled={startDisabled}
-						onPress={onRetry}
-					>
-						{copy.retry}
-					</Button>
-				) : state.kind === "error" && onRecheck ? (
-					<Button className={action} onPress={onRecheck}>
-						{copy.recheck}
-					</Button>
-				) : (
-					<Button
-						className={action}
-						isDisabled={startDisabled || active}
-						onPress={onStart}
-					>
-						{copy.start}
-					</Button>
-				)}
-			</div>
-		</section>
+					) : (
+						state.kind !== "idle" && (
+							<p className="font-medium" role="status">
+								{copy[state.kind]}
+							</p>
+						)
+					)}
+				</div>
+				<div className="flex items-start">
+					{state.kind === "failed" ? (
+						<Button
+							className={action}
+							isDisabled={startDisabled}
+							onPress={onRetry}
+						>
+							{copy.retry}
+						</Button>
+					) : state.kind === "error" && onRecheck ? (
+						<Button className={action} onPress={onRecheck}>
+							{copy.recheck}
+						</Button>
+					) : (
+						<Button
+							className={action}
+							isDisabled={startDisabled || active}
+							onPress={onStart}
+						>
+							{copy.start}
+						</Button>
+					)}
+				</div>
+			</section>
+			{disabledNote && (
+				<p className="m-0 text-xs text-[var(--muted)]">{disabledNote}</p>
+			)}
+			{streamNotice && <p role="status">{streamNotice}</p>}
+		</div>
 	);
 }

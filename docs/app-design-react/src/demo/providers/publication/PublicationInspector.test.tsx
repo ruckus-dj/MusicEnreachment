@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
 	type PublicationInspection,
 	PublicationInspector,
-} from "./PublicationInspector";
+} from "../../../ui/features/publication/PublicationInspector";
 
 const item: PublicationInspection = {
 	id: "track-1",

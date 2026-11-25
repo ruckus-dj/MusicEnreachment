@@ -4,10 +4,14 @@ import { createRequire } from "node:module";
 import { posix, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const prototypeSrc = new URL("../docs/app-design-react/src/", import.meta.url);
+const applicationSrc = new URL("../frontend/src/", import.meta.url);
 const prototypeUi = new URL("../docs/app-design-react/src/ui/", import.meta.url);
 const applicationUi = new URL("../frontend/src/ui/", import.meta.url);
 const prototypeLabel = "docs/app-design-react/src/ui";
 const applicationLabel = "frontend/src/ui";
+const prototypeHostLabel = "docs/app-design-react/src";
+const applicationHostLabel = "frontend/src";
 
 // Every portable UI module lives at the same path under src/ui/ in both trees.
 // Leads use keys relative to that root. A prototype-first revision may lead the
@@ -32,6 +36,36 @@ const HOST_ALIASES = [
   /^(?:src|app|api|features|components|styles)\//,
   /^(?:i18n|routes|navigation|metadata|infrastructure|fixtures|genres|test)\//,
 ];
+// Hosts may only wire checked local views or these dependency-free contexts.
+const HEADLESS_JSX = new Map([
+  ["react", new Set(["Fragment", "StrictMode"])],
+  ["@tanstack/react-query", new Set(["QueryClientProvider"])],
+  ["react-aria-components", new Set(["I18nProvider", "SSRProvider"])],
+]);
+const FORBIDDEN_JSX_PROPS = new Set([
+  "className",
+  "style",
+  "class",
+  "dangerouslySetInnerHTML",
+  "innerHTML",
+  "outerHTML",
+]);
+const COPY_JSX_PROPS = new Set([
+  "alt",
+  "aria-description",
+  "aria-label",
+  "children",
+  "description",
+  "heading",
+  "label",
+  "message",
+  "placeholder",
+  "subtitle",
+  "summary",
+  "textValue",
+  "title",
+]);
+const ELEMENT_FACTORIES = new Set(["createElement", "cloneElement", "jsx", "jsxs", "jsxDEV"]);
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -294,10 +328,327 @@ export function checkUiBoundaries(label, files, options = {}) {
   return errors;
 }
 
+function isHostPath(path) {
+  return path !== "ui" && !path.startsWith("ui/") &&
+    !TEST_FILE.test(path) && !/(^|\/)(?:test|__tests__)(?:\/|$)/.test(path);
+}
+
+export function hostSourceFiles(files) {
+  return files.filter(isHostPath);
+}
+
+function collectHostBindings(ts, source) {
+  const bindings = new Map();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) {
+      continue;
+    }
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (clause.name) {
+      bindings.set(clause.name.text, { specifier, imported: "default" });
+    }
+    const named = clause.namedBindings;
+    if (named && ts.isNamespaceImport(named)) {
+      bindings.set(named.name.text, { specifier, imported: "*" });
+    } else if (named && ts.isNamedImports(named)) {
+      for (const element of named.elements) {
+        if (element.isTypeOnly) continue;
+        bindings.set(element.name.text, {
+          specifier,
+          imported: (element.propertyName ?? element.name).text,
+        });
+      }
+    }
+  }
+  const declare = (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      bindings.set(node.name.text, { local: true });
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const value = unwrapHostExpression(ts, node.initializer);
+      if (value && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))) {
+        bindings.set(node.name.text, { local: true });
+      } else if (value && ts.isCallExpression(value)) {
+        const callee = value.expression;
+        const fromReact = ts.isIdentifier(callee)
+          ? bindings.get(callee.text)?.imported === "createContext" &&
+            bindings.get(callee.text)?.specifier === "react"
+          : ts.isPropertyAccessExpression(callee) &&
+            callee.name.text === "createContext" &&
+            ts.isIdentifier(callee.expression) &&
+            bindings.get(callee.expression.text)?.specifier === "react";
+        if (fromReact) bindings.set(node.name.text, { local: true, context: true });
+      }
+    }
+    ts.forEachChild(node, declare);
+  };
+  ts.forEachChild(source, declare);
+  return bindings;
+}
+
+function headlessJsxMember(binding, member) {
+  if (!binding?.specifier || binding.specifier.startsWith(".")) return false;
+  return HEADLESS_JSX.get(basePackage(binding.specifier))?.has(member) ?? false;
+}
+
+function checkedLocalBinding(filePath, specifier) {
+  const target = relativeTarget(filePath, specifier);
+  return target !== ".." && !target.startsWith("../") && !posix.isAbsolute(target);
+}
+
+function hostJsxTagError(ts, label, filePath, tagName, bindings) {
+  const location = `${label}/${filePath}`;
+  if (ts.isJsxNamespacedName(tagName)) {
+    return `${location}: Namespaced JSX element is not allowed: <${tagName.getText()}>`;
+  }
+  if (ts.isIdentifier(tagName)) {
+    const name = tagName.text;
+    if (!/^[A-Z]/.test(name) || name.includes("-")) {
+      return `${location}: Native or SVG JSX element is not allowed: <${name}>`;
+    }
+    const binding = bindings.get(name);
+    if (!binding) {
+      return `${location}: Custom JSX element is not a checked local component: <${name}>`;
+    }
+    if (binding.local) return null;
+    if (binding.specifier.startsWith(".")) {
+      if (!checkedLocalBinding(filePath, binding.specifier)) {
+        return `${location}: JSX component escapes the checked host source root: <${name}>`;
+      }
+      return null;
+    }
+    if (headlessJsxMember(binding, binding.imported)) return null;
+    return `${location}: Visual third-party JSX is not allowed: <${name}> from ${binding.specifier}`;
+  }
+  if (ts.isPropertyAccessExpression(tagName)) {
+    const member = tagName.name.text;
+    const owner = tagName.expression;
+    const rendered = tagName.getText();
+    if (ts.isIdentifier(owner)) {
+      const binding = bindings.get(owner.text);
+      if (binding) {
+        if (binding.local) {
+          return binding.context && (member === "Provider" || member === "Consumer")
+            ? null
+            : `${location}: Custom JSX element is not a checked local component: <${rendered}>`;
+        }
+        if (binding.specifier.startsWith(".")) {
+          if (!checkedLocalBinding(filePath, binding.specifier)) {
+            return `${location}: JSX component escapes the checked host source root: <${rendered}>`;
+          }
+          return null;
+        }
+        if (headlessJsxMember(binding, member)) return null;
+        return `${location}: Visual third-party JSX is not allowed: <${rendered}> from ${binding.specifier}`;
+      }
+      if (owner.text === "React" && HEADLESS_JSX.get("react").has(member)) return null;
+    }
+    return `${location}: Custom JSX element is not a checked local component: <${rendered}>`;
+  }
+  return `${location}: Unsupported JSX tag: <${tagName.getText()}>`;
+}
+
+function unwrapHostExpression(ts, expression) {
+  let value = expression;
+  while (
+    value &&
+    (ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value))
+  ) {
+    value = value.expression;
+  }
+  return value;
+}
+
+function hostCopyText(ts, expression) {
+  const value = expression && unwrapHostExpression(ts, expression);
+  if (!value) return null;
+  if (ts.isStringLiteralLike(value)) return value.text;
+  if (ts.isTemplateExpression(value)) return value.getText();
+  return null;
+}
+
+function hostJsxAttributeErrors(ts, location, attributes, errors) {
+  for (const attribute of attributes.properties) {
+    if (ts.isJsxSpreadAttribute(attribute)) continue;
+    if (!ts.isJsxAttribute(attribute)) continue;
+    const name = ts.isIdentifier(attribute.name)
+      ? attribute.name.text
+      : attribute.name.getText();
+    if (FORBIDDEN_JSX_PROPS.has(name)) {
+      errors.push(`${location}: Host JSX must not set ${name}`);
+    }
+    if (COPY_JSX_PROPS.has(name) && attribute.initializer) {
+      const expression = ts.isJsxExpression(attribute.initializer)
+        ? attribute.initializer.expression
+        : attribute.initializer;
+      const copy = hostCopyText(ts, expression);
+      if (copy !== null && copy.trim()) {
+        errors.push(`${location}: Host JSX must not contain copy`);
+      }
+    }
+  }
+}
+
+function hostJsxChildErrors(ts, location, children, errors) {
+  for (const child of children) {
+    if (ts.isJsxText(child)) {
+      if (child.text.trim()) errors.push(`${location}: Host JSX must not contain copy`);
+      continue;
+    }
+    if (ts.isJsxExpression(child)) {
+      const copy = hostCopyText(ts, child.expression);
+      if (copy !== null && copy.trim()) {
+        errors.push(`${location}: Host JSX must not contain copy`);
+      }
+    }
+  }
+}
+
+function hostJsxNodeErrors(ts, label, filePath, node, bindings, errors) {
+  const location = `${label}/${filePath}`;
+  if (ts.isJsxFragment(node)) {
+    hostJsxChildErrors(ts, location, node.children, errors);
+    return;
+  }
+  const opening = ts.isJsxElement(node) ? node.openingElement : node;
+  const tagError = hostJsxTagError(ts, label, filePath, opening.tagName, bindings);
+  if (tagError) errors.push(tagError);
+  hostJsxAttributeErrors(ts, location, opening.attributes, errors);
+  if (ts.isJsxElement(node)) {
+    hostJsxChildErrors(ts, location, node.children, errors);
+  }
+}
+
+function factoryMember(ts, callee) {
+  if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
+  if (
+    ts.isElementAccessExpression(callee) &&
+    ts.isStringLiteralLike(callee.argumentExpression)
+  ) {
+    return callee.argumentExpression.text;
+  }
+  return undefined;
+}
+
+function hostElementFactory(ts, callee, bindings) {
+  if (ts.isIdentifier(callee)) {
+    const binding = bindings.get(callee.text);
+    if (binding && ELEMENT_FACTORIES.has(binding.imported)) return binding.imported;
+    return ELEMENT_FACTORIES.has(callee.text) ? callee.text : null;
+  }
+  const member = factoryMember(ts, callee);
+  if (!member) return null;
+  const owner = callee.expression;
+  if (!ts.isIdentifier(owner)) return null;
+  if (owner.text === "document" &&
+      (member === "createElement" || member === "createElementNS" || member === "write"))
+    return `document.${member}`;
+  if (!ELEMENT_FACTORIES.has(member)) return null;
+  const binding = bindings.get(owner.text);
+  if (binding) return binding.specifier?.startsWith("react") ? member : null;
+  return owner.text === "React" ? member : null;
+}
+
+function checkHostCss(label, filePath, text) {
+  const location = `${label}/${filePath}`;
+  const errors = [];
+  const directives = text.replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\/\*[\s\S]*?\*\//g, (_, quoted) => quoted ?? "");
+  for (const match of directives.matchAll(/@source\b([^;]*);/g)) {
+    errors.push(`${location}: Host CSS has an unapproved @source: ${match[1].trim()}`);
+  }
+  for (const { kind, specifier } of parseCssReferences(directives)) {
+    if (kind === "@source") continue;
+    if (kind === "@import") {
+      const target = relativeTarget(filePath, specifier);
+      if (target === "ui" || target.startsWith("ui/")) continue;
+      errors.push(`${location}: Host CSS may only import portable UI styles: ${specifier}`);
+      continue;
+    }
+    errors.push(`${location}: Host CSS must not reference assets or styles: ${kind} ${specifier}`);
+  }
+  const residual = directives
+    .replace(/@(import|source)\b[^;]*;/g, " ")
+    .trim();
+  if (residual) {
+    const first = residual.split(/\s+/, 1)[0];
+    errors.push(`${location}: Host CSS may only bootstrap UI styles, not declare styles: ${first}`);
+  }
+  return errors;
+}
+
+export function checkHostBoundaries(label, files) {
+  const ts = loadTypeScript();
+  const errors = [];
+  for (const { path, text } of files) {
+    if (!isHostPath(path)) continue;
+    if (path.endsWith(".css")) {
+      errors.push(...checkHostCss(label, path, text));
+      continue;
+    }
+    if (!CODE_FILE.test(path)) continue;
+    const source = ts.createSourceFile(
+      path,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKind(ts, path),
+    );
+    const bindings = collectHostBindings(ts, source);
+    for (const statement of source.statements) {
+      if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue;
+      const specifier = statement.moduleSpecifier?.text;
+      const named = statement.exportClause && ts.isNamedExports(statement.exportClause);
+      const members = named
+        ? statement.exportClause.elements
+            .filter((item) => !item.isTypeOnly)
+            .map((item) => (item.propertyName ?? item.name).text)
+        : [];
+      const external = specifier && !specifier.startsWith(".");
+      const forbidden = external
+        ? !named || members.some((member) => !headlessJsxMember({ specifier }, member))
+        : !specifier && members.some((member) => {
+            const binding = bindings.get(member);
+            return binding?.specifier && !binding.specifier.startsWith(".") &&
+              !headlessJsxMember(binding, binding.imported);
+          });
+      if (forbidden) {
+        errors.push(`${label}/${path}: Host must not re-export external runtime components`);
+      }
+    }
+    const visit = (node) => {
+      if (
+        ts.isJsxElement(node) ||
+        ts.isJsxSelfClosingElement(node) ||
+        ts.isJsxFragment(node)
+      ) {
+        hostJsxNodeErrors(ts, label, path, node, bindings, errors);
+      } else if (ts.isCallExpression(node)) {
+        const factory = hostElementFactory(ts, node.expression, bindings);
+        if (factory) {
+          errors.push(
+            `${label}/${path}: Host JSX must not bypass the parser with an element factory: ${factory}`,
+          );
+        }
+        const member = factoryMember(ts, node.expression);
+        if (member === "focus" || member === "scrollIntoView" || member === "insertAdjacentHTML") {
+          errors.push(`${label}/${path}: DOM presentation interaction belongs in UI: ${member}`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return [...new Set(errors)];
+}
+
 export function collectUiTree(root) {
   const dir = fileURLToPath(root);
   if (lstatSync(dir).isSymbolicLink()) {
-    throw new Error(`UI source root is a symlink: ${dir}`);
+    throw new Error(`Source root is a symlink: ${dir}`);
   }
   const files = [];
   const symlinks = [];
@@ -329,6 +680,15 @@ function existsIn(files) {
   return (path) => paths.has(path);
 }
 
+function hostTreeErrors(label, tree, root) {
+  return [
+    ...tree.symlinks
+      .filter(isHostPath)
+      .map((path) => `Cross host symlink is not allowed: ${label}/${path}`),
+    ...checkHostBoundaries(label, textSources(root, hostSourceFiles(tree.files))),
+  ];
+}
+
 const entryScript = 'src="/src/main.tsx"';
 
 function normalizeEntry(html, prototype) {
@@ -345,17 +705,30 @@ function normalizeEntry(html, prototype) {
     .replace('src="./src/main.tsx"', entryScript);
 }
 
+function checkEntryStyleOwnership(html) {
+  const classes = [...html.matchAll(/\bclass\s*=\s*(["'])(.*?)\1/gs)]
+    .map((match) => match[2]);
+  return classes.length === 2 &&
+    classes.includes("__DOCUMENT_ROOT_CLASS__") &&
+    classes.includes("__DOCUMENT_BODY_CLASS__") &&
+    !/(?:<style\b|\sstyle\s*=)/i.test(html);
+}
+
 function main() {
   const receipts = JSON.parse(
     readFileSync(new URL("./ui-parity-prototype-leads.json", import.meta.url), "utf8"),
   );
   let prototypeTree;
   let applicationTree;
+  let prototypeSourceTree;
+  let applicationSourceTree;
   try {
     prototypeTree = collectUiTree(prototypeUi);
     applicationTree = collectUiTree(applicationUi);
+    prototypeSourceTree = collectUiTree(prototypeSrc);
+    applicationSourceTree = collectUiTree(applicationSrc);
   } catch (error) {
-    console.error(`Cannot read UI source tree: ${error.message}`);
+    console.error(`Cannot read source tree: ${error.message}`);
     process.exitCode = 1;
     return;
   }
@@ -380,6 +753,8 @@ function main() {
     ...checkUiBoundaries(applicationLabel, textSources(applicationUi, applicationTree.files), {
       exists: existsIn(applicationTree.files),
     }),
+    ...hostTreeErrors(prototypeHostLabel, prototypeSourceTree, prototypeSrc),
+    ...hostTreeErrors(applicationHostLabel, applicationSourceTree, applicationSrc),
   ];
   // The entry documents are host integration, not portable UI modules: compare
   // them only after the two expected prototype/application entry differences.
@@ -393,6 +768,9 @@ function main() {
   );
   if (prototypeEntry !== applicationEntry) {
     errors.push("Different application entry presentation: index.html");
+  }
+  if (![prototypeEntry, applicationEntry].every(checkEntryStyleOwnership)) {
+    errors.push("Entry HTML must use portable document presentation placeholders");
   }
   for (const error of errors) console.error(error);
   for (const lead of result.pending) console.log(`Prototype awaiting port: ${lead}`);
