@@ -476,28 +476,30 @@ export function useSetupScreenDemoProvider({
 				onRemoveSources: (sourceCleanupEnabled) =>
 					update({ sourceCleanupEnabled }),
 			},
-			providers: {
-				locale,
-				mode: musicBrainzMode,
-				baseURL: musicBrainzURL,
-				verification:
-					providerVerified || genreCatalogReady
-						? "verified"
-						: musicBrainzChanged
-							? "changed"
-							: "untested",
-				disabled: platformMismatch,
-				lrclib: { enabled: lrclibDraft, onChange: setLrclibDraft },
-				onModeChange: (mode) => {
-					setMusicBrainzChanged(true);
-					update({ musicBrainzMode: mode, musicBrainzVerified: false });
+			metadata: {
+				providers: {
+					locale,
+					mode: musicBrainzMode,
+					baseURL: musicBrainzURL,
+					verification:
+						providerVerified || genreCatalogReady
+							? "verified"
+							: musicBrainzChanged
+								? "changed"
+								: "untested",
+					disabled: platformMismatch,
+					lrclib: { enabled: lrclibDraft, onChange: setLrclibDraft },
+					onModeChange: (mode) => {
+						setMusicBrainzChanged(true);
+						update({ musicBrainzMode: mode, musicBrainzVerified: false });
+					},
+					onBaseURLChange: (musicBrainzURL) => {
+						setMusicBrainzChanged(true);
+						update({ musicBrainzURL, musicBrainzVerified: false });
+					},
 				},
-				onBaseURLChange: (musicBrainzURL) => {
-					setMusicBrainzChanged(true);
-					update({ musicBrainzURL, musicBrainzVerified: false });
-				},
+				acoustID: platformMismatch ? undefined : { locale, ...acoustID },
 			},
-			acoustID: platformMismatch ? undefined : { locale, ...acoustID },
 			genres: {
 				locale,
 				state: genreCatalog.state,

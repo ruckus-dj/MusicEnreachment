@@ -1,6 +1,17 @@
-import type { ComponentProps, ReactNode, RefObject } from "react";
+import {
+  type ComponentProps,
+  type ComponentType,
+  createContext,
+  type ReactNode,
+  type RefObject,
+  useContext,
+} from "react";
 import { AppButton } from "../../components/AppButton";
 import { GitHubTokenFormView } from "../tools/GitHubTokenFormView";
+import {
+  OperationProgressView,
+  type OperationProgressViewProps,
+} from "./OperationProgressView";
 import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
 import { SetupFeedbackView } from "./SetupFeedbackView";
 import { SetupGenreCatalogView } from "./SetupGenreCatalogView";
@@ -42,8 +53,10 @@ export type SetupScreenToolsStepView = {
   cards?: ComponentProps<typeof SetupToolCardsView>;
   confirmation?: ComponentProps<typeof SetupToolConfirmationView>;
   completed?: readonly SetupScreenCompletedOperationView[];
-  /** Mounted operation followers; the controller owns their lifecycle. */
-  operations?: ReactNode;
+  operations?: readonly {
+    id: string;
+    source: SetupStepSource<OperationProgressViewProps, { id: string }>;
+  }[];
   error?: {
     text: string;
     errorRef?: RefObject<HTMLParagraphElement | null>;
@@ -57,49 +70,64 @@ export type SetupScreenToolsStepView = {
   };
   loadingOperations?: string;
   requestPending?: string;
-  /** Demo provider form model; mounted controllers may pass `tokenMounted`. */
   token?: ComponentProps<typeof GitHubTokenFormView>;
-  tokenMounted?: ReactNode;
 };
 
 export type SetupScreenMetadataStepView = {
   providers: Omit<ComponentProps<typeof SetupProvidersView>, "acoustID">;
-  /** Demo provider form model; mounted controllers may pass `acoustIDMounted`. */
-  acoustID?: ComponentProps<typeof SetupAcoustIDView>;
-  acoustIDMounted?: ReactNode;
+  acoustID?: SetupStepSource<
+    ComponentProps<typeof SetupAcoustIDView>,
+    SetupAcoustIDProviderProps
+  >;
   error?: {
     text: string;
     errorRef?: RefObject<HTMLParagraphElement | null>;
   };
 };
 
-export type SetupScreenPublicationStepView = {
+export type SetupAcoustIDProviderProps = {
+  hasKey: boolean;
+  onChanged: () => unknown;
+  onBusyChange?: (busy: boolean) => void;
+  disabled?: boolean;
+};
+
+export type SetupScreenPublicationStepView<
+  MetadataP extends object = Record<string, never>,
+> = {
   directory: ComponentProps<typeof SetupDirectoryStepBody>;
   options: ComponentProps<typeof SetupPublicationOptions>;
   genres: ComponentProps<typeof SetupGenreCatalogView>;
-  /** Demo provider form model; mounted controllers may pass `metadata`. */
-  providers?: Omit<ComponentProps<typeof SetupProvidersView>, "acoustID">;
-  acoustID?: ComponentProps<typeof SetupAcoustIDView>;
-  /** Mounted metadata controller; replaces the pure metadata body. */
-  metadata?: ReactNode;
+  metadata?: SetupStepSource<SetupScreenMetadataStepView, MetadataP>;
 };
 
 export type SetupScreenSummaryStepView = ComponentProps<
   typeof SetupSummaryView
 >;
 
-export type SetupScreenViewProps = {
+type SetupStepProvider<Props extends object> = {
+  Component: ComponentType<Props & { children: ReactNode }>;
+  props: Props;
+  /** Remount identity for a fresh read on an existing mount boundary. */
+  key?: string | number;
+};
+
+type SetupStepSource<Model, Props extends object> =
+  | Model
+  | SetupStepProvider<Props>;
+
+export type SetupScreenViewProps<
+  SummaryP extends object = Record<string, never>,
+  ToolsP extends object = Record<string, never>,
+  MetadataP extends object = Record<string, never>,
+> = {
   locale: "en" | "ru";
   wizard: SetupScreenWizardView;
   platform?: SetupPlatformStepProps;
   directories: ComponentProps<typeof SetupDirectoryStepBody>;
-  tools?: SetupScreenToolsStepView;
-  /** Mounted tools controller; replaces the pure tools body. */
-  toolsMounted?: ReactNode;
-  publication: SetupScreenPublicationStepView;
-  summary?: SetupScreenSummaryStepView;
-  /** Mounted summary controller; replaces the pure summary body. */
-  summaryMounted?: ReactNode;
+  tools?: SetupStepSource<SetupScreenToolsStepView, ToolsP>;
+  publication: SetupScreenPublicationStepView<MetadataP>;
+  summary?: SetupStepSource<SetupScreenSummaryStepView, SummaryP>;
   summaryRecheck?: {
     label: string;
     disabled?: boolean;
@@ -108,7 +136,7 @@ export type SetupScreenViewProps = {
 };
 
 /** Pure tools step content shared by the demo provider and the app controller. */
-export function SetupToolsStepBody({
+function SetupToolsStepBody({
   description,
   refresh,
   cards,
@@ -120,7 +148,6 @@ export function SetupToolsStepBody({
   loadingOperations,
   requestPending,
   token,
-  tokenMounted,
 }: SetupScreenToolsStepView) {
   return (
     <div>
@@ -141,7 +168,9 @@ export function SetupToolsStepBody({
           {item.text}
         </p>
       ))}
-      {operations}
+      {operations?.map(({ id, source }) => (
+        <SetupOperationOutlet key={id} source={source} />
+      ))}
       {error && (
         <SetupFeedbackView error={error.text} errorRef={error.errorRef} />
       )}
@@ -161,16 +190,15 @@ export function SetupToolsStepBody({
       )}
       <SetupFeedbackView pending={loadingOperations ?? null} />
       <SetupFeedbackView pending={requestPending ?? null} />
-      {tokenMounted ?? (token ? <GitHubTokenFormView {...token} /> : null)}
+      {token && <GitHubTokenFormView {...token} />}
     </div>
   );
 }
 
 /** Pure provider forms shared by the demo provider and the app controller. */
-export function SetupMetadataStepBody({
+function SetupMetadataStepBody({
   providers,
   acoustID,
-  acoustIDMounted,
   error,
 }: SetupScreenMetadataStepView) {
   return (
@@ -178,8 +206,7 @@ export function SetupMetadataStepBody({
       <SetupProvidersView
         {...providers}
         acoustID={
-          acoustIDMounted ??
-          (acoustID ? <SetupAcoustIDView {...acoustID} /> : undefined)
+          acoustID ? <SetupAcoustIDOutlet source={acoustID} /> : undefined
         }
       />
       {error && (
@@ -192,35 +219,95 @@ export function SetupMetadataStepBody({
 }
 
 /** Pure publication step content shared by both trees. */
-export function SetupPublicationStepBody({
+export function SetupPublicationStepBody<
+  MetadataP extends object = Record<string, never>,
+>({
   directory,
   options,
   genres,
-  providers,
-  acoustID,
   metadata,
-}: SetupScreenPublicationStepView) {
+}: SetupScreenPublicationStepView<MetadataP>) {
   return (
     <div className="grid gap-3">
       <SetupDirectoryStepBody {...directory} />
       <SetupPublicationOptions {...options} />
-      {metadata ??
-        (providers && (
-          <SetupMetadataStepBody providers={providers} acoustID={acoustID} />
-        ))}
+      {metadata && <SetupMetadataOutlet source={metadata} />}
       <SetupGenreCatalogView {...genres} />
     </div>
   );
 }
 
-/** Pure summary content shared by the demo provider and the app controller. */
-export function SetupSummaryStepBody({
-  locale,
-  status,
-  values,
-}: SetupScreenSummaryStepView) {
-  return <SetupSummaryView locale={locale} status={status} values={values} />;
+function isStepProvider<Model extends object, Props extends object>(
+  source: SetupStepSource<Model, Props>,
+): source is SetupStepProvider<Props> {
+  return "Component" in source;
 }
+
+function createStepOutlet<Model extends object>(
+  name: string,
+  View: ComponentType<Model>,
+) {
+  const ModelContext = createContext<Model | null>(null);
+
+  function DataBinder({
+    model,
+    children,
+  }: {
+    model: Model;
+    children: ReactNode;
+  }) {
+    return (
+      <ModelContext.Provider value={model}>{children}</ModelContext.Provider>
+    );
+  }
+
+  function BoundView() {
+    const model = useContext(ModelContext);
+    if (!model) throw new Error(`missing ${name} view model`);
+    return <View {...model} />;
+  }
+
+  function Outlet<Props extends object>({
+    source,
+  }: {
+    source: SetupStepSource<Model, Props>;
+  }) {
+    if (isStepProvider(source)) {
+      const { Component, props, key } = source;
+      return (
+        <Component key={key} {...props}>
+          <BoundView />
+        </Component>
+      );
+    }
+    return (
+      <DataBinder model={source}>
+        <BoundView />
+      </DataBinder>
+    );
+  }
+
+  return { DataBinder, Outlet };
+}
+
+const { DataBinder: SetupToolsDataBinder, Outlet: SetupToolsOutlet } =
+  createStepOutlet("setup tools", SetupToolsStepBody);
+const { DataBinder: SetupSummaryDataBinder, Outlet: SetupSummaryOutlet } =
+  createStepOutlet("setup summary", SetupSummaryView);
+const { DataBinder: SetupMetadataDataBinder, Outlet: SetupMetadataOutlet } =
+  createStepOutlet("setup metadata", SetupMetadataStepBody);
+const { DataBinder: SetupAcoustIDDataBinder, Outlet: SetupAcoustIDOutlet } =
+  createStepOutlet("setup AcoustID", SetupAcoustIDView);
+const { DataBinder: SetupOperationDataBinder, Outlet: SetupOperationOutlet } =
+  createStepOutlet("setup operation", OperationProgressView);
+
+export {
+  SetupAcoustIDDataBinder,
+  SetupMetadataDataBinder,
+  SetupOperationDataBinder,
+  SetupSummaryDataBinder,
+  SetupToolsDataBinder,
+};
 
 /**
  * Pure Setup screen composition. Step selection, validation, drafts, tool
@@ -228,18 +315,20 @@ export function SetupSummaryStepBody({
  * controllers; this view renders the supplied models and mounted controllers
  * in the established order.
  */
-export function SetupScreenView({
+export function SetupScreenView<
+  SummaryP extends object = Record<string, never>,
+  ToolsP extends object = Record<string, never>,
+  MetadataP extends object = Record<string, never>,
+>({
   locale,
   wizard,
   platform,
   directories,
   tools,
-  toolsMounted,
   publication,
   summary,
-  summaryMounted,
   summaryRecheck,
-}: SetupScreenViewProps) {
+}: SetupScreenViewProps<SummaryP, ToolsP, MetadataP>) {
   return (
     <SetupWizard
       locale={locale}
@@ -259,13 +348,11 @@ export function SetupScreenView({
           <SetupDirectoryStepBody {...directories} />
         </>
       )}
-      {wizard.step === 1 &&
-        (toolsMounted ?? (tools ? <SetupToolsStepBody {...tools} /> : null))}
+      {wizard.step === 1 && tools && <SetupToolsOutlet source={tools} />}
       {wizard.step === 2 && <SetupPublicationStepBody {...publication} />}
       {wizard.step === 3 && (
         <div>
-          {summaryMounted ??
-            (summary ? <SetupSummaryStepBody {...summary} /> : null)}
+          {summary && <SetupSummaryOutlet source={summary} />}
           {summaryRecheck && (
             <AppButton
               isDisabled={summaryRecheck.disabled}

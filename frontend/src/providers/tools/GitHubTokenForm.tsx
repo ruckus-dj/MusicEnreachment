@@ -3,6 +3,7 @@ import { deleteGithubToken, setGithubToken } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
 import {
   GitHubTokenFormView,
+  type GitHubTokenFormViewProps,
   redactionMarker,
   type TokenError,
 } from "../../ui/features/tools/GitHubTokenFormView";
@@ -44,13 +45,20 @@ function thrownFailure(
     : fallback;
 }
 
-export function GitHubTokenForm({
-  hasToken,
-  onChanged,
-}: {
+type GitHubTokenFormInputs = {
   hasToken: boolean;
   onChanged?: () => void | Promise<void>;
-}) {
+};
+
+export function GitHubTokenForm(props: GitHubTokenFormInputs) {
+  const model = useGitHubTokenFormModel(props);
+  return <GitHubTokenFormView {...model} />;
+}
+
+export function useGitHubTokenFormModel({
+  hasToken,
+  onChanged,
+}: GitHubTokenFormInputs): GitHubTokenFormViewProps {
   const { locale } = useI18n();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -116,21 +124,19 @@ export function GitHubTokenForm({
     }
   }
 
-  return (
-    <GitHubTokenFormView
-      locale={locale}
-      hasToken={hasToken}
-      draft={draft}
-      busy={busy}
-      saved={saved}
-      error={error}
-      onDraftChange={(next) => {
-        setDraft(next);
-        setError(null);
-        setSaved(false);
-      }}
-      onSave={save}
-      onRemove={remove}
-    />
-  );
+  return {
+    locale,
+    hasToken,
+    draft,
+    busy,
+    saved,
+    error,
+    onDraftChange: (next) => {
+      setDraft(next);
+      setError(null);
+      setSaved(false);
+    },
+    onSave: save,
+    onRemove: remove,
+  };
 }

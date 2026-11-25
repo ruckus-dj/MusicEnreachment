@@ -29,7 +29,8 @@ export function DesignShell({
 }) {
 	const { locale } = useI18n();
 	const path = useHashLocation().slice(1).split("?", 1)[0];
-	const route = path.split("/", 1)[0] || "library";
+	const route = path.split("/", 1)[0];
+	const home = !path || path === "/";
 	const section =
 		path === "/operations" || path === "/settings"
 			? path.slice(1)
@@ -45,12 +46,13 @@ export function DesignShell({
 			locale={locale}
 			themeStore={themePreferenceStore}
 			state={
-				route === "setup"
+				path === "/setup"
 					? { kind: "startup" }
 					: {
 							kind: "product",
-							brandHref: "#review",
+							brandHref: "#/",
 							activeSection: sectionForRoute(section),
+							fallbackSection: home ? "home" : "library",
 							sectionLinks: {
 								review: "#review",
 								library: "#library",
@@ -61,7 +63,7 @@ export function DesignShell({
 							},
 							incomingCount,
 							footer: { kind: "prototype" },
-							setupHref: "#setup",
+							setupHref: "#/setup",
 						}
 			}
 		>

@@ -21,9 +21,9 @@ import {
   setupMessages,
 } from "../../ui/features/setup/setupMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
-import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
-import { SetupSummary } from "./SetupSummary";
-import { SetupTools } from "./SetupTools";
+import { type SetupMetadataAction, SetupMetadataBinder } from "./SetupMetadata";
+import { SetupSummaryBinder } from "./SetupSummary";
+import { SetupToolsBinder } from "./SetupTools";
 import { useSetupGenreCatalogProvider } from "./useSetupGenreCatalogProvider";
 
 const stepKey = "melotrove.setup.step";
@@ -309,15 +309,16 @@ export function SetupManager({
         browse: browseServerDirectory,
         disabled: pending,
       }}
-      toolsMounted={
-        <SetupTools
-          onBlockedChange={updateToolsBlocked}
-          hasGitHubToken={state.settings.has_github_token}
-          onGitHubTokenChanged={async () => {
+      tools={{
+        Component: SetupToolsBinder,
+        props: {
+          onBlockedChange: updateToolsBlocked,
+          hasGitHubToken: state.settings.has_github_token,
+          onGitHubTokenChanged: async () => {
             await refresh();
-          }}
-        />
-      }
+          },
+        },
+      }}
       publication={{
         directory: {
           kind: "output",
@@ -340,16 +341,17 @@ export function SetupManager({
           onFormat: setFormat,
           onRemoveSources: setRemoveSources,
         },
-        metadata: (
-          <SetupMetadata
-            state={state}
-            refresh={refresh}
-            disabled={pending}
-            onBusyChange={setMetadataBusy}
-            onConfigurationDirtyChange={setProviderDirty}
-            actionRef={metadataAction}
-          />
-        ),
+        metadata: {
+          Component: SetupMetadataBinder,
+          props: {
+            state,
+            refresh,
+            disabled: pending,
+            onBusyChange: setMetadataBusy,
+            onConfigurationDirtyChange: setProviderDirty,
+            actionRef: metadataAction,
+          },
+        },
         genres: {
           locale,
           state: catalogViewState,
@@ -362,7 +364,11 @@ export function SetupManager({
           onLoad: genreCatalog.load,
         },
       }}
-      summaryMounted={<SetupSummary key={summaryRefreshToken} state={state} />}
+      summary={{
+        Component: SetupSummaryBinder,
+        props: { state },
+        key: summaryRefreshToken,
+      }}
       summaryRecheck={{
         label: messages.updateCheck,
         disabled: pending,

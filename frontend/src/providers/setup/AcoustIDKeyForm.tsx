@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   deleteAcoustidApplicationKey,
   setAcoustidApplicationKey,
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
-import { SetupAcoustIDView } from "../../ui/features/setup/SetupProvidersView";
+import type { SetupAcoustIDViewProps } from "../../ui/features/setup/SetupProvidersView";
+import {
+  SetupAcoustIDDataBinder,
+  type SetupAcoustIDProviderProps,
+} from "../../ui/features/setup/SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -12,19 +16,22 @@ import {
   setupHttpError,
 } from "../../ui/features/setup/setupMessages";
 
-type Props = {
-  hasKey: boolean;
-  onChanged: () => unknown;
-  onBusyChange?: (busy: boolean) => void;
-  disabled?: boolean;
-};
+export function SetupAcoustIDBinder({
+  children,
+  ...props
+}: SetupAcoustIDProviderProps & { children: ReactNode }) {
+  const model = useSetupAcoustIDModel(props);
+  return (
+    <SetupAcoustIDDataBinder model={model}>{children}</SetupAcoustIDDataBinder>
+  );
+}
 
-export function AcoustIDKeyForm({
+function useSetupAcoustIDModel({
   hasKey,
   onChanged,
   onBusyChange,
   disabled,
-}: Props) {
+}: SetupAcoustIDProviderProps): SetupAcoustIDViewProps {
   const { locale } = useI18n();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,22 +61,20 @@ export function AcoustIDKeyForm({
     }
   }
 
-  return (
-    <SetupAcoustIDView
-      locale={locale}
-      draft={draft}
-      hasKey={hasKey}
-      busy={busy}
-      disabled={disabled}
-      error={error ? setupFeedbackText(error, locale) : undefined}
-      notice={notice}
-      onDraftChange={setDraft}
-      onSave={() => {
-        void mutate("save");
-      }}
-      onDelete={() => {
-        void mutate("delete");
-      }}
-    />
-  );
+  return {
+    locale,
+    draft,
+    hasKey,
+    busy,
+    disabled,
+    error: error ? setupFeedbackText(error, locale) : undefined,
+    notice,
+    onDraftChange: setDraft,
+    onSave: () => {
+      void mutate("save");
+    },
+    onDelete: () => {
+      void mutate("delete");
+    },
+  };
 }

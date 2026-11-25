@@ -118,6 +118,41 @@ export type ShellStartupState =
     }
   | { kind: "add-source"; sourcesHref: string };
 
+export type ShellHomeSourceRead =
+  | { kind: "loading" }
+  | { kind: "error"; message?: string; retry: () => void }
+  | { kind: "ready"; count: number };
+
+/** Both hosts use the same landing decision after reading their sources. */
+export function ShellHomeView({
+  locale,
+  sources,
+  sourcesHref,
+  onOpenIncoming,
+}: {
+  locale: Locale;
+  sources: ShellHomeSourceRead;
+  sourcesHref: string;
+  onOpenIncoming: () => void;
+}) {
+  const hasSources = sources.kind === "ready" && sources.count > 0;
+  useEffect(() => {
+    if (hasSources) onOpenIncoming();
+  }, [hasSources, onOpenIncoming]);
+
+  let state: ShellStartupState;
+  if (sources.kind === "loading") state = { kind: "loading-sources" };
+  else if (sources.kind === "error") {
+    state = {
+      kind: "sources-error",
+      message: sources.message,
+      retry: sources.retry,
+    };
+  } else if (hasSources) state = { kind: "opening-incoming" };
+  else state = { kind: "add-source", sourcesHref };
+  return <ShellStartupView locale={locale} state={state} />;
+}
+
 export function ShellStartupView({
   locale,
   state,

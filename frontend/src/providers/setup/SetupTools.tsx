@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { apiResponseError } from "../../api/client/errors";
 import { listInstallations, listOperations } from "../../api/generated/client";
 import type {
@@ -8,7 +14,7 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { SetupToolsStepBody } from "../../ui/features/setup/SetupScreenView";
+import { SetupToolsDataBinder } from "../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../ui/features/setup/SetupToolCardsView";
 import {
   type SetupFeedback,
@@ -27,14 +33,17 @@ import {
   operationStateLabel,
   operationTargetLabel,
 } from "../operations/operationPresentation";
-import { GitHubTokenForm } from "../tools/GitHubTokenForm";
+import { useGitHubTokenFormModel } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
   type ManagedToolKind,
   preflightManagedToolInstall,
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
-import { OperationProgress } from "./OperationProgress";
+import {
+  SetupOperationProgressBinder,
+  SetupOperationsContext,
+} from "./OperationProgress";
 
 type Kind = ManagedToolKind;
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
@@ -50,17 +59,23 @@ function toolExecutables(kind: Kind): string[] {
   return kind === "ffmpeg" ? ["ffmpeg", "ffprobe"] : ["fpcalc"];
 }
 
-export function SetupTools({
+export function SetupToolsBinder({
   onBlockedChange,
   hasGitHubToken = false,
   onGitHubTokenChanged,
+  children,
 }: {
   onBlockedChange?: (blocked: boolean) => void;
   hasGitHubToken?: boolean;
   onGitHubTokenChanged?: () => void | Promise<void>;
+  children: ReactNode;
 }) {
   const { locale } = useI18n();
   const messages = setupMessages[locale];
+  const token = useGitHubTokenFormModel({
+    hasToken: hasGitHubToken,
+    onChanged: onGitHubTokenChanged,
+  });
   const [ids, setIds] = useState(savedIds);
   const initialIds = useRef(ids);
   const finishedIds = useRef(new Set<string>());
@@ -275,79 +290,74 @@ export function SetupTools({
       ? setupFeedbackText(setupMessage("multipleReadyTools"), locale)
       : undefined;
   return (
-    <SetupToolsStepBody
-      refresh={
-        legacyConflict
-          ? undefined
-          : {
-              label: messages.toolCatalogRefresh,
-              disabled: pending,
-              onPress: load,
-            }
-      }
-      cards={legacyConflict ? undefined : { locale, tools: cards }}
-      confirmation={
-        !legacyConflict && preflight?.plan.conflicts?.length
-          ? {
-              title: messages.confirmOverwrite,
-              packageName: messages[preflight.kind],
-              release: preflight.release,
-              executables: toolExecutables(preflight.kind),
-              conflicts: preflight.plan.conflicts,
-              confirmLabel: messages.confirmOverwriteButton,
-              cancelLabel: messages.cancel,
-              busy: pending,
-              busyLabel: messages.startingToolDownload,
-              error: confirmError
-                ? setupFeedbackText(confirmError, locale)
-                : undefined,
-              onConfirm: () => {
-                void confirm();
+    <SetupOperationsContext.Provider
+      value={{ snapshots, onSuccess: loadInstallations, onFinished: forget }}
+    >
+      <SetupToolsDataBinder
+        model={{
+          refresh: legacyConflict
+            ? undefined
+            : {
+                label: messages.toolCatalogRefresh,
+                disabled: pending,
+                onPress: load,
               },
-              onCancel: () => {
-                setPreflight(undefined);
-                setConfirmError(null);
-                installTriggerFocus.restore();
-              },
-            }
-          : undefined
-      }
-      completed={completed.map((item) => {
-        const stage = operationStageLabel(item.stage, locale);
-        return {
-          key: item.id,
-          text: `${operationKindLabel(item.kind, locale)} — ${operationTargetLabel(item, locale)}: ${operationStateLabel(item.state, locale)}.${stage ? ` ${stage}.` : ""} ${operationProgressLabel(item, locale)}.`,
-        };
-      })}
-      operations={ids.map((id) => (
-        <OperationProgress
-          key={id}
-          id={id}
-          initial={snapshots[id]}
-          onSuccess={loadInstallations}
-          onFinished={forget}
-        />
-      ))}
-      error={errorText ? { text: errorText, errorRef: alert } : undefined}
-      operationError={
-        operationsError
-          ? {
-              text: setupFeedbackText(operationsError, locale),
-              errorRef: operationsAlert,
-              retryLabel: messages.retryOperations,
-              discovering,
-              onRetry: discover,
-            }
-          : undefined
-      }
-      loadingOperations={discovering ? messages.loadingOperations : undefined}
-      requestPending={pending ? messages.requestInProgress : undefined}
-      tokenMounted={
-        <GitHubTokenForm
-          hasToken={hasGitHubToken}
-          onChanged={onGitHubTokenChanged}
-        />
-      }
-    />
+          cards: legacyConflict ? undefined : { locale, tools: cards },
+          confirmation:
+            !legacyConflict && preflight?.plan.conflicts?.length
+              ? {
+                  title: messages.confirmOverwrite,
+                  packageName: messages[preflight.kind],
+                  release: preflight.release,
+                  executables: toolExecutables(preflight.kind),
+                  conflicts: preflight.plan.conflicts,
+                  confirmLabel: messages.confirmOverwriteButton,
+                  cancelLabel: messages.cancel,
+                  busy: pending,
+                  busyLabel: messages.startingToolDownload,
+                  error: confirmError
+                    ? setupFeedbackText(confirmError, locale)
+                    : undefined,
+                  onConfirm: () => {
+                    void confirm();
+                  },
+                  onCancel: () => {
+                    setPreflight(undefined);
+                    setConfirmError(null);
+                    installTriggerFocus.restore();
+                  },
+                }
+              : undefined,
+          completed: completed.map((item) => {
+            const stage = operationStageLabel(item.stage, locale);
+            return {
+              key: item.id,
+              text: `${operationKindLabel(item.kind, locale)} — ${operationTargetLabel(item, locale)}: ${operationStateLabel(item.state, locale)}.${stage ? ` ${stage}.` : ""} ${operationProgressLabel(item, locale)}.`,
+            };
+          }),
+          operations: ids.map((id) => ({
+            id,
+            source: { Component: SetupOperationProgressBinder, props: { id } },
+          })),
+          error: errorText ? { text: errorText, errorRef: alert } : undefined,
+          operationError: operationsError
+            ? {
+                text: setupFeedbackText(operationsError, locale),
+                errorRef: operationsAlert,
+                retryLabel: messages.retryOperations,
+                discovering,
+                onRetry: discover,
+              }
+            : undefined,
+          loadingOperations: discovering
+            ? messages.loadingOperations
+            : undefined,
+          requestPending: pending ? messages.requestInProgress : undefined,
+          token,
+        }}
+      >
+        {children}
+      </SetupToolsDataBinder>
+    </SetupOperationsContext.Provider>
   );
 }

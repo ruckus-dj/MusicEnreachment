@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { listInstallations } from "../../api/generated/client";
 import type {
   InstallationResponse,
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { SetupSummaryStepBody } from "../../ui/features/setup/SetupScreenView";
+import {
+  type SetupScreenSummaryStepView,
+  SetupSummaryDataBinder,
+} from "../../ui/features/setup/SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -49,7 +52,22 @@ function toolStatus(
   return `${messages.ready}${version}`;
 }
 
-export function SetupSummary({ state }: { state: SetupStateBody }) {
+export function SetupSummaryBinder({
+  state,
+  children,
+}: {
+  state: SetupStateBody;
+  children: ReactNode;
+}) {
+  const model = useSetupSummaryModel(state);
+  return (
+    <SetupSummaryDataBinder model={model}>{children}</SetupSummaryDataBinder>
+  );
+}
+
+function useSetupSummaryModel(
+  state: SetupStateBody,
+): SetupScreenSummaryStepView {
   const { locale } = useI18n();
   const messages = setupMessages[locale];
   const [installations, setInstallations] = useState<InstallationResponse[]>(
@@ -86,51 +104,48 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
 
   const ffmpeg = installations.find((item) => item.id === ffmpegID);
   const fpcalc = installations.find((item) => item.id === fpcalcID);
-  return (
-    <SetupSummaryStepBody
-      locale={locale}
-      status={{
-        healthy: state.configuration_health.healthy,
-        problems: state.configuration_health.problems ?? [],
-      }}
-      values={{
-        publication: {
-          directory: state.settings.output_directory || messages.notSpecified,
-          format: knownFormat(state.settings.publication_format),
-          explanation: formatExplanation(
-            state.settings.publication_format,
-            messages,
-          ),
-          removeSources: state.settings.publication_remove_sources,
-        },
-        tools: {
-          ffmpeg: toolStatus(ffmpegID, installations, loading, messages),
-          fpcalc: toolStatus(fpcalcID, installations, loading, messages),
-          notice: inventoryError
-            ? `${messages.toolsInventoryUnavailable}${setupFeedbackText(inventoryError, locale)}`
-            : undefined,
-        },
-        metadata: {
-          musicbrainz: state.settings.musicbrainz_verified_at
-            ? `${messages.connectionChecked}${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : messages.publicService}`
-            : messages.connectionNotChecked,
-          lrclibEnabled: state.settings.lrclib_enabled,
-          hasAcoustIdKey: state.settings.has_acoustid_application_key,
-          genres: state.genre_catalog.ready
-            ? messages.genreCatalogLoaded
-            : messages.genreCatalogMissing,
-        },
-        technical: {
-          platform: `${state.platform.goos}/${state.platform.goarch}`,
-          toolsDirectory:
-            state.settings.tools_directory || messages.notSpecified,
-          musicbrainzCheckedAt:
-            state.settings.musicbrainz_verified_at || messages.noData,
-          ffmpegCheckedAt: ffmpeg?.verified_at || messages.noData,
-          fpcalcCheckedAt: fpcalc?.verified_at || messages.noData,
-        },
-        showNextStep: true,
-      }}
-    />
-  );
+  return {
+    locale,
+    status: {
+      healthy: state.configuration_health.healthy,
+      problems: state.configuration_health.problems ?? [],
+    },
+    values: {
+      publication: {
+        directory: state.settings.output_directory || messages.notSpecified,
+        format: knownFormat(state.settings.publication_format),
+        explanation: formatExplanation(
+          state.settings.publication_format,
+          messages,
+        ),
+        removeSources: state.settings.publication_remove_sources,
+      },
+      tools: {
+        ffmpeg: toolStatus(ffmpegID, installations, loading, messages),
+        fpcalc: toolStatus(fpcalcID, installations, loading, messages),
+        notice: inventoryError
+          ? `${messages.toolsInventoryUnavailable}${setupFeedbackText(inventoryError, locale)}`
+          : undefined,
+      },
+      metadata: {
+        musicbrainz: state.settings.musicbrainz_verified_at
+          ? `${messages.connectionChecked}${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : messages.publicService}`
+          : messages.connectionNotChecked,
+        lrclibEnabled: state.settings.lrclib_enabled,
+        hasAcoustIdKey: state.settings.has_acoustid_application_key,
+        genres: state.genre_catalog.ready
+          ? messages.genreCatalogLoaded
+          : messages.genreCatalogMissing,
+      },
+      technical: {
+        platform: `${state.platform.goos}/${state.platform.goarch}`,
+        toolsDirectory: state.settings.tools_directory || messages.notSpecified,
+        musicbrainzCheckedAt:
+          state.settings.musicbrainz_verified_at || messages.noData,
+        ffmpegCheckedAt: ffmpeg?.verified_at || messages.noData,
+        fpcalcCheckedAt: fpcalc?.verified_at || messages.noData,
+      },
+      showNextStep: true,
+    },
+  };
 }

@@ -19,6 +19,7 @@ import {
 	ScreenFeedbackView,
 	ScreenStatus,
 } from "../ui/shell/ScreenFeedbackView";
+import { ShellHomeView } from "../ui/shell/ShellStartupView";
 import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
 import {
 	browseDemoDirectory,
@@ -145,6 +146,10 @@ const subscribeRoute = (listener: () => void) => {
 		window.removeEventListener("popstate", notifyForCurrentHash);
 	};
 };
+
+function openIncomingFromHome() {
+	window.location.hash = "review";
+}
 
 const routeId = (value: string) => {
 	try {
@@ -716,6 +721,15 @@ export function CatalogDemo({
 			onClose={() => setSelectionPreview(null)}
 		/>
 	);
+	if (!routeName || routeName === "/")
+		return (
+			<ShellHomeView
+				locale={locale}
+				sources={{ kind: "ready", count: sourceRoots.length }}
+				sourcesHref="#sources"
+				onOpenIncoming={openIncomingFromHome}
+			/>
+		);
 	if (preview || route === "publication-preview")
 		return (
 			<>
@@ -1158,7 +1172,7 @@ export function CatalogDemo({
 				/>
 			</>
 		);
-	if (route === "setup")
+	if (routeName === "/setup")
 		return (
 			<>
 				<SetupScreen

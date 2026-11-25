@@ -33,6 +33,8 @@ import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
 import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
 import {
   ApplicationFrame,
+  type ShellHomeSourceRead,
+  ShellHomeView,
   ShellStartupView,
 } from "../../ui/shell/ShellStartupView";
 import type { ShellSectionId } from "../../ui/shell/ShellView";
@@ -289,6 +291,10 @@ function ApplicationProductShell({
   );
 }
 
+function openIncomingFromHome() {
+  window.location.hash = "/incoming-groups";
+}
+
 function RootLanding() {
   const { locale } = useI18n();
   const sourcesQuery = useListSources({
@@ -303,41 +309,25 @@ function RootLanding() {
       : response && response.status !== 200
         ? response.data.detail || null
         : null;
-  const sourceCount = sources?.length ?? 0;
   const currentFetchSettled =
     sourcesQuery.isFetchedAfterMount && !sourcesQuery.isFetching;
-
-  useEffect(() => {
-    if (currentFetchSettled && !sourcesQuery.isError && sourceCount > 0)
-      window.location.hash = "/incoming-groups";
-  }, [currentFetchSettled, sourceCount, sourcesQuery.isError]);
-
-  if (sourcesQuery.isPending || !currentFetchSettled)
-    return (
-      <ShellStartupView locale={locale} state={{ kind: "loading-sources" }} />
-    );
-
-  if (sourcesQuery.isError || sources === null)
-    return (
-      <ShellStartupView
-        locale={locale}
-        state={{
-          kind: "sources-error",
-          message: errorMessage ?? undefined,
-          retry: () => void sourcesQuery.refetch(),
-        }}
-      />
-    );
-
-  if (sources.length > 0)
-    return (
-      <ShellStartupView locale={locale} state={{ kind: "opening-incoming" }} />
-    );
+  const sourceRead: ShellHomeSourceRead =
+    sourcesQuery.isPending || !currentFetchSettled
+      ? { kind: "loading" }
+      : sourcesQuery.isError || sources === null
+        ? {
+            kind: "error",
+            message: errorMessage ?? undefined,
+            retry: () => void sourcesQuery.refetch(),
+          }
+        : { kind: "ready", count: sources.length };
 
   return (
-    <ShellStartupView
+    <ShellHomeView
       locale={locale}
-      state={{ kind: "add-source", sourcesHref: "#/sources" }}
+      sources={sourceRead}
+      sourcesHref="#/sources"
+      onOpenIncoming={openIncomingFromHome}
     />
   );
 }

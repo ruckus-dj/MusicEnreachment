@@ -22,7 +22,7 @@ function shell(incomingCount: number, withSetupLink: boolean) {
 			controls={controls}
 			footerText="Prototype"
 			setupLink={
-				withSetupLink ? { href: "#setup", label: "First run" } : undefined
+				withSetupLink ? { href: "#/setup", label: "First run" } : undefined
 			}
 		>
 			<p>Content</p>
@@ -38,7 +38,7 @@ it("keeps the footer slot and skip focus while the provider count and setup link
 	if (!footerSlot) throw new Error("Missing shell footer slot");
 	expect(
 		within(footerSlot).getByRole("link", { name: "First run" }),
-	).toHaveAttribute("href", "#setup");
+	).toHaveAttribute("href", "#/setup");
 	const navigation = screen.getByRole("navigation", {
 		name: "Main navigation",
 	});

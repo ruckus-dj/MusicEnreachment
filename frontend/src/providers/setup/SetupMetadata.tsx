@@ -1,4 +1,5 @@
 import {
+  type ReactNode,
   type RefObject,
   useEffect,
   useImperativeHandle,
@@ -15,7 +16,10 @@ import type {
   UpdateMusicBrainzBodyMode,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { SetupMetadataStepBody } from "../../ui/features/setup/SetupScreenView";
+import {
+  SetupMetadataDataBinder,
+  type SetupScreenMetadataStepView,
+} from "../../ui/features/setup/SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -24,7 +28,7 @@ import {
   setupMessage,
 } from "../../ui/features/setup/setupMessages";
 import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
-import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
+import { SetupAcoustIDBinder } from "./AcoustIDKeyForm";
 
 export interface SetupMetadataAction {
   continue: () => Promise<boolean>;
@@ -40,14 +44,16 @@ type Props = {
   onConfigurationDirtyChange?: (dirty: boolean) => void;
   actionRef?: RefObject<SetupMetadataAction | null>;
   disabled?: boolean;
+  children: ReactNode;
 };
-export function SetupMetadata({
+export function SetupMetadataBinder({
   state,
   refresh,
   onBusyChange,
   onConfigurationDirtyChange,
   actionRef,
   disabled,
+  children,
 }: Props) {
   const { locale } = useI18n();
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>(
@@ -151,38 +157,39 @@ export function SetupMetadata({
     onBusyChange?.(pending || keyPending);
     return () => onBusyChange?.(false);
   }, [pending, keyPending, onBusyChange]);
+  const model: SetupScreenMetadataStepView = {
+    providers: {
+      locale,
+      mode,
+      baseURL,
+      verification: changed
+        ? "changed"
+        : state.settings.musicbrainz_verified_at
+          ? "verified"
+          : "untested",
+      verifiedAt: state.settings.musicbrainz_verified_at,
+      lrclib: { enabled: lrclib, onChange: setLrclib },
+      disabled: disabled || pending || keyPending,
+      onModeChange: setMode,
+      onBaseURLChange: setBaseURL,
+    },
+    acoustID:
+      state.platform.supported && !state.platform.diagnostic
+        ? {
+            Component: SetupAcoustIDBinder,
+            props: {
+              hasKey: state.settings.has_acoustid_application_key,
+              onChanged: refresh,
+              onBusyChange: setKeyPending,
+              disabled: disabled || pending,
+            },
+          }
+        : undefined,
+    error: error
+      ? { text: setupFeedbackText(error, locale), errorRef: alert }
+      : undefined,
+  };
   return (
-    <SetupMetadataStepBody
-      providers={{
-        locale,
-        mode,
-        baseURL,
-        verification: changed
-          ? "changed"
-          : state.settings.musicbrainz_verified_at
-            ? "verified"
-            : "untested",
-        verifiedAt: state.settings.musicbrainz_verified_at,
-        lrclib: { enabled: lrclib, onChange: setLrclib },
-        disabled: disabled || pending || keyPending,
-        onModeChange: setMode,
-        onBaseURLChange: setBaseURL,
-      }}
-      acoustIDMounted={
-        state.platform.supported && !state.platform.diagnostic ? (
-          <AcoustIDKeyForm
-            hasKey={state.settings.has_acoustid_application_key}
-            onChanged={refresh}
-            onBusyChange={setKeyPending}
-            disabled={disabled || pending}
-          />
-        ) : undefined
-      }
-      error={
-        error
-          ? { text: setupFeedbackText(error, locale), errorRef: alert }
-          : undefined
-      }
-    />
+    <SetupMetadataDataBinder model={model}>{children}</SetupMetadataDataBinder>
   );
 }

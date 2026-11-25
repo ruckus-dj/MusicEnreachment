@@ -1,12 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import {
-  type OperationProgressStatus,
-  OperationProgressView,
+import type {
+  OperationProgressStatus,
+  OperationProgressViewProps,
 } from "../../ui/features/setup/OperationProgressView";
+import { SetupOperationDataBinder } from "../../ui/features/setup/SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -22,7 +31,39 @@ import {
   operationTargetLabel,
 } from "../operations/operationPresentation";
 
-export function OperationProgress({
+type OperationInputs = {
+  snapshots: Readonly<Record<string, OperationResponse>>;
+  onSuccess: () => Promise<void>;
+  onFinished: (id: string, snapshot: OperationResponse) => void;
+};
+
+export const SetupOperationsContext = createContext<OperationInputs | null>(
+  null,
+);
+
+export function SetupOperationProgressBinder({
+  id,
+  children,
+}: {
+  id: string;
+  children: ReactNode;
+}) {
+  const inputs = useContext(SetupOperationsContext);
+  if (!inputs) throw new Error("missing setup operation inputs");
+  const model = useOperationProgressModel({
+    id,
+    initial: inputs.snapshots[id],
+    onSuccess: inputs.onSuccess,
+    onFinished: inputs.onFinished,
+  });
+  return (
+    <SetupOperationDataBinder model={model}>
+      {children}
+    </SetupOperationDataBinder>
+  );
+}
+
+function useOperationProgressModel({
   id,
   initial,
   onSuccess,
@@ -32,7 +73,7 @@ export function OperationProgress({
   initial?: OperationResponse;
   onSuccess: () => Promise<void>;
   onFinished: (id: string, snapshot: OperationResponse) => void;
-}) {
+}): OperationProgressViewProps {
   const { locale } = useI18n();
   const [snapshot, setSnapshot] = useState(initial);
   const [error, setError] = useState<SetupFeedback | null>(null);
@@ -128,50 +169,40 @@ export function OperationProgress({
   const refreshToolInventory = () => {
     if (completed) void refreshInstallations(completed);
   };
-  return (
-    <OperationProgressView
-      locale={locale}
-      status={status}
-      failure={failedError}
-      statusRead={
-        error
-          ? {
-              message: setupFeedbackText(error, locale),
-              alertRef: alert,
-              pending: snapshotPending,
-              onRetry: refreshSnapshot,
-            }
-          : undefined
-      }
-      toolsRefresh={
-        refreshError
-          ? {
-              message: setupFeedbackText(refreshError, locale),
-              alertRef: refreshAlert,
-              pending,
-              onRetry: refreshToolInventory,
-            }
-          : undefined
-      }
-      retryDownload={
-        snapshot?.state === "failed"
-          ? { disabled: pending, onPress: retry }
-          : undefined
-      }
-      retryToolList={
-        completed && refreshError
-          ? { disabled: pending, onPress: refreshToolInventory }
-          : undefined
-      }
-      pending={
-        snapshotPending
-          ? "status"
-          : pending
-            ? snapshot?.state === "succeeded"
-              ? "tools"
-              : "download"
-            : undefined
-      }
-    />
-  );
+  return {
+    locale,
+    status,
+    failure: failedError,
+    statusRead: error
+      ? {
+          message: setupFeedbackText(error, locale),
+          alertRef: alert,
+          pending: snapshotPending,
+          onRetry: refreshSnapshot,
+        }
+      : undefined,
+    toolsRefresh: refreshError
+      ? {
+          message: setupFeedbackText(refreshError, locale),
+          alertRef: refreshAlert,
+          pending,
+          onRetry: refreshToolInventory,
+        }
+      : undefined,
+    retryDownload:
+      snapshot?.state === "failed"
+        ? { disabled: pending, onPress: retry }
+        : undefined,
+    retryToolList:
+      completed && refreshError
+        ? { disabled: pending, onPress: refreshToolInventory }
+        : undefined,
+    pending: snapshotPending
+      ? "status"
+      : pending
+        ? snapshot?.state === "succeeded"
+          ? "tools"
+          : "download"
+        : undefined,
+  };
 }

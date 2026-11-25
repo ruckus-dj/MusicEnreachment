@@ -8,6 +8,7 @@ afterEach(() => {
 });
 
 it("renders one keyboard-operable four-option filter radio group", () => {
+	window.history.replaceState(null, "", "#library");
 	render(<CatalogDemo />);
 	const group = screen.getByRole("radiogroup", { name: "Состояние" });
 	const labels = ["Все", "Не хватает", "В наличии", "Опубликовано"];
@@ -23,6 +24,12 @@ it("renders one keyboard-operable four-option filter radio group", () => {
 	expect(radios[2]).toBeChecked();
 	fireEvent.keyDown(radios[2], { key: "ArrowRight" });
 	expect(radios[3]).toBeChecked();
+});
+
+it("opens Incoming from the root when the fixture has registered sources", () => {
+	window.history.replaceState(null, "", "#/");
+	render(<CatalogDemo />);
+	expect(window.location.hash).toBe("#review");
 });
 
 it("opens the exact release destination from an album row", () => {
