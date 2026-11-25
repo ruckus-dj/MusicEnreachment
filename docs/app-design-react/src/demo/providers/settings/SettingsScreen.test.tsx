@@ -8,7 +8,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n/host";
-import { initialDemoSettings, SettingsScreen } from "./SettingsScreen";
+import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
+import {
+	DemoSettingsBinder,
+	initialDemoSettings,
+	type SettingsScreenProps,
+} from "./SettingsScreen";
 import {
 	readSettingsDraft,
 	resetSettingsDraftMemory,
@@ -23,6 +28,16 @@ beforeEach(() => {
 	window.location.hash = "";
 });
 afterEach(() => vi.restoreAllMocks());
+
+function SettingsScreen(props: SettingsScreenProps) {
+	return (
+		<ApplicationRouteOutlet
+			route="settings"
+			provider={DemoSettingsBinder}
+			providerProps={props}
+		/>
+	);
+}
 
 it("keeps conflict actions scoped to one setting and rechecks replacement", async () => {
 	localStorage.setItem("music-design-v2-language", "en");
@@ -132,6 +147,26 @@ it("keeps conflict actions scoped to one setting and rechecks replacement", asyn
 	);
 });
 
+it("keeps the GitHub token draft across Settings tabs in memory", () => {
+	localStorage.setItem("music-design-v2-language", "en");
+	const onSettings = vi.fn();
+	render(
+		<I18nProvider>
+			<SettingsScreen settings={initialDemoSettings} onSettings={onSettings} />
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("tab", { name: "Tools" }));
+	fireEvent.change(screen.getByLabelText("Personal access token"), {
+		target: { value: "demo draft, not a token" },
+	});
+	fireEvent.click(screen.getByRole("tab", { name: "General" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Tools" }));
+	expect(screen.getByLabelText("Personal access token")).toHaveValue(
+		"demo draft, not a token",
+	);
+	expect(onSettings).not.toHaveBeenCalled();
+});
+
 describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 	it("keeps cleanup off by default and autosaves its changed value across tabs", () => {
 		localStorage.setItem("music-design-v2-language", locale);
@@ -160,7 +195,9 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		fireEvent.click(cleanup);
 		expect(cleanup).toBeChecked();
 		fireEvent.click(screen.getByRole("tab", { name: /folders|папки/i }));
+		expect(window.location.hash).toBe("#/settings?tab=folders");
 		fireEvent.click(screen.getByRole("tab", { name: /general|общие/i }));
+		expect(window.location.hash).toBe("#/settings");
 		expect(
 			within(
 				screen.getByRole("region", {
@@ -230,7 +267,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 
 	it("guards browser hash/back navigation and keeps an invalid draft when leaving", async () => {
 		localStorage.setItem("music-design-v2-language", locale);
-		window.location.hash = "#settings";
+		window.location.hash = "#/settings";
 		const view = render(
 			<I18nProvider>
 				<SettingsScreen settings={initialDemoSettings} onSettings={vi.fn()} />
@@ -243,7 +280,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 		window.history.pushState(null, "", "#library");
 		fireEvent(window, new PopStateEvent("popstate"));
 		await screen.findByRole("dialog");
-		expect(window.location.hash).toBe("#settings");
+		expect(window.location.hash).toBe("#/settings");
 		fireEvent.click(
 			screen.getByRole("button", {
 				name: /leave and keep draft|выйти, сохранив черновик/i,
@@ -458,7 +495,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 
 	it("saves a concurrency edit on leave without overwriting newer provider values", async () => {
 		localStorage.setItem("music-design-v2-language", locale);
-		window.location.hash = "#settings";
+		window.location.hash = "#/settings";
 		const onSettings = vi.fn();
 		const view = render(
 			<I18nProvider>
@@ -525,7 +562,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 
 	it("keeps an invalid draft across route unmount when session storage fails", async () => {
 		localStorage.setItem("music-design-v2-language", locale);
-		window.location.hash = "#settings";
+		window.location.hash = "#/settings";
 		const baseline = {
 			concurrency: "4",
 			matchingPairThreshold: "0.70",
@@ -573,7 +610,7 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			}),
 		);
 		first.unmount();
-		window.history.replaceState(window.history.state, "", "#settings");
+		window.history.replaceState(window.history.state, "", "#/settings");
 		const second = render(
 			<I18nProvider>
 				<SettingsScreen {...props} />

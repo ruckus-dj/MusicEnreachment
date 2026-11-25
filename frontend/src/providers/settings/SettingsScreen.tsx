@@ -46,16 +46,20 @@ import {
   resolveHashNavigation,
   useHashLocation,
 } from "../../app/navigation/hashLocation";
+import {
+  type ApplicationRouteProviderProps,
+  ApplicationSettingsBinder,
+  type ApplicationSettingsModel,
+} from "../../ui/app/ApplicationRouteOutlet";
 import type { SettingsGeneralFailureModel } from "../../ui/features/settings/SettingsGeneralSection";
 import type {
   ManagedPackageCardModel,
   ManagedPackageCatalog,
   ManagedPackageLifeState,
 } from "../../ui/features/settings/SettingsManagedPackageCards";
-import {
-  type SettingsConflictNoticeView,
-  SettingsScreenView,
-  type SettingsScreenViewProps,
+import type {
+  SettingsConflictNoticeView,
+  SettingsScreenViewProps,
 } from "../../ui/features/settings/SettingsScreenView";
 import {
   SettingsMessageError,
@@ -455,7 +459,18 @@ function activeOperation(operation: OperationResponse) {
   );
 }
 
-export function SettingsScreen() {
+export function ProductionSettingsBinder({
+  children,
+}: ApplicationRouteProviderProps) {
+  const model = useSettingsModel();
+  return (
+    <ApplicationSettingsBinder model={model}>
+      {children}
+    </ApplicationSettingsBinder>
+  );
+}
+
+function useSettingsModel(): ApplicationSettingsModel {
   const { locale } = useI18n();
   const hash = useHashLocation();
   const t = (
@@ -3625,7 +3640,7 @@ export function SettingsScreen() {
         : undefined,
     },
   };
-  return <SettingsScreenView {...view} />;
+  return view;
 }
 
 // Follows only tool operations for automatic settings refresh; progress,

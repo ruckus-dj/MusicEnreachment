@@ -57,13 +57,13 @@ import { useToolCatalogDemoProvider } from "./useToolCatalogDemoProvider";
 
 const readSettingsTab = (hash: string): SettingsTabKey => {
 	const [path, query = ""] = hash.replace(/^#/, "").split("?");
-	if (path !== "settings") return "general";
+	if (path !== "/settings") return "general";
 	const tab = new URLSearchParams(query).get("tab");
 	return settingsTabKeys.find((item) => item === tab) ?? "general";
 };
 
 const isSettingsTabDestination = (hash: string) =>
-	hash.replace(/^#/, "").split("?")[0] === "settings";
+	hash.replace(/^#/, "").split("?")[0] === "/settings";
 
 const inactiveDirectoryBrowse: BrowseDirectory = async (path) => ({
 	currentPath: path || "/",
@@ -395,7 +395,7 @@ export function useSettingsScreenDemoProvider({
 	const selectTab = (key: Key) => {
 		const tab = settingsTabKeys.find((item) => item === key) ?? "general";
 		setActiveTab(tab);
-		const nextHash = `#settings?tab=${tab}`;
+		const nextHash = tab === "general" ? "#/settings" : `#/settings?tab=${tab}`;
 		if (window.location.hash !== nextHash) window.location.hash = nextHash;
 	};
 	const [fieldErrors, setFieldErrors] = useState<
@@ -1357,14 +1357,11 @@ export function useSettingsScreenDemoProvider({
 		});
 	}
 
-	const githubToken = useGitHubTokenDemo(
-		{
-			locale,
-			hasGitHubToken: settings.hasGitHubToken ?? false,
-			onGitHubTokenChange: (hasGitHubToken) => update({ hasGitHubToken }),
-		},
-		activeTab === "tools",
-	);
+	const githubToken = useGitHubTokenDemo({
+		locale,
+		hasGitHubToken: settings.hasGitHubToken ?? false,
+		onGitHubTokenChange: (hasGitHubToken) => update({ hasGitHubToken }),
+	});
 	const tabs: SettingsScreenTabsViewProps = {
 		selectedKey: activeTab,
 		onSelectionChange: selectTab,

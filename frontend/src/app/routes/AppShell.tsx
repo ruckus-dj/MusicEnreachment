@@ -26,7 +26,7 @@ import {
 } from "../../providers/library/libraryRoute";
 import { OwnCatalogScreen } from "../../providers/local-catalog/OwnCatalogScreen";
 import { ProductionOperationsBinder } from "../../providers/operations/OperationsScreen";
-import { SettingsScreen } from "../../providers/settings/SettingsScreen";
+import { ProductionSettingsBinder } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
 import { SourcesScreen } from "../../providers/sources/SourcesScreen";
 import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
@@ -183,7 +183,11 @@ export function AppShell() {
         }}
       />
     ) : state && route === "/settings" ? (
-      <SettingsScreen />
+      <ApplicationRouteOutlet
+        route="settings"
+        provider={ProductionSettingsBinder}
+        providerProps={emptyProviderProps}
+      />
     ) : state && route === "/sources" ? (
       <SourcesScreen route={sourcesRoute} />
     ) : state && incomingGroupsRoute ? (

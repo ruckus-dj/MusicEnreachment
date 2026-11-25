@@ -419,7 +419,7 @@ export function SourcesScreen({
 										inline
 										label={m("workDirectory")}
 										path={workDirectory}
-										link={{ href: "#settings", label: m("configure") }}
+										link={{ href: "#/settings", label: m("configure") }}
 									/>
 								) : undefined,
 							availability:
@@ -531,7 +531,7 @@ export function SourcesScreen({
 						<SourceWorkDirectoryView
 							label={m("workDirectory")}
 							path={workDirectory}
-							link={{ href: "#settings", label: m("configureInSettings") }}
+							link={{ href: "#/settings", label: m("configureInSettings") }}
 						/>
 					}
 				/>

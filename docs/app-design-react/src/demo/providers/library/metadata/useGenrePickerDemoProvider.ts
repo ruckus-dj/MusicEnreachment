@@ -211,7 +211,7 @@ export function useGenrePickerDemoProvider({
 			!loaded && loadError ? metadataMessage(locale, "genre.loadError") : "",
 		bundledCatalogReady: loaded,
 		onLoadBundledCatalog: onLoad ? () => void load() : undefined,
-		settingsHref: "#settings",
+		settingsHref: "#/settings",
 		onOpenCatalog: () => undefined,
 		onRetryStatus: () => void load(),
 	};

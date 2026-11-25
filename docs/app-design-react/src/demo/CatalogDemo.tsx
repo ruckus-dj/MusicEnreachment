@@ -114,8 +114,8 @@ import {
 } from "./providers/publication/publicationOutput";
 import { defaultPublicationTemplate } from "./providers/settings/publicationTemplateDemo";
 import {
+	DemoSettingsBinder,
 	initialDemoSettings,
-	SettingsScreen,
 } from "./providers/settings/SettingsScreen";
 import { SetupScreen } from "./providers/setup/SetupScreen";
 import {
@@ -248,7 +248,7 @@ export function CatalogDemo({
 	} = useLibraryRouteState(route);
 	const headingRoute =
 		routeName === "library" ||
-		routeName === "settings" ||
+		routeName === "/settings" ||
 		routeName === "/operations"
 			? routeName
 			: route;
@@ -1116,41 +1116,44 @@ export function CatalogDemo({
 				}
 			/>
 		);
-	if (routeName === "settings")
+	if (routeName === "/settings")
 		return (
 			<>
-				<SettingsScreen
-					settings={settings}
-					sourceRoots={sourceRoots.map((root) => root.path)}
-					browseDirectory={browseDemoDirectory}
-					resolveDirectoryPath={demoDirectoryStart}
-					onSettings={setSettings}
-					workDirectoryBusy={
-						sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange
-					}
-					onOutputReset={() => {
-						setSourceProcessing((previous) =>
-							resetSourceProcessingQueue(previous),
-						);
-						operationsProvider.reset();
-						setPublicationJobs([]);
-						setReleases((previous) =>
-							previous.map((release) => ({
-								...release,
-								tracks: release.tracks.map((track) => ({
-									...track,
-									published: null,
-									metadataBaseline: undefined,
-									metadataBaselineExtras: undefined,
+				<ApplicationRouteOutlet
+					route="settings"
+					provider={DemoSettingsBinder}
+					providerProps={{
+						settings,
+						sourceRoots: sourceRoots.map((root) => root.path),
+						browseDirectory: browseDemoDirectory,
+						resolveDirectoryPath: demoDirectoryStart,
+						onSettings: setSettings,
+						workDirectoryBusy:
+							sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange,
+						onOutputReset: () => {
+							setSourceProcessing((previous) =>
+								resetSourceProcessingQueue(previous),
+							);
+							operationsProvider.reset();
+							setPublicationJobs([]);
+							setReleases((previous) =>
+								previous.map((release) => ({
+									...release,
+									tracks: release.tracks.map((track) => ({
+										...track,
+										published: null,
+										metadataBaseline: undefined,
+										metadataBaselineExtras: undefined,
+									})),
 								})),
-							})),
-						);
-						setDeletions([]);
-						setIncoming((previous) => ({
-							...previous,
-							plan: null,
-							inventoryVersion: previous.inventoryVersion + 1,
-						}));
+							);
+							setDeletions([]);
+							setIncoming((previous) => ({
+								...previous,
+								plan: null,
+								inventoryVersion: previous.inventoryVersion + 1,
+							}));
+						},
 					}}
 				/>
 			</>

@@ -30,6 +30,7 @@ const TEST_LIBRARIES = new Set([
 const CSS_LIBRARIES = new Set(["tailwindcss"]);
 const OUTLET_OWNED_VIEWS = new Set([
   "ui/features/operations/OperationsScreenView",
+  "ui/features/settings/SettingsScreenView",
 ]);
 // Portable UI behavior is only equivalent at equal resolved versions. Keep the
 // explicit shared runtime and build set; this is not a full resolver.

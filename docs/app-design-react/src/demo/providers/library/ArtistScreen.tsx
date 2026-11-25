@@ -348,7 +348,7 @@ export function ArtistScreen({
 					if (onLoadGenres) void onLoadGenres();
 					else setLocalGenresLoaded(true);
 				},
-				settingsHref: "#settings",
+				settingsHref: "#/settings",
 				onOpenCatalog: () => undefined,
 				onRetryStatus: () => undefined,
 			}}

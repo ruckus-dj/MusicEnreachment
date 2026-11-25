@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
-import { SettingsScreen } from "./SettingsScreen";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { ProductionSettingsBinder } from "./SettingsScreen";
 import {
   readSettingsDraft,
   resetSettingsDraftMemory,
@@ -32,6 +33,15 @@ function render(ui: ReactNode) {
       <TestLanguageBridge />
       {ui}
     </I18nProvider>,
+  );
+}
+function renderSettings() {
+  return render(
+    <ApplicationRouteOutlet
+      route="settings"
+      provider={ProductionSettingsBinder}
+      providerProps={{}}
+    />,
   );
 }
 async function selectSettingsTab(name: string) {
@@ -180,7 +190,7 @@ it("checks an inline tools move and confirms only the latest frozen preflight", 
       return json(queuedMove);
     }),
   );
-  render(<SettingsScreen />);
+  renderSettings();
   await selectSettingsTab("Инструменты");
   const destination = screen.getByRole("textbox", {
     name: "Новый каталог инструментов",
@@ -333,7 +343,7 @@ describe("SettingsScreen", () => {
         { ...operation, id: "source", kind: "scan_source", state: "running" },
       ],
     });
-    render(<SettingsScreen />);
+    renderSettings();
     await screen.findByRole("heading", { name: "Состояние конфигурации" });
 
     expect(
@@ -377,7 +387,7 @@ describe("SettingsScreen", () => {
       ),
     );
     const firstRead = nextResponseFor("/api/operations/tool");
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     await firstRead;
     expect(discoveryScopes).toContain("install_and_move");
@@ -397,7 +407,7 @@ describe("SettingsScreen", () => {
   it("retains an unsaved draft across tab and locale switches without rereading settings", async () => {
     const settingsReads = vi.fn(() => json(settings));
     server.use(http.get("/api/settings", settingsReads));
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "8" } });
@@ -435,7 +445,7 @@ describe("SettingsScreen", () => {
       http.put("/api/settings/musicbrainz", settingsWrites),
     );
 
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
 
     const concurrency = await screen.findByLabelText("Одновременные файлы");
@@ -471,7 +481,7 @@ describe("SettingsScreen", () => {
       ),
     );
 
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Папки");
 
     expect(
@@ -507,7 +517,7 @@ describe("SettingsScreen", () => {
       http.put("/api/settings/sha256", saved),
       http.get("/api/settings", reads),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const toggle = await screen.findByLabelText("Вычислять SHA-256");
     const response = nextResponseFor("/api/settings/sha256", "PUT");
@@ -642,7 +652,7 @@ describe("SettingsScreen", () => {
         }),
       ),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "8 invalid" } });
@@ -794,7 +804,7 @@ describe("SettingsScreen", () => {
         }),
       ),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const toggle = await screen.findByLabelText("Вычислять SHA-256");
     fireEvent.click(toggle);
@@ -834,7 +844,7 @@ describe("SettingsScreen", () => {
         }),
       ),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
@@ -896,7 +906,7 @@ describe("SettingsScreen", () => {
         }),
       ),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     const formatButton = screen.getByRole("button", {
@@ -953,7 +963,7 @@ describe("SettingsScreen", () => {
         });
       }),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
@@ -1012,7 +1022,7 @@ describe("SettingsScreen", () => {
         }),
       ),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "5" } });
@@ -1107,7 +1117,7 @@ describe("SettingsScreen", () => {
       http.put("/api/settings/log-level", logWrites),
     );
 
-    const oldView = render(<SettingsScreen />);
+    const oldView = renderSettings();
     await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
@@ -1121,7 +1131,7 @@ describe("SettingsScreen", () => {
     expect(logWrites).not.toHaveBeenCalled();
 
     oldView.unmount();
-    render(<SettingsScreen />);
+    renderSettings();
     await waitFor(() => expect(installationReads).toHaveBeenCalledTimes(4));
     expect(settingsReads).toHaveBeenCalledTimes(1);
 
@@ -1226,7 +1236,7 @@ describe("SettingsScreen", () => {
       ),
       http.put("/api/settings/runtime", writes),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     await selectSettingsTab("Папки");
@@ -1332,7 +1342,7 @@ describe("SettingsScreen", () => {
       ),
       http.put("/api/settings/runtime", writes),
     );
-    render(<SettingsScreen />);
+    renderSettings();
     await selectSettingsTab("Папки");
     const outputInput = await screen.findByLabelText("Каталог публикации");
     fireEvent.click(
@@ -1424,7 +1434,7 @@ describe("SettingsScreen", () => {
       http.put("/api/settings/log-level", logWrites),
     );
 
-    const oldView = render(<SettingsScreen />);
+    const oldView = renderSettings();
     await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
@@ -1433,7 +1443,7 @@ describe("SettingsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     oldView.unmount();
-    render(<SettingsScreen />);
+    renderSettings();
     await waitFor(() => expect(installationReads).toHaveBeenCalledTimes(4));
     expect(settingsReads).toHaveBeenCalledTimes(1);
 

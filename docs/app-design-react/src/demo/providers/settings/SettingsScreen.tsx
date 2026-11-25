@@ -1,4 +1,7 @@
-import { SettingsScreenView } from "../../../ui/features/settings/SettingsScreenView";
+import {
+	type ApplicationRouteProviderProps,
+	ApplicationSettingsBinder,
+} from "../../../ui/app/ApplicationRouteOutlet";
 import {
 	type SettingsScreenProps,
 	useSettingsScreenDemoProvider,
@@ -11,9 +14,18 @@ export type {
 export { initialDemoSettings } from "./useSettingsScreenDemoProvider";
 
 /**
- * Public Settings entry point. The demo provider owns state and the view owns
- * the markup; this facade preserves existing imports and prop shape.
+ * Public Settings entry point. The demo provider owns state and the portable
+ * route outlet owns presentation; this facade preserves existing type and
+ * fixture imports.
  */
-export function SettingsScreen(props: SettingsScreenProps) {
-	return <SettingsScreenView {...useSettingsScreenDemoProvider(props)} />;
+export function DemoSettingsBinder({
+	children,
+	...props
+}: SettingsScreenProps & ApplicationRouteProviderProps) {
+	const model = useSettingsScreenDemoProvider(props);
+	return (
+		<ApplicationSettingsBinder model={model}>
+			{children}
+		</ApplicationSettingsBinder>
+	);
 }

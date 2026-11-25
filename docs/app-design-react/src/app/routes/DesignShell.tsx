@@ -31,9 +31,9 @@ export function DesignShell({
 	const path = useHashLocation().slice(1).split("?", 1)[0];
 	const route = path.split("/", 1)[0] || "library";
 	const section =
-		path === "/operations"
-			? "operations"
-			: route === "operations"
+		path === "/operations" || path === "/settings"
+			? path.slice(1)
+			: route === "operations" || route === "settings"
 				? ""
 				: libraryRoutes.includes(route)
 					? "library"
@@ -57,7 +57,7 @@ export function DesignShell({
 								local: "#local",
 								sources: "#sources",
 								operations: "#/operations",
-								settings: "#settings",
+								settings: "#/settings",
 							},
 							incomingCount,
 							footer: { kind: "prototype" },
