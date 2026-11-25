@@ -80,7 +80,7 @@ import { ReleaseOverviewScreen } from "./providers/library/ReleaseOverviewScreen
 import { SelectionDock } from "./providers/library/SelectionDock";
 import { TrackScreen } from "./providers/library/TrackScreen";
 import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
-import { LocalCatalogScreen } from "./providers/local-catalog";
+import { DemoLocalCatalogBinder } from "./providers/local-catalog";
 import { releaseDraftToRecord } from "./providers/local-catalog/localCatalogModel";
 import { localProviderReleases } from "./providers/local-catalog/localProviderModel";
 import { LocalReleaseDemoGenres } from "./providers/local-release/LocalReleaseDemoGenres";
@@ -988,11 +988,15 @@ export function CatalogDemo({
 	}
 	if (route === "local")
 		return (
-			<LocalCatalogScreen
-				state={localProvider}
-				onLoadGenres={loadGenres}
-				onState={setLocalProvider}
-				genresLoaded={settings.genresLoaded}
+			<ApplicationRouteOutlet
+				route="own-catalog"
+				provider={DemoLocalCatalogBinder}
+				providerProps={{
+					state: localProvider,
+					onLoadGenres: loadGenres,
+					onState: setLocalProvider,
+					genresLoaded: settings.genresLoaded,
+				}}
 			/>
 		);
 	if (routeName === "review")

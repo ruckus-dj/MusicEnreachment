@@ -31,7 +31,18 @@ vi.mock("../../api/generated/client", async (importOriginal) => ({
   ...api,
 }));
 
-import { OwnCatalogScreen } from "./OwnCatalogScreen";
+import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { ProductionOwnCatalogBinder } from "./OwnCatalogScreen";
+
+function OwnCatalogScreen() {
+  return (
+    <ApplicationRouteOutlet
+      route="own-catalog"
+      provider={ProductionOwnCatalogBinder}
+      providerProps={{}}
+    />
+  );
+}
 
 type ListParams = {
   q?: string;

@@ -5,6 +5,10 @@ import {
   useContext,
 } from "react";
 import {
+  LocalCatalogScreenView,
+  type LocalCatalogScreenViewProps,
+} from "../features/local-catalog/LocalCatalogScreenView";
+import {
   OperationsScreenView,
   type OperationsScreenViewProps,
 } from "../features/operations/OperationsScreenView";
@@ -17,7 +21,10 @@ import {
  * Semantic routes owned by the portable tree. A host selects the route and its
  * data provider; it does not choose or compose the screen.
  */
-export type ApplicationRoute = "operations" | "settings";
+export type ApplicationRoute = "own-catalog" | "operations" | "settings";
+
+/** The complete data-only model of the portable Local catalog screen. */
+export type ApplicationOwnCatalogModel = LocalCatalogScreenViewProps;
 
 /** The complete data-only model of the portable operations screen. */
 export type ApplicationOperationsModel = OperationsScreenViewProps;
@@ -33,12 +40,30 @@ export type ApplicationRouteDataProvider<
   ProviderProps extends object = object,
 > = ComponentType<ProviderProps & ApplicationRouteProviderProps>;
 
+const OwnCatalogModelContext = createContext<ApplicationOwnCatalogModel | null>(
+  null,
+);
 const OperationsModelContext = createContext<ApplicationOperationsModel | null>(
   null,
 );
 const SettingsModelContext = createContext<ApplicationSettingsModel | null>(
   null,
 );
+
+/** Host-facing adapter for the portable Local catalog screen. */
+export function ApplicationOwnCatalogBinder({
+  model,
+  children,
+}: {
+  model: ApplicationOwnCatalogModel;
+  children: ReactNode;
+}) {
+  return (
+    <OwnCatalogModelContext.Provider value={model}>
+      {children}
+    </OwnCatalogModelContext.Provider>
+  );
+}
 
 /**
  * Host-facing adapter. It wraps the exact outlet child with a model value and
@@ -73,6 +98,12 @@ export function ApplicationSettingsBinder({
   );
 }
 
+function OwnCatalogRoute() {
+  const model = useContext(OwnCatalogModelContext);
+  if (!model) throw new Error("missing own catalog view model");
+  return <LocalCatalogScreenView {...model} />;
+}
+
 function OperationsRoute() {
   const model = useContext(OperationsModelContext);
   if (!model) throw new Error("missing operations view model");
@@ -86,6 +117,7 @@ function SettingsRoute() {
 }
 
 const applicationRoutes: Record<ApplicationRoute, ComponentType> = {
+  "own-catalog": OwnCatalogRoute,
   operations: OperationsRoute,
   settings: SettingsRoute,
 };

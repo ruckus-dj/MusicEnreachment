@@ -24,7 +24,7 @@ import {
   parseLibraryReleaseRoute,
   parseLibraryRoute,
 } from "../../providers/library/libraryRoute";
-import { OwnCatalogScreen } from "../../providers/local-catalog/OwnCatalogScreen";
+import { ProductionOwnCatalogBinder } from "../../providers/local-catalog/OwnCatalogScreen";
 import { ProductionOperationsBinder } from "../../providers/operations/OperationsScreen";
 import { ProductionSettingsBinder } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
@@ -203,7 +203,11 @@ export function AppShell() {
     ) : state && route === "/library" ? (
       <LibraryScreen />
     ) : state && route === "/own-catalog" ? (
-      <OwnCatalogScreen />
+      <ApplicationRouteOutlet
+        route="own-catalog"
+        provider={ProductionOwnCatalogBinder}
+        providerProps={emptyProviderProps}
+      />
     ) : state && route.startsWith("/library/artists/") ? (
       <LibraryArtistScreen
         artistId={parseLibraryArtistRoute(hash)?.artistId ?? ""}

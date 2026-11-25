@@ -74,7 +74,7 @@ export type LocalCatalogEditorBinding =
 	  };
 
 export type LocalCatalogScreenModel = Omit<
-	LocalCatalogScreenViewProps<string>,
+	LocalCatalogScreenViewProps,
 	"editor"
 > & {
 	locale: Locale;
@@ -247,7 +247,7 @@ export function useLocalCatalogScreenDemoProvider({
 		}
 	};
 
-	let details: LocalCatalogScreenViewProps<string>["details"] = null;
+	let details: LocalCatalogScreenViewProps["details"] = null;
 	if (view.kind === "details") {
 		const record = viewRecord(view);
 		if (record) {
@@ -430,13 +430,12 @@ export function useLocalCatalogScreenDemoProvider({
 					id: record.id,
 					title: rowTitle(record),
 					detail: rowDetails(record),
-					value: record.id,
+					onOpen: () => navigate(detailView(type, record.id)),
 				})),
 			},
 			pageNumber: currentPage,
 			pageCount: totalPages,
 			onRetry: () => {},
-			onOpenRow: (row) => navigate(detailView(type, row.value)),
 			onPageChange: setPage,
 		},
 		notice: notice ? m(notice) : "",

@@ -29,6 +29,7 @@ const TEST_LIBRARIES = new Set([
 ]);
 const CSS_LIBRARIES = new Set(["tailwindcss"]);
 const OUTLET_OWNED_VIEWS = new Set([
+  "ui/features/local-catalog/LocalCatalogScreenView",
   "ui/features/operations/OperationsScreenView",
   "ui/features/settings/SettingsScreenView",
 ]);

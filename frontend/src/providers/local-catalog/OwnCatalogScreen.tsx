@@ -22,9 +22,11 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import {
-  type LocalCatalogEditorSlot,
-  LocalCatalogScreenView,
-} from "../../ui/features/local-catalog/LocalCatalogScreenView";
+  ApplicationOwnCatalogBinder,
+  type ApplicationOwnCatalogModel,
+  type ApplicationRouteProviderProps,
+} from "../../ui/app/ApplicationRouteOutlet";
+import type { LocalCatalogEditorSlot } from "../../ui/features/local-catalog/LocalCatalogScreenView";
 import type {
   OwnCatalogListCopy,
   OwnCatalogListRow,
@@ -184,7 +186,18 @@ function updateOwnCatalog(
   return updateLocalProviderArtist(id, body);
 }
 
-export function OwnCatalogScreen() {
+export function ProductionOwnCatalogBinder({
+  children,
+}: ApplicationRouteProviderProps) {
+  const model = useOwnCatalogModel();
+  return (
+    <ApplicationOwnCatalogBinder model={model}>
+      {children}
+    </ApplicationOwnCatalogBinder>
+  );
+}
+
+function useOwnCatalogModel(): ApplicationOwnCatalogModel {
   const { locale } = useI18n();
   const hash = useHashLocation();
   const route = parseOwnCatalogRoute(hash) ?? defaultOwnCatalogRoute;
@@ -781,13 +794,11 @@ export function OwnCatalogScreen() {
     label: m(kind as OwnCatalogMessage),
     count: totals[kind] ?? 0,
   }));
-  const rows: OwnCatalogListRow<LocalProviderItem>[] = (
-    activePage?.items ?? []
-  ).map((item) => ({
+  const rows: OwnCatalogListRow[] = (activePage?.items ?? []).map((item) => ({
     id: item.id,
     title: ownCatalogTitle(route.type, item),
     detail: ownCatalogRowDetails(route.type, item, m),
-    value: item,
+    onOpen: () => openDetails(route.type, item),
   }));
   const copy: OwnCatalogListCopy = {
     title: m("title"),
@@ -803,34 +814,31 @@ export function OwnCatalogScreen() {
     clearFilter: m("clearFilter"),
   };
 
-  return (
-    <LocalCatalogScreenView<LocalProviderItem>
-      list={{
-        locale,
-        copy,
-        tabs,
-        selectedTab: route.type,
-        onTabChange: changeTab,
-        filter: filterInput,
-        hasFilter: Boolean(filter),
-        onFilterChange: changeFilter,
-        onClearFilter: clearFilter,
-        onCreate: () => openEditor({ kind: "create", type: route.type }),
-        createDisabled: saving,
-        loading: listLoading,
-        loaded: listLoaded,
-        error: listError,
-        page: activePage ? { rows, total: activePage.total } : undefined,
-        pageNumber: currentPage,
-        pageCount,
-        busy: pagerBusy,
-        onRetry: () => setListVersion((attempt) => attempt + 1),
-        onOpenRow: (row) => openDetails(route.type, row.value),
-        onPageChange: setPage,
-      }}
-      notice={notice ? m(notice) : ""}
-      details={detailsView}
-      editor={editorView}
-    />
-  );
+  return {
+    list: {
+      locale,
+      copy,
+      tabs,
+      selectedTab: route.type,
+      onTabChange: changeTab,
+      filter: filterInput,
+      hasFilter: Boolean(filter),
+      onFilterChange: changeFilter,
+      onClearFilter: clearFilter,
+      onCreate: () => openEditor({ kind: "create", type: route.type }),
+      createDisabled: saving,
+      loading: listLoading,
+      loaded: listLoaded,
+      error: listError,
+      page: activePage ? { rows, total: activePage.total } : undefined,
+      pageNumber: currentPage,
+      pageCount,
+      busy: pagerBusy,
+      onRetry: () => setListVersion((attempt) => attempt + 1),
+      onPageChange: setPage,
+    },
+    notice: notice ? m(notice) : "",
+    details: detailsView,
+    editor: editorView,
+  };
 }

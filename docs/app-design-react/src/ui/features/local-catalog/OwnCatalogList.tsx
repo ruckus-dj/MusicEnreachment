@@ -31,19 +31,23 @@ export type OwnCatalogListTab = {
   count: number;
 };
 
-export type OwnCatalogListRow<T> = {
+/**
+ * Data-only row. The provider owns the record behind `id` and supplies the
+ * action, so the shared list never receives a domain-specific value.
+ */
+export type OwnCatalogListRow = {
   id: string;
   title: string;
   detail: string;
-  value: T;
+  onOpen: () => void;
 };
 
-export type OwnCatalogListPage<T> = {
-  rows: readonly OwnCatalogListRow<T>[];
+export type OwnCatalogListPage = {
+  rows: readonly OwnCatalogListRow[];
   total: number;
 };
 
-export type OwnCatalogListProps<T> = {
+export type OwnCatalogListProps = {
   locale: "ru" | "en";
   copy: OwnCatalogListCopy;
   tabs: readonly OwnCatalogListTab[];
@@ -58,16 +62,15 @@ export type OwnCatalogListProps<T> = {
   loading?: boolean;
   loaded?: boolean;
   error?: string | null;
-  page?: OwnCatalogListPage<T>;
+  page?: OwnCatalogListPage;
   pageNumber: number;
   pageCount: number;
   busy?: boolean;
   onRetry: () => void;
-  onOpenRow: (row: OwnCatalogListRow<T>) => void;
   onPageChange: (page: number) => void;
 };
 
-export function OwnCatalogList<T>({
+export function OwnCatalogList({
   locale,
   copy,
   tabs,
@@ -87,9 +90,8 @@ export function OwnCatalogList<T>({
   pageCount,
   busy,
   onRetry,
-  onOpenRow,
   onPageChange,
-}: OwnCatalogListProps<T>) {
+}: OwnCatalogListProps) {
   const listRows = page?.rows ?? [];
   return (
     <section className="mx-auto max-w-none">
@@ -186,7 +188,7 @@ export function OwnCatalogList<T>({
                     <Button
                       className="flex min-h-14 w-full justify-start gap-2 border-0 bg-transparent px-3 py-2 text-left hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus)]"
                       isDisabled={busy}
-                      onPress={() => onOpenRow(row)}
+                      onPress={row.onOpen}
                     >
                       <span className="min-w-0">
                         <strong className="block wrap-anywhere">

@@ -1,7 +1,9 @@
 import {
-	type LocalCatalogEditorSlot,
-	LocalCatalogScreenView,
-} from "../../../ui/features/local-catalog/LocalCatalogScreenView";
+	ApplicationOwnCatalogBinder,
+	ApplicationRouteOutlet,
+	type ApplicationRouteProviderProps,
+} from "../../../ui/app/ApplicationRouteOutlet";
+import type { LocalCatalogEditorSlot } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
 import type { Locale } from "../../../ui/i18n/types";
 import {
 	LocalCatalogArtistForm,
@@ -57,12 +59,27 @@ function editorSlot(
 	};
 }
 
-export function LocalCatalogScreen(props: LocalCatalogScreenProps) {
+/** Binds demo data to the portable Local catalog route. */
+export function DemoLocalCatalogBinder({
+	children,
+	...props
+}: LocalCatalogScreenProps & ApplicationRouteProviderProps) {
 	const { editor, locale, ...view } = useLocalCatalogScreenDemoProvider(props);
 	return (
-		<LocalCatalogScreenView
-			{...view}
-			editor={editor ? editorSlot(editor, locale) : null}
+		<ApplicationOwnCatalogBinder
+			model={{ ...view, editor: editor ? editorSlot(editor, locale) : null }}
+		>
+			{children}
+		</ApplicationOwnCatalogBinder>
+	);
+}
+
+export function LocalCatalogScreen(props: LocalCatalogScreenProps) {
+	return (
+		<ApplicationRouteOutlet
+			route="own-catalog"
+			provider={DemoLocalCatalogBinder}
+			providerProps={props}
 		/>
 	);
 }

@@ -20,8 +20,8 @@ export type LocalCatalogEditorSlot =
       element: ReactElement;
     };
 
-export type LocalCatalogScreenViewProps<Row> = {
-  list: OwnCatalogListProps<Row>;
+export type LocalCatalogScreenViewProps = {
+  list: OwnCatalogListProps;
   /** Localized commit notice; an empty value leaves the status region hidden. */
   notice: string;
   details: ComponentProps<typeof OwnCatalogDetailsView> | null;
@@ -34,12 +34,12 @@ export type LocalCatalogScreenViewProps<Row> = {
  * editor actors are supplied as narrow slots. This module owns the screen
  * shell and the list/details/edit branch markup.
  */
-export function LocalCatalogScreenView<Row>({
+export function LocalCatalogScreenView({
   list,
   notice,
   details,
   editor,
-}: LocalCatalogScreenViewProps<Row>) {
+}: LocalCatalogScreenViewProps) {
   const shell = (content: ReactNode, inset = false) => (
     <section
       className={inset ? "mx-auto max-w-none p-3" : "mx-auto max-w-none"}
@@ -71,5 +71,5 @@ export function LocalCatalogScreenView<Row>({
       </OwnCatalogEditorShell>,
     );
   }
-  return shell(<OwnCatalogList<Row> {...list} />, true);
+  return shell(<OwnCatalogList {...list} />, true);
 }
