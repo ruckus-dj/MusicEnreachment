@@ -436,14 +436,29 @@ describe("SetupManager", () => {
     localStorage.setItem("melotrove.setup.step", "summary");
     const completed = vi.fn();
     const onCompleted = vi.fn();
+    const readSetup = vi.fn();
     server.use(
-      http.get("/api/setup", () => HttpResponse.json(ready)),
+      http.get("/api/setup", () => {
+        readSetup();
+        return HttpResponse.json(ready);
+      }),
       http.post("/api/setup/complete", async ({ request }) => {
         completed(await request.json());
         return new HttpResponse(null, { status: 204 });
       }),
     );
     renderSetup(ready, onCompleted);
+    const recheck = screen.getByRole("button", { name: "Обновить проверку" });
+    const readsBeforeRecheck = readSetup.mock.calls.length;
+    await click("Обновить проверку");
+    await waitFor(() => {
+      expect(readSetup.mock.calls.length).toBeGreaterThan(readsBeforeRecheck);
+      const currentRecheck = screen.getByRole("button", {
+        name: "Обновить проверку",
+      });
+      expect(currentRecheck).toBe(recheck);
+      expect(currentRecheck).toBeEnabled();
+    });
     await click("Завершить настройку");
     await waitFor(() =>
       expect(completed).toHaveBeenCalledWith({

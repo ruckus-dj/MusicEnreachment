@@ -67,8 +67,7 @@ source channel, а fixture макета такого происхождения 
 рассчитывает допустимость и меняет данные. Отделение представления в макете
 не считается парой файлов и не означает, что приложение уже его использует.
 
-В макете отделены представления первого запуска и «Сопоставления»
-(`SetupScreenView.tsx`, `MatchingScreenView.tsx`)
+В макете отделены представления «Сопоставления» (`MatchingScreenView.tsx`)
 и публикации из сохранённых связей (`MatchingReceiptPublicationReadyView.tsx`).
 Разметка редактора метаданных,
 выбора жанров и оболочек редакторов релиза и позиции отделена от подготовки
@@ -109,7 +108,7 @@ source channel, а fixture макета такого происхождения 
 | Настройки: выход с черновиком и подтверждение замены сохранённого значения | `features/settings/SettingsLeaveDialog.tsx`, `SettingsConflictDialog.tsx` | Те же пути |
 | Настройки: предупреждение о конфликте черновика над вкладками, сохранённое значение и действия для конкретной настройки | `features/settings/SettingsDraftConflictNotice.tsx` | Тот же путь |
 | Настройки и первый запуск: форма токена GitHub | `features/tools/GitHubTokenFormView.tsx`, `toolMessages.ts` | Те же пути |
-| Первый запуск: каркас мастера и сообщения состояния, поля папок, карточки инструментов, подтверждение установки инструмента, формат публикации, формы провайдеров, загрузка каталога жанров и итоговая сводка | `features/setup/SetupWizard.tsx`, `SetupFeedbackView.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolConfirmationView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupProvidersView.tsx`, `SetupGenreCatalogView.tsx`, `SetupSummaryView.tsx` | Те же пути |
+| Первый запуск: весь мастер из четырёх шагов, обратная связь, подтверждение загрузки инструментов и итоговая сводка | `features/setup/SetupScreenView.tsx`, `SetupWizard.tsx`, `SetupFeedbackView.tsx`, `SetupDirectoryFields.tsx`, `SetupToolCardsView.tsx`, `SetupToolConfirmationView.tsx`, `SetupToolReleasePicker.tsx`, `SetupPublicationOptions.tsx`, `SetupMusicBrainzFields.tsx`, `SetupProvidersView.tsx`, `SetupGenreCatalogView.tsx`, `SetupSummaryView.tsx` | Те же пути; серверные проверки, идентификатор каталога и восстановление операций остаются в провайдерах |
 | Медиатека: карточки артистов, списки альбомов и треков, позиции издания, выбор издания, вкладки, поиск, фильтр, пагинация и панель выбора | `features/library/LibraryArtistCards.tsx`, `libraryArtistCardStyles.ts`, `LibraryAlbumListView.tsx`, `LibraryTrackListView.tsx`, `LibraryAlbumPositionsView.tsx`, `LibraryMissingEditionView.tsx`, `LibraryCatalogControls.tsx`, `LibraryCatalogFilterView.tsx`, `LibraryPaginationView.tsx`, `LibrarySelectionDockView.tsx`, `LibrarySelectionReviewView.tsx` | Те же пути |
 | Медиатека: редактор карточки артиста, выбор жанров и действия редакторов метаданных | `features/library/ArtistMetadataCard.tsx`, `GenrePicker.tsx`, `genreMessages.ts`, `MetadataCardActions.tsx` | Те же пути |
 | Медиатека: строка принятых жанров MusicBrainz в редакторе издания | `features/library/ProviderGenreBaselineRow.tsx` | Тот же путь |

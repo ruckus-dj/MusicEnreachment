@@ -7,7 +7,6 @@ import type {
   InstallPreflightBody,
   OperationResponse,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   operationKindLabel,
@@ -24,9 +23,8 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
-import { SetupFeedbackView } from "./SetupFeedbackView";
-import { type SetupToolCard, SetupToolCardsView } from "./SetupToolCardsView";
-import { SetupToolConfirmationView } from "./SetupToolConfirmationView";
+import { SetupToolsStepBody } from "./SetupScreenView";
+import type { SetupToolCard } from "./SetupToolCardsView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -274,56 +272,60 @@ export function SetupTools({
       },
     };
   });
+  const errorText = error
+    ? setupFeedbackText(error, locale)
+    : legacyConflict
+      ? setupFeedbackText(setupMessage("multipleReadyTools"), locale)
+      : undefined;
   return (
-    <div>
-      {!legacyConflict && (
-        <AppButton isDisabled={pending} onPress={load}>
-          {messages.toolCatalogRefresh}
-        </AppButton>
-      )}
-      {!legacyConflict && <SetupToolCardsView locale={locale} tools={cards} />}
-      {!legacyConflict && preflight?.plan.conflicts?.length ? (
-        <SetupToolConfirmationView
-          title={messages.confirmOverwrite}
-          packageName={messages[preflight.kind]}
-          release={preflight.release}
-          executables={toolExecutables(preflight.kind)}
-          conflicts={preflight.plan.conflicts}
-          confirmLabel={messages.confirmOverwriteButton}
-          cancelLabel={messages.cancel}
-          busy={pending}
-          busyLabel={messages.startingToolDownload}
-          error={
-            confirmError ? setupFeedbackText(confirmError, locale) : undefined
-          }
-          onConfirm={() => {
-            void confirm();
-          }}
-          onCancel={() => {
-            const trigger = installTrigger.current;
-            setPreflight(undefined);
-            setConfirmError(null);
-            requestAnimationFrame(() => {
-              if (trigger?.isConnected) trigger.focus();
-            });
-          }}
-        />
-      ) : null}
-      {completed.map((item) => (
-        <p
-          key={item.id}
-          role="status"
-          className="wrap-anywhere bg-[var(--accent-soft)] p-2 my-2"
-        >
-          {operationKindLabel(item.kind, locale)} —{" "}
-          {operationTargetLabel(item, locale)}:{" "}
-          {operationStateLabel(item.state, locale)}.
-          {operationStageLabel(item.stage, locale) &&
-            ` ${operationStageLabel(item.stage, locale)}.`}
-          {` ${operationProgressLabel(item, locale)}.`}
-        </p>
-      ))}
-      {ids.map((id) => (
+    <SetupToolsStepBody
+      refresh={
+        legacyConflict
+          ? undefined
+          : {
+              label: messages.toolCatalogRefresh,
+              disabled: pending,
+              onPress: load,
+            }
+      }
+      cards={legacyConflict ? undefined : { locale, tools: cards }}
+      confirmation={
+        !legacyConflict && preflight?.plan.conflicts?.length
+          ? {
+              title: messages.confirmOverwrite,
+              packageName: messages[preflight.kind],
+              release: preflight.release,
+              executables: toolExecutables(preflight.kind),
+              conflicts: preflight.plan.conflicts,
+              confirmLabel: messages.confirmOverwriteButton,
+              cancelLabel: messages.cancel,
+              busy: pending,
+              busyLabel: messages.startingToolDownload,
+              error: confirmError
+                ? setupFeedbackText(confirmError, locale)
+                : undefined,
+              onConfirm: () => {
+                void confirm();
+              },
+              onCancel: () => {
+                const trigger = installTrigger.current;
+                setPreflight(undefined);
+                setConfirmError(null);
+                requestAnimationFrame(() => {
+                  if (trigger?.isConnected) trigger.focus();
+                });
+              },
+            }
+          : undefined
+      }
+      completed={completed.map((item) => {
+        const stage = operationStageLabel(item.stage, locale);
+        return {
+          key: item.id,
+          text: `${operationKindLabel(item.kind, locale)} — ${operationTargetLabel(item, locale)}: ${operationStateLabel(item.state, locale)}.${stage ? ` ${stage}.` : ""} ${operationProgressLabel(item, locale)}.`,
+        };
+      })}
+      operations={ids.map((id) => (
         <OperationProgress
           key={id}
           id={id}
@@ -332,37 +334,26 @@ export function SetupTools({
           onFinished={forget}
         />
       ))}
-      <SetupFeedbackView
-        error={
-          error
-            ? setupFeedbackText(error, locale)
-            : legacyConflict
-              ? setupFeedbackText(setupMessage("multipleReadyTools"), locale)
-              : undefined
-        }
-        errorRef={alert}
-      />
-      {operationsError && (
-        <div>
-          <SetupFeedbackView
-            error={setupFeedbackText(operationsError, locale)}
-            errorRef={operationsAlert}
-          />
-          <AppButton isDisabled={discovering} onPress={discover}>
-            {messages.retryOperations}
-          </AppButton>
-        </div>
-      )}
-      <SetupFeedbackView
-        pending={discovering ? messages.loadingOperations : null}
-      />
-      <SetupFeedbackView
-        pending={pending ? messages.requestInProgress : null}
-      />
-      <GitHubTokenForm
-        hasToken={hasGitHubToken}
-        onChanged={onGitHubTokenChanged}
-      />
-    </div>
+      error={errorText ? { text: errorText, errorRef: alert } : undefined}
+      operationError={
+        operationsError
+          ? {
+              text: setupFeedbackText(operationsError, locale),
+              errorRef: operationsAlert,
+              retryLabel: messages.retryOperations,
+              discovering,
+              onRetry: discover,
+            }
+          : undefined
+      }
+      loadingOperations={discovering ? messages.loadingOperations : undefined}
+      requestPending={pending ? messages.requestInProgress : undefined}
+      tokenMounted={
+        <GitHubTokenForm
+          hasToken={hasGitHubToken}
+          onChanged={onGitHubTokenChanged}
+        />
+      }
+    />
   );
 }

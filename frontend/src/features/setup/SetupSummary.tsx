@@ -5,7 +5,7 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
-import { SetupSummaryView } from "./SetupSummaryView";
+import { SetupSummaryStepBody } from "./SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -87,7 +87,7 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
   const ffmpeg = installations.find((item) => item.id === ffmpegID);
   const fpcalc = installations.find((item) => item.id === fpcalcID);
   return (
-    <SetupSummaryView
+    <SetupSummaryStepBody
       locale={locale}
       status={{
         healthy: state.configuration_health.healthy,

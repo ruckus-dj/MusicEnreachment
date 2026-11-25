@@ -9,16 +9,13 @@ import type {
   SaveRuntimeBodyPublicationFormat,
   SetupStateBody,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { browseServerDirectory } from "../../components/DirectoryPicker";
 import { useI18n } from "../../i18n/I18nProvider";
-import { SetupDirectoryStepBody } from "./SetupDirectoryFields";
-import { SetupGenreCatalogView } from "./SetupGenreCatalogView";
 import { SetupMetadata, type SetupMetadataAction } from "./SetupMetadata";
-import { SetupPublicationOptions } from "./SetupPublicationOptions";
+import { SetupScreenView } from "./SetupScreenView";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
-import { SetupPlatformStep, SetupWizard, setupSteps } from "./SetupWizard";
+import { setupSteps } from "./SetupWizard";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -263,60 +260,56 @@ export function SetupManager({
         ? "idle"
         : genreCatalog.state;
   return (
-    <SetupWizard
+    <SetupScreenView
       locale={locale}
-      step={step}
-      help={stepHelp}
-      error={error ? setupFeedbackText(error, locale) : undefined}
-      notice={notice ? setupFeedbackText(notice, locale) : undefined}
-      pending={pending}
-      onBack={() => {
-        if (pending || (step === 2 && metadataAction.current?.isBusy())) return;
-        navigate(step - 1);
+      wizard={{
+        step,
+        help: stepHelp,
+        error: error ? setupFeedbackText(error, locale) : undefined,
+        notice: notice ? setupFeedbackText(notice, locale) : undefined,
+        pending,
+        onBack: () => {
+          if (pending || (step === 2 && metadataAction.current?.isBusy()))
+            return;
+          navigate(step - 1);
+        },
+        onNext: () => {
+          void advance();
+        },
+        nextDisabled:
+          !state.platform.supported ||
+          state.platform.diagnostic ||
+          pending ||
+          metadataBusy ||
+          (step === 1 && toolsBlocked) ||
+          (step === 2 && (providerDirty || catalogViewState !== "ready")) ||
+          (step === 3 && catalogViewState !== "ready"),
+        backDisabled: pending || metadataBusy,
       }}
-      onNext={() => {
-        void advance();
+      platform={{
+        locale,
+        goos: state.platform.goos,
+        goarch: state.platform.goarch,
+        supported: state.platform.supported,
+        reason: state.platform.reason,
       }}
-      nextDisabled={
-        !state.platform.supported ||
-        state.platform.diagnostic ||
-        pending ||
-        metadataBusy ||
-        (step === 1 && toolsBlocked) ||
-        (step === 2 && (providerDirty || catalogViewState !== "ready")) ||
-        (step === 3 && catalogViewState !== "ready")
-      }
-      backDisabled={pending || metadataBusy}
-    >
-      {step === 0 && (
-        <SetupPlatformStep
-          locale={locale}
-          goos={state.platform.goos}
-          goarch={state.platform.goarch}
-          supported={state.platform.supported}
-          reason={state.platform.reason}
-        />
-      )}
-      {step === 0 && (
-        <SetupDirectoryStepBody
-          kind="tools"
-          selected={
-            toolsDirectory !== "" &&
-            toolsDirectory === state.settings.tools_directory
-          }
-          fields={[
-            {
-              kind: "tools",
-              value: toolsDirectory,
-              onSelect: setToolsDirectory,
-            },
-          ]}
-          locale={locale}
-          browse={browseServerDirectory}
-          disabled={pending}
-        />
-      )}
-      {step === 1 && (
+      directories={{
+        kind: "tools",
+        selected:
+          toolsDirectory !== "" &&
+          toolsDirectory === state.settings.tools_directory,
+        fields: [
+          {
+            kind: "tools",
+            value: toolsDirectory,
+            onSelect: setToolsDirectory,
+          },
+        ],
+        locale,
+        browse: browseServerDirectory,
+        disabled: pending,
+      }}
+      toolsMounted={
         <SetupTools
           onBlockedChange={updateToolsBlocked}
           hasGitHubToken={state.settings.has_github_token}
@@ -324,30 +317,30 @@ export function SetupManager({
             await refresh();
           }}
         />
-      )}
-      {step === 2 && (
-        <div className="grid gap-3">
-          <SetupDirectoryStepBody
-            kind="output"
-            fields={[
-              {
-                kind: "output",
-                value: outputDirectory,
-                onSelect: setOutputDirectory,
-              },
-            ]}
-            locale={locale}
-            browse={browseServerDirectory}
-            disabled={pending}
-          />
-          <SetupPublicationOptions
-            locale={locale}
-            format={format}
-            removeSources={removeSources}
-            disabled={pending}
-            onFormat={setFormat}
-            onRemoveSources={setRemoveSources}
-          />
+      }
+      publication={{
+        directory: {
+          kind: "output",
+          fields: [
+            {
+              kind: "output",
+              value: outputDirectory,
+              onSelect: setOutputDirectory,
+            },
+          ],
+          locale,
+          browse: browseServerDirectory,
+          disabled: pending,
+        },
+        options: {
+          locale,
+          format,
+          removeSources,
+          disabled: pending,
+          onFormat: setFormat,
+          onRemoveSources: setRemoveSources,
+        },
+        metadata: (
           <SetupMetadata
             state={state}
             refresh={refresh}
@@ -356,34 +349,26 @@ export function SetupManager({
             onConfigurationDirtyChange={setProviderDirty}
             actionRef={metadataAction}
           />
-          <SetupGenreCatalogView
-            locale={locale}
-            state={catalogViewState}
-            count={providerDirty ? undefined : genreCatalog.count}
-            disabled={
-              pending ||
-              metadataBusy ||
-              !state.platform.supported ||
-              state.platform.diagnostic
-            }
-            onLoad={genreCatalog.load}
-          />
-        </div>
-      )}
-      {step === 3 && (
-        <div>
-          <SetupSummary key={summaryRefreshToken} state={state} />
-          <AppButton
-            isDisabled={pending}
-            onPress={() => {
-              void verifySummary();
-            }}
-          >
-            {messages.updateCheck}
-          </AppButton>
-        </div>
-      )}
-    </SetupWizard>
+        ),
+        genres: {
+          locale,
+          state: catalogViewState,
+          count: providerDirty ? undefined : genreCatalog.count,
+          disabled:
+            pending ||
+            metadataBusy ||
+            !state.platform.supported ||
+            state.platform.diagnostic,
+          onLoad: genreCatalog.load,
+        },
+      }}
+      summaryMounted={<SetupSummary key={summaryRefreshToken} state={state} />}
+      summaryRecheck={{
+        label: messages.updateCheck,
+        disabled: pending,
+        onPress: () => void verifySummary(),
+      }}
+    />
   );
   async function verifySummary() {
     setPending(true);

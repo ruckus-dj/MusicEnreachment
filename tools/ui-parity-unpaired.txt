@@ -94,7 +94,6 @@ docs/app-design-react/src/features/settings/settingsDraft.ts
 docs/app-design-react/src/features/settings/useSettingsScreenDemoProvider.ts
 docs/app-design-react/src/features/settings/useToolCatalogDemoProvider.ts
 docs/app-design-react/src/features/setup/SetupScreen.tsx
-docs/app-design-react/src/features/setup/SetupScreenView.tsx
 docs/app-design-react/src/features/setup/setupToolsLifecycle.ts
 docs/app-design-react/src/features/setup/useSetupGenreCatalogDemoProvider.ts
 docs/app-design-react/src/features/setup/useSetupScreenDemoProvider.ts

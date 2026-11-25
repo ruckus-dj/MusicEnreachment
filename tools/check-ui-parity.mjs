@@ -76,7 +76,7 @@ const pairs = [
       "SettingsToolsOverview.tsx",
     ],
   ],
-  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupFeedbackView.tsx", "SetupGenreCatalogView.tsx", "SetupMusicBrainzFields.tsx", "SetupProvidersView.tsx", "SetupPublicationOptions.tsx", "SetupSummaryView.tsx", "SetupToolCardsView.tsx", "SetupToolConfirmationView.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
+  ["features/setup", "features/setup", ["SetupDirectoryFields.tsx", "SetupFeedbackView.tsx", "SetupGenreCatalogView.tsx", "SetupMusicBrainzFields.tsx", "SetupProvidersView.tsx", "SetupPublicationOptions.tsx", "SetupScreenView.tsx", "SetupSummaryView.tsx", "SetupToolCardsView.tsx", "SetupToolConfirmationView.tsx", "SetupToolReleasePicker.tsx", "SetupWizard.tsx"]],
   ["features/tools", "features/tools", ["GitHubTokenFormView.tsx", "toolMessages.ts"]],
   [
     "features/library",

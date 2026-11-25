@@ -16,7 +16,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
-import { SetupProvidersView } from "./SetupProvidersView";
+import { SetupMetadataStepBody } from "./SetupScreenView";
 import {
   type SetupFeedback,
   setupFeedback,
@@ -153,39 +153,37 @@ export function SetupMetadata({
     return () => onBusyChange?.(false);
   }, [pending, keyPending, onBusyChange]);
   return (
-    <>
-      <SetupProvidersView
-        locale={locale}
-        mode={mode}
-        baseURL={baseURL}
-        verification={
-          changed
-            ? "changed"
-            : state.settings.musicbrainz_verified_at
-              ? "verified"
-              : "untested"
-        }
-        verifiedAt={state.settings.musicbrainz_verified_at}
-        lrclib={{ enabled: lrclib, onChange: setLrclib }}
-        disabled={disabled || pending || keyPending}
-        onModeChange={setMode}
-        onBaseURLChange={setBaseURL}
-        acoustID={
-          state.platform.supported && !state.platform.diagnostic ? (
-            <AcoustIDKeyForm
-              hasKey={state.settings.has_acoustid_application_key}
-              onChanged={refresh}
-              onBusyChange={setKeyPending}
-              disabled={disabled || pending}
-            />
-          ) : undefined
-        }
-      />
-      {error && (
-        <p role="alert" ref={alert} tabIndex={-1}>
-          {setupFeedbackText(error, locale)}
-        </p>
-      )}
-    </>
+    <SetupMetadataStepBody
+      providers={{
+        locale,
+        mode,
+        baseURL,
+        verification: changed
+          ? "changed"
+          : state.settings.musicbrainz_verified_at
+            ? "verified"
+            : "untested",
+        verifiedAt: state.settings.musicbrainz_verified_at,
+        lrclib: { enabled: lrclib, onChange: setLrclib },
+        disabled: disabled || pending || keyPending,
+        onModeChange: setMode,
+        onBaseURLChange: setBaseURL,
+      }}
+      acoustIDMounted={
+        state.platform.supported && !state.platform.diagnostic ? (
+          <AcoustIDKeyForm
+            hasKey={state.settings.has_acoustid_application_key}
+            onChanged={refresh}
+            onBusyChange={setKeyPending}
+            disabled={disabled || pending}
+          />
+        ) : undefined
+      }
+      error={
+        error
+          ? { text: setupFeedbackText(error, locale), errorRef: alert }
+          : undefined
+      }
+    />
   );
 }
