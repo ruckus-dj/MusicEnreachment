@@ -8,7 +8,6 @@ import {
 import { type Locale, useI18n } from "../../../app/i18n";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
 import { SourceInspectorView } from "../../../ui/features/sources/SourceInspectorView";
-import { SourceInventoryPanel } from "../../../ui/features/sources/SourceInventoryPanel";
 import { SourceListPageView } from "../../../ui/features/sources/SourceListPageView";
 import {
 	MissingSourceView,
@@ -22,7 +21,6 @@ import {
 import { SourceRootDetailView } from "../../../ui/features/sources/SourceRootDetailView";
 import type { SourceRootListRow } from "../../../ui/features/sources/SourceRootList";
 import type { SourceRootChange } from "../../../ui/features/sources/SourceRootSettingsView";
-import { SourceScanPanel } from "../../../ui/features/sources/SourceScanPanel";
 import {
 	type SourceMessageKey,
 	sourceMessage,
@@ -362,51 +360,43 @@ export function SourcesScreen({
 								root.available === true ? incomingGroupsListHref() : undefined,
 						}}
 						feedback={noticeMessage}
-						scan={
-							<SourceScanPanel
-								locale={locale}
-								state={
-									demoScanState?.kind === "fixtureFailure"
-										? { kind: "failed", message: m("scanFailedFixture") }
-										: (demoScanState ?? { kind: "idle" })
-								}
-								onStart={() => startScan(root)}
-								onRetry={() => startScan(root)}
-								startDisabled={root.available === false}
-							/>
-						}
-						inventory={
-							<SourceInventoryPanel
-								locale={locale}
-								path={inventoryPath}
-								unpublished={!root.lastSuccessfulScanAt}
-								rows={inventoryLocations.map((location) => {
-									const observed = rootFiles.find(
-										(item) => item.id === `${root.id}:${location.id}`,
-									);
-									const step = observed?.steps.find(
-										(item) => item.id === "audio_inspection",
-									);
-									return {
-										id: location.id,
-										path:
-											inventoryPrefix &&
-											location.path.startsWith(inventoryPrefix)
-												? location.path.slice(inventoryPrefix.length)
-												: location.path,
-										href: demoSourceLocationHref(root.id, location.id),
-										sizeBytes: location.size,
-										modifiedAt: location.mtime,
-										status:
-											step?.status === "succeeded"
-												? "audio"
-												: step?.status === "failed"
-													? "probe_error"
-													: "not_analyzed",
-									};
-								})}
-							/>
-						}
+						scan={{
+							state:
+								demoScanState?.kind === "fixtureFailure"
+									? { kind: "failed", message: m("scanFailedFixture") }
+									: (demoScanState ?? { kind: "idle" }),
+							onStart: () => startScan(root),
+							onRetry: () => startScan(root),
+							startDisabled: root.available === false,
+						}}
+						inventory={{
+							path: inventoryPath,
+							unpublished: !root.lastSuccessfulScanAt,
+							rows: inventoryLocations.map((location) => {
+								const observed = rootFiles.find(
+									(item) => item.id === `${root.id}:${location.id}`,
+								);
+								const step = observed?.steps.find(
+									(item) => item.id === "audio_inspection",
+								);
+								return {
+									id: location.id,
+									path:
+										inventoryPrefix && location.path.startsWith(inventoryPrefix)
+											? location.path.slice(inventoryPrefix.length)
+											: location.path,
+									href: demoSourceLocationHref(root.id, location.id),
+									sizeBytes: location.size,
+									modifiedAt: location.mtime,
+									status:
+										step?.status === "succeeded"
+											? "audio"
+											: step?.status === "failed"
+												? "probe_error"
+												: "not_analyzed",
+								};
+							}),
+						}}
 						overview={{
 							name: root.name,
 							path: root.path,

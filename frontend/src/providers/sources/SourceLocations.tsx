@@ -1,12 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { listSourceLocations } from "../../api/generated/client";
 import type {
   SourceLocationResponse,
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { SourceInventoryPanel } from "../../ui/features/sources/SourceInventoryPanel";
 import type { SourceInventoryStatus } from "../../ui/features/sources/SourceInventoryView";
+import {
+  SourceInventoryDataBinder,
+  type SourceInventoryModel,
+} from "../../ui/features/sources/SourceRootDetailView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import {
   inventoryAvailabilityNote,
@@ -52,7 +61,8 @@ export function SourceLocations({
   root,
   refreshToken,
   limit,
-}: SourceLocationsProps) {
+  children,
+}: SourceLocationsProps & { children: ReactNode }) {
   const { locale } = useI18n();
   const size = pageLimit(limit);
   const generation = root.scan_generation;
@@ -149,34 +159,37 @@ export function SourceLocations({
     inventoryScopeNote(root, locale),
   ].filter(Boolean);
 
+  const model: SourceInventoryModel = {
+    path: root.inventory_path ?? root.configured_path,
+    unpublished: generation === 0,
+    notes,
+    loading: !loaded,
+    error: error ? renderSourceError(error, locale) : undefined,
+    onRetry: retry,
+    rows: locations.map((location) => ({
+      id: location.id,
+      path: location.relative_path,
+      href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
+      sizeBytes: location.size_bytes,
+      modifiedAt: location.mtime,
+      status: inventoryStatus(location.probe_status),
+      notes:
+        location.probe_status === "no_audio"
+          ? [sourceMessage(locale, "noAudioReason")]
+          : location.probe_status === "probe_error"
+            ? [
+                ...(location.safe_error ? [location.safe_error] : []),
+                sourceMessage(locale, "probeRetryNote"),
+              ]
+            : undefined,
+    })),
+    loadingMore: busy,
+    onLoadMore: nextCursor ? () => void loadMore() : undefined,
+  };
+
   return (
-    <SourceInventoryPanel
-      locale={locale}
-      path={root.inventory_path ?? root.configured_path}
-      unpublished={generation === 0}
-      notes={notes}
-      loading={!loaded}
-      error={error ? renderSourceError(error, locale) : undefined}
-      onRetry={retry}
-      rows={locations.map((location) => ({
-        id: location.id,
-        path: location.relative_path,
-        href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
-        sizeBytes: location.size_bytes,
-        modifiedAt: location.mtime,
-        status: inventoryStatus(location.probe_status),
-        notes:
-          location.probe_status === "no_audio"
-            ? [sourceMessage(locale, "noAudioReason")]
-            : location.probe_status === "probe_error"
-              ? [
-                  ...(location.safe_error ? [location.safe_error] : []),
-                  sourceMessage(locale, "probeRetryNote"),
-                ]
-              : undefined,
-      }))}
-      loadingMore={busy}
-      onLoadMore={nextCursor ? () => void loadMore() : undefined}
-    />
+    <SourceInventoryDataBinder model={model}>
+      {children}
+    </SourceInventoryDataBinder>
   );
 }

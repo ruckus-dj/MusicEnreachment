@@ -3,10 +3,8 @@ import type {
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import {
-  SourceScanPanel,
-  type SourceScanState,
-} from "../../ui/features/sources/SourceScanPanel";
+import type { SourceScanModel } from "../../ui/features/sources/SourceRootDetailView";
+import type { SourceScanState } from "../../ui/features/sources/SourceScanPanel";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { useSourceScans } from "./sourceScans";
 import { renderSourceError } from "./sourcesApi";
@@ -33,15 +31,15 @@ function operationState(
   return { kind: "idle" };
 }
 
-export type SourceScanControlProps = {
-  root: SourceRootResponse;
-  admissionDisabled?: boolean;
-};
-
-export function SourceScanControl({
-  root,
-  admissionDisabled,
-}: SourceScanControlProps) {
+/**
+ * Projects the shared source-scan context into the portable scan panel model.
+ * It owns no state or effects; admission and operation following stay in
+ * SourceScansProvider.
+ */
+export function useSourceScanPanel(
+  root: SourceRootResponse | undefined,
+  admissionDisabled?: boolean,
+): SourceScanModel | undefined {
   const { locale } = useI18n();
   const {
     operation,
@@ -54,6 +52,7 @@ export function SourceScanControl({
     retry,
     discover,
   } = useSourceScans();
+  if (!root) return undefined;
   const scan = operation(root.id);
   const rejected = error(root.id);
   const following = scan?.state === "queued" || scan?.state === "running";
@@ -77,22 +76,18 @@ export function SourceScanControl({
     );
   }
 
-  return (
-    <SourceScanPanel
-      locale={locale}
-      state={state}
-      onStart={() => void start(root.id)}
-      onRetry={() => void retry(root.id)}
-      onRecheck={discoveryFailure ? () => void discover() : undefined}
-      startDisabled={!root.enabled || admissionDisabled}
-      disabledNote={
-        root.enabled ? undefined : sourceMessage(locale, "disabledScan")
-      }
-      streamNotice={
-        following && streamError(root.id)
-          ? sourceMessage(locale, "scanStreamError")
-          : undefined
-      }
-    />
-  );
+  return {
+    state,
+    onStart: () => void start(root.id),
+    onRetry: () => void retry(root.id),
+    onRecheck: discoveryFailure ? () => void discover() : undefined,
+    startDisabled: !root.enabled || admissionDisabled,
+    disabledNote: root.enabled
+      ? undefined
+      : sourceMessage(locale, "disabledScan"),
+    streamNotice:
+      following && streamError(root.id)
+        ? sourceMessage(locale, "scanStreamError")
+        : undefined,
+  };
 }

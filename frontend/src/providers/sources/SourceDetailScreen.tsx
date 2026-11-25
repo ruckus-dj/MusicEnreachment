@@ -18,8 +18,8 @@ import type { SourceRootChange } from "../../ui/features/sources/SourceRootSetti
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { incomingGroupCountQueryKey } from "../incoming/incomingGroupsQueryKeys";
-import { SourceLocations } from "./SourceLocations";
-import { SourceScanControl } from "./SourceScanControl";
+import { SourceLocations, type SourceLocationsProps } from "./SourceLocations";
+import { useSourceScanPanel } from "./SourceScanControl";
 import { useSourceScans } from "./sourceScans";
 import {
   inventoryLabel,
@@ -85,6 +85,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const root = rootQuery.data;
   const { error, isFetching: reading } = rootQuery;
   const busy = reading || saving || deleting;
+  const scanModel = useSourceScanPanel(root, saving);
 
   const settings = useMutation({
     mutationKey: mutationFilter.mutationKey,
@@ -171,7 +172,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   return (
-    <SourceRootDetailView
+    <SourceRootDetailView<SourceLocationsProps>
       locale={locale}
       headingId="source-title"
       heading={{
@@ -190,17 +191,18 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
         retryDisabled: saving,
         onRetry: () => void rootQuery.refetch(),
       }}
-      scan={
-        root && <SourceScanControl root={root} admissionDisabled={saving} />
-      }
+      scan={scanModel}
       inventory={
-        root && (
-          <SourceLocations
-            sourceId={sourceId}
-            root={root}
-            refreshToken={rootQuery.dataUpdatedAt}
-          />
-        )
+        root
+          ? {
+              Component: SourceLocations,
+              props: {
+                sourceId,
+                root,
+                refreshToken: rootQuery.dataUpdatedAt,
+              },
+            }
+          : undefined
       }
       overview={
         root
