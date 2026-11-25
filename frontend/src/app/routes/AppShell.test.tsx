@@ -440,4 +440,34 @@ describe("AppShell sources routing", () => {
     );
     expect(window.location.hash).toBe(`#/incoming-groups/${groupId}/matching`);
   });
+
+  it("keeps a blocked product deep link on the diagnostic startup view", async () => {
+    server.use(
+      http.get("/api/setup", () =>
+        HttpResponse.json({
+          ...completedState,
+          platform: {
+            ...completedState.platform,
+            diagnostic: true,
+            supported: false,
+            reason: "unsupported platform",
+          },
+        }),
+      ),
+    );
+    window.location.hash = "/operations";
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Диагностика платформы",
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("unsupported platform");
+    expect(
+      screen.queryByRole("navigation", { name: "Основная навигация" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#/operations");
+  });
 });

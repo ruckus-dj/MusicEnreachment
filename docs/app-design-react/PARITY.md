@@ -81,7 +81,7 @@ source channel, а fixture макета такого происхождения 
 
 | Область | Файлы относительно `src/ui/` | Копии и различия провайдеров |
 | --- | --- | --- |
-| Оболочка, язык и тема | `shell/ShellView.tsx`, `shell/ShellStartupView.tsx`, `components/LanguageControl.tsx`, `components/ThemeControl.tsx` | Компоновка общая. Стартовый экран получает состояние чтения источников и открывает «Входящие», если источник есть. Адреса и предпочтения подключают хосты |
+| Оболочка, язык и тема | `shell/ShellView.tsx`, `shell/ShellStartupView.tsx`, `shell/ShellStartupContent.tsx`, `shell/shellRoute.ts` | Общее дерево выбирает рамку, раздел навигации и представление запуска. Хосты передают адреса, предпочтения и результат проверки Setup. Домашний экран открывает «Входящие», если источник есть |
 | Глобальные токены, типографика, фокус и цветовая схема | `styles/index.css`, `styles/documentPresentation.ts` | `app/styles.css` только подключает общие стили; сборки используют общие классы для `html` и `body` |
 | Базовая локализация и предпочтение темы | `i18n/{I18nProvider.tsx,createNamespace.ts,locale.ts,translator.ts,types.ts,namespaces/shell.ts}`, `components/themePreference.ts` | Те же пути |
 | Источники: композиция страницы списка, его заголовок, заголовок корня, сканирование и инвентарь | `features/sources/SourceListPageView.tsx`, `SourceListHeadingView.tsx`, `SourceRootList.tsx`, `SourceRootHeadingView.tsx`, `SourceScanPanel.tsx`, `SourceInventoryPanel.tsx`, `SourceInventoryView.tsx` | Те же пути |

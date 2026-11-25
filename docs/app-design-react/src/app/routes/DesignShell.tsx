@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { ApplicationFrame } from "../../ui/shell/ShellStartupView";
-import { type ShellSectionId, shellSections } from "../../ui/shell/ShellView";
+import {
+	type ShellRouteFamily,
+	shellApplicationFrameState,
+	shellSectionId,
+} from "../../ui/shell/shellRoute";
 import { useI18n } from "../i18n";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
@@ -14,10 +18,17 @@ const libraryRoutes = [
 	"publication-preview",
 	"publication-list",
 ];
-function sectionForRoute(section: string): ShellSectionId | undefined {
-	return shellSections.some((id) => id === section)
-		? (section as ShellSectionId)
-		: undefined;
+
+function familyForPath(path: string): ShellRouteFamily | undefined {
+	if (!path || path === "/") return "home";
+	if (path === "/setup") return "setup";
+	if (path === "/operations") return "operations";
+	if (path === "/settings") return "settings";
+	const route = path.split("/", 1)[0];
+	if (route === "operations" || route === "settings") return undefined;
+	if (libraryRoutes.includes(route)) return "library";
+	if (route === "match") return "review";
+	return shellSectionId(route);
 }
 
 export function DesignShell({
@@ -29,43 +40,29 @@ export function DesignShell({
 }) {
 	const { locale } = useI18n();
 	const path = useHashLocation().slice(1).split("?", 1)[0];
-	const route = path.split("/", 1)[0];
-	const home = !path || path === "/";
-	const section =
-		path === "/operations" || path === "/settings"
-			? path.slice(1)
-			: route === "operations" || route === "settings"
-				? ""
-				: libraryRoutes.includes(route)
-					? "library"
-					: route === "match"
-						? "review"
-						: route;
+	const family = familyForPath(path);
 	return (
 		<ApplicationFrame
 			locale={locale}
 			themeStore={themePreferenceStore}
-			state={
-				path === "/setup"
-					? { kind: "startup" }
-					: {
-							kind: "product",
-							brandHref: "#/",
-							activeSection: sectionForRoute(section),
-							fallbackSection: home ? "home" : "library",
-							sectionLinks: {
-								review: "#review",
-								library: "#library",
-								local: "#local",
-								sources: "#sources",
-								operations: "#/operations",
-								settings: "#/settings",
-							},
-							incomingCount,
-							footer: { kind: "prototype" },
-							setupHref: "#/setup",
-						}
-			}
+			state={shellApplicationFrameState(
+				family,
+				family === "setup" ? "startup" : "product",
+				{
+					brandHref: "#/",
+					sectionLinks: {
+						review: "#review",
+						library: "#library",
+						local: "#local",
+						sources: "#sources",
+						operations: "#/operations",
+						settings: "#/settings",
+					},
+					incomingCount,
+					footer: { kind: "prototype" },
+					setupHref: "#/setup",
+				},
+			)}
 		>
 			{children}
 		</ApplicationFrame>

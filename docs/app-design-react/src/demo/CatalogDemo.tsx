@@ -19,6 +19,7 @@ import {
 	ScreenFeedbackView,
 	ScreenStatus,
 } from "../ui/shell/ScreenFeedbackView";
+import { ShellStartupContent } from "../ui/shell/ShellStartupContent";
 import { ShellHomeView } from "../ui/shell/ShellStartupView";
 import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
 import {
@@ -1178,14 +1179,21 @@ export function CatalogDemo({
 		);
 	if (routeName === "/setup")
 		return (
-			<>
-				<SetupScreen
-					settings={settings}
-					onSettings={setSettings}
-					step={setupStep}
-					onStepChange={setSetupStep}
-				/>
-			</>
+			<ShellStartupContent
+				locale={locale}
+				facts={{
+					kind: "setup",
+					setup: {
+						component: SetupScreen,
+						props: {
+							settings,
+							onSettings: setSettings,
+							step: setupStep,
+							onStepChange: setSetupStep,
+						},
+					},
+				}}
+			/>
 		);
 	const sourceRoute = parseDemoSourceRoute(routeName);
 	if (sourceRoute) {

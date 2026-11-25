@@ -1,5 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import packageMetadata from "../../../package.json";
 import {
   getGetIncomingGroupsQueryKey,
@@ -32,12 +38,20 @@ import { SourcesScreen } from "../../providers/sources/SourcesScreen";
 import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
 import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
 import {
+  ShellStartupContent,
+  type ShellStartupFacts,
+} from "../../ui/shell/ShellStartupContent";
+import {
   ApplicationFrame,
   type ShellHomeSourceRead,
   ShellHomeView,
-  ShellStartupView,
 } from "../../ui/shell/ShellStartupView";
-import type { ShellSectionId } from "../../ui/shell/ShellView";
+import {
+  type ShellFrameData,
+  type ShellRouteFamily,
+  shellApplicationFrameState,
+  shellSectionForFamily,
+} from "../../ui/shell/shellRoute";
 import { useI18n } from "../i18n/host";
 import { useHashLocation } from "../navigation/hashLocation";
 import { themePreferenceStore } from "../theme/themePreferenceHost";
@@ -57,6 +71,38 @@ type Route =
   | `/library/artists/${string}`
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
+
+function familyForRoute(route: Route): ShellRouteFamily {
+  switch (route) {
+    case "/":
+      return "home";
+    case "/setup":
+      return "setup";
+    case "/settings":
+      return "settings";
+    case "/sources":
+      return "sources";
+    case "/operations":
+      return "operations";
+    case "/own-catalog":
+      return "local";
+    default:
+      return route.startsWith("/incoming-groups") ? "review" : "library";
+  }
+}
+
+const applicationShellFrame: ShellFrameData = {
+  brandHref: "#/",
+  sectionLinks: {
+    review: "#/incoming-groups",
+    library: "#/library",
+    local: "#/own-catalog",
+    sources: "#/sources",
+    operations: "#/operations",
+    settings: "#/settings",
+  },
+  footer: { kind: "version", version: packageMetadata.version },
+};
 
 function currentRoute(
   hash: string,
@@ -99,6 +145,7 @@ export function AppShell() {
     sourcesRoute !== undefined,
     incomingGroupsRoute,
   );
+  const family = familyForRoute(route);
   const [state, setState] = useState<SetupStateBody>();
   const [error, setError] = useState<ShellError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,53 +185,73 @@ export function AppShell() {
     if (state.completed && route === "/setup") window.location.hash = "/";
   }, [state, route]);
 
-  const content = renderRouteContent();
+  const content = renderContent();
 
   if (productAvailable)
     return (
-      <ApplicationProductShell route={route}>{content}</ApplicationProductShell>
+      <ApplicationProductShell family={family}>
+        {content}
+      </ApplicationProductShell>
     );
 
   return (
     <ApplicationFrame
       locale={locale}
       themeStore={themePreferenceStore}
-      state={{ kind: "startup" }}
+      state={shellApplicationFrameState(
+        family,
+        "startup",
+        applicationShellFrame,
+      )}
     >
       {content}
     </ApplicationFrame>
   );
 
-  function renderRouteContent() {
-    return loading ? (
-      <ShellStartupView locale={locale} state={{ kind: "loading-server" }} />
-    ) : error ? (
-      <ShellStartupView
-        locale={locale}
-        state={{
-          kind: "setup-error",
-          message: "message" in error ? error.message : undefined,
-          retry: load,
-        }}
-      />
-    ) : state && (state.platform.diagnostic || !state.platform.supported) ? (
-      <ShellStartupView
-        locale={locale}
-        state={{
-          kind: "diagnostic",
-          message: state.platform.reason,
-          platform: `${state.platform.goos}/${state.platform.goarch}`,
-          retry: load,
-        }}
-      />
-    ) : state && !state.completed ? (
-      <SetupManager
-        initialState={state}
-        onCompleted={() => {
-          void load();
-        }}
-      />
-    ) : state && route === "/settings" ? (
+  function renderContent() {
+    const facts = startupFacts();
+    return facts ? (
+      <ShellStartupContent locale={locale} facts={facts} />
+    ) : (
+      renderProductContent()
+    );
+  }
+
+  function startupFacts():
+    | ShellStartupFacts<ComponentProps<typeof SetupManager>>
+    | undefined {
+    if (loading) return { kind: "loading-server" };
+    if (error)
+      return {
+        kind: "setup-error",
+        message: "message" in error ? error.message : undefined,
+        retry: load,
+      };
+    if (state && (state.platform.diagnostic || !state.platform.supported))
+      return {
+        kind: "diagnostic",
+        message: state.platform.reason,
+        platform: `${state.platform.goos}/${state.platform.goarch}`,
+        retry: load,
+      };
+    if (state && !state.completed)
+      return {
+        kind: "setup",
+        setup: {
+          component: SetupManager,
+          props: {
+            initialState: state,
+            onCompleted: () => {
+              void load();
+            },
+          },
+        },
+      };
+    return undefined;
+  }
+
+  function renderProductContent() {
+    return state && route === "/settings" ? (
       <ApplicationRouteOutlet
         route="settings"
         provider={ProductionSettingsBinder}
@@ -224,14 +291,14 @@ export function AppShell() {
 }
 
 function ApplicationProductShell({
-  route,
+  family,
   children,
 }: {
-  route: Route;
+  family: ShellRouteFamily;
   children: ReactNode;
 }) {
   const { locale } = useI18n();
-  const activeSection = sectionForRoute(route);
+  const activeSection = shellSectionForFamily(family);
   const incomingActive = activeSection === "review";
   // Observe the shared group-list cache without fetching: the Incoming review
   // screen owns that request, so the shell only mirrors it while an Incoming
@@ -273,22 +340,10 @@ function ApplicationProductShell({
     <ApplicationFrame
       locale={locale}
       themeStore={themePreferenceStore}
-      state={{
-        kind: "product",
-        brandHref: "#/",
-        activeSection,
-        sectionLinks: {
-          review: "#/incoming-groups",
-          library: "#/library",
-          local: "#/own-catalog",
-          sources: "#/sources",
-          operations: "#/operations",
-          settings: "#/settings",
-        },
+      state={shellApplicationFrameState(family, "product", {
+        ...applicationShellFrame,
         incomingCount,
-        fallbackSection: "home",
-        footer: { kind: "version", version: packageMetadata.version },
-      }}
+      })}
     >
       {children}
     </ApplicationFrame>
@@ -334,15 +389,4 @@ function RootLanding() {
       onOpenIncoming={openIncomingFromHome}
     />
   );
-}
-
-function sectionForRoute(route: Route): ShellSectionId | undefined {
-  if (route === "/incoming-groups" || route.startsWith("/incoming-groups/"))
-    return "review";
-  if (route === "/library" || route.startsWith("/library/")) return "library";
-  if (route === "/own-catalog") return "local";
-  if (route === "/sources") return "sources";
-  if (route === "/operations") return "operations";
-  if (route === "/settings") return "settings";
-  return undefined;
 }
