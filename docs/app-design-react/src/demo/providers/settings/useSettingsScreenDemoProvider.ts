@@ -20,7 +20,10 @@ import {
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import { settingsMessage } from "../../../ui/features/settings/settingsMessages";
 import { genreCatalog } from "../genres/catalogue";
-import type { SetupToolDownloadActivity } from "../setup/useSetupToolDownloadsDemoProvider";
+import type {
+	DemoToolMovePlan,
+	SetupToolDownloadActivity,
+} from "../setup/useSetupToolDownloadsDemoProvider";
 import { overlapsAnyDemoPath } from "../sources/demoPathValidation";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
 import {
@@ -54,6 +57,7 @@ import {
 	isAbsoluteDemoServerPath,
 	type ManagedToolPackage,
 	movePreflightDemo,
+	managedDemoFileCount,
 } from "./ToolLifecycleDemo";
 import { useToolCatalogDemoProvider } from "./useToolCatalogDemoProvider";
 
@@ -185,6 +189,11 @@ export type SettingsScreenProps = {
 	checkMusicBrainz?: DemoMusicBrainzCheck;
 	/** Route-independent tool-download host owned above Settings. */
 	toolActivity?: Partial<SetupToolDownloadActivity>;
+	toolMoves?: {
+		active: boolean;
+		visible: boolean;
+		start: (plan: DemoToolMovePlan) => void;
+	};
 };
 
 function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
@@ -192,7 +201,7 @@ function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
 		concurrency: settings.concurrency ?? "4",
 		matchingPairThreshold: settings.matchingPairThreshold ?? "0.70",
 		toolsPath: settings.toolsPath,
-		toolsPathCandidate: "",
+		toolsPathCandidate: settings.toolsPath,
 		publicationTemplate:
 			settings.publicationTemplate ?? defaultPublicationTemplate,
 		workDirectory: settings.workDirectory,
@@ -358,6 +367,7 @@ export function useSettingsScreenDemoProvider({
 	resolveDirectoryPath,
 	checkMusicBrainz,
 	toolActivity,
+	toolMoves,
 }: SettingsScreenProps): SettingsScreenViewProps {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
@@ -379,6 +389,11 @@ export function useSettingsScreenDemoProvider({
 		| null
 	>(null);
 	const [removeOld, setRemoveOld] = useState(false);
+	const [moveError, setMoveError] = useState<"invalidPath" | "pathOverlap">();
+	const moveAlert = useRef<HTMLParagraphElement>(null);
+	useEffect(() => {
+		if (moveError) requestSettingsFocus(moveAlert.current);
+	}, [moveError]);
 	const moveOpener = useRef<HTMLElement | null>(null);
 	const [installPlan, setInstallPlan] = useState<{
 		preflight: ReturnType<typeof installPreflightDemo>;
@@ -544,8 +559,8 @@ export function useSettingsScreenDemoProvider({
 				Object.assign(baseline, { [field]: saved[field] });
 			}
 			if (group === "toolsDirectory") {
-				value.toolsPathCandidate = "";
-				baseline.toolsPathCandidate = "";
+				value.toolsPathCandidate = saved.toolsPathCandidate;
+				baseline.toolsPathCandidate = saved.toolsPathCandidate;
 			}
 			return { value, baseline };
 		});
@@ -557,6 +572,7 @@ export function useSettingsScreenDemoProvider({
 		clearConflictDismissal(group);
 		if (group === "toolsDirectory") {
 			setMovePlan(null);
+			setMoveError(undefined);
 			setNotice("");
 		}
 	};
@@ -1139,10 +1155,7 @@ export function useSettingsScreenDemoProvider({
 	const blocked = ["running", "claimed"].includes(settings.outputDemoExecution);
 	const candidate = draftState.value.outputDirectory;
 	const outputDirty = candidate !== draftState.baseline.outputDirectory;
-	const managedCount = installations.reduce(
-		(count, item) => count + (item.package === "ffmpeg" ? 2 : 1),
-		0,
-	);
+	const managedCount = managedDemoFileCount(installations);
 	const musicBrainzFingerprint = musicBrainzConfigurationFingerprint({
 		mode: draftState.value.musicBrainzMode,
 		url: draftState.value.musicBrainzURL,
@@ -1335,19 +1348,22 @@ export function useSettingsScreenDemoProvider({
 		setNotice("");
 	};
 	const startMove = (opener: Element, candidatePath: string) => {
+		if (!toolMoves || toolMoves.active) return;
+		setMoveError(undefined);
 		if (!isAbsoluteDemoServerPath(candidatePath.trim())) {
-			setNotice("invalidPath");
+			setMoveError("invalidPath");
 			return;
 		}
 		if (
 			overlapsAnyDemoPath(candidatePath, [
 				settings.workDirectory,
 				currentOutput,
+				settings.toolsPath,
 				...sourceRoots,
 			])
 		) {
 			setMovePlan(null);
-			setNotice("pathOverlap");
+			setMoveError("pathOverlap");
 			return;
 		}
 		moveOpener.current = opener instanceof HTMLElement ? opener : null;
@@ -1372,6 +1388,7 @@ export function useSettingsScreenDemoProvider({
 		startMove(opener, candidatePath);
 	};
 	const confirmMove = () => {
+		if (!toolMoves || toolMoves.active) return;
 		if (!movePlan || !isAbsoluteDemoServerPath(moveCandidate.trim())) {
 			setMovePlan(null);
 			setNotice("invalidPath");
@@ -1382,6 +1399,7 @@ export function useSettingsScreenDemoProvider({
 			overlapsAnyDemoPath(freshPlan.path, [
 				settings.workDirectory,
 				currentOutput,
+				settings.toolsPath,
 				...sourceRoots,
 			])
 		) {
@@ -1399,24 +1417,9 @@ export function useSettingsScreenDemoProvider({
 			setNotice(platformMismatch ? "conflicts" : "staleMove");
 			return;
 		}
-		update({ toolsPath: movePlan.path, pathChecked: false, setupVerified: {} });
+		toolMoves.start(movePlan);
 		setMovePlan(null);
 		clearConflictDismissal("toolsDirectory");
-		{
-			const baseline = {
-				...draftState.baseline,
-				toolsPath: movePlan.path,
-				toolsPathCandidate: "",
-			};
-			setDraftState({
-				baseline,
-				value: {
-					...draftState.value,
-					toolsPath: movePlan.path,
-					toolsPathCandidate: "",
-				},
-			});
-		}
 		setNotice("");
 	};
 	const noticeText =
@@ -1566,6 +1569,7 @@ export function useSettingsScreenDemoProvider({
 			root: {
 				locale,
 				savedDirectory: settings.toolsPath,
+				operationsHref: toolMoves?.visible ? "#/operations" : undefined,
 			},
 			token: githubToken,
 			catalog: {
@@ -1587,6 +1591,7 @@ export function useSettingsScreenDemoProvider({
 					onChange: (value) => {
 						updateDraft({ toolsPathCandidate: value });
 						setMovePlan(null);
+						setMoveError(undefined);
 						setNotice("");
 					},
 					browse: browseDirectory ?? inactiveDirectoryBrowse,
@@ -1599,8 +1604,10 @@ export function useSettingsScreenDemoProvider({
 						setMovePlan(null);
 					},
 				},
+				error: moveError ? copy[moveError] : undefined,
+				errorRef: moveAlert,
 				preflight: {
-					disabled: platformMismatch,
+					disabled: platformMismatch || !toolMoves || toolMoves.active,
 					onPress: requestMove,
 				},
 			},

@@ -17,7 +17,7 @@ const baseline = {
 	concurrency: "4",
 	matchingPairThreshold: "0.70",
 	toolsPath: "/tools",
-	toolsPathCandidate: "",
+	toolsPathCandidate: "/tools",
 	publicationTemplate: "{ALBUM_NAME}",
 	workDirectory: "",
 	outputDirectory: "/srv/music",
@@ -154,19 +154,35 @@ describe("settings text drafts", () => {
 
 	it("rebases a clean tools path before a candidate begins and conflicts after it begins", () => {
 		const clean = { value: baseline, baseline };
-		const current = { ...baseline, toolsPath: "/new-tools" };
+		expect(settingsDraftIsDirty(clean.value, baseline)).toBe(false);
+		const current = {
+			...baseline,
+			toolsPath: "/new-tools",
+			toolsPathCandidate: "/new-tools",
+		};
 		const rebased = rebaseSettingsDraft(clean, current);
 		expect(rebased.value.toolsPath).toBe("/new-tools");
 		expect(rebased.baseline.toolsPath).toBe("/new-tools");
+		expect(rebased.value.toolsPathCandidate).toBe("/new-tools");
 		const candidate = {
 			...rebased,
 			value: { ...rebased.value, toolsPathCandidate: "/candidate" },
 		};
-		const newer = { ...current, toolsPath: "/externally-updated" };
+		const newer = {
+			...current,
+			toolsPath: "/externally-updated",
+			toolsPathCandidate: "/externally-updated",
+		};
 		expect(rebaseSettingsDraft(candidate, newer)).toBe(candidate);
 		expect(
 			settingsDraftConflicts(candidate.baseline, newer, candidate.value),
 		).toEqual(["toolsPath"]);
+		const moved = rebaseSettingsDraft(candidate, {
+			...current,
+			toolsPath: "/candidate",
+			toolsPathCandidate: "/candidate",
+		});
+		expect(settingsDraftIsDirty(moved.value, moved.baseline)).toBe(false);
 	});
 
 	it("merges only changed draft fields and keeps latest untouched settings", () => {

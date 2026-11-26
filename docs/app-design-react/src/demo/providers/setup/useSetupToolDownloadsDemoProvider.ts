@@ -12,9 +12,13 @@ import {
 	initialDemoInstallations,
 	initialDemoUnmanagedToolFiles,
 	installPreflightDemo,
+	isAbsoluteDemoServerPath,
+	managedDemoFileCount,
 	type ManagedToolPackage,
+	movePreflightDemo,
 } from "../settings/ToolLifecycleDemo";
 import type { DemoSettings } from "../settings/useSettingsScreenDemoProvider";
+import { overlapsAnyDemoPath } from "../sources/demoPathValidation";
 
 /** Demo scheduling: queued work stays visible before the host advances it. */
 const startDelayMs = 400;
@@ -51,6 +55,24 @@ export type SetupToolDownload = {
 	createdAt: number;
 };
 
+/** Frozen evidence for a prototype managed-tools folder move. */
+export type DemoToolMovePlan = {
+	/** Tools root that must still be current when the move settles. */
+	sourceDirectory: string;
+	/** Exact destination root applied only after a successful settlement. */
+	path: string;
+	removeOld: boolean;
+	token: string;
+};
+
+export type SetupToolMove = {
+	id: string;
+	plan: DemoToolMovePlan;
+	status: SetupToolDownloadStatus;
+	/** Epoch milliseconds, matching the operations snapshot date format. */
+	createdAt: number;
+};
+
 const statusText = {
 	queued: { en: "Queued", ru: "В очереди" },
 	running: { en: "Running", ru: "Выполняется" },
@@ -75,6 +97,47 @@ function downloadText(
 
 function isPending(download: SetupToolDownload) {
 	return download.status === "queued" || download.status === "running";
+}
+
+function isPendingMove(move: SetupToolMove) {
+	return move.status === "queued" || move.status === "running";
+}
+
+/**
+ * A move applies only while its frozen evidence still matches the live root.
+ * Compare the fixture's preflight again; no filesystem or byte-level work is
+ * simulated here.
+ */
+function approvedMove(current: DemoSettings, plan: DemoToolMovePlan) {
+	if (current.toolsPath.trim() !== plan.sourceDirectory.trim())
+		return undefined;
+	if (!isAbsoluteDemoServerPath(plan.path.trim())) return undefined;
+	if (
+		overlapsAnyDemoPath(plan.path, [
+			current.toolsPath,
+			current.workDirectory,
+			current.currentOutput ?? "/srv/music",
+		])
+	)
+		return undefined;
+	const managedCount = managedDemoFileCount(
+		current.installations ?? initialDemoInstallations,
+	);
+	if (movePreflightDemo(plan.path, managedCount).token !== plan.token)
+		return undefined;
+	return plan.path.trim();
+}
+
+/** Applying a move invalidates the path check, as a confirmed Settings move did. */
+function applyMove(current: DemoSettings, plan: DemoToolMovePlan) {
+	const destination = approvedMove(current, plan);
+	if (!destination) return undefined;
+	return {
+		...current,
+		toolsPath: destination,
+		pathChecked: false,
+		setupVerified: {},
+	};
 }
 
 function approvedDownload(current: DemoSettings, plan: DemoInstallPreflight) {
@@ -148,9 +211,10 @@ export function useSetupToolDownloadsDemoProvider(
 	initialSettings: DemoSettings,
 ) {
 	const { locale } = useI18n();
-	const [{ settings, downloads }, setState] = useState({
+	const [{ settings, downloads, moves }, setState] = useState({
 		settings: initialSettings,
 		downloads: [] as SetupToolDownload[],
+		moves: [] as SetupToolMove[],
 	});
 	const setSettings = useCallback(
 		(update: SetStateAction<DemoSettings>) =>
@@ -226,19 +290,99 @@ export function useSetupToolDownloadsDemoProvider(
 		}));
 	}
 
-	// Advance one admitted download at a time so an unrelated queued package
+	function startMove(plan: DemoToolMovePlan) {
+		const frozen: DemoToolMovePlan = {
+			sourceDirectory: plan.sourceDirectory,
+			path: plan.path,
+			removeOld: plan.removeOld,
+			token: plan.token,
+		};
+		const createdAt = Date.now();
+		const id = `tool-move-${crypto.randomUUID()}`;
+		setState((current) => {
+			if (current.moves.some(isPendingMove)) return current;
+			return {
+				...current,
+				moves: [
+					...current.moves,
+					{ id, plan: frozen, status: "queued", createdAt },
+				],
+			};
+		});
+	}
+
+	function retryMove(id: string) {
+		setState((current) => {
+			const failed = current.moves.find(
+				(item) => item.id === id && item.status === "failed",
+			);
+			if (!failed || current.moves.some(isPendingMove)) return current;
+			return {
+				...current,
+				moves: current.moves.map((item) =>
+					item === failed ? { ...item, status: "queued" } : item,
+				),
+			};
+		});
+	}
+
+	function dismissMove(id: string) {
+		setState((current) => ({
+			...current,
+			moves: current.moves.filter(
+				(item) => item.id !== id || item.status !== "failed",
+			),
+		}));
+	}
+
+	// Advance one admitted tool activity at a time so an unrelated queued item
 	// cannot restart the running timer, mirroring the demo operations host.
+	// Downloads and moves are distinct kinds sharing this timer.
+	const activities = [
+		...downloads.map((item) => ({
+			kind: "download" as const,
+			id: item.id,
+			status: item.status,
+		})),
+		...moves.map((item) => ({
+			kind: "move" as const,
+			id: item.id,
+			status: item.status,
+		})),
+	];
 	const active =
-		downloads.find((item) => item.status === "running") ??
-		downloads.find((item) => item.status === "queued");
+		activities.find((item) => item.status === "running") ??
+		activities.find((item) => item.status === "queued");
 	const activeId = active?.id;
 	const activeStatus = active?.status;
+	const activeKind = active?.kind;
 
 	useEffect(() => {
-		if (!activeId || !activeStatus) return;
+		if (!activeId || !activeStatus || !activeKind) return;
 		const timer = setTimeout(
 			() => {
 				setState((current) => {
+					if (activeKind === "move") {
+						const move = current.moves.find((item) => item.id === activeId);
+						if (move?.status !== activeStatus) return current;
+						const applied =
+							activeStatus === "running"
+								? applyMove(current.settings, move.plan)
+								: undefined;
+						const status =
+							activeStatus === "queued"
+								? "running"
+								: applied
+									? "succeeded"
+									: "failed";
+						return {
+							...current,
+							settings: applied ?? current.settings,
+							moves: current.moves.map((item) =>
+								item === move ? { ...item, status } : item,
+							),
+						};
+					}
 					const download = current.downloads.find(
 						(item) => item.id === activeId,
 					);
@@ -256,6 +400,7 @@ export function useSetupToolDownloadsDemoProvider(
 								? "succeeded"
 								: "failed";
 					return {
+						...current,
 						settings: applied ?? current.settings,
 						downloads: current.downloads.map((item) =>
 							item === download ? { ...item, status } : item,
@@ -266,7 +411,7 @@ export function useSetupToolDownloadsDemoProvider(
 			activeStatus === "queued" ? startDelayMs : settleDelayMs,
 		);
 		return () => clearTimeout(timer);
-	}, [activeId, activeStatus]);
+	}, [activeId, activeKind, activeStatus]);
 
 	const busyKinds = new Set<ManagedToolPackage>();
 	for (const item of downloads) {
@@ -310,5 +455,16 @@ export function useSetupToolDownloadsDemoProvider(
 		start,
 		busyKinds,
 	};
-	return { settings, setSettings, activity, downloads, retry, dismiss };
+	return {
+		settings,
+		setSettings,
+		activity,
+		downloads,
+		retry,
+		dismiss,
+		moves,
+		startMove,
+		retryMove,
+		dismissMove,
+	};
 }

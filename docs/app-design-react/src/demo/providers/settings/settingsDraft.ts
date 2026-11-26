@@ -64,9 +64,26 @@ export function rebaseSettingsDraft(
 		"musicBrainzDelay",
 	];
 	for (const field of fields) {
-		const locallyChanged =
-			value[field] !== baseline[field] ||
-			(field === "toolsPath" && value.toolsPathCandidate !== "");
+		if (field === "toolsPath") {
+			const candidateDirty =
+				value.toolsPathCandidate !== baseline.toolsPathCandidate;
+			if (
+				candidateDirty &&
+				value.toolsPathCandidate !== current.toolsPathCandidate
+			)
+				continue;
+			if (
+				baseline.toolsPath !== current.toolsPath ||
+				baseline.toolsPathCandidate !== current.toolsPathCandidate
+			) {
+				value.toolsPath = baseline.toolsPath = current.toolsPath;
+				value.toolsPathCandidate = baseline.toolsPathCandidate =
+					current.toolsPathCandidate;
+				changed = true;
+			}
+			continue;
+		}
+		const locallyChanged = value[field] !== baseline[field];
 		if (!locallyChanged && baseline[field] !== current[field]) {
 			Object.assign(value, { [field]: current[field] });
 			Object.assign(baseline, { [field]: current[field] });
@@ -93,7 +110,10 @@ export function mergeSettingsDraft(
 ): SettingsTextDraft {
 	const merged = {
 		...current,
-		toolsPathCandidate: snapshot.value.toolsPathCandidate,
+		toolsPathCandidate:
+			snapshot.value.toolsPathCandidate !== snapshot.baseline.toolsPathCandidate
+				? snapshot.value.toolsPathCandidate
+				: current.toolsPathCandidate,
 	};
 	for (const field of fields) {
 		Object.assign(merged, {
@@ -178,14 +198,10 @@ export function settingsDraftIsDirty(
 	value: SettingsTextDraft,
 	baseline: SettingsTextDraft,
 ) {
-	return (
-		value.toolsPathCandidate !== "" ||
-		Object.keys(value).some(
-			(key) =>
-				key !== "toolsPathCandidate" &&
-				value[key as keyof SettingsTextDraft] !==
-					baseline[key as keyof SettingsTextDraft],
-		)
+	return Object.keys(value).some(
+		(key) =>
+			value[key as keyof SettingsTextDraft] !==
+			baseline[key as keyof SettingsTextDraft],
 	);
 }
 
@@ -202,7 +218,8 @@ export function settingsDraftConflicts(
 			(!value ||
 				value[key as keyof SettingsTextDraft] !==
 					baseline[key as keyof SettingsTextDraft] ||
-				(key === "toolsPath" && value.toolsPathCandidate !== "")),
+				(key === "toolsPath" &&
+					value.toolsPathCandidate !== baseline.toolsPathCandidate)),
 	) as (keyof SettingsTextDraft)[];
 }
 

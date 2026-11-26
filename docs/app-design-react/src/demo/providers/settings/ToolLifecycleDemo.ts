@@ -196,6 +196,15 @@ export function isAbsoluteDemoServerPath(value: string): boolean {
 	);
 }
 
+export function managedDemoFileCount(
+	installations: readonly DemoInstallation[],
+) {
+	return installations.reduce(
+		(count, item) => count + (item.package === "ffmpeg" ? 2 : 1),
+		0,
+	);
+}
+
 export function movePreflightDemo(
 	path: string,
 	managedCount: number,

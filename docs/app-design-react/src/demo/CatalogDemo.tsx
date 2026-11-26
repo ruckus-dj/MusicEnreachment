@@ -228,7 +228,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 	useEffect(() => {
 		onIncomingCount?.(incomingCount);
 	}, [incomingCount, onIncomingCount]);
-	// Host-owned so an admitted tool download settles across route changes.
+	// Host-owned so admitted downloads and moves settle across route changes.
 	const {
 		settings,
 		setSettings,
@@ -236,6 +236,10 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		downloads: toolDownloadSnapshots,
 		retry: retryToolDownload,
 		dismiss: dismissToolDownload,
+		moves: toolMoveSnapshots,
+		startMove: startToolMove,
+		retryMove: retryToolMove,
+		dismissMove: dismissToolMove,
 	} = useSetupToolDownloadsDemoProvider(initialDemoSettings);
 	const publicationDestination: PublicationDestination = {
 		outputDirectory:
@@ -1383,6 +1387,15 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 						resolveDirectoryPath: demoDirectoryStart,
 						onSettings: setSettings,
 						toolActivity: toolDownloads,
+						toolMoves: {
+							active: toolMoveSnapshots.some(
+								({ status }) => status === "queued" || status === "running",
+							),
+							visible: toolMoveSnapshots.some(
+								({ status }) => status !== "succeeded",
+							),
+							start: startToolMove,
+						},
 						workDirectoryBusy:
 							sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange,
 						onOutputReset: () => {
@@ -1503,6 +1516,9 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 					toolDownloads: toolDownloadSnapshots,
 					onRetryToolDownload: retryToolDownload,
 					onDismissToolDownload: dismissToolDownload,
+					toolMoves: toolMoveSnapshots,
+					onRetryToolMove: retryToolMove,
+					onDismissToolMove: dismissToolMove,
 					positionHrefForTrack: (positionId) => {
 						const release = releases.find((item) =>
 							item.tracks.some((track) => track.id === positionId),

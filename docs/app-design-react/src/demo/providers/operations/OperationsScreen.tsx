@@ -34,7 +34,10 @@ import {
 import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
-import type { SetupToolDownload } from "../setup/useSetupToolDownloadsDemoProvider";
+import type {
+	SetupToolDownload,
+	SetupToolMove,
+} from "../setup/useSetupToolDownloadsDemoProvider";
 import type { SourceArtifactCleanupDemoExecution } from "../sources/sourceArtifactCleanupDemoProvider";
 import type { SourceRoot } from "../sources/SourcesScreen";
 import type {
@@ -50,6 +53,7 @@ const pageSize = 50;
 const emptyScanAttempts: readonly DemoScanAttempt[] = [];
 const emptySourceRoots: readonly SourceRoot[] = [];
 const emptyToolDownloads: readonly SetupToolDownload[] = [];
+const emptyToolMoves: readonly SetupToolMove[] = [];
 
 type VisibleOperationStatus = Exclude<DemoOperationStatus, "succeeded">;
 
@@ -105,6 +109,9 @@ export interface DemoOperationsScreenProps {
 	toolDownloads?: readonly SetupToolDownload[];
 	onRetryToolDownload?: (id: string) => void;
 	onDismissToolDownload?: (id: string) => void;
+	toolMoves?: readonly SetupToolMove[];
+	onRetryToolMove?: (id: string) => void;
+	onDismissToolMove?: (id: string) => void;
 }
 
 export function DemoOperationsBinder({
@@ -132,6 +139,9 @@ function useDemoOperationsModel({
 	toolDownloads = emptyToolDownloads,
 	onRetryToolDownload,
 	onDismissToolDownload,
+	toolMoves = emptyToolMoves,
+	onRetryToolMove,
+	onDismissToolMove,
 }: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
 	const copy = operationMessages[locale];
@@ -359,6 +369,53 @@ function useDemoOperationsModel({
 			);
 		}
 
+		for (const move of toolMoves) {
+			addRow(
+				move.status,
+				undefined,
+				{
+					id: move.id,
+					target: locale === "ru" ? "Папка инструментов" : "Tools folder",
+					operation: operationKinds.kinds.move_tools_root[locale],
+					stage:
+						move.status === "running"
+							? locale === "ru"
+								? "Копирование"
+								: "Copying"
+							: move.status === "queued"
+								? locale === "ru"
+									? "В очереди"
+									: "Queued"
+								: undefined,
+					error: settingsMessages[locale].staleMove,
+					actions:
+						move.status === "failed"
+							? [
+									...(onRetryToolMove
+										? [
+												{
+													id: "retry",
+													label: copy.retry,
+													onPress: () => onRetryToolMove(move.id),
+												},
+											]
+										: []),
+									...(onDismissToolMove
+										? [
+												{
+													id: "dismiss",
+													label: copy.dismiss,
+													onPress: () => onDismissToolMove(move.id),
+												},
+											]
+										: []),
+								]
+							: undefined,
+				},
+				move.createdAt,
+			);
+		}
+
 		for (const attempt of scanAttempts) {
 			const root = sourceRoots.find((item) => item.id === attempt.rootId);
 			if (!root) continue;
@@ -440,11 +497,14 @@ function useDemoOperationsModel({
 		onScanRoot,
 		onRetryToolDownload,
 		onDismissToolDownload,
+		onRetryToolMove,
+		onDismissToolMove,
 		queue,
 		scanAttempts,
 		sourceCleanup,
 		sourceRoots,
 		toolDownloads,
+		toolMoves,
 		provider.deletionStates,
 		provider.publicationJobs,
 		provider.publicationStates,
