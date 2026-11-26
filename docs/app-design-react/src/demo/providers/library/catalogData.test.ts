@@ -80,6 +80,37 @@ it("overrides number tags without redefining the displayed position", () => {
 	});
 });
 
+it("resolves the exact key override before mapping the publication container", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	const fixture = release?.tracks[0];
+	if (!release || !fixture) throw new Error("Missing position fixture");
+	const track = {
+		...fixture,
+		recordingScalarIntent: {
+			key: { state: "value" as const, value: ["C minor"] },
+		},
+		positionScalarIntent: {
+			key: { state: "value" as const, value: ["D minor"] },
+		},
+	};
+	expect(desiredTags(release, track, undefined, null, "M4A")).toMatchObject({
+		INITIALKEY: ["D minor"],
+		KEY: [],
+	});
+	expect(
+		desiredTags(
+			release,
+			{ ...track, positionScalarIntent: {} },
+			undefined,
+			null,
+			"FLAC",
+		),
+	).toMatchObject({
+		KEY: ["C minor"],
+		INITIALKEY: [],
+	});
+});
+
 it("creates only from the explicitly selected available source and skips missing positions", () => {
 	const next = applyMetadataPreview(
 		originalReleases,

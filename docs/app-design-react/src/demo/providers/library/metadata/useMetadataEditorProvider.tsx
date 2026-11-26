@@ -123,7 +123,16 @@ export interface MetadataEditorProps {
 	fieldLabels?: Readonly<Record<string, string>>;
 	fieldKinds?: Readonly<Record<string, MetadataFieldDescriptor["kind"]>>;
 	fieldHints?: Readonly<Record<string, string>>;
-	fieldBaselines?: Readonly<Record<string, string>>;
+	fieldBaselines?: Readonly<
+		Record<
+			string,
+			{
+				display: string;
+				notice: string;
+				populated: boolean;
+			}
+		>
+	>;
 	/** Explicit editor fields for scopes whose shared registry identity differs. */
 	fields?: readonly MetadataField[];
 	fieldStateDisplay?: {
@@ -382,11 +391,11 @@ export function useMetadataEditorProvider({
 		const hasState = stateControlled(field.key);
 		const libraryScalar = libraryMetadata && hasState;
 		const fieldState = hasState ? (stateFor(field.key) ?? "absent") : undefined;
-		const providerBaseline =
+		const baseline =
 			fieldState === "absent" ? fieldBaselines?.[field.key] : undefined;
 		const displayValue = fieldState
 			? fieldState === "absent"
-				? (providerBaseline ?? fieldStateDisplay?.absent)
+				? (baseline?.display ?? fieldStateDisplay?.absent)
 				: fieldState === "explicit_empty"
 					? fieldStateDisplay?.explicitEmpty
 					: (list ? fieldRows.join("\n") : (fieldRows[0] ?? "")) ||
@@ -400,9 +409,7 @@ export function useMetadataEditorProvider({
 			editing: !readOnlyField,
 			presentation: hasState ? undefined : "control",
 			displayValue,
-			notices: providerBaseline
-				? [releaseMetadataEditorMessages[locale].providerBaseline]
-				: undefined,
+			notices: baseline ? [baseline.notice] : undefined,
 			state: fieldState,
 			mode: hasState ? fieldStateMode : undefined,
 			onStateChange: hasState
@@ -1138,14 +1145,16 @@ export function useMetadataEditorProvider({
 		([group, sectionFields]) => ({
 			key: group,
 			label: groupHeading(group),
-			summary: scopedRelease
+			summary: libraryMetadata
 				? metadataFilledSummary(
 						locale,
 						sectionFields.filter(({ key }) => {
+							if (!stateControlled(key)) return current[key]?.some(Boolean);
 							const state = stateFor(key);
 							return state === "value"
-								? current[key]?.some(Boolean)
-								: state === "absent" && Boolean(fieldBaselines?.[key]);
+								? current[key]?.some(Boolean) ||
+										(fieldKinds?.[key] === "boolean" && current[key]?.length)
+								: state === "absent" && fieldBaselines?.[key]?.populated;
 						}).length,
 					)
 				: metadataSummary(sectionFields, current, locale),

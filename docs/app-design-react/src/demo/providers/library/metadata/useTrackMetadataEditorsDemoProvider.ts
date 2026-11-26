@@ -10,7 +10,7 @@ import {
 	type CatalogArtist,
 	effectiveRecordingTitle,
 	type OriginalTrack,
-	positionLayoutFields,
+	positionScalarFields,
 	positionTitleIntent,
 	recordingTitleBaseline,
 	type ScopedScalarIntentMap,
@@ -100,17 +100,34 @@ export function useTrackMetadataEditorsDemoProvider({
 	const position: MetadataValues = {
 		...track.positionMetadata,
 		...Object.fromEntries(
-			positionLayoutFields.map(({ metadataKey }) => {
+			positionScalarFields.map(({ metadataKey, kind }) => {
 				const intent = track.positionScalarIntent?.[metadataKey];
 				return [
 					metadataKey,
-					intent?.state === "value" ? [...intent.value] : [],
+					intent?.state === "value"
+						? [...intent.value]
+						: kind === "advisory"
+							? ["explicit"]
+							: [],
 				];
 			}),
 		),
 		title: [positionTitle.value],
 	};
 	const releaseText = releaseMetadataEditorMessages[locale];
+	const recordingKey = track.recordingScalarIntent?.key;
+	const inheritedKey =
+		recordingKey?.state === "value" || recordingKey?.state === "explicit_empty"
+			? {
+					display:
+						recordingKey.state === "explicit_empty"
+							? releaseText.explicitEmpty
+							: (recordingKey.value[0] ?? ""),
+					notice: releaseText.inheritedFromRecording,
+					populated:
+						recordingKey.state === "value" && Boolean(recordingKey.value[0]),
+				}
+			: undefined;
 	const fieldStateMode = {
 		label: releaseText.mode,
 		absent: releaseText.absent,
@@ -233,7 +250,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			fieldStates: {
 				title: positionTitle.state,
 				...Object.fromEntries(
-					positionLayoutFields.map(({ metadataKey }) => [
+					positionScalarFields.map(({ metadataKey }) => [
 						metadataKey,
 						track.positionScalarIntent?.[metadataKey]?.state ?? "absent",
 					]),
@@ -242,18 +259,20 @@ export function useTrackMetadataEditorsDemoProvider({
 			fieldLabels: {
 				title: releaseText.labels.title,
 				...Object.fromEntries(
-					positionLayoutFields.map(({ key, metadataKey }) => [
+					positionScalarFields.map(({ key, metadataKey }) => [
 						metadataKey,
 						releaseText.labels[key],
 					]),
 				),
 			},
 			fieldKinds: Object.fromEntries(
-				positionLayoutFields.map(({ metadataKey, kind }) => [
+				positionScalarFields.map(({ metadataKey, kind }) => [
 					metadataKey,
 					kind,
 				]),
 			),
+			fieldBaselines: inheritedKey ? { key: inheritedKey } : undefined,
+			fieldHints: { recordingdate: releaseText.dateHint },
 			fieldStateMode,
 			fieldStateDisplay,
 			onSave: (values, details) => {
@@ -268,7 +287,7 @@ export function useTrackMetadataEditorsDemoProvider({
 					const positionScalarIntent: ScopedScalarIntentMap = {
 						...current.positionScalarIntent,
 					};
-					for (const { metadataKey: field, kind } of positionLayoutFields) {
+					for (const { metadataKey: field, kind } of positionScalarFields) {
 						delete positionMetadata[field];
 						delete comparison[field];
 						const state = details?.fieldStates?.[field];
@@ -278,11 +297,14 @@ export function useTrackMetadataEditorsDemoProvider({
 						else if (state === "value")
 							positionScalarIntent[field] = {
 								state,
-								value: [
-									kind === "integer"
-										? String(Number(values[field]?.[0]))
-										: (values[field]?.[0] ?? ""),
-								],
+								value:
+									kind === "list"
+										? [...(values[field] ?? [])]
+										: [
+												kind === "integer" || kind === "number"
+													? String(Number(values[field]?.[0]))
+													: (values[field]?.[0] ?? ""),
+											],
 							};
 					}
 					const updated: OriginalTrack = {

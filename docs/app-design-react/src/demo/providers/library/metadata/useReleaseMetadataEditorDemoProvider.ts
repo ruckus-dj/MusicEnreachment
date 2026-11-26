@@ -147,7 +147,18 @@ export function useReleaseMetadataEditorDemoProvider({
 			fieldBaselines: Object.fromEntries(
 				(["asin", "script"] as const).flatMap((key) => {
 					const value = acceptedReleaseIdentifier(release, key);
-					return value ? [[key, value]] : [];
+					return value
+						? [
+								[
+									key,
+									{
+										display: value,
+										notice: releaseText.providerBaseline,
+										populated: true,
+									},
+								],
+							]
+						: [];
 				}),
 			),
 			fieldStateMode: {

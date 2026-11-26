@@ -7,7 +7,7 @@ import {
 	type ReleaseScalarField,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../../ui/i18n/types";
-import { positionLayoutFields } from "../catalogData";
+import { positionScalarFields } from "../catalogData";
 import {
 	fieldByKey,
 	fieldsForScope,
@@ -73,14 +73,14 @@ export const libraryPositionEditorFields: MetadataField[] = [
 		kind: "text",
 		group: "main",
 	},
-	...positionLayoutFields.map(
-		({ metadataKey, tag, kind }): MetadataField => ({
+	...positionScalarFields.map(
+		({ metadataKey, tag, kind, group }): MetadataField => ({
 			key: metadataKey,
 			label: metadataKey,
 			tag,
 			kind,
 			scope: "track",
-			group: "position",
+			group,
 		}),
 	),
 	...fieldsForScope("track").filter(({ kind }) => kind === "identity"),

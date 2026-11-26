@@ -335,14 +335,7 @@ export function recordingScalarOverrideTags(
 		if (!intent || !tag || intent.state === "absent") continue;
 		// TITLE has its own resolver; other fields keep the existing recording overlay.
 		if (purpose === "publication" && metadataKey === "title") continue;
-		const values =
-			intent.state === "explicit_empty"
-				? []
-				: kind === "advisory"
-					? [intent.value[0] === "clean" ? "2" : "1"]
-					: [...intent.value];
-		tags[tag] = values;
-		if (metadataKey === "key") tags.INITIALKEY = [...values];
+		tags[tag] = scalarIntentTagValues(intent, kind);
 	}
 	return tags;
 }
@@ -353,7 +346,7 @@ export function recordingIdentity(track: OriginalTrack): string | undefined {
 	return undefined;
 }
 
-export const positionLayoutFields = [
+const positionLayoutFields = [
 	{
 		key: "disc_title",
 		metadataKey: "disctitle",
@@ -386,6 +379,29 @@ export const positionLayoutFields = [
 	},
 ] as const;
 
+export const positionScalarFields = [
+	...recordingScalarFields
+		.filter(({ key }) => key !== "title")
+		.map((field) => ({
+			...field,
+			tag: fieldByKey(field.metadataKey)?.tag ?? "",
+		})),
+	...positionLayoutFields.map((field) => ({
+		...field,
+		group: "position" as const,
+	})),
+];
+
+function scalarIntentTagValues(
+	intent: Exclude<ScopedScalarIntent, { state: "absent" }>,
+	kind: string,
+): string[] {
+	if (intent.state === "explicit_empty") return [];
+	return kind === "advisory"
+		? [intent.value[0] === "clean" ? "2" : "1"]
+		: [...intent.value];
+}
+
 /** The exact raw position tags before any explicit track/disc override. */
 function positionNumberingBaseline(
 	track: Pick<
@@ -401,14 +417,14 @@ function positionNumberingBaseline(
 	};
 }
 
-export function positionLayoutOverrideTags(
+export function positionScalarOverrideTags(
 	track: OriginalTrack,
 ): MetadataValues {
 	const tags: MetadataValues = {};
-	for (const { metadataKey, tag } of positionLayoutFields) {
+	for (const { metadataKey, tag, kind } of positionScalarFields) {
 		const intent = track.positionScalarIntent?.[metadataKey];
-		if (!intent || intent.state === "absent") continue;
-		tags[tag] = intent.state === "explicit_empty" ? [] : [...intent.value];
+		if (!intent || !tag || intent.state === "absent") continue;
+		tags[tag] = scalarIntentTagValues(intent, kind);
 	}
 	return tags;
 }
@@ -559,35 +575,40 @@ export function applyMetadataPreview(
 				continue;
 			if (track.published && !metadataChanged(release, track, artists))
 				continue;
-			const tags = effectivePublicationTags(release, track, artists, files);
+			const output =
+				!track.published && file
+					? choosePublicationOutput(file, {
+							...destination,
+							artist: originalArtistName(release.artistId, artists),
+							year: effectiveReleaseYear(release),
+							release: effectiveReleaseTitle(release),
+							position: track.position,
+							title: track.title,
+						})
+					: undefined;
+			const tags = effectivePublicationTags(
+				release,
+				track,
+				artists,
+				files,
+				output?.container,
+			);
 			const coverHash = track.coverHash || null;
 			const lyrics = track.lyrics || null;
-			track.published = track.published
-				? { ...track.published, tags, coverHash, lyrics }
-				: {
-						tags,
-						coverHash,
-						lyrics,
-						codec: file ? demoOutputCodec(file.codec, destination.format) : "",
-						container: choosePublicationOutput(file!, {
-							...destination,
-							artist: originalArtistName(release.artistId, artists),
-							year: effectiveReleaseYear(release),
-							release: effectiveReleaseTitle(release),
-							position: track.position,
-							title: track.title,
-						}).container,
-						sourceId: track.sourceId,
-						path: choosePublicationOutput(file!, {
-							...destination,
-							artist: originalArtistName(release.artistId, artists),
-							year: effectiveReleaseYear(release),
-							release: effectiveReleaseTitle(release),
-							position: track.position,
-							title: track.title,
-						}).path,
-						readAt: "Только в памяти макета",
-					};
+			if (track.published)
+				track.published = { ...track.published, tags, coverHash, lyrics };
+			else if (file && output)
+				track.published = {
+					tags,
+					coverHash,
+					lyrics,
+					codec: demoOutputCodec(file.codec, destination.format),
+					container: output.container,
+					sourceId: track.sourceId,
+					path: output.path,
+					readAt: "Только в памяти макета",
+				};
+			else continue;
 			track.metadataBaseline = structuredClone(tags);
 			track.metadataBaselineExtras = { coverHash, lyrics };
 		}
@@ -660,6 +681,7 @@ export function desiredTags(
 	track: OriginalTrack,
 	artists: CatalogArtist[] = originalArtists,
 	audioSourceId: string | null = track.sourceId,
+	outputContainer?: string,
 ): Record<string, string[]> {
 	const artist = artists.find((item) => item.id === track.artistId);
 	const albumArtist = artists.find((item) => item.id === release.artistId);
@@ -863,9 +885,21 @@ export function desiredTags(
 		...projectMetadataValues(recordingValues).tags,
 		...recordingScalarOverrideTags(track, "publication"),
 		...projectMetadataValues(explicitValues).tags,
-		...positionLayoutOverrideTags(track),
+		...positionScalarOverrideTags(track),
 	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	const musicalKey = result.KEY;
+	if (musicalKey && outputContainer) {
+		const container = outputContainer.toUpperCase();
+		if (!musicalKey.length || container === "MKA" || container === "FLAC") {
+			result.INITIALKEY = [];
+		} else if (container === "MP3" || container === "M4A") {
+			result.INITIALKEY = musicalKey;
+			result.KEY = [];
+		} else {
+			delete result.KEY;
+		}
+	}
 	const projectedArtistNames = (
 		credits: { creditName: string; joinPhrase?: string }[],
 		names: string[],
@@ -975,12 +1009,14 @@ export function effectivePublicationTags(
 	track: OriginalTrack,
 	artists: CatalogArtist[] = originalArtists,
 	files: SourceFiles = originalFiles,
+	outputContainer = track.published?.container,
 ): Record<string, string[]> {
 	const tags = desiredTags(
 		release,
 		track,
 		artists,
 		track.published?.sourceId ?? track.sourceId,
+		outputContainer,
 	);
 	if (!track.published) {
 		const sourceFile = track.sourceId ? files[track.sourceId] : undefined;

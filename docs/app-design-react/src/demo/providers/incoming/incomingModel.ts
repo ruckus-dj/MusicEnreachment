@@ -311,8 +311,9 @@ export function providerTags(
 	track: OriginalTrack,
 	artists?: CatalogArtist[],
 	audioSourceId: string | null = track.sourceId,
+	outputContainer?: string,
 ): TagMap {
-	return desiredTags(release, track, artists, audioSourceId);
+	return desiredTags(release, track, artists, audioSourceId, outputContainer);
 }
 
 export function findProviderTrack(
@@ -478,6 +479,11 @@ export function planRows(
 			projected,
 			artists,
 			selectedSourceId(assignment),
+			file
+				? destination.format === "original"
+					? demoSourceContainer(file)
+					: destination.format
+				: undefined,
 		);
 		const previous = track?.published ?? undefined;
 		const outputCodec = file

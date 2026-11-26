@@ -411,7 +411,7 @@ function createTarget(
 	});
 	return {
 		sourceId: file.id,
-		tags: desiredTags(release, track, artists, file.id),
+		tags: desiredTags(release, track, artists, file.id, output.container),
 		codec: demoOutputCodec(file.codec, destination.format),
 		container: output.container,
 		path: output.path,
