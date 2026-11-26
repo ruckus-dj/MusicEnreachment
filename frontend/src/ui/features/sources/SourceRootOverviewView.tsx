@@ -1,6 +1,5 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { AppButton } from "../../components/AppButton";
-import { SourceWorkDirectoryView } from "./SourcePageFeedbackView";
 
 export type SourceRootOverviewTone = "available" | "unavailable" | "unknown";
 
@@ -16,13 +15,11 @@ export type SourceRootOverviewViewProps = {
 	name: string;
 	path: string;
 	mode: "in_place" | "staged";
-	modeNote?: Omit<ComponentProps<typeof SourceWorkDirectoryView>, "inline">;
 	availability: SourceRootOverviewTone;
 	availabilityNote?: string;
 	lastScan: { label: string; dateTime?: string };
 	inventory: {
 		label: string;
-		notes?: readonly string[];
 		path?: string;
 		stale?: boolean;
 	};
@@ -85,7 +82,6 @@ export function SourceRootOverviewView({
 	name,
 	path,
 	mode,
-	modeNote,
 	availability,
 	availabilityNote,
 	lastScan,
@@ -103,16 +99,7 @@ export function SourceRootOverviewView({
 		{
 			key: "mode",
 			label: text.mode,
-			value: (
-				<>
-					{text[mode]}
-					{modeNote && (
-						<span className={note}>
-							<SourceWorkDirectoryView {...modeNote} inline />
-						</span>
-					)}
-				</>
-			),
+			value: text[mode],
 		},
 		{
 			key: "availability",
@@ -140,16 +127,7 @@ export function SourceRootOverviewView({
 		{
 			key: "inventory",
 			label: text.inventory,
-			value: (
-				<>
-					{inventory.label}
-					{inventory.notes?.map((item) => (
-						<span key={item} className={note}>
-							{item}
-						</span>
-					))}
-				</>
-			),
+			value: inventory.label,
 		},
 	];
 	if (inventory.path) {

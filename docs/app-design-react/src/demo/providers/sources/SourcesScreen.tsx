@@ -422,14 +422,6 @@ export function SourcesScreen({
 								name: root.name,
 								path: root.path,
 								mode: root.mode,
-								modeNote:
-									root.mode === "staged"
-										? {
-												label: m("workDirectory"),
-												path: workDirectory,
-												link: { href: "#/settings", label: m("configure") },
-											}
-										: undefined,
 								availability:
 									root.available === true
 										? "available"
@@ -446,10 +438,6 @@ export function SourcesScreen({
 									label: inventoryLabel,
 									path: root.inventoryPath,
 									stale: inventoryPathStale(root),
-									notes:
-										root.lastSuccessfulScanAt && root.inventoryCount === 0
-											? [m("noInventory")]
-											: undefined,
 								},
 								onRemove: () => requestRootRemoval(root),
 							},

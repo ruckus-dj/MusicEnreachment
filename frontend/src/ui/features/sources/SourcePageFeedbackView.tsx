@@ -88,25 +88,3 @@ export function SourceNoticeView({ message }: { message: string }) {
     </p>
   );
 }
-
-export function SourceWorkDirectoryView({
-  label,
-  path,
-  link,
-  inline,
-}: {
-  label: string;
-  path?: string;
-  link: { label: string; href: string };
-  inline?: boolean;
-}) {
-  const content = (
-    <>
-      {label}: {path || "—"} ·{" "}
-      <a href={link.href} className="text-[var(--accent)] hover:underline">
-        {link.label}
-      </a>
-    </>
-  );
-  return inline ? content : <p>{content}</p>;
-}
