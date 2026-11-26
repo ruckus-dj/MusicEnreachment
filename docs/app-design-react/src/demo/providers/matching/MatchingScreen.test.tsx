@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { I18nProvider, useI18n } from "../../../app/i18n";
+import { I18nProvider, useI18n } from "../demoPreferences";
 import {
 	createIncomingState,
 	type IncomingReleases,

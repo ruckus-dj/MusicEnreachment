@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useContext } from "react";
-import { useI18n } from "../../../app/i18n/host";
+import { useI18n } from "../demoPreferences";
 import {
 	type LibraryAlbumCredit,
 	type LibraryAlbumDetail,

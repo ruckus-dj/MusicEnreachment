@@ -1,26 +1,37 @@
 import {
 	type ReactNode,
+	createContext,
+	useContext,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
-	useSyncExternalStore,
 } from "react";
-import { useI18n } from "../app/i18n";
-import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
+import {
+	navigateHash,
+	useMeloTroveHashLocation,
+} from "../ui/app/hashLocation";
+import {
+	bindMeloTroveHomeModel,
+	bindMeloTroveReleaseModel,
+	bindMeloTroveRoute,
+	bindMeloTroveScreen,
+	type MeloTroveModel,
+	type MeloTroveProvider,
+	type MeloTroveScreens,
+} from "../ui/app/MeloTroveProvider";
+import { meloTrovePaths, type MeloTroveRoute } from "../ui/app/MeloTroveRoute";
 import type { IncomingCreationModel } from "../ui/features/incoming/IncomingCreationOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
-import { LibraryReleaseWorkspaceView } from "../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	type LibrarySelectionPreviewPosition,
 	type LibrarySelectionPreviewState,
-	LibrarySelectionPreviewView,
 	maxLibraryPreviewPositions,
 } from "../ui/features/library/LibrarySelectionPreviewView";
-import { LibrarySelectionScreenFrame } from "../ui/features/library/LibrarySelectionScreenFrame";
 import {
+	type LibraryArtistAddress,
 	libraryPositionHref,
 	libraryReleaseHref,
 	parseLibraryArtistAddress,
@@ -29,9 +40,6 @@ import {
 } from "../ui/features/library/libraryDetailRoute";
 import { libraryReleaseMessage } from "../ui/features/library/libraryReleaseMessages";
 import { matchingMessage } from "../ui/features/matching/matchingWorkspaceMessages";
-import { ShellStartupContent } from "../ui/shell/ShellStartupContent";
-import { ShellHomeView } from "../ui/shell/ShellStartupView";
-import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -47,9 +55,14 @@ import {
 	newDemoLocalRecord,
 	selectDemoRelease,
 } from "./fixtures/localReleaseDemo";
-import { IncomingWorkspaceAnchor } from "./providers/incoming/IncomingWorkspaceAnchor";
+import { themePreferenceStore, useI18n } from "./providers/demoPreferences";
+import {
+	DemoMeloTroveIncomingBinder,
+	type IncomingWorkspaceAnchorProps,
+} from "./providers/incoming/IncomingWorkspaceAnchor";
 import { readyAutomaticIncomingFolders } from "./providers/incoming/automaticIncomingAnalysis";
 import {
+	type IncomingGroupsRoute,
 	incomingGroupMatchingHref,
 	incomingGroupsListHref,
 	parseIncomingGroupsRoute,
@@ -91,7 +104,7 @@ import {
 	trackSearchText,
 } from "./providers/library/catalogViewModel";
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
-import { DemoLibraryReleaseWorkspace } from "./providers/library/DemoLibraryReleaseWorkspace";
+import { DemoMeloTroveReleaseBinder } from "./providers/library/DemoLibraryReleaseWorkspace";
 import {
 	type DemoLibraryProviderRefresh,
 	useDemoLibraryProviderRefresh,
@@ -157,14 +170,15 @@ import {
 	DemoSettingsBinder,
 	initialDemoSettings,
 } from "./providers/settings/SettingsScreen";
-import { SetupScreen } from "./providers/setup/SetupScreen";
+import { DemoMeloTroveSetupBinder } from "./providers/setup/SetupScreen";
 import { useSetupToolDownloadsDemoProvider } from "./providers/setup/useSetupToolDownloadsDemoProvider";
 import {
+	DemoMeloTroveSourcesBinder,
 	initialSourceRoots,
-	SourcesScreen,
 } from "./providers/sources/SourcesScreen";
 import {
 	parseSourcesRoute,
+	type SourcesRoute,
 	sourcesHref,
 } from "../ui/features/sources/sourcesRoute";
 import { useSourceArtifactCleanupDemoExecution } from "./providers/sources/sourceArtifactCleanupDemoProvider";
@@ -176,25 +190,6 @@ import {
 } from "./providers/sources/sourceProcessingModel";
 import { useSourceScanDemoProvider } from "./providers/sources/useSourceScanDemoProvider";
 
-const subscribeRoute = (listener: () => void) => {
-	let observedHash = window.location.hash;
-	const notifyForCurrentHash = () => {
-		if (observedHash === window.location.hash) return;
-		observedHash = window.location.hash;
-		listener();
-	};
-	window.addEventListener("hashchange", notifyForCurrentHash);
-	window.addEventListener("popstate", notifyForCurrentHash);
-	return () => {
-		window.removeEventListener("hashchange", notifyForCurrentHash);
-		window.removeEventListener("popstate", notifyForCurrentHash);
-	};
-};
-
-function openIncomingFromHome() {
-	window.location.hash = incomingGroupsListHref();
-}
-
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob &
 	(
@@ -203,25 +198,38 @@ type PublicationJob = DemoPublicationJob &
 		| { kind: "receipt"; plan: MatchingReceiptPublicationJobPlan }
 	);
 
-export function CatalogDemo({
-	onIncomingCount,
-	renderFrame,
-	providerRefresh,
+const DemoProviderRefreshContext = createContext<
+	DemoLibraryProviderRefresh | undefined
+>(undefined);
+
+/** Test-only injection point for provider refresh results. */
+export function DemoMeloTroveProviderRefresh({
+	value,
+	children,
 }: {
-	onIncomingCount?: (count: number) => void;
-	renderFrame?: (content: ReactNode) => ReactNode;
-	providerRefresh?: DemoLibraryProviderRefresh;
-} = {}) {
-	const content = useCatalogDemoContent(onIncomingCount, providerRefresh);
-	return renderFrame ? renderFrame(content) : content;
+	value: DemoLibraryProviderRefresh | undefined;
+	children: ReactNode;
+}) {
+	return (
+		<DemoProviderRefreshContext.Provider value={value}>
+			{children}
+		</DemoProviderRefreshContext.Provider>
+	);
 }
 
-// The frame switches between startup and product layouts. Keep the demo data
-// owner above it so neither layout can discard admitted work or saved state.
-function useCatalogDemoContent(
-	onIncomingCount?: (count: number) => void,
-	providerRefresh?: DemoLibraryProviderRefresh,
-) {
+/**
+ * One route-independent demo model. It stays mounted above every route swap so
+ * admitted downloads, publications, scans and drafts survive navigation.
+ */
+export function useDemoMeloTroveModel(route: MeloTroveRoute): MeloTroveModel {
+	const providerRefresh = useContext(DemoProviderRefreshContext);
+	return useDemoMeloTroveState(route, providerRefresh);
+}
+
+function useDemoMeloTroveState(
+	route: MeloTroveRoute,
+	providerRefresh: DemoLibraryProviderRefresh | undefined,
+): MeloTroveModel {
 	const { locale } = useI18n();
 	const releaseProviderRefresh = useDemoLibraryProviderRefresh(
 		providerRefresh,
@@ -238,9 +246,6 @@ function useCatalogDemoContent(
 	const incomingCount = incoming.groups.filter(
 		(group) => !group.processed,
 	).length;
-	useEffect(() => {
-		onIncomingCount?.(incomingCount);
-	}, [incomingCount, onIncomingCount]);
 	// Host-owned so admitted downloads and moves settle across route changes.
 	const {
 		settings,
@@ -294,18 +299,6 @@ function useCatalogDemoContent(
 				...(track.sourceId ? [track.sourceId] : []),
 			]),
 		].some((id) => files[id]?.available && files[id]?.locations?.length);
-	const routePath = useSyncExternalStore(
-		subscribeRoute,
-		() => {
-			const hash = window.location.hash.slice(1);
-			return hash === "publication-list" ? "/library" : hash;
-		},
-		() => "/library",
-	);
-	const route = routePath;
-	const [routeName] = route.split("?", 1);
-	const incomingRoute = parseIncomingGroupsRoute(route);
-	const artistAddress = parseLibraryArtistAddress(route);
 	const {
 		view,
 		query,
@@ -321,15 +314,7 @@ function useCatalogDemoContent(
 		setPage,
 		setSearch,
 		reset: resetLibrarySearch,
-	} = useLibraryRouteState(route);
-	const headingRoute = artistAddress
-		? `/library/artists/${artistAddress.artistId}`
-		: routeName === "/library" ||
-				routeName === "/settings" ||
-				routeName === "/operations" ||
-				routeName === "/own-catalog"
-			? routeName
-			: route;
+	} = useLibraryRouteState(route.hash);
 	const [releases, renderReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
@@ -474,7 +459,7 @@ function useCatalogDemoContent(
 	} | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
-	}, [route]);
+	}, [route.hash]);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
 	const [receiptPublicationBatches, setReceiptPublicationBatches] = useState<
@@ -646,7 +631,7 @@ function useCatalogDemoContent(
 	);
 	const queueDeletion = (operation: DeletionOperation) => {
 		setDeletions((previous) => [...previous, operation]);
-		window.location.hash = "/operations";
+		navigateHash(meloTrovePaths.operations);
 	};
 	const recordReceiptPublicationResult = (
 		jobId: string,
@@ -846,12 +831,6 @@ function useCatalogDemoContent(
 		);
 		return next.status;
 	};
-	useShellPageEffects({
-		focusKey: headingRoute,
-		titleKey: route,
-		titleSuffix: msg("documentTitleSuffix"),
-		scrollResetKey: incomingRoute ? routeName : undefined,
-	});
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [editions, setEditions] = useState<Record<string, string>>({});
@@ -946,7 +925,7 @@ function useCatalogDemoContent(
 	useEffect(() => {
 		if (!isLibraryRoute) return;
 		// Wait for the hook to adopt the whole route before clamping its offset.
-		const adopted = parseLibraryRoute(route);
+		const adopted = parseLibraryRoute(route.hash);
 		if (
 			adopted.view !== view ||
 			adopted.query !== query ||
@@ -963,7 +942,7 @@ function useCatalogDemoContent(
 		page,
 		publication,
 		query,
-		route,
+		route.hash,
 		setPage,
 		totalPages,
 		view,
@@ -1001,70 +980,69 @@ function useCatalogDemoContent(
 						},
 		});
 	};
-	const selectionPreviewDialog = selectionPreview && (
-		<LibrarySelectionPreviewView
-			locale={locale}
-			positions={selectionPreview.positions}
-			state={selectionPreview.state}
-			onClose={() => setSelectionPreview(null)}
-		/>
-	);
-	if (artistAddress) {
-		const artistId = artistAddress.artistId;
-		return (
-			<LibrarySelectionScreenFrame>
-				<ApplicationRouteOutlet
-					key={artistId}
-					route="library-artist"
-					provider={ArtistScreen}
-					providerProps={{
-						artistId,
-						artists,
-						releases,
-						files,
-						genresLoaded: settings.genresLoaded,
-						onLoadGenres: loadGenres,
-						selected,
-						onSelect: update,
-						onQueueDeletion: queueDeletion,
-						onUpdateArtist: (updated) =>
-							setArtists((current) =>
-								current.map((artist) =>
-									artist.id === updated.id ? updated : artist,
-								),
-							),
-					}}
-				/>
-				<SelectionDock
-					selected={selected}
-					releases={releases}
-					onSelect={update}
-					onPreview={openSelectionPreview}
-					onQueueDeletion={queueDeletion}
-				/>
-				{selectionPreviewDialog}
-			</LibrarySelectionScreenFrame>
+	const selectionPreviewView = selectionPreview
+		? {
+				locale,
+				positions: selectionPreview.positions,
+				state: selectionPreview.state,
+				onClose: () => setSelectionPreview(null),
+			}
+		: undefined;
+	const libraryArtistScreen = (address: LibraryArtistAddress) => {
+		const artistId = address.artistId;
+		return bindMeloTroveRoute(
+			ArtistScreen,
+			{
+				artistId,
+				artists,
+				releases,
+				files,
+				genresLoaded: settings.genresLoaded,
+				onLoadGenres: loadGenres,
+				selected,
+				onSelect: update,
+				onQueueDeletion: queueDeletion,
+				onUpdateArtist: (updated) =>
+					setArtists((current) =>
+						current.map((artist) =>
+							artist.id === updated.id ? updated : artist,
+						),
+					),
+			},
+			{
+				key: artistId,
+				selection: {
+					dock: (
+						<SelectionDock
+							selected={selected}
+							releases={releases}
+							onSelect={update}
+							onPreview={openSelectionPreview}
+							onQueueDeletion={queueDeletion}
+						/>
+					),
+					preview: selectionPreviewView,
+				},
+			},
 		);
-	}
-	const positionAddress = parseLibraryPositionAddress(route);
-	const releaseAddress = parseLibraryReleaseAddress(route);
-	const address = positionAddress ?? releaseAddress;
-	if (address) {
+	};
+	const libraryReleaseScreen = (address: {
+		releaseId: string;
+		positionId?: string;
+	}) => {
 		const release = releases.find((item) => item.id === address.releaseId);
 		if (!release)
-			return (
-				<LibraryReleaseWorkspaceView
-					locale={locale}
-					selection={{ kind: "unavailable" }}
-					overview={{ libraryHref: libraryRootHref(), heading: null }}
-					positions={[]}
-				/>
-			);
-		const track = positionAddress
-			? release.tracks.find((item) => item.id === positionAddress.positionId)
+			return bindMeloTroveReleaseModel({
+				locale,
+				selection: { kind: "unavailable" },
+				overview: { libraryHref: libraryRootHref(), heading: null },
+				positions: [],
+			});
+		const track = address.positionId
+			? release.tracks.find((item) => item.id === address.positionId)
 			: undefined;
 		const missingPosition =
-			positionAddress && !track
+			address.positionId && !track
 				? {
 						message: libraryReleaseMessage(locale, "positionNotFound"),
 						releaseHref: libraryReleaseHref(release.id),
@@ -1194,30 +1172,22 @@ function useCatalogDemoContent(
 				},
 			};
 		}
-		return (
-			<DemoLibraryReleaseWorkspace
-				overview={overview}
-				position={position}
-				notFound={missingPosition}
-				contextualPublications={contextualPublications}
-				providerRefresh={releaseProviderRefresh(release.id)}
-			/>
-		);
-	}
-	if (routeName === "/own-catalog")
-		return (
-			<ApplicationRouteOutlet
-				route="own-catalog"
-				provider={DemoLocalCatalogBinder}
-				providerProps={{
-					state: localProvider,
-					onLoadGenres: loadGenres,
-					onState: setLocalProvider,
-					genresLoaded: settings.genresLoaded,
-				}}
-			/>
-		);
-	if (incomingRoute?.view === "list" || incomingRoute?.view === "matching") {
+		return bindMeloTroveScreen(DemoMeloTroveReleaseBinder, {
+			overview,
+			position,
+			notFound: missingPosition,
+			contextualPublications,
+			providerRefresh: releaseProviderRefresh(release.id),
+		});
+	};
+	const ownCatalogScreen = () =>
+		bindMeloTroveRoute(DemoLocalCatalogBinder, {
+			state: localProvider,
+			onLoadGenres: loadGenres,
+			onState: setLocalProvider,
+			genresLoaded: settings.genresLoaded,
+		});
+	const incomingScreen = (incomingRoute: IncomingGroupsRoute) => {
 		const matchingRoute =
 			incomingRoute.view === "matching" ? incomingRoute : undefined;
 		const groupId = matchingRoute?.groupId;
@@ -1247,8 +1217,9 @@ function useCatalogDemoContent(
 					} = {},
 					releaseId?: string,
 				) => {
-					window.location.replace(
+					navigateHash(
 						incomingGroupMatchingHref(group.id, releaseId, selection),
+						true,
 					);
 				};
 				const suggested = localReleaseSuggestions(
@@ -1335,237 +1306,194 @@ function useCatalogDemoContent(
 							returnToMatching({ localReleaseId: release.id });
 						},
 						onCancel: () =>
-							window.location.replace(
+							navigateHash(
 								incomingGroupMatchingHref(group.id, matchingRoute.releaseId, {
 									localReleaseId: matchingRoute.localReleaseId,
 									prepareReleaseId: matchingRoute.prepareReleaseId,
 								}),
+								true,
 							),
 					},
 				};
 			}
 		}
-		return (
-			<DemoLocalReleaseGenreLoadProvider
-				loaded={settings.genresLoaded}
-				onLoad={loadGenres}
-			>
-				<IncomingWorkspaceAnchor
-					route={incomingRoute}
-					list={{
-						destination: publicationDestination,
-						state: incoming,
-						onState: setIncoming,
-						files,
-						providers,
-						roots: sourceRoots,
-						artists: providerArtists,
-						releases,
-						onReleases: setImportedReleases,
-						publication: receiptPublicationPort,
-					}}
-					creation={creation}
-				/>
-			</DemoLocalReleaseGenreLoadProvider>
-		);
-	}
-
-	if (routeName === "/settings")
-		return (
-			<>
-				<ApplicationRouteOutlet
-					route="settings"
-					provider={DemoSettingsBinder}
-					providerProps={{
-						settings,
-						sourceRoots: sourceRoots.map((root) => root.path),
-						browseDirectory: browseDemoDirectory,
-						resolveDirectoryPath: demoDirectoryStart,
-						onSettings: setSettings,
-						toolActivity: toolDownloads,
-						toolMoves: {
-							active: toolMoveSnapshots.some(
-								({ status }) => status === "queued" || status === "running",
-							),
-							visible: toolMoveSnapshots.some(
-								({ status }) => status !== "succeeded",
-							),
-							start: startToolMove,
-						},
-						workDirectoryBusy:
-							sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange,
-						onOutputReset: () => {
-							setSourceProcessing((previous) =>
-								resetSourceProcessingQueue(previous),
-							);
-							operationsProvider.reset();
-							replacePublicationJobs([]);
-							setReceiptPublicationBatches([]);
-							setReleases((previous) =>
-								previous.map((release) => ({
-									...release,
-									tracks: release.tracks.map((track) => ({
-										...track,
-										published: null,
-										metadataBaseline: undefined,
-										metadataBaselineExtras: undefined,
-									})),
-								})),
-							);
-							setDeletions([]);
-							setIncoming((previous) => ({
-								...previous,
-								plan: null,
-								inventoryVersion: previous.inventoryVersion + 1,
-							}));
-						},
-					}}
-				/>
-			</>
-		);
-	if (routeName === "/setup")
-		return (
-			<ShellStartupContent
-				locale={locale}
-				facts={{
-					kind: "setup",
-					setup: {
-						component: SetupScreen,
-						props: {
-							settings,
-							onSettings: setSettings,
-							step: setupStep,
-							onStepChange: setSetupStep,
-							toolActivity: toolDownloads,
-						},
-					},
-				}}
-			/>
-		);
-	const sourceRoute = parseSourcesRoute(routeName);
-	if (sourceRoute) {
-		const sourceScreen = (
-			<SourcesScreen
-				roots={sourceRoots}
-				onRoots={setSourceRoots}
-				files={files}
-				selectedRootId={
-					sourceRoute.view === "list" ? undefined : sourceRoute.id
-				}
-				selectedLocationId={
-					sourceRoute.view === "location" ? sourceRoute.locationId : undefined
-				}
-				workDirectory={settings.workDirectory}
-				toolsPath={settings.toolsPath}
-				currentOutput={settings.currentOutput ?? "/srv/music"}
-				processing={sourceProcessing}
-				scans={sourceScans}
-				onProcessingState={setSourceProcessing}
-				cleanupExecution={sourceCleanupExecution}
-				onRemove={(id) => {
-					const next = removeRootFromInventory(files, releases, id);
-					setIncoming((previous) => {
-						const updated = structuredClone(previous);
-						for (const group of updated.groups) {
-							group.fileIds = group.fileIds.filter(
-								(fileId) => !next.orphaned.has(fileId),
-							);
-							for (const assignments of Object.values(group.drafts))
-								for (const assignment of Object.values(assignments)) {
-									assignment.sourceIds = assignment.sourceIds.filter(
-										(fileId) => !next.orphaned.has(fileId),
-									);
-									if (
-										assignment.selectedSourceId &&
-										next.orphaned.has(assignment.selectedSourceId)
-									)
-										assignment.selectedSourceId = null;
-									for (const fileId of next.orphaned)
-										delete assignment.sourceMeta[fileId];
-								}
-						}
-						updated.inventoryVersion++;
-						return updated;
-					});
-					setFiles(next.files);
-					setReleases(next.releases);
-					setSourceRoots((previous) =>
-						previous.filter((root) => root.id !== id),
-					);
-				}}
-			/>
-		);
-		return sourceScreen;
-	}
-	if (routeName === "/operations")
-		return (
-			<ApplicationRouteOutlet
-				route="operations"
-				provider={DemoOperationsBinder}
-				providerProps={{
-					deletions,
-					provider: operationsProvider,
-					scanAttempts: sourceScans.attempts,
-					sourceRoots,
-					onScanRoot: sourceScans.start,
-					sourceCleanup: sourceCleanupExecution,
-					toolDownloads: toolDownloadSnapshots,
-					onRetryToolDownload: retryToolDownload,
-					onDismissToolDownload: dismissToolDownload,
-					toolMoves: toolMoveSnapshots,
-					onRetryToolMove: retryToolMove,
-					onDismissToolMove: dismissToolMove,
-					positionHrefForTrack: (positionId) => {
-						const release = releases.find((item) =>
-							item.tracks.some((track) => track.id === positionId),
+		return bindMeloTroveScreen(DemoMeloTroveIncomingGenreBinder, {
+			loaded: settings.genresLoaded,
+			onLoad: loadGenres,
+			route: incomingRoute,
+			list: {
+				destination: publicationDestination,
+				state: incoming,
+				onState: setIncoming,
+				files,
+				providers,
+				roots: sourceRoots,
+				artists: providerArtists,
+				releases,
+				onReleases: setImportedReleases,
+				publication: receiptPublicationPort,
+			},
+			creation,
+		});
+	};
+	const settingsScreen = () =>
+		bindMeloTroveRoute(DemoSettingsBinder, {
+			settings,
+			sourceRoots: sourceRoots.map((root) => root.path),
+			browseDirectory: browseDemoDirectory,
+			resolveDirectoryPath: demoDirectoryStart,
+			onSettings: setSettings,
+			toolActivity: toolDownloads,
+			toolMoves: {
+				active: toolMoveSnapshots.some(
+					({ status }) => status === "queued" || status === "running",
+				),
+				visible: toolMoveSnapshots.some(
+					({ status }) => status !== "succeeded",
+				),
+				start: startToolMove,
+			},
+			workDirectoryBusy:
+				sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange,
+			onOutputReset: () => {
+				setSourceProcessing((previous) =>
+					resetSourceProcessingQueue(previous),
+				);
+				operationsProvider.reset();
+				replacePublicationJobs([]);
+				setReceiptPublicationBatches([]);
+				setReleases((previous) =>
+					previous.map((release) => ({
+						...release,
+						tracks: release.tracks.map((track) => ({
+							...track,
+							published: null,
+							metadataBaseline: undefined,
+							metadataBaselineExtras: undefined,
+						})),
+					})),
+				);
+				setDeletions([]);
+				setIncoming((previous) => ({
+					...previous,
+					plan: null,
+					inventoryVersion: previous.inventoryVersion + 1,
+				}));
+			},
+		});
+	const setupScreen = () =>
+		bindMeloTroveScreen(DemoMeloTroveSetupBinder, {
+			settings,
+			onSettings: setSettings,
+			step: setupStep,
+			onStepChange: setSetupStep,
+			toolActivity: toolDownloads,
+		});
+	const sourcesScreen = (sourceRoute: SourcesRoute) => {
+		return bindMeloTroveScreen(DemoMeloTroveSourcesBinder, {
+			roots: sourceRoots,
+			onRoots: setSourceRoots,
+			files,
+			selectedRootId:
+				sourceRoute.view === "list" ? undefined : sourceRoute.id,
+			selectedLocationId:
+				sourceRoute.view === "location" ? sourceRoute.locationId : undefined,
+			workDirectory: settings.workDirectory,
+			toolsPath: settings.toolsPath,
+			currentOutput: settings.currentOutput ?? "/srv/music",
+			processing: sourceProcessing,
+			scans: sourceScans,
+			onProcessingState: setSourceProcessing,
+			cleanupExecution: sourceCleanupExecution,
+			onRemove: (id: string) => {
+				const next = removeRootFromInventory(files, releases, id);
+				setIncoming((previous) => {
+					const updated = structuredClone(previous);
+					for (const group of updated.groups) {
+						group.fileIds = group.fileIds.filter(
+							(fileId) => !next.orphaned.has(fileId),
 						);
-						return release
-							? libraryPositionHref(release.id, positionId)
-							: undefined;
-					},
-					isTargetCurrent: (href) => {
-						const sourceAddress = parseSourcesRoute(href);
-						if (sourceAddress && sourceAddress.view !== "list")
-							return sourceRoots.some((root) => root.id === sourceAddress.id);
-						const incomingTarget = parseIncomingGroupsRoute(href);
-						if (incomingTarget?.view === "matching")
-							return incoming.groups.some(
-								(group) =>
-									group.id === incomingTarget.groupId && !group.processed,
-							);
-						const positionAddress = parseLibraryPositionAddress(href);
-						if (positionAddress)
-							return releases.some(
-								(release) =>
-									release.id === positionAddress.releaseId &&
-									release.tracks.some(
-										(track) => track.id === positionAddress.positionId,
-									),
-							);
-						const releaseAddress = parseLibraryReleaseAddress(href);
-						if (releaseAddress)
-							return releases.some(
-								(release) => release.id === releaseAddress.releaseId,
-							);
-						const artistAddress = parseLibraryArtistAddress(href);
-						if (artistAddress)
-							return artists.some(
-								(artist) => artist.id === artistAddress.artistId,
-							);
-						return false;
-					},
-				}}
-			/>
-		);
-	if (routeName !== "/library")
-		return (
-			<ShellHomeView
-				locale={locale}
-				sources={{ kind: "ready", count: sourceRoots.length }}
-				sourcesHref={sourcesHref}
-				onOpenIncoming={openIncomingFromHome}
-			/>
-		);
+						for (const assignments of Object.values(group.drafts))
+							for (const assignment of Object.values(assignments)) {
+								assignment.sourceIds = assignment.sourceIds.filter(
+									(fileId) => !next.orphaned.has(fileId),
+								);
+								if (
+									assignment.selectedSourceId &&
+									next.orphaned.has(assignment.selectedSourceId)
+								)
+									assignment.selectedSourceId = null;
+								for (const fileId of next.orphaned)
+									delete assignment.sourceMeta[fileId];
+							}
+					}
+					updated.inventoryVersion++;
+					return updated;
+				});
+				setFiles(next.files);
+				setReleases(next.releases);
+				setSourceRoots((previous) =>
+					previous.filter((root) => root.id !== id),
+				);
+			},
+		});
+	};
+	const operationsScreen = () =>
+		bindMeloTroveRoute(DemoOperationsBinder, {
+			deletions,
+			provider: operationsProvider,
+			scanAttempts: sourceScans.attempts,
+			sourceRoots,
+			onScanRoot: sourceScans.start,
+			sourceCleanup: sourceCleanupExecution,
+			toolDownloads: toolDownloadSnapshots,
+			onRetryToolDownload: retryToolDownload,
+			onDismissToolDownload: dismissToolDownload,
+			toolMoves: toolMoveSnapshots,
+			onRetryToolMove: retryToolMove,
+			onDismissToolMove: dismissToolMove,
+			positionHrefForTrack: (positionId) => {
+				const release = releases.find((item) =>
+					item.tracks.some((track) => track.id === positionId),
+				);
+				return release
+					? libraryPositionHref(release.id, positionId)
+					: undefined;
+			},
+			isTargetCurrent: (href) => {
+				const sourceAddress = parseSourcesRoute(href);
+				if (sourceAddress && sourceAddress.view !== "list")
+					return sourceRoots.some((root) => root.id === sourceAddress.id);
+				const incomingTarget = parseIncomingGroupsRoute(href);
+				if (incomingTarget?.view === "matching")
+					return incoming.groups.some(
+						(group) =>
+							group.id === incomingTarget.groupId && !group.processed,
+					);
+				const positionAddress = parseLibraryPositionAddress(href);
+				if (positionAddress)
+					return releases.some(
+						(release) =>
+							release.id === positionAddress.releaseId &&
+							release.tracks.some(
+								(track) => track.id === positionAddress.positionId,
+							),
+					);
+				const releaseAddress = parseLibraryReleaseAddress(href);
+				if (releaseAddress)
+					return releases.some(
+						(release) => release.id === releaseAddress.releaseId,
+					);
+				const artistAddress = parseLibraryArtistAddress(href);
+				if (artistAddress)
+					return artists.some(
+						(artist) => artist.id === artistAddress.artistId,
+					);
+				return false;
+			},
+		});
+	const homeScreen = () =>
+		bindMeloTroveHomeModel({ kind: "ready", count: sourceRoots.length });
 	const librarySummary = {
 		artists: fixture.artists.length,
 		releases: releases.length,
@@ -1644,11 +1572,10 @@ function useCatalogDemoContent(
 						DataProvider: DemoLibraryAlbumRowsProvider,
 					};
 
-	return (
-		<ApplicationRouteOutlet
-			route="library-catalog"
-			provider={DemoLibraryCatalogBinder}
-			providerProps={{
+	const libraryCatalogScreen = () =>
+		bindMeloTroveRoute(
+			DemoLibraryCatalogBinder,
+			{
 				locale,
 				summary: librarySummary,
 				incomingHref: incomingGroupsListHref(),
@@ -1680,7 +1607,8 @@ function useCatalogDemoContent(
 								files,
 								filter,
 								expanded,
-								onToggleAlbum: (id) => setExpanded(expanded === id ? null : id),
+								onToggleAlbum: (id) =>
+									setExpanded(expanded === id ? null : id),
 								pageSelection,
 							}
 						: null,
@@ -1690,19 +1618,67 @@ function useCatalogDemoContent(
 				hasPrevious: currentPage > 1,
 				hasNext: currentPage < totalPages,
 				onPageChange: (next) => setPage(next, totalPages),
-				selectionDock: (
-					<SelectionDock
-						selected={selected}
-						visiblePositionIds={visiblePositionIds}
-						releases={releases}
-						onSelect={update}
-						onPreview={openSelectionPreview}
-						onQueueDeletion={queueDeletion}
-					/>
-				),
-				selectionPreview: selectionPreviewDialog ?? undefined,
-				dockSpace: true,
-			}}
-		/>
+			},
+			{
+				selection: {
+					dock: (
+						<SelectionDock
+							selected={selected}
+							visiblePositionIds={visiblePositionIds}
+							releases={releases}
+							onSelect={update}
+							onPreview={openSelectionPreview}
+							onQueueDeletion={queueDeletion}
+						/>
+					),
+					preview: selectionPreviewView,
+				},
+			},
+		);
+	const screens: MeloTroveScreens = {
+		home: homeScreen,
+		setup: setupScreen,
+		sources: sourcesScreen,
+		incoming: incomingScreen,
+		libraryRelease: libraryReleaseScreen,
+		libraryArtist: libraryArtistScreen,
+		libraryCatalog: libraryCatalogScreen,
+		ownCatalog: ownCatalogScreen,
+		settings: settingsScreen,
+		operations: operationsScreen,
+	};
+	return {
+		locale,
+		themeStore: themePreferenceStore,
+		footer: { kind: "prototype" },
+		setupLink: true,
+		incomingCount,
+		startup: { kind: "ready" },
+		screens,
+	};
+}
+
+/**
+ * The demo implements data hooks and the browser adapter only. Every route is
+ * parsed and its portable screen selected by MeloTroveUI.
+ */
+export const demoMeloTroveProvider = {
+	useLocation: useMeloTroveHashLocation,
+	useModel: useDemoMeloTroveModel,
+} satisfies MeloTroveProvider;
+
+function DemoMeloTroveIncomingGenreBinder({
+	loaded,
+	onLoad,
+	...props
+}: IncomingWorkspaceAnchorProps & {
+	loaded: boolean;
+	onLoad: () => void | Promise<void>;
+	children: ReactNode;
+}) {
+	return (
+		<DemoLocalReleaseGenreLoadProvider loaded={loaded} onLoad={onLoad}>
+			<DemoMeloTroveIncomingBinder {...props} />
+		</DemoLocalReleaseGenreLoadProvider>
 	);
 }

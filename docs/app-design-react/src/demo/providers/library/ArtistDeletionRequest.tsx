@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useI18n } from "../../../app/i18n/host";
+import { useI18n } from "../demoPreferences";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
 import { LibraryDeletionControlView } from "../../../ui/features/library/LibraryDeletionControlView";
 import type { CatalogArtist, OriginalRelease } from "./catalogData";

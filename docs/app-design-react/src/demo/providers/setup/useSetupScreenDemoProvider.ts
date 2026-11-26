@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
+import { navigateHash } from "../../../ui/app/hashLocation";
+import { meloTrovePaths } from "../../../ui/app/MeloTroveRoute";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import type { SetupScreenViewProps } from "../../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../../ui/features/setup/SetupToolCardsView";
@@ -316,7 +318,7 @@ export function useSetupScreenDemoProvider({
 				return;
 			}
 			update({ currentOutput: outputPath });
-			window.location.hash = "/";
+			navigateHash(meloTrovePaths.home);
 			return;
 		}
 		setStep(Math.min(step + 1, 3));

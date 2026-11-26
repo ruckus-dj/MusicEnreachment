@@ -1,6 +1,10 @@
 import { type Dispatch, type SetStateAction, useState } from "react";
-import { useI18n } from "../../../app/i18n/host";
-import { useHashLocation } from "../../../app/navigation/hashLocation";
+import { useI18n } from "../demoPreferences";
+import {
+	pushHashState as pushCatalogHash,
+	replaceHashState as replaceCatalogHash,
+	useHashLocation,
+} from "../../../ui/app/hashLocation";
 import type { GenrePickerCatalog } from "../../../ui/features/library/GenrePicker";
 import type {
 	LocalCatalogArtistEditorActor,
@@ -113,29 +117,6 @@ type LocalCatalogEditorDraft =
 	| { kind: "edit"; type: LocalCatalogType; id: string };
 type LocalCatalogEditorState = LocalCatalogEditorDraft & { hash: string };
 type LocalCatalogHistoryState = { localCatalogDetail?: string };
-
-function hashURL(href: string) {
-	return `${window.location.pathname}${window.location.search}${href}`;
-}
-
-function publishHashChange() {
-	window.dispatchEvent(new HashChangeEvent("hashchange"));
-}
-
-function pushCatalogHash(
-	href: string,
-	state: LocalCatalogHistoryState | null = null,
-) {
-	if (window.location.hash === href) return;
-	window.history.pushState(state, "", hashURL(href));
-	publishHashChange();
-}
-
-function replaceCatalogHash(href: string) {
-	if (window.location.hash === href) return;
-	window.history.replaceState(null, "", hashURL(href));
-	publishHashChange();
-}
 
 /**
  * Local catalog demo provider: owns tab/filter/page/notice state, fixture

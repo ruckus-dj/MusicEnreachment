@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n";
+import { I18nProvider } from "../demoPreferences";
 import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import { queuedOperationFixtures } from "../../fixtures/operationsQueueFixtures";

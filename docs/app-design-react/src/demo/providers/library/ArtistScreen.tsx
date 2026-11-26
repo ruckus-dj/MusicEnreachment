@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "../../../app/i18n/host";
-import { useHashLocation } from "../../../app/navigation/hashLocation";
+import { useI18n } from "../demoPreferences";
 import {
 	ApplicationLibraryArtistBinder,
 	type ApplicationLibraryArtistModel,
 	type ApplicationRouteProviderProps,
 } from "../../../ui/app/ApplicationRouteOutlet";
+import { navigateHash, useHashLocation } from "../../../ui/app/hashLocation";
 import {
 	ArtistMetadataCard,
 	type ArtistMetadataValues,
@@ -222,20 +222,24 @@ export function ArtistScreen({
 			if (window.location.hash !== capturedHash) return;
 			const current = currentRoute();
 			if (current.query === value) return;
-			window.location.hash = libraryArtistAddressHref(artistId, {
-				...current,
-				query: value,
-				offset: 0,
-			}).slice(1);
+			navigateHash(
+				libraryArtistAddressHref(artistId, {
+					...current,
+					query: value,
+					offset: 0,
+				}),
+			);
 		}, SEARCH_DEBOUNCE_MS);
 	}
 	function changeFilter(value: CatalogFilterValue) {
 		const current = currentRoute();
 		if (filterForRoute(current) === value) return;
-		window.location.hash = libraryArtistAddressHref(artistId, {
-			...routeWithFilter(current, value),
-			offset: 0,
-		}).slice(1);
+		navigateHash(
+			libraryArtistAddressHref(artistId, {
+				...routeWithFilter(current, value),
+				offset: 0,
+			}),
+		);
 	}
 	const [localArtistUpdates, setLocalArtistUpdates] = useState<
 		Record<string, CatalogArtist>

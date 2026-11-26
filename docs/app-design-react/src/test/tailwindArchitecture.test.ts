@@ -4,23 +4,19 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 it("keeps the shared Tailwind configuration separate from host source discovery", () => {
-	const source = join(dirname(fileURLToPath(import.meta.url)), "../..");
+	const source = join(dirname(fileURLToPath(import.meta.url)), "..");
 	expect(
 		readdirSync(source, { withFileTypes: true })
 			.map((entry) => entry.name)
 			.sort(),
-	).toEqual(["app", "demo", "ui"]);
+	).toEqual(["app", "demo", "test", "ui"]);
 	const files = readdirSync(source, { recursive: true })
 		.map(String)
 		.map((file) => file.split(sep).join("/"));
 	expect(files.filter((file) => file.endsWith(".css")).sort()).toEqual([
-		"app/styles.css",
 		"ui/styles/index.css",
 	]);
 	const entry = readFileSync(join(source, "ui/styles/index.css"), "utf8");
-	const hostEntry = readFileSync(join(source, "app/styles.css"), "utf8");
-	expect(hostEntry).toContain('@import "../ui/styles/index.css"');
-	expect(hostEntry.replace(/@(import|source)[^;]*;/g, "").trim()).toBe("");
 	expect(entry).toContain('@import "tailwindcss"');
 	expect(entry).not.toMatch(
 		/@apply\b|@layer\s+(base|components)|:root|\.demo-/,

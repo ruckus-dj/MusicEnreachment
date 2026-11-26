@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useI18n } from "../../../app/i18n/host";
+import { useI18n } from "../demoPreferences";
 import { LibrarySelectionDeletionView } from "../../../ui/features/library/LibrarySelectionDeletionView";
 import { LibrarySelectionDockView } from "../../../ui/features/library/LibrarySelectionDockView";
 import { LibrarySelectionReviewView } from "../../../ui/features/library/LibrarySelectionReviewView";

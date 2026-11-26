@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
 import { usePreviewHeadingFocus } from "../../../ui/components/useViewFocus";
 import { incomingMessages } from "../../../ui/features/incoming/incomingReviewMessages";
 import type { MatchingPreviewRow } from "../../../ui/features/matching/MatchingPreview";

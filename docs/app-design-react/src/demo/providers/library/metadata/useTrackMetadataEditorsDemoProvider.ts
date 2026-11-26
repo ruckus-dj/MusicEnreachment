@@ -1,4 +1,4 @@
-import { useI18n } from "../../../../app/i18n/host";
+import { useI18n } from "../../demoPreferences";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { TrackMetadataEditorsViewProps } from "../../../../ui/features/library/metadata/TrackMetadataEditorsView";
 import {

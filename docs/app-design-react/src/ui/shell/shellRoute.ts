@@ -1,14 +1,8 @@
 import type { ApplicationFrameState } from "./ShellStartupView";
-import {
-  type ProductShellProps,
-  type ShellSectionId,
-  shellSections,
-} from "./ShellView";
+import type { ProductShellProps, ShellSectionId } from "./ShellView";
 
 /**
- * Semantic route families shared by both hosts. Hosts keep their own URL
- * grammar, aliases and entity identifiers; only the family and its shell
- * presentation are portable.
+ * Semantic route families used by the portable router and shell.
  */
 export const shellRouteFamilies = [
   "home",
@@ -32,19 +26,14 @@ const sectionByFamily: Partial<Record<ShellRouteFamily, ShellSectionId>> = {
   settings: "settings",
 };
 
-/** Resolves a host-owned route family to the portable navigation section. */
+/** Resolves a route family to the navigation section. */
 export function shellSectionForFamily(
   family: ShellRouteFamily | undefined,
 ): ShellSectionId | undefined {
   return family ? sectionByFamily[family] : undefined;
 }
 
-/** Resolves one navigation section name; entity identifiers stay in the host. */
-export function shellSectionId(value: string): ShellSectionId | undefined {
-  return shellSections.find((id) => id === value);
-}
-
-/** Host data for the shell frame; routing and URL grammar stay in the host. */
+/** Data and destinations for the shell frame. */
 export type ShellFrameData = Omit<
   ProductShellProps,
   "locale" | "themeStore" | "activeSection" | "fallbackSection" | "children"

@@ -1,10 +1,14 @@
 import { type ReactNode, useRef } from "react";
+import { navigateHash } from "../../../ui/app/hashLocation";
+import {
+	MeloTroveIncomingBinder,
+	MeloTroveIncomingContent,
+} from "../../../ui/app/MeloTroveProvider";
 import type { IncomingCreationModel } from "../../../ui/features/incoming/IncomingCreationOutlet";
 import {
 	IncomingMatchingDataBinder,
 	type IncomingMatchingSource,
 } from "../../../ui/features/incoming/IncomingMatchingOutlet";
-import { IncomingWorkspaceView } from "../../../ui/features/incoming/IncomingWorkspaceView";
 import { useMatchingScreenDemoProvider } from "../matching/useMatchingScreenDemoProvider";
 import {
 	type IncomingScreenProps,
@@ -78,16 +82,13 @@ function MatchingScreenController({
 			},
 		),
 		onSelectProviderRelease: (releaseId?: string) => {
-			window.location.hash = incomingGroupMatchingHref(
-				selector.groupId,
-				releaseId,
-			);
+			navigateHash(incomingGroupMatchingHref(selector.groupId, releaseId));
 		},
 		onSelectLocalRelease: (localReleaseId: string) => {
-			window.location.hash = incomingGroupMatchingHref(
-				selector.groupId,
-				undefined,
-				{ localReleaseId },
+			navigateHash(
+				incomingGroupMatchingHref(selector.groupId, undefined, {
+					localReleaseId,
+				}),
 			);
 		},
 		hidden: hidden || selector.creatingLocalRelease === true,
@@ -107,11 +108,12 @@ function MatchingScreenController({
  * props. Hidden expanded list rows collapse so file action portals unmount
  * while matching is active.
  */
-export function IncomingWorkspaceAnchor({
+export function DemoMeloTroveIncomingBinder({
 	route,
 	list,
 	creation,
-}: IncomingWorkspaceAnchorProps) {
+	children,
+}: IncomingWorkspaceAnchorProps & { children: ReactNode }) {
 	const listModel = useIncomingScreenDemoProvider(list);
 	const listHidden = route?.view !== "list";
 	const listView = listHidden
@@ -148,10 +150,23 @@ export function IncomingWorkspaceAnchor({
 			}
 		: null;
 	return (
-		<IncomingWorkspaceView
-			creation={creation}
-			list={listView}
-			matching={matchingSource}
-		/>
+		<MeloTroveIncomingBinder
+			model={{ creation, list: listView, matching: matchingSource }}
+		>
+			{children}
+		</MeloTroveIncomingBinder>
+	);
+}
+
+/**
+ * Module-level Incoming workspace for the prototype host. The demo provider
+ * supplies data and the portable UI owns the composition; this facade
+ * preserves existing imports and prop shape.
+ */
+export function IncomingWorkspaceAnchor(props: IncomingWorkspaceAnchorProps) {
+	return (
+		<DemoMeloTroveIncomingBinder {...props}>
+			<MeloTroveIncomingContent />
+		</DemoMeloTroveIncomingBinder>
 	);
 }

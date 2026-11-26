@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n/host";
+import { I18nProvider } from "../demoPreferences";
 import type { SourceFiles } from "../library/catalogData";
 import { useSourceArtifactCleanupDemoExecution } from "./sourceArtifactCleanupDemoProvider";
 import {

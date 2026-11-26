@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n";
+import { I18nProvider } from "../demoPreferences";
 import { MatchingScreen } from "../matching/MatchingScreen";
 import { initialSourceRoots } from "../sources/SourcesScreen";
 import { IncomingScreen } from "./IncomingScreen";

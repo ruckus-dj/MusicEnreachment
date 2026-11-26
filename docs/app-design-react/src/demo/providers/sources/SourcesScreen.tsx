@@ -1,12 +1,17 @@
 import {
 	type Dispatch,
+	type ReactNode,
 	type SetStateAction,
 	useEffect,
 	useRef,
 	useState,
 } from "react";
-import { useI18n } from "../../../app/i18n";
-import type { Locale } from "../../../ui/i18n/types";
+import { useI18n } from "../demoPreferences";
+import { navigateHash } from "../../../ui/app/hashLocation";
+import {
+	MeloTroveSourcesBinder,
+	MeloTroveSourcesContent,
+} from "../../../ui/app/MeloTroveProvider";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
 import {
 	type SourceRegistrationErrorKey,
@@ -15,6 +20,7 @@ import {
 } from "../../../ui/features/sources/SourceRegistrationView";
 import type { SourceRootListRow } from "../../../ui/features/sources/SourceRootList";
 import type { SourceRootChange } from "../../../ui/features/sources/SourceRootSettingsView";
+import type { SourcesPage } from "../../../ui/features/sources/SourcesRouteOutlet";
 import {
 	type SourceMessageKey,
 	sourceMessage,
@@ -25,6 +31,7 @@ import {
 	sourceLocationHref,
 	sourcesHref,
 } from "../../../ui/features/sources/sourcesRoute";
+import type { Locale } from "../../../ui/i18n/types";
 import {
 	browseDemoDirectory,
 	demoDirectoryStart,
@@ -47,7 +54,6 @@ import {
 	removeRootProcessingState,
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
-import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import type { SourceScanDemoProvider } from "./useSourceScanDemoProvider";
 
 type Mode = "in_place" | "staged";
@@ -127,21 +133,7 @@ function countLabel(locale: Locale, count: number) {
 	});
 }
 
-export function SourcesScreen({
-	roots,
-	onRoots,
-	files,
-	onRemove,
-	selectedRootId,
-	selectedLocationId,
-	workDirectory = "",
-	toolsPath = "",
-	currentOutput = "",
-	processing,
-	scans,
-	onProcessingState,
-	cleanupExecution,
-}: {
+export type SourcesScreenProps = {
 	roots: SourceRoot[];
 	onRoots: Dispatch<SetStateAction<SourceRoot[]>>;
 	files: SourceFiles;
@@ -156,7 +148,29 @@ export function SourcesScreen({
 	onProcessingState: (state: SourceProcessingState) => void;
 	/** Host-owned execution so a running cleanup survives other routes. */
 	cleanupExecution: SourceArtifactCleanupDemoExecution;
-}) {
+};
+
+/**
+ * Supplies the demo Sources page without choosing the portable screen
+ * composition. The portable UI root mounts MeloTroveSourcesContent through
+ * children.
+ */
+export function DemoMeloTroveSourcesBinder({
+	roots,
+	onRoots,
+	files,
+	onRemove,
+	selectedRootId,
+	selectedLocationId,
+	workDirectory = "",
+	toolsPath = "",
+	currentOutput = "",
+	processing,
+	scans,
+	onProcessingState,
+	cleanupExecution,
+	children,
+}: SourcesScreenProps & { children: ReactNode }) {
 	const { locale } = useI18n();
 	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
 		sourceMessage(locale, key, values);
@@ -264,7 +278,7 @@ export function SourcesScreen({
 		notify("sourceAdded");
 		// Registration only opens the root. Registering never scans, processes,
 		// or invents scan results.
-		window.location.hash = sourceDetailHref(id);
+		navigateHash(sourceDetailHref(id));
 	};
 	const saveRoot = async (change: SourceRootChange): Promise<boolean> => {
 		if (!root) return false;
@@ -302,6 +316,8 @@ export function SourcesScreen({
 							path: change.value,
 							fixturePath: item.fixturePath ?? item.path,
 						};
+					default:
+						return item;
 				}
 			}),
 		);
@@ -344,11 +360,9 @@ export function SourcesScreen({
 
 	const noticeMessage = notice ? m(notice.key, notice.values) : undefined;
 
-	if (selectedRootId && selectedLocationId)
-		return (
-			<SourcesBinder
-				key={`${selectedRootId}:${selectedLocationId}`}
-				page={{
+	const page: SourcesPage =
+		selectedRootId && selectedLocationId
+			? {
 					view: "location",
 					...sourceInspectorDemoProvider({
 						locale,
@@ -361,19 +375,10 @@ export function SourcesScreen({
 						workDirectory,
 						scanning: scans.active(selectedRootId),
 					}),
-				}}
-			>
-				<SourcesOutlet />
-			</SourcesBinder>
-		);
-
-	return (
-		<>
-			{selectedRootId ? (
-				root ? (
-					<SourcesBinder
-						key={root.id}
-						page={{
+				}
+			: selectedRootId
+				? root
+					? {
 							view: "detail",
 							detail: "root",
 							locale,
@@ -496,30 +501,19 @@ export function SourcesScreen({
 												onRemove(removal.id);
 												notify("rootRemoved");
 												setRemoval(null);
-												window.location.hash = sourcesHref;
+												navigateHash(sourcesHref);
 											},
 										}
 									: undefined,
-						}}
-					>
-						<SourcesOutlet />
-					</SourcesBinder>
-				) : (
-					<SourcesBinder
-						page={{
+						}
+					: {
 							view: "detail",
 							detail: "missing",
 							title: m("sourceNotFound"),
 							id: selectedRootId,
 							back: { href: sourcesHref, label: m("backToSources") },
-						}}
-					>
-						<SourcesOutlet />
-					</SourcesBinder>
-				)
-			) : (
-				<SourcesBinder
-					page={{
+						}
+				: {
 						view: "list",
 						locale,
 						heading: {
@@ -565,11 +559,29 @@ export function SourcesScreen({
 						},
 						loaded: true,
 						cleanup,
-					}}
-				>
-					<SourcesOutlet />
-				</SourcesBinder>
-			)}
-		</>
+					};
+
+	const pageKey =
+		selectedRootId && selectedLocationId
+			? `${selectedRootId}:${selectedLocationId}`
+			: root?.id;
+
+	return (
+		<MeloTroveSourcesBinder key={pageKey} model={page}>
+			{children ?? <MeloTroveSourcesContent />}
+		</MeloTroveSourcesBinder>
+	);
+}
+
+/**
+ * Module-level Sources workspace for the prototype host. The demo provider
+ * supplies data and the portable UI owns the composition; this facade
+ * preserves existing imports and prop shape.
+ */
+export function SourcesScreen(props: SourcesScreenProps) {
+	return (
+		<DemoMeloTroveSourcesBinder {...props}>
+			<MeloTroveSourcesContent />
+		</DemoMeloTroveSourcesBinder>
 	);
 }

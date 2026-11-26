@@ -6,7 +6,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../../app/i18n";
+import { I18nProvider } from "../../demoPreferences";
 import { genreCatalog } from "../../genres/catalogue";
 import { MetadataEditor } from "./MetadataEditor";
 

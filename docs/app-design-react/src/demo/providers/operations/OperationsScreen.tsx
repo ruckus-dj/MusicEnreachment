@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "../../../app/i18n";
-import { useHashLocation } from "../../../app/navigation/hashLocation";
+import { useI18n } from "../demoPreferences";
 import {
 	type OperationsLocation,
 	operationsLocationHref,
 	parseOperationsLocation,
-} from "../../../app/navigation/operationsLocation";
+} from "../../../ui/features/operations/operationsLocation";
 import {
 	ApplicationOperationsBinder,
 	type ApplicationOperationsModel,
 	type ApplicationRouteProviderProps,
 } from "../../../ui/app/ApplicationRouteOutlet";
+import { navigateHash, useHashLocation } from "../../../ui/app/hashLocation";
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type { OperationsListRow } from "../../../ui/features/operations/OperationsList";
 import { operationMessages } from "../../../ui/features/operations/operationMessages";
@@ -162,8 +162,7 @@ function useDemoOperationsModel({
 				offset: location.offset,
 				...next,
 			});
-			if (replace) window.location.replace(href);
-			else window.location.hash = href;
+			navigateHash(href, replace);
 		},
 		[
 			location.status,

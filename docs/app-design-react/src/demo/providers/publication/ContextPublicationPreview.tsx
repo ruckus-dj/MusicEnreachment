@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
 import type { PublicationPreviewSource } from "../../../ui/features/library/PublicationPreviewDetailsView";
 import {
 	ContextPublicationPreviewDataBinder,

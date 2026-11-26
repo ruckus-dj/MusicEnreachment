@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n/host";
+import { I18nProvider } from "../demoPreferences";
 import { firstPublicationPreviewMessages } from "../../../ui/features/library/firstPublicationPreviewMessages";
 import { ContextPublicationPreviewOutlet } from "../../../ui/features/publication/ContextPublicationPreview";
 import { publicationMessage } from "../../../ui/features/publication/publicationMessages";

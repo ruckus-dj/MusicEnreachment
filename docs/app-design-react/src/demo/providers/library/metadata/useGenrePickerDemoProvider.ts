@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "../../../../app/i18n";
+import { useI18n } from "../../demoPreferences";
 import { GenrePicker as LibraryGenrePicker } from "../../../../ui/features/library/GenrePicker";
 import {
 	type GenreMessages,

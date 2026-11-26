@@ -1,5 +1,6 @@
 import { type Key, useEffect, useRef, useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
+import { navigateHash } from "../../../ui/app/hashLocation";
 import type { BrowseDirectory } from "../../../ui/components/DirectoryPickerView";
 import type {
 	ManagedPackageCardModel,
@@ -61,15 +62,11 @@ import {
 } from "./ToolLifecycleDemo";
 import { useToolCatalogDemoProvider } from "./useToolCatalogDemoProvider";
 
-const readSettingsTab = (hash: string): SettingsTabKey => {
-	const [path, query = ""] = hash.replace(/^#/, "").split("?");
-	if (path !== "/settings") return "general";
-	const tab = new URLSearchParams(query).get("tab");
-	return settingsTabKeys.find((item) => item === tab) ?? "general";
-};
-
-const isSettingsTabDestination = (hash: string) =>
-	hash.replace(/^#/, "").split("?")[0] === "/settings";
+import {
+	parseSettingsRoute,
+	settingsTabFromHash as readSettingsTab,
+	settingsTabHash,
+} from "../../../ui/features/settings/settingsRoute";
 
 const inactiveDirectoryBrowse: BrowseDirectory = async (path) => ({
 	currentPath: path || "/",
@@ -491,8 +488,8 @@ export function useSettingsScreenDemoProvider({
 	const selectTab = (key: Key) => {
 		const tab = settingsTabKeys.find((item) => item === key) ?? "general";
 		setActiveTab(tab);
-		const nextHash = tab === "general" ? "#/settings" : `#/settings?tab=${tab}`;
-		if (window.location.hash !== nextHash) window.location.hash = nextHash;
+		const nextHash = settingsTabHash(tab);
+		navigateHash(nextHash);
 	};
 	const [fieldErrors, setFieldErrors] = useState<
 		Partial<Record<keyof SettingsTextDraft, string>>
@@ -638,7 +635,7 @@ export function useSettingsScreenDemoProvider({
 				previousHash.current = nextHash;
 				return;
 			}
-			if (isSettingsTabDestination(nextHash)) {
+			if (parseSettingsRoute(nextHash)) {
 				previousHash.current = nextHash;
 				return;
 			}
@@ -1272,7 +1269,7 @@ export function useSettingsScreenDemoProvider({
 		setLeavePrompt(false);
 		if (target) {
 			allowNavigation.current = true;
-			window.location.hash = target;
+			navigateHash(target);
 		}
 	};
 

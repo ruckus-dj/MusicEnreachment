@@ -1,17 +1,20 @@
 import {
-  defaultOperationsListQuery as defaultOperationsLocation,
+  defaultOperationsListQuery,
   isOperationsKindSelection,
   isOperationsSortColumn,
   isOperationsStatusFilter,
   type OperationsListQuery,
   type OperationsSortDirection,
-} from "../../ui/features/operations/operationsFilters";
+} from "./operationsFilters";
 
 /** Upper bound for a requested server offset, matching the portable list. */
 export const MAX_OPERATIONS_PAGE_OFFSET = 1_000_000;
 
 /** Canonical, host-independent operations location. */
 export type OperationsLocation = OperationsListQuery;
+
+export const defaultOperationsLocation: OperationsLocation =
+  defaultOperationsListQuery;
 
 function isOperationsSortDirection(
   value: string,

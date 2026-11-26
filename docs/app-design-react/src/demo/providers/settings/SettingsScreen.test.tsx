@@ -7,7 +7,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n/host";
+import { I18nProvider } from "../demoPreferences";
 import { ApplicationRouteOutlet } from "../../../ui/app/ApplicationRouteOutlet";
 import {
 	DemoSettingsBinder,

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
 import {
 	ApplicationIncomingListBinder,
 	type ApplicationIncomingListModel,
 	ApplicationRouteOutlet,
 } from "../../../ui/app/ApplicationRouteOutlet";
+import { navigateHash } from "../../../ui/app/hashLocation";
 import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../../ui/features/incoming/IncomingGroupsPanel";
@@ -119,7 +120,7 @@ export function useIncomingScreenDemoProvider({
 		const ids = expanded.includes(id)
 			? expanded.filter((openId) => openId !== id)
 			: [...expanded, id];
-		window.location.hash = incomingGroupsListHref(ids);
+		navigateHash(incomingGroupsListHref(ids));
 	}
 	function moveFile(sourceId: string, fileId: string, targetId: string) {
 		const source = state.groups.find((group) => group.id === sourceId);

@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { useI18n } from "../../../app/i18n/host";
+import { useI18n } from "../demoPreferences";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
 import type { LibraryReleaseOverviewModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import {

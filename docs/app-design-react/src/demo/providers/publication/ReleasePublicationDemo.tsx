@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useI18n } from "../../../app/i18n";
+import { useI18n } from "../demoPreferences";
 import {
 	type AggregateDisposition,
 	type AggregateInspectorPresentation,

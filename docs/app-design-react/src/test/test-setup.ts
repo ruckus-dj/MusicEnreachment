@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import "../i18n/host";
+import "../demo/providers/demoPreferences";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 

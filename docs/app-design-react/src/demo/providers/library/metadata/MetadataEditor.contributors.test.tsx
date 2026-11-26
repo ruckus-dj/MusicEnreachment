@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../../app/i18n";
+import { I18nProvider } from "../../demoPreferences";
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataValues } from "./projection";
 

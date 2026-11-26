@@ -1,4 +1,4 @@
-import { useI18n } from "../../../../app/i18n/host";
+import { useI18n } from "../../demoPreferences";
 import type { MetadataFieldState } from "../../../../ui/features/library/MetadataFieldPresentation";
 import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import {

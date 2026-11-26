@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n/host";
+import { I18nProvider } from "../demoPreferences";
 import { initialDemoSettings } from "../settings/SettingsScreen";
 import { SetupScreen } from "./SetupScreen";
 import { useSetupToolDownloadsDemoProvider } from "./useSetupToolDownloadsDemoProvider";

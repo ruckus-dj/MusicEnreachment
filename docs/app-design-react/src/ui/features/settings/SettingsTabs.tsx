@@ -1,15 +1,9 @@
 import type { Key, ReactNode } from "react";
 import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { type SettingsTabID, settingsTabIDs } from "./settingsRoute";
 
-export const settingsTabKeys = [
-	"general",
-	"folders",
-	"tools",
-	"providers",
-	"genres",
-] as const;
-
-export type SettingsTabKey = (typeof settingsTabKeys)[number];
+export const settingsTabKeys = settingsTabIDs;
+export type SettingsTabKey = SettingsTabID;
 
 export type SettingsTabsLocale = "en" | "ru";
 

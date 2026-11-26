@@ -1,6 +1,10 @@
-import { useState } from "react";
-import { useI18n } from "../../../app/i18n/host";
-import { LibraryReleaseWorkspaceView } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
+import { type ReactNode, useState } from "react";
+import { useI18n } from "../demoPreferences";
+import {
+	MeloTroveReleaseBinder,
+	MeloTroveReleaseContent,
+} from "../../../ui/app/MeloTroveProvider";
+import type { LibraryReleaseWorkspaceViewProps } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import type {
 	TrackProviderRefreshModel,
 	TrackScreenNotFoundView,
@@ -37,13 +41,13 @@ export type DemoLibraryReleaseWorkspaceProps = {
  * portals behind a position. Viewed positions retain their exact publication
  * binder; other position panels only render for the active route.
  */
-function DemoLibraryReleaseWorkspaceForRelease({
+function useDemoLibraryReleaseWorkspaceModel({
 	overview,
 	position = null,
 	notFound,
 	contextualPublications,
 	providerRefresh,
-}: DemoLibraryReleaseWorkspaceProps) {
+}: DemoLibraryReleaseWorkspaceProps): LibraryReleaseWorkspaceViewProps<DemoPositionPublicationBinderProps> {
 	const { locale } = useI18n();
 	const showPosition = position !== null;
 	const [visitedEdition, setVisitedEdition] = useState(!showPosition);
@@ -62,47 +66,70 @@ function DemoLibraryReleaseWorkspaceForRelease({
 		editionControls: !showPosition && notFound === undefined,
 	});
 	const positionModel = useTrackScreenDemoProvider(position);
+	return {
+		locale,
+		selection: notFound
+			? { kind: "missing", notFound }
+			: positionKey
+				? { kind: "position", positionId: positionKey }
+				: { kind: "edition" },
+		overview: visitedEdition ? overviewModel : null,
+		overviewProviderRefresh:
+			!showPosition && !notFound ? providerRefresh : undefined,
+		positions: positionKeys.map((id) => ({
+			id,
+			screen: {
+				...(id === positionKey ? { ...positionModel, providerRefresh } : {}),
+				contextualPublication:
+					contextualPublications?.get(id) ??
+					(id === positionKey
+						? positionModel?.contextualPublication
+						: undefined),
+			},
+		})),
+	};
+}
+
+function DemoMeloTroveReleaseBinderForRelease({
+	children,
+	...props
+}: DemoLibraryReleaseWorkspaceProps & { children: ReactNode }) {
+	const model = useDemoLibraryReleaseWorkspaceModel(props);
 	return (
-		<LibraryReleaseWorkspaceView<DemoPositionPublicationBinderProps>
-			locale={locale}
-			selection={
-				notFound
-					? { kind: "missing", notFound }
-					: positionKey
-						? { kind: "position", positionId: positionKey }
-						: { kind: "edition" }
-			}
-			overview={visitedEdition ? overviewModel : null}
-			overviewProviderRefresh={
-				!showPosition && !notFound ? providerRefresh : undefined
-			}
-			positions={positionKeys.map((id) => ({
-				id,
-				screen: {
-					...(id === positionKey ? { ...positionModel, providerRefresh } : {}),
-					contextualPublication:
-						contextualPublications?.get(id) ??
-						(id === positionKey
-							? positionModel?.contextualPublication
-							: undefined),
-				},
-			}))}
-		/>
+		<MeloTroveReleaseBinder model={model}>{children}</MeloTroveReleaseBinder>
 	);
 }
 
 /**
- * Module-level release workspace for the prototype host. The key prevents
- * retention state and the metadata actor from following navigation into a
- * different release; same-release edition/position changes keep one instance.
+ * The key prevents retention state and the metadata actor from following
+ * navigation into a different release; same-release edition/position changes
+ * keep one instance.
+ */
+export function DemoMeloTroveReleaseBinder({
+	children,
+	...props
+}: DemoLibraryReleaseWorkspaceProps & { children: ReactNode }) {
+	return (
+		<DemoMeloTroveReleaseBinderForRelease
+			key={props.overview.release.id}
+			{...props}
+		>
+			{children}
+		</DemoMeloTroveReleaseBinderForRelease>
+	);
+}
+
+/**
+ * Module-level release workspace for the prototype host. The demo provider
+ * supplies data and the portable UI owns the composition; this facade
+ * preserves existing imports and prop shape.
  */
 export function DemoLibraryReleaseWorkspace(
 	props: DemoLibraryReleaseWorkspaceProps,
 ) {
 	return (
-		<DemoLibraryReleaseWorkspaceForRelease
-			key={props.overview.release.id}
-			{...props}
-		/>
+		<DemoMeloTroveReleaseBinder {...props}>
+			<MeloTroveReleaseContent />
+		</DemoMeloTroveReleaseBinder>
 	);
 }

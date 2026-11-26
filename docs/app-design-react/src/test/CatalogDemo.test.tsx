@@ -1,7 +1,24 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { CatalogDemo } from "../demo/CatalogDemo";
+import {
+	DemoMeloTroveProviderRefresh,
+	demoMeloTroveProvider,
+} from "../demo/demoMeloTroveProvider";
+import type { DemoLibraryProviderRefresh } from "../demo/providers/library/useDemoLibraryProviderRefresh";
+import { MeloTroveUI } from "../ui/app/MeloTroveUI";
 import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
+
+function CatalogDemo({
+	providerRefresh,
+}: {
+	providerRefresh?: DemoLibraryProviderRefresh;
+}) {
+	return (
+		<DemoMeloTroveProviderRefresh value={providerRefresh}>
+			<MeloTroveUI provider={demoMeloTroveProvider} />
+		</DemoMeloTroveProviderRefresh>
+	);
+}
 
 const northernReleaseHref = "#/library/releases/north";
 const northernPositionHref = "#/library/releases/north/positions/north-t1";

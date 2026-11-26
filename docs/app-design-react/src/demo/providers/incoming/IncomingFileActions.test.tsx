@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { I18nProvider } from "../../../app/i18n";
+import { I18nProvider } from "../demoPreferences";
 import { IncomingFileActions } from "../../../ui/features/incoming/IncomingFileActions";
 
 const fileId = "north-f1";
