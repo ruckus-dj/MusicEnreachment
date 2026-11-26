@@ -369,7 +369,7 @@ it("renders the existing Matching route for the split group without a dangling t
 	);
 
 	expect(
-		screen.getByRole("heading", { name: "Разбор: Northern Lines" }),
+		screen.getByRole("heading", { name: "Сопоставление · Northern Lines" }),
 	).toBeInTheDocument();
 	expect(screen.queryByText("Цель сопоставления не найдена")).toBeNull();
 	expect(screen.getByText("Назначено позиций: 0 из 10")).toBeInTheDocument();

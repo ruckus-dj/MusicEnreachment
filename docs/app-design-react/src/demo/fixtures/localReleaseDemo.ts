@@ -159,8 +159,6 @@ export function selectDemoRelease(
 		groupId,
 		selectedFile: null,
 		selectedTarget: null,
-		recordingTarget: null,
-		recordingResults: null,
 		plan: state.plan?.groupId === groupId ? null : state.plan,
 		confirmDowngrade:
 			state.plan?.groupId === groupId ? false : state.confirmDowngrade,

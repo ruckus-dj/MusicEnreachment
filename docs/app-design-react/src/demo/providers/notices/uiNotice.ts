@@ -20,9 +20,7 @@ export type UiNotice =
 				| "candidateChanged"
 				| "candidateChangeNotice"
 				| "planPublished"
-				| "linksSavedFilesUnchanged"
-				| "missingAssignment"
-				| "recordingLinked";
+				| "linksSavedFilesUnchanged";
 			params?: NoticeParams;
 	  }
 	| {

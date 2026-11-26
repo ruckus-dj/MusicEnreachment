@@ -314,13 +314,15 @@ it("retains matching search and preparation while creating a Local release", asy
 			fireEvent.click(discard);
 		});
 	expect(
-		await screen.findByRole("heading", { name: "Разбор: Northern Lines" }),
+		await screen.findByRole("heading", {
+			name: "Сопоставление · Northern Lines",
+		}),
 	).toBeInTheDocument();
 
 	expect(window.location.hash).toBe(matchingHash);
 	expect(matchingScreen).not.toHaveAttribute("hidden");
 	expect(
-		screen.getByRole("heading", { name: "Разбор: Northern Lines" }),
+		screen.getByRole("heading", { name: "Сопоставление · Northern Lines" }),
 	).toHaveFocus();
 	expect(
 		screen.getByRole("button", {
@@ -350,7 +352,9 @@ it("retains matching search and preparation while creating a Local release", asy
 		window.history.back();
 	});
 	expect(
-		await screen.findByRole("heading", { name: "Разбор: Northern Lines" }),
+		await screen.findByRole("heading", {
+			name: "Сопоставление · Northern Lines",
+		}),
 	).toBeInTheDocument();
 	expect(window.location.hash).toBe(matchingHash);
 	expect(

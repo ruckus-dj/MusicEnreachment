@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { usePreviewHeadingFocus } from "../../../ui/components/useViewFocus";
+import { incomingMessages } from "../../../ui/features/incoming/incomingReviewMessages";
 import type { MatchingPreviewRow } from "../../../ui/features/matching/MatchingPreview";
 import type {
 	MatchingScreenViewModel,
@@ -14,7 +15,6 @@ import { fixtureMatchingBoard } from "../../fixtures/fixtureMatchingBoard";
 import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import {
 	type Assignment,
-	artistName,
 	assignFile,
 	createIncomingState,
 	findTarget,
@@ -26,7 +26,6 @@ import {
 	type IncomingState,
 	incomingFixtures,
 	type MatchingLinkReceipt,
-	normalized,
 	providerReleases,
 	selectedSourceId,
 	sourceIds,
@@ -59,11 +58,6 @@ export type MatchingScreenProps = {
 	/** Hide the matching surface without unmounting its drafts and search state. */
 	hidden?: boolean;
 };
-
-const duration = (seconds: unknown) =>
-	Number.isFinite(Number(seconds))
-		? `${Math.floor(Number(seconds) / 60)}:${String(Math.round(Number(seconds) % 60)).padStart(2, "0")}`
-		: "—";
 
 function receiptMatchesTarget(
 	receipt: MatchingLinkReceipt,
@@ -112,7 +106,6 @@ export function useMatchingScreenDemoProvider({
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
-	const [recordingQuery, setRecordingQuery] = useState("");
 	const [inspectedPair, setInspectedPair] = useState<{
 		groupId: string;
 		trackId: string;
@@ -201,6 +194,8 @@ export function useMatchingScreenDemoProvider({
 			: groupReceipts.at(-1);
 	const backHref = incomingGroupsListHref(group ? [group.id] : []);
 	const backLabel = matchingMessage(locale, "backToIncoming");
+	const matchingTitle = (name: string) =>
+		`${incomingMessages[locale].tabMatching} · ${name}`;
 	useEffect(() => {
 		if (!matchingActive || !group) return;
 		const previous = targetResetRef.current;
@@ -210,19 +205,10 @@ export function useMatchingScreenDemoProvider({
 		setInspectedPair(undefined);
 		setFocusReceiptId("");
 		setDismissedReceiptId("");
-		if (
-			!state.selectedFile &&
-			!state.selectedTarget &&
-			!state.recordingTarget &&
-			!state.recordingResults &&
-			!state.plan
-		)
-			return;
+		if (!state.selectedFile && !state.selectedTarget && !state.plan) return;
 		const next = structuredClone(state);
 		next.selectedFile = null;
 		next.selectedTarget = null;
-		next.recordingTarget = null;
-		next.recordingResults = null;
 		next.plan = null;
 		next.confirmDowngrade = false;
 		givenState ? onState?.(next) : setLocalState(next);
@@ -244,9 +230,7 @@ export function useMatchingScreenDemoProvider({
 			heading: {
 				backHref,
 				backLabel,
-				title: matchingMessage(locale, "matchingTitle", {
-					group: receipt.groupTitle,
-				}),
+				title: matchingTitle(receipt.groupTitle),
 			},
 			body: {
 				key: `${activeTargetKey}:${receipt.id}`,
@@ -324,7 +308,7 @@ export function useMatchingScreenDemoProvider({
 				backLabel: matchingMessage(locale, "incomingLink"),
 				sourceDirectoryLabel: matchingMessage(locale, "sourceDirectory"),
 				sourcePath: `/mnt/inbox/${group.id}`,
-				title: matchingMessage(locale, "matchingTitle", { group: group.title }),
+				title: matchingTitle(group.title),
 				hint: matchingMessage(locale, "localTrackListHint"),
 			},
 			feedback: { text: "", visible: false },
@@ -469,22 +453,6 @@ export function useMatchingScreenDemoProvider({
 	const pool = group.fileIds.filter(
 		(id) => usableFile(files[id]) && !used.has(id),
 	);
-	const allProviderTracks = providers.flatMap((release) =>
-		release.tracks.map((track) => ({ release, track })),
-	);
-	const matchingRecordings = (state.recordingResults ?? []).filter(
-		({ release, track }) => {
-			const query = normalized(recordingQuery || state.recordingQuery);
-			return query
-				.split(" ")
-				.filter(Boolean)
-				.every((term) =>
-					normalized(
-						`${track.title} ${artistName(String(track.artistId), artists)} ${release.title}`,
-					).includes(term),
-				);
-		},
-	);
 	const mutateAssignment = (
 		callback: (draft: Record<string, Assignment>) => void,
 	) => {
@@ -557,8 +525,6 @@ export function useMatchingScreenDemoProvider({
 		if (canSkip) return;
 		state.selectedFile = null;
 		state.selectedTarget = null;
-		state.recordingTarget = null;
-		state.recordingResults = null;
 		setNotice({ namespace: "matching", id: "candidateChanged" });
 		clearPreview();
 		if (routedLocal) {
@@ -677,32 +643,6 @@ export function useMatchingScreenDemoProvider({
 		setFocusReceiptId(result.receipt.id);
 		commitState();
 	};
-	const bindRecording = (recordingId: string) => {
-		const item = assignments[String(state.recordingTarget)];
-		if (!item) {
-			setNotice({ namespace: "matching", id: "missingAssignment" });
-			commitState();
-			return;
-		}
-		item.providerTrackId = recordingId;
-		item.method = "Вручную · композиция";
-		if (item.selectedSourceId && item.sourceMeta[item.selectedSourceId])
-			item.sourceMeta[item.selectedSourceId].method = item.method;
-		state.selectedTarget = state.recordingTarget;
-		state.recordingTarget = null;
-		setNotice({ namespace: "matching", id: "recordingLinked" });
-		clearPreview();
-		commitState();
-	};
-	const openRecordingSearch = (trackId: string) => {
-		const track = tracks.find((item) => String(item.id) === trackId);
-		if (!track) return;
-		state.recordingTarget = trackId;
-		state.recordingQuery = String(track.title);
-		state.recordingResults = allProviderTracks;
-		setRecordingQuery(String(track.title));
-		commitState();
-	};
 	const search = {
 		bind: (children: ReactNode) => (
 			<MatchingSearchPicker
@@ -776,7 +716,7 @@ export function useMatchingScreenDemoProvider({
 			backLabel: matchingMessage(locale, "incomingLink"),
 			sourceDirectoryLabel: matchingMessage(locale, "sourceDirectory"),
 			sourcePath: `/mnt/inbox/${group.id}`,
-			title: matchingMessage(locale, "matchingTitle", { group: group.title }),
+			title: matchingTitle(group.title),
 			hint:
 				activeMode === "local"
 					? matchingMessage(locale, "localTrackListHint")
@@ -829,18 +769,8 @@ export function useMatchingScreenDemoProvider({
 			onInspectPair: (fileId, trackId) => {
 				setInspectedPair({ groupId: group.id, fileId, trackId });
 				state.selectedTarget = trackId;
-				state.recordingTarget = null;
-				state.recordingResults = null;
 				commitState();
 			},
-			recordingSearch:
-				activeMode === "local"
-					? {
-							label: matchingMessage(locale, "recordingSearch"),
-							trackIds: tracks.map((track) => String(track.id)),
-							onOpen: openRecordingSearch,
-						}
-					: null,
 		},
 		inspector: {
 			ariaLabel: matchingMessage(locale, "ariaTrackInspector"),
@@ -857,35 +787,6 @@ export function useMatchingScreenDemoProvider({
 					: null,
 			emptyText: matchingMessage(locale, "noEvidenceFile"),
 		},
-		recording: state.recordingTarget
-			? {
-					title: matchingMessage(locale, "recordingSearch"),
-					queryLabel: matchingMessage(locale, "searchTitleArtist"),
-					ariaSearchLabel: matchingMessage(locale, "ariaSearchTitleArtist"),
-					query: recordingQuery,
-					onQueryChange: setRecordingQuery,
-					onSubmit: () => {
-						state.recordingQuery = recordingQuery;
-						state.recordingResults = allProviderTracks;
-						commitState();
-					},
-					searchLabel: matchingMessage(locale, "searchRecordings"),
-					closeLabel: matchingMessage(locale, "close"),
-					onClose: () => {
-						state.recordingTarget = null;
-						commitState();
-					},
-					hint: matchingMessage(locale, "recordingLinkHint"),
-					results: matchingRecordings.map(({ release, track }) => ({
-						key: String(track.id),
-						title: String(track.title),
-						releaseTitle: String(release.title),
-						duration: duration(track.duration),
-						linkLabel: matchingMessage(locale, "linkRecording"),
-						onLink: () => bindRecording(String(track.id)),
-					})),
-				}
-			: null,
 		footer: previewModel
 			? null
 			: {

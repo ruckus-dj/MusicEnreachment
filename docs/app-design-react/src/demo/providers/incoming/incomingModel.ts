@@ -122,9 +122,6 @@ export type IncomingState = {
 	selectedTarget: string | null;
 	providerQuery: string;
 	providerResults: IncomingReleases | null;
-	recordingQuery: string;
-	recordingResults: { release: OriginalRelease; track: OriginalTrack }[] | null;
-	recordingTarget: string | null;
 	notice: string;
 	noticeDescriptor: IncomingNotice | null;
 	uiNotice?: UiNotice | null;
@@ -187,9 +184,6 @@ export function createIncomingState(): IncomingState {
 		selectedTarget: null,
 		providerQuery: "Northern Lines",
 		providerResults: null,
-		recordingQuery: "",
-		recordingResults: null,
-		recordingTarget: null,
 		notice: "",
 		noticeDescriptor: null,
 		uiNotice: null,

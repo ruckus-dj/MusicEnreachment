@@ -30,7 +30,6 @@ it("selects a freshly saved release only on the named group and keeps publicatio
 	state.plan = makeGroupPlan(state, north, files, incomingFixtures.releases);
 	state.inventoryVersion = 7;
 	state.selectedTarget = "north-f1";
-	state.recordingTarget = "north-f1";
 	state.notice = "previous";
 	state.noticeDescriptor = { code: "nothingToPublish" };
 	const plan = structuredClone(state.plan);
@@ -58,7 +57,6 @@ it("selects a freshly saved release only on the named group and keeps publicatio
 
 	expect(next.groupId).toBe("hours");
 	expect(next.selectedTarget).toBeNull();
-	expect(next.recordingTarget).toBeNull();
 	expect(next.notice).toBe("");
 	expect(next.noticeDescriptor).toBeNull();
 	expect(next.uiNotice).toEqual({
