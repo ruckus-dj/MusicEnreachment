@@ -18,11 +18,13 @@ import {
 	settingsTabKeys,
 } from "../../../ui/features/settings/SettingsTabs";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
+import { settingsMessage } from "../../../ui/features/settings/settingsMessages";
 import { genreCatalog } from "../genres/catalogue";
 import { overlapsAnyDemoPath } from "../sources/demoPathValidation";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
 import {
 	isValidMusicBrainzConfiguration,
+	type MusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
 } from "./providerValidation";
 import {
@@ -158,6 +160,19 @@ export const initialDemoSettings: DemoSettings = {
 	publicationAutoCompleteAlbums: false,
 };
 
+export type DemoMusicBrainzCheckResult = { ok: boolean };
+export type DemoMusicBrainzCheck = (
+	configuration: MusicBrainzConfiguration,
+) => DemoMusicBrainzCheckResult | Promise<DemoMusicBrainzCheckResult>;
+
+type PendingMusicBrainzCheck = {
+	check: DemoMusicBrainzCheck;
+	configuration: MusicBrainzConfiguration;
+	fingerprint: string;
+	draftSignature: string;
+	saving: boolean;
+};
+
 export type SettingsScreenProps = {
 	settings: DemoSettings;
 	onSettings: (settings: DemoSettings) => void;
@@ -166,6 +181,8 @@ export type SettingsScreenProps = {
 	sourceRoots?: string[];
 	browseDirectory?: BrowseDirectory;
 	resolveDirectoryPath?: (path: string) => string;
+	/** Optional demo check; omitted keeps the immediate accepted result. */
+	checkMusicBrainz?: DemoMusicBrainzCheck;
 };
 
 function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
@@ -317,6 +334,7 @@ type NoticeKey =
 	| "conflicts"
 	| "invalidProvider"
 	| "providerSaved"
+	| "musicBrainzChecked"
 	| "invalidTemplate"
 	| "staleOutput"
 	| "staleSettings"
@@ -336,6 +354,7 @@ export function useSettingsScreenDemoProvider({
 	sourceRoots = [],
 	browseDirectory,
 	resolveDirectoryPath,
+	checkMusicBrainz,
 }: SettingsScreenProps): SettingsScreenViewProps {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
@@ -367,6 +386,63 @@ export function useSettingsScreenDemoProvider({
 		const restored = readSettingsDraft(getSettingsDraftStorage());
 		return restored ?? { value: baseline, baseline };
 	});
+	const [pendingMusicBrainzCheck, setPendingMusicBrainzCheck] =
+		useState<PendingMusicBrainzCheck>();
+	const providerCheckLock = useRef(false);
+	const [providerCheckFailed, setProviderCheckFailed] = useState(false);
+	const providerCheckAlert = useRef<HTMLParagraphElement>(null);
+	const latestProviderContext = useRef({ settings, draftState, onSettings });
+	latestProviderContext.current = { settings, draftState, onSettings };
+	useEffect(() => {
+		if (providerCheckFailed) requestSettingsFocus(providerCheckAlert.current);
+	}, [providerCheckFailed]);
+	useEffect(() => {
+		if (!pendingMusicBrainzCheck) return;
+		let active = true;
+		const attempt = pendingMusicBrainzCheck;
+		const complete = async () => {
+			let ok = false;
+			try {
+				ok = (await attempt.check(attempt.configuration)).ok;
+			} catch {
+				// The prototype uses the same safe feedback for a failed check.
+			}
+			if (!active) return;
+			providerCheckLock.current = false;
+			setPendingMusicBrainzCheck(undefined);
+			const { settings, draftState, onSettings } =
+				latestProviderContext.current;
+			const configuration: MusicBrainzConfiguration = {
+				mode: settings.musicBrainzMode ?? "",
+				url: settings.musicBrainzURL,
+				throttle: settings.musicBrainzThrottle,
+				delay: settings.musicBrainzDelay,
+			};
+			if (
+				musicBrainzConfigurationFingerprint(configuration) !==
+					attempt.fingerprint ||
+				conflictGroupSignature("musicBrainz", draftState.value) !==
+					attempt.draftSignature
+			) {
+				setNotice("staleSettings");
+				return;
+			}
+			if (!ok) {
+				setProviderCheckFailed(true);
+				return;
+			}
+			onSettings({
+				...settings,
+				musicBrainzVerified: true,
+				musicBrainzVerifiedFingerprint: attempt.fingerprint,
+			});
+			setNotice("musicBrainzChecked");
+		};
+		void complete();
+		return () => {
+			active = false;
+		};
+	}, [pendingMusicBrainzCheck]);
 	const moveCandidate = draftState.value.toolsPathCandidate;
 	const [folderReplacement, setFolderReplacement] =
 		useState<FolderReplacement>();
@@ -865,6 +941,7 @@ export function useSettingsScreenDemoProvider({
 		musicBrainzURL: string,
 		musicBrainzDelay: string,
 	) => {
+		if (providerCheckLock.current) return;
 		const selfHosted = musicBrainzMode === "self-hosted";
 		const savedMusicBrainzURL = selfHosted
 			? musicBrainzURL
@@ -887,14 +964,26 @@ export function useSettingsScreenDemoProvider({
 			requestSettingsFocus(field);
 			return;
 		}
+		const fingerprint = musicBrainzConfigurationFingerprint(configuration);
+		const preserveProof =
+			settings.musicBrainzVerified === true &&
+			settings.musicBrainzVerifiedFingerprint === fingerprint;
+		const providerDraft = {
+			...draftState.value,
+			musicBrainzMode,
+			...(selfHosted && {
+				musicBrainzURL: savedMusicBrainzURL,
+				musicBrainzDelay: savedMusicBrainzDelay,
+			}),
+		};
+		setProviderCheckFailed(false);
 		onSettings({
 			...settings,
 			musicBrainzMode,
 			musicBrainzURL: savedMusicBrainzURL,
 			musicBrainzDelay: savedMusicBrainzDelay,
-			musicBrainzVerified: true,
-			musicBrainzVerifiedFingerprint:
-				musicBrainzConfigurationFingerprint(configuration),
+			musicBrainzVerified: checkMusicBrainz ? preserveProof : true,
+			musicBrainzVerifiedFingerprint: fingerprint,
 		});
 		setDraftState((current) => ({
 			baseline: {
@@ -915,7 +1004,21 @@ export function useSettingsScreenDemoProvider({
 				: { ...current.value, musicBrainzMode },
 		}));
 		clearConflictDismissal("musicBrainz");
-		setNotice("providerSaved");
+		setNotice(checkMusicBrainz ? "" : "providerSaved");
+		if (checkMusicBrainz) {
+			providerCheckLock.current = true;
+			setPendingMusicBrainzCheck({
+				check: checkMusicBrainz,
+				configuration,
+				fingerprint,
+				draftSignature: conflictGroupSignature("musicBrainz", providerDraft),
+				saving:
+					settings.musicBrainzMode !== musicBrainzMode ||
+					(selfHosted &&
+						(settings.musicBrainzURL !== savedMusicBrainzURL ||
+							settings.musicBrainzDelay !== savedMusicBrainzDelay)),
+			});
+		}
 	};
 	const commitProviders = (approval?: ValueReplacement) => {
 		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
@@ -1314,13 +1417,15 @@ export function useSettingsScreenDemoProvider({
 			? copy.saved
 			: notice === "providerSaved"
 				? copy.providerSaved
-				: notice === "invalidProvider"
-					? copy.invalidProvider
-					: notice === "pathOverlap"
-						? copy.pathOverlap
-						: notice
-							? copy[notice]
-							: "";
+				: notice === "musicBrainzChecked"
+					? settingsMessage(locale, "musicBrainzChecked")
+					: notice === "invalidProvider"
+						? copy.invalidProvider
+						: notice === "pathOverlap"
+							? copy.pathOverlap
+							: notice
+								? copy[notice]
+								: "";
 
 	const notices: SettingsNoticeView[] = [];
 	if (noticeText) notices.push({ key: "notice", text: noticeText });
@@ -1496,7 +1601,7 @@ export function useSettingsScreenDemoProvider({
 		providers: {
 			locale,
 			snapshot: {
-				busy: false,
+				busy: pendingMusicBrainzCheck?.saving ?? false,
 				acoustID: {
 					applicationKey: acoustIDApplicationKey,
 					hasKey: settings.hasAcoustIDApplicationKey ?? false,
@@ -1676,6 +1781,12 @@ export function useSettingsScreenDemoProvider({
 	return {
 		locale,
 		notices,
+		feedback: providerCheckFailed
+			? {
+					message: settingsMessage(locale, "musicBrainzUnavailable"),
+					alertRef: providerCheckAlert,
+				}
+			: undefined,
 		conflicts: conflictNotices,
 		ready: { tabs },
 		dialogs,

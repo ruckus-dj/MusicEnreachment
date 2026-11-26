@@ -39,6 +39,68 @@ function SettingsScreen(props: SettingsScreenProps) {
 	);
 }
 
+it("keeps a saved provider target unverified until its check succeeds", async () => {
+	localStorage.setItem("music-design-v2-language", "en");
+	let current: typeof initialDemoSettings = {
+		...initialDemoSettings,
+		musicBrainzMode: "self-hosted",
+		musicBrainzURL: "https://old.example",
+		musicBrainzDelay: "1",
+	};
+	let finishCheck: ((result: { ok: boolean }) => void) | undefined;
+	const checkMusicBrainz = vi.fn(
+		() =>
+			new Promise<{ ok: boolean }>((resolve) => {
+				finishCheck = resolve;
+			}),
+	);
+	const element = () => (
+		<I18nProvider>
+			<SettingsScreen
+				settings={current}
+				onSettings={(next) => {
+					current = next;
+					view.rerender(element());
+				}}
+				checkMusicBrainz={checkMusicBrainz}
+			/>
+		</I18nProvider>
+	);
+	const view = render(element());
+	fireEvent.click(screen.getByRole("tab", { name: "Providers" }));
+	const url = document.getElementById("settings-musicBrainzURL");
+	if (!url) throw new Error("Missing provider URL field");
+	fireEvent.change(url, { target: { value: "https://provider.example" } });
+	const check = screen.getByRole("button", {
+		name: "Save and check MusicBrainz",
+	});
+	fireEvent.click(check);
+	await waitFor(() => expect(checkMusicBrainz).toHaveBeenCalledTimes(1));
+	expect(check).toBeDisabled();
+	expect(current).toMatchObject({
+		musicBrainzURL: "https://provider.example",
+		musicBrainzVerified: false,
+	});
+
+	await act(async () => finishCheck?.({ ok: false }));
+	const alert = screen.getByRole("alert");
+	expect(alert).toHaveTextContent(/MusicBrainz/i);
+	expect(alert).toHaveFocus();
+	expect(current.musicBrainzVerified).toBe(false);
+
+	fireEvent.click(check);
+	await waitFor(() => expect(checkMusicBrainz).toHaveBeenCalledTimes(2));
+	current = { ...current, concurrency: "7" };
+	view.rerender(element());
+	await act(async () => finishCheck?.({ ok: true }));
+	expect(current).toMatchObject({
+		musicBrainzURL: "https://provider.example",
+		musicBrainzVerified: true,
+		concurrency: "7",
+	});
+	expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("keeps conflict actions scoped to one setting and rechecks replacement", async () => {
 	localStorage.setItem("music-design-v2-language", "en");
 	let current: typeof initialDemoSettings = {
