@@ -60,8 +60,7 @@ it("localizes the publication reason before adding artist warnings", () => {
 						providers: providerReleases,
 						artists: originalArtists,
 						inventoryVersion: state.inventoryVersion,
-						confirmDowngrade: false,
-						onPlan: vi.fn(),
+						onClose: vi.fn(),
 						onReleases: vi.fn(),
 						onSuccess: vi.fn(),
 					},
@@ -260,4 +259,71 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	).toEqual(
 		changedRelease.tracks.filter((item) => item.id !== signalsTrack.id),
 	);
+});
+
+it("warns about an output downgrade and confirms a compatible ready retained plan once", async () => {
+	localStorage.setItem("music-design-v2-language", "ru");
+	const copy = firstPublicationPreviewMessages.ru;
+	const state = createIncomingState();
+	const releases = structuredClone(originalReleases);
+	const release = releases.find((item) => item.id === "signals")!;
+	const track = release.tracks.find((item) => item.id === "signals-t1")!;
+	const source = Object.values(originalFiles).find(
+		(file) =>
+			file.codec === "MP3" && file.available && Boolean(file.locations?.length),
+	)!;
+	const destination: PublicationDestination = {
+		...fixturePublicationDestination,
+		format: "m4a",
+	};
+	const retainedPath = `${destination.outputDirectory}/Retained/01 - Signal.m4a`;
+	track.sourceId = source.id;
+	track.sourceIds = [source.id];
+	track.observedFile = null;
+	track.published = {
+		...track.published!,
+		codec: "ALAC",
+		container: "M4A",
+		sourceId: source.id,
+		path: retainedPath,
+	};
+	const onReleases = vi.fn();
+	render(
+		<I18nProvider>
+			<ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
+				source={{
+					key: "demo-position-publication",
+					Component: DemoPositionPublication,
+					props: {
+						destination,
+						release,
+						positionId: track.id,
+						state,
+						files: originalFiles,
+						releases,
+						providers: providerReleases,
+						artists: originalArtists,
+						onReleases,
+						onSuccess: vi.fn(),
+					},
+				}}
+			/>
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("radio", { name: copy.retainedRepublish }));
+	fireEvent.click(screen.getByRole("button", { name: copy.preview }));
+	expect(
+		await screen.findByText(copy.outputQualityDowngradeWarning),
+	).toBeInTheDocument();
+	expect(screen.queryByRole("checkbox")).toBeNull();
+	const confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+	expect(confirm).toBeEnabled();
+	fireEvent.click(confirm);
+	expect(onReleases).toHaveBeenCalledTimes(1);
+	const updated = onReleases.mock.calls[0][0] as typeof originalReleases;
+	const updatedTrack = updated
+		.find((item) => item.id === release.id)!
+		.tracks.find((item) => item.id === track.id)!;
+	expect(updatedTrack.published?.sourceId).toBe(source.id);
+	expect(updatedTrack.published?.path).toBe(retainedPath);
 });

@@ -603,6 +603,13 @@ export function planPositionRow(
 		renderedContainer,
 		retainedPath,
 		ordinaryUnchanged,
+		downgrade: Boolean(
+			row.previous &&
+				row.outputCodec &&
+				demoIsLosslessCodec(row.previous.codec) &&
+				!demoIsLosslessCodec(row.outputCodec) &&
+				row.assignment?.included,
+		),
 		action:
 			!row.assignment?.included || !row.file
 				? "Пропустить"

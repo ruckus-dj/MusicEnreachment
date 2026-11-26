@@ -1,4 +1,3 @@
-import { Checkbox } from "react-aria-components";
 import { firstPublicationPreviewMessages } from "../library/firstPublicationPreviewMessages";
 import {
   LibraryPositionConfirmButton,
@@ -34,13 +33,6 @@ export interface ContextPublicationPreviewPlanControl {
   onPreview: () => void;
 }
 
-export interface ContextPublicationPreviewDowngradeControl {
-  checked: boolean;
-  disabled?: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-}
-
 export interface ContextPublicationPreviewConfirmControl {
   disabled: boolean;
   label: "publish" | "retainedRepublish";
@@ -60,7 +52,6 @@ export interface ContextPublicationPreviewViewProps {
   onRefresh?: () => void;
   workflowControl?: ContextPublicationPreviewWorkflowControl;
   planControl?: ContextPublicationPreviewPlanControl;
-  downgradeControl?: ContextPublicationPreviewDowngradeControl;
   confirmControl?: ContextPublicationPreviewConfirmControl;
 }
 
@@ -76,7 +67,6 @@ export function ContextPublicationPreviewView({
   onRefresh,
   workflowControl,
   planControl,
-  downgradeControl,
   confirmControl,
 }: ContextPublicationPreviewViewProps) {
   const copy = firstPublicationPreviewMessages[locale];
@@ -169,17 +159,6 @@ export function ContextPublicationPreviewView({
           onSourceChoice={onSourceChoice}
           onRefresh={onRefresh}
         />
-      )}
-      {!readOnly && downgradeControl && (
-        <Checkbox
-          className="react-aria-Checkbox ui-checkbox inline-flex min-h-8 pointer-coarse:min-h-[40px] cursor-pointer items-center gap-[7px] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 [&_.checkbox]:grid [&_.checkbox]:size-4 [&_.checkbox]:place-items-center [&_.checkbox]:border [&_.checkbox]:border-[var(--control)] [&_.checkbox]:bg-[var(--surface)] [&_.checkbox]:text-[var(--button-text)] data-[selected]:[&_.checkbox]:border-[var(--accent)] data-[selected]:[&_.checkbox]:bg-[var(--accent)]"
-          isSelected={downgradeControl.checked}
-          isDisabled={Boolean(downgradeControl.disabled)}
-          onChange={downgradeControl.onChange}
-        >
-          <span className="checkbox" />
-          {downgradeControl.label}
-        </Checkbox>
       )}
       {!readOnly && confirmControl && (
         <LibraryPositionConfirmButton

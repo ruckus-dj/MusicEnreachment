@@ -35,7 +35,6 @@ import { demoPathInside } from "../sources/demoPathValidation";
 import { individualPublicationDetails } from "./individualPublicationDetails";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
-	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
 	retainedOutputIssue,
@@ -116,8 +115,7 @@ export type ContextPublicationPreviewProps = {
 	providers: IncomingReleases;
 	artists: CatalogArtist[];
 	inventoryVersion: number;
-	confirmDowngrade: boolean;
-	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
+	onClose: () => void;
 	onReleases: (releases: OriginalRelease[]) => void;
 	onSuccess: (notice: UiNotice) => void;
 	controls?: Pick<
@@ -143,8 +141,7 @@ export function ContextPublicationPreview({
 	providers,
 	artists,
 	inventoryVersion,
-	confirmDowngrade,
-	onPlan,
+	onClose,
 	onReleases,
 	onSuccess,
 	controls,
@@ -207,18 +204,11 @@ export function ContextPublicationPreview({
 	const retainedSourceMismatch = Boolean(
 		retainedWorkflow && current && source && current.sourceId !== source.id,
 	);
-	const retainedCodecMismatch = Boolean(
-		retainedWorkflow &&
-			current &&
-			source &&
-			current.codec !== demoOutputCodec(source.codec, destination.format),
-	);
 	const retainedUnavailable = Boolean(
 		retainedWorkflow &&
 			(!current ||
 				!source ||
 				retainedSourceMismatch ||
-				retainedCodecMismatch ||
 				retainedIssue ||
 				observedCurrentUnavailable ||
 				metadataIssues.length > 0 ||
@@ -262,8 +252,7 @@ export function ContextPublicationPreview({
 			row?.assignment?.included &&
 			source &&
 			metadataIssues.length === 0 &&
-			(row.action === "Создать" || row.action === "Заменить") &&
-			(!downgrade || confirmDowngrade),
+			(row.action === "Создать" || row.action === "Заменить"),
 	);
 	const reason = metadataIssues.length
 		? formatPublicationMessage(locale, "invalidMetadata", {
@@ -326,7 +315,7 @@ export function ContextPublicationPreview({
 		);
 		if (!applied) return;
 		onReleases(next);
-		onPlan(null, false);
+		onClose();
 		onSuccess({
 			namespace: "publication",
 			id: "applySuccess",
@@ -343,16 +332,6 @@ export function ContextPublicationPreview({
 		notices,
 		details,
 		sourceGroupName: `demo-publication-source-${positionId}`,
-		downgradeControl: downgrade
-			? {
-					checked: confirmDowngrade,
-					disabled: Boolean(error),
-					label: formatPublicationMessage(locale, "confirmDowngrade", {
-						count: 1,
-					}),
-					onChange: (checked) => onPlan(plan, checked),
-				}
-			: undefined,
 		confirmControl: {
 			label: current ? "retainedRepublish" : "publish",
 			disabled: !canConfirm,
@@ -392,7 +371,6 @@ export type DemoPositionPublicationSource =
 
 type PreparedPublication = {
 	plan: IncomingPlan;
-	confirmDowngrade: boolean;
 	destination: PublicationDestination;
 	preview: PositionPreviewSnapshot | null;
 };
@@ -437,7 +415,6 @@ export function DemoPositionPublication({
 			const destinationSnapshot = { ...destination };
 			setPrepared({
 				plan: preparedPlan,
-				confirmDowngrade: false,
 				destination: destinationSnapshot,
 				preview: capturePositionPreview(
 					preparedPlan,
@@ -514,29 +491,7 @@ export function DemoPositionPublication({
 			providers={providers}
 			artists={artists}
 			inventoryVersion={state.inventoryVersion}
-			confirmDowngrade={prepared.confirmDowngrade}
-			onPlan={(plan, confirmed) =>
-				setPrepared((current) =>
-					plan
-						? current
-							? { ...current, plan, confirmDowngrade: Boolean(confirmed) }
-							: {
-									plan,
-									confirmDowngrade: Boolean(confirmed),
-									destination: { ...destination },
-									preview: capturePositionPreview(
-										plan,
-										destination,
-										files,
-										releases,
-										providers,
-										artists,
-										positionId,
-									),
-								}
-						: undefined,
-				)
-			}
+			onClose={() => setPrepared(undefined)}
 			onReleases={onReleases}
 			onSuccess={onSuccess}
 			workflow={effectiveWorkflow}
