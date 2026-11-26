@@ -374,26 +374,27 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		const nextIncoming = structuredClone(incoming);
 		const nextReleases = structuredClone(releases);
 		const minimumScore = Number(settings.matchingPairThreshold ?? "0.70");
-		const count = runAutomaticMatching(
+		const result = runAutomaticMatching(
 			nextIncoming,
 			files,
 			nextReleases,
 			completed,
-			settings.publicationAutoCompleteAlbums && Number.isFinite(minimumScore)
-				? minimumScore
-				: undefined,
+			minimumScore,
+			settings.publicationAutoCompleteAlbums === true,
 			providers,
 			providerArtists,
 			publicationDestination,
 		);
-		if (!count) return;
-		nextIncoming.notice = "";
-		nextIncoming.noticeDescriptor = null;
-		nextIncoming.uiNotice = {
-			namespace: "incoming",
-			id: "automaticPublished",
-			params: { count },
-		};
+		if (!result.publications && !result.links && !result.retired) return;
+		if (result.publications) {
+			nextIncoming.notice = "";
+			nextIncoming.noticeDescriptor = null;
+			nextIncoming.uiNotice = {
+				namespace: "incoming",
+				id: "automaticPublished",
+				params: { count: result.publications },
+			};
+		}
 		setIncoming(nextIncoming);
 		setImportedReleases(nextReleases);
 	}, [

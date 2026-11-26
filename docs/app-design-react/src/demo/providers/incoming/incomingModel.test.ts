@@ -30,6 +30,78 @@ const fresh = () => ({
 	releases: structuredClone(incomingFixtures.releases),
 });
 
+function automaticMatchingFixture() {
+	const { state, files, releases } = fresh();
+	const group = state.groups.find((item) => item.id === "hours");
+	if (!group) throw new Error("Missing automatic matching fixture");
+	for (const id of group.fileIds) files[id].sha256 = `demo-test-source-${id}`;
+	const root = {
+		id: "root-backup",
+		path: "/mnt/inbox",
+		mode: "in_place" as const,
+		available: true,
+		lastSuccessfulScanAt: "2026-11-26T12:00:00Z",
+	};
+	let processing = processSourceQueue(
+		createSourceScan(initialSourceProcessingState, root.id, root.mode, files),
+	);
+	const work = processing.files.filter((item) =>
+		group.fileIds.includes(item.fileId),
+	);
+	expect(work).toHaveLength(group.fileIds.length);
+	const folders = () =>
+		readyAutomaticIncomingFolders({
+			roots: [root],
+			files,
+			processing,
+		}).map((folder) => folder.fileIds);
+	const retry = (id: string) => {
+		processing = processSourceQueue(
+			retrySourceStep(processing, id, "fingerprint"),
+			root.id,
+			id,
+		);
+	};
+	for (const item of work.slice(0, -1)) retry(item.id);
+	expect(folders()).toEqual([]);
+	retry(work[work.length - 1].id);
+	const ready = folders();
+	expect(ready).toContainEqual(new Set(group.fileIds));
+	return { state, files, releases, group, ready };
+}
+
+function scoreAutomaticPairs(
+	group: ReturnType<typeof fresh>["state"]["groups"][number],
+	files: ReturnType<typeof fresh>["files"],
+	releases: ReturnType<typeof fresh>["releases"],
+	value = 0.85,
+	sourceSHA256?: (fileId: string) => string | undefined,
+) {
+	const assignments = getDraft(group, files, providerReleases, releases);
+	for (const assignment of Object.values(assignments)) {
+		const id = selectedSourceId(assignment);
+		const sha = id ? (sourceSHA256?.(id) ?? files[id]?.sha256) : undefined;
+		if (id && sha && assignment.sourceMeta[id])
+			assignment.sourceMeta[id].score = { value, sourceSHA256: sha };
+	}
+}
+
+function publishedCount(releases: ReturnType<typeof fresh>["releases"]) {
+	return releases
+		.flatMap(({ tracks }) => tracks)
+		.filter(({ published }) => published).length;
+}
+
+function clearHoursLinks(releases: ReturnType<typeof fresh>["releases"]) {
+	const release = releases.find((item) => item.id === "hours");
+	if (!release) throw new Error("Missing Small Hours fixture");
+	for (const track of release.tracks) {
+		track.sourceIds = [];
+		track.sourceId = null;
+	}
+	return release;
+}
+
 it("normalizes optional source associations without dropping the legacy fileId", () => {
 	expect(sourceIds(undefined)).toEqual([]);
 	expect(sourceIds({})).toEqual([]);
@@ -214,63 +286,178 @@ it("replaces only audio measurement tags on an automatic quality upgrade", () =>
 	expect(track.published.matchingConfidence).toBe(0.86);
 });
 
-it("admits automatic first publication only with one ready folder and exact pair scores", () => {
-	const { state, files, releases } = fresh();
-	const group = state.groups.find((item) => item.autoEligible);
-	if (!group) throw new Error("Missing automatic matching fixture");
-	for (const id of group.fileIds) files[id].sha256 = `demo-test-source-${id}`;
-	const root = {
-		id: "root-backup",
-		path: "/mnt/inbox",
-		mode: "in_place" as const,
-		available: true,
-		lastSuccessfulScanAt: "2026-11-26T12:00:00Z",
+it("requires exact pair scores and hashes before retiring automatic links", () => {
+	const { state, files, releases, group, ready } = automaticMatchingFixture();
+	const baseline = publishedCount(releases);
+	const originalFileIds = [...group.fileIds];
+
+	expect(
+		runAutomaticMatching(state, files, releases, ready, 0.7, false),
+	).toEqual({ publications: 0, links: 0, retired: 0 });
+	expect(group.fileIds).toEqual(originalFileIds);
+	expect(group.processed).toBe(false);
+	expect(publishedCount(releases)).toBe(baseline);
+
+	scoreAutomaticPairs(
+		group,
+		files,
+		releases,
+		0.85,
+		() => "demo-wrong-source-hash",
+	);
+	expect(
+		runAutomaticMatching(state, files, releases, ready, 0.7, false),
+	).toEqual({ publications: 0, links: 0, retired: 0 });
+	expect(group.fileIds).toEqual(originalFileIds);
+	expect(group.processed).toBe(false);
+	expect(publishedCount(releases)).toBe(baseline);
+
+	scoreAutomaticPairs(group, files, releases);
+	const hours = clearHoursLinks(releases);
+	const boundTrack = hours.tracks[0];
+	const exactBinding = boundTrack.providerTrackId;
+	boundTrack.providerTrackId = "unrelated-provider-position";
+	expect(
+		runAutomaticMatching(state, files, releases, ready, 0.7, false),
+	).toEqual({ publications: 0, links: 0, retired: 0 });
+	expect(group.fileIds).toEqual(originalFileIds);
+	expect(boundTrack.sourceIds).toEqual([]);
+	boundTrack.providerTrackId = exactBinding;
+	const result = runAutomaticMatching(
+		state,
+		files,
+		releases,
+		ready,
+		0.7,
+		false,
+	);
+	expect(result).toEqual({ publications: 0, links: 8, retired: 8 });
+	expect(group.fileIds).toEqual([]);
+	expect(state.groups.some(({ id }) => id === group.id)).toBe(false);
+	expect(group.processed).toBe(true);
+	expect(publishedCount(releases)).toBe(baseline);
+	expect(hours.tracks.flatMap((track) => track.sourceIds ?? [])).toEqual(
+		originalFileIds,
+	);
+	expect(hours.tracks.every((track) => track.sourceId === null)).toBe(true);
+	expect(hours.tracks.every((track) => track.published === null)).toBe(true);
+});
+
+it("applies automatic first publication only to a complete edition when enabled", () => {
+	const extra = automaticMatchingFixture();
+	scoreAutomaticPairs(extra.group, extra.files, extra.releases);
+	clearHoursLinks(extra.releases);
+	const providers = structuredClone(incomingFixtures.providerReleases);
+	const edition = providers.find((item) => item.id === "p-hours");
+	if (!edition) throw new Error("Missing provider edition");
+	const lastTrack = edition.tracks[edition.tracks.length - 1];
+	edition.tracks.push({
+		...structuredClone(lastTrack),
+		id: "p-hours-t9",
+		position: 9,
+		title: "Encore",
+		sourceId: null,
+		sourceIds: [],
+		published: null,
+	});
+	const extraBaseline = publishedCount(extra.releases);
+	const extraResult = runAutomaticMatching(
+		extra.state,
+		extra.files,
+		extra.releases,
+		extra.ready,
+		0.7,
+		true,
+		providers,
+	);
+	expect(extraResult).toEqual({ publications: 0, links: 8, retired: 8 });
+	expect(extra.group.fileIds).toEqual([]);
+	expect(publishedCount(extra.releases)).toBe(extraBaseline);
+
+	const below = automaticMatchingFixture();
+	scoreAutomaticPairs(below.group, below.files, below.releases);
+	clearHoursLinks(below.releases);
+	const belowBaseline = publishedCount(below.releases);
+	const belowResult = runAutomaticMatching(
+		below.state,
+		below.files,
+		below.releases,
+		below.ready,
+		0.9,
+		true,
+	);
+	expect(belowResult).toEqual({ publications: 0, links: 0, retired: 0 });
+	expect(below.group.fileIds).toHaveLength(8);
+	expect(publishedCount(below.releases)).toBe(belowBaseline);
+
+	const full = automaticMatchingFixture();
+	scoreAutomaticPairs(full.group, full.files, full.releases);
+	const hours = clearHoursLinks(full.releases);
+	const fullBaseline = publishedCount(full.releases);
+	const fullResult = runAutomaticMatching(
+		full.state,
+		full.files,
+		full.releases,
+		full.ready,
+		0.7,
+		true,
+	);
+	expect(fullResult).toEqual({ publications: 8, links: 8, retired: 8 });
+	expect(full.group.fileIds).toEqual([]);
+	expect(publishedCount(full.releases)).toBe(fullBaseline + 8);
+	expect(hours.tracks.every((track) => track.published)).toBe(true);
+	expect(
+		hours.tracks.map((track) => track.published?.matchingConfidence),
+	).toEqual([0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85]);
+});
+
+it("upgrades strictly better automatic audio without the first-publication setting", () => {
+	const { state, files, releases, group, ready } = automaticMatchingFixture();
+	scoreAutomaticPairs(group, files, releases);
+	const hours = clearHoursLinks(releases);
+	const target = hours.tracks[0];
+	files["hours-f1"].codec = "ALAC";
+	const currentSourceId = "hours-current";
+	files[currentSourceId] = {
+		...structuredClone(files["hours-f1"]),
+		id: currentSourceId,
+		codec: "MP3",
+		sha256: "demo-current-source-hash",
+		providerTrackId: null,
 	};
-	let processing = processSourceQueue(
-		createSourceScan(initialSourceProcessingState, root.id, root.mode, files),
-	);
-	const work = processing.files.filter((item) =>
-		group.fileIds.includes(item.fileId),
-	);
-	expect(work).toHaveLength(group.fileIds.length);
-	const folders = () =>
-		readyAutomaticIncomingFolders({ roots: [root], files, processing }).map(
-			(folder) => folder.fileIds,
-		);
-	const retry = (id: string) => {
-		processing = processSourceQueue(
-			retrySourceStep(processing, id, "fingerprint"),
-			root.id,
-			id,
-		);
+	target.sourceId = currentSourceId;
+	target.sourceIds = [currentSourceId];
+	target.published = {
+		tags: {},
+		codec: "MP3",
+		container: "MKA",
+		sourceId: currentSourceId,
+		path: "/srv/music/Arden Trio/2018 - Small Hours/01 - Green Room.mka",
+		readAt: "2026-11-26T12:00:00Z",
+		coverHash: null,
+		lyrics: null,
+		matchingConfidence: 0.8,
 	};
-	for (const item of work.slice(0, -1)) retry(item.id);
-	expect(folders()).toEqual([]);
-	retry(work[work.length - 1].id);
-	const ready = folders();
-	expect(ready).toContainEqual(new Set(group.fileIds));
-	const published = () =>
-		releases
-			.flatMap(({ tracks }) => tracks)
-			.filter(({ published }) => published).length;
-	const baseline = published();
-	expect(runAutomaticMatching(state, files, releases, ready, 0.7)).toBe(0);
-	const assignments = getDraft(group, files, providerReleases, releases);
-	for (const assignment of Object.values(assignments)) {
-		const id = selectedSourceId(assignment);
-		const sha = id ? files[id]?.sha256 : undefined;
-		if (id && sha && assignment.sourceMeta[id])
-			assignment.sourceMeta[id].score = { value: 0.85, sourceSHA256: sha };
-	}
-	expect(runAutomaticMatching(state, files, releases, ready, undefined)).toBe(
-		0,
+	const baseline = publishedCount(releases);
+
+	const result = runAutomaticMatching(
+		state,
+		files,
+		releases,
+		ready,
+		0.7,
+		false,
 	);
-	expect(runAutomaticMatching(state, files, releases, ready, 0.9)).toBe(0);
-	expect(published()).toBe(baseline);
-	expect(runAutomaticMatching(state, files, releases, ready, 0.7)).toBe(
-		group.fileIds.length,
-	);
-	expect(published()).toBe(baseline + group.fileIds.length);
+	expect(result).toEqual({ publications: 1, links: 8, retired: 8 });
+	expect(group.fileIds).toEqual([]);
+	expect(publishedCount(releases)).toBe(baseline);
+	expect(target.published).toMatchObject({
+		codec: "ALAC",
+		sourceId: "hours-f1",
+		path: "/srv/music/Arden Trio/2018 - Small Hours/01 - Green Room.mka",
+		matchingConfidence: 0.85,
+	});
+	expect(target.sourceId).toBe(currentSourceId);
 });
 
 it("preserves identical current M4A audio and metadata after source conversion", () => {

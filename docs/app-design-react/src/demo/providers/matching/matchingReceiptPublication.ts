@@ -16,9 +16,9 @@ import {
 	originalArtists,
 	type SourceFile,
 } from "../library/catalogData";
+import { compareDemoAudioUpgrade } from "../publication/audioUpgradeQuality";
 import {
 	choosePublicationOutput,
-	demoIsLosslessCodec,
 	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
@@ -142,28 +142,6 @@ export type MatchingReceiptPublicationApplyResult = {
 	results: MatchingReceiptPublicationRowResult[];
 };
 
-type AudioFacts = {
-	lossless: boolean | null;
-	codec: string;
-	bits: number | null;
-	sampleRate: number | null;
-	bitrate: number | null;
-};
-
-type QualityComparison =
-	| { better: true }
-	| { better: false; notice: MatchingReceiptPublicationNotice };
-
-function qualityAccepted(): QualityComparison {
-	return { better: true };
-}
-
-function qualityRejected(
-	notice: MatchingReceiptPublicationNotice,
-): QualityComparison {
-	return { better: false, notice };
-}
-
 function isSelectionMap(
 	selections: MatchingReceiptPublicationSelections,
 ): selections is ReadonlyMap<string, string | null | undefined> {
@@ -203,45 +181,6 @@ function trackSourceIds(track: Pick<OriginalTrack, "sourceId" | "sourceIds">) {
 	);
 }
 
-function finiteValue(value: number | null | undefined): number | null {
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function codecFacts(value: string | null | undefined): {
-	codec: string;
-	lossless: boolean | null;
-} {
-	const codec = (value ?? "").trim().toUpperCase();
-	if (!codec) return { codec: "", lossless: null };
-	return { codec, lossless: demoIsLosslessCodec(codec) };
-}
-
-function sourceAudioFacts(file: SourceFile): AudioFacts {
-	const codec = codecFacts(file.codec);
-	return {
-		lossless: codec.lossless,
-		codec: codec.codec,
-		bits: finiteValue(file.bits),
-		sampleRate: finiteValue(file.sampleRate),
-		bitrate: finiteValue(file.bitrate),
-	};
-}
-
-function currentAudioFacts(
-	current: MatchingReceiptPublicationCurrent,
-	files: IncomingFiles,
-): AudioFacts {
-	const codec = codecFacts(current.codec);
-	const source = current.sourceId ? files[current.sourceId] : undefined;
-	return {
-		lossless: codec.lossless,
-		codec: codec.codec,
-		bits: finiteValue(source?.bits),
-		sampleRate: finiteValue(source?.sampleRate),
-		bitrate: finiteValue(source?.bitrate),
-	};
-}
-
 /**
  * The retained CURRENT container, not the global destination, determines the
  * upgrade transform. A format change belongs to a new publication, not to an
@@ -261,80 +200,6 @@ function retainedPublicationFormat(
 		default:
 			return null;
 	}
-}
-
-/**
- * Facts of the audio that publication would actually produce. Copy and ALAC
- * keep measured depth and sample rate. An AAC bitrate is an encoder setting,
- * not proof of a better audio stream, so it stays unmeasured.
- */
-function publicationAudioFacts(
-	source: AudioFacts,
-	format: PublicationDestination["format"],
-): AudioFacts | null {
-	if (!source.codec || source.lossless === null) return null;
-	if (format !== "m4a") return source;
-	if (source.lossless) return { ...source, codec: "ALAC", bitrate: null };
-	return { ...source, codec: "AAC", bitrate: null };
-}
-
-/**
- * Conservative comparison over facts known for both sides. A missing fact is
- * never replaced with a default: it becomes an unchanged preview with a notice.
- */
-function compareAudioQuality(
-	candidate: AudioFacts,
-	current: AudioFacts,
-): QualityComparison {
-	if (candidate.lossless === null || current.lossless === null)
-		return qualityRejected("matchingReceipt.qualityUnavailable");
-	if (candidate.lossless !== current.lossless)
-		return candidate.lossless
-			? qualityAccepted()
-			: qualityRejected("matchingReceipt.qualityNotBetter");
-	if (candidate.lossless) {
-		if (candidate.bits === null || current.bits === null)
-			return qualityRejected("matchingReceipt.qualityUnavailable");
-		if (candidate.bits !== current.bits)
-			return candidate.bits > current.bits
-				? qualityAccepted()
-				: qualityRejected("matchingReceipt.qualityNotBetter");
-		if (candidate.sampleRate === null || current.sampleRate === null)
-			return qualityRejected("matchingReceipt.qualityUnavailable");
-		if (candidate.sampleRate !== current.sampleRate)
-			return candidate.sampleRate > current.sampleRate
-				? qualityAccepted()
-				: qualityRejected("matchingReceipt.qualityNotBetter");
-		return qualityRejected("matchingReceipt.qualityNotBetter");
-	}
-	if (candidate.codec !== current.codec)
-		return qualityRejected("matchingReceipt.qualityUnavailable");
-	if (candidate.bitrate === null || current.bitrate === null)
-		return qualityRejected("matchingReceipt.qualityUnavailable");
-	if (candidate.bitrate !== current.bitrate)
-		return candidate.bitrate > current.bitrate
-			? qualityAccepted()
-			: qualityRejected("matchingReceipt.qualityNotBetter");
-	return qualityRejected("matchingReceipt.qualityNotBetter");
-}
-
-/**
- * Both the measured source and the audio that the retained-container transform
- * would produce must strictly improve CURRENT. An AAC transcode is never proof
- * of better audio, because its bitrate is only an encoder setting.
- */
-function strictlyBetterUpgrade(
-	source: AudioFacts,
-	current: AudioFacts,
-	format: PublicationDestination["format"],
-): QualityComparison {
-	if (format === "m4a" && source.lossless === false)
-		return qualityRejected("matchingReceipt.transcodeNotProven");
-	const planned = publicationAudioFacts(source, format);
-	if (!planned) return qualityRejected("matchingReceipt.qualityUnavailable");
-	const sourceComparison = compareAudioQuality(source, current);
-	if (!sourceComparison.better) return sourceComparison;
-	return compareAudioQuality(planned, current);
 }
 
 function encoderTagName(key: string) {
@@ -570,9 +435,10 @@ export function prepareMatchingReceiptPublication(
 				} else if (!demoOutputCodec(file.codec, format)) {
 					rowBlockers.push("matchingReceipt.formatUnsupported");
 				} else {
-					const comparison = strictlyBetterUpgrade(
-						sourceAudioFacts(file),
-						currentAudioFacts(current, files),
+					const comparison = compareDemoAudioUpgrade(
+						file,
+						current.codec,
+						current.sourceId ? files[current.sourceId] : undefined,
 						format,
 					);
 					if (comparison.better) {

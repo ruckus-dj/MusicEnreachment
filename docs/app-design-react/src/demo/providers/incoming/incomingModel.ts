@@ -19,6 +19,7 @@ import { replaceAudioMeasurements } from "../library/metadata/audioMeasurements"
 import { retainUnspecifiedContributorTags } from "../library/metadata/scopedContributors";
 import { sameTagValues } from "../library/tagEquality";
 import type { UiNotice } from "../notices/uiNotice";
+import { compareDemoAudioUpgrade } from "../publication/audioUpgradeQuality";
 
 export type TagMap = Record<string, string[]>;
 export type SourceFile = CatalogSourceFile & {
@@ -35,6 +36,14 @@ export type IncomingReason = {
 export type IncomingNotice = {
 	code: "automaticPublished" | "nothingToPublish";
 	params?: Record<string, string | number>;
+};
+export type AutomaticMatchingResult = {
+	/** Publication operations applied by this run, including audio upgrades. */
+	publications: number;
+	/** Newly added source associations; existing links are preserved. */
+	links: number;
+	/** Files removed from the active incoming group. */
+	retired: number;
 };
 export type Assignment = {
 	sourceIds: string[];
@@ -470,6 +479,7 @@ export function planRows(
 	providers: IncomingReleases = providerReleases,
 	artists?: CatalogArtist[],
 	destination: PublicationDestination = fixturePublicationDestination,
+	exactProviderTracks = false,
 ): PlanRow[] {
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
@@ -478,9 +488,11 @@ export function planRows(
 	return targetTracks.map((targetTrack) => {
 		const assignment = plan.assignments[String(targetTrack.id)];
 		const track = existing?.tracks.find((item) =>
-			plan.positionId && plan.mode === "local"
-				? item.id === targetTrack.id
-				: item.position === targetTrack.position,
+			exactProviderTracks
+				? item.providerTrackId === targetTrack.id
+				: plan.positionId && plan.mode === "local"
+					? item.id === targetTrack.id
+					: item.position === targetTrack.position,
 		);
 		const candidate = assignment && files[selectedSourceId(assignment) ?? ""];
 		const file = usableFile(candidate) ? candidate : undefined;
@@ -684,7 +696,15 @@ export function applyPlan(
 					positionId,
 				),
 			].filter((row): row is PositionPlanRow => row !== null)
-		: planRows(plan, files, releases, providers, artists, destination);
+		: planRows(
+				plan,
+				files,
+				releases,
+				providers,
+				artists,
+				destination,
+				Boolean(automatic) && plan.mode === "provider",
+			);
 	const hasApplicableRow = rows.some((row) => {
 		if (
 			!row.assignment?.included ||
@@ -722,11 +742,14 @@ export function applyPlan(
 	}
 	let changed = 0;
 	for (const row of rows) {
-		const track = release.tracks.find((item) =>
-			positionId
-				? item.id === positionId
-				: item.position === row.targetTrack.position,
-		);
+		const track =
+			automatic && plan.mode === "provider"
+				? row.track
+				: release.tracks.find((item) =>
+						positionId
+							? item.id === positionId
+							: item.position === row.targetTrack.position,
+					);
 		if (!track) continue;
 		if (automatic === "first" && row.previous) continue;
 		const currentSource = row.previous?.sourceId
@@ -740,9 +763,13 @@ export function applyPlan(
 				!currentSource?.sha256 ||
 				!row.file.sha256 ||
 				currentSource.sha256 === row.file.sha256 ||
-				row.previous.codec !== "MP3" ||
-				row.file.codec !== "FLAC" ||
-				retainedOutputIssue(row.previous, row.file, destination))
+				retainedOutputIssue(row.previous, row.file, destination) ||
+				!compareDemoAudioUpgrade(
+					row.file,
+					row.previous.codec,
+					currentSource,
+					destination.format,
+				).better)
 		)
 			continue;
 		if (positionId && row.action === "Без изменений") continue;
@@ -754,6 +781,7 @@ export function applyPlan(
 		)
 			continue;
 		if (
+			automatic !== "audio" &&
 			row.assignment?.included &&
 			row.file &&
 			publicationMetadataIssues(
@@ -763,7 +791,7 @@ export function applyPlan(
 			).length
 		)
 			continue;
-		const assigned = automatic === "audio" ? [] : sourceIds(row.assignment);
+		const assigned = automatic ? [] : sourceIds(row.assignment);
 		const usableAssignments = assigned.filter((id) => usableFile(files[id]));
 		const existingSources = [
 			...new Set([
@@ -781,8 +809,8 @@ export function applyPlan(
 			(row.action === "Без изменений" && !plan.force)
 		)
 			continue;
-		track.sourceId = selectedSourceId(row.assignment);
-		if (automatic !== "audio") {
+		if (!automatic) {
+			track.sourceId = selectedSourceId(row.assignment);
 			track.providerTrackId = row.assignment.providerTrackId;
 			if (row.provider) track.recordingId = row.provider.track.recordingId;
 		}
@@ -852,50 +880,224 @@ export function applyPlan(
 	return changed;
 }
 
+type AutomaticPosition = {
+	targetTrack: OriginalTrack;
+	assignment: Assignment;
+	file: SourceFile;
+};
+
+/**
+ * Proves a complete automatic layout: one exact analyzed folder, every active
+ * file covered by a distinct usable pair, and explicit numeric/hash evidence for
+ * every pair. Edition positions may stay unassigned; a partial or ambiguous
+ * layout rejects the whole group instead of applying its matched part.
+ */
+function automaticLayout(
+	group: IncomingGroup,
+	target: OriginalRelease,
+	assignments: Record<string, Assignment>,
+	files: IncomingFiles,
+	threshold: number,
+): AutomaticPosition[] | null {
+	if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1)
+		return null;
+	if (target.tracks.length < group.fileIds.length) return null;
+	const assigned = new Set<string>();
+	const targetIds = new Set<string>();
+	const positions: AutomaticPosition[] = [];
+	for (const targetTrack of target.tracks) {
+		const assignment = assignments[String(targetTrack.id)];
+		if (!assignment?.included) continue;
+		const fileId = selectedSourceId(assignment);
+		if (!fileId || !group.fileIds.includes(fileId)) continue;
+		if (assigned.has(fileId) || targetIds.has(String(targetTrack.id)))
+			return null;
+		const file = files[fileId];
+		if (!usableFile(file)) continue;
+		const method =
+			assignment.sourceMeta[fileId]?.method || assignment.method || "";
+		if (
+			assignment.providerTrackId !== targetTrack.id ||
+			!method.startsWith("Авто") ||
+			!sourceIds(assignment).includes(fileId)
+		)
+			continue;
+		const score = automaticPairScore(assignment, file);
+		if (score === undefined || score < threshold) continue;
+		assigned.add(fileId);
+		targetIds.add(String(targetTrack.id));
+		positions.push({ targetTrack, assignment, file });
+	}
+	if (positions.length !== group.fileIds.length) return null;
+	if (!group.fileIds.every((id) => assigned.has(id))) return null;
+	return positions;
+}
+
+/**
+ * Adds accepted automatic associations without replacing saved links or the
+ * selected publication source, then retires the accepted members like an
+ * explicit link save. No manual receipt or preview state is produced.
+ */
+function saveAutomaticLinks(
+	state: IncomingState,
+	group: IncomingGroup,
+	plan: IncomingPlan,
+	positions: readonly AutomaticPosition[],
+	releases: IncomingReleases,
+): { links: number; retired: number } | null {
+	if (
+		!positions.length ||
+		plan.groupId !== group.id ||
+		plan.inventoryVersion !== state.inventoryVersion ||
+		plan.mode !== "provider"
+	)
+		return null;
+	const target = plan.target;
+	let release = releases.find((item) => item.id === plan.localReleaseId);
+	const imported = !release;
+	if (!release) {
+		release = {
+			...structuredClone(target),
+			id: `import-${target.id}`,
+			providerId: target.providerId ?? target.id,
+			tracks: target.tracks.map((track) => ({
+				...structuredClone(track),
+				id: `import-${target.id}-${track.id}`,
+				localProviderTrackId: null,
+				sourceId: null,
+				sourceIds: [],
+				providerTrackId: track.id,
+				published: null,
+				metadataBaseline: undefined,
+				metadataBaselineExtras: undefined,
+			})),
+		};
+	}
+	const resolved = positions.map(({ targetTrack, file }) => ({
+		file,
+		tracks: release.tracks.filter(
+			(track) => track.providerTrackId === targetTrack.id,
+		),
+	}));
+	// Do not treat a matching ordinal, another edition or an unrelated saved
+	// source association as proof that this exact provider position owns the file.
+	for (const { file, tracks } of resolved) {
+		const track = tracks[0];
+		if (
+			tracks.length !== 1 ||
+			releases.some((entry) =>
+				entry.tracks.some(
+					(other) =>
+						other !== track &&
+						(other.sourceId === file.id || other.sourceIds?.includes(file.id)),
+				),
+			)
+		)
+			return null;
+	}
+	if (imported) {
+		releases.push(release);
+		plan.localReleaseId = String(release.id);
+	}
+	let links = 0;
+	const savedFileIds = new Set<string>();
+	for (const {
+		file,
+		tracks: [track],
+	} of resolved) {
+		const existing = new Set([
+			...(track.sourceIds ?? []),
+			...(track.sourceId ? [track.sourceId] : []),
+		]);
+		if (!existing.has(file.id)) {
+			existing.add(file.id);
+			links++;
+		}
+		track.sourceIds = [...existing];
+		savedFileIds.add(file.id);
+	}
+	if (!savedFileIds.size) return null;
+
+	group.fileIds = group.fileIds.filter((id) => !savedFileIds.has(id));
+	for (const assignments of Object.values(group.drafts))
+		for (const targetId of Object.keys(assignments))
+			for (const fileId of savedFileIds)
+				unassignFile(assignments, targetId, fileId);
+	group.processed = group.fileIds.length === 0;
+	return { links, retired: savedFileIds.size };
+}
+
+/**
+ * Retires a fully evidenced automatic layout independently of publication.
+ * First publication is opt-in and requires the complete edition; audio upgrades
+ * are applied regardless of that setting when strictly better. A manual source
+ * selection is never replaced by an automatic first publication.
+ */
 export function runAutomaticMatching(
 	state: IncomingState,
 	files: IncomingFiles,
 	releases: IncomingReleases,
 	readyFolders: readonly ReadonlySet<string>[],
-	automaticFirstMinimumScore: number | undefined,
+	matchingPairThreshold: number,
+	autoPublishCompleteAlbums: boolean,
 	providers: IncomingReleases = providerReleases,
 	artists?: CatalogArtist[],
 	destination: PublicationDestination = fixturePublicationDestination,
-) {
-	let count = 0;
+): AutomaticMatchingResult {
+	const result: AutomaticMatchingResult = {
+		publications: 0,
+		links: 0,
+		retired: 0,
+	};
+	const retiredGroups = new Set<string>();
 	for (const group of state.groups) {
-		const assignments = getDraft(group, files, providers, releases);
-		const target = findTarget(group, releases, providers);
 		if (
-			!target ||
-			!group.autoEligible ||
 			group.processed ||
+			!group.autoEligible ||
 			group.mode !== "provider" ||
-			!readyFolders.some((folder) =>
-				group.fileIds.every((id) => folder.has(id)),
-			) ||
-			target.tracks.length !== group.fileIds.length ||
-			!target.tracks.every((track) => {
-				const assignment = assignments[track.id];
-				const selected = selectedSourceId(assignment);
-				const method = selected
-					? assignment?.sourceMeta[selected]?.method || assignment?.method || ""
-					: "";
-				return Boolean(
-					selected &&
-						group.fileIds.includes(selected) &&
-						usableFile(files[selected]) &&
-						!publicationMetadataIssues(target, track, selected).length &&
-						files[selected]?.confidence === "high" &&
-						assignment?.included &&
-						method.startsWith("Авто"),
-				);
-			})
+			!group.fileIds.length
 		)
 			continue;
+		const folder = readyFolders.find(
+			(candidate) =>
+				candidate.size === group.fileIds.length &&
+				group.fileIds.every((id) => candidate.has(id)),
+		);
+		if (!folder) continue;
+		const assignments = getDraft(group, files, providers, releases);
+		const target = findTarget(group, releases, providers);
+		if (!target) continue;
+		const positions = automaticLayout(
+			group,
+			target,
+			assignments,
+			files,
+			matchingPairThreshold,
+		);
+		if (!positions) continue;
 		const plan = makeGroupPlan(state, group, files, releases, providers);
 		if (!plan) continue;
-		let applied = applyPlan(
+		plan.assignments = Object.fromEntries(
+			positions.map(
+				({ targetTrack, assignment, file }) =>
+					[
+						String(targetTrack.id),
+						{
+							...structuredClone(assignment),
+							sourceIds: [file.id],
+							selectedSourceId: file.id,
+							included: true,
+						},
+					] as const,
+			),
+		);
+
+		const saved = saveAutomaticLinks(state, group, plan, positions, releases);
+		if (!saved) continue;
+		if (group.fileIds.length === 0) retiredGroups.add(group.id);
+		result.links += saved.links;
+		result.retired += saved.retired;
+		result.publications += applyPlan(
 			plan,
 			files,
 			releases,
@@ -904,35 +1106,49 @@ export function runAutomaticMatching(
 			artists,
 			destination,
 		);
+
 		if (
-			automaticFirstMinimumScore !== undefined &&
-			Number.isFinite(automaticFirstMinimumScore) &&
-			automaticFirstMinimumScore >= 0 &&
-			automaticFirstMinimumScore <= 1 &&
-			target.tracks.every((track) => {
-				const assignment = assignments[track.id];
-				const id = selectedSourceId(assignment);
-				const score = automaticPairScore(
-					assignment,
-					id ? files[id] : undefined,
-				);
-				return typeof score === "number" && score >= automaticFirstMinimumScore;
-			})
+			autoPublishCompleteAlbums &&
+			positions.length === plan.target.tracks.length
 		) {
-			applied += applyPlan(
-				plan,
-				files,
-				releases,
-				providers,
-				"first",
-				artists,
-				destination,
+			const localRelease = releases.find(
+				(item) => item.id === plan.localReleaseId,
 			);
+			plan.assignments = Object.fromEntries(
+				positions
+					.filter(({ targetTrack, file }) => {
+						const track = localRelease?.tracks.find(
+							(item) => item.providerTrackId === targetTrack.id,
+						);
+						// Never publish over a saved manual selection or existing CURRENT.
+						return (
+							!track?.published &&
+							(!track?.sourceId || track.sourceId === file.id)
+						);
+					})
+					.flatMap(({ targetTrack }) => {
+						const assignment = plan.assignments[String(targetTrack.id)];
+						return assignment
+							? [[String(targetTrack.id), assignment] as const]
+							: [];
+					}),
+			);
+			if (Object.keys(plan.assignments).length)
+				result.publications += applyPlan(
+					plan,
+					files,
+					releases,
+					providers,
+					"first",
+					artists,
+					destination,
+				);
 		}
-		count += applied;
-		if (applied > 0) group.processed = true;
 	}
-	return count;
+	if (retiredGroups.size > 0) {
+		state.groups = state.groups.filter((group) => !retiredGroups.has(group.id));
+	}
+	return result;
 }
 
 export function removeRootFromIncomingInventory(
