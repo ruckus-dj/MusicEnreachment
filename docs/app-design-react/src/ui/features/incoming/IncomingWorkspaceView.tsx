@@ -1,11 +1,11 @@
 import {
-  MatchingScreenView,
-  type MatchingScreenViewModel,
-} from "../matching/MatchingScreenView";
-import {
   IncomingCreationOutlet,
   type IncomingCreationSource,
 } from "./IncomingCreationOutlet";
+import {
+  IncomingMatchingOutlet,
+  type IncomingMatchingSource,
+} from "./IncomingMatchingOutlet";
 import {
   IncomingScreenView,
   type IncomingScreenViewProps,
@@ -29,13 +29,13 @@ export function IncomingWorkspaceView<
 }: {
   creation?: IncomingCreationSource<Props> | null;
   list?: IncomingScreenViewProps | null;
-  matching: MatchingScreenViewModel | null;
+  matching?: IncomingMatchingSource | null;
 }) {
   return (
     <section className={incomingScreenClass}>
       {creation ? <IncomingCreationOutlet source={creation} /> : null}
       {list ? <IncomingScreenView {...list} /> : null}
-      {matching ? <MatchingScreenView model={matching} /> : null}
+      <IncomingMatchingOutlet source={matching} />
     </section>
   );
 }

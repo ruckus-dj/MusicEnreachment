@@ -247,3 +247,107 @@ it("opens the publication preview inline without changing the route", async () =
 	expect(window.location.hash).toBe(hash);
 	expect(trigger).toHaveFocus();
 });
+
+it("retains matching search and preparation while creating a Local release", async () => {
+	const matchingHash =
+		"#/incoming-groups/north/matching?release=p-north&prepare=p-japan";
+	window.history.replaceState(null, "", matchingHash);
+	render(<CatalogDemo />);
+	const search = within(screen.getByRole("region", { name: "Поиск изданий" }));
+	fireEvent.change(
+		search.getByRole("textbox", { name: "Артист и название издания" }),
+		{ target: { value: "Northern Lines" } },
+	);
+	fireEvent.click(search.getByRole("button", { name: "Искать" }));
+	await search.findByRole("button", {
+		name: /^Выбрать «Northern Lines» \(MusicBrainz,/,
+	});
+	fireEvent.change(
+		screen.getByRole("textbox", {
+			name: "MBID или официальная ссылка на издание",
+		}),
+		{ target: { value: "p-north-draft" } },
+	);
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole("link", { name: "Создать свой релиз" }));
+	});
+	expect(
+		await screen.findByRole("heading", { name: "Создать свой релиз" }),
+	).toBeInTheDocument();
+
+	expect(window.location.hash).toBe(
+		"#/incoming-groups/north/matching/local-release?release=p-north&prepare=p-japan",
+	);
+	const matchingScreen = document.querySelector<HTMLElement>(
+		"[data-matching-screen]",
+	);
+	if (!matchingScreen) throw new Error("Missing matching screen");
+	expect(matchingScreen).toHaveAttribute("hidden");
+	expect(
+		screen.getByRole("heading", { name: "Создать свой релиз" }),
+	).toHaveFocus();
+	expect(
+		screen.queryByRole("textbox", { name: "Артист и название издания" }),
+	).not.toBeInTheDocument();
+	expect(
+		within(matchingScreen).getByDisplayValue("Northern Lines"),
+	).toBeInTheDocument();
+	expect(
+		within(matchingScreen).getByDisplayValue("p-north-draft"),
+	).toBeInTheDocument();
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+	});
+	const discard = screen.queryByRole("button", { name: "Отменить релиз" });
+	if (discard)
+		await act(async () => {
+			fireEvent.click(discard);
+		});
+	expect(
+		await screen.findByRole("heading", { name: "Разбор: Northern Lines" }),
+	).toBeInTheDocument();
+
+	expect(window.location.hash).toBe(matchingHash);
+	expect(matchingScreen).not.toHaveAttribute("hidden");
+	expect(
+		screen.getByRole("heading", { name: "Разбор: Northern Lines" }),
+	).toHaveFocus();
+	expect(
+		screen.getByRole("button", {
+			name: /^Выбрать «Northern Lines» \(MusicBrainz,/,
+		}),
+	).toBeInTheDocument();
+	expect(
+		screen.getByRole("textbox", { name: "Артист и название издания" }),
+	).toHaveValue("Northern Lines");
+	expect(
+		screen.getByRole("textbox", {
+			name: "MBID или официальная ссылка на издание",
+		}),
+	).toHaveValue("p-north-draft");
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole("link", { name: "Все входящие" }));
+	});
+	expect(
+		await screen.findByRole("heading", {
+			name: "Разбор входящих групп",
+		}),
+	).toBeInTheDocument();
+	expect(window.location.hash).toBe("#/incoming-groups?group=north");
+
+	await act(async () => {
+		window.history.back();
+	});
+	expect(
+		await screen.findByRole("heading", { name: "Разбор: Northern Lines" }),
+	).toBeInTheDocument();
+	expect(window.location.hash).toBe(matchingHash);
+	expect(
+		screen.getByRole("textbox", {
+			name: "MBID или официальная ссылка на издание",
+		}),
+	).toHaveValue("p-north-draft");
+});

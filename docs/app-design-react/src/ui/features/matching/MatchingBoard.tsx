@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import {
 	Button as AriaButton,
 	Label,
@@ -55,6 +55,8 @@ export type MatchingBoardProps = {
 	automaticAssignments?: MatchingWorkspaceAutomaticAssignments | null;
 	savedScores?: MatchingWorkspaceSavedScores | null;
 	disabled?: boolean;
+	/** Close transient board popups while the host keeps the board mounted hidden. */
+	hidden?: boolean;
 	inspectedTrackId?: string;
 	selectedSourceId?: string | null;
 	defaultSelectedSourceId?: string | null;
@@ -102,6 +104,7 @@ export function MatchingBoard({
 	automaticAssignments,
 	savedScores,
 	disabled = false,
+	hidden,
 	inspectedTrackId,
 	selectedSourceId,
 	defaultSelectedSourceId,
@@ -124,6 +127,10 @@ export function MatchingBoard({
 		string | null
 	>(defaultSelectedSourceId ?? null);
 	const [freeFileSort, setFreeFileSort] = useState<SourceFileSort>("track");
+	const [sortOpen, setSortOpen] = useState(false);
+	useEffect(() => {
+		if (hidden) setSortOpen(false);
+	}, [hidden]);
 	const collator = useMemo(
 		() => new Intl.Collator(locale, { numeric: true, sensitivity: "base" }),
 		[locale],
@@ -496,6 +503,8 @@ export function MatchingBoard({
 				<Select
 					className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1"
 					selectedKey={freeFileSort}
+					isOpen={sortOpen && !hidden}
+					onOpenChange={setSortOpen}
 					isDisabled={freeMembers.length < 2}
 					onSelectionChange={(key) => {
 						if (key === "track" || key === "name") setFreeFileSort(key);

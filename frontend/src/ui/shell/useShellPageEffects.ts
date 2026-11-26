@@ -1,9 +1,16 @@
 import { useEffect } from "react";
 
+function visibleHeading(root: ParentNode) {
+  for (const heading of root.querySelectorAll<HTMLElement>("h1")) {
+    if (!heading.closest("[hidden]")) return heading;
+  }
+  return undefined;
+}
+
 function currentHeading() {
+  const content = document.getElementById("content");
   return (
-    document.querySelector<HTMLElement>("#content h1") ??
-    document.querySelector<HTMLElement>("h1")
+    (content ? visibleHeading(content) : undefined) ?? visibleHeading(document)
   );
 }
 
@@ -30,6 +37,18 @@ export function useShellPageEffects({
     if (!heading) return;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
+    // Closing a portaled control during navigation can leave focus on body.
+    // Retry after its cleanup, without moving focus from a visible control.
+    const focusRecovery = window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (
+        currentHeading() === heading &&
+        (active === document.body || active?.closest("[hidden]"))
+      ) {
+        heading.focus({ preventScroll: true });
+      }
+    });
+    return () => window.cancelAnimationFrame(focusRecovery);
   }, [focusKey]);
   useEffect(() => {
     if (!titleKey) return;

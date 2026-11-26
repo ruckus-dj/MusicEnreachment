@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import {
 	ApplicationIncomingListBinder,
-	ApplicationRouteOutlet,
 	type ApplicationIncomingListModel,
+	ApplicationRouteOutlet,
 } from "../../../ui/app/ApplicationRouteOutlet";
 import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
@@ -51,7 +51,7 @@ export type IncomingScreenProps = {
 	onReleases?: (releases: IncomingReleases) => void;
 };
 
-export function IncomingScreen({
+export function useIncomingScreenDemoProvider({
 	destination,
 	files: givenFiles,
 	releases: givenReleases,
@@ -61,7 +61,7 @@ export function IncomingScreen({
 	state: givenState,
 	onState,
 	onReleases,
-}: IncomingScreenProps) {
+}: IncomingScreenProps): ApplicationIncomingListModel {
 	const { locale } = useI18n();
 	const msg = (
 		key: IncomingMessage,
@@ -317,11 +317,16 @@ export function IncomingScreen({
 			},
 		},
 	};
+	return listModel;
+}
+
+export function IncomingScreen(props: IncomingScreenProps) {
+	const model = useIncomingScreenDemoProvider(props);
 	return (
 		<ApplicationRouteOutlet
 			route="incoming-list"
 			provider={ApplicationIncomingListBinder}
-			providerProps={{ model: listModel }}
+			providerProps={{ model }}
 		/>
 	);
 }

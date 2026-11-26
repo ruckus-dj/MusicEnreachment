@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import type { Ref } from "react";
 import { Input, Label, TextField } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
 import {
@@ -745,6 +745,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
         {board ? (
           <MatchingBoard
             {...board}
+            hidden={model.hidden}
             renderPositionMeta={(context) => (
               <>
                 {board.renderPositionMeta?.(context)}

@@ -56,6 +56,8 @@ export type MatchingScreenProps = {
 	localReleaseId?: string;
 	onSelectProviderRelease?: (releaseId?: string) => void;
 	onSelectLocalRelease?: (localReleaseId: string) => void;
+	/** Hide the matching surface without unmounting its drafts and search state. */
+	hidden?: boolean;
 };
 
 const duration = (seconds: unknown) =>
@@ -100,6 +102,7 @@ export function useMatchingScreenDemoProvider({
 	localReleaseId,
 	onSelectProviderRelease,
 	onSelectLocalRelease,
+	hidden = false,
 }: MatchingScreenProps): MatchingScreenViewModel {
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [previewOpenSequence, setPreviewOpenSequence] = useState(0);
@@ -119,6 +122,7 @@ export function useMatchingScreenDemoProvider({
 	const linkCopy = matchingLinksCopy[locale];
 	usePreviewHeadingFocus(previewHeadingRef, previewOpenSequence);
 	const state = givenState ?? localState;
+	const matchingActive = !hidden;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
 	const providers = givenProviders ?? providerReleases;
@@ -167,7 +171,7 @@ export function useMatchingScreenDemoProvider({
 						release.id === rememberedTargetId,
 				)
 			: undefined;
-	if (group && routeTarget)
+	if (matchingActive && group && routeTarget)
 		rememberedTargets.current[group.id] = String(routeTarget.id);
 	const activeTarget = localMode
 		? (localTarget ?? null)
@@ -198,7 +202,7 @@ export function useMatchingScreenDemoProvider({
 	const backHref = incomingGroupsListHref(group ? [group.id] : []);
 	const backLabel = matchingMessage(locale, "backToIncoming");
 	useEffect(() => {
-		if (!group) return;
+		if (!matchingActive || !group) return;
 		const previous = targetResetRef.current;
 		targetResetRef.current = activeTargetKey;
 		if (previous === activeTargetKey) return;
@@ -227,12 +231,13 @@ export function useMatchingScreenDemoProvider({
 		givenState,
 		group,
 		localReleaseId,
+		matchingActive,
 		onState,
 		releaseId,
 		state,
 	]);
 
-	if (receipt && dismissedReceiptId !== receipt.id) {
+	if (matchingActive && receipt && dismissedReceiptId !== receipt.id) {
 		return {
 			kind: "receipt",
 			locale,
@@ -289,18 +294,20 @@ export function useMatchingScreenDemoProvider({
 		return {
 			kind: "missing",
 			locale,
+			hidden: !matchingActive,
 			heading: {
 				backHref,
 				backLabel,
 				title: matchingMessage(locale, "groupNotFound"),
 			},
 		};
-	state.groupId = group.id;
+	if (matchingActive) state.groupId = group.id;
 	if (!activeTarget) {
 		if (!localMode)
 			return {
 				kind: "missing",
 				locale,
+				hidden: !matchingActive,
 				heading: {
 					backHref,
 					backLabel,
@@ -311,6 +318,7 @@ export function useMatchingScreenDemoProvider({
 		return {
 			kind: "workspace",
 			locale,
+			hidden: !matchingActive,
 			heading: {
 				backHref,
 				backLabel: matchingMessage(locale, "incomingLink"),
@@ -396,7 +404,9 @@ export function useMatchingScreenDemoProvider({
 				};
 	const tracks = activeTarget.tracks;
 	const assignments = getDraft(
-		editionGroup,
+		matchingActive
+			? editionGroup
+			: { ...editionGroup, drafts: { ...editionGroup.drafts } },
 		files,
 		providers,
 		releases,
@@ -760,6 +770,7 @@ export function useMatchingScreenDemoProvider({
 	const model: MatchingScreenViewWorkspace = {
 		kind: "workspace",
 		locale,
+		hidden: !matchingActive,
 		heading: {
 			backHref,
 			backLabel: matchingMessage(locale, "incomingLink"),
