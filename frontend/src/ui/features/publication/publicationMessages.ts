@@ -56,40 +56,21 @@ export const publicationMessages = createNamespace({
     movementName: "Movement name",
     movementNumber: "Movement number",
     movementTotal: "Movement total",
-    previewTitle: "Publication preview",
-    audioUpgradeDescription:
-      "Only the audio is upgraded. Current tags, artwork, lyrics and publication path are preserved; audio measurements come from the selected source.",
-    audioUpgradeUnavailable:
-      "Audio upgrade requires a current MP3 publication and an available selected FLAC source.",
-    previewSummary:
-      "Existing positions from the selected objects are shown; duplicate tracks are combined. New entities and alternate sources are not selected.",
     previewContext: "Preview context",
     returnToLibrary: "Return to library",
-    closePreview: "Close preview",
     stalePreview:
       "The preview is out of date: the source inventory or context changed. Return and open the preview again.",
-    actionSummary: "Action summary",
     positionColumn: "Position",
     sourceFormat: "Source / format",
     publicationPathFormat: "Publication path / format",
     actionReason: "Action and reason",
-    unavailableSource: "Selected source is unavailable",
     noSource: "No source selected",
-    pathUnavailable: "Path unavailable: source is unavailable",
     pathUndetermined: "Path not determined",
-    noFormat: "—",
     unprocessed: "positions cannot be processed.",
     soundPreserved: "Audio and quality will remain unchanged",
     selectedSourceUnused:
       "The selected source {codec} is not used for this action.",
     newPublicationSource: "New publication from the selected source ({codec}).",
-    selectedSourceCreate: "Create from the selected available source",
-    metadataOnlyUpdate:
-      "Effective metadata will be updated; published audio is preserved",
-    metadataSame: "Effective metadata matches the publication snapshot",
-    noFileChosen: "No file selected; another source will not be chosen",
-    fileUnavailable:
-      "The selected file is unavailable for this operation; another source will not be chosen",
     invalidMetadata: "Invalid metadata: {fields}",
     recordingSortCollision:
       "Recording artist sort tags are omitted because different artists resolve to the same sort name.",
@@ -101,13 +82,6 @@ export const publicationMessages = createNamespace({
       "Recording artist names collide; verify the credits.",
     releaseArtistNameCollision:
       "Release artist names collide; verify the credits.",
-    applyCount: "Create {create} · update {update}",
-    applyTitle: "Apply changes for {count} positions?",
-    newSourceConfirmation: "New publications use the selected source.",
-    existingMetadataConfirmation:
-      "Only metadata changes on existing publications; audio and quality are preserved.",
-    prototypeMemoryOnly:
-      "This action changes only prototype memory; no files are written.",
     cancel: "Cancel",
     confirm: "Confirm",
     include: "Include",
@@ -116,10 +90,8 @@ export const publicationMessages = createNamespace({
     willWrite: "Will be written",
     unchanged: "Unchanged",
     unprocessable: "Cannot process",
-    skip: "Skip",
     create: "Create",
     update: "Update",
-    unchangedAction: "No changes",
     selectedUnavailable: "Selected source unavailable",
     publicationNone: "Not published",
     selectedSource: "Selected source",
@@ -148,10 +120,6 @@ export const publicationMessages = createNamespace({
       "The configured output format cannot replace the current file at its existing path.",
     demoApplied: "Demo: {count} positions published.",
     linksStored: "Links for {count} positions saved.",
-    unselectedUnchanged:
-      "Unselected positions and unassigned files were not changed.",
-    previewPolicy:
-      "Existing publications get updated effective metadata while their audio stays the same. New publications use the selected source. Skipped positions are not included.",
     contextualPreview:
       "Contextual operation preview. This is not a separate publication list.",
     includeColumn: "Include",
@@ -230,40 +198,21 @@ export const publicationMessages = createNamespace({
     movementName: "Название части",
     movementNumber: "Номер части",
     movementTotal: "Всего частей",
-    previewTitle: "Предпросмотр публикации",
-    audioUpgradeDescription:
-      "Улучшается только аудио. Текущие теги, обложка, текст и путь публикации сохраняются; измерения аудио берутся из выбранного источника.",
-    audioUpgradeUnavailable:
-      "Для улучшения нужны текущая MP3-публикация и выбранный доступный FLAC-источник.",
-    previewSummary:
-      "Показаны существующие позиции выбранных объектов; повторяющиеся треки объединены. Новые сущности и альтернативные источники не выбираются.",
     previewContext: "Контекст предпросмотра",
     returnToLibrary: "Вернуться в медиатеку",
-    closePreview: "Закрыть предпросмотр",
     stalePreview:
       "Снимок предпросмотра устарел: изменился инвентарь источников или контекст. Вернитесь и откройте предпросмотр заново.",
-    actionSummary: "Сводка действий",
     positionColumn: "Позиция",
     sourceFormat: "Источник / формат",
     publicationPathFormat: "Путь публикации / формат",
     actionReason: "Действие и причина",
-    unavailableSource: "Выбранный источник недоступен",
     noSource: "Источник не выбран",
-    pathUnavailable: "Путь не определён: источник недоступен",
     pathUndetermined: "Путь не определён",
-    noFormat: "—",
     unprocessed: "позиций невозможно обработать.",
     soundPreserved: "Звук и качество останутся прежними",
     selectedSourceUnused:
       "Выбранный источник {codec} в этом действии не применяется.",
     newPublicationSource: "Новая публикация из выбранного источника ({codec}).",
-    selectedSourceCreate: "Создание из выбранного доступного источника",
-    metadataOnlyUpdate:
-      "Обновятся эффективные метаданные; опубликованный звук сохраняется",
-    metadataSame: "Эффективные метаданные совпадают со снимком публикации",
-    noFileChosen: "Файл не выбран; другой источник не выбирается",
-    fileUnavailable:
-      "Выбранный файл недоступен для этой операции; другой источник не выбирается",
     invalidMetadata: "Некорректные метаданные: {fields}",
     recordingSortCollision:
       "Сортировочные теги исполнителей композиции пропущены: у разных артистов совпало имя сортировки.",
@@ -275,13 +224,6 @@ export const publicationMessages = createNamespace({
       "Имена исполнителей композиции совпадают; проверьте кредиты.",
     releaseArtistNameCollision:
       "Имена исполнителей издания совпадают; проверьте кредиты.",
-    applyCount: "Создать {create} · обновить {update}",
-    applyTitle: "Применить изменения для {count} позиций?",
-    newSourceConfirmation: "Новые публикации используют выбранный источник.",
-    existingMetadataConfirmation:
-      "У существующих публикаций меняются только метаданные; звук и качество сохраняются.",
-    prototypeMemoryOnly:
-      "Действие выполняется только в памяти макета, без записи файлов.",
     cancel: "Отмена",
     confirm: "Подтвердить",
     include: "Включить",
@@ -290,10 +232,8 @@ export const publicationMessages = createNamespace({
     willWrite: "Будет записано",
     unchanged: "Без изменений",
     unprocessable: "Невозможно обработать",
-    skip: "Пропустить",
     create: "Создать",
     update: "Обновить",
-    unchangedAction: "Без изменений",
     selectedUnavailable: "Выбранный источник недоступен",
     publicationNone: "Нет публикации",
     selectedSource: "Выбранный источник",
@@ -321,10 +261,6 @@ export const publicationMessages = createNamespace({
       "Настроенный формат вывода не позволяет заменить текущий файл по прежнему пути.",
     demoApplied: "Демо: {count} позиций опубликовано.",
     linksStored: "Связи {count} позиций сохранены.",
-    unselectedUnchanged:
-      "Невыбранные позиции и неразмеченные файлы не изменены.",
-    previewPolicy:
-      "Для уже опубликованных позиций обновляются эффективные метаданные, звук сохраняется. Новые публикации используют выбранный источник. Пропущенные позиции не входят в эту выборку.",
     contextualPreview:
       "Контекстный предпросмотр операции. Это не отдельный список публикаций.",
     includeColumn: "Включить",

@@ -27,7 +27,6 @@ export type TrackActionsViewProps = {
     onSubmit: () => void;
   };
   onRefresh: () => void;
-  onAudioUpgrade?: () => void;
   onRepublish?: () => void;
   deletion?: ReactElement;
 };
@@ -37,7 +36,6 @@ export function TrackActionsView({
   notice,
   rename,
   onRefresh,
-  onAudioUpgrade,
   onRepublish,
   deletion,
 }: TrackActionsViewProps) {
@@ -55,9 +53,6 @@ export function TrackActionsView({
             <div className={objectActions}>
               <Button onPress={rename.onStart}>{m("editLocalTitle")}</Button>
               <Button onPress={onRefresh}>{m("refreshProviderCache")}</Button>
-              {onAudioUpgrade && (
-                <Button onPress={onAudioUpgrade}>{m("upgradeAudio")}</Button>
-              )}
               {onRepublish && (
                 <Button onPress={onRepublish}>{m("republishExplicit")}</Button>
               )}

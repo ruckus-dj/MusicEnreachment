@@ -80,10 +80,6 @@ export const operationMessages = createNamespace({
     refreshProviderCache: "Refresh provider cache",
     providerCacheRefreshed:
       "Provider cache refreshed separately. The publication and metadata snapshot are unchanged.",
-    upgradeAudio: "Improve audio quality only",
-    upgradeAudioTitle: "Improve audio only?",
-    audioUpgraded:
-      "Audio quality was updated. Publication tags, artwork, lyrics, and metadata snapshot are preserved.",
     republishExplicit: "Republish explicitly",
     chooseSource:
       "Choose a source before explicitly republishing. No alternative source is selected automatically.",
@@ -182,10 +178,6 @@ export const operationMessages = createNamespace({
     refreshProviderCache: "Обновить кэш провайдера",
     providerCacheRefreshed:
       "Кэш провайдера обновлён отдельно. Публикация и снимок метаданных не изменились.",
-    upgradeAudio: "Улучшить только качество аудио",
-    upgradeAudioTitle: "Улучшить только аудио?",
-    audioUpgraded:
-      "Качество аудио обновлено. Теги публикации, обложка, текст песни и снимок метаданных сохранены.",
     republishExplicit: "Перепубликовать явно",
     chooseSource:
       "Для явной перепубликации выберите исходник. Альтернативный вариант автоматически не выбирается.",

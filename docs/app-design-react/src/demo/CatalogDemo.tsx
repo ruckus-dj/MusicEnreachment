@@ -1,12 +1,10 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
-import { focusView, focusViewById } from "../ui/components/useViewFocus";
 import type { IncomingCreationModel } from "../ui/features/incoming/IncomingCreationOutlet";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
-import { libraryPositionTitleId } from "../ui/features/library/LibraryPositionHeadingView";
 import { LibraryReleaseWorkspaceView } from "../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	type LibrarySelectionPreviewPosition,
@@ -63,7 +61,6 @@ import {
 } from "./providers/library";
 import { ArtistScreen } from "./providers/library/ArtistScreen";
 import {
-	applyMetadataPreview,
 	type CatalogArtist,
 	catalogData,
 	type OriginalRelease,
@@ -95,7 +92,6 @@ import {
 	managedDeletionObservation,
 } from "./providers/library/libraryDeletionModel";
 import { SelectionDock } from "./providers/library/SelectionDock";
-import { applyAudioUpgradePreview } from "./providers/library/trackActionModel";
 import type { ReleaseOverviewScreenProps } from "./providers/library/useReleaseOverviewDemoModel";
 import type { TrackScreenProps } from "./providers/library/useTrackScreenDemoProvider";
 import { DemoLocalCatalogBinder } from "./providers/local-catalog";
@@ -122,16 +118,6 @@ import {
 	settleDemoPublication,
 } from "./providers/publication/libraryPublicationDemo";
 import type { ManagedPathObservation } from "./providers/publication/managedPublicationDeletionModel";
-import {
-	PublicationPreview,
-	type PublicationPreviewMode,
-} from "./providers/publication/PublicationPreview";
-import {
-	captureMetadataPreview,
-	isMetadataPreviewFresh,
-	type MetadataPreviewToken,
-	previewScopeKey,
-} from "./providers/publication/previewModel";
 import {
 	fixturePublicationDestination,
 	type PublicationDestination,
@@ -179,17 +165,6 @@ function openIncomingFromHome() {
 
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
-type InlinePublicationPreview = {
-	originRoute: string;
-	mode: PublicationPreviewMode;
-	ids: string[];
-	token: MetadataPreviewToken;
-	originControl: HTMLElement | null;
-};
-type PreviewFocusReturn = {
-	control: HTMLElement | null;
-	originRoute: string;
-};
 
 const recordingIdentity = (track: OriginalTrack) =>
 	track.localRecordingId
@@ -365,27 +340,10 @@ export function CatalogDemo({
 		positionId: string;
 		notice: UiNotice;
 	} | null>(null);
-	const [inlinePreview, setInlinePreview] =
-		useState<InlinePublicationPreview | null>(null);
-	const [previewFocusReturn, setPreviewFocusReturn] =
-		useState<PreviewFocusReturn | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
 		setPositionNotice(null);
-		setInlinePreview(null);
 	}, [route]);
-	useEffect(() => {
-		if (!previewFocusReturn) return;
-		const { control, originRoute } = previewFocusReturn;
-		setPreviewFocusReturn(null);
-		if (originRoute !== route || window.location.hash.slice(1) !== originRoute)
-			return;
-		if (control?.isConnected) {
-			focusView(control);
-			if (document.activeElement === control) return;
-		}
-		focusViewById(libraryPositionTitleId);
-	}, [previewFocusReturn, route]);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
 	const publicationCatalog: DemoPublicationCatalog = {
@@ -710,65 +668,6 @@ export function CatalogDemo({
 						},
 		});
 	};
-	const openPreview = (
-		ids: Iterable<string>,
-		mode: PublicationPreviewMode = "metadata",
-	) => {
-		const frozenIds = [...ids];
-		const activeElement = document.activeElement;
-		setInlinePreview({
-			originRoute: route,
-			mode,
-			ids: frozenIds,
-			token: captureMetadataPreview(
-				incoming.inventoryVersion,
-				previewScopeKey(route, frozenIds),
-				frozenIds,
-			),
-			originControl:
-				activeElement instanceof HTMLElement &&
-				activeElement !== document.body &&
-				activeElement !== document.documentElement
-					? activeElement
-					: null,
-		});
-	};
-	const closeInlinePreview = (restoreFocus: boolean) => {
-		if (restoreFocus && inlinePreview) {
-			setPreviewFocusReturn({
-				control: inlinePreview.originControl,
-				originRoute: inlinePreview.originRoute,
-			});
-		}
-		setInlinePreview(null);
-	};
-	const applyPreview = (token: MetadataPreviewToken) => {
-		if (!inlinePreview) return false;
-		const activeScope = previewScopeKey(
-			inlinePreview.originRoute,
-			inlinePreview.ids,
-		);
-		const frozenIds = new Set(inlinePreview.token.selectedIds);
-		if (
-			window.location.hash.slice(1) !== inlinePreview.originRoute ||
-			token.selectedIds.length === 0 ||
-			token.selectedIds.some((id) => !frozenIds.has(id)) ||
-			!isMetadataPreviewFresh(token, incoming.inventoryVersion, activeScope)
-		)
-			return false;
-		setReleases((previous) =>
-			inlinePreview.mode === "audioUpgrade"
-				? applyAudioUpgradePreview(previous, token.selectedIds, files)
-				: applyMetadataPreview(
-						previous,
-						new Set(token.selectedIds),
-						files,
-						artists,
-						publicationDestination,
-					),
-		);
-		return true;
-	};
 	const selectionPreviewDialog = selectionPreview && (
 		<LibrarySelectionPreviewView
 			locale={locale}
@@ -879,59 +778,29 @@ export function CatalogDemo({
 				positionNotice.positionId === track.id
 					? positionNotice.notice
 					: null;
-			const activePreview =
-				inlinePreview && inlinePreview.originRoute === route
-					? inlinePreview
-					: null;
-			const contextualPublication: DemoPositionPublicationSource | undefined =
-				activePreview
-					? undefined
-					: {
-							key: `${release.id}:${track.id}`,
-							Component: DemoPositionPublication,
-							props: {
-								destination: publicationDestination,
-								release,
-								positionId: track.id,
-								state: incoming,
-								files,
-								releases,
-								providers,
-								artists: providerArtists,
-								onReleases: setImportedReleases,
-								hasCustomTemplate: Boolean(
-									publicationCatalog.hasCustomTemplate,
-								),
-								onSuccess: (notice) => {
-									setPositionNotice({
-										releaseId: release.id,
-										positionId: track.id,
-										notice,
-									});
-								},
-							},
-						};
-			const inlinePublicationPreview = activePreview
-				? {
-						key: `${activePreview.token.scopeKey}:${activePreview.mode}`,
-						Component: PublicationPreview,
-						props: {
-							mode: activePreview.mode,
-							destination: publicationDestination,
-							token: activePreview.token,
-							inventoryVersion: incoming.inventoryVersion,
-							scopeKey: previewScopeKey(
-								activePreview.originRoute,
-								activePreview.ids,
-							),
-							files,
-							releases,
-							artists,
-							onApply: applyPreview,
-							onBack: () => closeInlinePreview(true),
-						},
-					}
-				: undefined;
+			const contextualPublication: DemoPositionPublicationSource = {
+				key: `${release.id}:${track.id}`,
+				Component: DemoPositionPublication,
+				props: {
+					destination: publicationDestination,
+					release,
+					positionId: track.id,
+					state: incoming,
+					files,
+					releases,
+					providers,
+					artists: providerArtists,
+					onReleases: setImportedReleases,
+					hasCustomTemplate: Boolean(publicationCatalog.hasCustomTemplate),
+					onSuccess: (notice) => {
+						setPositionNotice({
+							releaseId: release.id,
+							positionId: track.id,
+							notice,
+						});
+					},
+				},
+			};
 			position = {
 				files,
 				providers,
@@ -940,14 +809,12 @@ export function CatalogDemo({
 					? formatUiNotice(locale, activePositionNotice)
 					: undefined,
 				contextualPublication,
-				inlinePublicationPreview,
 				onQueueDeletion: queueDeletion,
 				release,
 				track,
 				genresLoaded: settings.genresLoaded,
 				onLoadGenres: loadGenres,
 				onRecordingChange: (updateTrack) => {
-					closeInlinePreview(false);
 					setReleases((previous) =>
 						previous.map((item) => ({
 							...item,
@@ -961,7 +828,6 @@ export function CatalogDemo({
 					);
 				},
 				onMutate: (updateTrack) => {
-					closeInlinePreview(false);
 					setReleases((previous) =>
 						previous.map((item) => ({
 							...item,
@@ -971,14 +837,7 @@ export function CatalogDemo({
 						})),
 					);
 				},
-				onAudioUpgrade: () => {
-					openPreview([track.id], "audioUpgrade");
-				},
-				onMetadataPreview: (ids) => {
-					openPreview(ids);
-				},
 				onSource: (id) => {
-					closeInlinePreview(false);
 					setReleases((previous) =>
 						previous.map((item) => ({
 							...item,

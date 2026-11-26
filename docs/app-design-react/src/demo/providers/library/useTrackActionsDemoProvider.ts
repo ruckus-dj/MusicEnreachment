@@ -18,7 +18,6 @@ export type TrackActionsProps = {
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
 	onRepublish?: () => void;
-	onAudioUpgrade?: () => void;
 };
 
 export function useTrackActionsDemoProvider({
@@ -28,7 +27,6 @@ export function useTrackActionsDemoProvider({
 	onQueueDeletion,
 	files = originalFiles,
 	onRepublish,
-	onAudioUpgrade,
 }: TrackActionsProps): Omit<TrackActionsViewProps, "deletion"> & {
 	deletion?: {
 		release: OriginalRelease;
@@ -65,10 +63,6 @@ export function useTrackActionsDemoProvider({
 			onMutate(refreshProviderHint);
 			setNotice(message(locale, "providerCacheRefreshed"));
 		},
-		onAudioUpgrade:
-			track.published?.codec === "MP3" && file?.codec === "FLAC"
-				? onAudioUpgrade
-				: undefined,
 		onRepublish:
 			track.published && onRepublish
 				? () =>

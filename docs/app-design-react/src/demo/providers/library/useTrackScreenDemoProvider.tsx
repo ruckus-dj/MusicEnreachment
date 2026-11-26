@@ -5,13 +5,11 @@ import {
 	formatTrackMessage,
 	trackMessage,
 } from "../../../ui/features/library/trackMessages";
-import type { InlinePublicationPreviewSource } from "../../../ui/features/publication/InlinePublicationPreview";
 import { PublicationMetadataChanges } from "../../../ui/features/publication/PublicationInspector";
 import type {
 	DemoPositionPublicationBinderProps,
 	DemoPositionPublicationSource,
 } from "../publication/ContextPublicationPreview";
-import type { PublicationPreviewBinderProps } from "../publication/PublicationPreview";
 import { publicationMetadataDiff } from "../publication/publicationMetadataDiff";
 import { releaseHref } from "./artistReleaseRoute";
 import {
@@ -38,10 +36,7 @@ export type TrackScreenProps = {
 	onPreview?: () => void;
 	onRepublish?: () => void;
 	publicationPreviewNotice?: string;
-	inlinePublicationPreview?: InlinePublicationPreviewSource<PublicationPreviewBinderProps>;
 	contextualPublication?: DemoPositionPublicationSource;
-	onAudioUpgrade?: () => void;
-	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onRecordingChange?: (
 		update: (current: OriginalTrack) => OriginalTrack,
@@ -68,10 +63,7 @@ const duration = (seconds: number) =>
  */
 export function useTrackScreenDemoProvider(
 	props?: TrackScreenProps | null,
-): LibraryReleasePositionModel<
-	DemoPositionPublicationBinderProps,
-	PublicationPreviewBinderProps
-> | null {
+): LibraryReleasePositionModel<DemoPositionPublicationBinderProps> | null {
 	const { locale } = useI18n();
 	const entryIdentity = props ? `${props.release.id}:${props.track.id}` : null;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
@@ -90,10 +82,7 @@ export function useTrackScreenDemoProvider(
 		onPreview,
 		onRepublish,
 		publicationPreviewNotice,
-		inlinePublicationPreview,
 		contextualPublication,
-		onAudioUpgrade,
-		onMetadataPreview = onPreview,
 		onMutate,
 		onRecordingChange,
 		genresLoaded = true,
@@ -210,13 +199,8 @@ export function useTrackScreenDemoProvider(
 			) : undefined,
 			outputStatus: outputStatus ?? undefined,
 			onPreview,
-			onUpdateMetadata:
-				track.published && onMetadataPreview
-					? () => onMetadataPreview([track.id])
-					: undefined,
 			previewNotice: publicationPreviewNotice,
 		},
-		inlinePublicationPreview,
 		contextualPublication,
 		actions: onMutate ? (
 			<TrackActions
@@ -226,7 +210,6 @@ export function useTrackScreenDemoProvider(
 				files={files}
 				onQueueDeletion={onQueueDeletion}
 				onRepublish={onRepublish ?? onPreview}
-				onAudioUpgrade={onAudioUpgrade}
 			/>
 		) : undefined,
 		technical: {

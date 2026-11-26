@@ -228,30 +228,35 @@ it("keeps a CURRENT comparison inside the position publication panel", () => {
 	expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-it("opens the publication preview inline without changing the route", async () => {
+it("omits demo publication shortcuts and keeps the position preview contextual", () => {
 	const hash = northernPositionHref;
 	window.history.replaceState(null, "", hash);
 	render(<CatalogDemo />);
 	const publication = within(
 		screen.getByRole("region", { name: "Публикация" }),
 	);
-	const trigger = publication.getByRole("button", {
-		name: "Обновить метаданные",
-	});
-	trigger.focus();
-	fireEvent.click(trigger);
-	expect(window.location.hash).toBe(hash);
-	const preview = await screen.findByRole("heading", {
-		name: "Предпросмотр публикации",
-	});
-	expect(preview.tagName).toBe("H3");
-	expect(preview).toHaveFocus();
-	fireEvent.click(screen.getByRole("button", { name: "Закрыть предпросмотр" }));
 	expect(
-		screen.queryByRole("heading", { name: "Предпросмотр публикации" }),
+		publication.queryByRole("button", { name: "Обновить метаданные" }),
+	).toBeNull();
+	fireEvent.click(publication.getByRole("button", { name: "Другие действия" }));
+	expect(
+		publication.getByRole("button", { name: "Изменить локальное название" }),
+	).toBeVisible();
+	expect(
+		publication.queryByRole("button", {
+			name: "Улучшить только качество аудио",
+		}),
+	).toBeNull();
+	const copy = firstPublicationPreviewMessages.ru;
+	expect(
+		publication.queryByRole("region", { name: copy.tagDifferences }),
 	).not.toBeInTheDocument();
+	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
+	expect(
+		publication.getByRole("region", { name: copy.tagDifferences }),
+	).toBeInTheDocument();
+	expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
 	expect(window.location.hash).toBe(hash);
-	expect(trigger).toHaveFocus();
 });
 
 it("retains matching search and preparation while creating a Local release", async () => {

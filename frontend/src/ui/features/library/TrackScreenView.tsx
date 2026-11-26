@@ -6,10 +6,6 @@ import {
   type ContextPublicationPreviewSource,
 } from "../publication/ContextPublicationPreview";
 import {
-  InlinePublicationPreviewOutlet,
-  type InlinePublicationPreviewSource,
-} from "../publication/InlinePublicationPreview";
-import {
   LibraryPositionEditorsView,
   type LibraryPositionEditorsViewProps,
 } from "./LibraryPositionEditorsView";
@@ -49,7 +45,6 @@ const copy = {
     metadataState: "Publication metadata state",
     compareEffectiveMetadata: "Compare effective metadata",
     publicationFileStatus: "Publication file",
-    updateMetadata: "Update metadata",
     actualCoverRegion: "Actual cover of the current publication",
     actualCover: "Actual cover",
     unknown: "unknown",
@@ -101,7 +96,6 @@ const copy = {
     metadataState: "Состояние метаданных публикации",
     compareEffectiveMetadata: "Сравнить эффективные метаданные",
     publicationFileStatus: "Файл публикации",
-    updateMetadata: "Обновить метаданные",
     actualCoverRegion: "Фактическая обложка текущей публикации",
     actualCover: "Фактическая обложка",
     unknown: "неизвестно",
@@ -266,7 +260,6 @@ export type TrackScreenPublicationView = {
   diff?: ReactNode;
   outputStatus?: string;
   onPreview?: () => void;
-  onUpdateMetadata?: () => void;
   previewNotice?: string;
   current?: TrackScreenPublicationCurrentView;
   coverEmbedding?: TrackScreenCoverEmbeddingView;
@@ -349,15 +342,13 @@ export function TrackProviderRefreshView({
 /**
  * Whole position route composition. The route owns every read and action
  * admission; this view renders a typed snapshot, a typed editor stack with
- * named host bridges, and narrow slots for the inline publication preview,
- * contextual publication preview, deletion and tag evidence actors. Both
- * publication preview slots
- * stay outside the active-only branches so their controllers keep one
- * reconciliation identity across overview and position routes.
+ * named host bridges, and narrow slots for the contextual publication preview,
+ * deletion and tag evidence actors. The publication preview slot stays outside
+ * the active-only branches so its controller keeps one reconciliation identity
+ * across overview and position routes.
  */
 export type TrackScreenViewProps<
   ContextProps extends object = Record<never, never>,
-  InlineProps extends object = Record<never, never>,
 > = {
   locale: Locale;
   active?: boolean;
@@ -371,7 +362,6 @@ export type TrackScreenViewProps<
   editors?: Omit<LibraryPositionEditorsViewProps, "locale" | "active">;
   sources?: TrackScreenSourcesView;
   publication?: TrackScreenPublicationView;
-  inlinePublicationPreview?: InlinePublicationPreviewSource<InlineProps>;
   contextualPublication?: ContextPublicationPreviewSource<ContextProps>;
   actions?: ReactNode;
   deletion?: ReactNode;
@@ -625,7 +615,6 @@ function TechnicalDetails({
 
 export function TrackScreenView<
   ContextProps extends object = Record<never, never>,
-  InlineProps extends object = Record<never, never>,
 >({
   locale,
   active = true,
@@ -635,14 +624,13 @@ export function TrackScreenView<
   editors,
   sources,
   publication,
-  inlinePublicationPreview,
   contextualPublication,
   actions,
   deletion,
   technical,
   tags,
   evidence,
-}: TrackScreenViewProps<ContextProps, InlineProps>) {
+}: TrackScreenViewProps<ContextProps>) {
   if (notFound) {
     return (
       <section className={libraryPositionPageClassName}>
@@ -705,34 +693,18 @@ export function TrackScreenView<
           }
           actions={
             <>
-              {(publication?.onUpdateMetadata || publication?.onPreview) && (
+              {publication?.onPreview && (
                 <div className={actionsClass}>
-                  {publication?.onUpdateMetadata && (
-                    <button
-                      type="button"
-                      className={buttonClass}
-                      onClick={publication.onUpdateMetadata}
-                    >
-                      {text(locale, "updateMetadata")}
-                    </button>
-                  )}
-                  {publication?.onPreview && (
-                    <LibraryPositionPreviewButton
-                      locale={locale}
-                      onPreview={publication.onPreview}
-                    />
-                  )}
+                  <LibraryPositionPreviewButton
+                    locale={locale}
+                    onPreview={publication.onPreview}
+                  />
                 </div>
               )}
               {publication?.previewNotice ? (
                 <ScreenStatus>{publication.previewNotice}</ScreenStatus>
               ) : null}
-              {inlinePublicationPreview ? (
-                <InlinePublicationPreviewOutlet
-                  locale={locale}
-                  source={inlinePublicationPreview}
-                />
-              ) : contextualPublication ? (
+              {contextualPublication ? (
                 <ContextPublicationPreviewOutlet
                   source={contextualPublication}
                 />
