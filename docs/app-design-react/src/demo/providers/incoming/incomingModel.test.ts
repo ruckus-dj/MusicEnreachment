@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
 import {
+	createSourceScan,
+	initialSourceProcessingState,
+	processSourceQueue,
+	retrySourceStep,
+} from "../sources/sourceProcessingModel";
+import { readyAutomaticIncomingFolders } from "./automaticIncomingAnalysis";
+import {
 	applyPlan,
 	assignFile,
 	createIncomingState,
@@ -11,6 +18,7 @@ import {
 	providerReleases,
 	providerTags,
 	removeRootFromIncomingInventory,
+	runAutomaticMatching,
 	selectedSourceId,
 	sourceIds,
 	unassignFile,
@@ -143,7 +151,14 @@ it("replaces only audio measurement tags on an automatic quality upgrade", () =>
 	const plan = makePlan(state, files, releases)!;
 	const targetTrack = plan.target.tracks[0];
 	const track = releases.find((release) => release.id === "north")!.tracks[0];
-	if (!track.published) throw new Error("Missing publication fixture");
+	if (!track.published?.sourceId)
+		throw new Error("Missing publication fixture");
+	const previousSourceId = track.published.sourceId;
+	files[previousSourceId] = {
+		...files["north-f1"],
+		id: previousSourceId,
+		codec: "MP3",
+	};
 	const sourceId = "north-upgrade";
 	files[sourceId] = {
 		...files["north-f1"],
@@ -157,6 +172,7 @@ it("replaces only audio measurement tags on an automatic quality upgrade", () =>
 	track.published = {
 		...track.published,
 		codec: "MP3",
+		matchingConfidence: 0.8,
 		tags: {
 			...track.published.tags,
 			REPLAYGAIN_TRACK_GAIN: ["-12.00 dB"],
@@ -172,11 +188,89 @@ it("replaces only audio measurement tags on an automatic quality upgrade", () =>
 		},
 	};
 
-	expect(applyPlan(plan, files, releases, undefined, true)).toBe(1);
+	const current = track.published;
+	expect(applyPlan(plan, files, releases, undefined, "audio")).toBe(0);
+	expect(track.published).toBe(current);
+	files[sourceId].sha256 = "demo-upgrade-distinct-file";
+	expect(applyPlan(plan, files, releases, undefined, "audio")).toBe(1);
+	expect(track.published).toMatchObject({
+		path: current.path,
+		container: current.container,
+		coverHash: current.coverHash,
+		lyrics: current.lyrics,
+	});
+	expect(track.published.matchingConfidence).toBeUndefined();
 	expect(track.published?.tags.REPLAYGAIN_TRACK_GAIN).toEqual(["-5.00"]);
 	expect(track.published?.tags.R128_TRACK_GAIN).toBeUndefined();
 	expect(track.metadataBaseline?.REPLAYGAIN_TRACK_GAIN).toEqual(["-5.00"]);
 	expect(track.published?.tags.TITLE).toEqual(track.metadataBaseline?.TITLE);
+	track.published = current;
+	plan.assignments[targetTrack.id].sourceMeta[sourceId] = {
+		method: "Авто",
+		confidence: "high",
+		score: { value: 0.86, sourceSHA256: "demo-upgrade-distinct-file" },
+	};
+	expect(applyPlan(plan, files, releases, undefined, "audio")).toBe(1);
+	expect(track.published.matchingConfidence).toBe(0.86);
+});
+
+it("admits automatic first publication only with one ready folder and exact pair scores", () => {
+	const { state, files, releases } = fresh();
+	const group = state.groups.find((item) => item.autoEligible);
+	if (!group) throw new Error("Missing automatic matching fixture");
+	for (const id of group.fileIds) files[id].sha256 = `demo-test-source-${id}`;
+	const root = {
+		id: "root-backup",
+		path: "/mnt/inbox",
+		mode: "in_place" as const,
+		available: true,
+		lastSuccessfulScanAt: "2026-11-26T12:00:00Z",
+	};
+	let processing = processSourceQueue(
+		createSourceScan(initialSourceProcessingState, root.id, root.mode, files),
+	);
+	const work = processing.files.filter((item) =>
+		group.fileIds.includes(item.fileId),
+	);
+	expect(work).toHaveLength(group.fileIds.length);
+	const folders = () =>
+		readyAutomaticIncomingFolders({ roots: [root], files, processing }).map(
+			(folder) => folder.fileIds,
+		);
+	const retry = (id: string) => {
+		processing = processSourceQueue(
+			retrySourceStep(processing, id, "fingerprint"),
+			root.id,
+			id,
+		);
+	};
+	for (const item of work.slice(0, -1)) retry(item.id);
+	expect(folders()).toEqual([]);
+	retry(work[work.length - 1].id);
+	const ready = folders();
+	expect(ready).toContainEqual(new Set(group.fileIds));
+	const published = () =>
+		releases
+			.flatMap(({ tracks }) => tracks)
+			.filter(({ published }) => published).length;
+	const baseline = published();
+	expect(runAutomaticMatching(state, files, releases, ready, 0.7)).toBe(0);
+	const assignments = getDraft(group, files, providerReleases, releases);
+	for (const assignment of Object.values(assignments)) {
+		const id = selectedSourceId(assignment);
+		const sha = id ? files[id]?.sha256 : undefined;
+		if (id && sha && assignment.sourceMeta[id])
+			assignment.sourceMeta[id].score = { value: 0.85, sourceSHA256: sha };
+	}
+	expect(runAutomaticMatching(state, files, releases, ready, undefined)).toBe(
+		0,
+	);
+	expect(runAutomaticMatching(state, files, releases, ready, 0.9)).toBe(0);
+	expect(published()).toBe(baseline);
+	expect(runAutomaticMatching(state, files, releases, ready, 0.7)).toBe(
+		group.fileIds.length,
+	);
+	expect(published()).toBe(baseline + group.fileIds.length);
 });
 
 it("preserves identical current M4A audio and metadata after source conversion", () => {

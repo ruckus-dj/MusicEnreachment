@@ -1,6 +1,8 @@
 import {
 	type ReactNode,
 	useEffect,
+	useMemo,
+	useRef,
 	useState,
 	useSyncExternalStore,
 } from "react";
@@ -46,12 +48,16 @@ import {
 	selectDemoRelease,
 } from "./fixtures/localReleaseDemo";
 import { IncomingWorkspaceAnchor } from "./providers/incoming/IncomingWorkspaceAnchor";
+import { readyAutomaticIncomingFolders } from "./providers/incoming/automaticIncomingAnalysis";
 import {
 	incomingGroupMatchingHref,
 	incomingGroupsListHref,
 	parseIncomingGroupsRoute,
 } from "./providers/incoming/incomingGroupsRoute";
-import { createIncomingState } from "./providers/incoming/incomingModel";
+import {
+	createIncomingState,
+	runAutomaticMatching,
+} from "./providers/incoming/incomingModel";
 import {
 	combineLibraryAlbumEntries,
 	libraryArtistPositionIds,
@@ -346,6 +352,62 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		});
 		setReleases(nextReleases);
 	};
+	const observedAnalysis = useRef(new Map<string, string>());
+	const readyIncomingFolders = useMemo(
+		() =>
+			readyAutomaticIncomingFolders({
+				files,
+				roots: sourceRoots,
+				processing: sourceProcessing,
+			}),
+		[files, sourceRoots, sourceProcessing],
+	);
+	useEffect(() => {
+		const completed: ReadonlySet<string>[] = [];
+		for (const folder of readyIncomingFolders) {
+			if (observedAnalysis.current.get(folder.key) === folder.signature)
+				continue;
+			observedAnalysis.current.set(folder.key, folder.signature);
+			completed.push(folder.fileIds);
+		}
+		if (completed.length === 0) return;
+		const nextIncoming = structuredClone(incoming);
+		const nextReleases = structuredClone(releases);
+		const minimumScore = Number(settings.matchingPairThreshold ?? "0.70");
+		const count = runAutomaticMatching(
+			nextIncoming,
+			files,
+			nextReleases,
+			completed,
+			settings.publicationAutoCompleteAlbums && Number.isFinite(minimumScore)
+				? minimumScore
+				: undefined,
+			providers,
+			providerArtists,
+			publicationDestination,
+		);
+		if (!count) return;
+		nextIncoming.notice = "";
+		nextIncoming.noticeDescriptor = null;
+		nextIncoming.uiNotice = {
+			namespace: "incoming",
+			id: "automaticPublished",
+			params: { count },
+		};
+		setIncoming(nextIncoming);
+		setImportedReleases(nextReleases);
+	}, [
+		readyIncomingFolders,
+		files,
+		incoming,
+		releases,
+		settings.matchingPairThreshold,
+		settings.publicationAutoCompleteAlbums,
+		providers,
+		providerArtists,
+		publicationDestination,
+		setImportedReleases,
+	]);
 	const fixture = {
 		...catalogData,
 		artists,

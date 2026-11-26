@@ -8,6 +8,7 @@ import {
 import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../../ui/features/incoming/IncomingGroupsPanel";
+import { incomingMessages } from "../../../ui/features/incoming/incomingReviewMessages";
 import {
 	type IncomingMessage,
 	incomingMessage,
@@ -31,8 +32,6 @@ import {
 	type IncomingReleases,
 	type IncomingState,
 	incomingFixtures,
-	providerReleases,
-	runAutomaticMatching,
 	usableFile,
 } from "./incomingModel";
 import { incomingOverviewRows } from "./incomingOverview";
@@ -52,15 +51,11 @@ export type IncomingScreenProps = {
 };
 
 export function useIncomingScreenDemoProvider({
-	destination,
 	files: givenFiles,
-	releases: givenReleases,
-	providers: givenProviders,
 	roots = [],
 	artists = incomingFixtures.artists,
 	state: givenState,
 	onState,
-	onReleases,
 }: IncomingScreenProps): ApplicationIncomingListModel {
 	const { locale } = useI18n();
 	const msg = (
@@ -81,9 +76,6 @@ export function useIncomingScreenDemoProvider({
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [localFiles] = useState<IncomingFiles>(() =>
 		structuredClone(incomingFixtures.files),
-	);
-	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
-		structuredClone(incomingFixtures.releases),
 	);
 	const state = givenState ?? localState;
 	const [hash, setHash] = useState(() => window.location.hash);
@@ -117,8 +109,6 @@ export function useIncomingScreenDemoProvider({
 			})
 			.sort((a, b) => compareSourceFiles(a, b, "track", fileNames));
 	}
-	const releases = givenReleases ?? localReleases;
-	const providers = givenProviders ?? providerReleases;
 	const updateState = () => {
 		const next = structuredClone(state);
 		givenState ? onState?.(next) : setLocalState(next);
@@ -252,25 +242,6 @@ export function useIncomingScreenDemoProvider({
 			};
 		},
 	);
-	const runAuto = () => {
-		const nextReleases = structuredClone(releases);
-		const count = runAutomaticMatching(
-			state,
-			files,
-			nextReleases,
-			providers,
-			artists,
-			destination,
-		);
-		state.notice = "";
-		state.noticeDescriptor = null;
-		state.uiNotice = count
-			? { namespace: "incoming", id: "automaticPublished", params: { count } }
-			: { namespace: "incoming", id: "nothingToPublish" };
-		if (givenReleases) onReleases?.(nextReleases);
-		else setLocalReleases(nextReleases);
-		updateState();
-	};
 	const notice =
 		state.notice ||
 		(state.uiNotice
@@ -299,9 +270,11 @@ export function useIncomingScreenDemoProvider({
 	};
 	const listModel: ApplicationIncomingListModel = {
 		locale,
-		headingAction: { label: msg("process"), onPress: runAuto },
+		headingAction: {
+			label: incomingMessages[locale].refreshGroups,
+			onPress: updateState,
+		},
 		notice,
-		showProcessingStages: true,
 		panel: {
 			labels,
 			rows: viewRows,

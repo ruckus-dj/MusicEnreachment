@@ -157,3 +157,7 @@ unavailable.
   Lifecycle tests supply an empty queue and use fake time for their one
   operation; rendering the full fixture on every filter/retry can time out
   under the normal parallel test gate even with fake timers.
+- Automatic audio-upgrade fixtures need a registered prior source with its
+  own hash. A CURRENT snapshot can name a historical source absent from the
+  inventory; that cannot demonstrate a successful replacement. Prove the
+  distinct-source baseline and reject equal hashes without modifying CURRENT.

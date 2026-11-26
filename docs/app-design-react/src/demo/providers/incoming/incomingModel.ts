@@ -13,6 +13,7 @@ import {
 	originalProviders,
 	originalReleases,
 	publicationMetadataIssues,
+	sourceOnlyAudioTagKeys,
 } from "../library/catalogData";
 import { replaceAudioMeasurements } from "../library/metadata/audioMeasurements";
 import { retainUnspecifiedContributorTags } from "../library/metadata/scopedContributors";
@@ -38,13 +39,35 @@ export type IncomingNotice = {
 export type Assignment = {
 	sourceIds: string[];
 	selectedSourceId: string | null;
-	sourceMeta: Record<string, { method: string; confidence: string | null }>;
+	sourceMeta: Record<
+		string,
+		{
+			method: string;
+			confidence: string | null;
+			/** Accepted evidence for this exact source/position pair, not a label-derived score. */
+			score?: { value: number; sourceSHA256: string };
+		}
+	>;
 	method: string;
 	confidence: string | null;
 	providerTrackId: string | null;
 	included: boolean;
 	fileId?: string | null;
 };
+function automaticPairScore(
+	assignment: Assignment | undefined,
+	file: SourceFile | undefined,
+) {
+	const score = file?.sha256
+		? assignment?.sourceMeta[file.id]?.score
+		: undefined;
+	return score &&
+		score.sourceSHA256 === file?.sha256 &&
+		score.value >= 0 &&
+		score.value <= 1
+		? score.value
+		: undefined;
+}
 export type IncomingGroup = {
 	id: string;
 	title: string;
@@ -641,13 +664,14 @@ export function applyPlan(
 	files: IncomingFiles,
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
-	automatic = false,
+	automatic: false | "audio" | "first" = false,
 	artists?: CatalogArtist[],
 	destination: PublicationDestination = fixturePublicationDestination,
 	positionId?: string,
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
 	if (plan.mode === "local" && !release) return 0;
+	if (automatic === "audio" && !release) return 0;
 	const rows = positionId
 		? [
 				planPositionRow(
@@ -704,6 +728,23 @@ export function applyPlan(
 				: item.position === row.targetTrack.position,
 		);
 		if (!track) continue;
+		if (automatic === "first" && row.previous) continue;
+		const currentSource = row.previous?.sourceId
+			? files[row.previous.sourceId]
+			: undefined;
+		if (
+			automatic === "audio" &&
+			(!row.previous ||
+				!row.file ||
+				row.previous.sourceId === row.file.id ||
+				!currentSource?.sha256 ||
+				!row.file.sha256 ||
+				currentSource.sha256 === row.file.sha256 ||
+				row.previous.codec !== "MP3" ||
+				row.file.codec !== "FLAC" ||
+				retainedOutputIssue(row.previous, row.file, destination))
+		)
+			continue;
 		if (positionId && row.action === "Без изменений") continue;
 		if (
 			plan.retainCurrentPath &&
@@ -722,7 +763,7 @@ export function applyPlan(
 			).length
 		)
 			continue;
-		const assigned = automatic && row.previous ? [] : sourceIds(row.assignment);
+		const assigned = automatic === "audio" ? [] : sourceIds(row.assignment);
 		const usableAssignments = assigned.filter((id) => usableFile(files[id]));
 		const existingSources = [
 			...new Set([
@@ -740,29 +781,30 @@ export function applyPlan(
 			(row.action === "Без изменений" && !plan.force)
 		)
 			continue;
-		if (
-			automatic &&
-			row.previous &&
-			!(row.previous.codec === "MP3" && row.file.codec === "FLAC")
-		)
-			continue;
 		track.sourceId = selectedSourceId(row.assignment);
-		if (!(automatic && row.previous)) {
+		if (automatic !== "audio") {
 			track.providerTrackId = row.assignment.providerTrackId;
 			if (row.provider) track.recordingId = row.provider.track.recordingId;
 		}
 		const published = track.published;
-		if (automatic && row.previous) {
+		if (automatic === "audio" && row.previous) {
 			const replacementTags = replaceAudioMeasurements(
 				row.previous.tags,
 				desiredTags(release, track, artists, row.file.id),
 			);
+			const outputCodec = demoOutputCodec(row.file.codec, destination.format);
+			for (const key of sourceOnlyAudioTagKeys) {
+				delete replacementTags[key];
+				if (outputCodec === row.file.codec && Object.hasOwn(row.file.tags, key))
+					replacementTags[key] = [...row.file.tags[key]];
+			}
 			track.published = {
 				...row.previous,
 				tags: replacementTags,
-				codec: row.file.codec,
+				codec: outputCodec,
 				sourceId: row.file.id,
 				readAt: "Только что · демо",
+				matchingConfidence: automaticPairScore(row.assignment, row.file),
 			};
 			track.metadataBaseline = structuredClone(replacementTags);
 			changed++;
@@ -796,6 +838,9 @@ export function applyPlan(
 					: rebuildSource || !published
 						? output.path
 						: published.path,
+			...(automatic === "first"
+				? { matchingConfidence: automaticPairScore(row.assignment, row.file) }
+				: {}),
 		};
 		track.metadataBaseline = structuredClone(row.nextTags);
 		track.metadataBaselineExtras = {
@@ -811,6 +856,8 @@ export function runAutomaticMatching(
 	state: IncomingState,
 	files: IncomingFiles,
 	releases: IncomingReleases,
+	readyFolders: readonly ReadonlySet<string>[],
+	automaticFirstMinimumScore: number | undefined,
 	providers: IncomingReleases = providerReleases,
 	artists?: CatalogArtist[],
 	destination: PublicationDestination = fixturePublicationDestination,
@@ -824,6 +871,9 @@ export function runAutomaticMatching(
 			!group.autoEligible ||
 			group.processed ||
 			group.mode !== "provider" ||
+			!readyFolders.some((folder) =>
+				group.fileIds.every((id) => folder.has(id)),
+			) ||
 			target.tracks.length !== group.fileIds.length ||
 			!target.tracks.every((track) => {
 				const assignment = assignments[track.id];
@@ -833,6 +883,7 @@ export function runAutomaticMatching(
 					: "";
 				return Boolean(
 					selected &&
+						group.fileIds.includes(selected) &&
 						usableFile(files[selected]) &&
 						!publicationMetadataIssues(target, track, selected).length &&
 						files[selected]?.confidence === "high" &&
@@ -844,15 +895,40 @@ export function runAutomaticMatching(
 			continue;
 		const plan = makeGroupPlan(state, group, files, releases, providers);
 		if (!plan) continue;
-		const applied = applyPlan(
+		let applied = applyPlan(
 			plan,
 			files,
 			releases,
 			providers,
-			true,
+			"audio",
 			artists,
 			destination,
 		);
+		if (
+			automaticFirstMinimumScore !== undefined &&
+			Number.isFinite(automaticFirstMinimumScore) &&
+			automaticFirstMinimumScore >= 0 &&
+			automaticFirstMinimumScore <= 1 &&
+			target.tracks.every((track) => {
+				const assignment = assignments[track.id];
+				const id = selectedSourceId(assignment);
+				const score = automaticPairScore(
+					assignment,
+					id ? files[id] : undefined,
+				);
+				return typeof score === "number" && score >= automaticFirstMinimumScore;
+			})
+		) {
+			applied += applyPlan(
+				plan,
+				files,
+				releases,
+				providers,
+				"first",
+				artists,
+				destination,
+			);
+		}
 		count += applied;
 		if (applied > 0) group.processed = true;
 	}
