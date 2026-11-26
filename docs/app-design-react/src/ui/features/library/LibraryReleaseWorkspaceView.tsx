@@ -26,7 +26,8 @@ export type LibraryReleaseOverviewModel = DistributiveOmit<
 /** One keyed position screen; the workspace owns its locale and visibility. */
 export type LibraryReleasePositionModel<
   ContextProps extends object = Record<never, never>,
-> = Omit<TrackScreenViewProps<ContextProps>, "locale" | "active">;
+  InlineProps extends object = Record<never, never>,
+> = Omit<TrackScreenViewProps<ContextProps, InlineProps>, "locale" | "active">;
 
 /** Typed read-error notice; the workspace supplies the frame locale. */
 export type LibraryReleasePositionNoticeModel = Omit<
@@ -37,9 +38,10 @@ export type LibraryReleasePositionNoticeModel = Omit<
 /** One keyed position entry; the host owns the key and its diagnostics. */
 export type LibraryReleasePositionEntry<
   ContextProps extends object = Record<never, never>,
+  InlineProps extends object = Record<never, never>,
 > = {
   id: string;
-  screen: LibraryReleasePositionModel<ContextProps>;
+  screen: LibraryReleasePositionModel<ContextProps, InlineProps>;
   /** Host-owned read error mounted after this key, when present. */
   notice?: LibraryReleasePositionNoticeModel;
 };
@@ -58,6 +60,7 @@ export type LibraryReleaseWorkspaceSelection =
 
 export type LibraryReleaseWorkspaceViewProps<
   ContextProps extends object = Record<never, never>,
+  InlineProps extends object = Record<never, never>,
 > = {
   locale: Locale;
   selection: LibraryReleaseWorkspaceSelection;
@@ -78,7 +81,7 @@ export type LibraryReleaseWorkspaceViewProps<
    * active so the retained publication preview keeps one reconciliation
    * identity across the edition and position routes.
    */
-  positions: readonly LibraryReleasePositionEntry<ContextProps>[];
+  positions: readonly LibraryReleasePositionEntry<ContextProps, InlineProps>[];
 };
 
 /**
@@ -89,13 +92,14 @@ export type LibraryReleaseWorkspaceViewProps<
  */
 export function LibraryReleaseWorkspaceView<
   ContextProps extends object = Record<never, never>,
+  InlineProps extends object = Record<never, never>,
 >({
   locale,
   selection,
   overview,
   overviewProviderRefresh,
   positions,
-}: LibraryReleaseWorkspaceViewProps<ContextProps>) {
+}: LibraryReleaseWorkspaceViewProps<ContextProps, InlineProps>) {
   if (selection.kind === "unavailable")
     return overview ? (
       <ReleaseOverviewView locale={locale} {...overview} />
@@ -128,7 +132,7 @@ export function LibraryReleaseWorkspaceView<
       )}
       {positions.map(({ id, screen, notice }) => (
         <Fragment key={id}>
-          <TrackScreenView<ContextProps>
+          <TrackScreenView<ContextProps, InlineProps>
             locale={locale}
             active={id === activePositionId}
             {...screen}

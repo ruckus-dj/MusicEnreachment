@@ -1,15 +1,17 @@
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import type { LibraryReleasePositionModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import {
 	formatTrackMessage,
 	trackMessage,
 } from "../../../ui/features/library/trackMessages";
+import type { InlinePublicationPreviewSource } from "../../../ui/features/publication/InlinePublicationPreview";
 import { PublicationMetadataChanges } from "../../../ui/features/publication/PublicationInspector";
 import type {
 	DemoPositionPublicationBinderProps,
 	DemoPositionPublicationSource,
 } from "../publication/ContextPublicationPreview";
+import type { PublicationPreviewBinderProps } from "../publication/PublicationPreview";
 import { publicationMetadataDiff } from "../publication/publicationMetadataDiff";
 import { releaseHref } from "./artistReleaseRoute";
 import {
@@ -36,7 +38,7 @@ export type TrackScreenProps = {
 	onPreview?: () => void;
 	onRepublish?: () => void;
 	publicationPreviewNotice?: string;
-	inlinePublicationPreview?: ReactNode;
+	inlinePublicationPreview?: InlinePublicationPreviewSource<PublicationPreviewBinderProps>;
 	contextualPublication?: DemoPositionPublicationSource;
 	onAudioUpgrade?: () => void;
 	onMetadataPreview?: (ids: string[]) => void;
@@ -66,7 +68,10 @@ const duration = (seconds: number) =>
  */
 export function useTrackScreenDemoProvider(
 	props?: TrackScreenProps | null,
-): LibraryReleasePositionModel<DemoPositionPublicationBinderProps> | null {
+): LibraryReleasePositionModel<
+	DemoPositionPublicationBinderProps,
+	PublicationPreviewBinderProps
+> | null {
 	const { locale } = useI18n();
 	const entryIdentity = props ? `${props.release.id}:${props.track.id}` : null;
 	const [inspectionFileId, setInspectionFileId] = useState<string>();

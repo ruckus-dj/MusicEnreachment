@@ -908,6 +908,27 @@ export function CatalogDemo({
 								},
 							},
 						};
+			const inlinePublicationPreview = activePreview
+				? {
+						key: `${activePreview.token.scopeKey}:${activePreview.mode}`,
+						Component: PublicationPreview,
+						props: {
+							mode: activePreview.mode,
+							destination: publicationDestination,
+							token: activePreview.token,
+							inventoryVersion: incoming.inventoryVersion,
+							scopeKey: previewScopeKey(
+								activePreview.originRoute,
+								activePreview.ids,
+							),
+							files,
+							releases,
+							artists,
+							onApply: applyPreview,
+							onBack: () => closeInlinePreview(true),
+						},
+					}
+				: undefined;
 			position = {
 				files,
 				providers,
@@ -916,23 +937,7 @@ export function CatalogDemo({
 					? formatUiNotice(locale, activePositionNotice)
 					: undefined,
 				contextualPublication,
-				inlinePublicationPreview: activePreview ? (
-					<PublicationPreview
-						mode={activePreview.mode}
-						destination={publicationDestination}
-						token={activePreview.token}
-						inventoryVersion={incoming.inventoryVersion}
-						scopeKey={previewScopeKey(
-							activePreview.originRoute,
-							activePreview.ids,
-						)}
-						files={files}
-						releases={releases}
-						artists={artists}
-						onApply={applyPreview}
-						onBack={() => closeInlinePreview(true)}
-					/>
-				) : undefined,
+				inlinePublicationPreview,
 				onQueueDeletion: queueDeletion,
 				release,
 				track,

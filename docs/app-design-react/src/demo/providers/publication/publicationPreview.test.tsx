@@ -9,6 +9,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n/host";
 import { firstPublicationPreviewMessages } from "../../../ui/features/library/firstPublicationPreviewMessages";
 import { ContextPublicationPreviewOutlet } from "../../../ui/features/publication/ContextPublicationPreview";
+import { InlinePublicationPreviewOutlet } from "../../../ui/features/publication/InlinePublicationPreview";
 import {
 	formatPublicationMessage,
 	publicationMessage,
@@ -25,7 +26,10 @@ import {
 } from "../library/catalogData";
 import { applyAudioUpgradePreview } from "../library/trackActionModel";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
-import { PublicationPreview } from "./PublicationPreview";
+import {
+	PublicationPreview,
+	type PublicationPreviewBinderProps,
+} from "./PublicationPreview";
 import { captureMetadataPreview } from "./previewModel";
 import {
 	fixturePublicationDestination,
@@ -59,22 +63,29 @@ it("audio-only publication uses shared confirmation without applying pending met
 	const token = captureMetadataPreview(0, "audio-only", [track.id]);
 	let result = [current];
 	render(
-		<PublicationPreview
-			mode="audioUpgrade"
-			token={token}
-			inventoryVersion={0}
-			scopeKey={token.scopeKey}
-			releases={result}
-			files={originalFiles}
-			artists={originalArtists}
-			onBack={vi.fn()}
-			onApply={(selection) => {
-				result = applyAudioUpgradePreview(
-					result,
-					selection.selectedIds,
-					originalFiles,
-				);
-				return true;
+		<InlinePublicationPreviewOutlet<PublicationPreviewBinderProps>
+			locale="ru"
+			source={{
+				key: token.scopeKey,
+				Component: PublicationPreview,
+				props: {
+					mode: "audioUpgrade",
+					token,
+					inventoryVersion: 0,
+					scopeKey: token.scopeKey,
+					releases: result,
+					files: originalFiles,
+					artists: originalArtists,
+					onBack: vi.fn(),
+					onApply: (selection) => {
+						result = applyAudioUpgradePreview(
+							result,
+							selection.selectedIds,
+							originalFiles,
+						);
+						return true;
+					},
+				},
 			}}
 		/>,
 	);
@@ -163,16 +174,23 @@ it("bulk metadata preview renders the shared publication flow and current facts"
 		publishedTrack.id,
 	]);
 	const { container } = render(
-		<PublicationPreview
-			destination={destination}
-			token={token}
-			inventoryVersion={0}
-			scopeKey={token.scopeKey}
-			releases={originalReleases}
-			files={originalFiles}
-			artists={originalArtists}
-			onApply={vi.fn(() => true)}
-			onBack={vi.fn()}
+		<InlinePublicationPreviewOutlet<PublicationPreviewBinderProps>
+			locale="ru"
+			source={{
+				key: token.scopeKey,
+				Component: PublicationPreview,
+				props: {
+					destination,
+					token,
+					inventoryVersion: 0,
+					scopeKey: token.scopeKey,
+					releases: originalReleases,
+					files: originalFiles,
+					artists: originalArtists,
+					onApply: vi.fn(() => true),
+					onBack: vi.fn(),
+				},
+			}}
 		/>,
 	);
 

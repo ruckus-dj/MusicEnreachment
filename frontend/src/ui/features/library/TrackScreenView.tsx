@@ -6,6 +6,10 @@ import {
   type ContextPublicationPreviewSource,
 } from "../publication/ContextPublicationPreview";
 import {
+  InlinePublicationPreviewOutlet,
+  type InlinePublicationPreviewSource,
+} from "../publication/InlinePublicationPreview";
+import {
   LibraryPositionHeadingView,
   libraryPositionPageClassName,
   libraryPositionTitleId,
@@ -348,6 +352,7 @@ export function TrackProviderRefreshView({
  */
 export type TrackScreenViewProps<
   ContextProps extends object = Record<never, never>,
+  InlineProps extends object = Record<never, never>,
 > = {
   locale: Locale;
   active?: boolean;
@@ -357,7 +362,7 @@ export type TrackScreenViewProps<
   editors?: ReactNode;
   sources?: TrackScreenSourcesView;
   publication?: TrackScreenPublicationView;
-  inlinePublicationPreview?: ReactNode;
+  inlinePublicationPreview?: InlinePublicationPreviewSource<InlineProps>;
   contextualPublication?: ContextPublicationPreviewSource<ContextProps>;
   actions?: ReactNode;
   deletion?: ReactNode;
@@ -611,6 +616,7 @@ function TechnicalDetails({
 
 export function TrackScreenView<
   ContextProps extends object = Record<never, never>,
+  InlineProps extends object = Record<never, never>,
 >({
   locale,
   active = true,
@@ -627,7 +633,7 @@ export function TrackScreenView<
   technical,
   tags,
   evidence,
-}: TrackScreenViewProps<ContextProps>) {
+}: TrackScreenViewProps<ContextProps, InlineProps>) {
   if (notFound) {
     return (
       <section className={libraryPositionPageClassName}>
@@ -704,12 +710,16 @@ export function TrackScreenView<
               {publication?.previewNotice ? (
                 <ScreenStatus>{publication.previewNotice}</ScreenStatus>
               ) : null}
-              {inlinePublicationPreview ??
-                (contextualPublication ? (
-                  <ContextPublicationPreviewOutlet
-                    source={contextualPublication}
-                  />
-                ) : null)}
+              {inlinePublicationPreview ? (
+                <InlinePublicationPreviewOutlet
+                  locale={locale}
+                  source={inlinePublicationPreview}
+                />
+              ) : contextualPublication ? (
+                <ContextPublicationPreviewOutlet
+                  source={contextualPublication}
+                />
+              ) : null}
               {actions}
             </>
           }

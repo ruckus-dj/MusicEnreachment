@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n";
-import { PublicationFlowView } from "../../../ui/features/publication/PublicationFlowView";
+import {
+	InlinePublicationPreviewDataBinder,
+	type InlinePublicationPreviewModel,
+} from "../../../ui/features/publication/InlinePublicationPreview";
 import type { PublicationInspection } from "../../../ui/features/publication/PublicationInspector";
 import {
 	formatPublicationMessage,
@@ -80,6 +83,27 @@ function displayReason(locale: "en" | "ru", reason: string) {
 	return key ? publicationMessage(locale, key) : reason;
 }
 
+export type PublicationPreviewProps = {
+	mode?: PublicationPreviewMode;
+	destination?: import("./publicationOutput").PublicationDestination;
+	token: MetadataPreviewToken;
+	inventoryVersion: number;
+	scopeKey: string;
+	onBack: () => void;
+	releases?: OriginalRelease[];
+	onApply?: (token: MetadataPreviewToken) => boolean;
+	files?: SourceFiles;
+	artists?: CatalogArtist[];
+	returnLabel?: string;
+	children: ReactNode;
+};
+
+/** Binder payload: the same preview props without the outlet-owned children. */
+export type PublicationPreviewBinderProps = Omit<
+	PublicationPreviewProps,
+	"children"
+>;
+
 export function PublicationPreview({
 	mode = "metadata",
 	destination = fixturePublicationDestination,
@@ -92,19 +116,8 @@ export function PublicationPreview({
 	files = originalFiles,
 	artists,
 	returnLabel,
-}: {
-	mode?: PublicationPreviewMode;
-	destination?: import("./publicationOutput").PublicationDestination;
-	token: MetadataPreviewToken;
-	inventoryVersion: number;
-	scopeKey: string;
-	onBack: () => void;
-	releases?: OriginalRelease[];
-	onApply?: (token: MetadataPreviewToken) => boolean;
-	files?: SourceFiles;
-	artists?: CatalogArtist[];
-	returnLabel?: string;
-}) {
+	children,
+}: PublicationPreviewProps) {
 	const { locale } = useI18n();
 	const [parentRejected, setParentRejected] = useState(false);
 	const availableArtists = artists ?? catalogData.artists;
@@ -268,45 +281,47 @@ export function PublicationPreview({
 		};
 		if (onApply && !onApply(applicableToken)) setParentRejected(true);
 	};
-	return (
-		<PublicationFlowView
-			locale={locale}
-			title={publicationMessage(locale, "previewTitle")}
-			description={publicationMessage(
+	const model: InlinePublicationPreviewModel = {
+		title: publicationMessage(locale, "previewTitle"),
+		description: publicationMessage(
+			locale,
+			mode === "audioUpgrade" ? "audioUpgradeDescription" : "previewSummary",
+		),
+		returnLabel: returnText,
+		onBack,
+		stale,
+		counts: actions.map((action) => ({
+			label: publicationMessage(locale, actionMessageKey[action]),
+			count: rows.filter((row) => row.action === action).length,
+		})),
+		items: inspections,
+		footer: {
+			unprocessed: `${rows.filter((row) => row.action === "Невозможно обработать").length} ${publicationMessage(locale, "unprocessed")}`,
+			policy: publicationMessage(
 				locale,
-				mode === "audioUpgrade" ? "audioUpgradeDescription" : "previewSummary",
-			)}
-			returnLabel={returnText}
-			onBack={onBack}
-			stale={stale}
-			counts={actions.map((action) => ({
-				label: publicationMessage(locale, actionMessageKey[action]),
-				count: rows.filter((row) => row.action === action).length,
-			}))}
-			items={inspections}
-			footer={{
-				unprocessed: `${rows.filter((row) => row.action === "Невозможно обработать").length} ${publicationMessage(locale, "unprocessed")}`,
-				policy: publicationMessage(
-					locale,
-					mode === "audioUpgrade" ? "unselectedUnchanged" : "previewPolicy",
-				),
-			}}
-			primaryLabel={formatPublicationMessage(locale, "applyCount", {
-				create: rows.filter((row) => row.action === "Создать").length,
-				update: rows.filter((row) => row.action === "Обновить").length,
-			})}
-			primaryDisabled={!onApply || applicableRows.length === 0}
-			confirmationTitle={formatPublicationMessage(locale, "applyTitle", {
-				count: applicableRows.length,
-			})}
-			confirmationDetails={[
-				mode === "audioUpgrade"
-					? publicationMessage(locale, "audioUpgradeDescription")
-					: `${publicationMessage(locale, "newSourceConfirmation")} ${publicationMessage(locale, "existingMetadataConfirmation")}`,
-				publicationMessage(locale, "prototypeMemoryOnly"),
-			]}
-			confirmLabel={publicationMessage(locale, "confirm")}
-			onConfirm={apply}
-		/>
+				mode === "audioUpgrade" ? "unselectedUnchanged" : "previewPolicy",
+			),
+		},
+		primaryLabel: formatPublicationMessage(locale, "applyCount", {
+			create: rows.filter((row) => row.action === "Создать").length,
+			update: rows.filter((row) => row.action === "Обновить").length,
+		}),
+		primaryDisabled: !onApply || applicableRows.length === 0,
+		confirmationTitle: formatPublicationMessage(locale, "applyTitle", {
+			count: applicableRows.length,
+		}),
+		confirmationDetails: [
+			mode === "audioUpgrade"
+				? publicationMessage(locale, "audioUpgradeDescription")
+				: `${publicationMessage(locale, "newSourceConfirmation")} ${publicationMessage(locale, "existingMetadataConfirmation")}`,
+			publicationMessage(locale, "prototypeMemoryOnly"),
+		],
+		confirmLabel: publicationMessage(locale, "confirm"),
+		onConfirm: apply,
+	};
+	return (
+		<InlinePublicationPreviewDataBinder model={model}>
+			{children}
+		</InlinePublicationPreviewDataBinder>
 	);
 }

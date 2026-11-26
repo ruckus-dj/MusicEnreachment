@@ -228,17 +228,21 @@ it("opens the publication preview inline without changing the route", async () =
 	const publication = within(
 		screen.getByRole("region", { name: "Публикация" }),
 	);
-	fireEvent.click(
-		publication.getByRole("button", { name: "Обновить метаданные" }),
-	);
+	const trigger = publication.getByRole("button", {
+		name: "Обновить метаданные",
+	});
+	trigger.focus();
+	fireEvent.click(trigger);
 	expect(window.location.hash).toBe(hash);
 	const preview = await screen.findByRole("heading", {
 		name: "Предпросмотр публикации",
 	});
 	expect(preview.tagName).toBe("H3");
+	expect(preview).toHaveFocus();
 	fireEvent.click(screen.getByRole("button", { name: "Закрыть предпросмотр" }));
 	expect(
 		screen.queryByRole("heading", { name: "Предпросмотр публикации" }),
 	).not.toBeInTheDocument();
 	expect(window.location.hash).toBe(hash);
+	expect(trigger).toHaveFocus();
 });
