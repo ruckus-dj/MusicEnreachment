@@ -82,4 +82,4 @@ focus outline 2 px; статус нельзя передавать только 
 Стили prototype используют Tailwind utilities в компонентах и статические
 utility strings; не добавлять handwritten CSS selectors, `@apply` или CSS-in-JS.
 Основные компоненты, fixtures и границы демонстрации описаны в
-[`README.md`](README.md); ограничения проверки — в [`PARITY.md`](PARITY.md).
+[`README.md`](README.md).

@@ -43,5 +43,4 @@ provider release — контекст evidence, не целевой альбом
 вызывает application API, настоящую файловую систему или production lifecycle;
 показанные результаты и статусы не являются доказательством выполнения операции.
 Общий дизайн экранов — в [`02-screens.md`](02-screens.md), визуальные принципы —
-в [`DESIGN.md`](DESIGN.md), а ограничения и текущие пробелы — в
-[`PARITY.md`](PARITY.md).
+в [`DESIGN.md`](DESIGN.md).
