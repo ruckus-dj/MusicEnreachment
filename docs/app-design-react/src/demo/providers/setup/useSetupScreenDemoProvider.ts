@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
-import type { SetupScreenViewProps } from "../../../ui/features/setup/SetupScreenView";
+import type {
+	SetupScreenToolsStepView,
+	SetupScreenViewProps,
+} from "../../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../../ui/features/setup/SetupToolCardsView";
 import { setupMessages } from "../../../ui/features/setup/setupMessages";
 import { useSetupTriggerFocus } from "../../../ui/features/setup/useSetupTriggerFocus";
@@ -89,6 +92,11 @@ function useSetupAcoustIDDraftProvider({
 export type SetupScreenProps = SettingsScreenProps & {
 	step?: number;
 	onStepChange?: (step: number) => void;
+	/** Current tool activity supplied by the prototype data host, if available. */
+	toolActivity?: Pick<
+		SetupScreenToolsStepView,
+		"operations" | "completed" | "operationError" | "loadingOperations"
+	>;
 };
 
 /**
@@ -100,6 +108,7 @@ export function useSetupScreenDemoProvider({
 	onSettings,
 	step: savedStep,
 	onStepChange,
+	toolActivity,
 }: SetupScreenProps): SetupScreenViewProps {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
@@ -408,6 +417,7 @@ export function useSetupScreenDemoProvider({
 			resolveInitialPath: demoDirectoryStart,
 		},
 		tools: {
+			...toolActivity,
 			description: copy.toolDescription,
 			cards: {
 				locale,

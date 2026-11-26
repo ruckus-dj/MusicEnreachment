@@ -28,6 +28,39 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+it("renders an admitted tool download again when the host supplies its snapshot", () => {
+	const operation = {
+		id: "fixture-install",
+		source: {
+			locale: "en" as const,
+			status: {
+				text: "Tool download — FFmpeg, version 8.0: Running",
+				stage: "Downloading files",
+				progress: "25 / 100 bytes",
+			},
+		},
+	};
+	const onSettings = vi.fn();
+	const element = (
+		<I18nProvider>
+			<SetupScreen
+				settings={initialDemoSettings}
+				onSettings={onSettings}
+				step={1}
+				toolActivity={{ operations: [operation] }}
+			/>
+		</I18nProvider>
+	);
+	const progress = () =>
+		screen.getByText(/Running · Downloading files · 25 \/ 100 bytes/);
+	const before = render(element);
+	expect(progress()).toHaveAttribute("role", "status");
+	before.unmount();
+	render(element);
+	expect(progress()).toHaveAttribute("role", "status");
+	expect(onSettings).not.toHaveBeenCalled();
+});
+
 it("starts verification directly when the demo preflight is clean", () => {
 	const onSettings = setup("8.0");
 	fireEvent.click(screen.getByRole("button", { name: "Install FFmpeg" }));
