@@ -6,7 +6,10 @@ import { useI18n } from "../../app/i18n/host";
 import type { LibraryArtistReleaseTrackRow } from "../../ui/features/library/LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "../../ui/features/library/LibraryPositionSourcesView";
 import { libraryPositionHref } from "../../ui/features/library/libraryDetailRoute";
-import { ReleaseCreditListView } from "../../ui/features/library/ReleaseCreditListView";
+import {
+  ReleaseCreditListView,
+  type ReleaseCreditView,
+} from "../../ui/features/library/ReleaseCreditListView";
 import type {
   ReleaseOverviewCredit,
   ReleaseOverviewMedia,
@@ -14,6 +17,20 @@ import type {
 import { sourceInventoryStatusLabel } from "../../ui/features/sources/SourceInventoryView";
 import { statusLabel } from "../sources/sourcesApi";
 import { libraryArtistRouteHref } from "./libraryRoute";
+
+/** Resolve release or track credits into the portable credit presentation. */
+export function releaseCreditViews(
+  credits: LibraryReleaseDetailResponse["artists"],
+): ReleaseCreditView[] {
+  return (credits ?? []).map((credit) => ({
+    key: `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`,
+    name: credit.credit_name || credit.artist_name || "",
+    canonicalName: credit.artist_name,
+    href: libraryArtistRouteHref(credit.artist_id),
+    joinPhrase: credit.join_phrase,
+    role: credit.role,
+  }));
+}
 
 export function ReleaseCreditList({
   credits,
@@ -24,14 +41,7 @@ export function ReleaseCreditList({
   return (
     <ReleaseCreditListView
       locale={locale}
-      credits={(credits ?? []).map((credit) => ({
-        key: `${credit.artist_id}-${credit.role}-${credit.join_phrase}-${credit.credit_name}`,
-        name: credit.credit_name || credit.artist_name || "",
-        canonicalName: credit.artist_name,
-        href: libraryArtistRouteHref(credit.artist_id),
-        joinPhrase: credit.join_phrase,
-        role: credit.role,
-      }))}
+      credits={releaseCreditViews(credits)}
     />
   );
 }

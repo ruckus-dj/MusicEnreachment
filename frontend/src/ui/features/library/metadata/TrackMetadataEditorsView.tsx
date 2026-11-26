@@ -1,21 +1,29 @@
-import type { ReactElement } from "react";
+import {
+  LibraryPositionMetadataEditorOutlet,
+  type LibraryPositionMetadataEditorSource,
+} from "./LibraryPositionMetadataEditorOutlet";
 
 export type TrackMetadataEditorsViewProps = {
   label?: string;
-  recording?: ReactElement;
+  recording?: LibraryPositionMetadataEditorSource;
   positionSummary?: string;
-  position: ReactElement;
+  position: LibraryPositionMetadataEditorSource;
   audioLabel?: string;
   audioSummary?: string;
   noLinkedVariant?: string;
   selectedFileUnavailable?: string;
-  selectedAudio?: ReactElement;
+  selectedAudio?: LibraryPositionMetadataEditorSource;
   otherAudioSummary?: string;
-  otherAudio?: readonly ReactElement[];
+  otherAudio?: readonly LibraryPositionMetadataEditorSource[];
 };
 
 const disclosure =
   "rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3";
+
+/** Stable variant identity for keyed audio sources. */
+function editorSourceKey(source: LibraryPositionMetadataEditorSource) {
+  return "bind" in source ? source.key : undefined;
+}
 
 export function TrackMetadataEditorsView({
   label,
@@ -32,16 +40,18 @@ export function TrackMetadataEditorsView({
 }: TrackMetadataEditorsViewProps) {
   return (
     <section className="grid min-w-0 gap-3" aria-label={label}>
-      {recording}
+      {recording && <LibraryPositionMetadataEditorOutlet source={recording} />}
       {positionSummary ? (
         <details className={disclosure}>
           <summary className="cursor-pointer font-semibold">
             {positionSummary}
           </summary>
-          <div className="mt-3">{position}</div>
+          <div className="mt-3">
+            <LibraryPositionMetadataEditorOutlet source={position} />
+          </div>
         </details>
       ) : (
-        position
+        <LibraryPositionMetadataEditorOutlet source={position} />
       )}
       {audioLabel && (
         <section className="min-w-0" aria-label={audioLabel}>
@@ -50,7 +60,12 @@ export function TrackMetadataEditorsView({
               {audioSummary}
             </summary>
             <div className="mt-3">
-              {selectedAudio ?? (
+              {selectedAudio ? (
+                <LibraryPositionMetadataEditorOutlet
+                  key={editorSourceKey(selectedAudio)}
+                  source={selectedAudio}
+                />
+              ) : (
                 <p className="m-0 text-sm text-[var(--muted)]">
                   {noLinkedVariant}
                 </p>
@@ -65,7 +80,14 @@ export function TrackMetadataEditorsView({
                   <summary className="cursor-pointer text-sm font-semibold">
                     {otherAudioSummary}
                   </summary>
-                  <div className="mt-3 grid min-w-0 gap-3">{otherAudio}</div>
+                  <div className="mt-3 grid min-w-0 gap-3">
+                    {otherAudio.map((source, index) => (
+                      <LibraryPositionMetadataEditorOutlet
+                        key={editorSourceKey(source) ?? index}
+                        source={source}
+                      />
+                    ))}
+                  </div>
                 </details>
               )}
             </div>

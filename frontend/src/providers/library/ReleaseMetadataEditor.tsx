@@ -51,6 +51,7 @@ import { artistCreditMessages } from "../../ui/features/library/metadata/artistC
 import { ContributorArtistLinkNotice } from "../../ui/features/library/metadata/ContributorArtistLinkNotice";
 import { ContributorModeControlView } from "../../ui/features/library/metadata/ContributorModeControlView";
 import { ContributorRoleControlView } from "../../ui/features/library/metadata/ContributorRoleControlView";
+import { LibraryPositionMetadataEditorDataBinder } from "../../ui/features/library/metadata/LibraryPositionMetadataEditorOutlet";
 import { MetadataEditorNoticesView } from "../../ui/features/library/metadata/MetadataEditorNoticesView";
 import { MetadataGenreSectionView } from "../../ui/features/library/metadata/MetadataGenreSectionView";
 import {
@@ -366,6 +367,7 @@ export function ReleaseMetadataEditor({
 type ScopedLibraryMetadataEditorProps = {
   refreshToken?: number | string;
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
+  children?: ReactNode;
 } & (
   | { scope: "recording"; ownerId: string; releaseId?: never }
   | { scope: "position"; ownerId: string; releaseId: string }
@@ -387,7 +389,9 @@ export function ScopedLibraryMetadataEditor(
         releaseId={props.releaseId}
         refreshToken={refreshToken}
         onSaved={onSaved}
-      />
+      >
+        {props.children}
+      </LibraryScopedMetadataEditorSession>
     );
   }
   return (
@@ -398,7 +402,9 @@ export function ScopedLibraryMetadataEditor(
       ownerId={ownerId}
       refreshToken={refreshToken}
       onSaved={onSaved}
-    />
+    >
+      {props.children}
+    </LibraryScopedMetadataEditorSession>
   );
 }
 
@@ -1476,11 +1482,18 @@ function LibraryScopedMetadataEditorSession({
     ),
   };
 
-  if (children !== undefined) {
+  if (children !== undefined && scope === "release") {
     return (
       <ReleaseMetadataEditorDataBinder model={{ editor: editorView }}>
         {children}
       </ReleaseMetadataEditorDataBinder>
+    );
+  }
+  if (children !== undefined) {
+    return (
+      <LibraryPositionMetadataEditorDataBinder model={editorView}>
+        {children}
+      </LibraryPositionMetadataEditorDataBinder>
     );
   }
 

@@ -25,7 +25,6 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
-import { LibraryPrimaryArtistControl } from "../../ui/features/library/LibraryPrimaryArtistControl";
 import {
   type LibraryReleaseOverviewModel,
   type LibraryReleasePositionEntry,
@@ -42,8 +41,6 @@ import {
   libraryReleaseText,
   renderLibraryReleaseText,
 } from "../../ui/features/library/libraryReleaseMessages";
-import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/LibraryPositionLyricsView";
-import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
 import type { ReleaseOverviewHeading } from "../../ui/features/library/ReleaseOverviewView";
 import { releaseCoverEditorCopy } from "../../ui/features/library/releaseCoverEditorCopy";
 import type {
@@ -64,7 +61,7 @@ import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import { LibraryPositionTagEvidence } from "./LibraryPositionTagEvidence";
 import {
   positionSourceItems,
-  ReleaseCreditList,
+  releaseCreditViews,
   releaseOverviewCredits,
   releaseOverviewMedia,
 } from "./LibraryReleaseFacts";
@@ -1733,6 +1730,8 @@ export function LibraryReleaseScreen({
             lyricsField?.authority === "manual" &&
             ["value", "explicit_empty"].includes(lyricsField.state);
           const credits = track.artists ?? [];
+          const recordingId = track.recording_id;
+          const editorRefreshToken = `${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`;
 
           function isPositionScopeCurrent() {
             return (
@@ -1941,43 +1940,55 @@ export function LibraryReleaseScreen({
                     },
                   }
                 : undefined,
-              editors: showWorkspace ? (
-                <>
-                  <ReleaseCreditList credits={credits} />
-                  {track.recording_id ? (
-                    <GenreMetadataEditor
-                      owner="recording"
-                      ownerId={track.recording_id}
-                      refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                      onSaved={refreshAfterMetadataSave}
-                    />
-                  ) : null}
-                  <TrackMetadataEditorsView
-                    recording={
-                      track.recording_id ? (
-                        <ScopedLibraryMetadataEditor
-                          scope="recording"
-                          ownerId={track.recording_id}
-                          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+              editors: {
+                positionNumber: track.displayed_number,
+                credits: releaseCreditViews(credits),
+                genre: recordingId
+                  ? {
+                      bind: (children: ReactNode) => (
+                        <GenreMetadataEditor
+                          owner="recording"
+                          ownerId={recordingId}
+                          refreshToken={editorRefreshToken}
                           onSaved={refreshAfterMetadataSave}
-                        />
-                      ) : undefined
+                        >
+                          {children}
+                        </GenreMetadataEditor>
+                      ),
                     }
-                    position={
+                  : undefined,
+                metadata: {
+                  recording: recordingId
+                    ? {
+                        bind: (children: ReactNode) => (
+                          <ScopedLibraryMetadataEditor
+                            scope="recording"
+                            ownerId={recordingId}
+                            refreshToken={editorRefreshToken}
+                            onSaved={refreshAfterMetadataSave}
+                          >
+                            {children}
+                          </ScopedLibraryMetadataEditor>
+                        ),
+                      }
+                    : undefined,
+                  position: {
+                    bind: (children: ReactNode) => (
                       <ScopedLibraryMetadataEditor
                         scope="position"
                         ownerId={track.id}
                         releaseId={releaseId}
-                        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                        refreshToken={editorRefreshToken}
                         onSaved={refreshAfterMetadataSave}
-                      />
-                    }
-                  />
-                  {credits.length > 1 && (
-                    <LibraryPrimaryArtistControl
-                      locale={locale}
-                      positionNumber={track.displayed_number}
-                      model={{
+                      >
+                        {children}
+                      </ScopedLibraryMetadataEditor>
+                    ),
+                  },
+                },
+                primaryArtist:
+                  credits.length > 1
+                    ? {
                         selectedId: track.primary_artist.selected_artist_id,
                         options: uniqueArtists(credits).map((artist) => ({
                           id: artist.artist_id,
@@ -1986,50 +1997,45 @@ export function LibraryReleaseScreen({
                         disabled: !position?.metadata || position.writePending,
                         onChange: (id) =>
                           void selectPrimaryArtist(track.id, id),
-                      }}
-                    />
-                  )}
-                  <LibraryPositionLyricsView
-                    locale={locale}
-                    value={position?.lyrics ?? ""}
-                    onChange={(value) => {
-                      lyricsEditGenerations.current.set(
-                        track.id,
-                        (lyricsEditGenerations.current.get(track.id) ?? 0) + 1,
-                      );
-                      setPositions((current) => ({
-                        ...current,
-                        [track.id]: {
-                          ...current[track.id],
-                          lyrics: value,
-                          draftDirty: true,
-                        },
-                      }));
-                    }}
-                    saveDisabled={
-                      !position?.metadata ||
-                      Boolean(
-                        position.writePending ||
-                          position.saving ||
-                          position.readError,
-                      )
-                    }
-                    applyDisabled={
-                      !publication?.can_apply_manual_lyrics ||
-                      !hasManualLyrics ||
-                      Boolean(
-                        position?.readError ||
-                          position?.applyOperationID ||
-                          publication.active_attempt ||
-                          position?.applying,
-                      )
-                    }
-                    onSave={() => void saveLyrics(track.id)}
-                    onClear={() => void saveLyrics(track.id, true)}
-                    onApply={() => void applyLyrics(track.id)}
-                  />
-                </>
-              ) : undefined,
+                      }
+                    : undefined,
+                lyrics: {
+                  value: position?.lyrics ?? "",
+                  onChange: (value) => {
+                    lyricsEditGenerations.current.set(
+                      track.id,
+                      (lyricsEditGenerations.current.get(track.id) ?? 0) + 1,
+                    );
+                    setPositions((current) => ({
+                      ...current,
+                      [track.id]: {
+                        ...current[track.id],
+                        lyrics: value,
+                        draftDirty: true,
+                      },
+                    }));
+                  },
+                  saveDisabled:
+                    !position?.metadata ||
+                    Boolean(
+                      position.writePending ||
+                        position.saving ||
+                        position.readError,
+                    ),
+                  applyDisabled:
+                    !publication?.can_apply_manual_lyrics ||
+                    !hasManualLyrics ||
+                    Boolean(
+                      position?.readError ||
+                        position?.applyOperationID ||
+                        publication.active_attempt ||
+                        position?.applying,
+                    ),
+                  onSave: () => void saveLyrics(track.id),
+                  onClear: () => void saveLyrics(track.id, true),
+                  onApply: () => void applyLyrics(track.id),
+                },
+              },
               publication: publicationView,
               contextualPublication,
               deletion: showWorkspace ? (

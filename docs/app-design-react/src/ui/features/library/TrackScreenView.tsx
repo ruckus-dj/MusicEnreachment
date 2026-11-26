@@ -10,6 +10,10 @@ import {
   type InlinePublicationPreviewSource,
 } from "../publication/InlinePublicationPreview";
 import {
+  LibraryPositionEditorsView,
+  type LibraryPositionEditorsViewProps,
+} from "./LibraryPositionEditorsView";
+import {
   LibraryPositionHeadingView,
   libraryPositionPageClassName,
   libraryPositionTitleId,
@@ -344,9 +348,10 @@ export function TrackProviderRefreshView({
 
 /**
  * Whole position route composition. The route owns every read and action
- * admission; this view renders a typed snapshot plus narrow slots for the
- * independent editor, inline publication preview, contextual publication
- * preview, deletion and tag evidence actors. Both publication preview slots
+ * admission; this view renders a typed snapshot, a typed editor stack with
+ * named host bridges, and narrow slots for the inline publication preview,
+ * contextual publication preview, deletion and tag evidence actors. Both
+ * publication preview slots
  * stay outside the active-only branches so their controllers keep one
  * reconciliation identity across overview and position routes.
  */
@@ -359,7 +364,11 @@ export type TrackScreenViewProps<
   notFound?: TrackScreenNotFoundView;
   heading?: TrackScreenHeadingView;
   providerRefresh?: TrackProviderRefreshModel;
-  editors?: ReactNode;
+  /**
+   * Typed position editor composition. The portable stack owns editor order and
+   * mounts nothing for an inactive retained position.
+   */
+  editors?: Omit<LibraryPositionEditorsViewProps, "locale" | "active">;
   sources?: TrackScreenSourcesView;
   publication?: TrackScreenPublicationView;
   inlinePublicationPreview?: InlinePublicationPreviewSource<InlineProps>;
@@ -665,7 +674,15 @@ export function TrackScreenView<
       >
         <LibraryPositionWorkspace
           locale={locale}
-          editors={active ? editors : undefined}
+          editors={
+            editors ? (
+              <LibraryPositionEditorsView
+                locale={locale}
+                active={active}
+                {...editors}
+              />
+            ) : undefined
+          }
           sources={
             active && sources ? (
               <LibraryPositionSourcesView

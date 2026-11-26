@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import type { LibraryReleasePositionModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
 import {
@@ -174,17 +174,25 @@ export function useTrackScreenDemoProvider(
 			libraryHref: libraryRootHref(),
 		},
 		editors:
-			onMutate || onRecordingChange ? (
-				<TrackMetadataEditors
-					track={track}
-					artists={artists ?? catalogData.artists}
-					files={files}
-					genresLoaded={genresLoaded}
-					onLoadGenres={onLoadGenres}
-					onMutate={onMutate ?? (() => undefined)}
-					onRecordingChange={onRecordingChange}
-				/>
-			) : undefined,
+			onMutate || onRecordingChange
+				? {
+						metadata: {
+							bind: (children: ReactNode) => (
+								<TrackMetadataEditors
+									track={track}
+									artists={artists ?? catalogData.artists}
+									files={files}
+									genresLoaded={genresLoaded}
+									onLoadGenres={onLoadGenres}
+									onMutate={onMutate ?? (() => undefined)}
+									onRecordingChange={onRecordingChange}
+								>
+									{children}
+								</TrackMetadataEditors>
+							),
+						},
+					}
+				: undefined,
 		sources: {
 			position: trackNumberLabel(release, track),
 			items: sourceItems,

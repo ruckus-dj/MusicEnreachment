@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   getGenreCatalog,
@@ -17,6 +23,10 @@ import type {
   ProviderGenreBaseline,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  GenreMetadataEditorDataBinder,
+  type GenreMetadataEditorModel,
+} from "../../ui/features/library/GenreMetadataEditorOutlet";
 import {
   GenreMetadataEditorView,
   type GenreMetadataOwner,
@@ -61,6 +71,7 @@ export function GenreMetadataEditor({
   ownerId,
   refreshToken,
   onSaved,
+  children,
 }: {
   owner: GenreOwner;
   ownerId: string;
@@ -70,6 +81,7 @@ export function GenreMetadataEditor({
     ownerId: string,
     metadata: LibraryMetadataResponse,
   ) => void | Promise<void>;
+  children?: ReactNode;
 }) {
   return (
     <GenreMetadataEditorSession
@@ -78,7 +90,9 @@ export function GenreMetadataEditor({
       ownerId={ownerId}
       refreshToken={refreshToken}
       onSaved={onSaved}
-    />
+    >
+      {children}
+    </GenreMetadataEditorSession>
   );
 }
 
@@ -87,6 +101,7 @@ function GenreMetadataEditorSession({
   ownerId,
   refreshToken,
   onSaved,
+  children,
 }: {
   owner: GenreOwner;
   ownerId: string;
@@ -96,6 +111,7 @@ function GenreMetadataEditorSession({
     ownerId: string,
     metadata: LibraryMetadataResponse,
   ) => void | Promise<void>;
+  children?: ReactNode;
 }) {
   const { locale } = useI18n();
   const identity = `${owner}:${ownerId}`;
@@ -428,48 +444,51 @@ function GenreMetadataEditorSession({
     markDraftDirty();
   }
 
-  return (
-    <GenreMetadataEditorView
-      owner={owner}
-      locale={locale}
-      editing={editing}
-      draftDirty={draftDirty}
-      draft={draft}
-      selected={selected}
-      draftState={draftState}
-      savedState={savedState}
-      loadingSaved={loadingSaved}
-      saving={saving}
-      readError={readError}
-      saveError={saveError}
-      refreshConflict={refreshConflict}
-      providerGenreBaseline={
-        providerGenreBaseline
-          ? { genres: providerGenreBaseline.genres ?? [] }
-          : null
-      }
-      picker={{
-        options,
-        query,
-        onQueryChange: setQuery,
-        loading,
-        catalogError,
-        onClearCatalogError: () => setCatalogError(""),
-        onRetryCatalog: () => {
-          searchAttemptRef.current += 1;
-          setRetrySearch((value) => value + 1);
-        },
-        catalogStatus,
-        catalogStatusLoading,
-        catalogStatusError,
-        onOpenCatalog: () => void loadCatalogStatus(),
-        onRetryStatus: () => void loadCatalogStatus(),
-      }}
-      onChange={changeDraft}
-      onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
-      onCancel={cancelEdit}
-      onClear={setExplicitEmpty}
-      onInherit={setAbsent}
-    />
-  );
+  const editorView: GenreMetadataEditorModel = {
+    owner,
+    locale,
+    editing,
+    draftDirty,
+    draft,
+    selected,
+    draftState,
+    savedState,
+    loadingSaved,
+    saving,
+    readError,
+    saveError,
+    refreshConflict,
+    providerGenreBaseline: providerGenreBaseline
+      ? { genres: providerGenreBaseline.genres ?? [] }
+      : null,
+    picker: {
+      options,
+      query,
+      onQueryChange: setQuery,
+      loading,
+      catalogError,
+      onClearCatalogError: () => setCatalogError(""),
+      onRetryCatalog: () => {
+        searchAttemptRef.current += 1;
+        setRetrySearch((value) => value + 1);
+      },
+      catalogStatus,
+      catalogStatusLoading,
+      catalogStatusError,
+      onOpenCatalog: () => void loadCatalogStatus(),
+      onRetryStatus: () => void loadCatalogStatus(),
+    },
+    onChange: changeDraft,
+    onEditOrSave: () => (editing ? void saveDraft() : beginEdit()),
+    onCancel: cancelEdit,
+    onClear: setExplicitEmpty,
+    onInherit: setAbsent,
+  };
+  if (children)
+    return (
+      <GenreMetadataEditorDataBinder model={editorView}>
+        {children}
+      </GenreMetadataEditorDataBinder>
+    );
+  return <GenreMetadataEditorView {...editorView} />;
 }

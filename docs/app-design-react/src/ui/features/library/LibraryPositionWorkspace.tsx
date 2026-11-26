@@ -74,7 +74,7 @@ export function LibraryPositionWorkspace({
   const publicationTitle = useId();
   return (
     <>
-      {editors && <div className="grid min-w-0 gap-3">{editors}</div>}
+      {editors}
       <div className="grid grid-cols-2 gap-3 max-[1100px]:grid-cols-1">
         {sources}
         <section
