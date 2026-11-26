@@ -9,7 +9,6 @@ import {
 	browseDemoDirectory,
 	demoDirectoryStart,
 } from "../../fixtures/directoryBrowseDemo";
-import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import {
 	isValidMusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
@@ -37,6 +36,7 @@ import {
 import type { SetupToolDownloadActivity } from "./useSetupToolDownloadsDemoProvider";
 
 type NoticeKey =
+	| "toolsDirectoryRequired"
 	| "missingPath"
 	| "missingTools"
 	| "missingPublication"
@@ -107,6 +107,7 @@ export function useSetupScreenDemoProvider({
 	const copy = settingsMessages[locale];
 	const setupCopy = setupMessages[locale];
 	const [localStep, setLocalStep] = useState(0);
+	const [toolsDirectory, setToolsDirectory] = useState(settings.toolsPath);
 	const step = savedStep ?? localStep;
 	const [notice, setNotice] = useState<NoticeKey | "">("");
 	const [lrclibDraft, setLrclibDraft] = useState(
@@ -187,27 +188,19 @@ export function useSetupScreenDemoProvider({
 
 	const setStep = (nextStep: number) => {
 		if (nextStep === 2) setLrclibDraft(settings.lrclibEnabled ?? true);
+		setNotice("");
 		setLocalStep(nextStep);
 		onStepChange?.(nextStep);
 	};
-	const choosePath = (kind: "tools" | "output", path: string) => {
-		if (kind === "tools") {
-			const accepted = isAbsoluteDemoServerPath(path.trim());
-			update({
-				toolsPath: path.trim(),
-				pathChecked: accepted,
-				setupVerified: {},
-			});
-			setNotice(accepted ? "" : "missingPath");
-		} else {
-			const accepted = isAbsoluteDemoServerPath(path.trim());
-			update({
-				outputCandidate: path.trim(),
-				outputChecked: accepted,
-				musicBrainzVerified: false,
-			});
-			setNotice(accepted ? "" : "missingPublication");
-		}
+	const chooseOutputPath = (path: string) => {
+		const candidate = path.trim();
+		const accepted = isAbsoluteDemoServerPath(candidate);
+		update({
+			outputCandidate: candidate,
+			outputChecked: accepted,
+			musicBrainzVerified: false,
+		});
+		setNotice(accepted ? "" : "missingPublication");
 	};
 	const preflightInstall = (kind: SetupToolKind, release: string) =>
 		// Mirror the server: a clean preflight starts directly, and only exact
@@ -265,12 +258,18 @@ export function useSetupScreenDemoProvider({
 	const next = () => {
 		if (platformMismatch) return;
 		if (step === 0) {
-			if (
-				!isAbsoluteDemoServerPath(settings.toolsPath) ||
-				!settings.pathChecked
-			) {
-				setNotice("missingPath");
+			const candidate = toolsDirectory.trim();
+			if (!isAbsoluteDemoServerPath(candidate)) {
+				setNotice(candidate ? "missingPath" : "toolsDirectoryRequired");
 				return;
+			}
+			setToolsDirectory(candidate);
+			if (candidate !== settings.toolsPath || !settings.pathChecked) {
+				update({
+					toolsPath: candidate,
+					pathChecked: true,
+					...(candidate !== settings.toolsPath ? { setupVerified: {} } : {}),
+				});
 			}
 		} else if (step === 1) {
 			if (!toolsReady) {
@@ -300,7 +299,6 @@ export function useSetupScreenDemoProvider({
 				musicBrainzVerified: true,
 				musicBrainzVerifiedFingerprint: providerFingerprint,
 			});
-			setNotice("");
 			setStep(3);
 			return;
 		} else {
@@ -318,15 +316,14 @@ export function useSetupScreenDemoProvider({
 				return;
 			}
 			update({ currentOutput: outputPath });
-			window.location.hash = incomingGroupsListHref();
+			window.location.hash = "/";
 			return;
 		}
-		setNotice("");
 		setStep(Math.min(step + 1, 3));
 	};
 	const canProceed =
 		step === 0
-			? settings.pathChecked && isAbsoluteDemoServerPath(settings.toolsPath)
+			? true
 			: step === 1
 				? toolsReady
 				: step === 2
@@ -342,9 +339,11 @@ export function useSetupScreenDemoProvider({
 			? locale === "ru"
 				? "Настройки прототипа проверены."
 				: "Prototype selections checked."
-			: notice
-				? copy[notice]
-				: "";
+			: notice === "toolsDirectoryRequired"
+				? setupCopy.toolsDirectoryRequired
+				: notice
+					? copy[notice]
+					: "";
 
 	const acoustID = useSetupAcoustIDDraftProvider({
 		active: step === 2 && !platformMismatch,
@@ -375,26 +374,32 @@ export function useSetupScreenDemoProvider({
 		locale,
 		wizard: {
 			step,
-			help:
-				step === 3
-					? locale === "ru"
-						? "Итог составлен по выбранным данным прототипа. Если что-то не готово, вернитесь к нужному шагу."
-						: "The summary uses the prototype’s selections. If anything is not ready, return to the relevant step."
+			help: [
+				setupCopy.toolsDirectoryHelp,
+				setupCopy.toolsHelp,
+				`${setupCopy.publicationHelp} ${setupCopy.metadataHelp}`,
+				locale === "ru"
+					? "Итог составлен по выбранным данным прототипа. Если что-то не готово, вернитесь к нужному шагу."
+					: "The summary uses the prototype’s selections. If anything is not ready, return to the relevant step.",
+			][step],
+			error: platformMismatch
+				? copy.conflicts
+				: step === 0
+					? noticeText || undefined
 					: undefined,
-			error: platformMismatch ? copy.conflicts : undefined,
-			notice: noticeText || undefined,
+			notice: step === 0 ? undefined : noticeText || undefined,
 			nextDisabled: !canProceed || platformMismatch,
 			onBack: () => setStep(step - 1),
 			onNext: next,
 		},
 		directories: {
 			kind: "tools",
-			selected: settings.pathChecked,
+			selected: settings.pathChecked && toolsDirectory === settings.toolsPath,
 			fields: [
 				{
 					kind: "tools",
-					value: settings.toolsPath,
-					onSelect: (path) => choosePath("tools", path),
+					value: toolsDirectory,
+					onSelect: setToolsDirectory,
 				},
 			],
 			locale,
@@ -483,7 +488,7 @@ export function useSetupScreenDemoProvider({
 					{
 						kind: "output",
 						value: outputPath,
-						onSelect: (path) => choosePath("output", path),
+						onSelect: chooseOutputPath,
 					},
 				],
 				locale,
