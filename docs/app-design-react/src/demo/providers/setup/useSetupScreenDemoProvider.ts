@@ -125,12 +125,21 @@ export function useSetupScreenDemoProvider({
 		installations.find(
 			(item) => item.package === kind && item.status === "active",
 		);
+	const verifiedInstallation = (kind: SetupToolKind) => {
+		const active = activeInstallation(kind);
+		const selected = toolSelection[kind];
+		if (
+			active &&
+			selected &&
+			settings.setupVerified?.[kind] === selected &&
+			active.release === selected
+		) {
+			return active;
+		}
+		return undefined;
+	};
 	const toolsReady = (["ffmpeg", "fpcalc"] as const).every((kind) =>
-		Boolean(
-			toolSelection[kind] &&
-				settings.setupVerified?.[kind] === toolSelection[kind] &&
-				activeInstallation(kind)?.release === toolSelection[kind],
-		),
+		Boolean(verifiedInstallation(kind)),
 	);
 	const platformMismatch = settings.platformMismatch ?? false;
 	const outputPath = settings.outputCandidate;
@@ -170,10 +179,7 @@ export function useSetupScreenDemoProvider({
 	const genreCatalogReady = genreCatalog.state === "ready";
 
 	const nextTool = (["ffmpeg", "fpcalc"] as const).find(
-		(kind) =>
-			!toolSelection[kind] ||
-			settings.setupVerified?.[kind] !== toolSelection[kind] ||
-			activeInstallation(kind)?.release !== toolSelection[kind],
+		(kind) => !verifiedInstallation(kind),
 	);
 
 	const setStep = (nextStep: number) => {
@@ -392,13 +398,21 @@ export function useSetupScreenDemoProvider({
 			cards: {
 				locale,
 				tools: (["ffmpeg", "fpcalc"] as const).map((kind): SetupToolCard => {
-					const active = activeInstallation(kind);
+					const verified = verifiedInstallation(kind);
+					if (verified) {
+						return {
+							kind,
+							state: "ready",
+							versions: [
+								{
+									id: verified.id,
+									version: verified.release,
+									active: verified.status === "active",
+								},
+							],
+						};
+					}
 					const selected = toolSelection[kind];
-					const verified =
-						active &&
-						selected &&
-						settings.setupVerified?.[kind] === selected &&
-						active.release === selected;
 					return {
 						kind,
 						state: "install",
@@ -425,12 +439,7 @@ export function useSetupScreenDemoProvider({
 							disabled: !selected || platformMismatch || Boolean(installPlan),
 							onPress: (event) => requestInstall(kind, event.target),
 						},
-						verification: verified
-							? {
-									state: "verified",
-									release: active.release,
-								}
-							: { state: "available" },
+						verification: { state: "available" },
 						executables: setupToolExecutables(kind),
 					};
 				}),
@@ -539,8 +548,8 @@ export function useSetupScreenDemoProvider({
 					removeSources: settings.sourceCleanupEnabled,
 				},
 				tools: {
-					ffmpeg: activeInstallation("ffmpeg")?.release ?? "",
-					fpcalc: activeInstallation("fpcalc")?.release ?? "",
+					ffmpeg: verifiedInstallation("ffmpeg")?.release ?? "",
+					fpcalc: verifiedInstallation("fpcalc")?.release ?? "",
 				},
 				metadata: {
 					lrclibEnabled: settings.lrclibEnabled,
