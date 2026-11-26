@@ -1,3 +1,5 @@
+import { FileFormatBadge } from "../../components/FileFormatBadge";
+
 const messages = {
   en: {
     current: "Current publication",
@@ -64,7 +66,9 @@ export function PublicationCurrentDetailsView({
       {format && (
         <>
           <dt className="text-[var(--muted)]">{text.format}</dt>
-          <dd className="m-0">{format}</dd>
+          <dd className="m-0">
+            <FileFormatBadge value={format} />
+          </dd>
         </>
       )}
       {details.path && (

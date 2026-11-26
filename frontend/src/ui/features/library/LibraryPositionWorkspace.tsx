@@ -22,7 +22,7 @@ export function LibraryPositionPreviewButton({
       data-position-preview-button
       isDisabled={pending || disabled}
       onPress={onPreview}
-      className="min-h-8! rounded-[4px]! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
+      className="min-h-8! rounded-lg! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
     >
       {pending ? text.loading : text.preview}
     </AppButton>
@@ -49,7 +49,7 @@ export function LibraryPositionConfirmButton({
       data-position-confirm-button
       isDisabled={pending || disabled}
       onPress={onConfirm}
-      className="min-h-8! rounded-[4px]! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
+      className="min-h-8! rounded-lg! pointer-coarse:min-h-10! max-[599px]:min-h-10!"
     >
       {pending ? text.publicationStart : text[label]}
     </AppButton>
@@ -79,7 +79,7 @@ export function LibraryPositionWorkspace({
         {sources}
         <section
           aria-labelledby={publicationTitle}
-          className="mb-[10px] min-w-0 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-[10px] wrap-anywhere [&_h2]:mb-[9px] [&_h2]:text-sm [&_h3]:mb-2 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2"
+          className="mb-[10px] min-w-0 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-[10px] wrap-anywhere [&_h2]:mb-[9px] [&_h2]:text-sm [&_h3]:mb-2 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2"
         >
           <h2 id={publicationTitle}>{title[locale]}</h2>
           {publication}

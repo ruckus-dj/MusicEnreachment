@@ -1,6 +1,8 @@
+import { Input, Label, TextField } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathFieldView } from "../../components/DirectoryPathFieldView";
 import type { BrowseDirectory } from "../../components/DirectoryPickerView";
+import { SettingsHelpDetails } from "./SettingsHelpDetails";
 
 const copyByLocale = {
   en: {
@@ -8,40 +10,48 @@ const copyByLocale = {
     outputDirectory: "Output directory",
     unsavedPublication: "Publication changes are unsaved.",
     publicationTemplate: "Publication path template",
-    templateHelp:
-      "Tokens in braces are filled from metadata. Add a fallback after | when a value may be missing. Use / to separate folders under the output directory.",
+    templateHint:
+      "Tokens in braces are filled from metadata. Use / to separate folders under the output directory.",
+    templateDetails: "Add a fallback after | when a value may be missing.",
     unsavedTemplate: "The publication path template has unsaved changes.",
     saveTemplate: "Save path template",
     changeOutput: "Change output directory",
     sourceProcessing: "Source processing",
     workDirectory: "Work directory for staged copies",
-    workDirectoryHelp:
-      "This setting is not required for Setup or source-root registration, but is required to process staged sources. It cannot be changed while operations or retained copies exist.",
+    workDirectoryHint:
+      "Required to process staged sources. It cannot be changed while operations or retained copies exist.",
+    workDirectoryDetails: "Not required for Setup or source-root registration.",
     unsavedWorkDirectory: "The work directory has unsaved changes.",
     saveWorkDirectory: "Save work directory",
+    detailsLabel: "Details",
   },
   ru: {
     publication: "Публикация",
     outputDirectory: "Каталог публикации",
     unsavedPublication: "Есть несохранённые изменения публикации.",
     publicationTemplate: "Шаблон пути публикации",
-    templateHelp:
-      "Токены в фигурных скобках подставляются из метаданных; для отсутствующего значения задайте альтернативу через |. Разделяйте вложенные папки каталога публикации знаком /.",
+    templateHint:
+      "Токены в фигурных скобках подставляются из метаданных; разделяйте вложенные папки каталога публикации знаком /.",
+    templateDetails:
+      "Для отсутствующего значения задайте альтернативу через |.",
     unsavedTemplate: "Есть несохранённый шаблон пути публикации.",
     saveTemplate: "Сохранить шаблон пути",
     changeOutput: "Сменить каталог публикации",
     sourceProcessing: "Обработка источников",
     workDirectory: "Рабочая папка для подготовленных копий",
-    workDirectoryHelp:
-      "Настройка не требуется для первичной настройки или регистрации корня источников, но обязательна для обработки подготовленных источников. Каталог нельзя изменить, пока существуют операции или сохранённые копии.",
+    workDirectoryHint:
+      "Обязательна для обработки подготовленных источников. Каталог нельзя изменить, пока существуют операции или сохранённые копии.",
+    workDirectoryDetails:
+      "Для первичной настройки и регистрации корня источников не требуется.",
     unsavedWorkDirectory: "Есть несохранённые изменения рабочей папки.",
     saveWorkDirectory: "Сохранить рабочую папку",
+    detailsLabel: "Подробнее",
   },
 } as const;
 
 const panel =
-  "grid min-w-0 content-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-sm";
-const heading = "m-0 text-sm font-semibold";
+  "grid min-w-0 content-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm";
+const heading = "m-0 text-base font-semibold";
 const note = "m-0 text-xs text-[var(--muted)]";
 
 type Field = {
@@ -87,19 +97,26 @@ export function SettingsFoldersSection({
           disabled={busy}
         />
         {output.dirty && <p className={note}>{copy.unsavedPublication}</p>}
-        <label className="grid gap-1 font-semibold">
-          {copy.publicationTemplate}
-          <input
-            className="min-h-9 min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 font-normal focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]"
+        <TextField
+          value={template.value}
+          onChange={template.onChange}
+          className="grid min-w-0 gap-1.5"
+        >
+          <Label className="text-sm font-medium text-[var(--ink)]">
+            {copy.publicationTemplate}
+          </Label>
+          <Input
             aria-describedby="publication-template-help"
             maxLength={4096}
-            value={template.value}
-            onChange={(event) => template.onChange(event.target.value)}
+            className="h-9 min-w-0 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] focus-visible:border-[var(--accent)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0"
           />
-        </label>
+        </TextField>
         <p id="publication-template-help" className={note}>
-          {copy.templateHelp}
+          {copy.templateHint}
         </p>
+        <SettingsHelpDetails label={copy.detailsLabel}>
+          <p>{copy.templateDetails}</p>
+        </SettingsHelpDetails>
         {template.dirty && <p className={note}>{copy.unsavedTemplate}</p>}
         <div className="flex flex-wrap gap-2">
           <AppButton
@@ -128,7 +145,10 @@ export function SettingsFoldersSection({
           onSelect={work.onChange}
           disabled={busy || work.locked}
         />
-        <p className={note}>{copy.workDirectoryHelp}</p>
+        <p className={note}>{copy.workDirectoryHint}</p>
+        <SettingsHelpDetails label={copy.detailsLabel}>
+          <p>{copy.workDirectoryDetails}</p>
+        </SettingsHelpDetails>
         {work.dirty && <p className={note}>{copy.unsavedWorkDirectory}</p>}
         <AppButton
           className="justify-self-start"

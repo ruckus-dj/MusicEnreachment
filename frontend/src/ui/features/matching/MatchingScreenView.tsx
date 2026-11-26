@@ -1,5 +1,6 @@
 import type { Ref } from "react";
 import { Input, Label, TextField } from "react-aria-components";
+import { AppBreadcrumbs } from "../../components/AppBreadcrumbs";
 import { AppButton } from "../../components/AppButton";
 import {
   IncomingTagEncodingReviewOutlet,
@@ -265,23 +266,23 @@ export type MatchingScreenViewModel =
   | MatchingScreenViewWorkspace;
 
 const pageSectionClass =
-  "relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 text-[var(--ink)] max-[800px]:px-3 max-[800px]:pt-3.5";
+  "relative mx-auto w-full max-w-[1500px] px-0 text-[var(--ink)]";
 
 const workspaceSectionClass = [
-  "relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 pb-[110px] text-[var(--ink)]",
-  "max-[800px]:px-3 max-[800px]:pt-3.5 max-[800px]:pb-[120px]",
+  "relative mx-auto w-full max-w-[1500px] px-0 text-[var(--ink)]",
   "min-[1400px]:flex min-[1400px]:h-full min-[1400px]:min-h-0 min-[1400px]:flex-col",
 ].join(" ");
 
-const pageTitleClass = "mt-1 text-[clamp(22px,2vw,30px)] tracking-[-.025em]";
+const pageTitleClass =
+  "m-0 mt-2 text-[26px]/[1.2] font-semibold tracking-[-.02em] [text-wrap:balance]";
 const workspaceTitleClass =
-  "m-0 text-[clamp(22px,2vw,30px)] tracking-[-.025em]";
-const sectionHeadingClass = "mb-2.5 mt-0 text-[15px] tracking-[-.01em]";
+  "m-0 mt-2 text-[26px]/[1.2] font-semibold tracking-[-.02em] [text-wrap:balance]";
+const sectionHeadingClass = "m-0 mb-3 text-base font-semibold";
 const surfacePanel =
-  "min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] p-[13px] shadow-[0_1px_2px_#00000008]";
+  "min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4";
 const recordingFieldClass = "min-w-0";
 const recordingInputClass =
-  "min-h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+  "h-9 min-w-0 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0";
 
 function ScreenHeader({
   heading,
@@ -292,23 +293,25 @@ function ScreenHeader({
 }) {
   return (
     <header className={workspace ? "mb-4 min-[1400px]:shrink-0" : undefined}>
-      <p
-        className={
-          workspace
-            ? "demo-eyebrow mb-[5px] text-[11px] text-[var(--muted)]"
-            : undefined
-        }
-      >
-        <a className="text-[var(--accent)] underline" href={heading.backHref}>
-          {heading.backLabel}
-        </a>
-        {workspace && heading.sourceDirectoryLabel && heading.sourcePath ? (
-          <>
-            {" · "}
-            {heading.sourceDirectoryLabel}: {heading.sourcePath}
-          </>
-        ) : null}
-      </p>
+      <AppBreadcrumbs
+        label={heading.backLabel}
+        items={[
+          {
+            id: "back",
+            label: heading.backLabel,
+            href: heading.backHref,
+          },
+          ...(workspace && heading.sourceDirectoryLabel && heading.sourcePath
+            ? [
+                {
+                  id: "source",
+                  label: `${heading.sourceDirectoryLabel}: ${heading.sourcePath}`,
+                },
+              ]
+            : []),
+          { id: "current", label: heading.title },
+        ]}
+      />
       <h1
         id={heading.id}
         ref={heading.headingRef}
@@ -419,7 +422,7 @@ function Inspector({
           {actions.error ? (
             <p
               role="alert"
-              className="w-full rounded border border-red-600 p-2 text-sm"
+              className="w-full rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] p-2.5 text-sm text-[var(--error)]"
             >
               {actions.error}
             </p>
@@ -427,7 +430,7 @@ function Inspector({
           {actions.notice ? (
             <p
               role="status"
-              className="w-full rounded border border-green-700 p-2 text-sm"
+              className="w-full rounded-lg border border-[color-mix(in_srgb,var(--success)_25%,transparent)] bg-[var(--success-soft)] p-2.5 text-sm text-[var(--success)]"
             >
               {actions.notice}
             </p>
@@ -518,7 +521,7 @@ function SummaryTable({
 }) {
   return (
     <section
-      className="rounded border border-[var(--line)] bg-[var(--surface)] p-4"
+      className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
       aria-label={summaryTable.label}
     >
       <h2 className="font-semibold">{summaryTable.heading}</h2>
@@ -611,21 +614,22 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
   return (
     <>
       {model.feedback ? (
-        <div
-          className="mb-2.5 h-12 min-w-0 max-[600px]:h-16 min-[1400px]:shrink-0"
-          data-matching-feedback
-        >
+        <div className="mb-3 min-w-0" data-matching-feedback>
           <div
             role="status"
             aria-live="polite"
-            className={`h-full overflow-auto rounded px-3 py-2 text-xs ${model.feedback.visible ? "border border-[var(--line)] bg-[var(--accent-soft)]" : ""}`}
+            className={
+              model.feedback.visible
+                ? "m-0 rounded-lg border border-[var(--line)] bg-[var(--accent-soft)] px-3.5 py-2 text-sm text-[var(--ink)]"
+                : "m-0 min-h-0 text-sm text-[var(--muted)]"
+            }
           >
             {model.feedback.text}
           </div>
         </div>
       ) : null}
       {model.summary ? (
-        <div className="incoming-summary mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-3 py-[9px] text-[var(--muted)] min-[1400px]:shrink-0">
+        <div className="incoming-summary mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-[var(--line)] bg-[var(--raised)] px-4 py-2.5 text-sm text-[var(--muted)] min-[1400px]:shrink-0">
           <strong className="text-[var(--ink)]">
             {model.summary.assigned}
           </strong>
@@ -638,7 +642,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
       ) : null}
       {model.status?.error ? <p role="alert">{model.status.error}</p> : null}
       {model.draftHint ? (
-        <p className="m-0 text-xs text-[var(--muted)]">{model.draftHint}</p>
+        <p className="m-0 text-sm text-[var(--muted)]">{model.draftHint}</p>
       ) : null}
       {model.groupSelect ? (
         <label className="block max-w-2xl text-sm font-medium">
@@ -679,13 +683,13 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
         </div>
       ) : null}
       {model.evaluation?.notRun ? (
-        <p className="rounded border border-amber-500 bg-amber-50 p-3">
+        <p className="rounded-lg border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
           {model.evaluation.notRun}
         </p>
       ) : null}
       {model.authority ? (
         <section
-          className="rounded border border-[var(--line)] bg-[var(--surface)] p-4"
+          className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
           aria-labelledby="authority-title"
         >
           <h2 id="authority-title" className="font-semibold">
@@ -698,7 +702,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
           {model.authority.notice ? (
             <p
               role="status"
-              className="mt-2 rounded border border-green-700 p-3"
+              className="mt-2 rounded-lg border border-[color-mix(in_srgb,var(--success)_25%,transparent)] bg-[var(--success-soft)] p-3 text-sm text-[var(--success)]"
             >
               {model.authority.notice}
             </p>
@@ -724,12 +728,12 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
         </section>
       ) : null}
       {model.evaluation?.unavailable ? (
-        <p className="rounded border border-amber-500 bg-amber-50 p-3">
+        <p className="rounded-lg border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
           {model.evaluation.unavailable}
         </p>
       ) : null}
       {model.evaluation?.noReleases ? (
-        <p className="rounded border border-[var(--line)] p-3">
+        <p className="rounded-lg border border-[var(--line)] p-3 text-sm">
           {model.evaluation.noReleases}
         </p>
       ) : null}
@@ -791,7 +795,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
               value={recording.query}
               onChange={recording.onQueryChange}
             >
-              <Label className="ui-label mb-1 block text-[11px] font-semibold text-[var(--muted)]">
+              <Label className="ui-label mb-1 block text-xs font-medium text-[var(--muted)]">
                 {recording.queryLabel}
               </Label>
               <Input id="recording-query" className={recordingInputClass} />
@@ -815,9 +819,11 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
         </section>
       )}
       {footer && (
-        <div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
-          <strong>{footer.assignedLabel}</strong>
-          <span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
+        <div className="matching-commit m-0 mt-4 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow)] max-[520px]:items-stretch">
+          <strong className="text-sm font-semibold text-[var(--ink)]">
+            {footer.assignedLabel}
+          </strong>
+          <span className="min-w-[220px] flex-1 text-xs text-[var(--muted)] max-[800px]:hidden">
             {footer.summary}
           </span>
           <AppButton

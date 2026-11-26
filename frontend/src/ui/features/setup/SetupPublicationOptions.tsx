@@ -4,6 +4,7 @@ import {
   RadioField,
   RadioGroup,
 } from "react-aria-components";
+import { AppCheckbox } from "../../components/AppCheckbox";
 
 const copy = {
   en: {
@@ -53,29 +54,23 @@ export function SetupPublicationOptions({
         }}
       >
         <Label className="block font-semibold">{text.format}</Label>
-        <div className="mt-1 flex flex-wrap gap-1">
+        <div className="mt-2 flex flex-wrap gap-2">
           {(["source", "mka", "m4a"] as const).map((value) => (
             <RadioField key={value} value={value} className="inline-block">
-              <RadioButton className="inline-flex cursor-pointer items-center gap-1 rounded border border-[var(--control)] px-2 py-1 data-selected:border-[var(--accent)] data-selected:bg-[var(--accent-soft)] data-selected:font-semibold data-selected:text-[var(--accent)]">
+              <RadioButton className="inline-flex h-9 cursor-pointer items-center rounded-lg border border-[var(--line)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] data-selected:border-[var(--accent)] data-selected:bg-[var(--accent-soft)] data-selected:font-medium data-selected:text-[var(--accent-strong)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)]">
                 {value === "m4a" ? "M4A" : text[value]}
               </RadioButton>
             </RadioField>
           ))}
         </div>
       </RadioGroup>
-      <label className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          checked={removeSources}
-          disabled={disabled}
-          className="mt-1 accent-[var(--accent)]"
-          onChange={(event) => onRemoveSources(event.currentTarget.checked)}
-        />
-        <span>
-          <span className="block">{text.removeSources}</span>
-          <span className="block text-[var(--muted)]">{text.cleanup}</span>
-        </span>
-      </label>
+      <AppCheckbox
+        label={text.removeSources}
+        description={text.cleanup}
+        isSelected={removeSources}
+        isDisabled={disabled}
+        onChange={onRemoveSources}
+      />
     </section>
   );
 }

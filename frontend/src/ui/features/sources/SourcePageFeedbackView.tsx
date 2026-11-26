@@ -18,7 +18,7 @@ export function SourcePageFeedbackView({
   return (
     <>
       {status && (
-        <p role="status" className="m-0 text-xs text-[var(--muted)]">
+        <p role="status" className="m-0 text-sm text-[var(--muted)]">
           {status}
         </p>
       )}
@@ -82,7 +82,7 @@ export function SourceNoticeView({ message }: { message: string }) {
   return (
     <p
       role="status"
-      className="rounded border border-[var(--line)] bg-[var(--raised)] p-2 text-sm"
+      className="rounded-lg border border-[var(--line)] bg-[var(--raised)] px-3.5 py-2.5 text-sm"
     >
       {message}
     </p>

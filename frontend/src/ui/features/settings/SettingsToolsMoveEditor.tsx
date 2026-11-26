@@ -58,7 +58,7 @@ const editorClass = "grid min-w-0 gap-3 text-sm text-[var(--ink)]";
 const fieldId = "settings-move-tools-directory";
 const focus =
   "focus-visible:relative focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]";
-const inputClass = `${focus} min-h-9 w-full min-w-0 rounded-[5px] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-1.5 text-[var(--ink)] max-[599px]:min-h-10`;
+const inputClass = `${focus} min-h-9 w-full min-w-0 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-[9px] py-1.5 text-[var(--ink)] max-[599px]:min-h-10`;
 const browseRowClass = "flex min-w-0 gap-2 max-[599px]:grid";
 const checkboxRowClass = "flex cursor-pointer items-start gap-2";
 const checkboxClass = "mt-0.5 size-4 flex-none accent-[var(--accent)]";

@@ -49,16 +49,16 @@ const actionCopy = {
 } as const;
 
 const itemClass =
-  "flex min-h-8 cursor-pointer items-center gap-2 rounded-[var(--control-radius)] px-2 py-[7px] text-xs text-[var(--ink)] outline-none data-[disabled]:cursor-not-allowed data-[disabled]:text-[var(--muted)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)] data-[focused]:bg-[var(--raised)] data-[open]:bg-[var(--raised)] pointer-coarse:min-h-11";
+  "flex min-h-9 cursor-pointer items-center gap-2 rounded-[var(--control-radius)] px-3 py-2 text-sm text-[var(--ink)] outline-none data-[disabled]:cursor-not-allowed data-[disabled]:text-[var(--muted)] data-[focus-visible]:outline-2 data-[focus-visible]:-outline-offset-2 data-[focus-visible]:outline-[var(--focus)] data-[focused]:bg-[var(--raised)] data-[open]:bg-[var(--raised)] pointer-coarse:min-h-11";
 
 const menuPopoverClass =
-  "react-aria-Popover z-50 min-w-[12rem] max-w-[min(22rem,calc(100vw-1rem))] max-h-[min(20rem,calc(100dvh-1rem))] overflow-y-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]";
+  "react-aria-Popover z-50 min-w-[13rem] max-w-[min(22rem,calc(100vw-1rem))] max-h-[min(20rem,calc(100dvh-1rem))] overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-[var(--ink)] shadow-[0_12px_32px_-8px_#00000040]";
 
 const searchPopoverClass =
-  "react-aria-Popover z-50 w-72 min-w-0 max-w-[calc(100vw-1rem)] max-h-[min(20rem,calc(100dvh-1rem))] overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_8px_24px_#0002]";
+  "react-aria-Popover z-50 w-72 min-w-0 max-w-[calc(100vw-1rem)] max-h-[min(20rem,calc(100dvh-1rem))] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_12px_32px_-8px_#00000040]";
 
 const triggerClass =
-  "size-8 min-h-8 min-w-8 justify-center border-transparent! bg-transparent! p-0 text-[var(--muted)] hover:border-[var(--line)]! hover:bg-[var(--raised)]! hover:text-[var(--ink)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+  "size-9 min-h-9 min-w-9 justify-center border-transparent! bg-transparent! p-0 text-[var(--muted)] hover:border-[var(--line)]! hover:bg-[var(--raised)]! hover:text-[var(--ink)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 
 const compactMenuQuery = "(max-width: 600px), (pointer: coarse)";
 
@@ -100,7 +100,7 @@ function ChevronRightIcon() {
       aria-hidden="true"
       focusable="false"
       viewBox="0 0 12 12"
-      className="ml-auto size-3 shrink-0 text-[var(--muted)]"
+      className="ml-auto size-3.5 shrink-0 text-[var(--muted)]"
     >
       <path
         d="M4.5 2.5 8 6l-3.5 3.5"
@@ -154,10 +154,10 @@ function MoveDestinationMenu({
         <SearchField
           autoFocus
           aria-label={copy.searchGroup}
-          className="shrink-0 border-b border-[var(--line)] p-2"
+          className="shrink-0 border-b border-[var(--line)] p-2.5"
         >
           <Input
-            className="min-h-7 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+            className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)]! px-3 py-2 text-sm text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
             placeholder={copy.searchGroup}
           />
         </SearchField>
@@ -166,7 +166,7 @@ function MoveDestinationMenu({
           autoFocus={false}
           className="max-h-64 min-h-0 flex-1 overflow-y-auto p-1 outline-none"
           renderEmptyState={() => (
-            <p className="m-0 px-2 py-3 text-center text-xs text-[var(--muted)]">
+            <p className="m-0 px-3 py-4 text-center text-sm text-[var(--muted)]">
               {copy.noGroupsFound}
             </p>
           )}

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { AppButton } from "../components/AppButton";
+import { AppIcon } from "../components/AppIcon";
 import type { ThemePreferenceStore } from "../components/themePreference";
 import { shell } from "../i18n/namespaces/shell";
 import type { Locale } from "../i18n/types";
@@ -11,11 +12,11 @@ import {
 import { shellStartupMessages } from "./shellStartupMessages";
 
 const focusSkipClass =
-  "fixed left-3 top-[-80px] z-[200] border-0 bg-[var(--surface)] p-2 focus:top-2";
+  "fixed left-3 top-[-80px] z-[200] rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm shadow-sm focus:top-2";
 const alertClass =
-  "wrap-anywhere bg-[var(--error-soft)] p-2 text-[var(--error)]";
+  "wrap-anywhere rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] px-3.5 py-2.5 text-sm text-[var(--error)]";
 const actionClass =
-  "inline-flex min-h-[34px] items-center rounded border border-[var(--button)] bg-[var(--button)] px-3.5 py-1.5 font-semibold text-[var(--button-text)] no-underline hover:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
+  "inline-flex min-h-9 items-center rounded-lg border border-transparent bg-[var(--button)] px-3.5 py-1.5 text-sm font-medium text-[var(--button-text)] no-underline hover:bg-[var(--button-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 
 export type ApplicationFrameState =
   | { kind: "startup" }
@@ -71,7 +72,7 @@ function ShellStartupFrame({
   const text = shell[locale];
   const controls = shellControls(themeStore);
   return (
-    <main className="min-h-dvh bg-[var(--canvas)] p-3 text-[var(--ink)]">
+    <main className="min-h-dvh bg-[var(--canvas)] text-[var(--ink)]">
       <button
         type="button"
         className={focusSkipClass}
@@ -79,12 +80,20 @@ function ShellStartupFrame({
       >
         {text.skip}
       </button>
-      <header className="m-0 flex flex-wrap items-center justify-between gap-3 bg-[var(--surface)] px-3 py-2">
-        <div className="flex min-w-0 flex-col gap-px p-1">
-          <strong className="text-[15px] leading-5">MeloTrove</strong>
-          <span className="text-[11px] leading-4 text-[var(--muted)]">
-            {text.library}
+      <header className="m-0 flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-6 max-[700px]:px-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            className="grid size-9 place-items-center rounded-lg bg-[var(--button)] text-[var(--button-text)]"
+          >
+            <AppIcon name="music" className="size-5" />
           </span>
+          <div className="flex min-w-0 flex-col">
+            <strong className="text-[15px] leading-5">MeloTrove</strong>
+            <span className="text-xs leading-4 text-[var(--muted)]">
+              {text.library}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {controls.language}
@@ -94,7 +103,7 @@ function ShellStartupFrame({
       <section
         ref={content}
         id="app-content"
-        className="min-w-0 pt-3"
+        className="mx-auto min-w-0 px-6 py-6 max-[700px]:px-3 max-[700px]:py-4"
         tabIndex={-1}
       >
         {children}

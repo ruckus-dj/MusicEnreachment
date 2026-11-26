@@ -16,23 +16,23 @@ import {
 } from "./sourceInspectorModel";
 
 const page =
-  "mx-auto grid min-w-0 max-w-5xl gap-2 py-3 text-[13px] leading-[1.4] text-[var(--ink)]";
-const breadcrumb = "flex flex-wrap items-center gap-2 text-[11px]";
+  "mx-auto grid min-w-0 max-w-5xl gap-2 py-3 text-sm leading-[1.4] text-[var(--ink)]";
+const breadcrumb = "flex flex-wrap items-center gap-2 text-xs";
 const breadcrumbLink =
   "rounded-sm text-[var(--accent)] wrap-anywhere hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
 const pageTitle = "m-0 text-xl font-semibold wrap-anywhere";
 const panel =
-  "grid min-w-0 gap-1 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2.5";
+  "grid min-w-0 gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2.5";
 const heading = "m-0 text-sm font-semibold";
-const note = "m-0 text-[11px] text-[var(--muted)] wrap-anywhere";
+const note = "m-0 text-xs text-[var(--muted)] wrap-anywhere";
 const alert =
-  "my-2 rounded-[4px] border border-[var(--line)] bg-[var(--error-soft)] px-2.5 py-2 text-[var(--error)] wrap-anywhere";
-const facts = "m-0 grid text-[13px]";
+  "my-2 rounded-lg border border-[var(--line)] bg-[var(--error-soft)] px-2.5 py-2 text-[var(--error)] wrap-anywhere";
+const facts = "m-0 grid text-sm";
 const fact =
   "grid min-w-0 gap-3 border-b border-[var(--line)] py-1.5 last:border-b-0 min-[600px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] max-[599px]:gap-0.5";
 const term = "m-0 text-[var(--muted)]";
 const detail = "m-0 min-w-0 wrap-anywhere";
-const code = "font-mono text-[11px] wrap-anywhere";
+const code = "font-mono text-xs wrap-anywhere";
 
 const artifactStateMessages: Record<
   SourceInspectorArtifactState,

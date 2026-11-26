@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { navigateHash } from "../../app/hashLocation";
 import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
+import type {
+  LibraryAvailabilityFilter,
+  LibraryPublicationFilter,
+} from "./libraryDetailRoute";
 import {
   buildLibraryRouteHref,
   LIBRARY_PAGE_SIZE,
@@ -96,6 +100,38 @@ export function useLibraryRouteState(route: string) {
     });
   }, []);
 
+  const setPublication = useCallback(
+    (publication: LibraryPublicationFilter) => {
+      clearPendingSearch();
+      setState((current) => {
+        if (
+          current.publication === publication &&
+          current.query === searchInput &&
+          current.offset === 0
+        )
+          return current;
+        return { ...current, publication, query: searchInput, offset: 0 };
+      });
+    },
+    [clearPendingSearch, searchInput],
+  );
+
+  const setAvailability = useCallback(
+    (availability: LibraryAvailabilityFilter) => {
+      clearPendingSearch();
+      setState((current) => {
+        if (
+          current.availability === availability &&
+          current.query === searchInput &&
+          current.offset === 0
+        )
+          return current;
+        return { ...current, availability, query: searchInput, offset: 0 };
+      });
+    },
+    [clearPendingSearch, searchInput],
+  );
+
   const setPage = useCallback(
     (page: number, totalPages = Number.MAX_SAFE_INTEGER) => {
       const nextPage = Math.max(
@@ -150,6 +186,8 @@ export function useLibraryRouteState(route: string) {
     isLibraryRoute,
     setView,
     setFilter,
+    setPublication,
+    setAvailability,
     setPage,
     setSearch,
     reset,

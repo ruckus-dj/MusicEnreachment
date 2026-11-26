@@ -31,7 +31,7 @@ export function LocalReleaseCancelDialog({
 		<ModalOverlay
 			isOpen={isOpen}
 			onOpenChange={onOpenChange}
-			className="fixed inset-0 z-50 grid place-items-center overflow-auto overscroll-contain bg-black/40 p-4"
+			className="fixed inset-0 z-50 grid place-items-center overflow-auto overscroll-contain bg-[rgb(0_0_0/0.45)] p-4"
 		>
 			<Modal className="w-full max-w-[420px]">
 				<Dialog className={`${panel} grid gap-3 outline-none`}>

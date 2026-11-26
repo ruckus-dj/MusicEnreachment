@@ -161,7 +161,12 @@ describe("application integration", () => {
     expect(
       screen.getByRole("link", { name: "Операции", current: "page" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("banner")).toHaveTextContent("Операции");
+    const content = screen.getByRole("main");
+    const shellHeader = screen
+      .getAllByRole("banner")
+      .find((header) => !content.contains(header));
+    if (!shellHeader) throw new Error("Missing shell header");
+    expect(shellHeader).toHaveTextContent("Операции");
 
     fireEvent.click(screen.getByRole("button", { name: /Язык интерфейса/ }));
     fireEvent.click(await screen.findByRole("option", { name: "English" }));
@@ -173,13 +178,12 @@ describe("application integration", () => {
     expect(
       screen.getByRole("link", { name: "Operations", current: "page" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("banner")).toHaveTextContent("Operations");
+    expect(shellHeader).toHaveTextContent("Operations");
     expect(setupRequests).toHaveBeenCalledTimes(1);
 
-    const content = screen.getByRole("main");
     expect(content).toHaveAttribute("id", "content");
     expect(
-      within(screen.getByRole("banner")).getByRole("link", {
+      within(shellHeader).getByRole("link", {
         name: "MeloTrove",
       }),
     ).toHaveAttribute("href", "#/");

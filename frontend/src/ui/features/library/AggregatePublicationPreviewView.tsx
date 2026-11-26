@@ -210,7 +210,7 @@ const styles = {
   inspectorHeading: "mb-2 font-medium",
   inspectorBody: "max-h-[34rem] min-w-0 overflow-y-auto",
   dialog:
-    "m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] backdrop:bg-black/40",
+    "m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] backdrop:bg-[rgb(0_0_0/0.45)]",
   dialogHeader: "mb-3 flex items-center justify-between gap-3",
   dialogTitle: "font-semibold",
   actions: "flex flex-wrap gap-2",

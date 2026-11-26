@@ -122,19 +122,19 @@ const copy = {
 } as const;
 
 const styles = {
-  root: "grid min-w-0 gap-3 text-xs",
-  field: "grid min-w-0 gap-1",
-  label: "text-[11px] font-semibold text-[var(--muted)]",
+  root: "grid min-w-0 gap-3 text-sm",
+  field: "grid min-w-0 gap-1.5",
+  label: "text-sm font-medium text-[var(--ink)]",
   select:
-    "w-full min-w-0 rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1.5 text-xs text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] pointer-coarse:min-h-10",
-  muted: "m-0 text-[11px] text-[var(--muted)] [overflow-wrap:anywhere]",
-  status: "m-0 text-[11px] text-[var(--muted)]",
+    "h-9 w-full min-w-0 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 pointer-coarse:h-10",
+  muted: "m-0 text-xs text-[var(--muted)] [overflow-wrap:anywhere]",
+  status: "m-0 text-xs text-[var(--muted)]",
   error:
-    "m-0 grid min-w-0 gap-2 rounded border border-[var(--error)] bg-[var(--error-soft)] p-2 text-[11px] text-[var(--error)] [overflow-wrap:anywhere]",
+    "m-0 grid min-w-0 gap-2 rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] p-3 text-sm text-[var(--error)] [overflow-wrap:anywhere]",
   pagination: "flex min-w-0 flex-wrap items-center gap-2",
-  page: "text-[11px] text-[var(--muted)] [font-variant-numeric:tabular-nums]",
+  page: "text-xs text-[var(--muted)] [font-variant-numeric:tabular-nums]",
   tracks: "grid min-w-0 gap-2",
-  count: "m-0 text-[11px] font-semibold",
+  count: "m-0 text-xs font-semibold",
   trackList:
     "m-0 grid min-w-0 list-none gap-1 p-0 [font-variant-numeric:tabular-nums]",
   trackRow:
@@ -142,7 +142,7 @@ const styles = {
   trackPrimary: "min-w-0 [overflow-wrap:anywhere]",
   trackPosition: "text-[var(--muted)]",
   trackSecondary:
-    "block text-[11px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
+    "block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
 } as const;
 
 function errorMessage(message: string | null | undefined, fallback: string) {

@@ -17,6 +17,7 @@ import { focusView } from "../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../ui/features/incoming/IncomingGroupsPanel";
 import type { IncomingScreenViewProps } from "../../ui/features/incoming/IncomingScreenView";
+import { incomingMessage } from "../../ui/features/incoming/incomingOverviewMessages";
 import {
   incomingMessages,
   incomingOverviewCopy as overviewCopy,
@@ -421,7 +422,8 @@ export function useIncomingGroupsPanel({
       noValue: copy.noValue,
       empty: incomingGroupsEmpty(locale),
       expand: ui.expand,
-      openGroup: copy.openGroup,
+      openGroup: (name) => incomingMessage(locale, "openGroup", { name }),
+      openGroupAction: incomingMessage(locale, "openGroupAction"),
     },
     rows,
     onToggle: toggle,

@@ -31,12 +31,12 @@ const messages = {
 } as const;
 
 const panelClass =
-  "grid min-w-0 content-start justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-sm text-[var(--ink)]";
-const headingClass = "m-0 text-sm font-semibold";
-const paragraphClass = "m-0 wrap-anywhere";
-const codeClass = "font-mono text-[11px]/[1.45] wrap-anywhere";
+  "grid min-w-0 content-start justify-items-start gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--ink)]";
+const headingClass = "m-0 text-base font-semibold";
+const paragraphClass = "m-0 text-sm wrap-anywhere";
+const codeClass = "font-mono text-xs/[1.5] wrap-anywhere";
 const alertClass =
-  "m-0 wrap-anywhere rounded border border-[var(--error)] bg-[var(--error-soft)] px-3 py-2 text-[var(--error)]";
+  "m-0 wrap-anywhere rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] px-3.5 py-2.5 text-sm text-[var(--error)]";
 
 export type SettingsToolsRootHeaderProps = {
   locale: "en" | "ru";
@@ -73,7 +73,7 @@ export function SettingsToolsRootHeader({
           {copy.operationsHint}{" "}
           <a
             href={operationsHref}
-            className="text-[var(--accent)] underline decoration-[var(--line)] underline-offset-2 hover:decoration-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
+            className="text-[var(--accent-strong)] underline decoration-[var(--line)] underline-offset-2 hover:decoration-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
           >
             {copy.openOperations}
           </a>

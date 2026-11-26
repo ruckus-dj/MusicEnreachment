@@ -1,4 +1,5 @@
 import { AppButton } from "../../components/AppButton";
+import { RowActionMenu } from "../../components/RowActionMenu";
 
 export type ManagedPackageLocale = "en" | "ru";
 
@@ -66,6 +67,7 @@ const messages = {
     unknown: "unknown",
     activate: "Activate",
     remove: "Remove",
+    moreActions: "More actions",
     versionToInstall: "Version to install",
     versionLabel: "Version {kind}",
     chooseVersion: "Choose a version",
@@ -90,6 +92,7 @@ const messages = {
     unknown: "неизвестно",
     activate: "Активировать",
     remove: "Удалить",
+    moreActions: "Действия",
     versionToInstall: "Версия для установки",
     versionLabel: "Версия {kind}",
     chooseVersion: "Выберите версию",
@@ -101,15 +104,15 @@ const messages = {
 } as const;
 
 const cards =
-  "grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-3";
+  "grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-4";
 const card =
-  "grid min-w-0 content-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-sm text-[var(--ink)]";
-const subheading = "m-0 text-xs font-semibold text-[var(--muted)]";
+  "grid min-w-0 content-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--ink)]";
+const subheading = "m-0 text-xs font-medium text-[var(--muted)]";
 const note = "m-0 text-xs text-[var(--muted)]";
 const row =
-  "flex min-w-0 flex-wrap items-center justify-between gap-2 rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1.5";
+  "flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2";
 const select =
-  "min-h-8 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
+  "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0";
 
 function releaseText(release: ManagedPackageRelease) {
   return release.source
@@ -191,7 +194,7 @@ export function SettingsManagedPackageCards({
                       </span>
                     </div>
                     {(item.activate || item.remove) && (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         {item.activate && (
                           <AppButton
                             aria-label={`${copy.activate} ${item.release.identity}`}
@@ -203,7 +206,22 @@ export function SettingsManagedPackageCards({
                             {copy.activate}
                           </AppButton>
                         )}
-                        {item.remove && (
+                        {item.remove && item.activate && (
+                          <RowActionMenu
+                            label={`${copy.moreActions}: ${item.release.identity}`}
+                            actions={[
+                              {
+                                id: "remove",
+                                label: `${copy.remove} ${item.release.identity}`,
+                                isDisabled: item.remove.disabled,
+                                isDestructive: true,
+                                onAction: (trigger) =>
+                                  item.remove?.onPress(trigger),
+                              },
+                            ]}
+                          />
+                        )}
+                        {item.remove && !item.activate && (
                           <AppButton
                             aria-label={`${copy.remove} ${item.release.identity}`}
                             isDisabled={item.remove.disabled}

@@ -48,12 +48,12 @@ const messages = {
 } as const;
 
 const modeChoice =
-	"group inline-flex min-h-8 cursor-pointer items-center gap-[7px] rounded-md border border-[var(--line)] px-3 py-[10px] text-xs data-[selected]:border-[var(--accent)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
-const modeHelp = "m-0 ml-[25px] text-[11px] text-[var(--muted)]";
+	"group flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--line)] px-3.5 py-2.5 text-sm text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] data-[selected]:border-[var(--accent)] data-[selected]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
+const modeHelp = "m-0 ml-8 text-xs text-[var(--muted)]";
 const radioIndicator =
 	"size-4 flex-none rounded-full border border-[var(--control)] bg-[var(--surface)] group-data-[selected]:border-[5px] group-data-[selected]:border-[var(--accent)]";
 const textField =
-	"min-h-8 w-full min-w-0 rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
+	"h-9 w-full min-w-0 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0";
 
 export function SourceRootSettingsView({
 	locale,
@@ -142,13 +142,16 @@ export function SourceRootSettingsView({
 	return (
 		<section
 			aria-labelledby={titleId}
-			className="mb-4 grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3"
+			className="grid min-w-0 gap-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
 		>
 			<h2 id={titleId} className="m-0 text-sm font-semibold">
 				{copy.title}
 			</h2>
 			<div className="grid min-w-0 gap-1">
-				<label className="text-xs font-semibold" htmlFor={nameId}>
+				<label
+					className="text-sm font-medium text-[var(--ink)]"
+					htmlFor={nameId}
+				>
 					{common.name}
 				</label>
 				<div className="flex min-w-0 gap-2">

@@ -11,7 +11,8 @@ const messages = {
   },
 } as const;
 
-const linkClass = "text-[var(--accent)] underline underline-offset-2";
+const linkClass =
+  "text-sm font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline";
 
 export function SourceRootHeadingView({
   locale,
@@ -38,12 +39,12 @@ export function SourceRootHeadingView({
           ref={headingRef}
           id={headingId}
           tabIndex={headingRef ? -1 : undefined}
-          className="m-0 text-2xl font-semibold wrap-anywhere"
+          className="m-0 text-[26px]/[1.2] font-semibold tracking-[-.02em] wrap-anywhere"
         >
           {title}
         </h1>
         {path && (
-          <p className="m-0 wrap-anywhere text-sm text-[var(--muted)]">
+          <p className="m-0 wrap-anywhere font-mono text-xs text-[var(--muted)]">
             <code>{path}</code>
           </p>
         )}

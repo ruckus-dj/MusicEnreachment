@@ -148,7 +148,11 @@ it("renders server summary, artist cards and preserves search and pagination in 
   expect(
     screen.getByText("1 артист · 1 релиз · 2 позиции · 1 опубликовано"),
   ).toBeInTheDocument();
-  expect(artistLink).toHaveTextContent("Аудио: 1 / 2");
+  const artistCard = artistLink.closest('[role="row"]');
+  expect(artistCard).not.toBeNull();
+  const artistCardScope = within(artistCard as HTMLElement);
+  expect(artistCardScope.getByText("Аудио")).toBeVisible();
+  expect(artistCardScope.getAllByText("1 / 2")).toHaveLength(2);
   expect(
     screen.getByRole("navigation", { name: "Страницы медиатеки" }),
   ).toHaveTextContent("Страница 1 из 2 · Всего: 51");
@@ -251,6 +255,72 @@ it("re-adopts the accepted URL when an immediate Back precedes the filter's queu
   expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
   expect(screen.getByRole("radio", { name: "Published" })).not.toBeChecked();
   expect(window.location.hash).toBe(all);
+});
+
+it("keeps independent filter axes from a mixed deep link and removes only the touched axis", async () => {
+  window.location.hash =
+    "#/library?view=artists&publication=published&availability=missing";
+  const requests: string[] = [];
+  server.use(
+    http.get("*/api/library/artists", ({ request }) => {
+      const url = new URL(request.url);
+      requests.push(
+        `${url.searchParams.get("publication")}/${url.searchParams.get("availability")}`,
+      );
+      return HttpResponse.json({
+        items: [
+          {
+            id: artistId,
+            name: "A Artist",
+            disambiguation: null,
+            genres: [],
+            provider_links: [],
+            release_count: 1,
+            position_count: 2,
+            available_position_count: 1,
+            published_position_count: 1,
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        summary,
+      });
+    }),
+  );
+  renderScreen(<LibraryCatalogRoute />, "en");
+
+  const filters = await screen.findByRole("grid", { name: "Active filters" });
+  expect(within(filters).getByRole("row", { name: /Published/ })).toBeVisible();
+  expect(
+    within(filters).getByRole("row", { name: /Missing audio/ }),
+  ).toBeVisible();
+  await waitFor(() => expect(requests.at(-1)).toBe("published/missing"));
+
+  fireEvent.click(
+    within(within(filters).getByRole("row", { name: /Published/ })).getByRole(
+      "button",
+    ),
+  );
+
+  await waitFor(() =>
+    expect(window.location.hash).toContain("publication=all"),
+  );
+  expect(window.location.hash).toContain("availability=missing");
+  await waitFor(() => expect(requests.at(-1)).toBe("all/missing"));
+  expect(
+    within(filters).queryByRole("row", { name: /Published/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(filters).getByRole("row", { name: /Missing audio/ }),
+  ).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Reset all" }));
+  await waitFor(() => {
+    expect(window.location.hash).toContain("publication=all");
+    expect(window.location.hash).toContain("availability=all");
+  });
+  await waitFor(() => expect(requests.at(-1)).toBe("all/all"));
 });
 
 it("retains the catalog route and search state without refetching when locale changes", async () => {

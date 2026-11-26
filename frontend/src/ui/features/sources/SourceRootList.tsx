@@ -8,6 +8,9 @@ import {
 	TableBody,
 	TableHeader,
 } from "react-aria-components";
+import { StatusBadge } from "../../components/StatusBadge";
+import type { UiBadgeTone } from "../../components/uiStyles";
+import { ui } from "../../components/uiStyles";
 
 export interface SourceRootListRow {
 	id: string;
@@ -75,15 +78,13 @@ const messages = {
 } as const;
 
 type Copy = (typeof messages)[keyof typeof messages];
-const panel =
-	"min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)]";
 const link =
-	"inline-block max-w-full rounded-sm font-semibold text-[var(--accent)] wrap-anywhere hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
-const sub = "block text-[var(--muted)] wrap-anywhere";
-const stateTones = {
-	available: "bg-[var(--accent-soft)] text-[var(--accent)]",
-	unavailable: "bg-[var(--raised)] text-[var(--error)]",
-	unknown: "bg-[var(--raised)] text-[var(--muted)]",
+	"inline-block max-w-full rounded-sm text-sm font-medium text-[var(--accent-strong)] wrap-anywhere underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
+const sub = "block text-xs text-[var(--muted)] wrap-anywhere";
+const stateTones: Record<SourceRootListRow["availability"], UiBadgeTone> = {
+	available: "success",
+	unavailable: "error",
+	unknown: "neutral",
 };
 
 function directory(row: SourceRootListRow) {
@@ -92,8 +93,16 @@ function directory(row: SourceRootListRow) {
 			<Link href={row.href} className={link}>
 				{row.name}
 			</Link>
-			<code className={`${sub} mt-1 text-[11px]`}>{row.path}</code>
+			<code className={`${sub} mt-1 font-mono`}>{row.path}</code>
 		</>
+	);
+}
+
+function availability(row: SourceRootListRow, copy: Copy) {
+	return (
+		<StatusBadge tone={stateTones[row.availability]}>
+			{copy.status[row.availability]}
+		</StatusBadge>
 	);
 }
 
@@ -103,13 +112,7 @@ function facts(row: SourceRootListRow, copy: Copy) {
 		{
 			key: "availability",
 			label: copy.availability,
-			value: (
-				<span
-					className={`inline-block rounded-sm px-1.5 py-0.5 font-medium ${stateTones[row.availability]}`}
-				>
-					{copy.status[row.availability]}
-				</span>
-			),
+			value: availability(row, copy),
 		},
 		{
 			key: "lastScan",
@@ -129,7 +132,7 @@ function facts(row: SourceRootListRow, copy: Copy) {
 				<>
 					{row.inventory.label}
 					{row.inventory.notes?.map((note) => (
-						<span className={`${sub} mt-1 text-[11px]`} key={note}>
+						<span className={`${sub} mt-1`} key={note}>
 							{note}
 						</span>
 					))}
@@ -150,7 +153,7 @@ function scanAction(
 			aria-label={`${label}: ${row.name}`}
 			isDisabled={row.scanning || row.availability === "unavailable"}
 			onPress={() => onScan(row.id)}
-			className="min-h-8 max-w-full rounded border border-[var(--control)] px-2 py-1 whitespace-nowrap text-[var(--ink)] data-[hovered]:bg-[var(--raised)] data-[disabled]:opacity-60 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] pointer-coarse:min-h-10"
+			className="inline-flex min-h-9 max-w-full cursor-pointer items-center justify-center whitespace-nowrap rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2 pointer-coarse:min-h-10"
 		>
 			{label}
 		</Button>
@@ -171,53 +174,51 @@ export function SourceRootList({
 	const copy = messages[locale];
 	const columns = [
 		{ id: "directory", label: copy.directory, width: "" },
-		{ id: "mode", label: copy.mode, width: "w-[16%]" },
-		{ id: "availability", label: copy.availability, width: "w-[14%]" },
+		{ id: "mode", label: copy.mode, width: "w-[14%]" },
+		{ id: "availability", label: copy.availability, width: "w-[12%]" },
 		{ id: "lastScan", label: copy.lastScan, width: "w-[18%]" },
-		{ id: "inventory", label: copy.inventory, width: "w-[14%]" },
-		{ id: "actions", label: copy.actions, width: "w-36" },
+		{ id: "inventory", label: copy.inventory, width: "w-[13%]" },
+		{ id: "actions", label: copy.actions, width: "w-28" },
 	];
 	return (
-		<section className="min-w-0 space-y-2">
-			<h2 className="text-sm font-semibold">{copy.title}</h2>
+		<section className="min-w-0 space-y-3">
+			<h2 className="m-0 text-base font-semibold">{copy.title}</h2>
 			{state?.kind === "loading" ? (
-				<p className={`${panel} p-3 text-xs text-[var(--muted)]`} role="status">
+				<p
+					className={`${ui.tableFrame} p-5 text-sm text-[var(--muted)]`}
+					role="status"
+				>
 					{copy.loading}
 				</p>
 			) : state?.kind === "error" ? (
 				<div
 					role="alert"
-					className={`${panel} flex flex-wrap items-center gap-2 p-3 text-xs wrap-anywhere`}
+					className={`${ui.tableFrame} flex flex-wrap items-center gap-3 p-5 text-sm wrap-anywhere`}
 				>
-					<p className="text-[var(--error)]">
-						{state.message || copy.loadError}
-					</p>
+					<p className={ui.fieldError}>{state.message || copy.loadError}</p>
 					<Button
 						onPress={state.onRetry}
-						className="min-h-8 rounded border border-[var(--control)] px-2 text-[var(--ink)] data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"
+						className="min-h-9 rounded-lg border border-[var(--line)] px-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)]"
 					>
 						{copy.retry}
 					</Button>
 				</div>
 			) : rows.length === 0 ? (
-				<div className={`${panel} space-y-1 p-3 text-xs`}>
-					<p className="font-semibold">{copy.empty}</p>
-					<p className="text-[var(--muted)]">{copy.emptyHint}</p>
+				<div className={`${ui.tableFrame} space-y-1 p-6 text-sm`}>
+					<p className="m-0 font-medium">{copy.empty}</p>
+					<p className="m-0 text-[var(--muted)]">{copy.emptyHint}</p>
 				</div>
 			) : (
 				<>
-					<div className={`${panel} max-[800px]:hidden`}>
-						<Table
-							aria-label={copy.title}
-							className="w-full table-fixed border-separate border-spacing-0 text-xs wrap-anywhere [font-variant-numeric:tabular-nums]"
-						>
+					<div className={`${ui.tableFrame} max-[800px]:hidden`}>
+						<Table aria-label={copy.title} className={ui.racTable}>
 							<TableHeader>
 								{columns.map(({ id, label, width }) => (
 									<Column
 										id={id}
 										key={id}
 										isRowHeader={id === "directory"}
-										className={`${width} border-b border-[var(--line)] bg-[var(--raised)] px-3 py-2 text-left font-semibold text-[var(--muted)]`}
+										className={`react-aria-Column ${width}`}
 									>
 										{label}
 									</Column>
@@ -227,40 +228,34 @@ export function SourceRootList({
 								{(row) => (
 									<Row
 										id={row.id}
-										className="[&:not(:last-child)>td]:border-b [&>td]:border-[var(--line)]"
+										className="react-aria-Row [&>.react-aria-Cell]:py-3.5"
 									>
-										<Cell className="px-3 py-2.5 align-top">
-											{directory(row)}
-										</Cell>
+										<Cell>{directory(row)}</Cell>
 										{facts(row, copy).map(({ key, value }) => (
-											<Cell key={key} className="px-3 py-2.5 align-top">
-												{value}
-											</Cell>
+											<Cell key={key}>{value}</Cell>
 										))}
-										<Cell className="px-3 py-2.5 align-top">
-											{scanAction(row, copy, onScan)}
-										</Cell>
+										<Cell>{scanAction(row, copy, onScan)}</Cell>
 									</Row>
 								)}
 							</TableBody>
 						</Table>
 					</div>
 					<ul
-						className="hidden min-w-0 list-none gap-2 p-0 text-xs max-[800px]:grid"
+						className="hidden min-w-0 list-none gap-3 p-0 text-sm max-[800px]:grid"
 						aria-label={copy.title}
 					>
 						{rows.map((row) => (
-							<li key={row.id} className={`${panel} p-3`}>
+							<li key={row.id} className={`${ui.tableFrame} p-4`}>
 								{directory(row)}
-								<dl className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 gap-y-1 wrap-anywhere">
+								<dl className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-4 gap-y-2 wrap-anywhere">
 									{facts(row, copy).map(({ key, label, value }) => (
 										<div className="contents" key={key}>
-											<dt className="text-[var(--muted)]">{label}</dt>
-											<dd className="min-w-0">{value}</dd>
+											<dt className="text-xs text-[var(--muted)]">{label}</dt>
+											<dd className="m-0 min-w-0">{value}</dd>
 										</div>
 									))}
 								</dl>
-								<div className="mt-2">{scanAction(row, copy, onScan)}</div>
+								<div className="mt-3">{scanAction(row, copy, onScan)}</div>
 							</li>
 						))}
 					</ul>

@@ -57,7 +57,7 @@ const copy = {
 } as const;
 
 const actionClass =
-  "inline-flex min-h-[30px] cursor-pointer items-center justify-center rounded-[var(--control-radius,4px)] border border-[var(--control)] px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-10";
+  "inline-flex min-h-9 cursor-pointer items-center justify-center rounded-[var(--control-radius,4px)] border border-[var(--control)] px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-10";
 
 export function MatchingLinkResultView({
   locale,

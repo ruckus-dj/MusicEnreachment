@@ -26,6 +26,66 @@ function LibraryArtistRoute({ artistId }: { artistId: string }) {
   );
 }
 
+const artistSummary = {
+  artist_count: 1,
+  release_count: 1,
+  position_count: 2,
+  published_position_count: 1,
+};
+
+/** Minimal mounted surface for filter-route tests without edition fixtures. */
+function artistScreenMocks(recordReleaseQuery: (url: URL) => void) {
+  return [
+    http.get(`*/api/library/artists/${artistId}`, () =>
+      HttpResponse.json({
+        id: artistId,
+        name: "Artist",
+        disambiguation: null,
+        genres: [],
+        provider_links: [],
+        release_count: 1,
+        position_count: 2,
+        available_position_count: 1,
+        published_position_count: 1,
+      }),
+    ),
+    http.get(`*/api/library/artists/${artistId}/details`, () =>
+      HttpResponse.json({
+        id: artistId,
+        name: "Artist",
+        disambiguation: null,
+        revision: 1,
+        publication_applied: false,
+      }),
+    ),
+    http.get(`*/api/library/artists/${artistId}/metadata`, () =>
+      HttpResponse.json({
+        revision: 1,
+        envelope: {
+          version: 1,
+          scope: "artist",
+          desired: {
+            sort_name: { state: "absent" },
+            genre: { state: "absent" },
+          },
+        },
+        publication_applied: false,
+        provider_genre_baseline: null,
+      }),
+    ),
+    http.get("*/api/library/releases", ({ request }) => {
+      recordReleaseQuery(new URL(request.url));
+      return HttpResponse.json({
+        items: [],
+        total: 0,
+        limit: 50,
+        offset: 0,
+        summary: artistSummary,
+      });
+    }),
+  ];
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -274,7 +334,7 @@ it("saves combined artist metadata in one patch while keeping the artist release
 
   expect(positionRequestCount).toBe(0);
   fireEvent.click(
-    await screen.findByRole("button", { name: "Show positions" }),
+    await screen.findByRole("button", { name: /^Show positions:/ }),
   );
   const tracks = await screen.findByRole("table");
   expect(positionRequestCount).toBeGreaterThan(0);
@@ -296,6 +356,86 @@ it("saves combined artist metadata in one patch while keeping the artist release
   expect(
     within(tracks).getByRole("row", { name: /2\.1 Other medium/ }),
   ).toHaveTextContent("Not published");
+});
+
+it("keeps both canonical filter axes from a mixed deep link and removes only the touched one", async () => {
+  window.location.hash = `#/library/artists/${artistId}?view=artists&publication=published&availability=missing`;
+  const releaseQueries: string[] = [];
+  server.use(
+    ...artistScreenMocks((url) =>
+      releaseQueries.push(
+        `${url.searchParams.get("publication")}/${url.searchParams.get("availability")}`,
+      ),
+    ),
+  );
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <LibraryArtistRoute artistId={artistId} />
+    </QueryClientProvider>,
+  );
+
+  await screen.findByRole("heading", { name: "Artist", level: 1 });
+  const filters = screen.getByRole("grid", { name: "Active filters" });
+  expect(within(filters).getByRole("row", { name: /Published/ })).toBeVisible();
+  expect(
+    within(filters).getByRole("row", { name: /Missing audio/ }),
+  ).toBeVisible();
+  await waitFor(() => expect(releaseQueries.at(-1)).toBe("published/missing"));
+
+  fireEvent.click(
+    within(within(filters).getByRole("row", { name: /Published/ })).getByRole(
+      "button",
+    ),
+  );
+
+  await waitFor(() =>
+    expect(window.location.hash).toContain("publication=all"),
+  );
+  expect(window.location.hash).toContain("availability=missing");
+  await waitFor(() => expect(releaseQueries.at(-1)).toBe("all/missing"));
+  expect(
+    within(filters).queryByRole("row", { name: /Published/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(filters).getByRole("row", { name: /Missing audio/ }),
+  ).toBeVisible();
+});
+
+it("clears search and both filter axes atomically when resetting an artist", async () => {
+  window.location.hash = `#/library/artists/${artistId}?view=artists&q=rock&publication=published&availability=missing`;
+  const releaseQueries: string[] = [];
+  server.use(...artistScreenMocks((url) => releaseQueries.push(url.search)));
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <LibraryArtistRoute artistId={artistId} />
+    </QueryClientProvider>,
+  );
+
+  await screen.findByRole("heading", { name: "Artist", level: 1 });
+  const search = screen.getByRole("searchbox");
+  expect(search).toHaveValue("rock");
+  fireEvent.change(search, { target: { value: "jazz" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Reset all" }));
+
+  await waitFor(() => expect(window.location.hash).not.toContain("q="));
+  expect(window.location.hash).toContain("publication=all");
+  expect(window.location.hash).toContain("availability=all");
+  await waitFor(() => expect(search).toHaveValue(""));
+
+  // The cancelled debounce must not write the superseded query afterwards.
+  await new Promise((resolve) => window.setTimeout(resolve, 350));
+  expect(window.location.hash).not.toContain("q=");
+  expect(window.location.hash).not.toContain("q=jazz");
+  await waitFor(() => expect(releaseQueries.at(-1)).not.toContain("q="));
 });
 
 it("preserves a conflicting draft and refreshes a reopened artist after a late save", async () => {

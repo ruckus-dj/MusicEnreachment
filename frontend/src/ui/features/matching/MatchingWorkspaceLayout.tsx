@@ -17,10 +17,10 @@ export function MatchingWorkspaceLayout({ children }: { children: ReactNode }) {
 }
 
 export const matchingCandidatesPanel =
-	"mb-3 min-w-0 rounded border border-[var(--line)] bg-[var(--surface)] p-3";
+	"mb-5 min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 max-[700px]:p-4";
 
 export const matchingInspectorPanel =
-	"min-w-0 rounded border border-[var(--line)] bg-[var(--surface)] p-3 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-3";
+	"min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-4";
 
 export const matchingInspectorContent =
 	"min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto";

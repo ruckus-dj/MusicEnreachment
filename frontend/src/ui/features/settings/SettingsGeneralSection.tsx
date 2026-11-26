@@ -10,6 +10,10 @@ import {
   TextField,
 } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import { AppCheckbox } from "../../components/AppCheckbox";
+import { AppSwitch } from "../../components/AppSwitch";
+import { ui } from "../../components/uiStyles";
+import { SettingsHelpDetails } from "./SettingsHelpDetails";
 
 const logLevels = ["debug", "info", "warn", "error"] as const;
 
@@ -29,24 +33,32 @@ const english = {
   concurrencyDirty: "Concurrency has an unsaved change.",
   saveConcurrency: "Save concurrency",
   matchingThreshold: "Matching threshold",
-  matchingThresholdHelp:
-    "Each file → position pair in an automatic layout must reach at least this score. Enter a number from 0 to 1; the default is 0.70. Changing the threshold does not re-confirm saved links or start publication.",
+  matchingThresholdHint:
+    "Each file → position pair in an automatic layout must reach at least this score. Enter a number from 0 to 1; the default is 0.70.",
+  matchingThresholdDetails:
+    "Changing the threshold does not re-confirm saved links or start publication.",
   matchingThresholdInvalid: "Enter a number from 0 to 1.",
   matchingThresholdDirty: "Matching threshold has an unsaved change.",
   saveMatchingThreshold: "Save matching threshold",
   calculateSha: "Calculate SHA-256",
-  shaHelp:
-    "This setting applies to future analyses. Changing it does not delete saved results or start a bulk recalculation.",
+  shaHint: "This setting applies to future analyses.",
+  shaDetails:
+    "Changing it does not delete saved results or start a bulk recalculation.",
   logLevel: "Log level",
+  detailsLabel: "Details",
   sourceDeletionTitle: "Source deletion",
   allowSourceDeletion: "Allow source deletion after publication",
-  sourceDeletionHelp:
-    "Off by default. An original file is eligible for removal only after every segment assigned to it has been successfully published, including segments not queued yet. Active consumers and retained holds also block removal. Filesystem permission is required; working copies and manual safeguards are unchanged. Changing this setting does not delete existing files or start processing.",
+  sourceDeletionHint:
+    "Off by default. An original file is eligible for removal only after every segment assigned to it has been successfully published, including segments not queued yet.",
+  sourceDeletionDetails:
+    "Active consumers and retained holds also block removal. Filesystem permission is required; working copies and manual safeguards are unchanged. Changing this setting does not delete existing files or start processing.",
   unsavedSourceDeletion: "The source deletion setting has unsaved changes.",
   albumCompletionTitle: "Automatic publication",
   autoCompleteAlbums: "Automatically publish complete albums",
-  albumCompletionHelp:
-    "Off by default. First publication starts automatically only when every track position in the edition reaches the matching threshold. Changing this setting does not publish previously matched albums.",
+  albumCompletionHint:
+    "Off by default. First publication starts automatically only when every track position in the edition reaches the matching threshold.",
+  albumCompletionDetails:
+    "Changing this setting does not publish previously matched albums.",
   unsavedAlbumCompletion:
     "The automatic publication setting has unsaved changes.",
   unsavedChanges: "There are unsaved changes.",
@@ -79,24 +91,31 @@ const russian: SettingsGeneralCopy = {
   concurrencyDirty: "Есть несохранённое изменение параллельности.",
   saveConcurrency: "Сохранить параллельность",
   matchingThreshold: "Порог сопоставления",
-  matchingThresholdHelp:
-    "Каждая пара «файл → позиция» в автоматической раскладке должна набрать не меньше этого значения. Введите число от 0 до 1; значение по умолчанию — 0.70. Изменение порога не переподтверждает сохранённые связи и не запускает публикацию.",
+  matchingThresholdHint:
+    "Каждая пара «файл → позиция» в автоматической раскладке должна набрать не меньше этого значения. Введите число от 0 до 1; значение по умолчанию — 0.70.",
+  matchingThresholdDetails:
+    "Изменение порога не переподтверждает сохранённые связи и не запускает публикацию.",
   matchingThresholdInvalid: "Введите число от 0 до 1.",
   matchingThresholdDirty: "Есть несохранённое изменение порога сопоставления.",
   saveMatchingThreshold: "Сохранить порог сопоставления",
   calculateSha: "Вычислять SHA-256",
-  shaHelp:
-    "Настройка применяется к последующим анализам. Её изменение не удаляет сохранённые результаты и не запускает массовый пересчёт.",
+  shaHint: "Настройка применяется к последующим анализам.",
+  shaDetails:
+    "Её изменение не удаляет сохранённые результаты и не запускает массовый пересчёт.",
   logLevel: "Уровень журнала",
+  detailsLabel: "Подробнее",
   sourceDeletionTitle: "Удаление исходников",
   allowSourceDeletion: "Разрешить удаление исходников после публикации",
-  sourceDeletionHelp:
-    "Выключено по умолчанию. Исходный файл можно удалить только после успешной публикации всех назначенных ему сегментов, включая ещё не поставленные в очередь. Активные потребители и сохранённые блокировки также запрещают удаление. Требуется разрешение файловой системы; рабочие копии и ручная защита не затрагиваются. Изменение настройки не удаляет существующие файлы и не запускает обработку.",
+  sourceDeletionHint:
+    "Выключено по умолчанию. Исходный файл можно удалить только после успешной публикации всех назначенных ему сегментов, включая ещё не поставленные в очередь.",
+  sourceDeletionDetails:
+    "Активные потребители и сохранённые блокировки также запрещают удаление. Требуется разрешение файловой системы; рабочие копии и ручная защита не затрагиваются. Изменение настройки не удаляет существующие файлы и не запускает обработку.",
   unsavedSourceDeletion: "Есть несохранённая настройка удаления исходников.",
   albumCompletionTitle: "Автопубликация",
   autoCompleteAlbums: "Автоматически публиковать полные альбомы",
-  albumCompletionHelp:
-    "Выключено по умолчанию. Первая публикация запускается автоматически, только если каждая позиция издания достигает порога сопоставления. Включение не публикует уже сопоставленные альбомы.",
+  albumCompletionHint:
+    "Выключено по умолчанию. Первая публикация запускается автоматически, только если каждая позиция издания достигает порога сопоставления.",
+  albumCompletionDetails: "Включение не публикует уже сопоставленные альбомы.",
   unsavedAlbumCompletion: "Есть несохранённая настройка автопубликации.",
   unsavedChanges: "Есть несохранённые изменения.",
   publicationFormatLabel: "формат публикации",
@@ -153,34 +172,31 @@ function failureLabelText(
 
 const sectionStyles = {
   panel:
-    "min-w-0 mb-[10px] rounded-[8px] border border-[var(--line)] bg-[var(--surface)] p-[10px] [&>h2]:mb-2 [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:mb-2 [&>h3]:text-sm [&>h3]:font-semibold",
-  layout: "grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:gap-x-6",
-  controls: "grid content-start gap-3 min-[600px]:grid-cols-2",
+    "min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 [&>h2]:mb-4 [&>h2]:text-base [&>h2]:font-semibold [&>h3]:mb-3 [&>h3]:text-sm [&>h3]:font-semibold",
+  layout: "grid gap-6 min-[1000px]:grid-cols-2 min-[1000px]:gap-x-8",
+  controls: "grid content-start gap-5 min-[600px]:grid-cols-2",
   column: "grid content-start gap-2",
-  field: "grid min-w-0 gap-[5px] text-xs font-semibold text-[var(--ink)]",
-  label:
-    "react-aria-Label ui-label mb-1 block text-[11px] font-semibold text-[var(--muted)]",
+  field: "grid min-w-0 gap-1.5 text-sm font-medium text-[var(--ink)]",
+  label: "react-aria-Label ui-label text-sm font-medium text-[var(--ink)]",
   select:
-    "react-aria-Select ui-select relative min-w-0 [&>button]:flex [&>button]:min-h-[30px] [&>button]:w-full [&>button]:items-center [&>button]:justify-between [&>button]:gap-1.5 [&>button]:rounded-[var(--control-radius)] [&>button]:border [&>button]:border-[var(--control)] [&>button]:bg-[var(--surface)] [&>button]:px-[9px] [&>button]:py-[5px] [&>button]:text-left [&>button]:text-[var(--ink)] [&>button]:hover:border-[var(--accent)] [&>button]:hover:bg-[var(--raised)]",
+    "react-aria-Select ui-select relative min-w-0 [&>button]:flex [&>button]:h-9 [&>button]:w-full [&>button]:items-center [&>button]:justify-between [&>button]:gap-2 [&>button]:rounded-[var(--control-radius)] [&>button]:border [&>button]:border-[var(--control)] [&>button]:bg-[var(--surface)] [&>button]:px-3 [&>button]:text-left [&>button]:text-sm [&>button]:text-[var(--ink)] [&>button:hover]:border-[var(--control)] [&>button:hover]:bg-[var(--raised)]",
   trigger:
-    "react-aria-Button ui-button inline-flex min-h-[30px] w-full cursor-pointer items-center justify-between gap-1.5 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-left text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2",
-  popover:
-    "react-aria-Popover ui-popover z-20 max-h-[280px] min-w-[var(--trigger-width)] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]",
-  listBox: "react-aria-ListBox ui-listbox grid gap-0.5 outline-none",
-  option:
-    "react-aria-ListBoxItem ui-listbox-item cursor-pointer rounded-sm px-2 py-[7px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]",
+    "react-aria-Button ui-button inline-flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-3 text-left text-sm text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0",
+  popover: ui.popover,
+  listBox: ui.listBox,
+  option: ui.option,
   value:
     "react-aria-SelectValue ui-select-value overflow-hidden text-ellipsis whitespace-nowrap",
   input:
-    "react-aria-Input ui-input min-h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] aria-[invalid=true]:border-[var(--error)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2",
+    "react-aria-Input ui-input h-9 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] placeholder:text-[var(--muted)] hover:border-[var(--control)] aria-[invalid=true]:border-[var(--error)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0",
   help: "m-0 text-xs text-[var(--muted)]",
-  error: "m-0 text-xs text-[var(--error)]",
+  error: "m-0 text-xs font-medium text-[var(--error)]",
   cleanup:
-    "grid content-start gap-2 border-t border-[var(--line)] pt-3 min-[1400px]:border-t-0 min-[1400px]:pt-0",
+    "grid content-start gap-3 rounded-lg border border-[var(--line)] p-4",
   cleanupTitle: "m-0 text-sm font-semibold",
-  cleanupHelp: "m-0 text-xs text-[var(--warning)]",
+  cleanupHelp: "m-0 text-xs text-[var(--muted)]",
   failure:
-    "grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3",
+    "mb-4 grid gap-3 rounded-lg border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] p-4",
 };
 
 export type SettingsGeneralLocale = "en" | "ru";
@@ -419,8 +435,11 @@ export function SettingsGeneralSection({
               id="settings-matching-threshold-help"
               className={sectionStyles.help}
             >
-              {copy.matchingThresholdHelp}
+              {copy.matchingThresholdHint}
             </p>
+            <SettingsHelpDetails label={copy.detailsLabel}>
+              <p>{copy.matchingThresholdDetails}</p>
+            </SettingsHelpDetails>
             {model.matchingThreshold.invalid && (
               <p
                 id="settings-matching-threshold-error"
@@ -442,20 +461,15 @@ export function SettingsGeneralSection({
             </AppButton>
           </div>
           <div className={sectionStyles.column}>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                aria-describedby="sha256-help"
-                checked={model.sha256.enabled}
-                onChange={(event) =>
-                  model.sha256.onChange(event.target.checked)
-                }
-              />
-              {copy.calculateSha}
-            </label>
-            <p id="sha256-help" className={sectionStyles.help}>
-              {copy.shaHelp}
-            </p>
+            <AppSwitch
+              label={copy.calculateSha}
+              description={copy.shaHint}
+              isSelected={model.sha256.enabled}
+              onChange={model.sha256.onChange}
+            />
+            <SettingsHelpDetails label={copy.detailsLabel}>
+              <p>{copy.shaDetails}</p>
+            </SettingsHelpDetails>
           </div>
           <Select
             selectedKey={model.logLevel.value}
@@ -497,24 +511,18 @@ export function SettingsGeneralSection({
             >
               {copy.sourceDeletionTitle}
             </h3>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                aria-describedby="source-cleanup-help"
-                checked={model.cleanup.enabled}
-                onChange={(event) =>
-                  model.cleanup.onChange(event.target.checked)
-                }
-              />
-              {copy.allowSourceDeletion}
-            </label>
-            <p
-              id="source-cleanup-help"
-              className={sectionStyles.cleanupHelp}
-              role="note"
-            >
-              {copy.sourceDeletionHelp}
+            <AppCheckbox
+              label={copy.allowSourceDeletion}
+              describedBy="source-deletion-help"
+              isSelected={model.cleanup.enabled}
+              onChange={model.cleanup.onChange}
+            />
+            <p id="source-deletion-help" className={sectionStyles.help}>
+              {copy.sourceDeletionHint}
             </p>
+            <SettingsHelpDetails label={copy.detailsLabel}>
+              <p>{copy.sourceDeletionDetails}</p>
+            </SettingsHelpDetails>
             {model.cleanup.dirty && (
               <p className="m-0">{copy.unsavedSourceDeletion}</p>
             )}
@@ -529,24 +537,18 @@ export function SettingsGeneralSection({
             >
               {copy.albumCompletionTitle}
             </h3>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                aria-describedby="album-completion-help"
-                checked={model.albumCompletion.enabled}
-                onChange={(event) =>
-                  model.albumCompletion.onChange(event.target.checked)
-                }
-              />
-              {copy.autoCompleteAlbums}
-            </label>
-            <p
-              id="album-completion-help"
-              className={sectionStyles.help}
-              role="note"
-            >
-              {copy.albumCompletionHelp}
+            <AppSwitch
+              label={copy.autoCompleteAlbums}
+              describedBy="album-completion-help"
+              isSelected={model.albumCompletion.enabled}
+              onChange={model.albumCompletion.onChange}
+            />
+            <p id="album-completion-help" className={sectionStyles.help}>
+              {copy.albumCompletionHint}
             </p>
+            <SettingsHelpDetails label={copy.detailsLabel}>
+              <p>{copy.albumCompletionDetails}</p>
+            </SettingsHelpDetails>
             {model.albumCompletion.dirty && (
               <p className="m-0">{copy.unsavedAlbumCompletion}</p>
             )}

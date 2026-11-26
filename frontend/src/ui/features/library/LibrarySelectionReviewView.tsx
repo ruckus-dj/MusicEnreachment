@@ -32,18 +32,18 @@ const librarySelectionReviewMessages = {
 
 const styles = {
   overlay:
-    "fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[#0008] p-4",
+    "fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[rgb(0_0_0/0.45)] p-4",
   modal:
-    "w-full max-w-[560px] rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-[18px] text-[var(--ink)] shadow-[0_16px_48px_#0003]",
+    "w-full max-w-[560px] rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)]",
   dialog: "wrap-anywhere outline-none",
-  heading: "mb-2 mt-0 text-base",
-  list: "my-3 grid max-h-[52dvh] list-none gap-2 overflow-auto p-0",
+  heading: "mb-2 mt-0 text-lg font-semibold",
+  list: "my-4 grid max-h-[52dvh] list-none gap-2 overflow-auto p-0",
   row: "flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] py-2",
   label: "min-w-0 wrap-anywhere",
   empty: "my-2 mb-[14px]",
   footer: "mt-3 flex flex-wrap justify-end gap-2",
   button:
-    "min-h-9 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-[10px] py-[6px] text-[var(--ink)] data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]",
+    "inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] data-[hovered]:border-[var(--control)] data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)]",
 } as const;
 
 function focusFallback() {

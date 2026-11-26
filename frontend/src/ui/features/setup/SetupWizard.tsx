@@ -1,24 +1,24 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
 import { SetupFeedbackView } from "./SetupFeedbackView";
 
-const pageClassName = "grid gap-[14px]";
-const headerClassName =
-  "grid gap-[5px] mb-[18px] pb-[14px] border-b border-[var(--line)] max-[600px]:flex max-[600px]:flex-wrap max-[600px]:items-center max-[600px]:justify-between";
+const pageClassName = "mx-auto grid w-full max-w-[1040px] gap-6";
+const headerClassName = "grid gap-1.5 border-b border-[var(--line)] pb-5";
 const titleClassName =
-  "m-0 text-[clamp(21px,2.5vw,28px)] leading-[1.18] [text-wrap:balance]";
-const descriptionClassName = "m-0 max-w-[75ch] text-[var(--muted)]";
+  "m-0 text-[26px]/[1.2] font-semibold tracking-[-.02em] [text-wrap:balance]";
+const descriptionClassName = "m-0 max-w-[75ch] text-sm text-[var(--muted)]";
 const stepperClassName =
-  "m-0 grid list-none gap-px overflow-hidden rounded-[7px] border border-[var(--line)] bg-[var(--line)] p-0 [&>li]:flex [&>li]:items-center [&>li]:gap-2 [&>li]:bg-[var(--raised)] [&>li]:p-[10px] [&>li]:text-xs [&>li]:text-[var(--muted)] [&>li[aria-current=step]]:bg-[var(--accent-soft)] [&>li[aria-current=step]]:font-bold [&>li[aria-current=step]]:text-[var(--accent)]";
+  "m-0 grid list-none gap-3 p-0 [&>li]:flex [&>li]:items-center [&>li]:gap-2.5 [&>li]:rounded-lg [&>li]:border [&>li]:border-[var(--line)] [&>li]:bg-[var(--surface)] [&>li]:px-3.5 [&>li]:py-2.5 [&>li]:text-sm [&>li]:text-[var(--muted)] [&>li[aria-current=step]]:border-[var(--accent)] [&>li[aria-current=step]]:bg-[var(--accent-soft)] [&>li[aria-current=step]]:font-medium [&>li[aria-current=step]]:text-[var(--accent-strong)]";
 const stepIndexClassName =
-  "grid size-6 flex-none place-items-center rounded-full border border-[var(--line)] bg-[var(--surface)]";
+  "grid size-6 flex-none place-items-center rounded-full border border-[var(--line)] bg-[var(--surface)] text-xs tabular-nums";
 const panelClassName =
-  "min-w-0 mb-[10px] rounded-[8px] border border-[var(--line)] bg-[var(--surface)] p-[10px] [&>h2]:mb-2 [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:mb-2 [&>h3]:text-sm [&>h3]:font-semibold [&>p]:my-2";
-const bodyClassName =
-  "grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-[14px]";
-const helpClassName = "my-2 max-w-[75ch] text-[var(--muted)]";
+  "min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 [&>h2]:mb-3 [&>h2]:text-lg [&>h2]:font-semibold [&>h3]:mb-2 [&>h3]:text-sm [&>h3]:font-semibold [&>p]:my-2 [&>p]:text-sm";
+const bodyClassName = "grid min-w-0 gap-4";
+const helpClassName =
+  "my-1 max-w-[75ch] rounded-lg bg-[var(--raised)] p-4 text-sm";
 const footerClassName =
-  "flex justify-between gap-2 border-t border-[var(--line)] pt-3";
+  "flex justify-between gap-2 border-t border-[var(--line)] pt-4";
 
 type Locale = "en" | "ru";
 export const setupSteps = [
@@ -124,7 +124,14 @@ export function SetupWizard({
           {steps.map((name, index) => (
             <li key={name} aria-current={index === step ? "step" : undefined}>
               <span className={stepIndexClassName}>
-                {index < step ? "✓" : index + 1}
+                {index < step ? (
+                  <AppIcon
+                    name="check"
+                    className="size-3.5 text-[var(--accent-strong)]"
+                  />
+                ) : (
+                  index + 1
+                )}
               </span>
               <span>{copy.step[name]}</span>
             </li>
@@ -136,7 +143,7 @@ export function SetupWizard({
           ref={headingRef}
           id="setup-step-title"
           tabIndex={-1}
-          className="mb-2 text-sm font-semibold"
+          className="mb-3 text-lg font-semibold"
         >
           {copy.step[steps[step]]}
         </h2>
@@ -162,7 +169,11 @@ export function SetupWizard({
                 {copy.back}
               </AppButton>
             )}
-            <AppButton isDisabled={nextDisabled} onPress={onNext}>
+            <AppButton
+              variant="primary"
+              isDisabled={nextDisabled}
+              onPress={onNext}
+            >
               {step === steps.length - 1 ? copy.finish : copy.continue}
             </AppButton>
           </div>

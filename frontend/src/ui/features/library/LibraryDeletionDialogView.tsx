@@ -99,9 +99,9 @@ export function LibraryDeletionDialogView({
       isOpen={open}
       onOpenChange={onOpenChange}
       isDismissable={dismissable}
-      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/45 p-3 sm:p-6"
+      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[rgb(0_0_0/0.45)] p-3 sm:p-6"
     >
-      <Modal className="flex max-h-[min(70dvh,700px)] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_16px_48px_#0003]">
+      <Modal className="flex max-h-[min(70dvh,700px)] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)]">
         <Dialog
           aria-labelledby={titleID}
           aria-describedby={targetID}

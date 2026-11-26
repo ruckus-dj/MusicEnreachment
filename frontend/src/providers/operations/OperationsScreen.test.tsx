@@ -337,7 +337,10 @@ it.each([
   );
 
   renderScreen();
-  const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Actions: FFmpeg 7.1" }),
+  );
+  const dismiss = await screen.findByRole("menuitem", { name: "Dismiss" });
   dismiss.focus();
   fireEvent.click(dismiss);
 
@@ -455,4 +458,61 @@ it("uses URL filters, clamps a page after the list shrinks and keeps position li
   expect(window.location.hash).toBe(
     "#/operations?status=failed&kind=publication",
   );
+});
+
+it("resets all active filters and the page offset in one navigation while keeping sort", async () => {
+  window.location.hash =
+    "#/operations?status=failed&kind=publication&sort=target&direction=asc&offset=100";
+  const reads: URL[] = [];
+  server.use(
+    http.get("/api/operations/current", ({ request }) => {
+      reads.push(new URL(request.url));
+      return HttpResponse.json({ operations: [], total: 150 });
+    }),
+  );
+
+  renderScreen();
+  const search = screen.getByRole("searchbox", { name: "Search operations" });
+  await waitFor(() => expect(reads).toHaveLength(1));
+  expect(reads[0]?.searchParams.get("status")).toBe("failed");
+  expect(reads[0]?.searchParams.get("kind")).toBe("publication");
+  expect(reads[0]?.searchParams.get("offset")).toBe("100");
+
+  fireEvent.change(search, { target: { value: "north" } });
+  await waitFor(() =>
+    expect(window.location.hash).toBe(
+      "#/operations?status=failed&kind=publication&sort=target&direction=asc",
+    ),
+  );
+  await waitFor(() =>
+    expect(
+      reads.some(
+        (url) =>
+          url.searchParams.get("q") === "north" &&
+          url.searchParams.get("offset") === "0",
+      ),
+    ).toBe(true),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Reset all" }));
+
+  await waitFor(() =>
+    expect(window.location.hash).toBe("#/operations?sort=target&direction=asc"),
+  );
+  await waitFor(() => {
+    const reset = reads.find(
+      (url) =>
+        url.searchParams.get("status") === "attention" &&
+        url.searchParams.get("offset") === "0",
+    );
+    expect(reset).toBeDefined();
+    expect(reset?.searchParams.get("kind")).toBeNull();
+    expect(reset?.searchParams.get("q")).toBeNull();
+    expect(reset?.searchParams.get("sort")).toBe("target");
+    expect(reset?.searchParams.get("direction")).toBe("asc");
+  });
+  expect(search).toHaveValue("");
+  expect(
+    screen.queryByRole("button", { name: "Reset all" }),
+  ).not.toBeInTheDocument();
 });

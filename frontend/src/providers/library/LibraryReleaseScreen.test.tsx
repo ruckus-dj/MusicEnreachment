@@ -376,11 +376,14 @@ it("shows publication and source details from release detail without source inve
     screen.getByText("Technical details").parentElement,
   ).not.toHaveAttribute("open");
   await openCurrentDetails();
+  const path = screen.getByText("Artist/Album/01 - Position One.flac", {
+    selector: "dd",
+  });
+  expect(path).toBeVisible();
+  const details = path.closest("dl");
+  if (!details) throw new Error("Missing current publication details");
   expect(
-    await screen.findByText("flac · FLAC", { selector: "dd" }),
-  ).toBeVisible();
-  expect(
-    screen.getByText("Artist/Album/01 - Position One.flac", { selector: "dd" }),
+    within(details).getByText("flac · FLAC", { selector: "dd *" }),
   ).toBeVisible();
   const formatted = new Intl.DateTimeFormat("en", {
     dateStyle: "medium",

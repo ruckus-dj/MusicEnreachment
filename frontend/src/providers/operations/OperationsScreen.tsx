@@ -18,6 +18,7 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import {
+  defaultOperationsLocation,
   type OperationsLocation,
   operationsLocationHref,
   parseOperationsLocation,
@@ -322,6 +323,13 @@ function useOperationsModel(): ApplicationOperationsModel {
   const route = parseOperationsLocation(hash);
   const { headingRef, focusHeading, restoreHeadingFocus } =
     useOperationsHeadingFocus();
+  // PageHeader only makes its heading programmatically focusable when it also
+  // receives an id, and the portable operations list does not pass one. Keep
+  // the shared heading focusable so post-action focus restoration works.
+  useEffect(() => {
+    const heading = headingRef.current;
+    if (heading && !heading.hasAttribute("tabindex")) heading.tabIndex = -1;
+  });
   const pendingGuard = useRef(false);
   const manualRefreshGuard = useRef(false);
   const lastGood = useRef<
@@ -657,6 +665,14 @@ function useOperationsModel(): ApplicationOperationsModel {
       kind: route.kind,
       onKindChange: (value) => {
         updateRoute({ kind: value, offset: 0 });
+      },
+      onResetFilters: () => {
+        setSearchText("");
+        updateRoute({
+          status: defaultOperationsLocation.status,
+          kind: defaultOperationsLocation.kind,
+          offset: 0,
+        });
       },
     },
     pagination,

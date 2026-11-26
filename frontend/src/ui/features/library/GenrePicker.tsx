@@ -1,16 +1,26 @@
-import { useMemo, useState } from "react";
-import type { Selection } from "react-aria-components";
 import {
-  Dialog,
-  Heading,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { Key, Selection } from "react-aria-components";
+import {
+  Autocomplete,
+  Button,
+  DialogTrigger,
   Input,
   ListBox,
   ListBoxItem,
-  Modal,
-  ModalOverlay,
+  Popover,
   SearchField,
+  Tag,
+  TagGroup,
+  TagList,
 } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
 import type { GenreMessages } from "./genreMessages";
 
 export type GenreReference = {
@@ -41,6 +51,43 @@ export type GenrePickerCatalog = {
   onRetryStatus: () => void;
 };
 
+const triggerClass =
+  "size-8 min-h-8 min-w-8 shrink-0 rounded-md px-0 text-[var(--muted)] hover:text-[var(--ink)]";
+
+const tagClass =
+  "inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--raised)] py-0 pl-2.5 pr-1 text-xs text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
+
+const readOnlyTagClass =
+  "inline-flex h-7 max-w-full min-w-0 items-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-2.5 text-xs text-[var(--ink)]";
+
+const removeButtonClass =
+  "grid size-5 shrink-0 cursor-pointer place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
+
+const popoverClass =
+  "z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-[min(22rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface)] p-0 text-[var(--ink)] shadow-[0_12px_32px_rgb(0_0_0/0.14)]";
+
+const searchClass =
+  "h-9 w-full min-w-0 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] placeholder:text-[var(--muted)] hover:border-[var(--ink)] focus-visible:border-[var(--accent)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0";
+
+const listBoxClass =
+  "max-h-56 overflow-y-auto overscroll-contain rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-1 outline-none";
+
+const optionClass =
+  "cursor-pointer rounded-[var(--control-radius)] px-2.5 py-2 text-sm text-[var(--ink)] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent-strong)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:-outline-offset-2";
+
+const noticeClass = "m-0 text-xs text-[var(--muted)]";
+const errorNoticeClass = "m-0 text-xs text-[var(--error)]";
+
+type PendingFocus =
+  | { target: "trigger"; removed?: string[] }
+  | { target: "tag"; id: string; removed: string[] };
+
+/**
+ * Multi-select genre picker. The selected value is always visible as removable
+ * tags; a compact, anchored popover holds search, catalog status and the
+ * provider-supplied result page. Search state and results belong to the host,
+ * so the popover never filters or paginates them a second time.
+ */
 export function GenrePicker({
   value,
   onChange,
@@ -75,6 +122,14 @@ export function GenrePicker({
 } & GenrePickerCatalog) {
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(60);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const tagGroupRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const pendingFocus = useRef<PendingFocus | null>(null);
+  const pendingExpandFocus = useRef(false);
+  const focusFrame = useRef<number | null>(null);
+  const [, setFocusRequest] = useState(0);
   const visibleOptions = useMemo(
     () => options.slice(0, visibleCount),
     [options, visibleCount],
@@ -94,11 +149,101 @@ export function GenrePicker({
     bundledCatalogReady ||
       (catalogStatus?.updated_at && catalogStatus.count > 0),
   );
+  const searchDisabled = disabled || !catalogAvailable || catalogStatusLoading;
+  const loadAvailable = Boolean(
+    onLoadBundledCatalog &&
+      !catalogStatusLoading &&
+      !catalogStatusError &&
+      !catalogStatus &&
+      !bundledCatalogReady,
+  );
+
+  function requestFocus(next: PendingFocus) {
+    pendingFocus.current = next;
+    setFocusRequest((request) => request + 1);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (!searchDisabled) {
+      searchInputRef.current?.focus();
+      return;
+    }
+    const action = loadAvailable ? "load" : "done";
+    popoverRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-genre-popover-action="${action}"]`,
+      )
+      ?.focus();
+  }, [loadAvailable, open, searchDisabled]);
+
+  useEffect(() => {
+    if (!pendingExpandFocus.current || visibleOptions.length < options.length)
+      return;
+    pendingExpandFocus.current = false;
+    if (!searchDisabled) {
+      searchInputRef.current?.focus();
+      return;
+    }
+    popoverRef.current
+      ?.querySelector<HTMLButtonElement>('[data-genre-popover-action="done"]')
+      ?.focus();
+  }, [searchDisabled, options.length, visibleOptions.length]);
+
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    if (pending.removed?.some((id) => value.some((item) => item.id === id)))
+      return;
+    pendingFocus.current = null;
+    const trigger =
+      fieldRef.current?.querySelector<HTMLButtonElement>("[data-genre-add]");
+    let target = trigger;
+    if (pending.target === "tag") {
+      const buttons = tagGroupRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-genre-remove-id]",
+      );
+      target = buttons
+        ? (Array.from(buttons).find(
+            (button) => button.dataset.genreRemoveId === pending.id,
+          ) ?? trigger)
+        : trigger;
+    }
+    if (!target) return;
+    if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current);
+    focusFrame.current = requestAnimationFrame(() => {
+      focusFrame.current = null;
+      target?.focus();
+    });
+  });
+
+  useEffect(
+    () => () => {
+      if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current);
+    },
+    [],
+  );
 
   function close() {
     setOpen(false);
     setVisibleCount(60);
+    pendingExpandFocus.current = false;
     onQueryChange("");
+    onClearCatalogError();
+  }
+
+  function changeOpen(nextOpen: boolean) {
+    if (nextOpen) {
+      setOpen(true);
+      onOpenCatalog();
+      return;
+    }
+    close();
+  }
+
+  function changeQuery(next: string) {
+    onQueryChange(next);
+    setVisibleCount(60);
     onClearCatalogError();
   }
 
@@ -112,119 +257,139 @@ export function GenrePicker({
     onChange([...retained, ...added]);
   }
 
+  function removeSelection(keys: Iterable<Key>) {
+    const removed = new Set(Array.from(keys, String));
+    if (!removed.size) return;
+    const firstRemoved = value.findIndex((item) => removed.has(item.id));
+    const remaining = value.filter((item) => !removed.has(item.id));
+    const next =
+      remaining[Math.min(Math.max(firstRemoved, 0), remaining.length - 1)];
+    requestFocus(
+      next
+        ? { target: "tag", id: next.id, removed: [...removed] }
+        : { target: "trigger", removed: [...removed] },
+    );
+    onChange(remaining);
+  }
+
+  function showMore() {
+    const next = visibleCount + 60;
+    if (next >= options.length) pendingExpandFocus.current = true;
+    setVisibleCount(next);
+  }
+
+  function handlePickerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!open || event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    requestFocus({ target: "trigger" });
+    close();
+  }
+
   return (
     <div className="grid min-w-0 gap-1 text-sm">
       {showLabel && (
         <span className="text-xs text-[var(--muted)]">{label}</span>
       )}
       {editing ? (
-        <>
-          <AppButton
-            type="button"
-            aria-label={label}
-            aria-haspopup="dialog"
-            aria-expanded={open}
-            isDisabled={disabled}
-            onPress={() => {
-              setOpen(true);
-              onOpenCatalog();
-            }}
-            className="min-h-9 w-full justify-between border-x-0 border-t-0 bg-transparent px-1 text-left shadow-none hover:bg-transparent"
-          >
-            <span className="truncate text-[var(--ink)]">
-              {value.length
-                ? value.map((item) => item.name).join(", ")
-                : copy.choose}
-            </span>
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 16 16"
-              className="size-4 shrink-0 text-[var(--muted)]"
-              fill="none"
+        <div
+          ref={fieldRef}
+          onKeyDownCapture={handlePickerKeyDown}
+          className="flex min-h-9 min-w-0 flex-wrap items-center gap-1.5 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-1 py-1 focus-within:border-[var(--accent)] focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-0 pointer-coarse:min-h-10"
+        >
+          {value.length ? (
+            <TagGroup
+              ref={tagGroupRef}
+              aria-label={copy.selected}
+              onRemove={removeSelection}
+              disabledKeys={disabled ? value.map((item) => item.id) : undefined}
+              className="min-w-0 flex-1"
             >
-              <path
-                d="m4 6 4 4 4-4"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </AppButton>
-          <ModalOverlay
-            isOpen={open}
-            onOpenChange={(nextOpen) => {
-              if (nextOpen) setOpen(true);
-              else close();
-            }}
-            isDismissable
-            className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/45 p-3 sm:p-6"
-          >
-            <Modal className="max-h-[min(80vh,560px)] w-full max-w-[560px] overflow-y-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[0_16px_48px_#0003] sm:p-5">
-              <div
-                onKeyDownCapture={(event) => {
-                  if (event.key === "Escape") {
-                    event.stopPropagation();
-                    close();
-                  }
-                }}
+              <TagList
+                items={value}
+                className="flex min-w-0 flex-wrap items-center gap-1.5"
               >
-                <Dialog aria-label={`${label} — ${copy.chooseDialog}`}>
-                  <Heading slot="title">{label}</Heading>
-                  {value.length > 0 ? (
-                    <ul
-                      aria-label={copy.selected}
-                      className="mb-3 flex flex-wrap gap-1.5"
+                {(genre) => (
+                  <Tag
+                    id={genre.id}
+                    textValue={genre.name}
+                    className={tagClass}
+                  >
+                    <span
+                      className="min-w-0 max-w-[16rem] truncate"
+                      title={
+                        genre.source_name !== genre.name
+                          ? genre.source_name
+                          : undefined
+                      }
                     >
-                      {value.map((genre) => (
-                        <li
-                          key={genre.id}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
-                        >
-                          {genre.name}
-                          <AppButton
-                            type="button"
-                            aria-label={`${copy.remove} ${genre.name}`}
-                            isDisabled={disabled}
-                            onPress={() =>
-                              onChange(
-                                value.filter((item) => item.id !== genre.id),
-                              )
-                            }
-                            className="min-h-6 min-w-6 px-1 py-0"
-                          >
-                            ×
-                          </AppButton>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
+                      {genre.name}
+                    </span>
+                    <Button
+                      slot="remove"
+                      aria-label={copy.remove}
+                      data-genre-remove-id={genre.id}
+                      className={removeButtonClass}
+                    >
+                      <AppIcon name="close" className="size-3" />
+                    </Button>
+                  </Tag>
+                )}
+              </TagList>
+            </TagGroup>
+          ) : (
+            <span className="min-w-0 flex-1 px-1 text-[var(--muted)]">
+              {copy.choose}
+            </span>
+          )}
+          <DialogTrigger isOpen={open} onOpenChange={changeOpen}>
+            <AppButton
+              type="button"
+              aria-label={label}
+              data-genre-add
+              variant="ghost"
+              isDisabled={disabled}
+              className={triggerClass}
+            >
+              <AppIcon name="plus" />
+            </AppButton>
+            <Popover
+              ref={popoverRef}
+              isNonModal
+              placement="bottom start"
+              offset={4}
+              className={popoverClass}
+            >
+              <Autocomplete
+                inputValue={query}
+                onInputChange={changeQuery}
+                /*
+                 * The host already searched the catalog. Keeping every supplied
+                 * row prevents a second, client-side filter of server results.
+                 */
+                filter={() => true}
+              >
+                <div className="grid gap-2 p-2">
                   <SearchField
                     aria-label={copy.search}
-                    value={query}
                     isDisabled={
                       disabled || !catalogAvailable || catalogStatusLoading
                     }
-                    onChange={(next) => {
-                      onQueryChange(next);
-                      setVisibleCount(60);
-                      onClearCatalogError();
-                    }}
-                    autoFocus
                     className="grid gap-1"
                   >
                     <Input
+                      ref={searchInputRef}
                       placeholder={copy.searchPlaceholder}
-                      className="min-h-10 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus-visible:ring-2 focus-visible:ring-[var(--focus)]"
+                      className={searchClass}
                     />
                   </SearchField>
                   {catalogStatusLoading ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.catalogLoading}
                     </p>
                   ) : null}
                   {catalogStatusError ? (
-                    <p role="alert" className="mt-2 text-[var(--error)]">
+                    <p role="alert" className={errorNoticeClass}>
                       {copy.catalogError} {catalogStatusError}{" "}
                       <button
                         type="button"
@@ -246,10 +411,15 @@ export function GenrePicker({
                   !catalogStatusError &&
                   !catalogStatus &&
                   !bundledCatalogReady ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.catalogUnloaded}{" "}
                       {onLoadBundledCatalog ? (
-                        <AppButton type="button" onPress={onLoadBundledCatalog}>
+                        <AppButton
+                          type="button"
+                          size="sm"
+                          data-genre-popover-action="load"
+                          onPress={onLoadBundledCatalog}
+                        >
                           {copy.loadBundledCatalog}
                         </AppButton>
                       ) : (
@@ -267,7 +437,7 @@ export function GenrePicker({
                   !catalogStatus.updated_at ? (
                     <p
                       role={catalogStatus.last_error ? "alert" : "status"}
-                      className="mt-2 text-[var(--muted)]"
+                      className={noticeClass}
                     >
                       {catalogStatus.last_error
                         ? `${copy.catalogError} ${catalogStatus.last_error}`
@@ -283,24 +453,24 @@ export function GenrePicker({
                   {!catalogStatusLoading &&
                   catalogStatus?.updated_at &&
                   catalogStatus.count === 0 ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.catalogEmpty}
                     </p>
                   ) : null}
                   {!catalogStatusLoading &&
                   catalogStatus?.updated_at &&
                   catalogStatus.last_error ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.catalogLastRefreshError} {catalogStatus.last_error}
                     </p>
                   ) : null}
                   {loading ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.loading}
                     </p>
                   ) : null}
                   {catalogError ? (
-                    <p role="alert" className="mt-2 text-[var(--error)]">
+                    <p role="alert" className={errorNoticeClass}>
                       {copy.catalogError} {catalogError}
                       <button
                         type="button"
@@ -315,7 +485,7 @@ export function GenrePicker({
                   !query.trim() &&
                   !options.length &&
                   !loading ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.searchPrompt}
                     </p>
                   ) : null}
@@ -324,7 +494,7 @@ export function GenrePicker({
                   !loading &&
                   !catalogError &&
                   !options.length ? (
-                    <p role="status" className="mt-2 text-[var(--muted)]">
+                    <p role="status" className={noticeClass}>
                       {copy.noMatches}
                     </p>
                   ) : null}
@@ -338,14 +508,15 @@ export function GenrePicker({
                       escapeKeyBehavior="none"
                       selectedKeys={selectedKeys}
                       onSelectionChange={changeSelection}
-                      className="mt-2 max-h-56 overflow-y-auto rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-1"
+                      className={listBoxClass}
                     >
                       {visibleOptions.map((item) => (
                         <ListBoxItem
                           key={item.id}
                           id={item.id}
+                          aria-label={item.name}
                           textValue={item.name}
-                          className="cursor-pointer rounded px-2 py-2 text-[var(--ink)] outline-none focus:bg-[var(--raised)] focus-visible:ring-2 focus-visible:ring-[var(--focus)] data-[selected]:bg-[var(--accent-soft)]"
+                          className={optionClass}
                         >
                           <span>{item.name}</span>
                           {item.source_name !== item.name ? (
@@ -361,30 +532,54 @@ export function GenrePicker({
                   visibleOptions.length < options.length ? (
                     <AppButton
                       type="button"
-                      className="mt-2 w-full"
-                      onPress={() => setVisibleCount((count) => count + 60)}
+                      size="sm"
+                      className="w-full"
+                      onPress={showMore}
                     >
                       {copy.more} · {options.length - visibleOptions.length}
                     </AppButton>
                   ) : null}
-                  <div className="mt-4 flex justify-end">
-                    <AppButton type="button" onPress={close}>
+                  <div className="flex justify-end">
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      data-genre-popover-action="done"
+                      onPress={close}
+                    >
                       {copy.done}
                     </AppButton>
                   </div>
-                </Dialog>
-              </div>
-            </Modal>
-          </ModalOverlay>
-        </>
+                </div>
+              </Autocomplete>
+            </Popover>
+          </DialogTrigger>
+        </div>
+      ) : value.length ? (
+        <ul
+          aria-label={copy.selected}
+          className="m-0 flex min-w-0 list-none flex-wrap items-center gap-1.5 p-0"
+        >
+          {value.map((genre) => (
+            <li key={genre.id} className={readOnlyTagClass}>
+              <span
+                className="min-w-0 truncate"
+                title={
+                  genre.source_name !== genre.name
+                    ? genre.source_name
+                    : undefined
+                }
+              >
+                {genre.name}
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div
           className="min-h-9 truncate border-b border-transparent px-1 py-2 text-[var(--ink)] max-sm:min-h-10"
-          title={value.map((item) => item.name).join(", ")}
+          title={copy.emptyDisplay}
         >
-          {value.length
-            ? value.map((item) => item.name).join(", ")
-            : copy.emptyDisplay}
+          {copy.emptyDisplay}
         </div>
       )}
     </div>

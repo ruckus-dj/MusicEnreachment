@@ -10,17 +10,17 @@ import {
 } from "./sourceInspectorModel";
 
 const panel =
-  "grid min-w-0 gap-1 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2.5";
+  "grid min-w-0 gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2.5";
 const heading = "m-0 text-sm font-semibold";
-const note = "m-0 text-[11px] text-[var(--muted)] wrap-anywhere";
-const facts = "m-0 grid text-[13px]";
+const note = "m-0 text-xs text-[var(--muted)] wrap-anywhere";
+const facts = "m-0 grid text-sm";
 const fact =
   "grid min-w-0 gap-3 border-b border-[var(--line)] py-1.5 last:border-b-0 min-[600px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] max-[599px]:gap-0.5";
 const term = "m-0 text-[var(--muted)]";
 const detail = "m-0 min-w-0 wrap-anywhere";
-const code = "font-mono text-[11px] wrap-anywhere";
+const code = "font-mono text-xs wrap-anywhere";
 const rawTrigger =
-  "min-h-8 w-fit cursor-pointer rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-left text-[13px] font-semibold text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
+  "min-h-8 w-fit cursor-pointer rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-left text-sm font-semibold text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
 
 export function SourceTechnicalResult({
   locale,

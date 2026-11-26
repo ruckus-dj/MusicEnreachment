@@ -45,7 +45,7 @@ const headingClass = "m-0 text-base font-semibold [text-wrap:balance]";
 const paragraphClass = "m-0 max-w-[75ch] text-sm";
 const mutedClass = "text-[var(--muted)]";
 const codeClass =
-  "rounded-[3px] bg-[var(--raised)] px-1 py-0.5 font-mono text-[0.9em] text-[var(--ink)]";
+  "rounded bg-[var(--raised)] px-1 py-0.5 font-mono text-[0.9em] text-[var(--ink)]";
 const linkClass =
   "text-[var(--accent)] underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]";
 const stepsClass = "m-0 max-w-[75ch] list-decimal space-y-1 pl-5 text-sm";

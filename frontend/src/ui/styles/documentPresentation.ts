@@ -1,20 +1,25 @@
-const documentRootClass = `min-w-[320px] font-[system-ui,sans-serif] text-[13px]/[1.4] text-[var(--ink)] bg-[var(--canvas)]
-  [color-scheme:light] [--canvas:#f2f3ef] [--surface:#fff] [--raised:#f7f8f5] [--ink:#26332b]
-  [--muted:#59675d] [--line:#d7ded5] [--control:#7c8a7e] [--accent:#226740] [--accent-soft:#e5f1e7]
-  [--button-text:#fff] [--warning:#845a12] [--warning-soft:#fff2d7] [--error:#a13535]
-  [--error-soft:#fde9e8] [--info:#315f88] [--info-soft:#e7f0fa] [--success:var(--accent)]
-  [--success-soft:var(--accent-soft)] [--focus:var(--accent)] [--button:var(--accent)] [--radius:5px]
-  [--control-radius:4px] [--mono:ui-monospace,SFMono-Regular,Consolas,monospace]
-  [font-variant-numeric:normal] dark:[color-scheme:dark] dark:[--canvas:#111512]
-  dark:[--surface:#191e1a] dark:[--raised:#222923] dark:[--ink:#e3eae3] dark:[--muted:#a7b5a9]
-  dark:[--line:#354138] dark:[--control:#718376] dark:[--accent:#83dca0] dark:[--accent-soft:#233e2c]
-  dark:[--button-text:#112419] dark:[--warning:#edc474] dark:[--warning-soft:#3a301d]
-  dark:[--error:#ffa09b] dark:[--error-soft:#3a2425] dark:[--info:#9fc7ec] dark:[--info-soft:#203246]`;
+const documentRootClass = `min-w-[320px] bg-[var(--canvas)] font-[system-ui,-apple-system,'Segoe UI',sans-serif] text-[14px]/[1.5] text-[var(--ink)]
+  [color-scheme:light] [--canvas:#fafafa] [--surface:#ffffff] [--raised:#f5f5f5] [--ink:#171717]
+  [--muted:#525252] [--line:#d4d4d4] [--control:#8a8a8a] [--accent:#2563eb] [--accent-strong:#1d4ed8]
+  [--accent-soft:#dbeafe] [--button:#2563eb] [--button-hover:#1d4ed8] [--button-text:#ffffff]
+  [--warning:#92400e] [--warning-soft:#fef3c7] [--error:#b91c1c] [--error-soft:#fee2e2]
+  [--info:#1d4ed8] [--info-soft:#dbeafe] [--success:#047857] [--success-soft:#d1fae5]
+  [--focus:#2563eb] [--radius:16px] [--control-radius:8px] [--popover-radius:12px] [--table-radius:8px]
+  [--mono:ui-monospace,SFMono-Regular,Consolas,monospace] [--shadow:0_1px_2px_rgb(0_0_0/0.04)]
+  [accent-color:var(--accent)] [scrollbar-color:var(--control)_transparent] [scrollbar-width:thin]
+  dark:[color-scheme:dark] dark:[--canvas:#0a0a0a] dark:[--surface:#171717] dark:[--raised:#262626]
+  dark:[--ink:#f5f5f5] dark:[--muted:#a3a3a3] dark:[--line:#404040] dark:[--control:#737373]
+  dark:[--accent:#60a5fa] dark:[--accent-strong:#93c5fd] dark:[--accent-soft:#1e3a8a4d]
+  dark:[--button:#2563eb] dark:[--button-hover:#1d4ed8] dark:[--button-text:#ffffff]
+  dark:[--warning:#fbbf24] dark:[--warning-soft:#451a03] dark:[--error:#f87171]
+  dark:[--error-soft:#450a0a] dark:[--info:#93c5fd] dark:[--info-soft:#172554]
+  dark:[--success:#34d399] dark:[--success-soft:#022c22] dark:[--focus:#60a5fa]`;
 
-const documentBodyClass = `m-0 min-h-dvh bg-[var(--canvas)] font-[system-ui,sans-serif] text-[13px]/[1.4] text-[var(--ink)]
-  [&_*:focus-visible]:outline-2 [&_*:focus-visible]:outline-[var(--focus)] [&_h1[tabindex='-1']:focus]:outline-none
-  [&_*:focus-visible]:outline-offset-2 selection:bg-[var(--accent-soft)] selection:text-[var(--ink)] caret-[var(--accent)]
-  [padding-bottom:env(safe-area-inset-bottom)] motion-reduce:[&_*]:transition-none motion-reduce:[&_*::before]:transition-none motion-reduce:[&_*::after]:transition-none`;
+const documentBodyClass = `m-0 min-h-dvh bg-[var(--canvas)] font-[system-ui,-apple-system,'Segoe UI',sans-serif] text-[14px]/[1.5] text-[var(--ink)]
+  [&_*:focus-visible]:outline-2 [&_*:focus-visible]:outline-[var(--focus)] [&_*:focus-visible]:outline-offset-2
+  [&_h1[tabindex='-1']:focus]:outline-none [&_h2[tabindex='-1']:focus]:outline-none selection:bg-[var(--accent-soft)] selection:text-[var(--ink)]
+  caret-[var(--accent)] [padding-bottom:env(safe-area-inset-bottom)]
+  motion-reduce:[&_*]:transition-none motion-reduce:[&_*::before]:transition-none motion-reduce:[&_*::after]:transition-none`;
 
 export const documentPresentation = {
   name: "portable-document-presentation",

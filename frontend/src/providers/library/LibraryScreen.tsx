@@ -90,14 +90,11 @@ function withStateFilter(
   };
 }
 
-function normalizedRoute(route: LibraryRoute): LibraryRoute {
-  return withStateFilter(route, stateFilterFor(route));
-}
-
 /**
  * Reads the canonical axis/offset route and also accepts the approved
  * `filter`/`page` spelling used by the design prototype. Explicit axis or
- * offset params win, so sharing an older library link keeps its meaning.
+ * offset params win, so sharing an older library link keeps its meaning and a
+ * mixed-axis link stays intact.
  */
 function libraryControllerRoute(hash: string): LibraryRoute | undefined {
   const route = parseLibraryRoute(hash);
@@ -123,7 +120,7 @@ function libraryControllerRoute(hash: string): LibraryRoute | undefined {
   ) {
     next = { ...next, offset: (requestedPage - 1) * PAGE_SIZE };
   }
-  return normalizedRoute(next);
+  return next;
 }
 
 function pageForOffset(offset: number) {
@@ -187,7 +184,7 @@ export function libraryArtistCardsModel({
 export function useLibraryController() {
   const observation = useHashObservation();
   const initialRoute =
-    libraryControllerRoute(observation.hash) ?? normalizedRoute(fallbackRoute);
+    libraryControllerRoute(observation.hash) ?? fallbackRoute;
   const [route, setRoute] = useState(initialRoute);
   const [searchInput, setSearchInput] = useState(initialRoute.query);
   const lastHref = useRef(libraryRouteHref(initialRoute));
@@ -238,10 +235,37 @@ export function useLibraryController() {
 
   const setFilter = useCallback((filter: LibraryStateFilter) => {
     setRoute((current) => {
-      if (stateFilterFor(current) === filter) return current;
-      return { ...withStateFilter(current, filter), offset: 0 };
+      const next = withStateFilter(current, filter);
+      if (
+        current.publication === next.publication &&
+        current.availability === next.availability
+      )
+        return current;
+      return { ...next, offset: 0 };
     });
   }, []);
+
+  const setPublication = useCallback(
+    (publication: LibraryRoute["publication"]) => {
+      setRoute((current) =>
+        current.publication === publication
+          ? current
+          : { ...current, publication, offset: 0 },
+      );
+    },
+    [],
+  );
+
+  const setAvailability = useCallback(
+    (availability: LibraryRoute["availability"]) => {
+      setRoute((current) =>
+        current.availability === availability
+          ? current
+          : { ...current, availability, offset: 0 },
+      );
+    },
+    [],
+  );
 
   const setPage = useCallback(
     (page: number, totalPages = Number.MAX_SAFE_INTEGER) => {
@@ -294,6 +318,8 @@ export function useLibraryController() {
     searchInput,
     setView,
     setFilter,
+    setPublication,
+    setAvailability,
     setPage,
     setSearch,
     reset,
@@ -326,6 +352,8 @@ function useLibraryCatalogModel(): {
     searchInput,
     setView,
     setFilter,
+    setPublication,
+    setAvailability,
     setPage,
     setSearch,
     reset,
@@ -402,7 +430,10 @@ function useLibraryCatalogModel(): {
     summary.artist_count === 0 &&
     summary.release_count === 0 &&
     summary.position_count === 0;
-  const isPristine = route.query === "" && filter === "all";
+  const isPristine =
+    route.query === "" &&
+    route.publication === "all" &&
+    route.availability === "all";
   const selection = useLibrarySelection({
     artistIDs:
       view === "artists"
@@ -443,7 +474,7 @@ function useLibraryCatalogModel(): {
             reason:
               catalogIsEmpty && isPristine
                 ? "library"
-                : filter === "published" &&
+                : route.publication === "published" &&
                     summary?.published_position_count === 0
                   ? "unpublished"
                   : !isPristine
@@ -512,6 +543,11 @@ function useLibraryCatalogModel(): {
     onSearch: setSearch,
     filter,
     onFilter: setFilter,
+    publication: route.publication,
+    availability: route.availability,
+    onPublicationChange: setPublication,
+    onAvailabilityChange: setAvailability,
+    onResetFilters: reset,
     onViewChange: setView,
     state: pageState,
     results,

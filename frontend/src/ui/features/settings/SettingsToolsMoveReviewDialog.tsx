@@ -43,7 +43,7 @@ export function SettingsToolsMoveReviewDialog({
       ref={dialog}
       aria-modal="true"
       aria-labelledby={title}
-      className="m-auto max-h-[calc(100dvh-24px)] w-[min(560px,calc(100vw-24px))] gap-3 overflow-auto overscroll-contain rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)] shadow-[0_16px_48px_#0003] backdrop:bg-black/45 open:grid"
+      className="m-auto max-h-[calc(100dvh-24px)] w-[min(560px,calc(100vw-24px))] gap-3 overflow-auto overscroll-contain rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)] backdrop:bg-[rgb(0_0_0/0.45)] open:grid"
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();

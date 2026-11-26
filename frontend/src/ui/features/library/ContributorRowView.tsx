@@ -34,7 +34,7 @@ export type ContributorRowActions = {
 };
 
 const inputClassName =
-  "min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] read-only:border-transparent read-only:bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--focus)]";
+  "min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] read-only:border-transparent read-only:bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--focus)]";
 
 function dataAttributes(keys?: string[]) {
   return keys?.length ? { "data-metadata-keys": keys.join(",") } : {};

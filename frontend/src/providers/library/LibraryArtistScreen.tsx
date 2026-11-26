@@ -191,11 +191,66 @@ function useLibraryArtistModel(
       }).slice(1);
     }, SEARCH_DEBOUNCE_MS);
   }
+  function clearPendingSearch() {
+    if (searchTimer.current !== null) {
+      window.clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
+  }
   function changeFilter(value: LibraryStateFilter) {
+    clearPendingSearch();
     const current = currentRoute();
-    if (stateFilterFor(current) === value) return;
-    window.location.hash = libraryArtistRouteHref(artistId, {
+    const next = {
       ...withStateFilter(current, value),
+      query: searchInput,
+      offset: 0,
+    };
+    if (
+      current.query === next.query &&
+      current.publication === next.publication &&
+      current.availability === next.availability &&
+      current.offset === next.offset
+    )
+      return;
+    window.location.hash = libraryArtistRouteHref(artistId, next).slice(1);
+  }
+  function changePublication(value: LibraryRoute["publication"]) {
+    clearPendingSearch();
+    const current = currentRoute();
+    window.location.hash = libraryArtistRouteHref(artistId, {
+      ...current,
+      publication: value,
+      query: searchInput,
+      offset: 0,
+    }).slice(1);
+  }
+  function changeAvailability(value: LibraryRoute["availability"]) {
+    clearPendingSearch();
+    const current = currentRoute();
+    window.location.hash = libraryArtistRouteHref(artistId, {
+      ...current,
+      availability: value,
+      query: searchInput,
+      offset: 0,
+    }).slice(1);
+  }
+  /** Clears search and both filter axes in one canonical navigation. */
+  function resetFilters() {
+    clearPendingSearch();
+    setSearchInput("");
+    const current = currentRoute();
+    if (
+      current.query === "" &&
+      current.publication === "all" &&
+      current.availability === "all" &&
+      current.offset === 0
+    )
+      return;
+    window.location.hash = libraryArtistRouteHref(artistId, {
+      ...current,
+      query: "",
+      publication: "all",
+      availability: "all",
       offset: 0,
     }).slice(1);
   }
@@ -446,6 +501,11 @@ function useLibraryArtistModel(
     filter: stateFilterFor(route),
     onQueryChange: changeQuery,
     onFilterChange: changeFilter,
+    publication: route.publication,
+    availability: route.availability,
+    onPublicationChange: changePublication,
+    onAvailabilityChange: changeAvailability,
+    onResetFilters: resetFilters,
     editionsKey: artistId,
     releases: releaseState,
   };

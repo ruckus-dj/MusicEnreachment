@@ -221,7 +221,7 @@ export function ArtistMetadataCard({
           {editing ? (
             <input
               aria-label={label}
-              className="min-h-9 min-w-0 flex-1 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+              className="min-h-9 min-w-0 flex-1 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
               value={draft[key] ?? ""}
               disabled={busy}
               onChange={(event) => updateText(key, event.currentTarget.value)}

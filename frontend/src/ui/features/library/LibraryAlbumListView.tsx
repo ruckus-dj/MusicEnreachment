@@ -124,7 +124,7 @@ export interface LibraryAlbumListViewProps {
 }
 
 const selectColumn =
-  "box-border w-[34px] min-w-[34px] max-w-[34px] px-0! text-center! align-middle!";
+  "box-border w-12 min-w-12 max-w-12 px-0! text-center! align-middle!";
 const widths = [
   selectColumn,
   "",
@@ -132,18 +132,18 @@ const widths = [
   "w-[12%]",
   "w-[8%]",
   "w-[8%]",
-  "w-[9%]",
-  "w-[12%]",
-  "w-[9%]",
+  "w-[8%]",
+  "w-[11%]",
+  "w-[11%]",
 ];
 const tableClass =
-  "w-full table-fixed border-collapse text-xs wrap-anywhere [font-variant-numeric:tabular-nums] [&_th]:bg-[var(--surface)] [&_th]:text-left [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_th]:px-2 [&_th]:py-2 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_th]:border-b [&_td]:border-b [&_th]:border-[var(--line)] [&_td]:border-[var(--line)]";
+  "w-full table-fixed border-separate border-spacing-0 text-sm wrap-anywhere [font-variant-numeric:tabular-nums] [&_.react-aria-Column]:border-b [&_.react-aria-Column]:border-[var(--line)] [&_.react-aria-Column]:bg-[var(--raised)] [&_.react-aria-Column]:px-4 [&_.react-aria-Column]:py-2.5 [&_.react-aria-Column]:text-left [&_.react-aria-Column]:text-xs [&_.react-aria-Column]:font-medium [&_.react-aria-Column]:text-[var(--muted)] [&_.react-aria-Row]:bg-[var(--surface)] [&_.react-aria-Row:hover]:bg-[var(--raised)] [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-t [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-[var(--line)] [&_.react-aria-Cell]:px-4 [&_.react-aria-Cell]:py-3 [&_.react-aria-Cell]:align-middle [&_.react-aria-Cell:first-child]:px-0";
 const detailClass =
-  "min-w-0 rounded border border-[var(--line)] bg-[var(--raised)]";
+  "min-w-0 rounded-lg border border-[var(--line)] bg-[var(--raised)]";
 const cardClass =
-  "grid min-w-0 gap-2 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2 text-xs wrap-anywhere";
-const subClass = "block text-[11px] text-[var(--muted)]";
-const linkClass = "text-[var(--accent)] hover:underline";
+  "grid min-w-0 gap-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm wrap-anywhere";
+const subClass = "block text-xs text-[var(--muted)]";
+const linkClass = "font-medium text-[var(--accent-strong)] hover:underline";
 const expanderClass =
   "max-w-full text-left font-semibold text-[var(--accent)] wrap-anywhere hover:underline data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]";
 const checkboxClass =
@@ -315,7 +315,15 @@ function fields(album: LibraryAlbumRow, text: Text) {
     album.sourceCount ?? "—",
     audioField(album, text),
     publicationField(album, text),
-    album.provider === "musicbrainz" ? "MusicBrainz" : text.local,
+    album.provider === "musicbrainz" ? (
+      <span key="provider" className="whitespace-nowrap">
+        MusicBrainz
+      </span>
+    ) : (
+      <span key="provider" className="whitespace-nowrap">
+        {text.local}
+      </span>
+    ),
   ];
 }
 
@@ -528,7 +536,7 @@ export function LibraryAlbumListView({
             {headings.map((label, index) => (
               <Column
                 key={label}
-                className={`${widths[index]} whitespace-normal! wrap-anywhere`}
+                className={`react-aria-Column ${widths[index]} whitespace-normal! wrap-anywhere`}
                 isRowHeader={index === 1}
               >
                 {index === 0

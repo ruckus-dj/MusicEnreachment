@@ -687,7 +687,9 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
     expect(concurrency).toHaveValue("8 invalid");
     const shaCheckbox = screen.getByLabelText("Вычислять SHA-256");
-    expect(shaCheckbox).toHaveAttribute("aria-describedby", "sha256-help");
+    expect(shaCheckbox).toHaveAccessibleDescription(
+      /Настройка применяется к последующим анализам/,
+    );
     expect(
       screen.getByText(/Настройка применяется к последующим анализам/),
     ).toBeInTheDocument();

@@ -38,7 +38,7 @@ export type StructuredMetadataFieldViewProps =
     );
 
 const inputClassName =
-  "min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]";
+  "min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]";
 
 /**
  * Structured works/movement field composition. The provider owns draft state

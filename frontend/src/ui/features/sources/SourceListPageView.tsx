@@ -55,7 +55,7 @@ export function SourceListPageView({
     <section
       aria-labelledby="sources-title"
       aria-busy={ariaBusy || undefined}
-      className="mx-auto grid w-full min-w-0 max-w-5xl gap-[14px] py-3"
+      className="mx-auto grid w-full min-w-0 max-w-[1200px] gap-5"
     >
       <SourceListHeadingView {...heading} locale={locale} />
       {registration && (
@@ -67,7 +67,7 @@ export function SourceListPageView({
         feedback && <SourcePageFeedbackView {...feedback} />
       )}
       {loaded && (
-        <p className="my-2 text-xs text-[var(--muted)]">
+        <p className="m-0 text-sm text-[var(--muted)]">
           {sourceRegistrationMessages[locale].sourceTableHelp}
         </p>
       )}
@@ -80,7 +80,11 @@ export function SourceListPageView({
         />
       </fieldset>
       {loaded && cleanup && <SourceCleanupOutlet source={cleanup} />}
-      {loaded && <p className="m-0">{sourcePublicationsNote[locale]}</p>}
+      {loaded && (
+        <p className="m-0 text-sm text-[var(--muted)]">
+          {sourcePublicationsNote[locale]}
+        </p>
+      )}
     </section>
   );
 }

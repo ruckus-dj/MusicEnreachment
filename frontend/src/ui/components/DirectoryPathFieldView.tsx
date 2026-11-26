@@ -16,7 +16,7 @@ export type DirectoryPathFieldProps = {
 };
 
 const focus =
-  "focus-visible:relative focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]";
+  "focus-visible:relative focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[var(--accent)]";
 
 export function DirectoryPathFieldView({
   id,
@@ -40,13 +40,13 @@ export function DirectoryPathFieldView({
     .filter(Boolean)
     .join(" ");
   return (
-    <div className="grid min-w-0 gap-1">
-      <label className="font-semibold" htmlFor={id}>
+    <div className="grid min-w-0 gap-1.5">
+      <label className="text-sm font-medium text-[var(--ink)]" htmlFor={id}>
         {label}
       </label>
       <div className="flex min-w-0">
         <input
-          className={`${focus} min-h-9 w-full min-w-0 rounded-l-[5px] border border-r-0 border-[var(--control)] bg-[var(--raised)] px-[9px] py-1.5 text-[var(--ink)] disabled:text-[var(--muted)] max-[599px]:min-h-10`}
+          className={`${focus} h-9 w-full min-w-0 rounded-l-lg border border-r-0 border-[var(--control)] bg-[var(--surface)] px-3 font-mono text-xs text-[var(--ink)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)]`}
           id={id}
           type="text"
           readOnly
@@ -55,7 +55,7 @@ export function DirectoryPathFieldView({
           aria-describedby={helpIds || undefined}
         />
         <button
-          className={`${focus} min-h-9 flex-none rounded-r-[5px] border border-[var(--control)] bg-[var(--surface)] px-2.5 py-1.5 whitespace-nowrap text-[var(--ink)] enabled:hover:border-[var(--accent)] enabled:hover:bg-[var(--raised)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] max-[599px]:min-h-10`}
+          className={`${focus} h-9 flex-none rounded-r-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm font-medium whitespace-nowrap text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] disabled:cursor-not-allowed disabled:bg-[var(--raised)] disabled:text-[var(--muted)]`}
           type="button"
           disabled={disabled}
           onClick={() => setPickerOpen(true)}

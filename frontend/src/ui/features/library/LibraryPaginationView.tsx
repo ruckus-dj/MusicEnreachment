@@ -18,7 +18,7 @@ const copies = {
 } as const;
 
 const controlClass =
-  "min-h-9 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-[10px] py-[6px] text-[var(--ink)] data-[disabled]:opacity-45 data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]";
+  "inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] no-underline data-[disabled]:opacity-45 data-[hovered]:border-[var(--control)] data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
 
 type PageAction = { label: string; disabled: boolean } & (
   | { href: string }
@@ -61,7 +61,7 @@ export function LibraryPaginationControls({
 }) {
   return (
     <nav
-      className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs"
+      className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm"
       aria-label={label}
     >
       <span className="text-[var(--muted)]" role="status">

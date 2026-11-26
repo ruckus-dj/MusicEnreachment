@@ -422,7 +422,9 @@ it("opens one group matching route from the list and keeps the draft when return
     screen.queryByRole("region", { name: /Сопоставление/ }),
   ).not.toBeInTheDocument();
 
-  fireEvent.click(await screen.findByText("Открыть группу «Исходник»"));
+  fireEvent.click(
+    await screen.findByRole("link", { name: "Сопоставить группу «Исходник»" }),
+  );
   await waitFor(() =>
     expect(window.location.hash).toBe(incomingGroupMatchingHref(ids.group)),
   );
@@ -443,7 +445,9 @@ it("opens one group matching route from the list and keeps the draft when return
   expect(
     screen.queryByRole("region", { name: /Сопоставление/ }),
   ).not.toBeInTheDocument();
-  fireEvent.click(await screen.findByText("Открыть группу «Исходник»"));
+  fireEvent.click(
+    await screen.findByRole("link", { name: "Сопоставить группу «Исходник»" }),
+  );
   await waitFor(() =>
     expect(window.location.hash).toBe(incomingGroupMatchingHref(ids.group)),
   );
@@ -523,7 +527,7 @@ it("previews and confirms only the chosen file when creating a new group", async
   await waitFor(() =>
     expect(
       screen
-        .getAllByRole("link", { name: /Открыть группу/ })
+        .getAllByRole("link", { name: /группу «/ })
         .map((link) => link.getAttribute("href")),
     ).toEqual([
       incomingGroupMatchingHref("confirmed-singleton"),

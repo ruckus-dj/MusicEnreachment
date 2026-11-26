@@ -131,7 +131,7 @@ const copyByLocale = {
 } as const;
 
 const sectionClassName =
-  "grid min-w-0 gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3";
+  "grid min-w-0 gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5";
 const headingClassName = "m-0 text-sm font-semibold text-[var(--ink)]";
 const listClassName = "m-0 grid gap-2";
 const rowClassName = "grid min-w-0 gap-0.5";
@@ -166,7 +166,7 @@ export function SetupSummaryView({
       {!status.healthy && (
         <div
           role="alert"
-          className="grid gap-1 rounded border-l-[3px] border-[var(--error)] bg-[var(--error-soft)] px-3 py-2 text-[var(--error)]"
+          className="grid gap-1 rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] px-3.5 py-2.5 text-sm text-[var(--error)]"
         >
           <p className="m-0">{copy.notReadyIntro}</p>
           {status.problems.length ? (

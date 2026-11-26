@@ -1,14 +1,12 @@
-import {
-  Button,
-  Input,
-  Label,
-  SearchField,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs,
-} from "react-aria-components";
-import { panel, primary } from "../local-release/localReleaseUi";
+import { useRef } from "react";
+import { Button, Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { ActiveFilterTags } from "../../components/ActiveFilterTags";
+import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
+import { AppSearchField } from "../../components/AppSearchField";
+import { AppToolbar } from "../../components/AppToolbar";
+import { PageHeader } from "../../components/PageHeader";
+import { ui } from "../../components/uiStyles";
 import { OwnCatalogPagination } from "./OwnCatalogPagination";
 
 export type OwnCatalogListCopy = {
@@ -70,6 +68,9 @@ export type OwnCatalogListProps = {
   onPageChange: (page: number) => void;
 };
 
+const tabClass =
+  "flex h-8 cursor-pointer items-center gap-2 rounded-md px-3 text-sm font-medium text-[var(--muted)] transition-colors data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--ink)] data-[selected]:shadow-[0_1px_2px_rgb(0_0_0/0.08)] data-[hovered]:not-data-[selected]:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
+
 export function OwnCatalogList({
   locale,
   copy,
@@ -93,111 +94,124 @@ export function OwnCatalogList({
   onPageChange,
 }: OwnCatalogListProps) {
   const listRows = page?.rows ?? [];
+  const filterInputRef = useRef<HTMLInputElement>(null);
   return (
-    <section className="mx-auto max-w-none">
-      <header className="mb-3">
-        <h1 className="m-0 text-2xl font-semibold">{copy.title}</h1>
-        <p className="m-0 text-sm text-[var(--muted)]">{copy.description}</p>
-      </header>
+    <section className="mx-auto w-full min-w-0 max-w-[1100px]">
+      <PageHeader title={copy.title} subtitle={copy.description} />
       <Tabs
         selectedKey={selectedTab}
         onSelectionChange={(key) => onTabChange(String(key))}
-        className="grid min-w-0 gap-2"
+        className="grid min-w-0 gap-4"
       >
         <TabList
           aria-label={copy.tabListLabel}
-          className="flex flex-wrap gap-[3px] text-xs"
+          className="inline-flex w-fit flex-wrap gap-1 rounded-lg bg-[var(--raised)] p-1"
         >
           {tabs.map((tab) => (
             <Tab
               key={tab.id}
               id={tab.id}
               aria-label={`${tab.label}: ${tab.count}`}
-              className="flex min-h-9 cursor-pointer items-center gap-1.5 rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold whitespace-nowrap text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] max-sm:px-2"
+              className={tabClass}
             >
               <span>{tab.label}</span>
               <span
                 aria-hidden="true"
-                className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--raised)] px-1 text-xs leading-none font-medium text-[var(--ink)] tabular-nums"
+                className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--surface)] px-1.5 text-xs leading-none font-medium text-[var(--muted)] tabular-nums ring-1 ring-[var(--line)]"
               >
                 {tab.count}
               </span>
             </Tab>
           ))}
         </TabList>
-        <TabPanel id={selectedTab} className="min-w-0 pt-2">
-          <section className={`${panel} grid gap-2`}>
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <SearchField
-                className="grid w-full min-w-0 gap-1 sm:max-w-[32rem] sm:flex-1"
+        <TabPanel id={selectedTab} className="min-w-0">
+          <div className="grid gap-5">
+            <AppToolbar label={copy.title}>
+              <AppSearchField
+                aria-label={copy.filterLabel}
+                placeholder={copy.filterPlaceholder}
                 value={filter}
                 onChange={onFilterChange}
-              >
-                <Label className="text-xs font-medium">
-                  {copy.filterLabel}
-                </Label>
-                <Input
-                  className="min-h-8 w-full rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
-                  placeholder={copy.filterPlaceholder}
-                />
-              </SearchField>
-              <Button
-                className={primary}
+                inputRef={filterInputRef}
+                className="w-full max-w-[420px] flex-1"
+              />
+              <AppButton
+                variant="primary"
                 isDisabled={createDisabled}
                 onPress={onCreate}
               >
+                <AppIcon name="plus" />
                 {copy.createLabel}
-              </Button>
-            </div>
+              </AppButton>
+            </AppToolbar>
+            <ActiveFilterTags
+              locale={locale}
+              items={
+                filter.trim()
+                  ? [
+                      {
+                        id: "query",
+                        label: `${copy.filterLabel}: ${filter}`,
+                      },
+                    ]
+                  : []
+              }
+              focusTargetRef={filterInputRef}
+              onRemove={() => onClearFilter()}
+              onReset={() => onClearFilter()}
+            />
             {loading ? (
-              <p className="m-0 text-xs text-[var(--muted)]" role="status">
+              <p className="m-0 text-sm text-[var(--muted)]" role="status">
                 {copy.loading}
               </p>
             ) : null}
             {error ? (
-              <div className="grid justify-items-start gap-2">
-                <p
-                  className="m-0 text-xs font-medium text-[var(--error)]"
-                  role="alert"
-                >
+              <div className="grid justify-items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5">
+                <p className={ui.fieldError} role="alert">
                   {error}
                 </p>
-                <Button className={primary} onPress={onRetry}>
-                  {copy.retry}
-                </Button>
+                <AppButton onPress={onRetry}>{copy.retry}</AppButton>
               </div>
             ) : null}
             {!error && page && loaded && page.total === 0 ? (
               hasFilter ? (
-                <div className="grid justify-items-start gap-2">
-                  <p className="m-0 text-xs text-[var(--muted)]">
+                <div className="grid justify-items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-6">
+                  <p className="m-0 text-sm text-[var(--muted)]">
                     {copy.noMatches}
                   </p>
-                  <Button onPress={onClearFilter}>{copy.clearFilter}</Button>
+                  <AppButton onPress={onClearFilter}>
+                    {copy.clearFilter}
+                  </AppButton>
                 </div>
               ) : (
-                <p className="m-0 text-xs text-[var(--muted)]">
+                <p className="m-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">
                   {copy.emptyLabel}
                 </p>
               )
             ) : null}
             {!error && page && listRows.length > 0 ? (
-              <ul className="m-0 list-none divide-y divide-[var(--line)] border-y border-[var(--line)] p-0">
+              <ul
+                className={`${ui.tableFrame} m-0 list-none divide-y divide-[var(--line)] p-0`}
+              >
                 {listRows.map((row) => (
                   <li key={row.id}>
                     <Button
-                      className="flex min-h-14 w-full justify-start gap-2 border-0 bg-transparent px-3 py-2 text-left hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus)]"
+                      className="group flex min-h-14 w-full items-center justify-between gap-4 border-0 bg-transparent px-4 py-3 text-left transition-colors hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)]"
                       isDisabled={busy}
                       onPress={row.onOpen}
                     >
                       <span className="min-w-0">
-                        <strong className="block wrap-anywhere">
+                        <strong className="block text-sm font-medium text-[var(--ink)] wrap-anywhere">
                           {row.title || "—"}
                         </strong>
-                        <small className="block text-[var(--muted)] wrap-anywhere">
+                        <small className="mt-0.5 block text-xs text-[var(--muted)] wrap-anywhere">
                           {row.detail}
                         </small>
                       </span>
+                      <AppIcon
+                        name="chevronRight"
+                        className="size-4 shrink-0 text-[var(--control)] transition-colors group-hover:text-[var(--ink)]"
+                      />
                     </Button>
                   </li>
                 ))}
@@ -211,7 +225,7 @@ export function OwnCatalogList({
               busy={busy}
               onPageChange={onPageChange}
             />
-          </section>
+          </div>
         </TabPanel>
       </Tabs>
     </section>

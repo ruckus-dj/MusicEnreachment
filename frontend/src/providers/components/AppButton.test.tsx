@@ -12,9 +12,27 @@ describe("AppButton", () => {
     );
 
     const button = screen.getByRole("button", { name: "Save" });
-    expect(button).toHaveClass("ui-button", "min-h-[30px]", "caller-class");
+    expect(button).toHaveClass("ui-button", "caller-class");
     fireEvent.click(button);
     expect(onPress).toHaveBeenCalledOnce();
+  });
+
+  it("lets caller classes replace conflicting shared classes", () => {
+    render(<AppButton className="min-h-12 px-6">Tall</AppButton>);
+
+    const button = screen.getByRole("button", { name: "Tall" });
+    expect(button).toHaveClass("ui-button", "min-h-12", "px-6");
+    expect(button).not.toHaveClass("min-h-9");
+    expect(button).not.toHaveClass("px-3");
+  });
+
+  it("applies the small size over the default control size", () => {
+    render(<AppButton size="sm">Small</AppButton>);
+
+    const button = screen.getByRole("button", { name: "Small" });
+    expect(button).toHaveClass("ui-button", "min-h-8", "px-2.5");
+    expect(button).not.toHaveClass("min-h-9");
+    expect(button).not.toHaveClass("px-3");
   });
 
   it("retains React Aria className render callbacks and disabled behavior", () => {
