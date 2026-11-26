@@ -1167,6 +1167,9 @@ export function metadataChanged(
 		"TRACKNUMBER",
 		"DISCNUMBER",
 		"GENRE",
+		"INITIALKEY",
+		"MOVEMENTCOUNT",
+		"MOVEMENTNUMBER",
 		...metadataManagedTagKeys(),
 		...metadataTagKeys({
 			...(release.metadataValues ?? {}),

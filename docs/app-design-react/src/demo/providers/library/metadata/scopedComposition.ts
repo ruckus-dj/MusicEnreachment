@@ -76,7 +76,7 @@ export function projectCompositionTags(composition?: ScopedComposition) {
 	if (works?.state === "explicit_empty") {
 		tags.WORK = [];
 		tags.MUSICBRAINZ_WORKID = [];
-	} else if (works?.state === "value") {
+	} else if (works?.state === "value" && works.value.length) {
 		tags.WORK = works.value.map((work) => work.title);
 		const ids = works.value.map((work) => work.mbid ?? "");
 		if (ids.length && ids.every(Boolean)) tags.MUSICBRAINZ_WORKID = ids;

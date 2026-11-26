@@ -584,6 +584,18 @@ export function useMetadataEditorProvider({
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
 		const errors = validateMetadataIssues(changedValues, scope);
+		if (
+			stateControlled("work") &&
+			dirty.has("work") &&
+			validatesControlledValue("work")
+		) {
+			errors.push(
+				...validateMetadataIssues(
+					{ musicbrainz_workid: draft.musicbrainz_workid ?? [] },
+					"recording",
+				),
+			);
+		}
 		if (libraryMetadata) {
 			for (const key of dirty) {
 				if (!stateControlled(key) || !validatesControlledValue(key)) continue;

@@ -147,6 +147,7 @@ function planPosition(
 			track,
 			catalog.artists,
 			catalog.files,
+			target.container,
 		),
 		coverHash: track.coverHash ?? null,
 		lyrics: track.lyrics ?? null,
