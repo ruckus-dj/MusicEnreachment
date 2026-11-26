@@ -261,25 +261,33 @@ export function buildMatchingReceiptPublicationReady({
 			const isPrepared = controller.prepared.has(trackId);
 			const disposition: AggregateDisposition = !isIncluded
 				? "skipped"
-				: pendingJob || failure || !row || !isPrepared
+				: pendingJob || !row || !isPrepared
 					? "blocked"
 					: dispositionFor(row, true);
-			counts[disposition] += 1;
+			if (!pendingJob || !isIncluded) counts[disposition] += 1;
 			return {
 				id: trackId,
 				label: row
 					? rowLabel(row)
 					: `${position.displayedNumber ?? position.position} · ${position.title}`,
-				status: pendingJob
-					? { kind: "queued" }
-					: !isPrepared && !failure
-						? { kind: "not-prepared" }
-						: { kind: "disposition", disposition },
-				diagnostic: failure
-					? { kind: "text", text: noticeText(text, failure) }
-					: row && isPrepared
-						? { kind: "text", text: rowDiagnostic(row, isIncluded, text) }
-						: undefined,
+				status:
+					pendingJob && isIncluded
+						? controller.running.has(trackId)
+							? {
+									kind: "operation",
+									label: locale === "ru" ? "Выполняется" : "Running",
+								}
+							: { kind: "queued" }
+						: isIncluded && !isPrepared && !failure
+							? { kind: "not-prepared" }
+							: { kind: "disposition", disposition },
+				diagnostic: pendingJob
+					? undefined
+					: failure && !isPrepared
+						? { kind: "text", text: noticeText(text, failure) }
+						: row && isPrepared
+							? { kind: "text", text: rowDiagnostic(row, isIncluded, text) }
+							: undefined,
 			};
 		},
 	);
@@ -294,6 +302,11 @@ export function buildMatchingReceiptPublicationReady({
 		controller.rows.find((row) => row.trackId === selectedTrackId);
 	const selectedPendingJob = controller.pendingJobs.get(selectedTrackId);
 	const selectedFailure = controller.failures.get(selectedTrackId);
+	const runningStatus = controller.running.has(selectedTrackId)
+		? locale === "ru"
+			? "Выполняется"
+			: "Running"
+		: undefined;
 	const fileChoice =
 		selectedReceiptPosition && selectedReceiptPosition.sourceIds.length > 1
 			? {
@@ -323,14 +336,15 @@ export function buildMatchingReceiptPublicationReady({
 		? {
 				kind: "publication",
 				details: selectedRow
-					? detailsFor(selectedRow, files, text, {
-							admittedOperationID: selectedPendingJob,
-							error: selectedFailure
-								? noticeText(text, selectedFailure)
-								: undefined,
-						})
+					? {
+							...detailsFor(selectedRow, files, text, {
+								admittedOperationID: selectedPendingJob,
+							}),
+							admittedOperationStatus: runningStatus,
+						}
 					: {
 							...emptyDetails,
+							error: selectedFailure ? noticeText(text, selectedFailure) : "",
 							inspection: { ...emptyDetails.inspection, preview: undefined },
 						},
 				fileChoice,

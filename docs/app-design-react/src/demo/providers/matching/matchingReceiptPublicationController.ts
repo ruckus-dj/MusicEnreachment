@@ -37,6 +37,7 @@ export type MatchingReceiptPublicationController = {
 	prepared: ReadonlySet<string>;
 	/** Positions with a scheduler job that has not reached a terminal state. */
 	pendingJobs: ReadonlyMap<string, string>;
+	running: ReadonlySet<string>;
 	/** Terminal failure notices, keyed by position. */
 	failures: ReadonlyMap<string, MatchingReceiptPublicationNotice>;
 	included: ReadonlySet<string>;
@@ -134,19 +135,9 @@ export function useMatchingReceiptPublication({
 			[...artists],
 			{ positionId: trackId, savedReceipts },
 		);
-	const prepareAllFor = (
-		choice: Readonly<Record<string, string | null>>,
-		catalog: IncomingReleases = releases,
-	) =>
-		new Map(
-			receipt.positions.map(({ trackId }) => [
-				String(trackId),
-				prepareFor(String(trackId), choice, catalog),
-			]),
-		);
-	const batch = publication?.batches
-		.filter((item) => item.receiptId === receipt.id)
-		.at(-1);
+	const batches =
+		publication?.batches.filter((item) => item.receiptId === receipt.id) ?? [];
+	const batch = batches.at(-1);
 	const entryStatus = (entry: { jobId: string | null }) =>
 		entry.jobId ? publication?.states.get(entry.jobId) : "failed";
 	const [prepared, setPrepared] = useState<
@@ -154,7 +145,17 @@ export function useMatchingReceiptPublication({
 	>(() => new Map());
 
 	const pendingJobs = new Map<string, string>();
+	const running = new Set<string>();
 	const pendingPreviews = new Map<string, MatchingReceiptPublicationPreview>();
+	for (const admitted of batches) {
+		for (const entry of admitted.entries) {
+			const state = entryStatus(entry);
+			if (!entry.jobId || state === "succeeded" || state === "failed") continue;
+			pendingJobs.set(entry.trackId, entry.jobId);
+			pendingPreviews.set(entry.trackId, entry.preview);
+			if (state === "running") running.add(entry.trackId);
+		}
+	}
 	const failures = new Map<string, MatchingReceiptPublicationNotice>();
 	const rejected: MatchingReceiptPublicationFailure[] = [];
 	let terminal = Boolean(batch);
@@ -179,10 +180,7 @@ export function useMatchingReceiptPublication({
 				continue;
 			}
 			terminal = false;
-			pendingJobs.set(entry.trackId, entry.jobId);
-			pendingPreviews.set(entry.trackId, entry.preview);
 		}
-	const pendingAny = pendingJobs.size > 0;
 	const displayPreviews = new Map([...prepared, ...pendingPreviews]);
 	const rows = [...displayPreviews.values()].flatMap((preview) => preview.rows);
 
@@ -205,6 +203,10 @@ export function useMatchingReceiptPublication({
 			included.has(trackId) && preview.canApply && !pendingJobs.has(trackId),
 	);
 	const selectedRow = rows.find((row) => row.trackId === selectedPositionId);
+	const selections = explicitSelections(receipt, chosen);
+	const preparable = [...included].filter(
+		(trackId) => !pendingJobs.has(trackId) && Boolean(selections[trackId]),
+	);
 
 	const toggleInclude = (trackId: string) => {
 		if (pendingJobs.has(trackId)) return;
@@ -228,15 +230,21 @@ export function useMatchingReceiptPublication({
 		});
 	};
 	const refresh = () => {
-		if (pendingAny) return;
-		setPrepared(prepareAllFor(chosen));
+		if (!preparable.length) return;
+		setPrepared(
+			(current) =>
+				new Map([
+					...current,
+					...preparable.map((id) => [id, prepareFor(id, chosen)] as const),
+				]),
+		);
 	};
 
 	const confirm = () => {
-		if (!publication || pendingAny || !ready.length) return;
+		if (!publication || !ready.length) return;
 		publication.submit({
 			receipt: structuredClone(receipt),
-			selections: explicitSelections(receipt, chosen),
+			selections,
 			destination: { ...destination },
 			artists: [...artists],
 			entries: ready.map(([positionId, preview]) => ({
@@ -255,12 +263,13 @@ export function useMatchingReceiptPublication({
 		rows,
 		prepared: new Set(displayPreviews.keys()),
 		pendingJobs,
+		running,
 		failures,
 		included,
 		selectedPositionId,
 		selectedRow,
-		canPrepare: included.size > 0 && !pendingAny,
-		canConfirm: Boolean(publication) && ready.length > 0 && !pendingAny,
+		canPrepare: preparable.length > 0,
+		canConfirm: Boolean(publication) && ready.length > 0,
 		preparing: false,
 		outcome,
 		sourceSelection: (trackId) =>

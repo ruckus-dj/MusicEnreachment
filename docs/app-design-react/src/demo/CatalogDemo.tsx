@@ -532,21 +532,25 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 	const submitReceiptPublication = (
 		submission: MatchingReceiptPublicationSubmission,
 	) => {
-		if (
-			publicationJobsRef.current.some(
-				(job) =>
-					job.kind === "receipt" &&
-					job.plan.receipt.id === submission.receipt.id &&
-					publicationPending(job.id),
-			)
-		)
-			return;
+		const alreadyAdmitted = new Set(
+			publicationJobsRef.current.flatMap((job) =>
+				job.kind === "receipt" &&
+				job.plan.receipt.id === submission.receipt.id &&
+				publicationPending(job.id)
+					? [job.positionId]
+					: [],
+			),
+		);
+		const submitted = submission.entries.filter(
+			(entry) => !alreadyAdmitted.has(entry.positionId),
+		);
+		if (!submitted.length) return;
 		const release = releasesRef.current.find(
 			(item) => item.id === submission.receipt.releaseId,
 		);
 		const jobs: PublicationJob[] = [];
 		const rejected = new Map<string, MatchingReceiptPublicationBatchEntry>();
-		for (const entry of submission.entries) {
+		for (const entry of submitted) {
 			const track = release?.tracks.find(
 				(item) => String(item.id) === entry.positionId,
 			);
@@ -588,8 +592,8 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		}
 		const accepted = addPublicationJobs(jobs);
 		const acceptedIds = new Set(accepted.map((job) => job.id));
-		const entries: MatchingReceiptPublicationBatchEntry[] =
-			submission.entries.map(({ positionId, preview }) => {
+		const entries: MatchingReceiptPublicationBatchEntry[] = submitted.map(
+			({ positionId, preview }) => {
 				const job = jobs.find(
 					({ positionId: queued }) => queued === positionId,
 				);
@@ -604,7 +608,8 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 								notice: "matchingReceipt.apply.blocked",
 							})
 				);
-			});
+			},
+		);
 		if (!entries.length) return;
 		const batch = {
 			id: `receipt-publication-${crypto.randomUUID()}`,
@@ -613,7 +618,13 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 			results: {},
 		};
 		setReceiptPublicationBatches((current) => [
-			...current.filter((batch) => batch.receiptId !== submission.receipt.id),
+			...current.filter(
+				(batch) =>
+					batch.receiptId !== submission.receipt.id ||
+					batch.entries.some(
+						(entry) => entry.jobId && publicationPending(entry.jobId),
+					),
+			),
 			batch,
 		]);
 	};
