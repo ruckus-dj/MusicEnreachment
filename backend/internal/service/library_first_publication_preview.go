@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"sort"
@@ -323,18 +324,14 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 }
 
 func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
-	return buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, false)
+	return buildFirstPublicationPreviewSelectedModeWithPolicy(withFirstPublicationTitle(contextSnapshot), runtimeSettings, selectedTools, releaseID, positionID, choice, mode, false, false)
 }
 
 func buildFirstPublicationRepublishPreviewSelectedMode(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
 	if contextSnapshot == nil || contextSnapshot.Library == nil || contextSnapshot.Library.Current == nil {
 		return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
 	}
-	return buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, true)
-}
-
-func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, allowExistingCurrent bool) (FirstPublicationPreview, error) {
-	return buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, allowExistingCurrent, false)
+	return buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, true, false)
 }
 
 // buildFirstPublicationPreviewFromMatchingReceipt plans only the association
@@ -342,7 +339,31 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 // source choice; callers must supply an explicit stream or let the sole eligible
 // stream be resolved by the preview entry point.
 func buildFirstPublicationPreviewFromMatchingReceipt(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
-	return buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary, false, true)
+	return buildFirstPublicationPreviewSelectedModeWithPolicy(withFirstPublicationTitle(contextSnapshot), runtimeSettings, selectedTools, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary, false, true)
+}
+
+// Bind the effective new-file TITLE through the existing context digest. Retained
+// rewrites and recheck moves plan against the unmodified snapshot.
+func withFirstPublicationTitle(snapshot *persistence.LibraryFirstPublicationContext) *persistence.LibraryFirstPublicationContext {
+	if snapshot == nil || snapshot.Library == nil || snapshot.Library.Current != nil || snapshot.FirstPositionTitle == nil {
+		return snapshot
+	}
+	title := snapshot.FirstPositionTitle
+	contextWithTitle := *snapshot
+	contextWithTitle.Tags.Position.Title = title.Baseline
+	if title.Desired != nil {
+		envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition}
+		if desired := contextWithTitle.Tags.Position.Desired; desired != nil {
+			envelope = *desired
+			envelope.Desired = maps.Clone(desired.Desired)
+		}
+		if envelope.Desired == nil {
+			envelope.Desired = make(map[string]librarymetadata.FieldValue)
+		}
+		envelope.Desired["title"] = *title.Desired
+		contextWithTitle.Tags.Position.Desired = &envelope
+	}
+	return &contextWithTitle
 }
 
 func buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, allowExistingCurrent, matchingReceiptScoped bool) (FirstPublicationPreview, error) {

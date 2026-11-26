@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	rivermigrate "github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	integrationtools "github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -33,7 +35,12 @@ func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 	for _, scenario := range []firstPublicationTemplateScenario{
 		{name: "flat from matching receipt", template: "Track.{EXT}", expectedPath: "Track.flac", fromMatchingReceipt: true},
 		{name: "default nested", defaultLayout: true},
-		{name: "custom nested", template: "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}", expectedPath: "literal/shared/preparation fixture/Published track.flac"},
+		{
+			name:           "custom nested",
+			template:       "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}",
+			expectedPath:   "literal/shared/preparation fixture/Published track.flac",
+			recordingTitle: "Saved recording title",
+		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			testPublicationSourceExecution(t, "Track.flac", true, scenario)
@@ -47,6 +54,7 @@ type firstPublicationTemplateScenario struct {
 	defaultLayout       bool
 	expectedPath        string
 	fromMatchingReceipt bool
+	recordingTitle      string
 }
 
 type explicitFirstPublicationAuthority struct{}
@@ -390,6 +398,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		if err := tx.Commit(); err != nil {
 			t.Fatal(err)
 		}
+		expectedTitle := "Published track"
 		if len(confirmation) > 0 && confirmation[0] == true {
 			expectedAuthorityMode = "automatic"
 			// Remove only this fixture's synthetic admission. The source graph and
@@ -449,6 +458,22 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 					templateScenario = scenario
 				}
 			}
+			if title := templateScenario.recordingTitle; title != "" {
+				library := persistence.NewLibraryRepository(db)
+				before, err := library.ReadMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before.Envelope.Desired["title"] = librarymetadata.FieldValue{
+					State: librarymetadata.StateValue, Value: title,
+					Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual},
+				}
+				saved, err := library.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, before.Revision, before.Envelope, nil)
+				if err != nil || saved.Revision != before.Revision+1 || saved.Envelope.Desired["title"].Value != title {
+					t.Fatalf("save recording title: revision %d, %v", saved.Revision, err)
+				}
+				expectedTitle = title
+			}
 			legacyDefaultLayout := len(confirmation) > 1 && confirmation[1] == true
 			if templateScenario.defaultLayout || legacyDefaultLayout {
 				if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, publication.DefaultTemplate); err != nil {
@@ -480,6 +505,9 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			}
 			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
 				t.Fatalf("first publication preview = %+v, %v", preview, err)
+			}
+			if preview.Current != nil || !slices.Equal(preview.DesiredTags.Tags["TITLE"], []string{expectedTitle}) {
+				t.Fatalf("first publication preview: current = %+v, TITLE = %q", preview.Current, preview.DesiredTags.Tags["TITLE"])
 			}
 			var sourceChoice *FirstPublicationSourceChoice
 			if receipt != nil {
@@ -576,7 +604,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			t.Fatal(err)
 		}
 		capture, err := (metadata.Reader{}).Read(ctx, filepath.Join(output, filepath.FromSlash(target)), metadata.ReadRequest{CoverInspection: true})
-		if err != nil || len(capture.Tags["TITLE"]) != 1 || capture.Tags["TITLE"][0] != "Published track" {
+		if err != nil || !slices.Equal(capture.Tags["TITLE"], []string{expectedTitle}) {
 			t.Fatalf("published metadata = %#v, %v", capture.Tags, err)
 		}
 		var current persistence.TrackPublication

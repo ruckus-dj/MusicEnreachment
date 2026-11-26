@@ -45,6 +45,7 @@ type LibraryFirstPublicationContext struct {
 	Sources                           []FirstPublicationSource
 	SourceAssociations                []PublicationSourceAssociation
 	Tags                              publication.TagProjectionInput
+	FirstPositionTitle                *FirstPublicationPositionTitle `json:"-"`
 	TemplateTokens                    map[string]string
 	Metadata                          FirstPublicationMetadata
 	GenreArtists                      []FirstPublicationGenreArtist `json:"-"`
@@ -251,6 +252,7 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	}
 	result.Tags.Position.TrackTotal = nil
 	copyFirstPublicationTokens(result.TemplateTokens, releaseEnv)
+	var recordingTitle string
 	if position.RecordingID != nil {
 		var recording struct {
 			ID       uuid.UUID       `bun:"id,type:uuid"`
@@ -266,6 +268,7 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		if err != nil {
 			return err
 		}
+		recordingTitle = recording.Title
 		result.GenreArtists, err = readFirstPublicationGenreArtists(ctx, tx, *position.RecordingID)
 		if err != nil {
 			return err
@@ -278,6 +281,9 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		if result.Tags.Position.RecordingID == nil {
 			result.Tags.Position.RecordingID = firstPublicationUUID(&result.Metadata.Recording.Envelope, "recording_mbid")
 		}
+	}
+	if library.Current == nil {
+		result.FirstPositionTitle = resolveFirstPublicationPositionTitle(result.Metadata, track.Metadata, track.Title, recordingTitle)
 	}
 	if err := resolveFirstPublicationArtistCredits(ctx, tx, result, releaseEnv, positionEnv, track.Metadata, position.RecordingID); err != nil {
 		return err

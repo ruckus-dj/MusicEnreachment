@@ -501,6 +501,11 @@ func materializeMatchingLocalRelease(ctx context.Context, tx bun.Tx, preview Mat
 			return uuid.Nil, err
 		}
 		if trackCreated {
+			if track.TitleOverride != nil {
+				if _, err := tx.NewRaw(`UPDATE local_track SET metadata=metadata || jsonb_build_object('title_origin',?::text) WHERE id=?`, positionTitleOriginOverride, localTrackID).Exec(ctx); err != nil {
+					return uuid.Nil, fmt.Errorf("record local matching position title origin: %w", err)
+				}
+			}
 			if err := materializeMatchingLocalProviderCredits(ctx, tx, localTrackID, "track_artist", track.RecordingCredits, authority); err != nil {
 				return uuid.Nil, err
 			}

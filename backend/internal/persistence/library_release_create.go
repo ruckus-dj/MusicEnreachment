@@ -189,7 +189,8 @@ func (repository *LibraryRepository) CreateStandaloneRelease(ctx context.Context
 					}
 					recordingPtr = &recordingID
 				}
-				if _, err := tx.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES (?,?,'{}'::jsonb)`, trackID, pos.Title).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`INSERT INTO local_track(id,title,metadata)
+					VALUES (?,?,jsonb_build_object('title_origin',?::text))`, trackID, pos.Title, positionTitleOriginOverride).Exec(ctx); err != nil {
 					return fmt.Errorf("create local track: %w", err)
 				}
 				var positionID uuid.UUID

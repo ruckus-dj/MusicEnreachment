@@ -543,7 +543,9 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 		if medium+1 != assignment.Medium || position+1 != assignment.Position {
 			return nil, ErrIncomingMatchConflict
 		}
-		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureAutomaticLocalTrack(ctx, tx, fence.ProviderID, providerTrack, providerRecording, localReleaseID, medium, position, recordingTitle, policy)
+		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureAutomaticLocalTrack(
+			ctx, tx, fence.ProviderID, providerTrack, providerRecording, localReleaseID, medium, position, recordingTitle, recordingTitle, policy,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -751,11 +753,11 @@ func ensureLocalRelease(ctx context.Context, tx bun.Tx, providerID, providerRele
 	return localID, true, nil
 }
 
-func ensureAutomaticLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, title, policy string) (uuid.UUID, uuid.UUID, bool, bool, error) {
-	return ensureLocalTrack(ctx, tx, providerID, providerTrackID, providerRecordingID, releaseID, medium, position, title, materializationAuthority{method: "automatic", policyVersion: &policy})
+func ensureAutomaticLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, trackTitle, recordingTitle, policy string) (uuid.UUID, uuid.UUID, bool, bool, error) {
+	return ensureLocalTrack(ctx, tx, providerID, providerTrackID, providerRecordingID, releaseID, medium, position, trackTitle, recordingTitle, materializationAuthority{method: "automatic", policyVersion: &policy})
 }
 
-func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, title string, authority materializationAuthority) (uuid.UUID, uuid.UUID, bool, bool, error) {
+func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, trackTitle, recordingTitle string, authority materializationAuthority) (uuid.UUID, uuid.UUID, bool, bool, error) {
 	var localID uuid.UUID
 	var method string
 	err := tx.NewRaw(`SELECT local_track_id, method FROM provider_local_track WHERE provider_id=? AND provider_track_id=? FOR UPDATE`, providerID, providerTrackID).Scan(ctx, &localID, &method)
@@ -784,7 +786,7 @@ func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackI
 	err = tx.NewRaw(`SELECT local_recording_id FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=? FOR UPDATE`, providerID, providerRecordingID).Scan(ctx, &recordingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		recordingID = uuid.New()
-		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,?)`, recordingID, title).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,?)`, recordingID, recordingTitle).Exec(ctx); err != nil {
 			return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: create local recording: %w", err)
 		}
 		if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerRecordingID, recordingID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
@@ -799,7 +801,7 @@ func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackI
 		}
 	}
 	localID = uuid.New()
-	if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, localID, trackTitle).Exec(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: create local track: %w", err)
 	}
 	if _, err := tx.NewRaw(`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerTrackID, localID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
@@ -1625,7 +1627,9 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 				return fmt.Errorf("apply matching operation: reactivate retained recording artists: %w", err)
 			}
 		}
-		localTrackID, mappedRecordingID, _, trackCreated, err := ensureAutomaticLocalTrack(ctx, tx, snapshot.Source.ProviderID, providerTrackID, providerRecordingID, localReleaseID, medium, position, track.Title, policy)
+		localTrackID, mappedRecordingID, _, trackCreated, err := ensureAutomaticLocalTrack(
+			ctx, tx, snapshot.Source.ProviderID, providerTrackID, providerRecordingID, localReleaseID, medium, position, track.Title, track.RecordingTitle, policy,
+		)
 		if err != nil {
 			return err
 		}

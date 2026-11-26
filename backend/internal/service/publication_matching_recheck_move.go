@@ -66,8 +66,8 @@ func (service *LibraryPublications) PrepareMatchingRecheckMovedPublication(ctx c
 	if err != nil {
 		return persistence.PublicationAdmission{}, err
 	}
-	preview, err := buildFirstPublicationPreviewSelected(contextSnapshot, runtimeSettings, tools,
-		contextSnapshot.Library.ReleaseID, contextSnapshot.Library.PositionID, &choice)
+	preview, err := buildFirstPublicationPreviewSelectedModeWithPolicy(contextSnapshot, runtimeSettings, tools,
+		contextSnapshot.Library.ReleaseID, contextSnapshot.Library.PositionID, &choice, firstPublicationPreviewModeOrdinary, false, false)
 	if err != nil {
 		return persistence.PublicationAdmission{}, fmt.Errorf("plan moved first publication: %w", err)
 	}

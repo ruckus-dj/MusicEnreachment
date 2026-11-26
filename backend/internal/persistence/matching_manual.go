@@ -1040,7 +1040,9 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 			trackTitleField, trackTitleKey = "title", recordingKey
 			trackTitleEvidence = json.RawMessage(recordingEvidence)
 		}
-		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureLocalTrack(ctx, tx, state.fence.ProviderID, assignment.ProviderTrackID, recordingID, localReleaseID, medium, position, trackTitle, materializationAuthority{method: "manual"})
+		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureLocalTrack(
+			ctx, tx, state.fence.ProviderID, assignment.ProviderTrackID, recordingID, localReleaseID, medium, position, trackTitle, recordingTitle, materializationAuthority{method: "manual"},
+		)
 		if err != nil {
 			return err
 		}
@@ -1201,7 +1203,9 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 				return fmt.Errorf("apply manual matching: reactivate retained recording artists: %w", err)
 			}
 		}
-		localTrackID, _, _, trackCreated, err := ensureLocalTrack(ctx, tx, seal.ProviderID, track.ProviderTrackID, recordingID, localReleaseID, medium, position, track.Title, materializationAuthority{method: "manual"})
+		localTrackID, _, _, trackCreated, err := ensureLocalTrack(
+			ctx, tx, seal.ProviderID, track.ProviderTrackID, recordingID, localReleaseID, medium, position, track.Title, track.RecordingTitle, materializationAuthority{method: "manual"},
+		)
 		if err != nil {
 			return err
 		}
