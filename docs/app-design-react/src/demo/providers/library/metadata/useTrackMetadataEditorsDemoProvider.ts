@@ -23,6 +23,12 @@ import {
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataValues } from "./projection";
+import {
+	compositionDraftValues,
+	compositionKeys,
+	compositionStates,
+	updateComposition,
+} from "./scopedComposition";
 
 function recordingValues(track: OriginalTrack): MetadataValues {
 	const values = { ...(track.recordingMetadata ?? {}) };
@@ -96,9 +102,11 @@ export function useTrackMetadataEditorsDemoProvider({
 			(_, name: string) => String(values[name] ?? `{${name}}`),
 		);
 	const recording = recordingValues(track);
+	Object.assign(recording, compositionDraftValues(track.recordingComposition));
 	const positionTitle = positionTitleIntent(track);
 	const position: MetadataValues = {
 		...track.positionMetadata,
+		...compositionDraftValues(track.positionComposition),
 		...Object.fromEntries(
 			positionScalarFields.map(({ metadataKey, kind }) => {
 				const intent = track.positionScalarIntent?.[metadataKey];
@@ -117,7 +125,8 @@ export function useTrackMetadataEditorsDemoProvider({
 	const releaseText = releaseMetadataEditorMessages[locale];
 	const recordingKey = track.recordingScalarIntent?.key;
 	const inheritedKey =
-		recordingKey?.state === "value" || recordingKey?.state === "explicit_empty"
+		(recordingKey?.state === "value" && recordingKey.value[0]) ||
+		recordingKey?.state === "explicit_empty"
 			? {
 					display:
 						recordingKey.state === "explicit_empty"
@@ -148,12 +157,15 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			fields: libraryRecordingEditorFields,
 			values: recording,
-			fieldStates: Object.fromEntries(
-				recordingScalarFields.map(({ metadataKey }) => [
-					metadataKey,
-					track.recordingScalarIntent?.[metadataKey]?.state ?? "absent",
-				]),
-			),
+			fieldStates: {
+				...Object.fromEntries(
+					recordingScalarFields.map(({ metadataKey }) => [
+						metadataKey,
+						track.recordingScalarIntent?.[metadataKey]?.state ?? "absent",
+					]),
+				),
+				...compositionStates(track.recordingComposition),
+			},
 			fieldLabels: Object.fromEntries(
 				recordingScalarFields.map(({ key, metadataKey }) => [
 					metadataKey,
@@ -219,10 +231,21 @@ export function useTrackMetadataEditorsDemoProvider({
 						const raw = current.recordingMetadata?.[metadataKey];
 						if (raw) nextMetadata[metadataKey] = raw;
 					}
+					for (const key of compositionKeys) {
+						delete nextMetadata[key];
+						delete comparison[key];
+						const raw = current.recordingMetadata?.[key];
+						if (raw) nextMetadata[key] = raw;
+					}
 					const updated: OriginalTrack = {
 						...current,
 						recordingTitle: recordingTitleBaseline(current) ?? current.title,
 						recordingScalarIntent: nextIntent,
+						recordingComposition: updateComposition(
+							current.recordingComposition,
+							values,
+							details?.fieldStates,
+						),
 						recordingMetadata: nextMetadata,
 						recordingComparisonOverrides: comparison,
 						...(details?.credits ? { recordingCredits: details.credits } : {}),
@@ -249,6 +272,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			fields: libraryPositionEditorFields,
 			fieldStates: {
 				title: positionTitle.state,
+				...compositionStates(track.positionComposition),
 				...Object.fromEntries(
 					positionScalarFields.map(({ metadataKey }) => [
 						metadataKey,
@@ -307,10 +331,21 @@ export function useTrackMetadataEditorsDemoProvider({
 											],
 							};
 					}
+					for (const key of compositionKeys) {
+						delete positionMetadata[key];
+						delete comparison[key];
+						const raw = current.positionMetadata?.[key];
+						if (raw) positionMetadata[key] = raw;
+					}
 					const updated: OriginalTrack = {
 						...current,
 						positionMetadata,
 						positionScalarIntent,
+						positionComposition: updateComposition(
+							current.positionComposition,
+							values,
+							details?.fieldStates,
+						),
 						positionComparisonOverrides: comparison,
 					};
 					const titleState = details?.fieldStates?.title;

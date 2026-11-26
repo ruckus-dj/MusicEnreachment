@@ -111,6 +111,32 @@ it("resolves the exact key override before mapping the publication container", (
 	});
 });
 
+it("keeps position work clearing terminal without changing the shared recording", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	const fixture = release?.tracks[0];
+	if (!release || !fixture) throw new Error("Missing position fixture");
+	const track = {
+		...fixture,
+		recordingComposition: {
+			works: { state: "value" as const, value: [{ title: "Recording work" }] },
+			movement: {
+				state: "value" as const,
+				value: { name: "Finale", number: "2", count: "3" },
+			},
+		},
+		positionComposition: { works: { state: "explicit_empty" as const } },
+	};
+	expect(desiredTags(release, track)).toMatchObject({
+		WORK: [],
+		MOVEMENTNAME: ["Finale"],
+		MOVEMENTNUMBER: ["2"],
+		MOVEMENTCOUNT: ["3"],
+	});
+	expect(
+		desiredTags(release, { ...track, positionComposition: {} }).WORK,
+	).toEqual(["Recording work"]);
+});
+
 it("creates only from the explicitly selected available source and skips missing positions", () => {
 	const next = applyMetadataPreview(
 		originalReleases,

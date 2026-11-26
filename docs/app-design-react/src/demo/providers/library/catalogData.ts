@@ -23,6 +23,11 @@ import {
 } from "./metadata/projection";
 import type { MetadataScope } from "./metadata/registry";
 import { fieldByKey, navidromeFields } from "./metadata/registry";
+import {
+	projectCompositionTags,
+	resolvePublicationComposition,
+	type ScopedComposition,
+} from "./metadata/scopedComposition";
 
 const musicBrainzUUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,10 +78,12 @@ export interface OriginalTrack {
 	recordingGenreRefs?: MetadataGenre[];
 	recordingMetadata?: MetadataValues;
 	recordingScalarIntent?: ScopedScalarIntentMap;
+	recordingComposition?: ScopedComposition;
 	/** Original distinct position title retained while editing the recording. */
 	positionTitleBaseline?: string;
-	/** Typed position-numbering overrides; absent keys inherit raw numbering. */
+	/** Explicit scalar tag intent of this position, not its displayed identity. */
 	positionScalarIntent?: ScopedScalarIntentMap;
+	positionComposition?: ScopedComposition;
 	positionMetadata?: MetadataValues;
 	audioMetadata?: Record<string, MetadataValues>;
 	recordingCredits?: import("./metadata/model").MetadataCredit[];
@@ -335,6 +342,8 @@ export function recordingScalarOverrideTags(
 		if (!intent || !tag || intent.state === "absent") continue;
 		// TITLE has its own resolver; other fields keep the existing recording overlay.
 		if (purpose === "publication" && metadataKey === "title") continue;
+		if (purpose === "publication" && emptyOptionalScalar(intent, kind))
+			continue;
 		tags[tag] = scalarIntentTagValues(intent, kind);
 	}
 	return tags;
@@ -402,6 +411,13 @@ function scalarIntentTagValues(
 		: [...intent.value];
 }
 
+function emptyOptionalScalar(intent: ScopedScalarIntent, kind: string) {
+	if (intent.state !== "value") return false;
+	return kind === "text"
+		? !intent.value[0]
+		: kind === "list" && !intent.value.length;
+}
+
 /** The exact raw position tags before any explicit track/disc override. */
 function positionNumberingBaseline(
 	track: Pick<
@@ -419,11 +435,14 @@ function positionNumberingBaseline(
 
 export function positionScalarOverrideTags(
 	track: OriginalTrack,
+	purpose: "comparison" | "publication",
 ): MetadataValues {
 	const tags: MetadataValues = {};
 	for (const { metadataKey, tag, kind } of positionScalarFields) {
 		const intent = track.positionScalarIntent?.[metadataKey];
 		if (!intent || !tag || intent.state === "absent") continue;
+		if (purpose === "publication" && emptyOptionalScalar(intent, kind))
+			continue;
 		tags[tag] = scalarIntentTagValues(intent, kind);
 	}
 	return tags;
@@ -885,9 +904,19 @@ export function desiredTags(
 		...projectMetadataValues(recordingValues).tags,
 		...recordingScalarOverrideTags(track, "publication"),
 		...projectMetadataValues(explicitValues).tags,
-		...positionScalarOverrideTags(track),
+		...positionScalarOverrideTags(track, "publication"),
 	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	const composition = resolvePublicationComposition(
+		track.positionComposition,
+		track.recordingComposition,
+	);
+	if (composition.works) delete result.MUSICBRAINZ_WORKID;
+	if (composition.movement) {
+		delete result.MOVEMENT;
+		delete result.MOVEMENTTOTAL;
+	}
+	Object.assign(result, projectCompositionTags(composition));
 	const musicalKey = result.KEY;
 	if (musicalKey && outputContainer) {
 		const container = outputContainer.toUpperCase();

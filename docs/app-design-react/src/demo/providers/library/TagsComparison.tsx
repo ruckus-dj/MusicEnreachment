@@ -16,6 +16,7 @@ import {
 	type SourceFiles,
 } from "./catalogData";
 import { projectMetadataValues } from "./metadata/projection";
+import { projectCompositionTags } from "./metadata/scopedComposition";
 
 export type TagScope = "artist" | "release" | "track";
 
@@ -76,7 +77,14 @@ export function TagsComparison({
 		}).tags,
 		...recordingScalarOverrideTags(track, "comparison"),
 		...projectMetadataValues(track.positionComparisonOverrides ?? {}).tags,
-		...positionScalarOverrideTags(track),
+		...positionScalarOverrideTags(track, "comparison"),
+		...projectCompositionTags({
+			works:
+				track.positionComposition?.works ?? track.recordingComposition?.works,
+			movement:
+				track.positionComposition?.movement ??
+				track.recordingComposition?.movement,
+		}),
 	};
 	const positionTitleOverride = track.positionComparisonOverrides?.title;
 	if (positionTitleOverride) overrides.TITLE = [...positionTitleOverride];

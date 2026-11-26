@@ -43,6 +43,11 @@ import {
 	validLibraryMetadataPartialDate,
 	validLibraryMetadataPositiveNumber,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
+import { StructuredMetadataFieldView } from "../../../../ui/features/library/metadata/StructuredMetadataFieldView";
+import type {
+	MetadataMovementDraft,
+	MetadataWorkDraft,
+} from "../../../../ui/features/library/metadata/structuredMetadataDraft";
 import type { WorkRowDraft } from "../../../../ui/features/library/WorkRowsView";
 import { audioMeasurementKeys } from "./audioMeasurements";
 import {
@@ -313,6 +318,7 @@ export function useMetadataEditorProvider({
 				kind: "validation";
 				issues: MetadataValidationIssue[];
 				requiredField?: string;
+				movementNameMissing?: boolean;
 		  }
 		| { kind: "save" }
 		| { kind: "external"; message: string }
@@ -566,6 +572,14 @@ export function useMetadataEditorProvider({
 			[...dirty]
 				.filter((key) => fieldByKey(key)?.scope === scope)
 				.filter((key) => !stateControlled(key))
+				.filter(
+					(key) =>
+						!(stateControlled("work") && key === "musicbrainz_workid") &&
+						!(
+							stateControlled("movement") &&
+							(key === "movementname" || key === "movementtotal")
+						),
+				)
 				.filter(validatesControlledValue)
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
@@ -586,16 +600,47 @@ export function useMetadataEditorProvider({
 				}
 			}
 		}
+		let movementNameMissing = false;
+		let movementFocusKey: string | undefined;
+		if (
+			libraryMetadata &&
+			movementFields.length > 0 &&
+			stateControlled("movement")
+		) {
+			const movementState =
+				(editing ? draftStates.movement : undefined) ?? fieldStates?.movement;
+			const movementTouched =
+				draftStates.movement !== undefined ||
+				dirty.has("movementname") ||
+				dirty.has("movementtotal") ||
+				dirty.has("movement");
+			if (movementState === "value" && movementTouched) {
+				const name = rows(current, "movementname")[0] ?? "";
+				const number = rows(current, "movement")[0] ?? "";
+				const count = rows(current, "movementtotal")[0] ?? "";
+				if (name === "") {
+					movementNameMissing = true;
+					movementFocusKey = "movementname";
+				} else if (!validLibraryMetadataPositiveNumber("integer", number)) {
+					errors.push({ key: "movement", code: "integer" });
+					movementFocusKey = "movement";
+				} else if (!validLibraryMetadataPositiveNumber("integer", count)) {
+					errors.push({ key: "movementtotal", code: "integer" });
+					movementFocusKey = "movementtotal";
+				}
+			}
+		}
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
-		if (errors.length || missingRequired) {
+		if (errors.length || missingRequired || movementNameMissing) {
 			setError({
 				kind: "validation",
 				issues: errors,
 				requiredField: missingRequired,
+				movementNameMissing,
 			});
-			const invalidKey = missingRequired ?? errors[0]?.key;
+			const invalidKey = movementFocusKey ?? missingRequired ?? errors[0]?.key;
 			focusMetadataKey(editorRef, invalidKey);
 			return;
 		}
@@ -797,6 +842,9 @@ export function useMetadataEditorProvider({
 	const displayedError = error
 		? error.kind === "validation"
 			? [
+					...(error.movementNameMissing
+						? [releaseMetadataEditorMessages[locale].invalidMovementName]
+						: []),
 					...error.issues.map((issue) =>
 						libraryMetadata && issue.code === "date"
 							? releaseMetadataEditorMessages[locale].invalidDate
@@ -828,11 +876,14 @@ export function useMetadataEditorProvider({
 		title: work.title,
 		...(work.mbid !== undefined ? { mbid: work.mbid } : {}),
 	}));
-	const writeWorks = (next: WorkRowDraft[]) => {
+	const writeWorks = (
+		next: WorkRowDraft[],
+		options?: { preserveEmpty?: boolean },
+	) => {
 		const written = writeMetadataWorks(current, next);
 		setWorkRowKeys(next.map(({ uiKey }) => uiKey));
-		setValue("work", written.work);
-		setValue("musicbrainz_workid", written.musicbrainz_workid);
+		setValue("work", written.work, options);
+		setValue("musicbrainz_workid", written.musicbrainz_workid, options);
 	};
 
 	const changeGenreField = (next: GenreReference[]) => {
@@ -1092,52 +1143,136 @@ export function useMetadataEditorProvider({
 				}
 			: undefined;
 
+	const workFieldStateControlled = stateControlled("work");
+	const movementFieldStateControlled = stateControlled("movement");
+	const structuredWorks = workFieldStateControlled && worksFields.length > 0;
+	const structuredMovement =
+		movementFieldStateControlled && movementFields.length > 0;
+	const releaseMetaText = releaseMetadataEditorMessages[locale];
+	const structuredWorkRows: MetadataWorkDraft[] = (
+		works.length ? workRows : []
+	).map((row) => ({
+		uiKey: row.uiKey,
+		name: row.title,
+		...(row.mbid !== undefined ? { mbid: row.mbid } : {}),
+	}));
+	const structuredMovementValue: MetadataMovementDraft = {
+		name: rows(current, "movementname")[0] ?? "",
+		count: rows(current, "movementtotal")[0] ?? "",
+		number: rows(current, "movement")[0] ?? "",
+	};
+	const writeStructuredWorks = (next: MetadataWorkDraft[]) => {
+		writeWorks(
+			next.map((row) => ({
+				uiKey: row.uiKey,
+				title: row.name,
+				...(row.mbid !== undefined ? { mbid: row.mbid } : {}),
+			})),
+			{ preserveEmpty: true },
+		);
+		changeFieldState("work", "value");
+	};
+	const writeStructuredMovement = (next: MetadataMovementDraft) => {
+		setValue("movementname", [next.name], { preserveEmpty: true });
+		setValue("movementtotal", [next.count], { preserveEmpty: true });
+		setValue("movement", [next.number], { preserveEmpty: true });
+		changeFieldState("movement", "value");
+	};
+
 	const worksMovement: MetadataEditorWorksMovementView | undefined =
 		worksMovementFields.length > 0
 			? {
-					label: m("group.worksMovement"),
-					summary: metadataSummary(worksMovementFields, current, locale),
-					worksLabel: groupHeading("works"),
-					movementLabel: groupHeading("movement"),
+					label:
+						structuredWorks || structuredMovement
+							? releaseMetaText.groups.worksMovement
+							: m("group.worksMovement"),
+					summary:
+						structuredWorks || structuredMovement
+							? metadataFilledSummary(
+									locale,
+									(stateFor("work") === "value"
+										? Number(works.some((item) => Boolean(item.title))) +
+											Number(works.some((item) => Boolean(item.mbid)))
+										: 0) +
+										(stateFor("movement") === "value"
+											? Object.values(structuredMovementValue).filter(Boolean)
+													.length
+											: 0),
+								)
+							: metadataSummary(worksMovementFields, current, locale),
+					worksLabel: structuredWorks
+						? releaseMetaText.labels.works
+						: groupHeading("works"),
+					movementLabel: structuredMovement
+						? releaseMetaText.labels.movement
+						: groupHeading("movement"),
 					worksDataKeys: worksFields.length
 						? ["work", "musicbrainz_workid"]
 						: undefined,
 					movementDataKeys: movementFields.map((field) => field.key),
-					works: worksFields.length
-						? {
-								rows: workRows,
-								editing,
-								disabled: saving,
-								onChange: writeWorks,
-								onAdd: () =>
-									writeWorks([
-										...(works.length ? workRows : []),
-										{
-											title: "",
-											uiKey: `new-work-${++nextAddedWork.current}`,
-										},
-									]),
-							}
-						: undefined,
-					movement: movementFields.length
-						? {
-								value: {
-									name: rows(current, "movementname")[0] ?? "",
-									count: rows(current, "movementtotal")[0] ?? "",
-									number: rows(current, "movement")[0] ?? "",
-								},
-								editing,
-								disabled: saving,
-								onChange: (key, value) => {
-									const tags = {
-										name: "movementname",
-										count: "movementtotal",
-										number: "movement",
-									} as const;
-									setValue(tags[key], value ? [value] : []);
-								},
-							}
-						: undefined,
+					works: structuredWorks
+						? undefined
+						: worksFields.length
+							? {
+									rows: workRows,
+									editing,
+									disabled: saving,
+									onChange: writeWorks,
+									onAdd: () =>
+										writeWorks([
+											...(works.length ? workRows : []),
+											{
+												title: "",
+												uiKey: `new-work-${++nextAddedWork.current}`,
+											},
+										]),
+								}
+							: undefined,
+					movement: structuredMovement
+						? undefined
+						: movementFields.length
+							? {
+									value: {
+										name: rows(current, "movementname")[0] ?? "",
+										count: rows(current, "movementtotal")[0] ?? "",
+										number: rows(current, "movement")[0] ?? "",
+									},
+									editing,
+									disabled: saving,
+									onChange: (key, value) => {
+										const tags = {
+											name: "movementname",
+											count: "movementtotal",
+											number: "movement",
+										} as const;
+										setValue(tags[key], value ? [value] : []);
+									},
+								}
+							: undefined,
+					worksContent: structuredWorks ? (
+						<StructuredMetadataFieldView
+							locale={locale}
+							field="works"
+							state={stateFor("work") ?? "absent"}
+							editing={editing}
+							saving={saving}
+							value={structuredWorkRows}
+							onStateChange={(next) => changeFieldState("work", next)}
+							onValueChange={writeStructuredWorks}
+						/>
+					) : undefined,
+					movementContent: structuredMovement ? (
+						<StructuredMetadataFieldView
+							locale={locale}
+							field="movement"
+							state={stateFor("movement") ?? "absent"}
+							editing={editing}
+							saving={saving}
+							value={structuredMovementValue}
+							onStateChange={(next) => changeFieldState("movement", next)}
+							onValueChange={writeStructuredMovement}
+						/>
+					) : undefined,
 				}
 			: undefined;
 

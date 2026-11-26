@@ -83,6 +83,9 @@ export const libraryPositionEditorFields: MetadataField[] = [
 			group,
 		}),
 	),
+	...fieldsForScope("recording")
+		.filter(({ kind }) => kind === "works" || kind === "movement")
+		.map((field): MetadataField => ({ ...field, scope: "track" })),
 	...fieldsForScope("track").filter(({ kind }) => kind === "identity"),
 ];
 
