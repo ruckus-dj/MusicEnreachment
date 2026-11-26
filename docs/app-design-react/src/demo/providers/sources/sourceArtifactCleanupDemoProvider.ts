@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Locale } from "../../../app/i18n";
 import type {
 	SourceArtifactCleanupCandidate,
@@ -21,30 +21,38 @@ type DemoOperation = NonNullable<SourceArtifactCleanupViewProps["operation"]>;
 
 const candidateLimit = 1000;
 
-export function useSourceArtifactCleanupDemoProvider({
+/**
+ * Host-owned demo execution. Kept above route branches so a cleanup started on
+ * Sources keeps its timers, operation and results while the user visits
+ * Operations and comes back. Selections stay in the screen provider.
+ */
+export type SourceArtifactCleanupDemoExecution = {
+	submitted: string[];
+	operation?: DemoOperation;
+	results?: SourceArtifactCleanupResult[];
+	error?: { text: string };
+	isPending: boolean;
+	/** Increments when a started batch reaches its terminal state. */
+	completedRuns: number;
+	onLoad: () => void;
+	onStart: (ids: readonly string[]) => void;
+};
+
+export function useSourceArtifactCleanupDemoExecution({
 	locale,
-	roots,
-	files,
 	processing,
 	updateProcessing,
-	failFirstAttempt = false,
 }: {
 	locale: Locale;
-	roots: SourceRoot[];
-	files: SourceFiles;
 	processing: SourceProcessingState;
 	updateProcessing: (state: SourceProcessingState) => void;
-	/** Fixture-only failure injection; normal demo actions never fail. */
-	failFirstAttempt?: boolean;
-}): SourceArtifactCleanupViewProps {
-	const [selected, setSelected] = useState<string[]>([]);
+}): SourceArtifactCleanupDemoExecution {
 	const [submitted, setSubmitted] = useState<string[]>([]);
 	const [operation, setOperation] = useState<DemoOperation>();
 	const [results, setResults] = useState<SourceArtifactCleanupResult[]>();
 	const [error, setError] = useState<{ text: string }>();
-	const [failedCopies, setFailedCopies] = useState<string[]>([]);
+	const [completedRuns, setCompletedRuns] = useState(0);
 	const pending = useRef(false);
-	const attempted = useRef(false);
 	const timers = useRef<Set<number>>(new Set());
 	const processingRef = useRef(processing);
 	processingRef.current = processing;
@@ -69,40 +77,9 @@ export function useSourceArtifactCleanupDemoProvider({
 	const message = (key: SourceMessageKey) =>
 		sourceMessage(localeRef.current, key);
 
-	const candidates: SourceArtifactCleanupCandidate[] = eligibleSourceCopies(
-		processing,
-	)
-		.slice(0, candidateLimit)
-		.map((copy) => ({
-			artifact_id: copy.id,
-			source_relative_path:
-				retainedCopyLabel(copy, processing, roots, files) ??
-				message("copyPathUnavailable"),
-			state: failedCopies.includes(copy.id)
-				? "cleanup_failed"
-				: "cleanup_eligible",
-		}));
-	const batchCount = candidates.length;
-	const isPending =
-		operation?.state === "queued" || operation?.state === "running";
-
 	function load() {
 		if (pending.current) return;
 		setError(undefined);
-		setFailedCopies((current) =>
-			current.filter((id) =>
-				processingRef.current.copies.some((copy) => copy.id === id),
-			),
-		);
-	}
-
-	function toggle(id: string) {
-		if (pending.current) return;
-		setSelected((current) =>
-			current.includes(id)
-				? current.filter((selectedId) => selectedId !== id)
-				: [...current, id],
-		);
 	}
 
 	function start(ids: readonly string[]) {
@@ -120,8 +97,6 @@ export function useSourceArtifactCleanupDemoProvider({
 		}
 
 		pending.current = true;
-		const fail = failFirstAttempt && !attempted.current;
-		attempted.current = true;
 		setError(undefined);
 		setSubmitted(frozen);
 		setResults(undefined);
@@ -136,26 +111,6 @@ export function useSourceArtifactCleanupDemoProvider({
 			// A later claim can fail without undoing the earlier confirmed items.
 			const firstBlocked = frozen.findIndex((id) => !frozenEligible.has(id));
 			const claimed = firstBlocked < 0 ? frozen : frozen.slice(0, firstBlocked);
-			setSelected([]);
-
-			if (fail) {
-				const safeError = message("cleanupCopyFailed");
-				setFailedCopies((existing) => [...new Set([...existing, ...claimed])]);
-				setResults(
-					claimed.map((id) => ({
-						artifact_id: id,
-						state: "failed",
-						safe_error: safeError,
-					})),
-				);
-				setOperation({
-					state: "failed",
-					stage: "finished",
-					safe_error: message("cleanupBatchFailed"),
-				});
-				pending.current = false;
-				return;
-			}
 
 			const removed = new Set(claimed);
 			updateProcessing({
@@ -167,7 +122,6 @@ export function useSourceArtifactCleanupDemoProvider({
 				),
 				copies: current.copies.filter((copy) => !removed.has(copy.id)),
 			});
-			setFailedCopies((existing) => existing.filter((id) => !removed.has(id)));
 			setResults(
 				claimed.map((id) => ({ artifact_id: id, state: "succeeded" })),
 			);
@@ -180,8 +134,72 @@ export function useSourceArtifactCleanupDemoProvider({
 							safe_error: message("cleanupSelectionStale"),
 						},
 			);
+			setCompletedRuns((count) => count + 1);
 			pending.current = false;
 		});
+	}
+
+	const isPending =
+		operation?.state === "queued" || operation?.state === "running";
+
+	return {
+		submitted,
+		operation,
+		results,
+		error,
+		isPending,
+		completedRuns,
+		onLoad: load,
+		onStart: start,
+	};
+}
+
+/**
+ * Screen-scoped cleanup view model. Candidate labels and checkbox selections
+ * belong to the mounted Sources screen; admitted execution comes from the host.
+ */
+export function useSourceArtifactCleanupDemoProvider({
+	locale,
+	roots,
+	files,
+	processing,
+	execution,
+}: {
+	locale: Locale;
+	roots: SourceRoot[];
+	files: SourceFiles;
+	processing: SourceProcessingState;
+	execution: SourceArtifactCleanupDemoExecution;
+}): SourceArtifactCleanupViewProps {
+	const [selected, setSelected] = useState<string[]>([]);
+	const completedRuns = useRef(execution.completedRuns);
+
+	useLayoutEffect(() => {
+		if (completedRuns.current === execution.completedRuns) return;
+		completedRuns.current = execution.completedRuns;
+		setSelected((current) => (current.length ? [] : current));
+	}, [execution.completedRuns]);
+
+	const candidates: SourceArtifactCleanupCandidate[] = eligibleSourceCopies(
+		processing,
+	)
+		.slice(0, candidateLimit)
+		.map((copy) => ({
+			artifact_id: copy.id,
+			source_relative_path:
+				retainedCopyLabel(copy, processing, roots, files) ??
+				sourceMessage(locale, "copyPathUnavailable"),
+			state: "cleanup_eligible",
+		}));
+	const batchCount = candidates.length;
+
+	function toggle(id: string) {
+		if (execution.isPending) return;
+		setSelected((current) =>
+			current.includes(id)
+				? current.filter((selectedId) => selectedId !== id)
+				: [...current, id],
+		);
 	}
 
 	return {
@@ -189,16 +207,16 @@ export function useSourceArtifactCleanupDemoProvider({
 		candidates,
 		batchCount,
 		selected,
-		submitted,
-		operation,
-		results,
+		submitted: execution.submitted,
+		operation: execution.operation,
+		results: execution.results,
 		loading: false,
 		busy: false,
-		isPending,
-		error,
+		isPending: execution.isPending,
+		error: execution.error,
 		streamError: "",
-		onLoad: load,
+		onLoad: execution.onLoad,
 		onToggle: toggle,
-		onStart: start,
+		onStart: execution.onStart,
 	};
 }

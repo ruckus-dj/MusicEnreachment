@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../app/i18n/host";
 import type { SourceFiles } from "../library/catalogData";
+import { useSourceArtifactCleanupDemoExecution } from "./sourceArtifactCleanupDemoProvider";
 import {
 	initialSourceRoots,
 	type SourceRoot,
@@ -49,6 +50,11 @@ function Harness({
 }) {
 	const [roots, setRoots] = useState(() => structuredClone(initialSourceRoots));
 	const [processing, setProcessing] = useState(initialSourceProcessingState);
+	const cleanupExecution = useSourceArtifactCleanupDemoExecution({
+		locale: "en",
+		processing,
+		updateProcessing: setProcessing,
+	});
 	const scans = useSourceScanDemoProvider({
 		files,
 		workDirectory: "/work",
@@ -72,6 +78,7 @@ function Harness({
 			processing={processing}
 			scans={scans}
 			onProcessingState={setProcessing}
+			cleanupExecution={cleanupExecution}
 		/>
 	);
 }

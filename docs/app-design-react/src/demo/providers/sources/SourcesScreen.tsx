@@ -31,7 +31,10 @@ import {
 import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import type { SourceFiles } from "../library/catalogData";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
-import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
+import {
+	type SourceArtifactCleanupDemoExecution,
+	useSourceArtifactCleanupDemoProvider,
+} from "./sourceArtifactCleanupDemoProvider";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
 import {
 	inventoryPathStale,
@@ -136,6 +139,7 @@ export function SourcesScreen({
 	processing,
 	scans,
 	onProcessingState,
+	cleanupExecution,
 }: {
 	roots: SourceRoot[];
 	onRoots: Dispatch<SetStateAction<SourceRoot[]>>;
@@ -149,6 +153,8 @@ export function SourcesScreen({
 	processing: SourceProcessingState;
 	scans: SourceScanDemoProvider;
 	onProcessingState: (state: SourceProcessingState) => void;
+	/** Host-owned execution so a running cleanup survives other routes. */
+	cleanupExecution: SourceArtifactCleanupDemoExecution;
 }) {
 	const { locale } = useI18n();
 	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
@@ -207,7 +213,7 @@ export function SourcesScreen({
 		roots,
 		files,
 		processing,
-		updateProcessing,
+		execution: cleanupExecution,
 	});
 	const hasActiveRootWork = (rootId: string) =>
 		scans.active(rootId) || !canRemoveSourceRoot(processing, rootId);

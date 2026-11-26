@@ -137,6 +137,7 @@ import {
 	parseSourcesRoute,
 	sourcesHref,
 } from "../ui/features/sources/sourcesRoute";
+import { useSourceArtifactCleanupDemoExecution } from "./providers/sources/sourceArtifactCleanupDemoProvider";
 import { removeRootFromInventory } from "./providers/sources/sourceInventory";
 import {
 	initialSourceProcessingState,
@@ -215,6 +216,12 @@ export function CatalogDemo({
 		files,
 		workDirectory: settings.workDirectory,
 		updateRoots: setSourceRoots,
+		updateProcessing: setSourceProcessing,
+	});
+	// Host-owned so an in-flight cleanup survives route changes.
+	const sourceCleanupExecution = useSourceArtifactCleanupDemoExecution({
+		locale,
+		processing: sourceProcessing,
 		updateProcessing: setSourceProcessing,
 	});
 	const hasAudio = (track: {
@@ -1134,6 +1141,7 @@ export function CatalogDemo({
 				processing={sourceProcessing}
 				scans={sourceScans}
 				onProcessingState={setSourceProcessing}
+				cleanupExecution={sourceCleanupExecution}
 				onRemove={(id) => {
 					const next = removeRootFromInventory(files, releases, id);
 					setIncoming((previous) => {
