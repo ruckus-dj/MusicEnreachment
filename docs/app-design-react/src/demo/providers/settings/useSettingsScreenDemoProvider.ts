@@ -1362,6 +1362,8 @@ export function useSettingsScreenDemoProvider({
 		hasGitHubToken: settings.hasGitHubToken ?? false,
 		onGitHubTokenChange: (hasGitHubToken) => update({ hasGitHubToken }),
 	});
+	const genreItems = settings.genresLoaded ? genreCatalog : [];
+	const genreCount = genreItems.length;
 	const tabs: SettingsScreenTabsViewProps = {
 		selectedKey: activeTab,
 		onSelectionChange: selectTab,
@@ -1536,10 +1538,10 @@ export function useSettingsScreenDemoProvider({
 		},
 		genres: {
 			locale,
-			items: genreCatalog,
+			items: genreItems,
 			status: {
-				count: genreCatalog.length,
-				available: settings.genresLoaded,
+				count: genreCount,
+				available: genreCount > 0,
 				updatedAt: lastGenreRefresh,
 				attemptedAt: lastGenreRefresh,
 			},
