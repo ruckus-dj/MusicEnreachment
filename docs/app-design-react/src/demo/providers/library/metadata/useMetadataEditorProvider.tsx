@@ -785,6 +785,8 @@ export function useMetadataEditorProvider({
 	const groupHeading = (group: string) => {
 		if (group === "main")
 			return releaseMetadataEditorMessages[locale].groups.main;
+		if (libraryMetadata && scope === "track" && group === "position")
+			return releaseMetadataEditorMessages[locale].groups.position;
 		if (scopedRelease && (group === "release" || group === "additional"))
 			return releaseMetadataEditorMessages[locale].groups[group];
 		return metadataGroupLabel(group, locale);

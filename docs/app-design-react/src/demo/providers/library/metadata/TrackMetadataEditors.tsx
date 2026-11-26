@@ -13,7 +13,7 @@ export function TrackMetadataEditors({
 	children,
 	...props
 }: TrackMetadataEditorsProps & { children: ReactNode }) {
-	const { recording, position, selectedAudio, otherAudio, ...view } =
+	const { recording, position, ...view } =
 		useTrackMetadataEditorsDemoProvider(props);
 	const model: TrackMetadataEditorsModel = {
 		...view,
@@ -27,22 +27,6 @@ export function TrackMetadataEditors({
 				<MetadataEditor {...position}>{children}</MetadataEditor>
 			),
 		},
-		selectedAudio: selectedAudio
-			? {
-					key: selectedAudio.id,
-					bind: (children: ReactNode) => (
-						<MetadataEditor {...selectedAudio.editor}>
-							{children}
-						</MetadataEditor>
-					),
-				}
-			: undefined,
-		otherAudio: otherAudio.map(({ id, editor }) => ({
-			key: id,
-			bind: (children: ReactNode) => (
-				<MetadataEditor {...editor}>{children}</MetadataEditor>
-			),
-		})),
 	};
 	return (
 		<TrackMetadataEditorsDataBinder model={model}>

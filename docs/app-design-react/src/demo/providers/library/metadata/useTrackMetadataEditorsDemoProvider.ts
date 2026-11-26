@@ -9,11 +9,10 @@ import {
 	type CatalogArtist,
 	effectiveRecordingTitle,
 	type OriginalTrack,
-	positionNumberingFields,
+	positionLayoutFields,
 	positionTitleIntent,
 	recordingTitleBaseline,
 	type ScopedScalarIntentMap,
-	type SourceFiles,
 } from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
 import {
@@ -23,12 +22,6 @@ import {
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-
-function mergedValues(
-	...values: (MetadataValues | undefined)[]
-): MetadataValues {
-	return Object.assign({}, ...values.filter(Boolean));
-}
 
 function recordingValues(track: OriginalTrack): MetadataValues {
 	const values = { ...(track.recordingMetadata ?? {}) };
@@ -74,7 +67,6 @@ function creditsFor(
 export type TrackMetadataEditorsProps = {
 	track: OriginalTrack;
 	artists: CatalogArtist[];
-	files: SourceFiles;
 	genresLoaded: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 	onMutate: (update: (current: OriginalTrack) => OriginalTrack) => void;
@@ -83,24 +75,19 @@ export type TrackMetadataEditorsProps = {
 	) => void;
 };
 
-type AudioEditor = { id: string; editor: MetadataEditorProps };
-
 export function useTrackMetadataEditorsDemoProvider({
 	track,
 	artists,
-	files,
 	genresLoaded,
 	onLoadGenres,
 	onMutate,
 	onRecordingChange,
 }: TrackMetadataEditorsProps): Omit<
 	TrackMetadataEditorsViewProps,
-	"recording" | "position" | "selectedAudio" | "otherAudio"
+	"recording" | "position"
 > & {
 	recording: MetadataEditorProps;
 	position: MetadataEditorProps;
-	selectedAudio?: AudioEditor;
-	otherAudio: AudioEditor[];
 } {
 	const { locale } = useI18n();
 	const m = (
@@ -116,19 +103,16 @@ export function useTrackMetadataEditorsDemoProvider({
 	const position: MetadataValues = {
 		...track.positionMetadata,
 		...Object.fromEntries(
-			positionNumberingFields.map((field) => {
-				const intent = track.positionScalarIntent?.[field];
-				return [field, intent?.state === "value" ? [...intent.value] : []];
+			positionLayoutFields.map(({ metadataKey }) => {
+				const intent = track.positionScalarIntent?.[metadataKey];
+				return [
+					metadataKey,
+					intent?.state === "value" ? [...intent.value] : [],
+				];
 			}),
 		),
 		title: [positionTitle.value],
 	};
-	const audioSources = [
-		...new Set([
-			...(track.sourceIds ?? []),
-			...(track.sourceId ? [track.sourceId] : []),
-		]),
-	];
 	const releaseText = releaseMetadataEditorMessages[locale];
 	const fieldStateMode = {
 		label: releaseText.mode,
@@ -142,10 +126,6 @@ export function useTrackMetadataEditorsDemoProvider({
 		emptyValue: releaseText.emptyValue,
 	};
 
-	const selectedId = track.sourceId;
-	const hasSelected = Boolean(selectedId && audioSources.includes(selectedId));
-	const otherIds = audioSources.filter((id) => id !== selectedId);
-	const fileName = (id: string) => files[id]?.name ?? id;
 	return {
 		label: `${m("positionDetails")} ${track.id}`,
 		recording: {
@@ -259,14 +239,28 @@ export function useTrackMetadataEditorsDemoProvider({
 			fields: libraryPositionEditorFields,
 			fieldStates: {
 				title: positionTitle.state,
-				track: track.positionScalarIntent?.track?.state ?? "absent",
-				disc: track.positionScalarIntent?.disc?.state ?? "absent",
+				...Object.fromEntries(
+					positionLayoutFields.map(({ metadataKey }) => [
+						metadataKey,
+						track.positionScalarIntent?.[metadataKey]?.state ?? "absent",
+					]),
+				),
 			},
 			fieldLabels: {
 				title: releaseText.labels.title,
-				track: releaseText.labels.track_number,
-				disc: releaseText.labels.disc_number,
+				...Object.fromEntries(
+					positionLayoutFields.map(({ key, metadataKey }) => [
+						metadataKey,
+						releaseText.labels[key],
+					]),
+				),
 			},
+			fieldKinds: Object.fromEntries(
+				positionLayoutFields.map(({ metadataKey, kind }) => [
+					metadataKey,
+					kind,
+				]),
+			),
 			fieldStateMode,
 			fieldStateDisplay,
 			onSave: (values, details) => {
@@ -281,7 +275,7 @@ export function useTrackMetadataEditorsDemoProvider({
 					const positionScalarIntent: ScopedScalarIntentMap = {
 						...current.positionScalarIntent,
 					};
-					for (const field of positionNumberingFields) {
+					for (const { metadataKey: field, kind } of positionLayoutFields) {
 						delete positionMetadata[field];
 						delete comparison[field];
 						const state = details?.fieldStates?.[field];
@@ -291,7 +285,11 @@ export function useTrackMetadataEditorsDemoProvider({
 						else if (state === "value")
 							positionScalarIntent[field] = {
 								state,
-								value: [String(Number(values[field]?.[0]))],
+								value: [
+									kind === "integer"
+										? String(Number(values[field]?.[0]))
+										: (values[field]?.[0] ?? ""),
+								],
 							};
 					}
 					const updated: OriginalTrack = {
@@ -322,48 +320,5 @@ export function useTrackMetadataEditorsDemoProvider({
 				});
 			},
 		},
-		audioLabel: m("audioMetadata"),
-		audioSummary: `${m("volumeEncoding")} · ${selectedId ? fileName(selectedId) : m("noSelectedSource")}`,
-		noLinkedVariant: m("noLinkedVariant"),
-		selectedFileUnavailable:
-			selectedId && !hasSelected ? m("selectedFileUnavailable") : undefined,
-		selectedAudio:
-			selectedId && hasSelected
-				? {
-						id: selectedId,
-						editor: {
-							label: `${fileName(selectedId)} · ${m("selectedForPublication")}`,
-							scope: "audio",
-							values: mergedValues(track.audioMetadata?.[selectedId]),
-							onSave: (values) =>
-								onMutate((current) => ({
-									...current,
-									audioMetadata: {
-										...current.audioMetadata,
-										[selectedId]: values,
-									},
-									audioComparisonOverrides: {
-										...current.audioComparisonOverrides,
-										[selectedId]: mergeComparisonOverrides(
-											current.audioComparisonOverrides?.[selectedId],
-											mergedValues(track.audioMetadata?.[selectedId]),
-											values,
-										),
-									},
-								})),
-						},
-					}
-				: undefined,
-		otherAudioSummary: m("otherAudioVariants", { count: otherIds.length }),
-		otherAudio: otherIds.map((id) => ({
-			id,
-			editor: {
-				label: `${fileName(id)} · ${m("readOnly")}`,
-				scope: "audio",
-				values: mergedValues(track.audioMetadata?.[id]),
-				readOnly: true,
-				onSave: () => undefined,
-			},
-		})),
 	};
 }

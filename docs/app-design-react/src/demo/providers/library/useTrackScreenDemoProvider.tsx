@@ -168,7 +168,6 @@ export function useTrackScreenDemoProvider(
 								<TrackMetadataEditors
 									track={track}
 									artists={artists ?? catalogData.artists}
-									files={files}
 									genresLoaded={genresLoaded}
 									onLoadGenres={onLoadGenres}
 									onMutate={onMutate ?? (() => undefined)}

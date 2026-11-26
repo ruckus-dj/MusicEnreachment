@@ -345,13 +345,38 @@ export function recordingScalarOverrideTags(
 	return tags;
 }
 
-export const positionNumberingFields = ["track", "disc"] as const;
-type PositionNumberingField = (typeof positionNumberingFields)[number];
-
-const positionNumberingTags: Record<PositionNumberingField, string> = {
-	track: "TRACKNUMBER",
-	disc: "DISCNUMBER",
-};
+export const positionLayoutFields = [
+	{
+		key: "disc_title",
+		metadataKey: "disctitle",
+		tag: "DISCNAME",
+		kind: "text",
+	},
+	{
+		key: "track_number",
+		metadataKey: "track",
+		tag: "TRACKNUMBER",
+		kind: "integer",
+	},
+	{
+		key: "track_total",
+		metadataKey: "tracktotal",
+		tag: "TRACKTOTAL",
+		kind: "integer",
+	},
+	{
+		key: "disc_number",
+		metadataKey: "disc",
+		tag: "DISCNUMBER",
+		kind: "integer",
+	},
+	{
+		key: "disc_total",
+		metadataKey: "disctotal",
+		tag: "DISCTOTAL",
+		kind: "integer",
+	},
+] as const;
 
 /** The exact raw position tags before any explicit track/disc override. */
 function positionNumberingBaseline(
@@ -359,7 +384,7 @@ function positionNumberingBaseline(
 		OriginalTrack,
 		"displayedNumber" | "mediumPosition" | "position" | "medium"
 	>,
-): Record<PositionNumberingField, string> {
+) {
 	return {
 		track: String(
 			track.displayedNumber || track.mediumPosition || track.position,
@@ -368,15 +393,14 @@ function positionNumberingBaseline(
 	};
 }
 
-export function positionNumberingOverrideTags(
+export function positionLayoutOverrideTags(
 	track: OriginalTrack,
 ): MetadataValues {
 	const tags: MetadataValues = {};
-	for (const key of positionNumberingFields) {
-		const intent = track.positionScalarIntent?.[key];
+	for (const { metadataKey, tag } of positionLayoutFields) {
+		const intent = track.positionScalarIntent?.[metadataKey];
 		if (!intent || intent.state === "absent") continue;
-		tags[positionNumberingTags[key]] =
-			intent.state === "explicit_empty" ? [] : [...intent.value];
+		tags[tag] = intent.state === "explicit_empty" ? [] : [...intent.value];
 	}
 	return tags;
 }
@@ -831,7 +855,7 @@ export function desiredTags(
 		...projectMetadataValues(recordingValues).tags,
 		...recordingScalarOverrideTags(track, "publication"),
 		...projectMetadataValues(explicitValues).tags,
-		...positionNumberingOverrideTags(track),
+		...positionLayoutOverrideTags(track),
 	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
 	const projectedArtistNames = (
