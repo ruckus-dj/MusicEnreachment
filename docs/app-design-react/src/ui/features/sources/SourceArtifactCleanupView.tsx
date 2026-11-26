@@ -136,12 +136,12 @@ const copy = {
 } as const;
 
 const panelClassName =
-  "min-w-0 mb-[10px] rounded-[8px] border border-[var(--line)] bg-[var(--surface)] p-[10px] [&>h2]:mb-2 [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:mb-2 [&>h3]:text-sm [&>h3]:font-semibold [&>p]:my-2";
+  "min-w-0 mb-[10px] rounded-xl border border-[var(--line)] bg-[var(--surface)] p-[10px] [&>h2]:mb-2 [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:mb-2 [&>h3]:text-sm [&>h3]:font-semibold [&>p]:my-2";
 const listClassName = "m-0 grid min-w-0 gap-2 pl-5 wrap-anywhere";
 const overlayClassName =
-  "react-aria-ModalOverlay ui-modal-overlay fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[#0008] p-4";
+  "react-aria-ModalOverlay ui-modal-overlay fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[rgb(0_0_0/0.45)] p-4";
 const modalClassName =
-  "react-aria-Modal ui-modal w-full max-w-[560px] rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-[18px] text-[var(--ink)] shadow-[0_16px_48px_#0003]";
+  "react-aria-Modal ui-modal w-full max-w-[560px] rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-[18px] text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)]";
 const dialogClassName =
   "react-aria-Dialog ui-dialog wrap-anywhere outline-none [&_[slot=title]]:mb-2 [&_[slot=title]]:mt-0 [&_[slot=title]]:text-base [&_p]:my-3 [&_p]:mb-[14px] [&_button]:mr-2 [&_button]:rounded-[var(--control-radius)] [&_button]:border [&_button]:border-[var(--control)] [&_button]:px-[10px] [&_button]:py-1.5";
 

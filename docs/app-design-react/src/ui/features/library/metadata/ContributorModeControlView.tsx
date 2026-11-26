@@ -24,7 +24,7 @@ export function ContributorModeControlView({
       <select
         id={inputId}
         aria-label={`${text.groups.contributors} — ${text.mode}`}
-        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)]"
+        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-[var(--ink)]"
         value={value}
         disabled={disabled}
         onChange={(event) =>

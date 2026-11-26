@@ -1,24 +1,24 @@
 import type { ComponentProps, ReactElement } from "react";
-import { useContext } from "react";
-import {
-  Checkbox,
-  Disclosure,
-  DisclosureGroup,
-  DisclosurePanel,
-  DisclosureStateContext,
-  Heading,
-} from "react-aria-components";
+import { useRef } from "react";
+import { DisclosureGroup, Heading } from "react-aria-components";
+import { ActiveFilterTags } from "../../components/ActiveFilterTags";
 import { AppButton } from "../../components/AppButton";
 import type { Locale } from "../../i18n/types";
-import { ArtistReleasePositionsView } from "./ArtistReleasePositionsView";
+import { ArtistEditionRowView } from "./ArtistEditionRowView";
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
 import { LibraryArtistHeadingView } from "./LibraryArtistHeadingView";
 import type { LibraryArtistReleaseTrackRow } from "./LibraryArtistReleaseTracksView";
-import { LibraryCatalogQueryControls } from "./LibraryCatalogControls";
+import {
+  LibraryCatalogQueryControls,
+  libraryActiveFilterTags,
+} from "./LibraryCatalogControls";
 import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
-import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import { LibraryPaginationControls } from "./LibraryPaginationView";
+import type {
+  LibraryAvailabilityFilter,
+  LibraryPublicationFilter,
+} from "./libraryDetailRoute";
 
 export type ArtistHeadingModel = {
   name: string;
@@ -164,6 +164,15 @@ export type ArtistScreenViewContent = {
   filter: LibraryStateFilter;
   onQueryChange: (value: string) => void;
   onFilterChange: (value: LibraryStateFilter) => void;
+  /** Canonical independent filter axes; tags render each non-default axis. */
+  publication?: LibraryPublicationFilter;
+  availability?: LibraryAvailabilityFilter;
+  /** Atomically clears only the publication axis, preserving query/availability. */
+  onPublicationChange?: (value: LibraryPublicationFilter) => void;
+  /** Atomically clears only the availability axis, preserving query/publication. */
+  onAvailabilityChange?: (value: LibraryAvailabilityFilter) => void;
+  /** Clears search and both canonical filter axes in one navigation. */
+  onResetFilters?: () => void;
   editionsKey: string;
   releases: ArtistReleasesModel;
   expandedReleaseId?: string;
@@ -185,25 +194,7 @@ export type ArtistScreenViewProps =
     } & ArtistScreenViewContent);
 
 const statePanelClass =
-  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm [&>h2]:m-0 [&>h2]:text-base [&>p]:m-0";
-const headerGrid =
-  "grid min-h-[94px] grid-cols-[68px_minmax(0,1fr)_auto] items-center gap-[13px] px-[15px] py-3 text-left max-[600px]:min-h-20 max-[600px]:grid-cols-[54px_minmax(0,1fr)_auto] max-[600px]:items-start max-[600px]:gap-[9px] max-[600px]:px-[9px] max-[600px]:py-[9px]";
-const cardCheckboxFocus =
-  "data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
-const toggleButton =
-  "inline-flex min-h-8 cursor-pointer items-center rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-xs text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2";
-
-/** Single trigger label driven by the enclosing Disclosure's actual state. */
-function PositionsToggle({ show, hide }: { show: string; hide: string }) {
-  const state = useContext(DisclosureStateContext);
-  return <>{state?.isExpanded ? hide : show}</>;
-}
-
-/** Defers mounting a lazy slot until its disclosure is actually expanded. */
-function ExpandedOnly({ children }: { children: ReactElement }) {
-  const state = useContext(DisclosureStateContext);
-  return state?.isExpanded ? children : null;
-}
+  "grid justify-items-start gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm [&>h2]:m-0 [&>h2]:text-base [&>h2]:font-semibold [&>p]:m-0 [&>p]:text-[var(--muted)]";
 
 function MissingGroupCredits({
   credits,
@@ -245,6 +236,7 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
   const { locale, libraryHref } = props;
   const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
     catalogueMessage(locale, key, values);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   if (!props.heading)
     return (
@@ -286,11 +278,23 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
     filter,
     onQueryChange,
     onFilterChange,
+    publication,
+    availability,
+    onPublicationChange,
+    onAvailabilityChange,
+    onResetFilters,
     editionsKey,
     releases,
     expandedReleaseId,
     tagFocus,
   } = props;
+
+  const activeFilterTags = libraryActiveFilterTags(
+    locale,
+    query,
+    filter,
+    publication && availability ? { publication, availability } : undefined,
+  );
 
   return (
     <section className={catalogueStyles.object} aria-labelledby="artist-title">
@@ -336,6 +340,25 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
           onSearch={onQueryChange}
           filter={filter}
           onFilter={onFilterChange}
+          inputRef={searchInputRef}
+        />
+        <ActiveFilterTags
+          locale={locale}
+          items={activeFilterTags}
+          focusTargetRef={searchInputRef}
+          onRemove={(id) => {
+            if (id === "search") onQueryChange("");
+            else if (id === "publication") onPublicationChange?.("all");
+            else if (id === "availability") onAvailabilityChange?.("all");
+            else if (id === "status") onFilterChange("all");
+          }}
+          onReset={
+            onResetFilters ??
+            (() => {
+              onQueryChange("");
+              onFilterChange("all");
+            })
+          }
         />
       </div>
       {releases.state === "loading" ? (
@@ -374,141 +397,16 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
           >
             {releases.rows.map((row) =>
               row.kind === "edition" ? (
-                <div className={catalogueStyles.albumRow} key={row.edition.key}>
-                  <Disclosure
-                    className={`group ${catalogueStyles.albumCard}`}
-                    id={row.edition.key}
-                  >
-                    {row.edition.selection && (
-                      <div className={catalogueStyles.cardSelection}>
-                        <Checkbox
-                          aria-label={`${m("selectAllEditionPositions")}: ${row.edition.ariaLabel}`}
-                          className={`${catalogueStyles.cardCheckbox} ${cardCheckboxFocus}`}
-                          isSelected={row.edition.selection.isSelected}
-                          isIndeterminate={
-                            row.edition.selection.isIndeterminate
-                          }
-                          isDisabled={row.edition.selection.isDisabled}
-                          onChange={row.edition.selection.onChange}
-                        >
-                          <span
-                            className={catalogueStyles.cardCheckboxBox}
-                            aria-hidden="true"
-                          >
-                            {row.edition.selection.isSelected
-                              ? "✓"
-                              : row.edition.selection.isIndeterminate
-                                ? "−"
-                                : ""}
-                          </span>
-                        </Checkbox>
-                      </div>
-                    )}
-                    <div className={headerGrid}>
-                      <LibraryEditionArtwork
-                        palette={row.edition.artwork.palette}
-                        title={row.edition.artwork.title}
-                        imageSrc={row.edition.artwork.imageSrc}
-                        imageAlt={row.edition.artwork.imageAlt}
-                      />
-                      <div className={catalogueStyles.albumCopy}>
-                        <Heading
-                          level={2}
-                          className="min-w-0"
-                          data-library-edition-title
-                        >
-                          {row.edition.titleHref ? (
-                            <a
-                              className="text-[var(--ink)]! no-underline hover:underline"
-                              href={row.edition.titleHref}
-                            >
-                              <strong>{row.edition.title}</strong>
-                            </a>
-                          ) : (
-                            <strong>{row.edition.title}</strong>
-                          )}
-                        </Heading>
-                        {row.edition.durationSeconds !== undefined && (
-                          <span className={catalogueStyles.albumMeta}>
-                            {row.edition.durationSeconds === null
-                              ? m("durationUnknown")
-                              : `${Math.floor(row.edition.durationSeconds / 60)}:${String(Math.round(row.edition.durationSeconds % 60)).padStart(2, "0")} ${m("total")}`}
-                          </span>
-                        )}
-                        <span className={catalogueStyles.albumMeta}>
-                          {row.edition.year} · {row.edition.positionCount}{" "}
-                          {m("positionsCount")}
-                          {row.edition.availableCount !== undefined &&
-                            ` · ${row.edition.availableCount} ${m("withAudio")}`}
-                          {row.edition.metadataChangedCount
-                            ? ` · ${m("metadataChangedFor", { count: row.edition.metadataChangedCount })}`
-                            : ""}
-                        </span>
-                        <span className={catalogueStyles.albumMeta}>
-                          {row.edition.country || m("countryUnspecified")} ·{" "}
-                          {row.edition.label || m("local")} ·{" "}
-                          {row.edition.catalog || "—"}
-                          {row.edition.providerText
-                            ? ` · ${row.edition.providerText}`
-                            : ""}
-                        </span>
-                        <span className={catalogueStyles.albumMeta}>
-                          {row.edition.providerTrackCount !== null
-                            ? `${row.edition.publishedCount}/${row.edition.providerTrackCount} ${m("publishedCount")}`
-                            : `${row.edition.publishedCount} ${m("publishedCount")} · ${m("providerCompletenessUnknown")}`}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <AppButton slot="trigger" className={toggleButton}>
-                          <PositionsToggle
-                            show={m("showPositions")}
-                            hide={m("hidePositions")}
-                          />
-                        </AppButton>
-                        {row.edition.deletion}
-                      </div>
-                    </div>
-                    <DisclosurePanel className={catalogueStyles.albumPanel}>
-                      {row.edition.editor && (
-                        <div
-                          ref={
-                            tagFocus?.scope === "release" &&
-                            tagFocus.releaseId === row.edition.key
-                              ? tagFocus.ref
-                              : undefined
-                          }
-                          tabIndex={
-                            tagFocus?.scope === "release" &&
-                            tagFocus.releaseId === row.edition.key
-                              ? -1
-                              : undefined
-                          }
-                          className="grid min-w-0 gap-3"
-                        >
-                          {row.edition.editor}
-                        </div>
-                      )}
-                      {row.edition.publication}
-                      {row.edition.positions ? (
-                        <ExpandedOnly>{row.edition.positions}</ExpandedOnly>
-                      ) : (
-                        <ArtistReleasePositionsView
-                          locale={locale}
-                          releaseTitle={row.edition.title}
-                          releaseSelection={row.edition.trackSelection}
-                          positions={{
-                            state: "ready",
-                            tracks: row.edition.tracks ?? [],
-                          }}
-                        />
-                      )}
-                    </DisclosurePanel>
-                  </Disclosure>
-                </div>
+                <ArtistEditionRowView
+                  key={row.edition.key}
+                  locale={locale}
+                  edition={row.edition}
+                  tagFocus={tagFocus}
+                />
               ) : (
                 <div className={catalogueStyles.albumRow} key={row.group.key}>
                   <article
-                    className={`${catalogueStyles.albumCard} grid gap-2 p-3`}
+                    className={`${catalogueStyles.albumCard} grid gap-2 p-5`}
                   >
                     <Heading level={2} className="m-0 text-base">
                       {row.group.title}

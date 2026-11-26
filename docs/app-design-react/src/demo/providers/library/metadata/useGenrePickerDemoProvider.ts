@@ -37,8 +37,8 @@ const isManualGenreId = (id: string) => id.startsWith(manualGenrePrefix);
 /**
  * Demo genre-picker adapter. It owns the fixture catalog, name resolution,
  * search ranking, selection retention and load state, then supplies the props
- * of the shared library picker, which owns the dialog, status, search,
- * selection and keyboard behavior.
+ * of the shared library picker, which owns the removable tags, anchored
+ * search popover, status, selection and keyboard behavior.
  */
 export function useGenrePickerDemoProvider({
   value,

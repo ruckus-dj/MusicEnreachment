@@ -48,7 +48,7 @@ export function SourceDetailFeedbackView({
             ref={alert}
             tabIndex={-1}
             role="alert"
-            className="rounded border border-[var(--line)] bg-[var(--error-soft)] p-2 text-[var(--error)]"
+            className="rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] p-3.5 text-sm text-[var(--error)]"
           >
             {error}
           </p>

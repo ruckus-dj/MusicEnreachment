@@ -1,10 +1,10 @@
 import type { RefObject } from "react";
 
 const errorClassName =
-  "my-2 border-l-[3px] border-[var(--error)] bg-[var(--error-soft)] px-3 py-[10px] text-[var(--error)] wrap-anywhere";
+  "my-2 rounded-lg border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] px-3.5 py-2.5 text-sm text-[var(--error)] wrap-anywhere";
 const noticeClassName =
-  "my-2 rounded bg-[var(--warning-soft)] px-3 py-[10px] wrap-anywhere";
-const pendingClassName = "my-2 text-[var(--muted)] wrap-anywhere";
+  "my-2 rounded-lg border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] px-3.5 py-2.5 text-sm wrap-anywhere";
+const pendingClassName = "my-2 text-sm text-[var(--muted)] wrap-anywhere";
 
 export interface SetupFeedbackViewProps {
   error?: string;

@@ -9,8 +9,8 @@ export type { GenreReference } from "./useGenrePickerDemoProvider";
 /**
  * Small demo adapter for the shared library genre picker. Fixture catalog,
  * name resolution, search ranking and selection retention live in the demo
- * provider; the shared picker owns the dialog, status, search, selection and
- * keyboard behavior.
+ * provider; the shared picker owns the removable tags, anchored search
+ * popover, status, selection and keyboard behavior.
  */
 export function GenrePickerView(props: GenrePickerProps) {
   const picker = useGenrePickerDemoProvider(props);

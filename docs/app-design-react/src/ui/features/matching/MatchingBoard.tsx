@@ -510,12 +510,12 @@ export function MatchingBoard({
 						if (key === "track" || key === "name") setFreeFileSort(key);
 					}}
 				>
-					<Label className="text-[10px] uppercase leading-4 tracking-[0.03em] text-[var(--muted)]">
+					<Label className="text-xs uppercase leading-4 tracking-[0.03em] text-[var(--muted)]">
 						{copy.sortLabel}
 					</Label>
 					<AriaButton
 						className={matchingBoardClasses(
-							"inline-flex min-h-[28px] min-w-[9rem] max-w-full cursor-pointer items-center justify-between gap-1 rounded-[3px] border border-[var(--line)] bg-[var(--surface)] px-[7px] py-0 text-left text-[11px] font-[inherit] text-[var(--ink)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-10",
+							"inline-flex min-h-[28px] min-w-[9rem] max-w-full cursor-pointer items-center justify-between gap-1 rounded border border-[var(--line)] bg-[var(--surface)] px-[7px] py-0 text-left text-xs font-[inherit] text-[var(--ink)] hover:border-[var(--control)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-10",
 							matchingBoardClass.focusRing,
 						)}
 					>
@@ -531,19 +531,19 @@ export function MatchingBoard({
 							<path d="m4 6 4 4 4-4" />
 						</svg>
 					</AriaButton>
-					<Popover className="z-30 max-h-[240px] min-w-[var(--trigger-width)] overflow-auto rounded-[3px] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]">
-						<ListBox className="grid gap-0.5 text-[11px] outline-none">
+					<Popover className="z-30 max-h-[240px] min-w-[var(--trigger-width)] overflow-auto rounded border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]">
+						<ListBox className="grid gap-0.5 text-xs outline-none">
 							<ListBoxItem
 								id="track"
 								textValue={copy.sortByTrack}
-								className="cursor-pointer rounded-[3px] px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
+								className="cursor-pointer rounded px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
 							>
 								{copy.sortByTrack}
 							</ListBoxItem>
 							<ListBoxItem
 								id="name"
 								textValue={copy.sortByName}
-								className="cursor-pointer rounded-[3px] px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
+								className="cursor-pointer rounded px-2 py-[5px] outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:shadow-[inset_0_0_0_2px_var(--focus)]"
 							>
 								{copy.sortByName}
 							</ListBoxItem>
@@ -581,7 +581,7 @@ export function MatchingBoard({
 											onInspectSource?.(memberId);
 										}}
 									>
-										<span className="flex min-w-0 items-baseline text-[12px] leading-4">
+										<span className="flex min-w-0 items-baseline text-xs leading-4">
 											{pathParts?.parents.length ? (
 												<span
 													aria-hidden="true"

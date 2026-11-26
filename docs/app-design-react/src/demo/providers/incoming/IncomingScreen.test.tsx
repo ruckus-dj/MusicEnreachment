@@ -35,6 +35,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("names the matching action without repeating the group title in English", () => {
+  window.localStorage.setItem("music-design-v2-language", "en");
+  renderOverview();
+
+  const action = screen.getByRole("link", {
+    name: "Match group “Small Hours”",
+  });
+  expect(action.textContent).toBe("Match");
+  expect(action).toHaveAttribute("href", "#/incoming-groups/hours/matching");
+});
+
 it("renders one four-column overview with source paths and link navigation", () => {
   renderOverview();
 
@@ -52,9 +63,10 @@ it("renders one four-column overview with source paths and link navigation", () 
   ).toBeInTheDocument();
 
   const north = screen.getByRole("link", {
-    name: "Открыть группу «Northern lines»",
+    name: "Сопоставить группу «Northern lines»",
   });
   expect(north).toHaveAttribute("href", "#/incoming-groups/north/matching");
+  expect(north.textContent).toBe("Сопоставить");
   const row = north.closest("tr");
   if (!row) throw new Error("Missing north overview row");
   expect(within(row).getByText("Mira Vale")).toBeInTheDocument();
@@ -63,9 +75,11 @@ it("renders one four-column overview with source paths and link navigation", () 
   expect(
     within(row).getByText("Неполный релиз; одна спорная композиция"),
   ).toBeInTheDocument();
-  expect(
-    within(row).getByRole("button", { name: "Файлы группы «Northern lines»" }),
-  ).toHaveAttribute("aria-expanded", "false");
+  const disclosure = within(row).getByRole("button", {
+    name: "Файлы группы «Northern lines»",
+  });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(disclosure).toHaveAccessibleDescription("Mira Vale");
 });
 
 it("restores the expanded group from a shared link", () => {
@@ -261,7 +275,7 @@ it("splits one exact file only on a menu action, preserving unrelated drafts", a
   );
   if (!splitGroup) throw new Error("Missing split group");
   const routes = screen
-    .getAllByRole("link", { name: /Открыть группу/ })
+    .getAllByRole("link", { name: /Сопоставить группу/ })
     .map((link) => link.getAttribute("href"));
   const sourceIndex = routes.indexOf("#/incoming-groups/north/matching");
   expect(sourceIndex).toBeGreaterThanOrEqual(0);

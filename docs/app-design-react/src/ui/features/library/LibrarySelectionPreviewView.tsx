@@ -118,7 +118,7 @@ const copyByLocale = {
 } as const;
 
 export const librarySelectionButtonClass =
-  "min-h-9 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-[10px] py-[6px] text-[var(--ink)] data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]";
+  "inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] no-underline data-[hovered]:border-[var(--control)] data-[hovered]:bg-[var(--raised)] data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
 
 export const maxLibraryPreviewPositions = 100;
 
@@ -156,7 +156,7 @@ export function LibrarySelectionPreviewView({
       isOpen
       isDismissable
       onOpenChange={(open) => !open && onClose()}
-      className="fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-black/45 p-3"
+      className="fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-[rgb(0_0_0/0.45)] p-3"
     >
       <Modal className="w-full max-w-[680px] rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] shadow-xl">
         <Dialog aria-labelledby={headingId} className="min-w-0 outline-none">

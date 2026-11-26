@@ -108,7 +108,11 @@ it("settles removal automatically and keeps failed attempts retryable until comp
   expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
 
   advance(demoOperationStartDelayMs);
-  expect(within(screen.getByRole("grid")).getByText("Running")).toBeVisible();
+  expect(
+    within(screen.getByRole("grid", { name: "Current operations" })).getByText(
+      "Running",
+    ),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
   expect(settleDeletion).not.toHaveBeenCalled();
 
@@ -118,7 +122,7 @@ it("settles removal automatically and keeps failed attempts retryable until comp
   const removalError =
     "Removal is incomplete. Retry to verify the managed path and finish removal; an unavailable path is not treated as an absent file.";
   expect(screen.getByRole("status")).toHaveTextContent(removalError);
-  const grid = screen.getByRole("grid");
+  const grid = screen.getByRole("grid", { name: "Current operations" });
   const failedRow = within(grid)
     .getByRole("link", { name: track.title })
     .closest("tr");
@@ -130,7 +134,11 @@ it("settles removal automatically and keeps failed attempts retryable until comp
   expect(screen.getByText(track.title)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Complete removal" })).toBeNull();
   advance(demoOperationStartDelayMs);
-  expect(within(screen.getByRole("grid")).getByText("Running")).toBeVisible();
+  expect(
+    within(screen.getByRole("grid", { name: "Current operations" })).getByText(
+      "Running",
+    ),
+  ).toBeVisible();
   advance(demoOperationSettleDelayMs);
   expect(settleDeletion).toHaveBeenCalledTimes(2);
   expect(settleDeletion).toHaveBeenNthCalledWith(2, operation);
@@ -196,7 +204,7 @@ it("sorts the whole filtered queue before pagination and returns to page one", (
   fireEvent.click(screen.getByRole("button", { name: /status/i }));
   fireEvent.click(screen.getByRole("option", { name: "Queued" }));
   syncLocation();
-  const grid = screen.getByRole("grid");
+  const grid = screen.getByRole("grid", { name: "Current operations" });
   const created = within(grid).getByRole("columnheader", { name: "Created" });
   expect(created).toHaveAttribute("aria-sort", "descending");
   fireEvent.click(screen.getByRole("button", { name: "Next" }));

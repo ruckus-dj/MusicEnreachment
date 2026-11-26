@@ -105,7 +105,7 @@ export function LibraryReleaseWorkspaceView<
   const showPosition = activePositionId !== undefined;
   return (
     <section
-      className={`grid min-w-0 gap-3 text-[13px] leading-[18px] text-ink ${showPosition ? "" : "mx-auto max-w-5xl"}`}
+      className={`grid min-w-0 gap-3 text-sm leading-[18px] text-ink ${showPosition ? "" : "mx-auto max-w-5xl"}`}
     >
       {overview && (
         <div hidden={showPosition}>

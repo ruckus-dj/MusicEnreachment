@@ -32,7 +32,7 @@ export function OwnCatalogPagination({
 				};
 	return (
 		<nav
-			className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] pt-3 text-xs"
+			className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] pt-4 text-sm"
 			aria-label={copy.pages}
 		>
 			<span role="status" className="text-[var(--muted)]">

@@ -1,5 +1,7 @@
 import type { Ref } from "react";
 import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
+import { PageHeader } from "../../components/PageHeader";
 import { sourceRegistrationMessages } from "./SourceRegistrationView";
 
 const copy = {
@@ -26,27 +28,23 @@ export function SourceListHeadingView({
 }) {
   const text = copy[locale];
   return (
-    <header className="mb-[18px] flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-[14px]">
-      <div className="min-w-0">
-        <h1
-          ref={headingRef}
-          tabIndex={-1}
-          id="sources-title"
-          className="m-0 text-[clamp(21px,2.5vw,28px)] leading-[1.18] [text-wrap:balance]"
-        >
-          {text.title}
-        </h1>
-        <p className="m-0 max-w-[75ch] text-[var(--muted)]">
-          {text.description}
-        </p>
-      </div>
-      {registration && (
-        <div className="my-2 flex flex-wrap items-center gap-2">
-          <AppButton id={registration.id} onPress={registration.onPress}>
+    <PageHeader
+      id="sources-title"
+      headingRef={headingRef}
+      title={text.title}
+      subtitle={text.description}
+      actions={
+        registration ? (
+          <AppButton
+            id={registration.id}
+            variant="primary"
+            onPress={registration.onPress}
+          >
+            <AppIcon name="plus" />
             {sourceRegistrationMessages[locale].addSource}
           </AppButton>
-        </div>
-      )}
-    </header>
+        ) : undefined
+      }
+    />
   );
 }

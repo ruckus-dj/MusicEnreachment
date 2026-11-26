@@ -308,6 +308,8 @@ function useDemoMeloTroveState(
     isLibraryRoute,
     setView,
     setFilter,
+    setPublication,
+    setAvailability,
     setPage,
     setSearch,
     reset: resetLibrarySearch,
@@ -1571,6 +1573,11 @@ function useDemoMeloTroveState(
         onSearch: setSearch,
         filter,
         onFilter: setFilter,
+        publication,
+        availability,
+        onPublicationChange: setPublication,
+        onAvailabilityChange: setAvailability,
+        onResetFilters: resetLibrarySearch,
         onViewChange: (nextView) => {
           setView(nextView);
           setExpanded(null);

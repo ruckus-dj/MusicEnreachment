@@ -66,14 +66,16 @@ const labels = {
 } as const;
 
 const panel =
-	"min-w-0 mb-[10px] rounded-[8px] border border-[var(--line)] bg-[var(--surface)] p-[10px] [&>h2]:mb-2 [&>h2]:text-sm [&>h2]:font-semibold";
+	"min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 [&>h2]:mb-3 [&>h2]:text-base [&>h2]:font-semibold";
 const summary =
-	"m-0 grid grid-cols-[minmax(130px,.3fr)_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs max-[600px]:grid-cols-1";
-const note = "mt-1 block text-[11px] text-[var(--muted)]";
+	"m-0 grid grid-cols-[minmax(130px,.3fr)_minmax(0,1fr)] gap-x-4 gap-y-2.5 text-sm max-[600px]:grid-cols-1";
+const note = "mt-1 block text-xs text-[var(--muted)]";
 const stateTones: Record<SourceRootOverviewTone, string> = {
-	available: "bg-[var(--accent-soft)] text-[var(--accent)]",
-	unavailable: "bg-[var(--raised)] text-[var(--error)]",
-	unknown: "bg-[var(--raised)] text-[var(--muted)]",
+	available:
+		"border border-[color-mix(in_srgb,var(--success)_25%,transparent)] bg-[var(--success-soft)] text-[var(--success)]",
+	unavailable:
+		"border border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] text-[var(--error)]",
+	unknown: "border border-[var(--line)] bg-[var(--raised)] text-[var(--muted)]",
 };
 
 export function SourceRootOverviewView({

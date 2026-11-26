@@ -45,7 +45,7 @@ const messages = {
 };
 
 const action =
-	"min-h-8 cursor-pointer rounded-[4px] border border-[var(--control)] px-2.5 py-1 font-semibold text-[var(--ink)] data-[disabled]:cursor-default data-[disabled]:opacity-50 data-[hovered]:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
+	"inline-flex min-h-9 cursor-pointer items-center rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] data-[disabled]:cursor-default data-[disabled]:opacity-50 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
 
 export function SourceScanPanel({
 	locale,
@@ -76,9 +76,9 @@ export function SourceScanPanel({
 	].includes(state.kind);
 	return (
 		<div className="grid min-w-0 gap-1">
-			<section className="grid min-w-0 gap-x-4 gap-y-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs wrap-anywhere sm:grid-cols-[minmax(0,1fr)_auto]">
+			<section className="grid min-w-0 gap-x-4 gap-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm wrap-anywhere sm:grid-cols-[minmax(0,1fr)_auto]">
 				<div className="min-w-0 space-y-1">
-					<h2 className="text-sm font-semibold">{copy.title}</h2>
+					<h2 className="m-0 text-base font-semibold">{copy.title}</h2>
 					<p className="text-[var(--muted)]">{copy.manual}</p>
 					{"message" in state ? (
 						<p className="text-[var(--error)]" role="alert">

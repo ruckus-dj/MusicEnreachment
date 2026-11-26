@@ -52,9 +52,9 @@ const messages = {
 } as const;
 
 const panel =
-  "min-w-0 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] p-[10px] text-xs wrap-anywhere";
-const note = "mt-2 block text-[11px] text-[var(--muted)]";
-const code = "font-mono text-[11px] [overflow-wrap:anywhere]";
+  "min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm wrap-anywhere";
+const note = "mt-2 block text-xs text-[var(--muted)]";
+const code = "font-mono text-xs [overflow-wrap:anywhere]";
 const errorBox =
   "mt-2 rounded border border-[var(--line)] bg-[var(--error-soft)] p-2 text-[var(--error)]";
 

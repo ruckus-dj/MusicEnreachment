@@ -1,15 +1,15 @@
 import { Checkbox } from "react-aria-components";
 
 const tableWrap =
-  "min-w-0 overflow-auto rounded-[5px] border border-[var(--line)] bg-[var(--surface)]";
+  "min-w-0 overflow-auto rounded-lg border border-[var(--line)] bg-[var(--surface)]";
 const headingClass =
-  "sticky top-0 z-[1] border-b border-[var(--line)] bg-[var(--raised)] p-2 text-left align-top wrap-anywhere";
+  "sticky top-0 z-[1] border-b border-[var(--line)] bg-[var(--raised)] px-3 py-2.5 text-left align-top text-xs font-medium text-[var(--muted)] wrap-anywhere";
 const comparisonRow =
   "[&:hover]:bg-[color-mix(in_srgb,var(--accent-soft)_36%,var(--surface))]";
 const rowHeading =
-  "border-b border-[var(--line)] p-[7px] text-left align-top font-semibold";
+  "border-b border-[var(--line)] px-3 py-3 text-left align-top text-sm font-medium";
 const cellClass =
-  "border-b border-[var(--line)] p-2 text-left align-top wrap-anywhere";
+  "border-b border-[var(--line)] px-3 py-3 text-left align-top text-sm wrap-anywhere";
 const checkboxClass =
   "react-aria-Checkbox ui-checkbox inline-flex min-h-8 cursor-pointer items-center gap-[7px] pointer-coarse:min-h-10 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 [&_.checkbox]:grid [&_.checkbox]:size-4 [&_.checkbox]:place-items-center [&_.checkbox]:border [&_.checkbox]:border-[var(--control)] [&_.checkbox]:bg-[var(--surface)] [&_.checkbox]:text-[var(--button-text)] data-[selected]:[&_.checkbox]:border-[var(--accent)] data-[selected]:[&_.checkbox]:bg-[var(--accent)]";
 
@@ -111,7 +111,7 @@ export function LibraryTagComparisonTable({
 }) {
   return (
     <div className={tableWrap}>
-      <table className="w-full min-w-[720px] border-collapse text-left text-[11px]">
+      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
         <thead>
           <tr>
             <th className={headingClass} scope="col">

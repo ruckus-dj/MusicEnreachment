@@ -232,11 +232,70 @@ export function ArtistScreen({
     }, SEARCH_DEBOUNCE_MS);
   }
   function changeFilter(value: CatalogFilterValue) {
+    if (pendingSearch.current !== null) {
+      window.clearTimeout(pendingSearch.current);
+      pendingSearch.current = null;
+    }
     const current = currentRoute();
-    if (filterForRoute(current) === value) return;
     navigateHash(
       libraryArtistAddressHref(artistId, {
         ...routeWithFilter(current, value),
+        query: searchInput,
+        offset: 0,
+      }),
+    );
+  }
+  /** Clears search and both filter axes in one canonical navigation. */
+  function resetFilters() {
+    if (pendingSearch.current !== null) {
+      window.clearTimeout(pendingSearch.current);
+      pendingSearch.current = null;
+    }
+    setSearchInput("");
+    const current = currentRoute();
+    if (
+      current.query === "" &&
+      current.publication === "all" &&
+      current.availability === "all" &&
+      current.offset === 0
+    )
+      return;
+    navigateHash(
+      libraryArtistAddressHref(artistId, {
+        ...current,
+        query: "",
+        publication: "all",
+        availability: "all",
+        offset: 0,
+      }),
+    );
+  }
+  function changePublication(value: LibraryArtistAddress["publication"]) {
+    if (pendingSearch.current !== null) {
+      window.clearTimeout(pendingSearch.current);
+      pendingSearch.current = null;
+    }
+    const current = currentRoute();
+    navigateHash(
+      libraryArtistAddressHref(artistId, {
+        ...current,
+        publication: value,
+        query: searchInput,
+        offset: 0,
+      }),
+    );
+  }
+  function changeAvailability(value: LibraryArtistAddress["availability"]) {
+    if (pendingSearch.current !== null) {
+      window.clearTimeout(pendingSearch.current);
+      pendingSearch.current = null;
+    }
+    const current = currentRoute();
+    navigateHash(
+      libraryArtistAddressHref(artistId, {
+        ...current,
+        availability: value,
+        query: searchInput,
         offset: 0,
       }),
     );
@@ -652,6 +711,11 @@ export function ArtistScreen({
     filter,
     onQueryChange: changeQuery,
     onFilterChange: changeFilter,
+    publication: route.publication,
+    availability: route.availability,
+    onPublicationChange: changePublication,
+    onAvailabilityChange: changeAvailability,
+    onResetFilters: resetFilters,
     editionsKey: artistId,
     releases: releaseState,
   };

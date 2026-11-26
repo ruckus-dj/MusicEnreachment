@@ -79,9 +79,9 @@ export function MatchingRecheckAbandonDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onCancel();
       }}
-      className="fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[#0008] p-3"
+      className="fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[rgb(0_0_0/0.45)] p-3"
     >
-      <AriaModal className="max-h-[calc(100dvh-24px)] w-full max-w-[620px] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[0_16px_48px_#0003]">
+      <AriaModal className="max-h-[calc(100dvh-24px)] w-full max-w-[620px] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)]">
         <AriaDialog className="outline-none">
           <AriaHeading
             slot="title"
@@ -89,7 +89,7 @@ export function MatchingRecheckAbandonDialog({
           >
             {copy.title}
           </AriaHeading>
-          <p className="mt-2 mb-0 text-[13px] text-[var(--muted)]">
+          <p className="mt-2 mb-0 text-sm text-[var(--muted)]">
             {copy.description}
           </p>
           <h3 className="mt-3 mb-1 text-xs font-semibold">{copy.positions}</h3>
@@ -105,8 +105,8 @@ export function MatchingRecheckAbandonDialog({
                 <span
                   className={
                     position.committed
-                      ? "shrink-0 text-[11px] text-[var(--muted)]"
-                      : "shrink-0 text-[11px] text-[var(--warning)]"
+                      ? "shrink-0 text-xs text-[var(--muted)]"
+                      : "shrink-0 text-xs text-[var(--warning)]"
                   }
                 >
                   {position.committed ? copy.committed : copy.unfinished}

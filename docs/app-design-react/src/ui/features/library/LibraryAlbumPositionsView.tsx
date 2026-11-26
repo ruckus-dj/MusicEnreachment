@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
 import { Checkbox } from "react-aria-components";
+import {
+  FileFormatBadge,
+  MetadataBadge,
+} from "../../components/FileFormatBadge";
 
 /**
  * Plain selection state supplied by a host. The view owns the checkbox markup
@@ -127,14 +131,14 @@ type Text = (typeof copy)[Locale];
 
 const styles = {
   root: "min-w-0 text-xs [font-variant-numeric:tabular-nums]",
-  sub: "mt-[3px] block text-[11px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
+  sub: "mt-[3px] block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
   mobile: "grid min-w-0 gap-2",
   mobileCard:
-    "grid min-w-0 gap-2 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2 text-xs wrap-anywhere",
+    "grid min-w-0 gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 text-xs wrap-anywhere",
   mobileHeading: "flex min-w-0 items-start gap-2",
   mobileFields: "grid min-w-0 gap-1",
   mobileField:
-    "m-0 grid min-w-0 grid-cols-[minmax(76px,.7fr)_minmax(0,1.5fr)] gap-2 border-b border-[var(--line)] pb-1.5 last:border-b-0 last:pb-0 [&>dt]:text-[11px] [&>dt]:text-[var(--muted)] [&>dd]:m-0 [&>dd]:[overflow-wrap:anywhere]",
+    "m-0 grid min-w-0 grid-cols-[minmax(76px,.7fr)_minmax(0,1.5fr)] gap-2 border-b border-[var(--line)] pb-1.5 last:border-b-0 last:pb-0 [&>dt]:text-xs [&>dt]:text-[var(--muted)] [&>dd]:m-0 [&>dd]:[overflow-wrap:anywhere]",
   desktop: "min-w-0",
   tableWrap:
     "min-w-0 overflow-auto rounded border border-[var(--line)] bg-[var(--raised)]",
@@ -145,10 +149,10 @@ const styles = {
   checkbox:
     "group grid size-8 shrink-0 cursor-pointer place-items-center data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]",
   checkboxBox:
-    "grid size-[18px] place-items-center rounded-[3px] border border-[var(--control)] bg-[var(--surface)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]",
+    "grid size-[18px] place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]",
   number: "whitespace-nowrap [font-variant-numeric:tabular-nums]",
   link: "font-semibold text-[var(--accent)] underline-offset-2 hover:underline",
-  path: "block font-mono text-[11px] [overflow-wrap:anywhere]",
+  path: "block font-mono text-xs [overflow-wrap:anywhere]",
   empty: "m-0 p-3 text-center text-[var(--muted)]",
   filterMatch:
     "bg-[linear-gradient(to_right,color-mix(in_srgb,var(--accent)_4%,transparent),transparent)] bg-left-top bg-no-repeat [background-size:9%_100%]",
@@ -252,13 +256,25 @@ function MobileField({
 function publicationLabel(
   publication: LibraryAlbumPositionPublication | undefined,
   text: Text,
-) {
+): ReactNode {
   if (!publication || publication.state === "unknown") return "—";
   if (publication.state === "not-published") return text.notPublished;
-  const format = `${publication.container} · ${publication.codec}`;
-  return publication.matchingConfidence == null
-    ? format
-    : `${format} · ${text.matchingConfidence}: ${Math.round(publication.matchingConfidence * 100)}%`;
+  const format = [publication.container, publication.codec]
+    .filter(Boolean)
+    .join(" · ");
+  const confidence =
+    publication.matchingConfidence == null
+      ? null
+      : `${text.matchingConfidence}: ${Math.round(publication.matchingConfidence * 100)}%`;
+  if (!format) return confidence || "—";
+  return (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+      <FileFormatBadge value={format} />
+      {confidence && (
+        <span className="text-xs text-[var(--muted)]">· {confidence}</span>
+      )}
+    </span>
+  );
 }
 
 function publishedTitle(position: LibraryAlbumPosition) {
@@ -273,30 +289,35 @@ function SourcePrimary({
   position: LibraryAlbumPosition;
   text: Text;
 }) {
-  const label =
-    position.sourceLabel ||
-    (position.sourceSelection === "unselected"
+  const label = position.sourceLabel?.trim();
+  const state =
+    position.sourceSelection === "unselected"
       ? text.noSourceSelected
       : position.sourceSelection === "missing"
         ? text.noFile
-        : undefined);
+        : undefined;
   const count = fill(text.sourceCount, { count: position.sourceCount });
   const summary =
     position.hasAudio === undefined
       ? count
       : `${count} · ${position.hasAudio ? text.hasAudio : text.noAudio}`;
-  return (
-    <>
-      {label ? (
-        <>
-          {label}
-          <span className={styles.sub}>{summary}</span>
-        </>
-      ) : (
-        summary
-      )}
-    </>
-  );
+  if (label) {
+    return (
+      <>
+        <FileFormatBadge value={label} />
+        <span className={styles.sub}>{summary}</span>
+      </>
+    );
+  }
+  if (state) {
+    return (
+      <>
+        {state}
+        <span className={styles.sub}>{summary}</span>
+      </>
+    );
+  }
+  return <>{summary}</>;
 }
 
 function PositionTitle({
@@ -387,7 +408,7 @@ function MobileCards({
                 <SourcePrimary position={position} text={text} />
               </MobileField>
               <MobileField label={text.properties}>
-                {position.properties || "—"}
+                <MetadataBadge value={position.properties} />
               </MobileField>
               <MobileField label={text.filePath}>
                 <PositionPaths position={position} />
@@ -478,7 +499,9 @@ function DesktopTable({
                   <td>
                     <SourcePrimary position={position} text={text} />
                   </td>
-                  <td>{position.properties || "—"}</td>
+                  <td>
+                    <MetadataBadge value={position.properties} />
+                  </td>
                   <td>
                     <PositionPaths position={position} />
                   </td>

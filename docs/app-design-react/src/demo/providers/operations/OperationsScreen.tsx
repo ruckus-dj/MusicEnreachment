@@ -15,6 +15,7 @@ import type {
   OperationsStatusFilter,
 } from "../../../ui/features/operations/operationsFilters";
 import {
+  defaultOperationsLocation,
   type OperationsLocation,
   operationsLocationHref,
   parseOperationsLocation,
@@ -223,6 +224,7 @@ function useDemoOperationsModel({
         {
           id: "abandon",
           label: copy.abandon,
+          isDestructive: true,
           onPress: () => setAbandonOpen(true),
         },
       ],
@@ -596,6 +598,14 @@ function useDemoOperationsModel({
   const changeKind = (value: OperationsKindSelection) => {
     updateLocation({ kind: value, offset: 0 });
   };
+  const resetFilters = () => {
+    setQuery("");
+    updateLocation({
+      status: defaultOperationsLocation.status,
+      kind: defaultOperationsLocation.kind,
+      offset: defaultOperationsLocation.offset,
+    });
+  };
 
   return {
     locale,
@@ -610,6 +620,7 @@ function useDemoOperationsModel({
       onStatusChange: changeStatus,
       kind: location.kind,
       onKindChange: changeKind,
+      onResetFilters: resetFilters,
     },
     sortColumn: location.sort,
     sortDirection: location.direction,

@@ -270,6 +270,7 @@ export function useIncomingScreenDemoProvider({
     noValue: msg("noValue"),
     expand: (name: string) => msg("filesIn", { name }),
     openGroup: (name: string) => msg("openGroup", { name }),
+    openGroupAction: msg("openGroupAction"),
   };
   const listModel: ApplicationIncomingListModel = {
     locale,

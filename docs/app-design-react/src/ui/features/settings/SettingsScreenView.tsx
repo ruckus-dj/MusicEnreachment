@@ -127,10 +127,10 @@ export type SettingsScreenViewProps = {
 };
 
 const healthPanelClass =
-  "grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3";
-const healthHeadingClass = "m-0 text-sm font-semibold";
+  "grid min-w-0 gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5";
+const healthHeadingClass = "m-0 text-base font-semibold";
 const unhealthyTextClass =
-  "m-0 rounded bg-[var(--error-soft)] p-2 text-[var(--error)]";
+  "m-0 rounded-lg bg-[var(--error-soft)] px-3.5 py-2.5 text-sm text-[var(--error)]";
 
 /**
  * Settings screen composition. Providers own lifecycle, validation, drafts,
@@ -155,7 +155,7 @@ export function SettingsScreenView({
       {notices.map((item) => (
         <p
           key={item.key}
-          className="mt-3 border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-[10px] text-[var(--ink)]"
+          className="m-0 rounded-lg border border-[color-mix(in_srgb,var(--accent)_25%,transparent)] bg-[var(--accent-soft)] px-3.5 py-2.5 text-sm text-[var(--ink)]"
           role="status"
           aria-live="polite"
         >
@@ -164,7 +164,12 @@ export function SettingsScreenView({
       ))}
       {loadError && (
         <>
-          <p ref={loadError.alertRef} tabIndex={-1} role="alert">
+          <p
+            className="m-0 text-sm font-medium text-[var(--error)]"
+            ref={loadError.alertRef}
+            tabIndex={-1}
+            role="alert"
+          >
             {loadError.message}
           </p>
           <AppButton
@@ -197,7 +202,7 @@ export function SettingsScreenView({
                   : ready.health.unhealthyText}
               </p>
               {!!ready.health.problems.length && (
-                <ul className="m-0 grid list-disc gap-1 pl-5 wrap-anywhere">
+                <ul className="m-0 grid list-disc gap-1 pl-5 text-sm wrap-anywhere">
                   {ready.health.problems.map((problem) => (
                     <li key={problem}>{problem}</li>
                   ))}
@@ -244,11 +249,20 @@ export function SettingsScreenView({
         </>
       )}
       {feedback && (
-        <p ref={feedback.alertRef} tabIndex={-1} role="alert">
+        <p
+          className="m-0 text-sm font-medium text-[var(--error)]"
+          ref={feedback.alertRef}
+          tabIndex={-1}
+          role="alert"
+        >
           {feedback.message}
         </p>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && (
+        <p className="m-0 text-sm text-[var(--muted)]" role="status">
+          {notice}
+        </p>
+      )}
       {refresh && (
         <AppButton isDisabled={refresh.disabled} onPress={refresh.onPress}>
           {refresh.label}

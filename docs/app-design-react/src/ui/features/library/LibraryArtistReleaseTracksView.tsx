@@ -1,4 +1,8 @@
 import { Checkbox } from "react-aria-components";
+import {
+  FileFormatBadge,
+  MetadataBadge,
+} from "../../components/FileFormatBadge";
 
 const copy = {
   en: {
@@ -85,9 +89,9 @@ export type LibraryArtistReleaseTrackRow = {
 };
 
 const tableClass =
-  "min-w-0 max-w-full overflow-auto rounded-[4px] border border-[var(--line)] [&_table]:w-full [&_table]:min-w-[700px] [&_table]:border-collapse [&_table]:text-[11px] [&_th]:px-2 [&_th]:py-[7px] [&_td]:px-2 [&_td]:py-[7px] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_th]:text-left [&_td]:text-left [&_th]:align-middle [&_td]:align-top [&_th]:wrap-anywhere [&_td]:wrap-anywhere [&_th]:bg-[var(--raised)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_tr:last-child>*]:border-b-0";
+  "min-w-0 max-w-full overflow-auto rounded-lg border border-[var(--line)] [&_table]:w-full [&_table]:min-w-[700px] [&_table]:border-collapse [&_table]:text-xs [&_th]:px-2 [&_th]:py-[7px] [&_td]:px-2 [&_td]:py-[7px] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_th]:text-left [&_td]:text-left [&_th]:align-middle [&_td]:align-top [&_th]:wrap-anywhere [&_td]:wrap-anywhere [&_th]:bg-[var(--raised)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_tr:last-child>*]:border-b-0";
 const secondary =
-  "mt-[3px] block text-[11px] font-normal text-[var(--muted)] wrap-anywhere";
+  "mt-[3px] block text-xs font-normal text-[var(--muted)] wrap-anywhere";
 const selectionCell =
   "box-border w-[34px] min-w-[34px] max-w-[34px] px-0! text-center! align-middle!";
 
@@ -107,7 +111,7 @@ function TrackSelection({
     >
       <span
         aria-hidden="true"
-        className="grid size-[18px] place-items-center rounded-[3px] border border-[var(--control)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)] group-data-[focus-visible]:outline group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-[var(--accent)] group-data-[focus-visible]:outline-offset-[3px]"
+        className="grid size-[18px] place-items-center rounded border border-[var(--control)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)] group-data-[focus-visible]:outline group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-[var(--accent)] group-data-[focus-visible]:outline-offset-[3px]"
       >
         {selection.isSelected ? "✓" : selection.isIndeterminate ? "−" : ""}
       </span>
@@ -139,10 +143,10 @@ function publicationText(
 ) {
   if (!publication) return "—";
   if (publication.state === "not-published") return text.notPublished;
-  return (
-    [publication.container, publication.codec].filter(Boolean).join(" · ") ||
-    text.published
-  );
+  const format = [publication.container, publication.codec]
+    .filter(Boolean)
+    .join(" · ");
+  return format ? <FileFormatBadge value={format} /> : text.published;
 }
 
 export function LibraryArtistReleaseTracksView({
@@ -216,7 +220,9 @@ export function LibraryArtistReleaseTracksView({
                     </span>
                   )}
                 </td>
-                <td>{track.properties || "—"}</td>
+                <td>
+                  <MetadataBadge value={track.properties} />
+                </td>
                 <td>
                   {track.hasAudio === undefined
                     ? "—"

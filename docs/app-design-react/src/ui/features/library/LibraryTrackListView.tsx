@@ -8,6 +8,10 @@ import {
   TableBody,
   TableHeader,
 } from "react-aria-components";
+import {
+  FileFormatBadge,
+  MetadataBadge,
+} from "../../components/FileFormatBadge";
 
 /**
  * Boolean selection state and action supplied by the host. The view owns the
@@ -149,24 +153,24 @@ type Text = (typeof copy)[Locale];
 
 const styles = {
   root: "w-full min-w-0 text-[var(--ink)]",
-  mobileList: "m-0 hidden grid-cols-1 gap-2 p-0 max-[599px]:grid",
+  mobileList: "m-0 hidden grid-cols-1 gap-3 p-0 max-[599px]:grid",
   mobileCard:
-    "grid min-w-0 gap-2 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-2 text-xs [font-variant-numeric:tabular-nums]",
+    "grid min-w-0 gap-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm [font-variant-numeric:tabular-nums]",
   mobileField:
-    "m-0 grid min-w-0 grid-cols-[minmax(76px,.7fr)_minmax(0,1.5fr)] gap-2 border-b border-[var(--line)] pb-1.5 last:border-b-0 last:pb-0 [&>dt]:text-[11px] [&>dt]:text-[var(--muted)] [&>dd]:m-0 [&>dd]:[overflow-wrap:anywhere] [&_a]:font-semibold [&_a]:text-[var(--accent)] [&_a]:underline-offset-2 [&_a:hover]:underline",
+    "m-0 grid min-w-0 grid-cols-[minmax(76px,.7fr)_minmax(0,1.5fr)] gap-2 border-b border-[var(--line)] pb-2 last:border-b-0 last:pb-0 [&>dt]:text-xs [&>dt]:text-[var(--muted)] [&>dd]:m-0 [&>dd]:[overflow-wrap:anywhere] [&_a]:font-medium [&_a]:text-[var(--accent-strong)] [&_a]:underline-offset-2 [&_a:hover]:underline",
   desktop: "w-full overflow-auto max-[599px]:hidden",
   table:
-    "w-full table-fixed border-separate border-spacing-0 text-xs wrap-anywhere [font-variant-numeric:tabular-nums] [&_.react-aria-Column]:border-b [&_.react-aria-Column]:border-[var(--line)] [&_.react-aria-Column]:bg-[var(--raised)] [&_.react-aria-Column]:px-[9px] [&_.react-aria-Column]:py-2 [&_.react-aria-Column]:text-left [&_.react-aria-Column]:text-[12px] [&_.react-aria-Column]:font-bold [&_.react-aria-Column]:text-[var(--muted)] [&_.react-aria-Column]:align-middle [&_.react-aria-Row]:bg-[var(--surface)] [&_.react-aria-Row:hover]:bg-[var(--raised)] [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-t [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-[var(--line)] [&_.react-aria-Cell]:min-w-0 [&_.react-aria-Cell]:px-2 [&_.react-aria-Cell]:py-[6px] [&_.react-aria-Cell]:align-top [&_.react-aria-Cell:nth-child(2)]:align-middle",
+    "w-full table-fixed border-separate border-spacing-0 text-sm wrap-anywhere [font-variant-numeric:tabular-nums] [&_.react-aria-Column]:border-b [&_.react-aria-Column]:border-[var(--line)] [&_.react-aria-Column]:bg-[var(--raised)] [&_.react-aria-Column]:px-4 [&_.react-aria-Column]:py-2.5 [&_.react-aria-Column]:text-left [&_.react-aria-Column]:text-xs [&_.react-aria-Column]:font-medium [&_.react-aria-Column]:text-[var(--muted)] [&_.react-aria-Column]:align-middle [&_.react-aria-Row]:bg-[var(--surface)] [&_.react-aria-Row:hover]:bg-[var(--raised)] [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-t [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-[var(--line)] [&_.react-aria-Cell]:min-w-0 [&_.react-aria-Cell]:px-4 [&_.react-aria-Cell]:py-3 [&_.react-aria-Cell]:align-middle [&_.react-aria-Cell:nth-child(2)]:align-middle",
   selectionCell:
-    "box-border w-[34px] min-w-[34px] max-w-[34px] px-0! text-center! align-middle!",
-  sub: "mt-[3px] block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
-  link: "font-semibold text-[var(--accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]",
-  path: "block font-mono text-[11px] [overflow-wrap:anywhere]",
-  empty: "m-0 p-3 text-center text-[var(--muted)]",
+    "box-border w-12 min-w-12 max-w-12 px-0! text-center! align-middle!",
+  sub: "mt-1 block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
+  link: "font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
+  path: "block font-mono text-xs [overflow-wrap:anywhere]",
+  empty: "m-0 p-6 text-center text-[var(--muted)]",
   checkbox:
-    "group grid size-8 shrink-0 cursor-pointer place-items-center data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]",
+    "group grid size-8 shrink-0 cursor-pointer place-items-center data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--accent)]",
   checkboxBox:
-    "grid size-[18px] place-items-center rounded-[3px] border border-[var(--control)] bg-[var(--surface)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]",
+    "grid size-4 place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-sm leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]",
   filterMatch:
     "bg-[linear-gradient(to_right,color-mix(in_srgb,var(--accent)_4%,transparent),transparent)] bg-left-top bg-no-repeat [background-size:9%_100%]",
   filterMutedRow: "[&>td]:opacity-[.55] [&:focus-within>td]:opacity-100",
@@ -201,13 +205,13 @@ function rowLabel(row: LibraryTrackRow, text: Text) {
   });
 }
 
-function publicationLabel(row: LibraryTrackRow, text: Text) {
+function publicationLabel(row: LibraryTrackRow, text: Text): ReactNode {
   if (!row.published) return text.notPublished;
   const detail = [row.publicationContainer, row.publicationCodec]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
     .join(" · ");
-  return detail || text.published;
+  return detail ? <FileFormatBadge value={detail} /> : text.published;
 }
 
 function SelectionCheckbox({
@@ -335,13 +339,13 @@ function Credits({ row, text }: { row: LibraryTrackRow; text: Text }) {
 function SourceSummary({ row, text }: { row: LibraryTrackRow; text: Text }) {
   const count = fill(text.sourceCount, { count: row.variantCount });
   const codec = row.sourceCodec?.trim();
-  const primary = codec
-    ? codec
-    : row.sourceSelection === "unselected"
-      ? text.noSourceSelected
-      : row.sourceSelection === "missing"
-        ? text.noFile
-        : null;
+  const primary = codec ? (
+    <FileFormatBadge value={codec} />
+  ) : row.sourceSelection === "unselected" ? (
+    text.noSourceSelected
+  ) : row.sourceSelection === "missing" ? (
+    text.noFile
+  ) : null;
   if (!primary) return <>{count}</>;
   return (
     <>
@@ -448,7 +452,7 @@ export function LibraryTrackListView({
               </MobileField>
               {showProperties && (
                 <MobileField label={text.properties}>
-                  {row.properties || "—"}
+                  <MetadataBadge value={row.properties} />
                 </MobileField>
               )}
               {showPaths && (
@@ -588,7 +592,9 @@ export function LibraryTrackListView({
                   <SourceSummary row={row} text={text} />
                 </Cell>
                 {showProperties && (
-                  <Cell key="properties">{row.properties || "—"}</Cell>
+                  <Cell key="properties">
+                    <MetadataBadge value={row.properties} />
+                  </Cell>
                 )}
                 {showPaths && (
                   <Cell key="paths">

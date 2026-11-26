@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from "react";
+import { PageHeader } from "../../components/PageHeader";
 
 const messages = {
   en: {
@@ -23,24 +24,15 @@ export function SettingsPageFrame({
   const copy = messages[locale];
   return (
     <section
-      className="grid min-w-0 gap-[14px]"
+      className="mx-auto grid w-full min-w-0 max-w-[1200px] gap-5"
       aria-labelledby="settings-title"
     >
-      <header className="mb-[18px] flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-[14px]">
-        <div>
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            className="m-0 text-[clamp(21px,2.5vw,28px)] leading-[1.18] [text-wrap:balance]"
-            id="settings-title"
-          >
-            {copy.title}
-          </h1>
-          <p className="m-0 max-w-[75ch] text-[var(--muted)]">
-            {copy.subtitle}
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        id="settings-title"
+        headingRef={headingRef}
+        title={copy.title}
+        subtitle={copy.subtitle}
+      />
       {children}
     </section>
   );

@@ -28,11 +28,11 @@ const settingsTabsCopy: Record<SettingsTabsLocale, SettingsTabsCopy> = {
 	},
 };
 
-const tabsClassName = "react-aria-Tabs ui-tabs grid min-w-0 gap-3";
+const tabsClassName = "react-aria-Tabs ui-tabs grid min-w-0 gap-5";
 const tabListClassName =
-	"react-aria-TabList ui-tab-list flex min-w-0 flex-wrap items-center gap-1 border-b border-[var(--line)]";
+	"react-aria-TabList ui-tab-list inline-flex w-fit min-w-0 flex-wrap items-center gap-1 rounded-lg bg-[var(--raised)] p-1";
 const tabClassName =
-	"react-aria-Tab ui-tab min-h-9 pointer-coarse:min-h-[40px] max-[599px]:min-h-[40px] cursor-pointer rounded-t border-0 border-b-2 border-b-transparent bg-transparent px-3 py-1.5 text-sm text-[var(--muted)] hover:bg-[var(--raised)] hover:text-[var(--ink)] data-[selected]:border-b-[var(--accent)] data-[selected]:font-semibold data-[selected]:text-[var(--accent)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+	"react-aria-Tab ui-tab flex h-8 pointer-coarse:min-h-10 max-[599px]:min-h-9 cursor-pointer items-center rounded-md px-3 text-sm font-medium text-[var(--muted)] transition-colors hover:text-[var(--ink)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--ink)] data-[selected]:shadow-[0_1px_2px_rgb(0_0_0/0.08)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
 const tabPanelClassName =
 	"react-aria-TabPanel ui-tab-panel min-w-0 focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 data-[inert]:hidden";
 

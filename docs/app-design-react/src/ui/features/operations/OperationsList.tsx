@@ -21,6 +21,16 @@ import {
 	type SortDescriptor,
 	type SortDirection,
 } from "react-aria-components";
+import { ActiveFilterTags } from "../../components/ActiveFilterTags";
+import { AppSearchField } from "../../components/AppSearchField";
+import { AppToolbar } from "../../components/AppToolbar";
+import { PageHeader } from "../../components/PageHeader";
+import {
+	RowActionMenu,
+	type RowActionMenuItem,
+} from "../../components/RowActionMenu";
+import { ui } from "../../components/uiStyles";
+import type { Locale } from "../../i18n/types";
 
 /**
  * Portable operations list.
@@ -79,6 +89,8 @@ export interface OperationsListAction {
 	onPress?: (trigger: Element) => void;
 	isPending?: boolean;
 	isDisabled?: boolean;
+	/** Rare, destructive secondary action, rendered with the error tone. */
+	isDestructive?: boolean;
 }
 
 export interface OperationsListRow {
@@ -118,6 +130,11 @@ export interface OperationsListFilters {
 	kind: string;
 	kindOptions: readonly OperationsListFilterOption[];
 	onKindChange: (kind: string) => void;
+	/**
+	 * Resets query, status and kind to the canonical defaults in one update.
+	 * Hosts that navigate on each callback should provide it to avoid hash races.
+	 */
+	onResetFilters?: () => void;
 }
 
 export interface OperationsListPagination {
@@ -128,6 +145,8 @@ export interface OperationsListPagination {
 
 export interface OperationsListProps {
 	copy: OperationsListCopy;
+	/** Locale for filter summary labels; falls back to English. */
+	locale?: Locale;
 	rows: OperationsListRow[];
 	status?: OperationsListStatus;
 	/** Safe failure text for the error state. Falls back to copy.loadError. */
@@ -153,42 +172,84 @@ export interface OperationsListProps {
 }
 
 const panelClass =
-	"min-w-0 overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)]";
+	"min-w-0 overflow-hidden rounded-[var(--table-radius)] border border-[var(--line)] bg-[var(--surface)]";
 const buttonClass =
-	"react-aria-Button inline-flex min-h-[30px] pointer-coarse:min-h-[40px] cursor-pointer items-center justify-center gap-1.5 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-xs text-[var(--ink)] no-underline hover:border-[var(--accent)] hover:bg-[var(--raised)] active:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+	"react-aria-Button inline-flex min-h-9 pointer-coarse:min-h-10 cursor-pointer items-center justify-center gap-2 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] no-underline hover:border-[var(--control)] hover:bg-[var(--raised)] data-[pressed]:bg-[var(--raised)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 const rowButtonClass =
-	"react-aria-Button inline-flex min-h-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-1.5 py-0.5 text-[11px] whitespace-nowrap text-[var(--ink)] no-underline hover:border-[var(--accent)] hover:bg-[var(--raised)] active:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+	"react-aria-Button inline-flex min-h-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-sm whitespace-nowrap text-[var(--ink)] no-underline hover:border-[var(--control)] hover:bg-[var(--raised)] data-[pressed]:bg-[var(--raised)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 const linkClass =
-	"react-aria-Link inline-flex min-h-[30px] items-center text-xs text-[var(--accent)] no-underline decoration-1 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+	"react-aria-Link inline-flex min-h-9 items-center text-sm text-[var(--accent-strong)] no-underline underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 const targetLinkClass =
-	"block min-w-0 truncate font-medium text-[var(--accent)] no-underline decoration-1 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+	"block min-w-0 truncate font-medium text-[var(--accent-strong)] no-underline underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2";
 const badgeClass =
-	"inline-flex w-max max-w-full items-center rounded-sm px-1.5 py-0.5 text-[11px]/[1.4]";
+	"inline-flex w-max max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-medium";
 const tableClass =
-	"w-full min-w-[760px] table-fixed border-separate border-spacing-0 text-xs [font-variant-numeric:tabular-nums]";
+	"w-full min-w-[760px] table-fixed border-separate border-spacing-0 text-sm [font-variant-numeric:tabular-nums]";
 const headCellClass =
-	"border-b border-[var(--line)] bg-[var(--raised)] px-1.5 py-1.5 text-[11px] leading-[1.4] font-semibold tracking-[.04em] text-[var(--muted)] uppercase";
-const sortableHeadCellClass = `${headCellClass} cursor-pointer select-none transition-colors hover:bg-[var(--accent-soft)] data-[pressed]:bg-[var(--accent-soft)] data-[sort-direction]:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-[-2px]`;
+	"border-b border-[var(--line)] bg-[var(--raised)] px-4 py-2.5 text-xs leading-[1.4] font-medium text-[var(--muted)]";
+const sortableHeadCellClass = `${headCellClass} cursor-pointer select-none transition-colors hover:bg-[var(--accent-soft)] data-[pressed]:bg-[var(--accent-soft)] data-[sort-direction]:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-[-2px]`;
 const sortableWidths: Record<OperationsListSortColumn, string> = {
 	target: "w-[27%]",
 	operation: "w-[16%]",
 	state: "w-[21%]",
 	created: "w-[14%]",
 };
-const cellClass = "border-b border-[var(--line)] px-1.5 py-[3px] align-middle";
+const cellClass = "border-b border-[var(--line)] px-4 py-3 align-middle";
 const selectButtonClass =
-	"react-aria-Button flex min-h-[30px] min-w-[104px] cursor-pointer items-center justify-between gap-1.5 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-left text-xs text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
-const popoverClass =
-	"react-aria-Popover z-50 max-h-[280px] min-w-[var(--trigger-width)] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink)] shadow-[0_8px_24px_#0002]";
-const optionClass =
-	"react-aria-ListBoxItem cursor-pointer rounded-sm px-2 py-[7px] text-xs outline-none data-[focused]:bg-[var(--raised)] data-[selected]:bg-[var(--accent-soft)] data-[selected]:text-[var(--accent)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-[-2px]";
+	"react-aria-Button flex h-9 min-w-[120px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-left text-sm text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0";
+const popoverClass = ui.popover;
+const optionClass = ui.option;
 
 const stateToneClass: Record<OperationsStateTone, string> = {
-	neutral: "bg-[var(--raised)] text-[var(--muted)]",
-	info: "bg-[var(--info-soft)] text-[var(--info)]",
-	warning: "bg-[var(--warning-soft)] text-[var(--warning)]",
-	error: "bg-[var(--error-soft)] text-[var(--error)]",
+	neutral: "border-[var(--line)] bg-[var(--raised)] text-[var(--muted)]",
+	info: "border-[color-mix(in_srgb,var(--info)_25%,transparent)] bg-[var(--info-soft)] text-[var(--info)]",
+	warning:
+		"border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] text-[var(--warning)]",
+	error:
+		"border-[color-mix(in_srgb,var(--error)_25%,transparent)] bg-[var(--error-soft)] text-[var(--error)]",
 };
+
+/** Canonical defaults; a removed chip restores the safe attention view. */
+const defaultFilterStatus = "attention";
+const defaultFilterKind = "all";
+const filterTagCopy = {
+	en: {
+		query: (value: string) => `Search: ${value}`,
+		status: (value: string) => `Status: ${value}`,
+		kind: (value: string) => `Kind: ${value}`,
+	},
+	ru: {
+		query: (value: string) => `Поиск: ${value}`,
+		status: (value: string) => `Статус: ${value}`,
+		kind: (value: string) => `Тип: ${value}`,
+	},
+} as const satisfies Record<
+	Locale,
+	{
+		query: (value: string) => string;
+		status: (value: string) => string;
+		kind: (value: string) => string;
+	}
+>;
+
+function optionLabel(
+	options: readonly OperationsListFilterOption[],
+	value: string,
+) {
+	return options.find((option) => option.value === value)?.label ?? value;
+}
+
+function rowMenuAction(action: OperationsListAction): RowActionMenuItem {
+	return {
+		id: action.id,
+		label: action.label,
+		href: action.href,
+		onAction: action.onPress,
+		isDisabled: action.isDisabled,
+		isPending: action.isPending,
+		isDestructive: action.isDestructive,
+	};
+}
 
 function SortHeaderLabel({
 	label,
@@ -250,7 +311,7 @@ function Actions({
 				action.href ? (
 					<AriaLink
 						key={action.id}
-						className={size === "row" ? `${linkClass} min-h-[26px]` : linkClass}
+						className={size === "row" ? `${linkClass} min-h-8` : linkClass}
 						href={action.href}
 					>
 						{action.label}
@@ -308,7 +369,7 @@ function FilterSelect({
 				if (key != null) onChange(String(key));
 			}}
 		>
-			<AriaLabel className="m-0 shrink-0 text-[11px] text-[var(--muted)]">
+			<AriaLabel className="m-0 shrink-0 text-sm text-[var(--muted)]">
 				{label}
 			</AriaLabel>
 			<AriaButton className={selectButtonClass}>
@@ -341,7 +402,7 @@ function DetailField({
 }) {
 	return (
 		<>
-			<dt className="text-[11px] text-[var(--muted)]">{label}</dt>
+			<dt className="text-xs text-[var(--muted)]">{label}</dt>
 			<dd className="m-0 min-w-0 [overflow-wrap:anywhere]">{children}</dd>
 		</>
 	);
@@ -378,17 +439,17 @@ function OperationDetails({
 			onOpenChange={(open) => {
 				if (!open) onClose();
 			}}
-			className="fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[#0008] p-3"
+			className="fixed inset-0 z-[100] grid place-items-center overflow-auto overscroll-contain bg-[rgb(0_0_0/0.45)] p-3"
 		>
-			<AriaModal className="max-h-[calc(100dvh-24px)] w-full max-w-[620px] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[0_16px_48px_#0003]">
+			<AriaModal className="max-h-[calc(100dvh-24px)] w-full max-w-[620px] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-[0_24px_64px_rgb(0_0_0/0.24)]">
 				<AriaDialog className="wrap-anywhere outline-none">
 					<AriaHeading
 						slot="title"
-						className="m-0 text-base leading-tight [text-wrap:balance]"
+						className="m-0 text-lg font-semibold leading-tight [text-wrap:balance]"
 					>
 						{copy.details}
 					</AriaHeading>
-					<p className="mt-1 mb-0 text-[13px] font-medium [overflow-wrap:anywhere]">
+					<p className="mt-1 mb-0 text-sm font-medium [overflow-wrap:anywhere]">
 						{row.targetHref ? (
 							<AriaLink className={linkClass} href={row.targetHref}>
 								{row.target}
@@ -401,7 +462,7 @@ function OperationDetails({
 						<DetailField label={copy.target}>
 							{row.target}
 							{row.targetDetail && (
-								<span className="mt-0.5 block text-[11px] text-[var(--muted)]">
+								<span className="mt-0.5 block text-xs text-[var(--muted)]">
 									{row.targetDetail}
 								</span>
 							)}
@@ -411,7 +472,7 @@ function OperationDetails({
 							<span className="flex flex-wrap items-center gap-1.5">
 								<StateBadge state={row.state} tone={row.stateTone} />
 								{row.stage && (
-									<span className="text-[11px] text-[var(--muted)]">
+									<span className="text-xs text-[var(--muted)]">
 										{row.stage}
 									</span>
 								)}
@@ -456,6 +517,7 @@ function OperationDetails({
 
 export function OperationsList({
 	copy,
+	locale = "en",
 	rows,
 	status = "ready",
 	error,
@@ -471,11 +533,44 @@ export function OperationsList({
 }: OperationsListProps) {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const sectionRef = useRef<HTMLElement>(null);
+	const queryInputRef = useRef<HTMLInputElement>(null);
 	const selectedRow = selectedId
 		? rows.find((row) => row.id === selectedId)
 		: undefined;
 	const detailError =
 		actionError?.rowId === selectedRow?.id ? actionError?.message : undefined;
+	const filterTags: { id: string; label: string }[] = [];
+	if (filters) {
+		const tags = filterTagCopy[locale];
+		if (filters.query.trim())
+			filterTags.push({ id: "query", label: tags.query(filters.query) });
+		if (filters.status !== defaultFilterStatus)
+			filterTags.push({
+				id: "status",
+				label: tags.status(optionLabel(filters.statusOptions, filters.status)),
+			});
+		if (filters.kind !== defaultFilterKind)
+			filterTags.push({
+				id: "kind",
+				label: tags.kind(optionLabel(filters.kindOptions, filters.kind)),
+			});
+	}
+	const resetFilters = () => {
+		if (!filters) return;
+		if (filters.onResetFilters) {
+			filters.onResetFilters();
+			return;
+		}
+		filters.onQueryChange("");
+		filters.onStatusChange(defaultFilterStatus);
+		filters.onKindChange(defaultFilterKind);
+	};
+	const removeFilter = (id: string) => {
+		if (!filters) return;
+		if (id === "query") filters.onQueryChange("");
+		else if (id === "status") filters.onStatusChange(defaultFilterStatus);
+		else if (id === "kind") filters.onKindChange(defaultFilterKind);
+	};
 	useEffect(() => {
 		if (selectedId === null || selectedRow) return;
 		setSelectedId(null);
@@ -488,31 +583,24 @@ export function OperationsList({
 			className="grid min-w-0 gap-[14px]"
 			aria-busy={status === "loading" || undefined}
 		>
-			<div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--line)] pb-[14px]">
-				<div className="grid min-w-0 gap-[5px]">
-					<h1
-						ref={headingRef}
-						tabIndex={-1}
-						className="m-0 text-[clamp(21px,2.5vw,28px)] leading-[1.18] [text-wrap:balance]"
-					>
-						{copy.title}
-					</h1>
-					<p className="m-0 max-w-[75ch] text-[var(--muted)]">
-						{copy.description}
-					</p>
-				</div>
-				{onRefresh && (
-					<AriaButton
-						className={buttonClass}
-						onPress={onRefresh}
-						isDisabled={status === "loading" || isRefreshing}
-					>
-						{isRefreshing || status === "loading"
-							? copy.refreshing
-							: copy.refresh}
-					</AriaButton>
-				)}
-			</div>
+			<PageHeader
+				title={copy.title}
+				subtitle={copy.description}
+				headingRef={headingRef}
+				actions={
+					onRefresh ? (
+						<AriaButton
+							className={buttonClass}
+							onPress={onRefresh}
+							isDisabled={status === "loading" || isRefreshing}
+						>
+							{isRefreshing || status === "loading"
+								? copy.refreshing
+								: copy.refresh}
+						</AriaButton>
+					) : undefined
+				}
+			/>
 			{notice && (
 				<p
 					className="m-0 rounded-[var(--control-radius)] bg-[var(--accent-soft)] px-3 py-2 text-[var(--ink)]"
@@ -544,41 +632,48 @@ export function OperationsList({
 				<OperationActionAlert message={actionError.message} />
 			)}
 			{filters && (
-				<div className="flex min-w-0 flex-wrap items-center gap-2">
-					<label className="flex min-h-[30px] min-w-0 flex-[1_1_220px] items-center rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1">
-						<span className="sr-only">{copy.search}</span>
-						<input
-							type="search"
-							value={filters.query}
-							onChange={(event) => filters.onQueryChange(event.target.value)}
+				<>
+					<AppToolbar label={copy.title}>
+						<AppSearchField
+							aria-label={copy.search}
 							placeholder={copy.search}
-							className="min-h-7 w-full min-w-0 border-0 bg-transparent p-0 text-xs text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
+							value={filters.query}
+							onChange={filters.onQueryChange}
+							inputRef={queryInputRef}
+							className="w-full max-w-[420px] flex-[1_1_260px]"
 						/>
-					</label>
-					<FilterSelect
-						label={copy.statusFilter}
-						value={filters.status}
-						options={filters.statusOptions}
-						onChange={filters.onStatusChange}
+						<FilterSelect
+							label={copy.statusFilter}
+							value={filters.status}
+							options={filters.statusOptions}
+							onChange={filters.onStatusChange}
+						/>
+						<FilterSelect
+							label={copy.kindFilter}
+							value={filters.kind}
+							options={filters.kindOptions}
+							onChange={filters.onKindChange}
+						/>
+					</AppToolbar>
+					<ActiveFilterTags
+						locale={locale}
+						items={filterTags}
+						onRemove={removeFilter}
+						onReset={resetFilters}
+						focusTargetRef={queryInputRef}
 					/>
-					<FilterSelect
-						label={copy.kindFilter}
-						value={filters.kind}
-						options={filters.kindOptions}
-						onChange={filters.onKindChange}
-					/>
-				</div>
+				</>
 			)}
 			{(status !== "error" || rows.length > 0) && (
 				<div className={panelClass}>
 					{status === "loading" && rows.length === 0 ? (
-						<p className="m-0 p-[18px] text-[var(--muted)]" role="status">
+						<p className="m-0 p-6 text-sm text-[var(--muted)]" role="status">
 							{copy.loading}
 						</p>
 					) : rows.length === 0 ? (
-						<div className="grid gap-1 p-[18px]">
-							<h2 className="m-0 text-[15px]">{copy.emptyTitle}</h2>
-							<p className="m-0 max-w-[75ch] text-[var(--muted)]">
+						<div className="grid gap-1 p-6">
+							<h2 className="m-0 text-base font-semibold">{copy.emptyTitle}</h2>
+							<p className="m-0 max-w-[75ch] text-sm text-[var(--muted)]">
 								{copy.emptyDescription}
 							</p>
 						</div>
@@ -623,92 +718,116 @@ export function OperationsList({
 									</AriaColumn>
 								</AriaTableHeader>
 								<AriaTableBody>
-									{rows.map((row) => (
-										<AriaRow
-											key={row.id}
-											id={row.id}
-											className="h-9 transition-colors hover:bg-[var(--raised)] [&:last-child>td]:border-b-0"
-										>
-											<AriaCell className={cellClass}>
-												<div className="min-w-0">
-													{row.targetHref ? (
-														<AriaLink
-															href={row.targetHref}
-															className={targetLinkClass}
-														>
-															{row.target}
-														</AriaLink>
-													) : (
-														<span
-															title={row.target}
-															className="block min-w-0 truncate font-medium"
-														>
-															{row.target}
-														</span>
-													)}
-													{row.targetDetail && (
-														<span
-															title={row.targetDetail}
-															className="block min-w-0 truncate text-[11px] text-[var(--muted)]"
-														>
-															{row.targetDetail}
-														</span>
-													)}
-												</div>
-											</AriaCell>
-											<AriaCell className={cellClass}>
-												<span
-													title={row.operation}
-													className="block min-w-0 truncate"
-												>
-													{row.operation}
-												</span>
-											</AriaCell>
-											<AriaCell className={cellClass}>
-												<div className="flex min-w-0 items-center gap-1.5">
-													<StateBadge state={row.state} tone={row.stateTone} />
-													{row.stage && (
-														<span
-															title={row.stage}
-															className="min-w-0 truncate text-[11px] text-[var(--muted)]"
-														>
-															{row.stage}
-														</span>
-													)}
-												</div>
-											</AriaCell>
-											<AriaCell className={cellClass}>
-												<span
-													title={row.created}
-													className={
-														row.created
-															? "block truncate"
-															: "block whitespace-nowrap text-[var(--muted)]"
-													}
-												>
-													{row.created || "—"}
-												</span>
-											</AriaCell>
-											<AriaCell className={`${cellClass} text-right`}>
-												<div className="flex min-w-0 flex-nowrap items-center justify-end gap-1">
-													<AriaButton
-														className={rowButtonClass}
-														aria-haspopup="dialog"
-														onPress={() => setSelectedId(row.id)}
+									{rows.map((row) => {
+										const primaryAction = row.actions?.find(
+											(action) => !action.href && action.id === "retry",
+										);
+										const secondaryActions = (row.actions ?? []).filter(
+											(action) => action !== primaryAction,
+										);
+										return (
+											<AriaRow
+												key={row.id}
+												id={row.id}
+												className="min-h-14 transition-colors hover:bg-[var(--raised)] [&:last-child>td]:border-b-0"
+											>
+												<AriaCell className={cellClass}>
+													<div className="min-w-0">
+														{row.targetHref ? (
+															<AriaLink
+																href={row.targetHref}
+																className={targetLinkClass}
+															>
+																{row.target}
+															</AriaLink>
+														) : (
+															<span
+																title={row.target}
+																className="block min-w-0 truncate font-medium"
+															>
+																{row.target}
+															</span>
+														)}
+														{row.targetDetail && (
+															<span
+																title={row.targetDetail}
+																className="block min-w-0 truncate text-xs text-[var(--muted)]"
+															>
+																{row.targetDetail}
+															</span>
+														)}
+													</div>
+												</AriaCell>
+												<AriaCell className={cellClass}>
+													<span
+														title={row.operation}
+														className="block min-w-0 truncate"
 													>
-														{copy.details}
-													</AriaButton>
-													{row.actions && (
-														<Actions
-															actions={row.actions.filter(
-																(action) => !action.href,
-															)}
+														{row.operation}
+													</span>
+												</AriaCell>
+												<AriaCell className={cellClass}>
+													<div className="flex min-w-0 items-center gap-1.5">
+														<StateBadge
+															state={row.state}
+															tone={row.stateTone}
 														/>
-													)}
-												</div>
-											</AriaCell>
-										</AriaRow>
-									))}
+														{row.stage && (
+															<span
+																title={row.stage}
+																className="min-w-0 truncate text-xs text-[var(--muted)]"
+															>
+																{row.stage}
+															</span>
+														)}
+													</div>
+												</AriaCell>
+												<AriaCell className={cellClass}>
+													<span
+														title={row.created}
+														className={
+															row.created
+																? "block truncate"
+																: "block whitespace-nowrap text-[var(--muted)]"
+														}
+													>
+														{row.created || "—"}
+													</span>
+												</AriaCell>
+												<AriaCell className={`${cellClass} text-right`}>
+													<div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+														<AriaButton
+															className={rowButtonClass}
+															aria-haspopup="dialog"
+															onPress={() => setSelectedId(row.id)}
+														>
+															{copy.details}
+														</AriaButton>
+														{primaryAction && (
+															<AriaButton
+																className={rowButtonClass}
+																onPress={(event) =>
+																	primaryAction.onPress?.(event.target)
+																}
+																isDisabled={
+																	primaryAction.isDisabled ||
+																	primaryAction.isPending
+																}
+															>
+																{primaryAction.label}
+															</AriaButton>
+														)}
+														{secondaryActions.length > 0 && (
+															<RowActionMenu
+																label={`${copy.actions}: ${row.target}`}
+																actions={secondaryActions.map(rowMenuAction)}
+															/>
+														)}
+													</div>
+												</AriaCell>
+											</AriaRow>
+										);
+									})}
 								</AriaTableBody>
 							</AriaTable>
 						</div>
@@ -717,9 +836,7 @@ export function OperationsList({
 			)}
 			{pagination && rows.length > 0 && (
 				<div className="flex flex-wrap items-center justify-between gap-2">
-					<p className="m-0 text-[11px] text-[var(--muted)]">
-						{pagination.label}
-					</p>
+					<p className="m-0 text-sm text-[var(--muted)]">{pagination.label}</p>
 					<div className="flex items-center gap-1.5">
 						<AriaButton
 							className={buttonClass}
@@ -738,7 +855,7 @@ export function OperationsList({
 					</div>
 				</div>
 			)}
-			<p className="m-0 max-w-[75ch] text-[11px] text-[var(--muted)]">
+			<p className="m-0 max-w-[75ch] text-sm text-[var(--muted)]">
 				{copy.footnote}
 			</p>
 			{selectedRow && (

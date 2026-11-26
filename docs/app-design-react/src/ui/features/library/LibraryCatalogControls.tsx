@@ -1,9 +1,24 @@
-import { Input, SearchField, Tab, TabList } from "react-aria-components";
+import type { RefObject } from "react";
+import { Tab, TabList } from "react-aria-components";
+import type { ActiveFilterTag } from "../../components/ActiveFilterTags";
+import { AppSearchField } from "../../components/AppSearchField";
 import {
   LibraryCatalogFilterView,
   type LibraryStateFilter,
+  libraryAvailabilityFilterLabel,
+  libraryFilterLabel,
+  libraryPublicationFilterLabel,
 } from "./LibraryCatalogFilterView";
+import type {
+  LibraryAvailabilityFilter,
+  LibraryPublicationFilter,
+} from "./libraryDetailRoute";
 import type { LibraryView } from "./libraryView";
+
+export type LibraryFilterAxes = {
+  publication: LibraryPublicationFilter;
+  availability: LibraryAvailabilityFilter;
+};
 
 const viewOrder: readonly LibraryView[] = ["artists", "albums", "tracks"];
 
@@ -17,6 +32,7 @@ const labels = {
     },
     search: "Search the library",
     searchPlaceholder: "Artist, release, track…",
+    searchTag: (value: string) => `Search: “${value}”`,
   },
   ru: {
     tabList: "Раздел медиатеки",
@@ -27,19 +43,44 @@ const labels = {
     },
     search: "Поиск в медиатеке",
     searchPlaceholder: "Артист, релиз, трек…",
+    searchTag: (value: string) => `Поиск: «${value}»`,
   },
 } as const;
 
+/** Active conditions shown above the results; "all" is hidden per axis. */
+export function libraryActiveFilterTags(
+  locale: "en" | "ru",
+  search: string,
+  filter: LibraryStateFilter,
+  axes?: LibraryFilterAxes,
+): ActiveFilterTag[] {
+  const text = labels[locale];
+  const items: ActiveFilterTag[] = [];
+  const query = search.trim();
+  if (query) items.push({ id: "search", label: text.searchTag(query) });
+  if (!axes) {
+    if (filter !== "all")
+      items.push({ id: "status", label: libraryFilterLabel(locale, filter) });
+    return items;
+  }
+  if (axes.publication !== "all")
+    items.push({
+      id: "publication",
+      label: libraryPublicationFilterLabel(locale, axes.publication),
+    });
+  if (axes.availability !== "all")
+    items.push({
+      id: "availability",
+      label: libraryAvailabilityFilterLabel(locale, axes.availability),
+    });
+  return items;
+}
+
 const tab =
-  "flex min-h-9 cursor-pointer items-center rounded-[4px] border border-transparent px-[11px] py-[7px] font-semibold text-[var(--muted)] data-[selected]:border-[var(--line)] data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--accent)] data-[selected]:shadow-[0_1px_2px_#0001] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]";
+  "flex h-8 cursor-pointer items-center rounded-md px-3 text-sm font-medium text-[var(--muted)] transition-colors data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--ink)] data-[selected]:shadow-[0_1px_2px_rgb(0_0_0/0.08)] data-[hovered]:not-data-[selected]:text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2";
 
 const controls =
-  "mb-3 grid grid-cols-[minmax(220px,1fr)_minmax(340px,1fr)] items-end gap-3 max-[1100px]:grid-cols-1 max-[600px]:gap-2";
-
-const searchField =
-  "min-h-[34px] min-w-0 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-2 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--focus)] focus-within:outline-offset-1";
-
-const searchInput = "min-h-8 w-full text-xs outline-none";
+  "mb-4 grid grid-cols-[minmax(220px,1fr)_minmax(340px,1fr)] items-end gap-3 max-[1100px]:grid-cols-1 max-[600px]:gap-2";
 
 export function libraryViewLabel(locale: "en" | "ru", view: LibraryView) {
   return labels[locale].views[view];
@@ -51,7 +92,7 @@ export function LibraryCatalogTabList({ locale }: { locale: "en" | "ru" }) {
   return (
     <TabList
       aria-label={copy.tabList}
-      className="mb-3 flex flex-wrap gap-[3px] text-xs"
+      className="mb-4 inline-flex w-fit flex-wrap gap-1 rounded-lg bg-[var(--raised)] p-1"
     >
       {viewOrder.map((view) => (
         <Tab key={view} id={view} className={tab}>
@@ -69,24 +110,25 @@ export function LibraryCatalogQueryControls({
   onSearch,
   filter,
   onFilter,
+  inputRef,
 }: {
   locale: "en" | "ru";
   search: string;
   onSearch: (value: string) => void;
   filter: LibraryStateFilter;
   onFilter: (value: LibraryStateFilter) => void;
+  inputRef?: RefObject<HTMLInputElement | null>;
 }) {
   const copy = labels[locale];
   return (
     <div className={controls}>
-      <SearchField
+      <AppSearchField
         aria-label={copy.search}
-        className={searchField}
+        placeholder={copy.searchPlaceholder}
         value={search}
         onChange={onSearch}
-      >
-        <Input className={searchInput} placeholder={copy.searchPlaceholder} />
-      </SearchField>
+        inputRef={inputRef}
+      />
       <LibraryCatalogFilterView
         locale={locale}
         value={filter}

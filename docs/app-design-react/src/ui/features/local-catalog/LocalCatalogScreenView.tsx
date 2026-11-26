@@ -62,9 +62,7 @@ export function LocalCatalogScreenView({
   editor,
 }: LocalCatalogScreenViewProps) {
   const shell = (content: ReactNode, inset = false) => (
-    <section
-      className={inset ? "mx-auto max-w-none p-3" : "mx-auto max-w-none"}
-    >
+    <section className={inset ? "min-w-0" : "min-w-0"}>
       {content}
       {notice ? (
         <p className="mt-3 text-sm text-[var(--ink)]" role="status">

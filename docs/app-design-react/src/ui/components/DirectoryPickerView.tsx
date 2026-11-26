@@ -1,4 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  Breadcrumb,
+  Breadcrumbs,
+  Dialog,
+  Heading,
+  Input,
+  Label,
+  Modal,
+  ModalOverlay,
+  TextField,
+} from "react-aria-components";
 import { AppButton } from "./AppButton";
 import {
   type DirectoryPickerLocale,
@@ -56,14 +67,14 @@ function pathParts(path: string) {
   return crumbs;
 }
 
-const dialogClass =
-  "m-auto hidden max-h-[min(82dvh,720px)] w-[min(92vw,620px)] gap-[14px] overflow-auto rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-[18px] text-[13px]/[1.4] text-[var(--ink)] shadow-[0_16px_48px_#0003] backdrop:bg-black/50 open:grid max-[600px]:max-h-[calc(100dvh-24px)] max-[600px]:w-[calc(100vw-20px)] max-[600px]:p-[14px]";
+const breadcrumbButtonClass =
+  "min-h-9 shrink-0 justify-start border-transparent! bg-transparent! px-1.5! hover:border-[var(--line)]! hover:bg-[var(--surface)]!";
 
 const directoryClass =
-  "flex! min-h-[44px] w-full justify-start! gap-[10px] rounded-none! border-0! border-b! border-[var(--line)]! bg-transparent! px-[10px]! py-[10px]! text-left [overflow-wrap:anywhere] hover:bg-[var(--raised)]!";
+  "flex! min-h-9 w-full justify-start! gap-2 rounded-none! border-0! border-b! border-[var(--line)]! bg-transparent! px-2.5! py-1.5! text-left text-sm [overflow-wrap:anywhere] hover:bg-[var(--raised)]!";
 
 const pathInputClass =
-  "min-h-[38px] w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-[10px] py-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
+  "min-h-9 w-full min-w-0 flex-1 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 aria-[invalid=true]:border-[var(--error)]";
 
 export function DirectoryPickerView({
   open,
@@ -94,10 +105,8 @@ export function DirectoryPickerView({
     offset: number;
     append: boolean;
   }>(undefined);
-  const pressedBackdrop = useRef(false);
   const controller = useRef<AbortController | undefined>(undefined);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
+  const dialog = useRef<HTMLElement>(null);
   const titleId = useId();
   const editPathRef = useRef<HTMLInputElement>(null);
 
@@ -171,13 +180,20 @@ export function DirectoryPickerView({
     [browse],
   );
 
+  const cancelEditing = useCallback(() => {
+    setEditingPath(false);
+    const lastPath = listing?.currentPath ?? lastConfirmedPath.current;
+    setPath(lastPath);
+    if (!listing || loading) void readPath(lastPath);
+    requestAnimationFrame(() => {
+      dialog.current
+        ?.querySelector<HTMLElement>("[data-directory-picker-edit]")
+        ?.focus();
+    });
+  }, [listing, loading, readPath]);
+
   useEffect(() => {
     if (!open) return;
-    previousFocus.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    if (!dialog.current?.open) dialog.current?.showModal();
     lastConfirmedPath.current = initialPath;
     setPath(initialPath);
     setEditingPath(false);
@@ -186,8 +202,6 @@ export function DirectoryPickerView({
     void readPath(initialPath);
     return () => {
       abortRequest();
-      dialog.current?.close();
-      previousFocus.current?.focus();
     };
   }, [open, initialPath, abortRequest, readPath]);
 
@@ -197,15 +211,7 @@ export function DirectoryPickerView({
 
   function close() {
     abortRequest();
-    dialog.current?.close();
     onClose();
-    previousFocus.current?.focus();
-  }
-
-  function focusEditTrigger() {
-    dialog.current
-      ?.querySelector<HTMLElement>("[data-directory-picker-edit]")
-      ?.focus();
   }
 
   const crumbs = pathParts(listing?.currentPath ?? path);
@@ -218,270 +224,305 @@ export function DirectoryPickerView({
       : [];
   const errorId = `${titleId}-error`;
   const editorInvalid = editingPath && Boolean(error);
+  const crumbItems = crumbs.length
+    ? crumbs
+    : [
+        {
+          label: path ? copy.editPath : copy.enterPath,
+          path: "",
+        },
+      ];
+  const currentCrumbLabel = currentPath
+    ? `${copy.editPath}: ${currentPath}`
+    : copy.enterPath;
 
   function startEditing() {
     setPath(currentPath);
     setEditingPath(true);
   }
 
-  function outsideDialog(element: HTMLDialogElement, x: number, y: number) {
-    const { left, right, top, bottom } = element.getBoundingClientRect();
-    return x < left || x >= right || y < top || y >= bottom;
-  }
+  useEffect(() => {
+    if (!open || !editingPath) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!dialog.current?.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelEditing();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [open, editingPath, cancelEditing]);
 
   return (
-    <dialog
-      ref={dialog}
-      className={`${dialogClass} ${
-        editingPath
-          ? "grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]"
-          : "grid-rows-[auto_auto_minmax(0,1fr)_auto]"
-      }`}
-      aria-labelledby={titleId}
-      aria-describedby={`${titleId}-help`}
-      onClose={(event) => event.stopPropagation()}
-      onCancel={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        close();
+    <ModalOverlay
+      isOpen={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) close();
       }}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented) return;
-        event.preventDefault();
-        event.stopPropagation();
-        close();
-      }}
-      onPointerDown={(event) => {
-        pressedBackdrop.current =
-          event.target === event.currentTarget &&
-          outsideDialog(event.currentTarget, event.clientX, event.clientY);
-      }}
-      onClick={(event) => {
-        if (
-          pressedBackdrop.current &&
-          event.target === event.currentTarget &&
-          outsideDialog(event.currentTarget, event.clientX, event.clientY)
-        ) {
-          close();
-        }
-        pressedBackdrop.current = false;
-      }}
+      isDismissable
+      isKeyboardDismissDisabled={editingPath}
+      className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto overscroll-contain bg-black/50 p-3 max-[600px]:p-1.5"
     >
-      <div className="relative grid gap-[3px] border-b border-[var(--line)] pb-3 pr-12">
-        <h2 id={titleId} className="m-0 text-base font-semibold">
-          {copy.title}
-        </h2>
-        <p id={`${titleId}-help`} className="m-0 text-[var(--muted)]">
-          {copy.help}
-        </p>
-        <AppButton
-          className="absolute top-0 right-0 h-9 w-9 px-0! text-xl"
-          type="button"
-          aria-label={copy.close}
-          onPress={close}
+      <Modal className="max-h-[min(86dvh,720px)] w-[min(94vw,640px)] overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] text-sm text-[var(--ink)] shadow-[0_16px_48px_#0003] max-[600px]:max-h-[calc(100dvh-12px)] max-[600px]:w-[calc(100vw-12px)]">
+        <Dialog
+          ref={dialog}
+          aria-labelledby={titleId}
+          aria-describedby={`${titleId}-help`}
+          className={`grid max-h-[inherit] min-h-0 gap-[14px] overflow-y-auto overscroll-contain p-[18px] outline-none max-[600px]:p-3.5 ${
+            editingPath
+              ? "grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]"
+              : "grid-rows-[auto_auto_minmax(0,1fr)_auto]"
+          }`}
         >
-          ×
-        </AppButton>
-      </div>
-      <nav
-        className="flex min-h-[56px] items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--raised)] p-[9px]"
-        aria-label={copy.navigation}
-      >
-        <AppButton
-          className="w-9 flex-none px-0! text-[19px]"
-          type="button"
-          aria-label={copy.up}
-          isDisabled={
-            loading || !listing || listing.currentPath === listing.parentPath
-          }
-          onPress={() => void readPath(listing?.parentPath ?? "")}
-        >
-          ↑
-        </AppButton>
-        <ol className="m-0 flex min-w-0 list-none items-center gap-[5px] overflow-x-auto p-0 whitespace-nowrap [&>li+li]:before:mr-[5px] [&>li+li]:before:text-[var(--muted)] [&>li+li]:before:content-['/']">
-          {crumbs.map((crumb, index) => (
-            <li key={crumb.path}>
-              {index === crumbs.length - 1 ? (
-                <AppButton
-                  type="button"
-                  className="border-transparent! bg-transparent! px-1.5!"
-                  data-directory-picker-edit=""
-                  aria-current="location"
-                  aria-label={`${copy.editPath}: ${currentPath}`}
-                  onPress={startEditing}
-                >
-                  {crumb.label}
-                </AppButton>
-              ) : (
-                <AppButton
-                  type="button"
-                  className="border-transparent! bg-transparent! px-1.5!"
-                  isDisabled={loading}
-                  onPress={() => void readPath(crumb.path)}
-                >
-                  {crumb.label}
-                </AppButton>
-              )}
-            </li>
-          ))}
-          {!crumbs.length && (
-            <li>
-              <AppButton
-                type="button"
-                className="border-transparent! bg-transparent! px-1.5!"
-                data-directory-picker-edit=""
-                aria-label={path ? `${copy.editPath}: ${path}` : copy.enterPath}
-                onPress={startEditing}
-              >
-                {path ? copy.editPath : copy.enterPath}
-              </AppButton>
-            </li>
-          )}
-        </ol>
-      </nav>
-      {editingPath && (
-        <div className="grid gap-[5px]">
-          <label
-            className="text-xs font-semibold text-[var(--ink)]"
-            htmlFor={`${titleId}-path`}
-          >
-            {copy.pathLabel}
-          </label>
-          <div className="flex flex-wrap items-center gap-2 [&>input]:flex-1">
-            <input
-              ref={editPathRef}
-              id={`${titleId}-path`}
-              className={pathInputClass}
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={editorInvalid || undefined}
-              aria-describedby={editorInvalid ? errorId : undefined}
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void readPath(path);
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setEditingPath(false);
-                  const lastPath =
-                    listing?.currentPath ?? lastConfirmedPath.current;
-                  setPath(lastPath);
-                  if (!listing || loading) void readPath(lastPath);
-                  requestAnimationFrame(focusEditTrigger);
-                }
-              }}
-            />
-            <AppButton type="button" onPress={() => void readPath(path)}>
-              {copy.go}
-            </AppButton>
-          </div>
-        </div>
-      )}
-      <section
-        className="min-h-0 overflow-auto overscroll-contain rounded-md border border-[var(--line)] p-0"
-        aria-label={copy.folders}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          if (
-            !loading &&
-            !error &&
-            listing?.nextOffset !== undefined &&
-            element.scrollHeight - element.scrollTop - element.clientHeight < 40
-          ) {
-            void readPath(listing.currentPath, listing.nextOffset, true);
-          }
-        }}
-      >
-        {otherRoots.length > 0 && (
-          <>
-            <h3 className="m-0 px-[10px] pt-2 pb-1 text-sm font-semibold">
-              {copy.serverRoots}
-            </h3>
-            <ul className="m-0 list-none p-0">
-              {otherRoots.map((root) => (
-                <li key={root}>
-                  <AppButton
-                    type="button"
-                    className={directoryClass}
-                    isDisabled={loading}
-                    onPress={() => void readPath(root)}
-                  >
-                    {root}
-                  </AppButton>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {directories.length > 0 ? (
-          <ul className="m-0 list-none p-0">
-            {directories.map((directory) => (
-              <li key={directory}>
-                <AppButton
-                  type="button"
-                  className={directoryClass}
-                  isDisabled={loading}
-                  onPress={() => void readPath(directory)}
-                >
-                  {directory.split(pathSeparator).filter(Boolean).at(-1) ||
-                    directory}
-                </AppButton>
-              </li>
-            ))}
-          </ul>
-        ) : listing && !loading && !error ? (
-          <p className="m-0 px-[10px] py-2 text-[var(--muted)]">{copy.empty}</p>
-        ) : null}
-        {loading && (
-          <p className="m-0 px-[10px] py-2 text-[var(--muted)]" role="status">
-            {copy.loading}
-          </p>
-        )}
-        {error && (
-          <div className="flex items-center justify-between gap-2 px-[10px] py-2 text-[var(--error)]">
-            <p id={errorId} className="m-0" role="alert">
-              {copy[error]}
+          <div className="relative grid gap-[3px] border-b border-[var(--line)] pr-12 pb-3">
+            <Heading
+              slot="title"
+              id={titleId}
+              className="m-0 text-base font-semibold"
+            >
+              {copy.title}
+            </Heading>
+            <p id={`${titleId}-help`} className="m-0 text-[var(--muted)]">
+              {copy.help}
             </p>
             <AppButton
+              className="absolute top-0 right-0 h-9 w-9 min-h-9 px-0!"
               type="button"
-              onPress={() => {
-                const failed = retryRequest.current;
-                if (failed)
-                  void readPath(failed.path, failed.offset, failed.append);
-              }}
+              aria-label={copy.close}
+              onPress={close}
             >
-              {copy.retry}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
             </AppButton>
           </div>
-        )}
-      </section>
-      <footer className="flex justify-end gap-2 border-t border-[var(--line)] pt-[10px] max-[600px]:[&>*]:flex-1">
-        <AppButton type="button" onPress={close}>
-          {copy.cancel}
-        </AppButton>
-        <AppButton
-          type="button"
-          className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-[.92]"
-          isDisabled={
-            loading ||
-            Boolean(error) ||
-            !listing ||
-            path !== listing.currentPath
-          }
-          onPress={() => {
-            if (!listing || error || loading || path !== listing.currentPath)
-              return;
-            onSelect(listing.currentPath);
-            close();
-          }}
-        >
-          {copy.choose}
-        </AppButton>
-      </footer>
-    </dialog>
+          <nav
+            className="flex min-h-12 min-w-0 items-center gap-1.5 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--raised)] p-1.5"
+            aria-label={copy.navigation}
+          >
+            <AppButton
+              className="h-9 w-9 min-h-9 flex-none px-0!"
+              type="button"
+              aria-label={copy.up}
+              isDisabled={
+                loading ||
+                !listing ||
+                listing.currentPath === listing.parentPath
+              }
+              onPress={() => void readPath(listing?.parentPath ?? "")}
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M8 12V4M4.5 7.5L8 4l3.5 3.5" />
+              </svg>
+            </AppButton>
+            <Breadcrumbs className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]">
+              {crumbItems.map((crumb, index) => {
+                const isCurrent = index === crumbItems.length - 1;
+                return (
+                  <Breadcrumb
+                    key={crumb.path || "__current"}
+                    className="flex shrink-0 items-center gap-0.5"
+                  >
+                    {index > 0 && (
+                      <span aria-hidden="true" className="text-[var(--muted)]">
+                        /
+                      </span>
+                    )}
+                    <AppButton
+                      type="button"
+                      className={`${breadcrumbButtonClass}${
+                        isCurrent ? " font-semibold" : ""
+                      }`}
+                      isDisabled={loading && !isCurrent}
+                      aria-current={isCurrent ? "location" : undefined}
+                      aria-label={isCurrent ? currentCrumbLabel : undefined}
+                      data-directory-picker-edit={isCurrent ? "" : undefined}
+                      onPress={
+                        isCurrent
+                          ? startEditing
+                          : () => void readPath(crumb.path)
+                      }
+                    >
+                      {crumb.label}
+                    </AppButton>
+                  </Breadcrumb>
+                );
+              })}
+            </Breadcrumbs>
+          </nav>
+          {editingPath && (
+            <TextField
+              className="grid gap-1.5"
+              value={path}
+              onChange={setPath}
+              isInvalid={editorInvalid}
+            >
+              <Label className="text-xs font-semibold text-[var(--ink)]">
+                {copy.pathLabel}
+              </Label>
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  ref={editPathRef}
+                  className={pathInputClass}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby={editorInvalid ? errorId : undefined}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void readPath(path);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      cancelEditing();
+                    }
+                  }}
+                />
+                <AppButton
+                  className="min-h-9 shrink-0"
+                  type="button"
+                  onPress={() => void readPath(path)}
+                >
+                  {copy.go}
+                </AppButton>
+              </div>
+            </TextField>
+          )}
+          <section
+            className="min-h-0 overflow-auto overscroll-contain rounded-[var(--control-radius)] border border-[var(--line)] p-0"
+            aria-label={copy.folders}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              if (
+                !loading &&
+                !error &&
+                listing?.nextOffset !== undefined &&
+                element.scrollHeight -
+                  element.scrollTop -
+                  element.clientHeight <
+                  40
+              ) {
+                void readPath(listing.currentPath, listing.nextOffset, true);
+              }
+            }}
+          >
+            {otherRoots.length > 0 && (
+              <>
+                <h3 className="m-0 px-2.5 pt-2 pb-1 text-sm font-semibold">
+                  {copy.serverRoots}
+                </h3>
+                <ul className="m-0 list-none p-0">
+                  {otherRoots.map((root) => (
+                    <li key={root}>
+                      <AppButton
+                        type="button"
+                        className={directoryClass}
+                        isDisabled={loading}
+                        onPress={() => void readPath(root)}
+                      >
+                        {root}
+                      </AppButton>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {directories.length > 0 ? (
+              <ul className="m-0 list-none p-0">
+                {directories.map((directory) => (
+                  <li key={directory}>
+                    <AppButton
+                      type="button"
+                      className={directoryClass}
+                      isDisabled={loading}
+                      onPress={() => void readPath(directory)}
+                    >
+                      {directory.split(pathSeparator).filter(Boolean).at(-1) ||
+                        directory}
+                    </AppButton>
+                  </li>
+                ))}
+              </ul>
+            ) : listing && !loading && !error ? (
+              <p className="m-0 px-2.5 py-2 text-[var(--muted)]">
+                {copy.empty}
+              </p>
+            ) : null}
+            {loading && (
+              <p className="m-0 px-2.5 py-2 text-[var(--muted)]" role="status">
+                {copy.loading}
+              </p>
+            )}
+            {error && (
+              <div className="flex items-center justify-between gap-2 px-2.5 py-2 text-[var(--error)]">
+                <p id={errorId} className="m-0" role="alert">
+                  {copy[error]}
+                </p>
+                <AppButton
+                  className="min-h-9 shrink-0"
+                  type="button"
+                  onPress={() => {
+                    const failed = retryRequest.current;
+                    if (failed)
+                      void readPath(failed.path, failed.offset, failed.append);
+                  }}
+                >
+                  {copy.retry}
+                </AppButton>
+              </div>
+            )}
+          </section>
+          <footer className="flex justify-end gap-2 border-t border-[var(--line)] pt-2.5 max-[600px]:[&>*]:flex-1">
+            <AppButton className="min-h-9" type="button" onPress={close}>
+              {copy.cancel}
+            </AppButton>
+            <AppButton
+              type="button"
+              className="min-h-9 border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:border-[var(--button-hover)]! hover:bg-[var(--button-hover)]! active:bg-[var(--button-hover)]! disabled:border-[var(--line)]! disabled:bg-[var(--raised)]! disabled:text-[var(--muted)]! aria-disabled:border-[var(--line)]! aria-disabled:bg-[var(--raised)]! aria-disabled:text-[var(--muted)]!"
+              isDisabled={
+                loading ||
+                Boolean(error) ||
+                !listing ||
+                path !== listing.currentPath
+              }
+              onPress={() => {
+                if (
+                  !listing ||
+                  error ||
+                  loading ||
+                  path !== listing.currentPath
+                )
+                  return;
+                onSelect(listing.currentPath);
+                close();
+              }}
+            >
+              {copy.choose}
+            </AppButton>
+          </footer>
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
   );
 }

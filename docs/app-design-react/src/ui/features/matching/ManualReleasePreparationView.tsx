@@ -9,7 +9,7 @@ function Button({ className, ...props }: ButtonProps) {
   return (
     <AriaButton
       {...props}
-      className={`inline-flex min-h-[30px] cursor-pointer items-center justify-center gap-1.5 rounded-[var(--control-radius,4px)] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] active:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 pointer-coarse:min-h-[40px] ${className ?? ""}`}
+      className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] active:bg-[var(--raised)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 pointer-coarse:h-10 ${className ?? ""}`}
     />
   );
 }
@@ -35,20 +35,22 @@ export function ManualReleasePreparationView({
 
   return (
     <section
-      className="rounded border border-[var(--line)] bg-[var(--surface)] p-4"
+      className="grid min-w-0 content-start gap-2"
       aria-labelledby="manual-release-title"
     >
-      <h2 id="manual-release-title" className="font-semibold">
+      <h2 id="manual-release-title" className="m-0 text-sm font-semibold">
         {message("selectReleaseTitle")}
       </h2>
-      <p className="mt-1 text-sm">{message("selectReleaseDescription")}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <p className="m-0 text-sm text-[var(--muted)]">
+        {message("selectReleaseDescription")}
+      </p>
+      <div className="flex flex-wrap gap-2">
         <label className="sr-only" htmlFor="manual-release-value">
           {message("releaseMBIDOrURL")}
         </label>
         <input
           id="manual-release-value"
-          className="min-w-0 basis-64 flex-1 rounded border border-[var(--control)] bg-[var(--raised)] p-2 text-[var(--ink)] max-[600px]:min-h-10"
+          className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] placeholder:text-[var(--muted)] hover:border-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 max-[600px]:h-10"
           value={value}
           disabled={pending || disabled}
           onChange={(event) => onValueChange(event.target.value)}

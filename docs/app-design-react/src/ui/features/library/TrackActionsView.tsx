@@ -1,15 +1,11 @@
 import type { ReactElement } from "react";
-import {
-  Disclosure,
-  DisclosureGroup,
-  DisclosurePanel,
-  Heading,
-  Input,
-  Label,
-  TextField,
-} from "react-aria-components";
+import { Heading, Input, Label, TextField } from "react-aria-components";
 import { ActionDialog, ActionModal } from "../../components/ActionModal";
 import { AppButton as Button } from "../../components/AppButton";
+import {
+  RowActionMenu,
+  type RowActionMenuItem,
+} from "../../components/RowActionMenu";
 import type { Locale } from "../../i18n/types";
 import { operationMessage } from "../operations/operationMessages";
 
@@ -41,26 +37,31 @@ export function TrackActionsView({
 }: TrackActionsViewProps) {
   const m = (key: Parameters<typeof operationMessage>[1]) =>
     operationMessage(locale, key);
+  const secondaryActions: RowActionMenuItem[] = [
+    {
+      id: "refresh-provider-cache",
+      label: m("refreshProviderCache"),
+      onAction: () => onRefresh(),
+    },
+  ];
+  if (onRepublish) {
+    secondaryActions.push({
+      id: "republish",
+      label: m("republishExplicit"),
+      onAction: () => onRepublish(),
+    });
+  }
   return (
     <>
-      <DisclosureGroup>
-        <Disclosure
-          id="track-actions"
-          className="border-b border-[var(--line)] py-[7px] [&_[slot=trigger]]:border-0 [&_[slot=trigger]]:bg-transparent [&_[slot=trigger]]:py-1 [&_[slot=trigger]]:text-[var(--accent)] [&_p]:my-1.5 [&_p]:text-[var(--muted)]"
-        >
-          <Button slot="trigger">{m("otherTrackActions")}</Button>
-          <DisclosurePanel className="min-w-0">
-            <div className={objectActions}>
-              <Button onPress={rename.onStart}>{m("editLocalTitle")}</Button>
-              <Button onPress={onRefresh}>{m("refreshProviderCache")}</Button>
-              {onRepublish && (
-                <Button onPress={onRepublish}>{m("republishExplicit")}</Button>
-              )}
-            </div>
-            {deletion}
-          </DisclosurePanel>
-        </Disclosure>
-      </DisclosureGroup>
+      <div className={objectActions}>
+        <Button onPress={rename.onStart}>{m("editLocalTitle")}</Button>
+        <RowActionMenu
+          label={m("otherTrackActions")}
+          size="default"
+          actions={secondaryActions}
+        />
+      </div>
+      {deletion}
       {notice && <p role="status">{notice}</p>}
       <ActionModal
         isOpen={rename.open}
@@ -86,12 +87,12 @@ export function TrackActionsView({
               onChange={rename.onTitleChange}
               isRequired
             >
-              <Label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">
+              <Label className="mb-1 block text-xs font-semibold text-[var(--muted)]">
                 {m("trackTitle")}
               </Label>
               <Input
                 autoComplete="off"
-                className="min-h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)]"
+                className="min-h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 py-[5px] text-[var(--ink)]"
               />
             </TextField>
             <p>{m("renamePreserves")}</p>

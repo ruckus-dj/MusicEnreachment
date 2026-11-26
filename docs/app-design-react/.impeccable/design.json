@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-26T19:25:30.000Z",
+  "title": "Визуальная система MeloTrove prototype",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Каталожный синий",
+        "canonical": "#2563eb",
+        "tonalRamp": [
+          "oklch(30% 0.12 263)",
+          "oklch(38% 0.16 263)",
+          "oklch(46% 0.20 263)",
+          "oklch(55% 0.245 263)",
+          "oklch(64% 0.20 263)",
+          "oklch(74% 0.14 263)",
+          "oklch(84% 0.08 263)",
+          "oklch(94% 0.03 263)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Холст",
+        "canonical": "#fafafa",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(28% 0 0)",
+          "oklch(42% 0 0)",
+          "oklch(56% 0 0)",
+          "oklch(70% 0 0)",
+          "oklch(82% 0 0)",
+          "oklch(92% 0 0)",
+          "oklch(98% 0 0)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Лист",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(28% 0 0)",
+          "oklch(42% 0 0)",
+          "oklch(56% 0 0)",
+          "oklch(70% 0 0)",
+          "oklch(82% 0 0)",
+          "oklch(92% 0 0)",
+          "oklch(100% 0 0)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Графит",
+        "canonical": "#171717",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(28% 0 0)",
+          "oklch(42% 0 0)",
+          "oklch(56% 0 0)",
+          "oklch(70% 0 0)",
+          "oklch(82% 0 0)",
+          "oklch(92% 0 0)",
+          "oklch(98% 0 0)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Серый текст",
+        "canonical": "#525252",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(28% 0 0)",
+          "oklch(42% 0 0)",
+          "oklch(56% 0 0)",
+          "oklch(70% 0 0)",
+          "oklch(82% 0 0)",
+          "oklch(92% 0 0)",
+          "oklch(98% 0 0)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Линия",
+        "canonical": "#d4d4d4",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(28% 0 0)",
+          "oklch(42% 0 0)",
+          "oklch(56% 0 0)",
+          "oklch(70% 0 0)",
+          "oklch(82% 0 0)",
+          "oklch(92% 0 0)",
+          "oklch(98% 0 0)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Page title",
+        "purpose": "Заголовок страницы 26/600."
+      },
+      "title-compact": {
+        "displayName": "Compact page title",
+        "purpose": "Заголовок страницы 22/1.2 на ширине до 700 px в uiStyles и каталоге."
+      },
+      "heading-compact": {
+        "displayName": "Compact heading",
+        "purpose": "h1 Incoming 20/1.3; крупные диалоги — 20 px с line-height 1.4."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Заголовок диалога и крупной секции 18/600."
+      },
+      "section": {
+        "displayName": "Section title",
+        "purpose": "Заголовок панели и группы 16/600."
+      },
+      "brand": {
+        "displayName": "Brand / edition title",
+        "purpose": "Бренд shell и заголовок издания 15/600; line-height 1.3 в карточке, 1.33–1.5 в shell."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Основной текст, таблицы и поля 14/1.5."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Кнопки, навигация и подписи контролов 14/500."
+      },
+      "secondary": {
+        "displayName": "Secondary",
+        "purpose": "Вторичные строки Incoming, пути и статусы 13/1.54."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Заголовки колонок, статусы и метаданные 12/500."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Пути к файлам и технические значения 11/1.5."
+      }
+    },
+    "shadows": [
+      {
+        "name": "panel",
+        "value": "0 1px 2px rgb(0 0 0 / 0.04)",
+        "purpose": "Редкие приподнятые блоки и итоговые панели."
+      },
+      {
+        "name": "popover",
+        "value": "0 12px 32px rgb(0 0 0 / 0.14)",
+        "purpose": "Меню выбора и списки."
+      },
+      {
+        "name": "dialog",
+        "value": "0 16px 48px rgb(0 0 0 / 0.2)",
+        "purpose": "Стандартные диалоги и DirectoryPicker."
+      },
+      {
+        "name": "dialog-large",
+        "value": "0 24px 64px rgb(0 0 0 / 0.24)",
+        "purpose": "ActionModal и крупные модальные формы."
+      },
+      {
+        "name": "tooltip",
+        "value": "0 8px 24px rgb(0 0 0 / 0.18)",
+        "purpose": "Подсказки к иконкам."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Смена фона, границы и цвета у контролов; при prefers-reduced-motion переходы отключаются."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "shell-stack",
+        "value": "600px"
+      },
+      {
+        "name": "page-padding",
+        "value": "700px"
+      },
+      {
+        "name": "catalog-controls",
+        "value": "1100px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Главное действие экрана: 36 px, радиус 8 px, каталожный синий.",
+      "html": "<button class='ds-btn-primary' type='button'>Опубликовать</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:8px;background:#2563eb;color:#ffffff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;font-weight:500;line-height:1.5;white-space:nowrap;cursor:pointer;transition:background-color 150ms,border-color 150ms,color 150ms,box-shadow 150ms}.ds-btn-primary:hover{background:#1d4ed8}.ds-btn-primary:active{background:#1d4ed8}.ds-btn-primary:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.ds-btn-primary:disabled{background:#f5f5f5;border-color:#d4d4d4;color:#525252;cursor:not-allowed}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Однострочное поле 36 px с подписью; тот же размер и радиус используют поиск и DirectoryPicker.",
+      "html": "<label class='ds-field'><span class='ds-field-label'>Путь к папке</span><input class='ds-input' type='text' value='/music/library' /></label>",
+      "css": ".ds-field{display:grid;gap:6px;min-width:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}.ds-field-label{font-size:14px;font-weight:500;line-height:1.5;color:#171717}.ds-input{box-sizing:border-box;width:100%;height:36px;padding:0 12px;border:1px solid #8a8a8a;border-radius:8px;background:#ffffff;color:#171717;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;font-weight:400;line-height:1.5}.ds-input::placeholder{color:#525252}.ds-input:hover{border-color:#171717}.ds-input:focus-visible{border-color:#2563eb;outline:2px solid #2563eb;outline-offset:0}.ds-input[aria-invalid='true']{border-color:#b91c1c}.ds-input:disabled{background:#f5f5f5;color:#525252;cursor:not-allowed}"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Пункт боковой навигации 40 px: muted в покое, accent-soft у текущего раздела.",
+      "html": "<nav class='ds-nav' aria-label='Разделы'><a class='ds-nav-item ds-nav-item--current' href='#' aria-current='page'><svg class='ds-nav-icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='12' cy='12' r='8.25'/><circle cx='12' cy='12' r='2.25'/></svg><span>Медиатека</span><span class='ds-nav-count'>12</span></a><a class='ds-nav-item' href='#'><svg class='ds-nav-icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3.5 6.75A1.75 1.75 0 0 1 5.25 5h4l2 2.25h7.5a1.75 1.75 0 0 1 1.75 1.75v8.75a1.75 1.75 0 0 1-1.75 1.75H5.25A1.75 1.75 0 0 1 3.5 17.75V6.75Z'/></svg><span>Источники</span></a></nav>",
+      "css": ".ds-nav{display:grid;gap:4px;width:240px;box-sizing:border-box;padding:20px 16px;border-right:1px solid #d4d4d4;background:#ffffff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}.ds-nav-item{display:flex;align-items:center;gap:12px;min-height:40px;padding:8px 12px;border-radius:8px;color:#525252;font-size:14px;font-weight:500;line-height:1.5;text-decoration:none}.ds-nav-item:hover{background:#f5f5f5;color:#171717}.ds-nav-item--current{background:#dbeafe;color:#1d4ed8}.ds-nav-item:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.ds-nav-icon{width:18px;height:18px;flex:none}.ds-nav-count{margin-left:auto;display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:9999px;background:#ffffff;color:#525252;box-shadow:inset 0 0 0 1px #d4d4d4;font-size:12px;font-weight:500;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "status-badge",
+      "description": "Статус-пилюля с обязательной текстовой подписью и семантическим тоном.",
+      "html": "<span class='ds-badge ds-badge--success'>Опубликовано</span> <span class='ds-badge ds-badge--neutral'>Черновик</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;gap:4px;width:max-content;max-width:100%;padding:2px 8px;border:1px solid;border-radius:9999px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:12px;font-weight:500;line-height:1.33}.ds-badge--neutral{border-color:#d4d4d4;background:#f5f5f5;color:#525252}.ds-badge--success{border-color:color-mix(in srgb,#047857 25%,transparent);background:#d1fae5;color:#047857}"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "refersTo": "table-cell",
+      "description": "Рабочая таблица: заголовок raised, строки surface, выбранная строка accent-soft.",
+      "html": "<div class='ds-table-frame'><table class='ds-table'><thead><tr><th>Трек</th><th>Исполнитель</th><th>Позиция</th><th>Публикация</th></tr></thead><tbody><tr><td><a href='#'>Первый снег</a><span class='ds-table-sub'>3:42</span></td><td>Северный ветер</td><td>1 · 03</td><td>Опубликовано</td></tr><tr class='ds-table-row--selected'><td><a href='#'>Тихий берег</a><span class='ds-table-sub'>4:18</span></td><td>Северный ветер</td><td>1 · 04</td><td>Черновик</td></tr></tbody></table></div>",
+      "css": ".ds-table-frame{overflow:hidden;border:1px solid #d4d4d4;border-radius:8px;background:#ffffff}.ds-table{width:100%;border-collapse:separate;border-spacing:0;color:#171717;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;font-weight:400;line-height:1.5;font-variant-numeric:tabular-nums}.ds-table th{padding:10px 16px;border-bottom:1px solid #d4d4d4;background:#f5f5f5;color:#525252;font-size:12px;font-weight:500;line-height:1.33;text-align:left;white-space:nowrap}.ds-table td{padding:12px 16px;vertical-align:middle}.ds-table tbody tr{background:#ffffff}.ds-table tbody tr:hover{background:#f5f5f5}.ds-table tbody tr+tr td{border-top:1px solid #d4d4d4}.ds-table tbody tr.ds-table-row--selected{background:#dbeafe}.ds-table a{color:#1d4ed8;font-weight:500;text-decoration:none;text-underline-offset:2px}.ds-table a:hover{text-decoration:underline}.ds-table-sub{display:block;margin-top:3px;color:#525252;font-size:12px}"
+    },
+    {
+      "name": "Gallery Card",
+      "kind": "card",
+      "refersTo": "gallery-card",
+      "description": "Карточка GridList: обложка-монограмма, название, описание и статистика; выбранное состояние accent-soft.",
+      "html": "<div class='ds-gallery'><div class='ds-gallery-card ds-gallery-card--selected'><span class='ds-gallery-select' aria-hidden='true'><svg viewBox='0 0 16 16' width='12' height='12' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='m3 8 3 3 7-7'/></svg></span><div class='ds-gallery-head'><span class='ds-gallery-art' aria-hidden='true'>С</span><div><p class='ds-gallery-title'>Северный ветер</p><p class='ds-gallery-desc'>фолк · инди</p></div></div><dl class='ds-gallery-stats'><div><dt>Аудио</dt><dd><strong>61 / 64</strong></dd></div><div><dt>Опубликовано</dt><dd><strong>48 / 64</strong></dd></div></dl></div></div>",
+      "css": ".ds-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:16px}.ds-gallery-card{position:relative;display:flex;min-width:0;flex-direction:column;gap:12px;padding:16px;border:1px solid #d4d4d4;border-radius:12px;background:#ffffff;color:#171717;text-align:left;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;transition:background-color 150ms,border-color 150ms}.ds-gallery-card:hover{border-color:#8a8a8a;background:#f5f5f5}.ds-gallery-card--selected{border-color:color-mix(in srgb,#2563eb 45%,#d4d4d4);background:#dbeafe}.ds-gallery-select{position:absolute;top:12px;right:12px;z-index:2;display:grid;place-items:center;width:20px;height:20px;border:1px solid #2563eb;border-radius:4px;background:#2563eb;color:#ffffff}.ds-gallery-head{display:flex;align-items:center;gap:12px;padding-right:28px}.ds-gallery-art{display:grid;place-items:center;width:48px;height:48px;flex:none;border:1px solid #d4d4d4;border-radius:8px;background:#f5f5f5;color:#171717;font-size:16px;font-weight:600}.ds-gallery-title{margin:0;font-size:14px;font-weight:600;line-height:1.5}.ds-gallery-desc{margin:2px 0 0;color:#525252;font-size:12px;line-height:1.33}.ds-gallery-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin:0;padding-top:12px;border-top:1px solid #d4d4d4;font-size:12px;line-height:1.33}.ds-gallery-stats div{display:flex;justify-content:space-between;gap:8px;min-width:0;color:#525252}.ds-gallery-stats dt,.ds-gallery-stats dd{margin:0}.ds-gallery-stats strong{color:#171717;font-weight:500;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Confirmation Dialog",
+      "kind": "custom",
+      "refersTo": "dialog",
+      "description": "React Aria Modal: overlay 45 %, радиус 16 px, максимум 560 px, заголовок 18/600.",
+      "html": "<div class='ds-dialog-overlay'><div class='ds-dialog' role='dialog' aria-modal='true' aria-labelledby='ds-dialog-title'><h2 id='ds-dialog-title'>Удалить выбранные позиции?</h2><p>Будут затронуты 3 позиции. Исходные файлы останутся на месте.</p><div class='ds-dialog-actions'><button class='ds-btn' type='button'>Отмена</button><button class='ds-btn ds-btn--danger' type='button'>Удалить</button></div></div></div>",
+      "css": ".ds-dialog-overlay{display:grid;place-items:center;padding:16px;background:rgb(0 0 0 / 0.45)}.ds-dialog{box-sizing:border-box;width:100%;max-width:560px;padding:24px;border:1px solid #d4d4d4;border-radius:16px;background:#ffffff;color:#171717;box-shadow:0 24px 64px rgb(0 0 0 / 0.24);font-family:system-ui,-apple-system,'Segoe UI',sans-serif}.ds-dialog h2{margin:0 0 8px;font-size:18px;font-weight:600;line-height:1.56}.ds-dialog p{margin:12px 0;color:#525252;font-size:14px;line-height:1.5}.ds-dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:16px}.ds-btn{min-height:36px;padding:0 12px;border:1px solid #d4d4d4;border-radius:8px;background:#ffffff;color:#171717;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;font-weight:500;line-height:1.5;cursor:pointer}.ds-btn:hover{border-color:#8a8a8a;background:#f5f5f5}.ds-btn:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.ds-btn--danger{border-color:color-mix(in srgb,#b91c1c 35%,#d4d4d4);color:#b91c1c}.ds-btn--danger:hover{border-color:#b91c1c;background:#fee2e2}"
+    },
+    {
+      "name": "Breadcrumbs",
+      "kind": "nav",
+      "refersTo": "breadcrumb",
+      "description": "React Aria Breadcrumbs: muted 14 px, разделитель control 14 px, текущая страница 500 ink.",
+      "html": "<nav class='ds-crumbs' aria-label='Хлебные крошки'><a class='ds-crumb' href='#'>Медиатека</a><svg class='ds-crumb-sep' viewBox='0 0 16 16' width='14' height='14' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 3 5 5-5 5'/></svg><a class='ds-crumb' href='#'>Артисты</a><svg class='ds-crumb-sep' viewBox='0 0 16 16' width='14' height='14' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 3 5 5-5 5'/></svg><span class='ds-crumb ds-crumb--current' aria-current='page'>Северный ветер</span></nav>",
+      "css": ".ds-crumbs{display:flex;align-items:center;gap:6px;min-width:0;color:#525252;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5}.ds-crumb{border-radius:4px;color:#525252;text-decoration:none;text-underline-offset:2px}.ds-crumb:hover{color:#171717;text-decoration:underline}.ds-crumb:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.ds-crumb--current{color:#171717;font-weight:500;text-decoration:none}.ds-crumb-sep{flex:none;color:#8a8a8a}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Ясный каталожный стол",
+    "overview": "Макет устроен как рабочий стол каталогизатора, а не как дашборд. Белая бумага, графитовый текст и тонкие линии держат содержание; записи, таблицы и карточки остаются главными, а действия стоят рядом с теми записями, которые они меняют. Плотность и поведение таблиц наследуют выбранному примеру React Aria CRUD; медиатека использует отдельный GridList-рисунок с плиткой-обложкой, названием, описанием и множественным выбором.\n\nСиний — рабочий сигнал, а не украшение. Он появляется в выборе, ссылках, активной навигации и фокусе, но не заливает фоны и не спорит с содержимым. Декоративные KPI-карточки, крупные hero-блоки, стекло, градиенты и тяжёлые тени исключены: глубина строится лестницей поверхностей и линиями в 1 px.\n\nКомпоновка desktop-first: устойчивый shell, компактные контролы высотой 36 px, таблицы с локальной прокруткой и галерея с автоматической сеткой. Светлая и тёмная темы сохраняют одну иерархию; русская и английская локали равноправны.",
+    "keyCharacteristics": [
+      "Бумажные нейтрали canvas / surface / raised и графитовый текст.",
+      "Один синий акцент: выбор, ссылки, активный пункт, фокус.",
+      "Плотные рабочие поверхности: таблицы, карточки, контролы 36 px.",
+      "Семантические статусы-пилюли, а не цвета обложек.",
+      "Плоскость по умолчанию; тени только у слоёв поверх страницы и редких приподнятых панелей.",
+      "Паритет светлой и тёмной тем, RU/EN."
+    ],
+    "rules": [
+      {
+        "name": "The One Blue Rule",
+        "body": "Синий занимает не более десятой части экрана. Он отмечает выбор, ссылку, активный пункт и фокус; если синего много, интерфейс теряет иерархию.",
+        "section": "colors"
+      },
+      {
+        "name": "The Surface Ladder Rule",
+        "body": "Глубина — это canvas → surface → raised, а не тень. Новая поверхность сначала получает место в этой лестнице и линию в 1 px.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Status Rule",
+        "body": "Статус всегда несёт текстовую подпись и цвет одновременно. Цвет обложки или палитра артиста не становятся статусом.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Числа, счётчики и таблицы используют font-variant-numeric: tabular-nums; моноширинный шрифт не применяется к прозе.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Покой — почти всегда плоско. Тень означает слой поверх страницы; тонкая тень 4 % допустима только у отдельной приподнятой панели, а не как знак важности содержимого.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do держать синий редким: выбор, ссылка, активный пункт, фокус.",
+      "Do использовать контролы 36 px и радиус 8 px как базовый размер.",
+      "Do строить глубину лестницей canvas → surface → raised и линией 1 px.",
+      "Do сопровождать статус текстом и цветом одновременно.",
+      "Do сохранять одинаковую иерархию в светлой и тёмной темах.",
+      "Do использовать React Aria primitives и выбранные примеры для поведения.",
+      "Do оставлять таблице локальную прокрутку, не ломая shell."
+    ],
+    "donts": [
+      "Don't добавлять декоративные KPI-карточки, крупные hero и градиентные фоны.",
+      "Don't использовать палитру обложки или артиста как статус.",
+      "Don't вешать тени на спокойные панели, строки и карточки.",
+      "Don't заливать синим большие площади и фоны секций.",
+      "Don't передавать статус только цветом.",
+      "Don't уменьшать контролы ниже 36 px и убирать подписи полей.",
+      "Don't добавлять второй акцент или произвольные радиусы."
+    ]
+  }
+}

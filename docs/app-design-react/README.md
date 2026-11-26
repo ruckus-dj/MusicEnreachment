@@ -19,3 +19,5 @@
 
 [Сценарии](01-product-and-flows.md) · [Экраны](02-screens.md) ·
 [Данные](03-data-and-evidence.md) · [Визуальная система](DESIGN.md)
+
+[Контекст макета](PRODUCT.md) · [Направление редизайна](REDESIGN.md)

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { AppButton } from "../../components/AppButton";
+import { AppSearchField } from "../../components/AppSearchField";
 
 export type GenreCatalogEntry = {
   id: string;
@@ -146,11 +147,11 @@ export function GenreCatalogView({
   return (
     <section
       aria-labelledby="genre-catalog-title"
-      className="grid min-w-0 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-sm text-[var(--ink)]"
+      className="grid min-w-0 gap-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--ink)]"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
-          <h2 id="genre-catalog-title" className="m-0 text-sm font-semibold">
+          <h2 id="genre-catalog-title" className="m-0 text-base font-semibold">
             {copy.title}
           </h2>
           <p className={muted}>{copy.description}</p>
@@ -207,26 +208,23 @@ export function GenreCatalogView({
       )}
       {items.length > 0 && (
         <>
-          <label className="grid w-full max-w-md gap-1 text-xs font-medium">
-            {copy.search}
-            <input
-              type="search"
-              placeholder={copy.placeholder}
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setLimit(pageSize);
-              }}
-              className="min-h-8 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)]"
-            />
-          </label>
+          <AppSearchField
+            label={copy.search}
+            placeholder={copy.placeholder}
+            value={query}
+            onChange={(value) => {
+              setQuery(value);
+              setLimit(pageSize);
+            }}
+            className="w-full max-w-md"
+          />
           <p className={muted} role="status">
             {copy.results}: {results.length.toLocaleString(locale)}
           </p>
           {results.length ? (
             <ul
               aria-label={copy.results}
-              className="m-0 grid max-h-[min(50dvh,420px)] grid-cols-[repeat(auto-fill,minmax(min(100%,210px),1fr))] list-none overflow-auto overscroll-contain rounded border border-[var(--line)] bg-[var(--surface)] p-1"
+              className="m-0 grid max-h-[min(50dvh,420px)] grid-cols-[repeat(auto-fill,minmax(min(100%,210px),1fr))] list-none overflow-auto overscroll-contain rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1"
             >
               {results.slice(0, limit).map(({ id, name, sourceName }) => (
                 <li

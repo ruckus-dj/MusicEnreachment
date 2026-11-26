@@ -24,7 +24,9 @@ export function OwnCatalogEditorShell({
 			<header className="flex min-w-0 flex-wrap items-start justify-between gap-2 border-b border-[var(--line)] pb-3">
 				<div className="min-w-0">
 					<p className={muted}>{eyebrow}</p>
-					<h1 className="my-1 text-xl font-semibold wrap-anywhere">{title}</h1>
+					<h1 className="my-1 text-[26px]/[1.2] font-semibold tracking-[-.02em] wrap-anywhere">
+						{title}
+					</h1>
 				</div>
 				<div className="flex flex-wrap gap-2">
 					{actions}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { I18nProvider } from "../../demoPreferences";
 import { GenrePicker } from "./GenrePicker";
@@ -19,11 +19,6 @@ it("retains a saved name-only genre when removing another selection", () => {
       />
     </I18nProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Genres" }));
-  fireEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", {
-      name: "Remove Jazz",
-    }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Remove Jazz" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith([{ name: "Rock" }]);
 });

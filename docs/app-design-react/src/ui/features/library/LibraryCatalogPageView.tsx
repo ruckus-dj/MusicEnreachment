@@ -1,9 +1,11 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { Button, TabPanel, Tabs } from "react-aria-components";
+import { ActiveFilterTags } from "../../components/ActiveFilterTags";
 import { catalogueStyles } from "./catalogueStyles";
 import {
   LibraryCatalogQueryControls,
   LibraryCatalogTabList,
+  libraryActiveFilterTags,
   libraryViewLabel,
 } from "./LibraryCatalogControls";
 import type { LibraryStateFilter } from "./LibraryCatalogFilterView";
@@ -13,10 +15,14 @@ import {
 } from "./LibraryCatalogResults";
 import { LibraryPaginationView } from "./LibraryPaginationView";
 import { librarySelectionButtonClass } from "./LibrarySelectionPreviewView";
+import type {
+  LibraryAvailabilityFilter,
+  LibraryPublicationFilter,
+} from "./libraryDetailRoute";
 import type { LibraryView } from "./libraryView";
 
 const statePanelClass =
-  "grid justify-items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 text-sm";
+  "grid justify-items-start gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-6 text-sm [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-semibold [&_p]:m-0 [&_p]:max-w-[65ch] [&_p]:text-[var(--muted)]";
 
 const copy = {
   en: {
@@ -138,6 +144,15 @@ export interface LibraryCatalogPageViewProps {
   onSearch: (value: string) => void;
   filter: LibraryStateFilter;
   onFilter: (value: LibraryStateFilter) => void;
+  /** Canonical independent filter axes; tags render each non-default axis. */
+  publication?: LibraryPublicationFilter;
+  availability?: LibraryAvailabilityFilter;
+  /** Atomically clears only the publication axis, preserving query/availability. */
+  onPublicationChange?: (value: LibraryPublicationFilter) => void;
+  /** Atomically clears only the availability axis, preserving query/publication. */
+  onAvailabilityChange?: (value: LibraryAvailabilityFilter) => void;
+  /** Clears search and both canonical filter axes in one navigation. */
+  onResetFilters?: () => void;
   onViewChange: (view: LibraryView) => void;
   state: LibraryCatalogPageState;
   /** Selected typed result leaf; the page supplies the album list locale. */
@@ -166,6 +181,11 @@ export function LibraryCatalogPageView({
   onSearch,
   filter,
   onFilter,
+  publication,
+  availability,
+  onPublicationChange,
+  onAvailabilityChange,
+  onResetFilters,
   onViewChange,
   state,
   results,
@@ -180,6 +200,13 @@ export function LibraryCatalogPageView({
   dockSpace = false,
 }: LibraryCatalogPageViewProps) {
   const text = copy[locale];
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const activeFilterTags = libraryActiveFilterTags(
+    locale,
+    search,
+    filter,
+    publication && availability ? { publication, availability } : undefined,
+  );
   return (
     <section
       className={`${catalogueStyles.shell}${dockSpace ? ` ${catalogueStyles.dockScreen}` : ""}${className ? ` ${className}` : ""}`}
@@ -203,7 +230,7 @@ export function LibraryCatalogPageView({
         {incomingHref && (
           <div className={catalogueStyles.pageHeaderAction}>
             <a
-              className={`${librarySelectionButtonClass} inline-flex items-center text-xs`}
+              className={`${librarySelectionButtonClass} inline-flex items-center text-sm`}
               href={incomingHref}
             >
               {summaryCopy[locale].incoming}
@@ -229,6 +256,25 @@ export function LibraryCatalogPageView({
               onSearch={onSearch}
               filter={filter}
               onFilter={onFilter}
+              inputRef={searchInputRef}
+            />
+            <ActiveFilterTags
+              locale={locale}
+              items={activeFilterTags}
+              focusTargetRef={searchInputRef}
+              onRemove={(id) => {
+                if (id === "search") onSearch("");
+                else if (id === "publication") onPublicationChange?.("all");
+                else if (id === "availability") onAvailabilityChange?.("all");
+                else if (id === "status") onFilter("all");
+              }}
+              onReset={
+                onResetFilters ??
+                (() => {
+                  onSearch("");
+                  onFilter("all");
+                })
+              }
             />
 
             {state.status === "loading" ? (
@@ -290,7 +336,9 @@ export function LibraryCatalogPageView({
                   </div>
                 )}
                 <section
-                  className={catalogueStyles.list}
+                  className={
+                    view === "artists" ? "min-w-0 py-1" : catalogueStyles.list
+                  }
                   aria-label={libraryViewLabel(locale, view)}
                 >
                   <LibraryCatalogResultView locale={locale} results={results} />

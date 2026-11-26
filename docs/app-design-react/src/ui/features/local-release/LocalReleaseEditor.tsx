@@ -89,7 +89,7 @@ export function LocalReleaseEditor(props: LocalReleaseEditorProps) {
 					<h1
 						ref={heading}
 						tabIndex={-1}
-						className="my-1 text-xl font-semibold"
+						className="my-1 text-[26px]/[1.2] font-semibold tracking-[-.02em]"
 					>
 						{copy.title}
 					</h1>

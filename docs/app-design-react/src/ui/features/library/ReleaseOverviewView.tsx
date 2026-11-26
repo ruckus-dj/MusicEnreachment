@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { Checkbox } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
 import type { Locale } from "../../i18n/types";
 import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { catalogueStyles } from "./catalogueStyles";
@@ -112,9 +113,9 @@ export type ReleaseOverviewViewProps = {
 );
 
 const selectionClass =
-  "group inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-xs text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 data-[disabled]:cursor-default data-[disabled]:opacity-50";
+  "group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2 data-[disabled]:cursor-default data-[disabled]:opacity-50";
 const selectionBox =
-  "grid size-4 place-items-center rounded-[3px] border border-[var(--control)] bg-[var(--surface)] text-[11px] leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]";
+  "grid size-4 place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-xs leading-none text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]";
 const sectionHeading = "m-0 text-base leading-[22px] font-[650] wrap-anywhere";
 const subHeading = "m-0 text-sm font-semibold wrap-anywhere";
 const meta = "m-0 text-sm text-[var(--muted)] wrap-anywhere";
@@ -293,7 +294,7 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
           <div className="grid min-w-0 gap-1 wrap-anywhere">
             <h1
               id="release-title"
-              className="m-0 text-xl leading-tight font-semibold"
+              className="m-0 text-[26px]/[1.2] font-semibold tracking-[-.02em]"
             >
               {heading.title}
             </h1>
@@ -335,7 +336,11 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
                 onChange={selection.onChange}
               >
                 <span aria-hidden="true" className={selectionBox}>
-                  {selected ? "✓" : mixed ? "−" : ""}
+                  {selected ? (
+                    <AppIcon name="check" className="size-3" />
+                  ) : mixed ? (
+                    <span className="h-0.5 w-2 rounded bg-current" />
+                  ) : null}
                 </span>
                 <span>{m("selectAllEditionPositions")}</span>
               </Checkbox>

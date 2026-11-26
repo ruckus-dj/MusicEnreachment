@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 import { SelectionDock } from "./SelectionDock";
@@ -43,6 +49,31 @@ const dock = (
     onQueueDeletion={vi.fn()}
   />
 );
+
+it("opens publication deletion from the overflow menu with its consequences", async () => {
+  render(dock(new Set(["visible", "hidden-1", "hidden-2"])));
+
+  expect(
+    screen.queryByRole("button", { name: "Удалить публикации" }),
+  ).toBeNull();
+  const trigger = screen.getByRole("button", {
+    name: "Другие действия с выбранными позициями",
+  });
+  fireEvent.click(trigger);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Удалить публикации" }),
+  );
+
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByText(/Будут затронуты только перечисленные/),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("button", { name: "Подтвердить удаление" }),
+  ).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
 
 it("reviews and removes selections hidden outside the current page", () => {
   const onSelect = vi.fn();

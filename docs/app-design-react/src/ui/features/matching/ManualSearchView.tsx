@@ -11,7 +11,7 @@ function Button({ className, ...props }: ButtonProps) {
 	return (
 		<AriaButton
 			{...props}
-			className={`inline-flex min-h-[30px] cursor-pointer items-center justify-center gap-1.5 rounded-[var(--control-radius,4px)] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-[var(--ink)] hover:border-[var(--accent)] hover:bg-[var(--raised)] active:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 pointer-coarse:min-h-[40px] ${className ?? ""}`}
+			className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--ink)] hover:border-[var(--control)] hover:bg-[var(--raised)] active:bg-[var(--raised)] disabled:cursor-not-allowed disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 pointer-coarse:h-10 ${className ?? ""}`}
 		/>
 	);
 }
@@ -141,13 +141,13 @@ export function ManualSearchView({
 
 	return (
 		<section
-			className="rounded border border-[var(--line)] bg-[var(--surface)] p-4"
+			className="grid min-w-0 content-start gap-2"
 			aria-labelledby="manual-search-title"
 		>
-			<h2 id="manual-search-title" className="font-semibold">
+			<h2 id="manual-search-title" className="m-0 text-sm font-semibold">
 				{message(showProviders ? "searchTitleEditions" : "searchTitle")}
 			</h2>
-			<p className="mt-1 text-sm">
+			<p className="m-0 text-sm text-[var(--muted)]">
 				{message(
 					showProviders ? "searchDescriptionEditions" : "searchDescription",
 				)}
@@ -164,7 +164,7 @@ export function ManualSearchView({
 				</label>
 				<input
 					id="manual-search-query"
-					className="min-w-0 basis-64 flex-1 rounded border border-[var(--control)] bg-[var(--raised)] p-2 text-[var(--ink)] max-[600px]:min-h-10"
+					className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] placeholder:text-[var(--muted)] hover:border-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 max-[600px]:h-10"
 					value={query}
 					disabled={pending || disabled}
 					onChange={(event) => onQueryChange(event.target.value)}
@@ -178,7 +178,7 @@ export function ManualSearchView({
 					min="1"
 					max="100"
 					aria-label={message("resultLimit")}
-					className="w-28 rounded border border-[var(--control)] bg-[var(--raised)] p-2 text-[var(--ink)] max-[600px]:min-h-10"
+					className="h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--control)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 max-[600px]:h-10"
 					value={limit}
 					disabled={pending || disabled}
 					onChange={(event) => onLimitChange(event.target.value)}
@@ -217,14 +217,14 @@ export function ManualSearchView({
 							{message("noMatches")}
 						</p>
 					) : (
-						<ul className="mt-3 max-h-60 overflow-y-auto divide-y divide-[var(--line)] rounded border border-[var(--line)]">
+						<ul className="m-0 max-h-64 list-none divide-y divide-[var(--line)] overflow-y-auto rounded-lg border border-[var(--line)] p-0">
 							{results.items.map((item) => {
 								const details = editionDetails(item, message);
 								const selected = isItemSelected(item, selection);
 								return (
 									<li
 										key={`${item.provider}:${item.id}`}
-										className="flex flex-wrap items-start justify-between gap-3 p-3"
+										className="flex flex-wrap items-start justify-between gap-3 px-3 py-2.5"
 									>
 										<div className="min-w-0 flex-1">
 											<p className="font-medium">

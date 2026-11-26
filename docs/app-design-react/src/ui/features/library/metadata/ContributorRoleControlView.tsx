@@ -28,7 +28,7 @@ export function ContributorRoleControlView({
       <label htmlFor={inputId}>{`${text.contributorRole} ${index + 1}`}</label>
       <select
         id={inputId}
-        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]"
         value={value}
         disabled={disabled}
         onChange={(event) => {

@@ -30,7 +30,11 @@
 	--color-line: var(--line);
 	--color-control: var(--control);
 	--color-accent: var(--accent);
+	--color-accent-strong: var(--accent-strong);
 	--color-accent-soft: var(--accent-soft);
+	--color-button: var(--button);
+	--color-button-hover: var(--button-hover);
+	--color-button-text: var(--button-text);
 	--color-warning: var(--warning);
 	--color-warning-soft: var(--warning-soft);
 	--color-error: var(--error);

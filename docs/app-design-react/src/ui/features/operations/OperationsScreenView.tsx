@@ -48,6 +48,8 @@ export interface OperationsScreenFilters {
   onStatusChange: (status: OperationsStatusFilter) => void;
   kind: OperationsKindSelection;
   onKindChange: (kind: OperationsKindSelection) => void;
+  /** Resets query, status and kind in one host update. */
+  onResetFilters?: () => void;
 }
 
 export interface OperationsScreenPagination {
@@ -156,6 +158,7 @@ export function OperationsScreenView({
     <>
       <OperationsList
         copy={copy}
+        locale={locale}
         rows={rows}
         status={status}
         error={error}
@@ -183,6 +186,7 @@ export function OperationsScreenView({
           onKindChange: (value) => {
             if (isOperationsKindSelection(value)) filters.onKindChange(value);
           },
+          onResetFilters: filters.onResetFilters,
         }}
         pagination={
           pagination && pagination.total > 0 && pagination.from > 0

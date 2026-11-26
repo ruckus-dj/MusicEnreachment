@@ -32,13 +32,13 @@ import {
 import { PublicationTagSnapshotView } from "./PublicationTagSnapshotView";
 
 const buttonClass =
-  "min-h-[30px] rounded border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-[var(--ink)] hover:enabled:border-[var(--accent)] hover:enabled:bg-[var(--raised)] disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] max-[599px]:min-h-10";
+  "min-h-9 rounded border border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[var(--ink)] hover:enabled:border-[var(--accent)] hover:enabled:bg-[var(--raised)] disabled:border-[var(--line)] disabled:bg-[var(--raised)] disabled:text-[var(--muted)] max-[599px]:min-h-10";
 const fieldsetClass =
-  "min-w-0 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2";
+  "min-w-0 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2";
 const alertClass = "text-[var(--error)] wrap-anywhere";
 const actionsClass = "my-2 flex flex-wrap items-center gap-[7px]";
 const factsClass =
-  "my-[10px] grid grid-cols-[minmax(130px,.75fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] max-[600px]:grid-cols-1 max-[600px]:gap-y-0 [&_dt]:text-[11px] [&_dt]:text-[var(--muted)] [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] max-[600px]:[&_dd]:mb-[7px]";
+  "my-[10px] grid grid-cols-[minmax(130px,.75fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] max-[600px]:grid-cols-1 max-[600px]:gap-y-0 [&_dt]:text-xs [&_dt]:text-[var(--muted)] [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] max-[600px]:[&_dd]:mb-[7px]";
 
 const copy = {
   en: {

@@ -185,7 +185,7 @@ function CreditRow({
         <span>{text.creditName}</span>
         <input
           id={creditNameId}
-          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
           value={row.credit_name}
           disabled={disabled}
           aria-describedby={identityId}
@@ -198,7 +198,7 @@ function CreditRow({
         <span>{text.joinPhrase}</span>
         <input
           id={joinPhraseId}
-          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
           value={row.join_phrase}
           disabled={disabled}
           aria-describedby={identityId}
@@ -288,7 +288,7 @@ export function ArtistCreditRowsEditorView({
       <label className="grid min-w-0 gap-1 text-sm">
         <span>{text.override}</span>
         <select
-          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+          className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
           value={draft.hasDesiredOverride ? draft.state : "inherited"}
           disabled={disabled}
           onChange={(event) =>
@@ -357,7 +357,7 @@ export function ArtistCreditRowsEditorView({
                 <span>{text.search}</span>
                 <input
                   id={queryId}
-                  className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                  className="min-h-10 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
                   type="search"
                   value={searchQuery}
                   disabled={disabled}

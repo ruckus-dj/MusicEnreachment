@@ -177,7 +177,7 @@ export function PublicationMetadataChanges({
                       <td colSpan={2} className="px-1 py-2">
                         <div className="grid grid-cols-2 gap-2">
                           <div className="min-w-0">
-                            <span className="block text-[10px] text-[var(--muted)]">
+                            <span className="block text-xs text-[var(--muted)]">
                               {publicationInspectorMessage(locale, "current")}
                             </span>
                             <div className="max-h-36 overflow-auto rounded-sm bg-[var(--raised)] p-2 text-xs">
@@ -191,7 +191,7 @@ export function PublicationMetadataChanges({
                             </div>
                           </div>
                           <div className="min-w-0">
-                            <span className="block text-[10px] text-[var(--muted)]">
+                            <span className="block text-xs text-[var(--muted)]">
                               {publicationInspectorMessage(locale, "after")}
                             </span>
                             <div className="max-h-36 overflow-auto rounded-sm bg-[var(--raised)] p-2 text-xs">
@@ -244,7 +244,7 @@ function InspectorBody({
   return (
     <>
       <div className="mb-3 border-b border-[var(--line)] pb-2">
-        <p className="m-0 text-[11px] text-[var(--muted)]">
+        <p className="m-0 text-xs text-[var(--muted)]">
           {publicationInspectorMessage(locale, "changedFields")}:{" "}
           {item.groups.reduce((n, group) => n + group.changes.length, 0)}
         </p>
@@ -260,7 +260,7 @@ function InspectorBody({
         <p className="m-0 break-words text-xs text-[var(--muted)]">
           {item.reason ?? ""}
         </p>
-        <dl className="mb-0 mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
+        <dl className="mb-0 mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
           <dt className="text-[var(--muted)]">
             {publicationInspectorMessage(locale, "source")}
           </dt>

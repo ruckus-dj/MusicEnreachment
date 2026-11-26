@@ -125,7 +125,7 @@ it("filters Local records before paging and restores the tab, filter and page af
   fireEvent.change(filter(), { target: { value: "External Session" } });
   expect(screen.getByText("По фильтру ничего не найдено.")).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /External Session/ }),
+    screen.queryByRole("button", { name: /^External Session/ }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сбросить фильтр" }));
   expectPage(1, 3);
@@ -139,6 +139,27 @@ it("filters Local records before paging and restores the tab, filter and page af
     screen.queryByText("По фильтру ничего не найдено."),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("External Artist")).not.toBeInTheDocument();
+});
+
+it("shows the active Local filter as a removable chip and resets paging", () => {
+  render(<LocalCatalogScreen state={state} onState={() => undefined} />);
+
+  fireEvent.change(filter(), { target: { value: "Synthetic" } });
+  expectPage(1, 3);
+  fireEvent.click(
+    within(pager()).getByRole("button", { name: "Следующая страница" }),
+  );
+  expectPage(2, 3);
+
+  const tag = screen
+    .getByText("Фильтр по всем записям: Synthetic")
+    .closest<HTMLElement>('[role="row"]');
+  if (!tag) throw new Error("Missing active Local filter tag");
+  fireEvent.click(within(tag).getByRole("button"));
+
+  expect(filter()).toHaveValue("");
+  expectPage(1, 3);
+  expect(screen.queryByText("Фильтр по всем записям: Synthetic")).toBeNull();
 });
 
 it("opens canonical record hashes and follows browser Back and Forward", async () => {

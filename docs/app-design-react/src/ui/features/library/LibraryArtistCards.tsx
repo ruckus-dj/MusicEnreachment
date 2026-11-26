@@ -1,37 +1,57 @@
-import { Checkbox, Link } from "react-aria-components";
+import {
+  Checkbox,
+  GridList,
+  GridListItem,
+  type Key,
+  Link,
+  type Selection,
+  Text,
+} from "react-aria-components";
 import { libraryArtistCardStyles as catalogueStyles } from "./libraryArtistCardStyles";
 
 const copyByLocale = {
   en: {
     artistsLibrary: "Library artists",
     performer: "Performer",
-    releases: "Releases",
-    positions: "Positions",
     audio: "Audio",
     published: "Published",
-    missingEditions: "Without an edition",
-    selectArtist: (name: string) => `Select positions by ${name}`,
+    selectArtist: "Select positions by",
+    selectArtistHint:
+      "Selects every position by this artist, not the artist record.",
     selectPage: "Select on this page",
+    positionsOnlyHelp: "Selection applies to positions, not artist records.",
     noArtists: "No artists found.",
     partialProviderScope: "Provider counts cover the known cache only.",
   },
   ru: {
     artistsLibrary: "Артисты медиатеки",
     performer: "Исполнитель",
-    releases: "Изданий",
-    positions: "Позиций",
     audio: "Аудио",
     published: "Опубликовано",
-    missingEditions: "Без издания",
-    selectArtist: (name: string) => `Выбрать позиции артиста ${name}`,
+    selectArtist: "Выбрать позиции артиста",
+    selectArtistHint:
+      "Выбирает все позиции этого артиста, а не запись артиста.",
     selectPage: "Выбрать на этой странице",
+    positionsOnlyHelp: "Выбор относится к позициям, а не к записям артистов.",
     noArtists: "Артисты не найдены.",
     partialProviderScope: "Данные провайдера ограничены известным кэшем.",
   },
 } as const;
 
-const checkboxFocus =
-  "data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]";
+const selectionGlyph = (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="size-3"
+  >
+    <path d="m3 8 3 3 7-7" />
+  </svg>
+);
 
 /** Display data for one artist card; counts are resolved by the host. */
 export interface LibraryArtistCard {
@@ -73,11 +93,8 @@ interface Props {
   pageSelectionControl?: ArtistCardSelectionControl;
 }
 
-const selectionMark = (control: ArtistCardSelectionControl) =>
-  control.isIndeterminate ? "−" : control.isSelected ? "✓" : "";
-
-const pageSelectionRow =
-  "flex items-center gap-2 px-[clamp(12px,1.5vw,20px)] pt-[clamp(12px,1.5vw,20px)] text-xs text-[var(--muted)]";
+const pageSelectionRow = "flex items-center gap-2 text-sm text-[var(--muted)]";
+const pageSelectionHelpId = "library-artist-page-selection-help";
 
 export function LibraryArtistCards({
   locale,
@@ -85,116 +102,174 @@ export function LibraryArtistCards({
   pageSelectionControl,
 }: Props) {
   const copy = copyByLocale[locale];
+  const selectedKeys = new Set<Key>(
+    artists
+      .filter((artist) => artist.selection.isSelected)
+      .map((artist) => artist.id),
+  );
+  const disabledKeys = artists
+    .filter((artist) => artist.selection.isDisabled)
+    .map((artist) => artist.id);
+
+  function changeSelection(keys: Selection) {
+    for (const artist of artists) {
+      if (artist.selection.isDisabled) continue;
+      const next =
+        keys === "all" ? true : keys instanceof Set && keys.has(artist.id);
+      if (next !== artist.selection.isSelected) artist.selection.onChange(next);
+    }
+  }
+
   return (
     <>
       {pageSelectionControl ? (
-        <div className={pageSelectionRow}>
-          <Checkbox
-            slot={null}
-            className={`${catalogueStyles.tableCheckbox} ${checkboxFocus}`}
-            aria-label={copy.selectPage}
-            isSelected={pageSelectionControl.isSelected}
-            isIndeterminate={pageSelectionControl.isIndeterminate}
-            isDisabled={pageSelectionControl.isDisabled}
-            onChange={pageSelectionControl.onChange}
+        <div className="mb-3 grid gap-1">
+          <div className={pageSelectionRow}>
+            <Checkbox
+              slot={null}
+              aria-label={copy.selectPage}
+              aria-describedby={pageSelectionHelpId}
+              isSelected={pageSelectionControl.isSelected}
+              isIndeterminate={pageSelectionControl.isIndeterminate}
+              isDisabled={pageSelectionControl.isDisabled}
+              onChange={pageSelectionControl.onChange}
+              className="group grid size-8 cursor-pointer place-items-center data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2"
+            >
+              <span
+                aria-hidden="true"
+                className="grid size-4 place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-[var(--surface)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]"
+              >
+                {pageSelectionControl.isIndeterminate
+                  ? "−"
+                  : pageSelectionControl.isSelected
+                    ? selectionGlyph
+                    : null}
+              </span>
+            </Checkbox>
+            <span>{copy.selectPage}</span>
+          </div>
+          <p
+            id={pageSelectionHelpId}
+            className="m-0 text-xs text-[var(--muted)]"
           >
-            <span className={catalogueStyles.checkboxBox} aria-hidden="true">
-              {selectionMark(pageSelectionControl)}
-            </span>
-          </Checkbox>
-          <span>{copy.selectPage}</span>
+            {copy.positionsOnlyHelp}
+          </p>
         </div>
       ) : null}
-      <section
-        className={catalogueStyles.artistGrid}
-        aria-label={copy.artistsLibrary}
+      <div
+        className="contents"
+        onKeyDownCapture={(event) => {
+          if (
+            (event.ctrlKey || event.metaKey) &&
+            event.key.toLowerCase() === "a"
+          ) {
+            event.preventDefault();
+            changeSelection("all");
+          }
+        }}
       >
-        {artists.length ? (
-          artists.map((artist) => (
-            <article className={catalogueStyles.artistCard} key={artist.id}>
-              <div
-                className={catalogueStyles.artistArt}
-                data-palette={artist.palette}
+        <GridList
+          aria-label={copy.artistsLibrary}
+          layout="grid"
+          selectionMode="multiple"
+          selectionBehavior="toggle"
+          disabledBehavior="selection"
+          selectedKeys={selectedKeys}
+          disabledKeys={disabledKeys}
+          onSelectionChange={changeSelection}
+          items={artists}
+          className={catalogueStyles.artistGrid}
+          renderEmptyState={() => (
+            <div className={catalogueStyles.empty}>{copy.noArtists}</div>
+          )}
+        >
+          {(artist) => {
+            const selectionHelpId = `library-artist-position-help-${artist.id}`;
+            return (
+              <GridListItem
+                id={artist.id}
+                textValue={artist.name}
+                className={catalogueStyles.artistCard}
               >
-                <Link
-                  href={artist.href}
-                  className={catalogueStyles.artistCardLink}
+                <span
+                  title={copy.selectArtistHint}
+                  className="absolute right-3 top-3 z-[2]"
                 >
+                  <Checkbox
+                    slot="selection"
+                    aria-label={copy.selectArtist}
+                    aria-describedby={selectionHelpId}
+                    isIndeterminate={artist.selection.isIndeterminate}
+                    className="grid size-5 cursor-pointer place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-[var(--surface)] data-[indeterminate]:border-[var(--accent)] data-[indeterminate]:bg-[var(--accent)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-[var(--accent)] group-data-[focus-visible]:outline-offset-2"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={
+                        artist.selection.isIndeterminate
+                          ? "h-0.5 w-2 rounded bg-current"
+                          : artist.selection.isSelected
+                            ? "block"
+                            : "hidden"
+                      }
+                    >
+                      {artist.selection.isIndeterminate ? null : selectionGlyph}
+                    </span>
+                  </Checkbox>
+                </span>
+                <span id={selectionHelpId} className="sr-only">
+                  {copy.selectArtistHint}
+                </span>
+                <div className="flex min-w-0 items-center gap-3 pr-7">
                   <span
-                    className={catalogueStyles.artistMonogram}
+                    className={catalogueStyles.artistArt}
+                    data-palette={artist.palette}
                     aria-hidden="true"
                   >
                     {artist.monogram}
                   </span>
-                  <span className={catalogueStyles.artistOverlay}>
-                    <span className={catalogueStyles.artistCopy}>
-                      <strong>{artist.name}</strong>
-                      <span>{artist.genres.join(" · ") || copy.performer}</span>
-                    </span>
-                    <span className={catalogueStyles.artistStats}>
-                      <span>
-                        <strong>
-                          {copy.releases}: {artist.releaseCount}
-                        </strong>
-                      </span>
-                      <span>
-                        <strong>
-                          {copy.positions}: {artist.positionCount}
-                        </strong>
-                      </span>
-                      <span>
-                        <strong>
-                          {copy.audio}: {artist.availableCount} /{" "}
-                          {artist.positionCount}
-                        </strong>
-                      </span>
-                      <span>
-                        <strong>
-                          {copy.published}: {artist.publishedCount} /{" "}
-                          {artist.positionCount}
-                        </strong>
-                      </span>
-                      {artist.missingEditionCount !== undefined && (
-                        <span>
-                          <strong>
-                            {copy.missingEditions}:{" "}
-                            {artist.missingEditionCount || "—"}
-                          </strong>
-                        </span>
-                      )}
-                      {artist.partialProviderScope && (
-                        <span className="col-span-2">
-                          {copy.partialProviderScope}
-                        </span>
-                      )}
-                    </span>
-                  </span>
-                </Link>
-                <div className={catalogueStyles.cardSelection}>
-                  <Checkbox
-                    slot={null}
-                    className={`${catalogueStyles.cardCheckbox} ${checkboxFocus}`}
-                    aria-label={copy.selectArtist(artist.name)}
-                    isSelected={artist.selection.isSelected}
-                    isIndeterminate={artist.selection.isIndeterminate}
-                    isDisabled={artist.selection.isDisabled}
-                    onChange={artist.selection.onChange}
-                  >
-                    <span
-                      className={catalogueStyles.cardCheckboxBox}
-                      aria-hidden="true"
+                  <span className={catalogueStyles.artistCopy}>
+                    <Link
+                      href={artist.href}
+                      className="block rounded-sm text-sm font-semibold text-[var(--ink)] underline-offset-2 wrap-anywhere hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
                     >
-                      {selectionMark(artist.selection)}
-                    </span>
-                  </Checkbox>
+                      {artist.name}
+                    </Link>
+                    <Text
+                      slot="description"
+                      className="block text-xs text-[var(--muted)] wrap-anywhere"
+                    >
+                      {artist.genres.join(" · ") || copy.performer}
+                    </Text>
+                  </span>
                 </div>
-              </div>
-            </article>
-          ))
-        ) : (
-          <div className={catalogueStyles.empty}>{copy.noArtists}</div>
-        )}
-      </section>
+                <dl className={catalogueStyles.artistStats}>
+                  <div>
+                    <dt>{copy.audio}</dt>
+                    <dd>
+                      <strong>
+                        {artist.availableCount} / {artist.positionCount}
+                      </strong>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{copy.published}</dt>
+                    <dd>
+                      <strong>
+                        {artist.publishedCount} / {artist.positionCount}
+                      </strong>
+                    </dd>
+                  </div>
+                </dl>
+                {artist.partialProviderScope ? (
+                  <p className="m-0 text-xs text-[var(--warning)]">
+                    {copy.partialProviderScope}
+                  </p>
+                ) : null}
+              </GridListItem>
+            );
+          }}
+        </GridList>
+      </div>
     </>
   );
 }

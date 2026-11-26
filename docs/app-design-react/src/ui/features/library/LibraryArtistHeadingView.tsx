@@ -1,4 +1,5 @@
 import { Checkbox } from "react-aria-components";
+import { AppIcon } from "../../components/AppIcon";
 
 type Locale = "en" | "ru";
 
@@ -78,21 +79,21 @@ export function LibraryArtistHeadingView({
   const mixed = Boolean(selection?.selected && !checked);
 
   return (
-    <header className="grid min-w-0 grid-cols-[76px_minmax(0,1fr)] gap-x-[13px] gap-y-2.5 pb-4 sm:grid-cols-[clamp(96px,14vw,168px)_minmax(0,1fr)] sm:gap-x-[clamp(16px,2.5vw,30px)]">
+    <header className="mb-5 grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-4 border-b border-[var(--line)] pb-5 sm:grid-cols-[96px_minmax(0,1fr)]">
       <div
         data-palette={palette}
-        className="relative isolate grid aspect-square min-w-0 place-items-center overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--artist-color)_48%,var(--line))] bg-[linear-gradient(145deg,color-mix(in_srgb,var(--artist-color)_80%,#111),color-mix(in_srgb,var(--artist-color)_42%,#101820))] text-white [--artist-color:#ac7059] data-[palette=forest]:[--artist-color:#486d59] data-[palette=dusk]:[--artist-color:#676e95] data-[palette=sand]:[--artist-color:#aa905f] data-[palette=slate]:[--artist-color:#4c717e] sm:rounded-[18px]"
+        className="relative isolate grid aspect-square min-w-0 place-items-center overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--raised)] text-[var(--muted)] data-[palette=forest]:bg-[color-mix(in_srgb,#486d59_16%,var(--raised))] data-[palette=dusk]:bg-[color-mix(in_srgb,#676e95_16%,var(--raised))] data-[palette=sand]:bg-[color-mix(in_srgb,#aa905f_18%,var(--raised))] data-[palette=slate]:bg-[color-mix(in_srgb,#4c717e_16%,var(--raised))]"
       >
         <span
           aria-hidden="true"
-          className="font-[Georgia,serif] text-[38px] font-medium [text-shadow:0_4px_22px_#0007] sm:text-[clamp(42px,6vw,76px)]"
+          className="text-2xl font-semibold uppercase sm:text-3xl"
         >
           {name.trim().slice(0, 1).toLocaleUpperCase(locale)}
         </span>
         {selection && (
           <Checkbox
             aria-label={text.select(name)}
-            className="group absolute top-2 left-2 grid size-6 cursor-pointer place-items-center"
+            className="group absolute top-1.5 left-1.5 grid size-7 cursor-pointer place-items-center rounded-md bg-[var(--surface)]/90 data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2"
             isSelected={checked}
             isIndeterminate={mixed}
             isDisabled={!selection.total || !selection.onChange}
@@ -100,17 +101,21 @@ export function LibraryArtistHeadingView({
           >
             <span
               aria-hidden="true"
-              className="grid size-4 place-items-center rounded border border-white bg-black/45 text-[11px] leading-none text-white group-data-[focus-visible]:outline-2 group-data-[focus-visible]:outline-offset-2 group-data-[disabled]:opacity-45"
+              className="grid size-4 place-items-center rounded border border-[var(--control)] bg-[var(--surface)] text-[var(--button-text)] group-data-[selected]:border-[var(--accent)] group-data-[selected]:bg-[var(--accent)] group-data-[indeterminate]:border-[var(--accent)] group-data-[indeterminate]:bg-[var(--accent)]"
             >
-              {checked ? "✓" : mixed ? "−" : ""}
+              {checked ? (
+                <AppIcon name="check" className="size-3" />
+              ) : mixed ? (
+                <span className="h-0.5 w-2 rounded bg-[var(--surface)]" />
+              ) : null}
             </span>
           </Checkbox>
         )}
       </div>
-      <div className="grid min-w-0 content-start gap-1">
+      <div className="grid min-w-0 content-start gap-1.5">
         <h1
           id="artist-title"
-          className="m-0 text-xl leading-tight font-semibold wrap-anywhere"
+          className="m-0 text-[26px]/[1.2] font-semibold tracking-[-.02em] wrap-anywhere"
         >
           {name}
         </h1>
@@ -119,7 +124,7 @@ export function LibraryArtistHeadingView({
             {disambiguation}
           </p>
         )}
-        <p className="m-0 text-sm font-semibold text-[var(--ink)] wrap-anywhere">
+        <p className="m-0 text-sm font-medium text-[var(--ink)] wrap-anywhere">
           {genres.length ? genres.join(", ") : text.performer}
         </p>
         <p className="m-0 text-sm text-[var(--muted)] max-sm:col-span-full">
@@ -134,7 +139,7 @@ export function LibraryArtistHeadingView({
             ` · ${formatter.format(count.local)} ${text.local}`}
         </p>
         {(discographyComplete || includesCachedGroups) && (
-          <p className="m-0 text-sm text-[var(--muted)]">
+          <p className="m-0 text-xs text-[var(--muted)]">
             {discographyComplete ? text.complete : text.summary}
           </p>
         )}

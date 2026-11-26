@@ -29,6 +29,41 @@ const stagesCopy = {
   },
 } as const;
 
+function InfoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      viewBox="0 0 16 16"
+      className="mt-0.5 size-4 flex-none"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 7.25v3.5" strokeLinecap="round" />
+      <circle cx="8" cy="4.9" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      viewBox="0 0 16 16"
+      className="size-4 flex-none motion-safe:animate-spin"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+    >
+      <circle cx="8" cy="8" r="5.75" opacity="0.25" />
+      <path d="M8 2.25A5.75 5.75 0 0 1 13.75 8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /**
  * Copy-ready incoming list composition.
  *
@@ -60,66 +95,104 @@ export function IncomingScreenView({
 }: IncomingScreenViewProps) {
   const stages = stagesCopy[locale];
   const panelStatus = panel?.status;
+  const stageItems = [
+    {
+      id: "group",
+      content: (
+        <span className="font-medium text-[var(--ink)]">
+          {stages.groupFiles}
+        </span>
+      ),
+    },
+    {
+      id: "match",
+      content: (
+        <span className="font-medium text-[var(--ink)]">{stages.match}</span>
+      ),
+    },
+    {
+      id: "automatic",
+      content: (
+        <>
+          <span className="font-medium text-[var(--ink)]">
+            {stages.allConfidentAutomatic}
+          </span>{" "}
+          <span aria-hidden="true" className="text-[var(--accent)]">
+            →
+          </span>{" "}
+          {stages.automaticDirection}
+        </>
+      ),
+    },
+    {
+      id: "manual",
+      content: (
+        <>
+          <span className="font-medium text-[var(--ink)]">
+            {stages.otherwiseManual}
+          </span>{" "}
+          <span aria-hidden="true" className="text-[var(--accent)]">
+            →
+          </span>{" "}
+          {stages.manualDirection}
+        </>
+      ),
+    },
+  ];
   return (
     <section
       hidden={hidden}
       aria-labelledby="incoming-title"
-      className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3"
+      className="min-w-0 w-full px-4 pt-6 pb-8 max-[600px]:px-3 max-[600px]:py-4"
     >
       <IncomingPageHeading locale={locale} action={headingAction} />
       {showProcessingStages ? (
-        <ol
-          className="mb-[10px] grid list-none grid-cols-4 gap-0 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--raised)] p-0 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1"
+        <ul
+          className="mb-5 flex list-none flex-wrap gap-x-8 gap-y-3 p-0"
           aria-label={stages.stages}
         >
-          <li className="flex min-w-0 items-center gap-2 px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10">
-            <b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-              01
-            </b>
-            <span className="min-w-0">{stages.groupFiles}</span>
-          </li>
-          <li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t max-[600px]:border-[var(--line)]">
-            <b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-              02
-            </b>
-            <span className="min-w-0">{stages.match}</span>
-          </li>
-          <li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-l-0 max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
-            <b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-              03
-            </b>
-            <span className="min-w-0">
-              {stages.allConfidentAutomatic}{" "}
-              <i className="text-[var(--accent)] not-italic" aria-hidden="true">
-                →
-              </i>{" "}
-              {stages.automaticDirection}
-            </span>
-          </li>
-          <li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
-            <b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
-              04
-            </b>
-            <span className="min-w-0">
-              {stages.otherwiseManual}{" "}
-              <i className="text-[var(--accent)] not-italic" aria-hidden="true">
-                →
-              </i>{" "}
-              {stages.manualDirection}
-            </span>
-          </li>
-        </ol>
+          {stageItems.map((item) => (
+            <li
+              key={item.id}
+              className="flex min-w-[15rem] flex-1 items-start gap-2.5"
+            >
+              <span
+                aria-hidden="true"
+                className="mt-1.5 size-2 flex-none rounded-full bg-[var(--accent)]"
+              />
+              <span className="min-w-0 text-sm leading-5 text-[var(--muted)]">
+                {item.content}
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : null}
       {notice ? (
         <p
           role="status"
-          className="mb-[10px] border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-[10px] py-[7px] text-xs text-[var(--ink)]"
+          className="mb-5 flex items-start gap-2.5 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm leading-5 text-[var(--ink)]"
         >
-          {notice}
+          <InfoIcon />
+          <span className="min-w-0">{notice}</span>
         </p>
       ) : null}
-      {loading ? <p role="status">{loading}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {loading ? (
+        <p
+          role="status"
+          className="mb-5 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]"
+        >
+          <SpinnerIcon />
+          <span className="min-w-0">{loading}</span>
+        </p>
+      ) : null}
+      {error ? (
+        <p
+          role="alert"
+          className="mb-5 rounded-lg border border-[var(--error)] bg-[var(--error-soft)] px-4 py-3 text-sm leading-5 text-[var(--ink)]"
+        >
+          {error}
+        </p>
+      ) : null}
       {panel ? (
         <IncomingGroupsPanel
           locale={locale}
