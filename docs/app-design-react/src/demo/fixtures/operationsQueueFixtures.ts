@@ -28,7 +28,7 @@ export type QueuedOperationKind =
 	| "matching";
 
 export type QueuedOperationLabel =
-	| "publishPositions"
+	| "publishTrack"
 	| "analyzeSource"
 	| "removeLibrary"
 	| "matchIncoming";
@@ -68,7 +68,7 @@ for (const release of originalReleases) {
 	for (const track of release.tracks) {
 		queueObjects.push({
 			kind: "publication",
-			operation: "publishPositions",
+			operation: "publishTrack",
 			target: `${release.title} · ${trackNumberLabel(release, track)} · ${track.title}`,
 			targetDetail: artist,
 			targetHref: libraryPositionHref(release.id, track.id),

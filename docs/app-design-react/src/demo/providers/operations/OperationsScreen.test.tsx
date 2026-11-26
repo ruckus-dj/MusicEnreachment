@@ -212,9 +212,6 @@ it("sorts the whole filtered queue before pagination and returns to page one", (
 	const first = within(grid).getAllByRole("row")[1];
 	expect(first).toHaveTextContent(oldest.target);
 	expect(first).toHaveTextContent(
-		new Intl.DateTimeFormat("en", {
-			dateStyle: "short",
-			timeStyle: "short",
-		}).format(oldest.createdAt),
+		new Date(oldest.createdAt).toLocaleString("en"),
 	);
 });

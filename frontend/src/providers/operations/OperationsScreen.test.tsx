@@ -66,6 +66,7 @@ afterEach(() => {
 });
 
 it("shows loading then current operations with target links, diagnostics and failed retry", async () => {
+  let refused = false;
   let retried = false;
   server.use(
     http.get("/api/operations/current", ({ request }) => {
@@ -112,6 +113,13 @@ it("shows loading then current operations with target links, diagnostics and fai
       });
     }),
     http.post("/api/operations/failed-id/retry", () => {
+      if (!refused) {
+        refused = true;
+        return HttpResponse.json(
+          { detail: "The operation changed; retry again." },
+          { status: 409 },
+        );
+      }
       retried = true;
       return HttpResponse.json({
         id: "failed-id",
@@ -137,10 +145,13 @@ it("shows loading then current operations with target links, diagnostics and fai
   ).not.toBeInTheDocument();
 
   fireEvent.click(within(row).getByRole("button", { name: "Details" }));
-  expect(screen.getByRole("dialog")).toHaveTextContent("Permission denied");
-  expect(
-    within(screen.getByRole("dialog")).queryByText("Progress"),
-  ).not.toBeInTheDocument();
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent("Permission denied");
+  expect(within(dialog).queryByText("Progress")).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "The operation changed; retry again.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
   fireEvent.click(within(row).getByRole("button", { name: "Retry" }));

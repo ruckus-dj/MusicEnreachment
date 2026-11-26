@@ -5,6 +5,7 @@ import {
   type MatchingRecheckAbandonPosition,
 } from "./MatchingRecheckAbandonDialog";
 import {
+  type OperationsActionError,
   OperationsList,
   type OperationsListFilterOption,
   type OperationsListRow,
@@ -77,7 +78,7 @@ export interface OperationsScreenViewProps {
   /** Feedback for the latest completed action. */
   notice?: string;
   /** Feedback for a failed action. */
-  actionError?: string;
+  actionError?: OperationsActionError;
   headingRef?: Ref<HTMLHeadingElement>;
   onRefresh?: () => void;
   isRefreshing?: boolean;

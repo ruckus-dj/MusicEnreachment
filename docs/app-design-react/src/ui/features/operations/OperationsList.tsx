@@ -134,7 +134,7 @@ export interface OperationsListProps {
 	error?: string;
 	/** Action feedback for the latest user action. */
 	notice?: string;
-	actionError?: string;
+	actionError?: OperationsActionError;
 	headingRef?: Ref<HTMLHeadingElement>;
 	onRefresh?: () => void;
 	isRefreshing?: boolean;
@@ -347,13 +347,28 @@ function DetailField({
 	);
 }
 
+export type OperationsActionError = { rowId: string; message: string };
+
+function OperationActionAlert({ message }: { message: string }) {
+	return (
+		<p
+			role="alert"
+			className="m-0 text-[var(--error)] [overflow-wrap:anywhere]"
+		>
+			{message}
+		</p>
+	);
+}
+
 function OperationDetails({
 	copy,
 	row,
+	actionError,
 	onClose,
 }: {
 	copy: OperationsListCopy;
 	row: OperationsListRow;
+	actionError?: string;
 	onClose: () => void;
 }) {
 	return (
@@ -423,6 +438,11 @@ function OperationDetails({
 							)}
 						</DetailField>
 					</dl>
+					{actionError && (
+						<div className="mt-3 text-xs">
+							<OperationActionAlert message={actionError} />
+						</div>
+					)}
 					<div className="mt-4 flex justify-end">
 						<AriaButton className={buttonClass} onPress={onClose}>
 							{copy.close}
@@ -454,6 +474,8 @@ export function OperationsList({
 	const selectedRow = selectedId
 		? rows.find((row) => row.id === selectedId)
 		: undefined;
+	const detailError =
+		actionError?.rowId === selectedRow?.id ? actionError?.message : undefined;
 	useEffect(() => {
 		if (selectedId === null || selectedRow) return;
 		setSelectedId(null);
@@ -518,13 +540,8 @@ export function OperationsList({
 					)}
 				</div>
 			)}
-			{actionError && (
-				<p
-					role="alert"
-					className="m-0 text-[var(--error)] [overflow-wrap:anywhere]"
-				>
-					{actionError}
-				</p>
+			{actionError && !detailError && (
+				<OperationActionAlert message={actionError.message} />
 			)}
 			{filters && (
 				<div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -728,6 +745,7 @@ export function OperationsList({
 				<OperationDetails
 					copy={copy}
 					row={selectedRow}
+					actionError={detailError}
 					onClose={() => setSelectedId(null)}
 				/>
 			)}

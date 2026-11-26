@@ -100,7 +100,10 @@ it("shows loading, error and empty states instead of rows", () => {
 			status="error"
 			isRefreshing
 			onRefresh={onRefresh}
-			actionError="Could not dismiss the operation."
+			actionError={{
+				rowId: row.id,
+				message: "Could not dismiss the operation.",
+			}}
 		/>,
 	);
 	expect(screen.getByText("Northern Lines · position 01")).toBeVisible();

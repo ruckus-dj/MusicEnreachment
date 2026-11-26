@@ -38,6 +38,7 @@ import type {
   OperationsListStatus,
 } from "../../ui/features/operations/OperationsList";
 import { operationsControllerCopy as messages } from "../../ui/features/operations/operationsScreenCopy";
+import { formatOperationTimestamp } from "../../ui/features/operations/operationTimestamp";
 import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";
 import {
   sourceDetailHref,
@@ -140,18 +141,13 @@ function reconcilePage(
 
 type OperationAction = "retry" | "dismiss" | "abandon";
 
-type ActionFailure =
+type ActionFailure = { rowId: string } & (
   | {
       action: OperationAction;
       response: { status: number; data?: unknown };
     }
-  | { action: OperationAction; reason: unknown };
-
-function formatDate(value: string | undefined, locale: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
-}
+  | { action: OperationAction; reason: unknown }
+);
 
 /**
  * Measured progress only. Operations without an observable count stay hidden
@@ -209,8 +205,7 @@ function targetHref(ref: OperationTargetRef | undefined) {
   return undefined;
 }
 
-function actionErrorText(failure: ActionFailure | null, copy: Copy) {
-  if (!failure) return undefined;
+function actionErrorText(failure: ActionFailure, copy: Copy) {
   if ("response" in failure) {
     const { status } = failure.response;
     return apiResponseError(
@@ -302,7 +297,7 @@ function operationRow(
         : "neutral",
     stage: stage || undefined,
     progress: measuredProgressLabel(operation, locale),
-    created: formatDate(operation.created_at, locale),
+    created: formatOperationTimestamp(operation.created_at, locale),
     error: failed ? operation.safe_error || undefined : undefined,
     actions: actions.length > 0 ? actions : undefined,
   };
@@ -484,14 +479,14 @@ function useOperationsModel(): ApplicationOperationsModel {
       if (action === "retry") {
         const response = await retryOperation(id);
         if (response.status !== 200) {
-          setActionError({ action, response });
+          setActionError({ rowId: id, action, response });
           return;
         }
         await reconcileCachedPages(id, response.data);
       } else {
         const response = await dismissOperation(id);
         if (response.status !== 204) {
-          setActionError({ action, response });
+          setActionError({ rowId: id, action, response });
           return;
         }
         await reconcileCachedPages(id, null);
@@ -500,7 +495,7 @@ function useOperationsModel(): ApplicationOperationsModel {
       }
       await queryClient.invalidateQueries({ queryKey: operationsListQueryKey });
     } catch (reason) {
-      setActionError({ action, reason });
+      setActionError({ rowId: id, action, reason });
     } finally {
       pendingGuard.current = false;
       setPending(undefined);
@@ -518,7 +513,7 @@ function useOperationsModel(): ApplicationOperationsModel {
         cache: "no-store",
       });
       if (response.status !== 200) {
-        setActionError({ action: "abandon", response });
+        setActionError({ rowId: id, action: "abandon", response });
         return;
       }
       setAbandonError(undefined);
@@ -532,7 +527,7 @@ function useOperationsModel(): ApplicationOperationsModel {
         })),
       });
     } catch (reason) {
-      setActionError({ action: "abandon", reason });
+      setActionError({ rowId: id, action: "abandon", reason });
     } finally {
       pendingGuard.current = false;
       setPending(undefined);
@@ -551,7 +546,11 @@ function useOperationsModel(): ApplicationOperationsModel {
       if (response.status !== 204) {
         if (response.status === 409) {
           setAbandonPreview(undefined);
-          setActionError({ action: "abandon", response });
+          setActionError({
+            rowId: abandonPreview.id,
+            action: "abandon",
+            response,
+          });
           await queryClient.invalidateQueries({
             queryKey: operationsListQueryKey,
           });
@@ -630,7 +629,12 @@ function useOperationsModel(): ApplicationOperationsModel {
     status: listStatus,
     error: loadError,
     notice: notice ? copy[notice] : undefined,
-    actionError: actionErrorText(actionError, copy),
+    actionError: actionError
+      ? {
+          rowId: actionError.rowId,
+          message: actionErrorText(actionError, copy),
+        }
+      : undefined,
     headingRef,
     sortColumn: route.sort,
     sortDirection: route.direction,

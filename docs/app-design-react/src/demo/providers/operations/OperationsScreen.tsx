@@ -14,6 +14,7 @@ import {
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type { OperationsListRow } from "../../../ui/features/operations/OperationsList";
 import { operationMessages } from "../../../ui/features/operations/operationMessages";
+import { formatOperationTimestamp } from "../../../ui/features/operations/operationTimestamp";
 import type {
 	OperationsKindFilter,
 	OperationsKindSelection,
@@ -166,14 +167,6 @@ function useDemoOperationsModel({
 		new WeakMap<DeletionOperation, { id: string; createdAt: number }>(),
 	);
 	const nextDeletionId = useRef(0);
-	const dates = useMemo(
-		() =>
-			new Intl.DateTimeFormat(locale, {
-				dateStyle: "short",
-				timeStyle: "short",
-			}),
-		[locale],
-	);
 	const collator = useMemo(
 		() => new Intl.Collator(locale, { sensitivity: "base", numeric: true }),
 		[locale],
@@ -200,7 +193,7 @@ function useDemoOperationsModel({
 				createdAt,
 				list: {
 					...row,
-					created: dates.format(createdAt),
+					created: formatOperationTimestamp(createdAt, locale),
 					targetHref: currentHref(row.targetHref),
 					error: rowStatus === "failed" ? row.error : undefined,
 					actions: rowStatus === "failed" ? row.actions : undefined,
@@ -214,7 +207,7 @@ function useDemoOperationsModel({
 			id: "signals",
 			target: copy.signalsTrack,
 			targetHref: matchingRecheckAbandonFixture.targetHref,
-			operation: copy.publishPositions,
+			operation: copy.publishTrack,
 			error: `${copy.writeAccessFailure} ${copy.prepareAgain}`,
 			actions: [
 				{ id: "retry", label: copy.retry, onPress: provider.retrySignals },
@@ -229,7 +222,7 @@ function useDemoOperationsModel({
 			id: "recovery",
 			target: copy.recoveryTrack,
 			targetHref: originalPositionHref(recoveryFixture.trackId),
-			operation: copy.publishPositions,
+			operation: copy.publishTrack,
 			error: copy.knownTargetMissingResult,
 			actions: [
 				{ id: "retry", label: copy.retry, onPress: provider.retryRecovery },
@@ -314,7 +307,7 @@ function useDemoOperationsModel({
 					id: job.id,
 					target: job.title,
 					targetHref: libraryPositionHref(job.releaseId, job.positionId),
-					operation: copy.publishPositions,
+					operation: copy.publishTrack,
 					error: `${copy.staleScope} ${copy.prepareAgain}`,
 				},
 				job.createdAt,
@@ -432,7 +425,7 @@ function useDemoOperationsModel({
 					operation: copy[fixture.operation],
 					state: copy.queued,
 					stateTone: "info",
-					created: dates.format(fixture.createdAt),
+					created: formatOperationTimestamp(fixture.createdAt, locale),
 				},
 			});
 		}
@@ -440,7 +433,6 @@ function useDemoOperationsModel({
 		return result;
 	}, [
 		copy,
-		dates,
 		demoStartedAt,
 		deletions,
 		isTargetCurrent,

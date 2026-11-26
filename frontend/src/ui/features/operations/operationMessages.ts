@@ -1,5 +1,6 @@
 import { createNamespace } from "../../i18n/createNamespace";
 import type { Locale } from "../../i18n/types";
+import operationKindLabels from "./operationKindLabels.json";
 import { operationsScreenCopy } from "./operationsScreenCopy";
 
 export const operationMessages = createNamespace({
@@ -12,11 +13,10 @@ export const operationMessages = createNamespace({
     consequence: "Consequence",
     action: "Action",
     signalsTrack: "Signals · position 06",
-    publishPositions: "Publish positions",
+    publishTrack: operationKindLabels.kinds.publish_track_v1.en,
     analyzeSource: "Analyze source",
     matchIncoming: "Match incoming files",
     retryQueued: "Retry queued",
-    retrySucceeded: "Retry succeeded; the resolved operation was removed.",
     prepareAgain:
       "A retry prepares the result again. It does not force a republish.",
     recoveryTrack: "Northern Lines · position 01",
@@ -109,11 +109,10 @@ export const operationMessages = createNamespace({
     consequence: "Последствие",
     action: "Действие",
     signalsTrack: "Signals · позиция 06",
-    publishPositions: "Публикация набора позиций",
+    publishTrack: operationKindLabels.kinds.publish_track_v1.ru,
     analyzeSource: "Анализ исходника",
     matchIncoming: "Сопоставление входящих файлов",
     retryQueued: "Повтор поставлен в очередь",
-    retrySucceeded: "Повтор завершён; устранённая операция удалена.",
     prepareAgain:
       "Повтор заново подготавливает результат и не является принудительной перепубликацией.",
     recoveryTrack: "Northern Lines · позиция 01",

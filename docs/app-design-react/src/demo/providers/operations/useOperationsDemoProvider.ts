@@ -184,7 +184,6 @@ export function useOperationsDemoProvider({
 		if (signals !== "running") return;
 		const timer = setTimeout(() => {
 			setSignals("succeeded");
-			setNotice("retrySucceeded");
 		}, demoOperationSettleDelayMs);
 		return () => clearTimeout(timer);
 	}, [signals]);
