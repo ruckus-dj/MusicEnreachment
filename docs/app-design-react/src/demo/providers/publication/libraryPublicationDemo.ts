@@ -1,6 +1,7 @@
 import {
 	type CatalogArtist,
 	effectivePublicationTags,
+	effectiveReleaseTitle,
 	metadataChanged,
 	type OriginalRelease,
 	type OriginalTrack,
@@ -113,7 +114,7 @@ function planPosition(
 		...catalog.destination,
 		artist: originalArtistName(release.artistId, catalog.artists),
 		year: release.year,
-		release: release.title,
+		release: effectiveReleaseTitle(release),
 		position: track.position,
 		title: track.title,
 	});

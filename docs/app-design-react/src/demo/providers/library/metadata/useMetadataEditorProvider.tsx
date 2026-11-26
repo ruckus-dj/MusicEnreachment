@@ -22,6 +22,8 @@ import type {
 } from "../../../../ui/features/library/MetadataEditorView";
 import {
 	type MetadataFieldDescriptor,
+	type MetadataFieldMode,
+	type MetadataFieldState,
 	metadataListActions,
 } from "../../../../ui/features/library/MetadataFieldPresentation";
 import {
@@ -78,6 +80,7 @@ export type SaveDetails = {
 	credits?: MetadataCredit[];
 	genres?: Genre[];
 	extraValues?: Record<string, string>;
+	fieldStates?: Partial<Record<string, MetadataFieldState>>;
 };
 
 export interface MetadataEditorProps {
@@ -100,6 +103,15 @@ export interface MetadataEditorProps {
 	onDraftChange?: (values: MetadataValues, details?: SaveDetails) => void;
 	requiredKeys?: string[];
 	extraFields?: ExtraField[];
+	/** Fields that expose the explicit absent/value/explicit_empty selector. */
+	fieldStates?: Partial<Record<string, MetadataFieldState>>;
+	fieldStateMode?: MetadataFieldMode;
+	fieldLabels?: Readonly<Record<string, string>>;
+	fieldStateDisplay?: {
+		absent: string;
+		explicitEmpty: string;
+		emptyValue: string;
+	};
 }
 
 const audioMeasurementKeySet = new Set<string>(audioMeasurementKeys);
@@ -217,6 +229,10 @@ export function useMetadataEditorProvider({
 	onDraftChange,
 	requiredKeys = [],
 	extraFields = [],
+	fieldStates,
+	fieldStateMode,
+	fieldLabels,
+	fieldStateDisplay,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
 	const m = (key: MetadataMessageKey) => metadataMessage(locale, key);
@@ -248,6 +264,9 @@ export function useMetadataEditorProvider({
 	const editing = controlledEditing ?? internalEditing;
 	const controlled = controlledEditing !== undefined;
 	const [draft, setDraft] = useState<MetadataValues>({});
+	const [draftStates, setDraftStates] = useState<
+		Partial<Record<string, MetadataFieldState>>
+	>({});
 	const [dirty, setDirty] = useState<Set<string>>(new Set());
 	const [draftCredits, setDraftCredits] = useState<MetadataCredit[]>([]);
 	const [draftCreditKeys, setDraftCreditKeys] = useState<string[]>();
@@ -281,6 +300,7 @@ export function useMetadataEditorProvider({
 			setContributorDrafts({});
 			setDraftCreditKeys(undefined);
 			setWorkRowKeys([]);
+			setDraftStates({});
 		}
 	}, [editing]);
 	const actionRef = useRef<HTMLDivElement>(null);
@@ -292,13 +312,29 @@ export function useMetadataEditorProvider({
 	const current = controlled || !editing ? values : draft;
 	const controlledValues = useRef(values);
 	controlledValues.current = values;
+	const stateControlled = (key: string) =>
+		Boolean(fieldStates && Object.hasOwn(fieldStates, key));
+	const stateFor = (key: string): MetadataFieldState | undefined =>
+		(editing ? draftStates[key] : undefined) ?? fieldStates?.[key];
+	const changeFieldState = (key: string, next: MetadataFieldState) => {
+		setDraftStates((state) => ({ ...state, [key]: next }));
+		setError(undefined);
+		if (controlled) {
+			onDraftChange?.(controlledValues.current, {
+				fieldStates: { [key]: next },
+			});
+			return;
+		}
+		setDirty((state) => new Set(state).add(key));
+	};
 	const simpleFieldDescriptor = (
 		field: MetadataField,
 		readOnlyField: boolean,
 	): MetadataFieldDescriptor => {
 		const fieldRows = rows(current, field.key);
 		const list = field.kind === "list" || field.kind === "identity";
-		const fieldLabel = metadataFieldLabel(field.key, locale);
+		const fieldLabel =
+			fieldLabels?.[field.key] ?? metadataFieldLabel(field.key, locale);
 		const kind: MetadataFieldDescriptor["kind"] =
 			field.kind === "lyrics"
 				? "lyrics"
@@ -311,13 +347,29 @@ export function useMetadataEditorProvider({
 					: list
 						? "list"
 						: "text";
+		const hasState = stateControlled(field.key);
+		const fieldState = hasState ? (stateFor(field.key) ?? "absent") : undefined;
+		const displayValue = fieldState
+			? fieldState === "absent"
+				? fieldStateDisplay?.absent
+				: fieldState === "explicit_empty"
+					? fieldStateDisplay?.explicitEmpty
+					: (list ? fieldRows.join("\n") : (fieldRows[0] ?? "")) ||
+						fieldStateDisplay?.emptyValue
+			: undefined;
 		return {
 			key: field.key,
 			label: fieldLabel,
 			kind,
 			value: list ? fieldRows : (fieldRows[0] ?? ""),
 			editing: !readOnlyField,
-			presentation: "control",
+			presentation: hasState ? undefined : "control",
+			displayValue,
+			state: fieldState,
+			mode: hasState ? fieldStateMode : undefined,
+			onStateChange: hasState
+				? (next) => changeFieldState(field.key, next)
+				: undefined,
 			dataKeys: [field.key],
 			emptyChoiceLabel:
 				field.kind === "boolean" || field.kind === "advisory"
@@ -343,12 +395,26 @@ export function useMetadataEditorProvider({
 				field.kind === "integer" || field.kind === "number" ? "number" : "text",
 			inputMode: field.kind === "date" ? "text" : undefined,
 			listActions: list ? metadataListActions(locale, fieldLabel) : undefined,
-			onChange: (next) =>
-				setValue(field.key, Array.isArray(next) ? next : next ? [next] : []),
+			onChange: (next) => {
+				const values = Array.isArray(next)
+					? next
+					: hasState
+						? [String(next)]
+						: next
+							? [next]
+							: [];
+				setValue(field.key, values, {
+					preserveEmpty: hasState && fieldState === "value",
+				});
+			},
 		};
 	};
-	const setValue = (key: string, next: string[]) => {
-		if (!next.some(Boolean)) next = [];
+	const setValue = (
+		key: string,
+		next: string[],
+		options?: { preserveEmpty?: boolean },
+	) => {
+		if (!options?.preserveEmpty && !next.some(Boolean)) next = [];
 		if (controlled) {
 			controlledValues.current = { ...controlledValues.current, [key]: next };
 			onDraftChange?.(controlledValues.current);
@@ -379,6 +445,7 @@ export function useMetadataEditorProvider({
 		);
 		setDirtyExtras(new Set());
 		setDirty(new Set());
+		setDraftStates({});
 		setError(undefined);
 		setInternalEditing(true);
 	};
@@ -388,6 +455,7 @@ export function useMetadataEditorProvider({
 		setError(undefined);
 		setDraft({});
 		setDirty(new Set());
+		setDraftStates({});
 		setDraftCredits([]);
 		setDraftGenres([]);
 		setDirtyGenres(false);
@@ -405,6 +473,7 @@ export function useMetadataEditorProvider({
 			setInternalEditing(false);
 			setDraft({});
 			setDirty(new Set());
+			setDraftStates({});
 			setDraftCredits([]);
 			setDraftGenres([]);
 			setDirtyGenres(false);
@@ -464,6 +533,16 @@ export function useMetadataEditorProvider({
 			details.extraValues = Object.fromEntries(
 				[...dirtyExtras].map((key) => [key, draftExtras[key] ?? ""]),
 			);
+		const fieldStateChanges = Object.fromEntries(
+			[...dirty]
+				.filter((key) => fieldStates && Object.hasOwn(fieldStates, key))
+				.map((key) => [
+					key,
+					draftStates[key] ?? fieldStates?.[key] ?? "absent",
+				]),
+		);
+		if (Object.keys(fieldStateChanges).length)
+			details.fieldStates = fieldStateChanges;
 		void complete(update, Object.keys(details).length ? details : undefined);
 	};
 	const foreignFields = Object.keys(values).filter((key) => {

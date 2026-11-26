@@ -134,8 +134,14 @@ it("renders the focused release destination without artist management", () => {
 it("retains an unsaved release title draft across a position visit", async () => {
 	window.history.replaceState(null, "", northernReleaseHref);
 	render(<CatalogDemo />);
-	const editor = screen.getByRole("region", { name: "Сведения об издании" });
+	const editor = screen.getByRole("region", { name: "Метаданные релиза" });
 	fireEvent.click(within(editor).getByRole("button", { name: "Изменить" }));
+	fireEvent.change(
+		within(editor).getByRole("combobox", {
+			name: "Название — Состояние переопределения",
+		}),
+		{ target: { value: "value" } },
+	);
 	const title = editor.querySelector<HTMLInputElement>(
 		'input[data-metadata-keys~="album"]',
 	);

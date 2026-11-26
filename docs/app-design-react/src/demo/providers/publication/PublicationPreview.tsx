@@ -13,6 +13,7 @@ import {
 	type CatalogArtist,
 	catalogData,
 	effectivePublicationTags,
+	effectiveReleaseTitle,
 	metadataChanged,
 	type OriginalRelease,
 	originalArtistName,
@@ -196,7 +197,7 @@ export function PublicationPreview({
 							...destination,
 							artist: originalArtistName(release.artistId, availableArtists),
 							year: release.year,
-							release: release.title,
+							release: effectiveReleaseTitle(release),
 							position: track.position,
 							title: track.title,
 						})

@@ -3,6 +3,7 @@ import {
 	type CatalogArtist,
 	type SourceFile as CatalogSourceFile,
 	desiredTags,
+	effectiveReleaseTitle,
 	type OriginalRelease,
 	type OriginalTrack,
 	originalArtistName,
@@ -558,7 +559,7 @@ export function planPositionRow(
 				...destination,
 				artist: originalArtistName(release.artistId, artists),
 				year: release.year,
-				release: release.title,
+				release: effectiveReleaseTitle(release),
 				position: row.targetTrack.position,
 				title: row.targetTrack.title,
 			})
@@ -749,7 +750,7 @@ export function applyPlan(
 			...destination,
 			artist: originalArtistName(release.artistId, artists),
 			year: release.year,
-			release: release.title,
+			release: effectiveReleaseTitle(release),
 			position: row.targetTrack.position,
 			title: row.targetTrack.title,
 		});

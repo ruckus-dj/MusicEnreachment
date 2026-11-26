@@ -8,6 +8,7 @@ import {
 import {
 	type CatalogArtist,
 	desiredTags,
+	effectiveReleaseTitle,
 	type OriginalRelease,
 	type OriginalTrack,
 	originalArtistName,
@@ -403,7 +404,7 @@ function createTarget(
 		...destination,
 		artist: originalArtistName(release.artistId, artists),
 		year: release.year,
-		release: release.title,
+		release: effectiveReleaseTitle(release),
 		position: track.position,
 		title: track.title,
 	});

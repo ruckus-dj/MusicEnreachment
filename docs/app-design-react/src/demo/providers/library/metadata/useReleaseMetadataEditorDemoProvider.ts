@@ -1,7 +1,13 @@
 import { useI18n } from "../../../../app/i18n/host";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
+import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
-import { type CatalogArtist, type OriginalRelease } from "../catalogData";
+import {
+	type CatalogArtist,
+	type OriginalRelease,
+	releaseTitleDraftValues,
+	releaseTitleOverrideState,
+} from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
@@ -19,7 +25,8 @@ function releaseValues(release: OriginalRelease): MetadataValues {
 			[...entries],
 		]),
 	);
-	if (!("album" in values)) values.album = [release.title];
+	// Title intent lives in comparisonOverrides; metadataValues is baseline-merged.
+	values.album = releaseTitleDraftValues(release);
 	if (!("releasedate" in values)) {
 		const metadataDate = release.metadata?.date;
 		values.releasedate = [
@@ -90,6 +97,8 @@ export function useReleaseMetadataEditorDemoProvider({
 	const { locale } = useI18n();
 	const m = (key: keyof typeof metadataEditorMessages.en) =>
 		metadataEditorMessages[locale][key];
+	const releaseText = releaseMetadataEditorMessages[locale];
+	const titleState = releaseTitleOverrideState(release);
 	const values = releaseValues(release);
 	const extended = release as ReleaseWithExtras;
 	const extras = [
@@ -102,7 +111,7 @@ export function useReleaseMetadataEditorDemoProvider({
 	];
 	return {
 		editor: {
-			label: m("releaseDetails"),
+			label: releaseText.title,
 			scope: "release",
 			values,
 			artists: artists.map(({ id, name, sortName }) => ({
@@ -115,8 +124,30 @@ export function useReleaseMetadataEditorDemoProvider({
 			genresLoaded,
 			onLoadGenres,
 			extraFields: extras,
+			fieldStates: { album: titleState },
+			fieldLabels: { album: releaseText.labels.title },
+			fieldStateMode: {
+				label: releaseText.mode,
+				absent: releaseText.absent,
+				value: releaseText.value,
+				explicitEmpty: releaseText.explicitEmpty,
+			},
+			fieldStateDisplay: {
+				absent: releaseText.noOverride,
+				explicitEmpty: releaseText.explicitEmpty,
+				emptyValue: releaseText.emptyValue,
+			},
 			onSave: (next, details) => {
-				const title = next.album?.[0] ?? "";
+				const nextTitleState =
+					details?.fieldStates?.album ?? releaseTitleOverrideState(release);
+				const titleValues =
+					nextTitleState === "explicit_empty"
+						? []
+						: nextTitleState === "value"
+							? next.album?.length
+								? [...next.album]
+								: [""]
+							: [release.title];
 				const date = next.releasedate?.[0] ?? "";
 				const oldDate = values.releasedate?.[0] ?? "";
 				const country = next.releasecountry?.[0] ?? "";
@@ -137,21 +168,23 @@ export function useReleaseMetadataEditorDemoProvider({
 					catalogNumber: catalog,
 					...(date !== oldDate ? { date } : {}),
 				};
+				const comparisonOverrides = mergeComparisonOverrides(
+					release.comparisonOverrides,
+					values,
+					next,
+				);
+				if (nextTitleState === "absent") delete comparisonOverrides.album;
+				else comparisonOverrides.album = [...titleValues];
 				const updated = {
 					...release,
-					title,
 					year: date.slice(0, 4),
 					country,
 					label,
 					catalog,
 					metadata,
-					metadataValues: next,
+					metadataValues: { ...next, album: titleValues },
 					comparisonOverrides: {
-						...mergeComparisonOverrides(
-							release.comparisonOverrides,
-							values,
-							next,
-						),
+						...comparisonOverrides,
 						...(details?.genres
 							? {
 									genre: details.genres

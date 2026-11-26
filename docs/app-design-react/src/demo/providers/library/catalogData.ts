@@ -76,6 +76,8 @@ export interface OriginalTrack {
 	positionTitleOverride?: string;
 }
 
+export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
+
 export interface OriginalRelease {
 	id: string;
 	releaseGroupId?: string;
@@ -234,6 +236,33 @@ export const originalProviders: OriginalRelease[] =
 		})),
 	}));
 
+/** Read title override intent from the sparse map, not the merged metadata values. */
+export function releaseTitleOverrideState(
+	release: OriginalRelease,
+): ReleaseTitleOverrideState {
+	const overrides = release.comparisonOverrides;
+	if (!overrides || !Object.hasOwn(overrides, "album")) return "absent";
+	return overrides.album.length === 0 ? "explicit_empty" : "value";
+}
+
+/**
+ * Separate edit draft for the title. Explicit clear and inherit keep the fixture
+ * title editable, so Value -> Inherit/Clear -> Value preserves typed text.
+ */
+export function releaseTitleDraftValues(release: OriginalRelease): string[] {
+	if (releaseTitleOverrideState(release) === "value")
+		return [...(release.comparisonOverrides?.album ?? [""])];
+	return [""];
+}
+
+/** The resolved title for publication tags and new output paths. */
+export function effectiveReleaseTitle(release: OriginalRelease): string {
+	const state = releaseTitleOverrideState(release);
+	if (state === "explicit_empty") return "";
+	if (state === "value") return release.comparisonOverrides?.album?.[0] ?? "";
+	return release.title;
+}
+
 import {
 	choosePublicationOutput,
 	demoOutputCodec,
@@ -272,7 +301,7 @@ export function applyMetadataPreview(
 							...destination,
 							artist: originalArtistName(release.artistId, artists),
 							year: release.year,
-							release: release.title,
+							release: effectiveReleaseTitle(release),
 							position: track.position,
 							title: track.title,
 						}).container,
@@ -281,7 +310,7 @@ export function applyMetadataPreview(
 							...destination,
 							artist: originalArtistName(release.artistId, artists),
 							year: release.year,
-							release: release.title,
+							release: effectiveReleaseTitle(release),
 							position: track.position,
 							title: track.title,
 						}).path,
@@ -362,10 +391,20 @@ export function desiredTags(
 ): Record<string, string[]> {
 	const artist = artists.find((item) => item.id === track.artistId);
 	const albumArtist = artists.find((item) => item.id === release.artistId);
+	const titleOverride = release.comparisonOverrides
+		? Object.hasOwn(release.comparisonOverrides, "album")
+			? release.comparisonOverrides.album
+			: undefined
+		: undefined;
 	const result: Record<string, string[]> = {
 		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
-		ALBUM: release.title ? [release.title] : [],
+		ALBUM:
+			titleOverride !== undefined
+				? [...titleOverride]
+				: release.title
+					? [release.title]
+					: [],
 		ALBUMARTIST: release.credits?.length
 			? release.credits
 					.map((credit) => credit.credit || credit.name || "")
@@ -525,6 +564,8 @@ export function desiredTags(
 	};
 	// Genre overrides are resolved per scope by publicationGenreFallback.
 	delete explicitValues.genre;
+	// The title intent comes from comparisonOverrides, not the merged metadata.
+	delete explicitValues.album;
 	const projected = projectMetadataValues(explicitValues).tags;
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
 	const projectedArtistNames = (
