@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalog } from "../../../app/i18n/catalog";
+import { catalog } from "../../../ui/i18n/catalog";
 import {
 	libraryRowsMessage,
 	libraryRowsMessages,

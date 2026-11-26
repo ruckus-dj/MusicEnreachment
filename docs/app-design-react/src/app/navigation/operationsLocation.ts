@@ -1,32 +1,17 @@
 import {
+  defaultOperationsListQuery as defaultOperationsLocation,
   isOperationsKindSelection,
   isOperationsSortColumn,
   isOperationsStatusFilter,
-  type OperationsKindSelection,
-  type OperationsSortColumn,
+  type OperationsListQuery,
   type OperationsSortDirection,
-  type OperationsStatusFilter,
 } from "../../ui/features/operations/operationsFilters";
 
 /** Upper bound for a requested server offset, matching the portable list. */
 export const MAX_OPERATIONS_PAGE_OFFSET = 1_000_000;
 
 /** Canonical, host-independent operations location. */
-export interface OperationsLocation {
-  status: OperationsStatusFilter;
-  kind: OperationsKindSelection;
-  sort: OperationsSortColumn;
-  direction: OperationsSortDirection;
-  offset: number;
-}
-
-export const defaultOperationsLocation: OperationsLocation = {
-  status: "attention",
-  kind: "all",
-  sort: "created",
-  direction: "desc",
-  offset: 0,
-};
+export type OperationsLocation = OperationsListQuery;
 
 function isOperationsSortDirection(
   value: string,
@@ -64,7 +49,7 @@ export function parseOperationsLocation(hash: string): OperationsLocation {
     offset:
       Number.isSafeInteger(requestedOffset) && requestedOffset > 0
         ? Math.min(requestedOffset, MAX_OPERATIONS_PAGE_OFFSET)
-        : 0,
+        : defaultOperationsLocation.offset,
   };
 }
 

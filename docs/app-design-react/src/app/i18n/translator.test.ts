@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTranslator } from "../../ui/i18n/translator";
-import { common, createNamespace } from "./catalog";
+import { common, createNamespace } from "../../ui/i18n/catalog";
 
 describe("createTranslator", () => {
 	it("translates typed namespace keys for the resolved locale", () => {

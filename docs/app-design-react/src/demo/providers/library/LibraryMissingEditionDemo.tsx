@@ -1,4 +1,4 @@
-import type { Locale } from "../../../app/i18n";
+import type { Locale } from "../../../ui/i18n/types";
 import {
 	type LibraryEditionOption,
 	type LibraryEditionsStatus,

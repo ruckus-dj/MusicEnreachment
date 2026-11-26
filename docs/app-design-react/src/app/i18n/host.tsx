@@ -1,5 +1,5 @@
 import { createI18n } from "../../ui/i18n/I18nProvider";
-import { catalog } from "./catalog";
+import { catalog } from "../../ui/i18n/catalog";
 import { defaultLocale, defaultPreference, languageStorageKey } from "./config";
 
 export const { I18nProvider, useI18n } = createI18n({

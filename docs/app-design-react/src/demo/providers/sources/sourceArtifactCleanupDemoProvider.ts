@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Locale } from "../../../app/i18n";
+import type { Locale } from "../../../ui/i18n/types";
 import type {
 	SourceArtifactCleanupCandidate,
 	SourceArtifactCleanupResult,

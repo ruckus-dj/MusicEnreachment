@@ -5,7 +5,8 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { type Locale, useI18n } from "../../../app/i18n";
+import { useI18n } from "../../../app/i18n";
+import type { Locale } from "../../../ui/i18n/types";
 import { useViewFocus } from "../../../ui/components/useViewFocus";
 import {
 	type SourceRegistrationErrorKey,

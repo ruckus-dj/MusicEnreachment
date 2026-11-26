@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "from": "i18n/catalog.ts",
+    "reason": "Portable typed i18n namespace registry; the application copy will arrive with the next UI port.",
+    "prototypeSHA256": "0df98b45aa7506945e3ca2ce0782c29956984b6b5071ada3d517a6690dc433c4",
+    "applicationSHA256": null
+  },
+  {
+    "from": "features/operations/operationsFilters.ts",
+    "reason": "Portable operations list query defaults and semantic state; the application copy will follow with the next UI port.",
+    "prototypeSHA256": "21990b0199f3b7a4bdf405b697a11da5c04779aa728c18ba5766f5e861df0f26",
+    "applicationSHA256": "80e000351bf0cf8ab90e8f07fa66133dbd720d7771fc7c1e303e33385a87f6b8"
+  }
+]

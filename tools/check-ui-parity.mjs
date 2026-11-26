@@ -1,6 +1,7 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
 import { posix, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -810,7 +811,87 @@ function checkEntryStyleOwnership(html) {
     !/(?:<style\b|\sstyle\s*=)/i.test(html);
 }
 
-function main() {
+async function operationsRouteErrors() {
+  const path = "app/navigation/operationsLocation.ts";
+  const hosts = [
+    [prototypeHostLabel, new URL(path, prototypeSrc)],
+    [applicationHostLabel, new URL(path, applicationSrc)],
+  ];
+  // Vite resolves this extensionless import; Node's native TS loader needs .ts.
+  const hook = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (
+        specifier === "../../ui/features/operations/operationsFilters" &&
+        hosts.some(([, url]) => url.href === context.parentURL)
+      ) {
+        return nextResolve(`${specifier}.ts`, context);
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+  const errors = [];
+  const defaults = {
+    status: "attention",
+    kind: "all",
+    sort: "created",
+    direction: "desc",
+    offset: 0,
+  };
+  const selections = [
+    [
+      "status=all&kind=publication&sort=target&direction=asc&offset=50",
+      { status: "all", kind: "publication", sort: "target", direction: "asc", offset: 50 },
+    ],
+    [
+      "status=failed&kind=analysis&sort=operation",
+      { status: "failed", kind: "analysis", sort: "operation" },
+    ],
+    [
+      "status=running&kind=removal&sort=state",
+      { status: "running", kind: "removal", sort: "state" },
+    ],
+    ["status=queued&kind=matching", { status: "queued", kind: "matching" }],
+  ];
+  try {
+    for (const [label, url] of hosts) {
+      try {
+        const { parseOperationsLocation: parse, operationsLocationHref: href } =
+          await import(url.href);
+        assert.deepEqual(parse("#/operations"), defaults, "bare route defaults");
+        assert.deepEqual(parse("#/settings?status=queued"), defaults, "unrelated route");
+        assert.deepEqual(
+          parse("#/operations?status=bad&kind=bad&sort=bad&direction=bad&offset=-1"),
+          defaults,
+          "invalid query fallback",
+        );
+        assert.equal(href(defaults), "#/operations", "omit default query values");
+        for (const [query, overrides] of selections) {
+          const hash = `#/operations?${query}`;
+          const selection = { ...defaults, ...overrides };
+          assert.deepEqual(parse(hash), selection, `read ${hash}`);
+          assert.equal(href(selection), hash, `write ${hash}`);
+        }
+        assert.deepEqual(
+          parse("#/operations?offset=1000001"),
+          { ...defaults, offset: 1_000_000 },
+          "clamp offset when reading",
+        );
+        assert.equal(
+          href({ ...defaults, offset: 1_000_001 }),
+          "#/operations?offset=1000000",
+          "clamp offset when writing",
+        );
+      } catch (error) {
+        errors.push(`Invalid Operations route codec: ${label}/${path}: ${error.message}`);
+      }
+    }
+  } finally {
+    hook.deregister();
+  }
+  return errors;
+}
+
+async function main() {
   const receipts = JSON.parse(
     readFileSync(new URL("./ui-parity-prototype-leads.json", import.meta.url), "utf8"),
   );
@@ -869,15 +950,11 @@ function main() {
     ...hostTreeErrors(prototypeHostLabel, prototypeSourceTree, prototypeSrc),
     ...hostTreeErrors(applicationHostLabel, applicationSourceTree, applicationSrc),
   ];
-  for (const [designPath, applicationPath] of [
-    ["app/navigation/operationsLocation.ts", "app/navigation/operationsLocation.ts"],
-    ["demo/providers/incoming/incomingGroupsRoute.ts", "providers/incoming/incomingGroupsRoute.ts"],
-  ]) {
-    const designCodec = readFileSync(new URL(designPath, prototypeSrc));
-    const applicationCodec = readFileSync(new URL(applicationPath, applicationSrc));
-    if (!designCodec.equals(applicationCodec)) {
-      errors.push(`Different host route codec: ${applicationPath}`);
-    }
+  const incomingPath = "providers/incoming/incomingGroupsRoute.ts";
+  const designIncomingCodec = readFileSync(new URL(`demo/${incomingPath}`, prototypeSrc));
+  const applicationIncomingCodec = readFileSync(new URL(incomingPath, applicationSrc));
+  if (!designIncomingCodec.equals(applicationIncomingCodec)) {
+    errors.push(`Different host route codec: ${incomingPath}`);
   }
   // The entry documents are host integration, not portable UI modules: compare
   // them only after the two expected prototype/application entry differences.
@@ -895,6 +972,7 @@ function main() {
   if (![prototypeEntry, applicationEntry].every(checkEntryStyleOwnership)) {
     errors.push("Entry HTML must use portable document presentation placeholders");
   }
+  if (errors.length === 0) errors.push(...(await operationsRouteErrors()));
   for (const error of errors) console.error(error);
   for (const lead of result.pending) console.log(`Prototype awaiting port: ${lead}`);
   console.log(`Byte-identical UI source pairs: ${result.identical}/${prototypeTree.files.length}`);
@@ -915,5 +993,5 @@ function main() {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  main();
+  await main();
 }
