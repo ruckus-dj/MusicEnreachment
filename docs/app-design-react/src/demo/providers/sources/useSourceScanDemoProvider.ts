@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SourceScanState } from "../../../ui/features/sources/SourceScanPanel";
 import type { SourceFiles } from "../library/catalogData";
 import type { SourceRoot } from "./SourcesScreen";
@@ -12,6 +12,21 @@ import {
 
 type Update<T> = (update: (current: T) => T) => void;
 
+export type DemoScanState =
+	| Exclude<SourceScanState, { message: string }>
+	| { kind: "fixtureFailure" };
+
+/** One explicit scan attempt, identified before its first scheduled stage. */
+export interface DemoScanAttempt {
+	id: string;
+	rootId: string;
+	path: string;
+	mode: SourceRoot["mode"];
+	createdAt: number;
+	state: DemoScanState;
+	phase?: "traversing" | "applying";
+}
+
 export function useSourceScanDemoProvider({
 	files,
 	workDirectory,
@@ -23,12 +38,22 @@ export function useSourceScanDemoProvider({
 	updateRoots: Update<SourceRoot[]>;
 	updateProcessing: Update<SourceProcessingState>;
 }) {
-	type DemoScanState =
-		| Exclude<SourceScanState, { message: string }>
-		| { kind: "fixtureFailure" };
-	const [states, setStates] = useState<Record<string, DemoScanState>>({});
-	const attempts = useRef(new Set<string>());
+	const [attemptsByRoot, setAttemptsByRoot] = useState<
+		Record<string, DemoScanAttempt>
+	>({});
+	const attempts = useMemo(
+		() => Object.values(attemptsByRoot),
+		[attemptsByRoot],
+	);
+	const states = useMemo(() => {
+		const result: Record<string, DemoScanState> = {};
+		for (const [rootId, attempt] of Object.entries(attemptsByRoot))
+			result[rootId] = attempt.state;
+		return result;
+	}, [attemptsByRoot]);
+	const attemptedRoots = useRef(new Set<string>());
 	const active = useRef(new Set<string>());
+	const nextAttemptId = useRef(0);
 	const timers = useRef(new Set<number>());
 	useEffect(() => {
 		const pending = timers.current;
@@ -57,11 +82,27 @@ export function useSourceScanDemoProvider({
 		// of replacing its retained inventory with invented results.
 		const fail =
 			root.available === false ||
-			(root.id === "root-backup" && !attempts.current.has(root.id));
-		attempts.current.add(root.id);
+			(root.id === "root-backup" && !attemptedRoots.current.has(root.id));
+		attemptedRoots.current.add(root.id);
 		active.current.add(root.id);
+		const id = `scan-${++nextAttemptId.current}`;
+		const createdAt = Date.now();
 		const report = (state: DemoScanState) =>
-			setStates((current) => ({ ...current, [root.id]: state }));
+			setAttemptsByRoot((current) => {
+				const attempt = current[root.id];
+				if (attempt?.id !== id) return current;
+				return {
+					...current,
+					[root.id]: {
+						...attempt,
+						state,
+						phase:
+							state.kind === "traversing" || state.kind === "applying"
+								? state.kind
+								: attempt.phase,
+					},
+				};
+			});
 		const schedule = (delay: number, callback: () => void) => {
 			const timer = window.setTimeout(() => {
 				timers.current.delete(timer);
@@ -69,7 +110,17 @@ export function useSourceScanDemoProvider({
 			}, delay);
 			timers.current.add(timer);
 		};
-		report({ kind: "queued" });
+		setAttemptsByRoot((current) => ({
+			...current,
+			[root.id]: {
+				id,
+				rootId: root.id,
+				path: root.path,
+				mode: root.mode,
+				createdAt,
+				state: { kind: "queued" },
+			},
+		}));
 		schedule(350, () => report({ kind: "traversing" }));
 		schedule(950, () => report({ kind: "applying" }));
 		schedule(1500, () => {
@@ -118,7 +169,12 @@ export function useSourceScanDemoProvider({
 		});
 	}
 
-	return { states, start, active: (id: string) => active.current.has(id) };
+	return {
+		states,
+		attempts,
+		start,
+		active: (id: string) => active.current.has(id),
+	};
 }
 
 export type SourceScanDemoProvider = ReturnType<

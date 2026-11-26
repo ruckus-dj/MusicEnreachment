@@ -19,6 +19,10 @@ import type {
 	OperationsKindSelection,
 	OperationsStatusFilter,
 } from "../../../ui/features/operations/operationsFilters";
+import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
+import operationKinds from "../../../ui/features/operations/operationKindLabels.json";
+import { sourceScanOperationStages } from "../../../ui/features/operations/sourceScanOperationStages";
+import { sourceDetailHref } from "../../../ui/features/sources/sourcesRoute";
 import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
 import {
 	type QueuedOperationFixture,
@@ -27,12 +31,19 @@ import {
 import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
+import type { SourceRoot } from "../sources/SourcesScreen";
+import type {
+	DemoScanAttempt,
+	DemoScanState,
+} from "../sources/useSourceScanDemoProvider";
 import type {
 	DemoOperationStatus,
 	OperationsDemoProvider,
 } from "./useOperationsDemoProvider";
 
 const pageSize = 50;
+const emptyScanAttempts: readonly DemoScanAttempt[] = [];
+const emptySourceRoots: readonly SourceRoot[] = [];
 
 type VisibleOperationStatus = Exclude<DemoOperationStatus, "succeeded">;
 
@@ -56,12 +67,30 @@ function matchesStatus(row: ScreenRow, filter: OperationsStatusFilter) {
 	return row.status === filter;
 }
 
+function scanAttemptStatus(state: DemoScanState): DemoOperationStatus {
+	switch (state.kind) {
+		case "queued":
+			return "queued";
+		case "traversing":
+		case "applying":
+			return "running";
+		case "fixtureFailure":
+			return "failed";
+		default:
+			return "succeeded";
+	}
+}
+
 export interface DemoOperationsScreenProps {
 	deletions: DeletionOperation[];
 	provider: OperationsDemoProvider;
 	isTargetCurrent?: (href: string) => boolean;
 	/** Resolves a removal's track to its owning release in the current catalog. */
 	positionHrefForTrack?: (positionId: string) => string | undefined;
+	/** Scan attempts owned by the source controller; history stays outside Operations. */
+	scanAttempts?: readonly DemoScanAttempt[];
+	sourceRoots?: readonly SourceRoot[];
+	onScanRoot?: (root: SourceRoot) => void;
 	queue?: readonly QueuedOperationFixture[];
 }
 
@@ -82,6 +111,9 @@ function useDemoOperationsModel({
 	provider,
 	isTargetCurrent,
 	positionHrefForTrack,
+	scanAttempts = emptyScanAttempts,
+	sourceRoots = emptySourceRoots,
+	onScanRoot,
 	queue = queuedOperationFixtures,
 }: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
@@ -273,6 +305,40 @@ function useDemoOperationsModel({
 			);
 		}
 
+		for (const attempt of scanAttempts) {
+			const root = sourceRoots.find((item) => item.id === attempt.rootId);
+			if (!root) continue;
+			const status = scanAttemptStatus(attempt.state);
+			addRow(
+				status,
+				"analysis",
+				{
+					id: attempt.id,
+					target: root.name,
+					targetHref: sourceDetailHref(root.id),
+					operation: operationKinds.kinds.scan_source[locale],
+					stage: attempt.phase
+						? sourceScanOperationStages[attempt.phase][locale]
+						: undefined,
+					error: sourceMessage(locale, "scanFailedFixture"),
+					actions:
+						status === "failed" &&
+						onScanRoot &&
+						root.path === attempt.path &&
+						root.mode === attempt.mode
+							? [
+									{
+										id: "retry",
+										label: copy.retry,
+										onPress: () => onScanRoot(root),
+									},
+								]
+							: undefined,
+				},
+				attempt.createdAt,
+			);
+		}
+
 		for (const fixture of queue) {
 			result.push({
 				status: "queued",
@@ -298,7 +364,11 @@ function useDemoOperationsModel({
 		demoStartedAt,
 		deletions,
 		isTargetCurrent,
+		locale,
+		onScanRoot,
 		queue,
+		scanAttempts,
+		sourceRoots,
 		provider.deletionStates,
 		provider.publicationJobs,
 		provider.publicationStates,

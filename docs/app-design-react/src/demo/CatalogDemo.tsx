@@ -1177,6 +1177,9 @@ export function CatalogDemo({
 				providerProps={{
 					deletions,
 					provider: operationsProvider,
+					scanAttempts: sourceScans.attempts,
+					sourceRoots,
+					onScanRoot: sourceScans.start,
 					positionHrefForTrack: (positionId) => {
 						const release = releases.find((item) =>
 							item.tracks.some((track) => track.id === positionId),
@@ -1186,6 +1189,9 @@ export function CatalogDemo({
 							: undefined;
 					},
 					isTargetCurrent: (href) => {
+						const sourceAddress = parseSourcesRoute(href);
+						if (sourceAddress && sourceAddress.view !== "list")
+							return sourceRoots.some((root) => root.id === sourceAddress.id);
 						const incomingTarget = parseIncomingGroupsRoute(href);
 						if (incomingTarget?.view === "matching")
 							return incoming.groups.some(

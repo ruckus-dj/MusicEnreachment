@@ -1,6 +1,7 @@
 import type { OperationResponse } from "../../api/generated/client.schemas";
+import operationKinds from "../../ui/features/operations/operationKindLabels.json";
+import { sourceScanOperationStages } from "../../ui/features/operations/sourceScanOperationStages";
 import type { Locale } from "../../ui/i18n/locale";
-import operationKinds from "./operationKindLabels.json";
 
 type LocalizedText = Record<Locale, string>;
 
@@ -32,8 +33,7 @@ const operationStageLabels: Record<string, LocalizedText> = {
   switch: { en: "Switching folders", ru: "Переключение папок" },
   rollback_pending: { en: "Waiting to restore", ru: "Ожидание восстановления" },
   move: { en: "Moving tools folder", ru: "Перемещение папки инструментов" },
-  traversing: { en: "Reading source folders", ru: "Обход папок источника" },
-  applying: { en: "Applying results", ru: "Применение результатов" },
+  ...sourceScanOperationStages,
   probing: { en: "Inspecting audio", ru: "Анализ аудио" },
   fingerprinting: {
     en: "Calculating audio fingerprint",
