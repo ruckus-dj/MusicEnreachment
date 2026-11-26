@@ -208,6 +208,9 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		settings,
 		setSettings,
 		activity: toolDownloads,
+		downloads: toolDownloadSnapshots,
+		retry: retryToolDownload,
+		dismiss: dismissToolDownload,
 	} = useSetupToolDownloadsDemoProvider(initialDemoSettings);
 	const publicationDestination: PublicationDestination = {
 		outputDirectory:
@@ -1086,6 +1089,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 						browseDirectory: browseDemoDirectory,
 						resolveDirectoryPath: demoDirectoryStart,
 						onSettings: setSettings,
+						toolActivity: toolDownloads,
 						workDirectoryBusy:
 							sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange,
 						onOutputReset: () => {
@@ -1202,6 +1206,9 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 					sourceRoots,
 					onScanRoot: sourceScans.start,
 					sourceCleanup: sourceCleanupExecution,
+					toolDownloads: toolDownloadSnapshots,
+					onRetryToolDownload: retryToolDownload,
+					onDismissToolDownload: dismissToolDownload,
 					positionHrefForTrack: (positionId) => {
 						const release = releases.find((item) =>
 							item.tracks.some((track) => track.id === positionId),

@@ -21,6 +21,7 @@ import type {
 } from "../../../ui/features/operations/operationsFilters";
 import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import operationKinds from "../../../ui/features/operations/operationKindLabels.json";
+import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import { sourceCleanupOperationCopy } from "../../../ui/features/operations/sourceCleanupOperationCopy";
 import { sourceScanOperationStages } from "../../../ui/features/operations/sourceScanOperationStages";
 import { sourceDetailHref } from "../../../ui/features/sources/sourcesRoute";
@@ -32,6 +33,7 @@ import {
 import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
+import type { SetupToolDownload } from "../setup/useSetupToolDownloadsDemoProvider";
 import type { SourceArtifactCleanupDemoExecution } from "../sources/sourceArtifactCleanupDemoProvider";
 import type { SourceRoot } from "../sources/SourcesScreen";
 import type {
@@ -46,13 +48,14 @@ import type {
 const pageSize = 50;
 const emptyScanAttempts: readonly DemoScanAttempt[] = [];
 const emptySourceRoots: readonly SourceRoot[] = [];
+const emptyToolDownloads: readonly SetupToolDownload[] = [];
 
 type VisibleOperationStatus = Exclude<DemoOperationStatus, "succeeded">;
 
 interface ScreenRow {
 	list: OperationsListRow;
 	status: VisibleOperationStatus;
-	kind: OperationsKindFilter;
+	kind?: OperationsKindFilter;
 	createdAt: number;
 }
 
@@ -98,6 +101,9 @@ export interface DemoOperationsScreenProps {
 		"operation" | "isPending" | "failedOperations"
 	>;
 	queue?: readonly QueuedOperationFixture[];
+	toolDownloads?: readonly SetupToolDownload[];
+	onRetryToolDownload?: (id: string) => void;
+	onDismissToolDownload?: (id: string) => void;
 }
 
 export function DemoOperationsBinder({
@@ -122,6 +128,9 @@ function useDemoOperationsModel({
 	onScanRoot,
 	sourceCleanup,
 	queue = queuedOperationFixtures,
+	toolDownloads = emptyToolDownloads,
+	onRetryToolDownload,
+	onDismissToolDownload,
 }: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
 	const copy = operationMessages[locale];
@@ -180,7 +189,7 @@ function useDemoOperationsModel({
 
 		function addRow(
 			rowStatus: DemoOperationStatus,
-			rowKind: OperationsKindFilter,
+			rowKind: OperationsKindFilter | undefined,
 			row: Omit<OperationsListRow, "state" | "stateTone">,
 			createdAt = demoStartedAt,
 		) {
@@ -312,6 +321,51 @@ function useDemoOperationsModel({
 			);
 		}
 
+		for (const attempt of toolDownloads) {
+			const { kind, release } = attempt.preflight;
+			const packageName = kind === "ffmpeg" ? "FFmpeg" : "fpcalc";
+			addRow(
+				attempt.status,
+				undefined,
+				{
+					id: attempt.id,
+					target: `${packageName}, ${locale === "ru" ? "версия" : "version"} ${release}`,
+					operation: operationKinds.kinds.install[locale],
+					stage:
+						attempt.status === "running"
+							? locale === "ru"
+								? "Загрузка файлов"
+								: "Downloading files"
+							: undefined,
+					error: settingsMessages[locale].staleInstall,
+					actions:
+						attempt.status === "failed"
+							? [
+									...(onRetryToolDownload
+										? [
+												{
+													id: "retry",
+													label: copy.retry,
+													onPress: () => onRetryToolDownload(attempt.id),
+												},
+											]
+										: []),
+									...(onDismissToolDownload
+										? [
+												{
+													id: "dismiss",
+													label: copy.dismiss,
+													onPress: () => onDismissToolDownload(attempt.id),
+												},
+											]
+										: []),
+								]
+							: undefined,
+				},
+				attempt.createdAt,
+			);
+		}
+
 		for (const attempt of scanAttempts) {
 			const root = sourceRoots.find((item) => item.id === attempt.rootId);
 			if (!root) continue;
@@ -392,10 +446,13 @@ function useDemoOperationsModel({
 		isTargetCurrent,
 		locale,
 		onScanRoot,
+		onRetryToolDownload,
+		onDismissToolDownload,
 		queue,
 		scanAttempts,
 		sourceCleanup,
 		sourceRoots,
+		toolDownloads,
 		provider.deletionStates,
 		provider.publicationJobs,
 		provider.publicationStates,

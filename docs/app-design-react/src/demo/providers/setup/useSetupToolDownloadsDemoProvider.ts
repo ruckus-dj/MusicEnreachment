@@ -7,6 +7,7 @@ import type {
 } from "../../../ui/features/setup/SetupScreenView";
 import {
 	activateOrCreateDemoInstallation,
+	createDemoInstallation,
 	type DemoInstallPreflight,
 	initialDemoInstallations,
 	initialDemoUnmanagedToolFiles,
@@ -19,22 +20,35 @@ import type { DemoSettings } from "../settings/useSettingsScreenDemoProvider";
 const startDelayMs = 400;
 const settleDelayMs = 800;
 
-type SetupToolDownloadStatus = "queued" | "running" | "succeeded" | "failed";
+export type SetupToolDownloadStatus =
+	| "queued"
+	| "running"
+	| "succeeded"
+	| "failed";
+
+/** Screens whose completion semantics differ for the same admitted download. */
+export type SetupToolDownloadOrigin = "setup" | "settings";
 
 /** Host-owned tool activity consumed by the existing Setup tools-step contract. */
 export type SetupToolDownloadActivity = Pick<
 	SetupScreenToolsStepView,
 	"operations" | "completed" | "operationError" | "loadingOperations"
 > & {
-	start: (preflight: DemoInstallPreflight) => void;
+	start: (
+		preflight: DemoInstallPreflight,
+		origin?: SetupToolDownloadOrigin,
+	) => void;
 	/** Packages with a queued or running download; repeated starts are disabled. */
 	busyKinds: ReadonlySet<ManagedToolPackage>;
 };
 
-type SetupToolDownload = {
+export type SetupToolDownload = {
 	id: string;
 	preflight: DemoInstallPreflight;
 	status: SetupToolDownloadStatus;
+	origin: SetupToolDownloadOrigin;
+	/** Epoch milliseconds, matching the operations snapshot date format. */
+	createdAt: number;
 };
 
 const statusText = {
@@ -63,7 +77,7 @@ function isPending(download: SetupToolDownload) {
 	return download.status === "queued" || download.status === "running";
 }
 
-function applyDownload(current: DemoSettings, plan: DemoInstallPreflight) {
+function approvedDownload(current: DemoSettings, plan: DemoInstallPreflight) {
 	if (current.toolsPath.trim() !== plan.toolsRoot) return undefined;
 	const installations = current.installations ?? initialDemoInstallations;
 	const unmanaged = current.unmanagedToolFiles ?? initialDemoUnmanagedToolFiles;
@@ -75,6 +89,14 @@ function applyDownload(current: DemoSettings, plan: DemoInstallPreflight) {
 		unmanaged,
 	);
 	if (approved.token !== plan.token) return undefined;
+	return { installations, unmanaged, approved };
+}
+
+/** Setup records a verified release and activates it as the current toolchain. */
+function applySetupDownload(current: DemoSettings, plan: DemoInstallPreflight) {
+	const evidence = approvedDownload(current, plan);
+	if (!evidence) return undefined;
+	const { installations, unmanaged } = evidence;
 	return {
 		...current,
 		installations: activateOrCreateDemoInstallation(
@@ -92,8 +114,31 @@ function applyDownload(current: DemoSettings, plan: DemoInstallPreflight) {
 	};
 }
 
+/** Settings installs without activating or claiming Setup verification. */
+function applySettingsDownload(
+	current: DemoSettings,
+	plan: DemoInstallPreflight,
+) {
+	const evidence = approvedDownload(current, plan);
+	if (!evidence) return undefined;
+	const { installations, unmanaged } = evidence;
+	return {
+		...current,
+		installations: createDemoInstallation(
+			installations,
+			plan.kind,
+			plan.release,
+		),
+		...(plan.conflicts.length > 0 && {
+			unmanagedToolFiles: unmanaged.filter(
+				(path) => !plan.conflicts.includes(path),
+			),
+		}),
+	};
+}
+
 /**
- * In-memory managed-tool download lifecycle for the prototype Setup host. It
+ * In-memory managed-tool downloads shared by Setup, Settings and Operations.
  * lives above the routes so queued work keeps settling after navigation. The
  * admitted preflight is frozen evidence: settlement only applies settings while
  * the current tools root still matches that evidence, and it never performs
@@ -117,12 +162,17 @@ export function useSetupToolDownloadsDemoProvider(
 		[],
 	);
 
-	function start(preflight: DemoInstallPreflight) {
+	function start(
+		preflight: DemoInstallPreflight,
+		origin: SetupToolDownloadOrigin = "setup",
+	) {
 		const frozen = {
 			...preflight,
 			targets: [...preflight.targets],
 			conflicts: [...preflight.conflicts],
 		};
+		const createdAt = Date.now();
+		const id = `tool-download-${crypto.randomUUID()}`;
 		setState((current) => {
 			if (
 				current.downloads.some(
@@ -135,13 +185,45 @@ export function useSetupToolDownloadsDemoProvider(
 				downloads: [
 					...current.downloads,
 					{
-						id: `setup-download-${current.downloads.length + 1}`,
+						id,
 						preflight: frozen,
 						status: "queued",
+						origin,
+						createdAt,
 					},
 				],
 			};
 		});
+	}
+
+	function retry(id: string) {
+		setState((current) => {
+			const failed = current.downloads.find(
+				(item) => item.id === id && item.status === "failed",
+			);
+			if (
+				!failed ||
+				current.downloads.some(
+					(item) =>
+						item.preflight.kind === failed.preflight.kind && isPending(item),
+				)
+			)
+				return current;
+			return {
+				...current,
+				downloads: current.downloads.map((item) =>
+					item === failed ? { ...item, status: "queued" } : item,
+				),
+			};
+		});
+	}
+	function dismiss(id: string) {
+		setState((current) => ({
+			...current,
+			downloads: current.downloads.filter(
+				(item) => item.id !== id || item.status !== "failed",
+			),
+		}));
 	}
 
 	// Advance one admitted download at a time so an unrelated queued package
@@ -163,7 +245,9 @@ export function useSetupToolDownloadsDemoProvider(
 					if (download?.status !== activeStatus) return current;
 					const applied =
 						activeStatus === "running"
-							? applyDownload(current.settings, download.preflight)
+							? download.origin === "settings"
+								? applySettingsDownload(current.settings, download.preflight)
+								: applySetupDownload(current.settings, download.preflight)
 							: undefined;
 					const status =
 						activeStatus === "queued"
@@ -226,5 +310,5 @@ export function useSetupToolDownloadsDemoProvider(
 		start,
 		busyKinds,
 	};
-	return { settings, setSettings, activity };
+	return { settings, setSettings, activity, downloads, retry, dismiss };
 }

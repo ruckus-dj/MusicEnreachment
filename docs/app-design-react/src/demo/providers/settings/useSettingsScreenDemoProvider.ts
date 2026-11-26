@@ -20,6 +20,7 @@ import {
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import { settingsMessage } from "../../../ui/features/settings/settingsMessages";
 import { genreCatalog } from "../genres/catalogue";
+import type { SetupToolDownloadActivity } from "../setup/useSetupToolDownloadsDemoProvider";
 import { overlapsAnyDemoPath } from "../sources/demoPathValidation";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
 import {
@@ -46,7 +47,6 @@ import {
 	activateDemoInstallation,
 	availableToolReleases,
 	canDeleteDemoInstallation,
-	createDemoInstallation,
 	type DemoInstallation,
 	initialDemoInstallations,
 	initialDemoUnmanagedToolFiles,
@@ -183,6 +183,8 @@ export type SettingsScreenProps = {
 	resolveDirectoryPath?: (path: string) => string;
 	/** Optional demo check; omitted keeps the immediate accepted result. */
 	checkMusicBrainz?: DemoMusicBrainzCheck;
+	/** Route-independent tool-download host owned above Settings. */
+	toolActivity?: Partial<SetupToolDownloadActivity>;
 };
 
 function settingsTextBaseline(settings: DemoSettings): SettingsTextDraft {
@@ -355,6 +357,7 @@ export function useSettingsScreenDemoProvider({
 	browseDirectory,
 	resolveDirectoryPath,
 	checkMusicBrainz,
+	toolActivity,
 }: SettingsScreenProps): SettingsScreenViewProps {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
@@ -1196,10 +1199,13 @@ export function useSettingsScreenDemoProvider({
 					},
 				}),
 			downloadAndVerify: {
-				disabled: platformMismatch || !selectedRelease[kind],
+				disabled:
+					platformMismatch ||
+					!selectedRelease[kind] ||
+					(toolActivity?.busyKinds?.has(kind) ?? false),
 				onPress: (opener) => {
 					const release = selectedRelease[kind];
-					if (!release) return;
+					if (!release || toolActivity?.busyKinds?.has(kind)) return;
 					const preflight = installPreflightDemo(
 						settings.toolsPath,
 						kind,
@@ -1208,13 +1214,7 @@ export function useSettingsScreenDemoProvider({
 						unmanagedToolFiles,
 					);
 					if (preflight.conflicts.length === 0) {
-						update({
-							installations: createDemoInstallation(
-								installations,
-								kind,
-								release,
-							),
-						});
+						toolActivity?.start?.(preflight, "settings");
 						setNotice("");
 						return;
 					}
@@ -1314,16 +1314,11 @@ export function useSettingsScreenDemoProvider({
 			setNotice("staleInstall");
 			return;
 		}
-		update({
-			installations: createDemoInstallation(
-				installations,
-				kind,
-				installPlan.preflight.release,
-			),
-			unmanagedToolFiles: unmanagedToolFiles.filter(
-				(path) => !fresh.conflicts.includes(path),
-			),
-		});
+		if (toolActivity?.busyKinds?.has(kind)) {
+			setInstallPlan(null);
+			return;
+		}
+		toolActivity?.start?.(fresh, "settings");
 		setInstallPlan(null);
 		setNotice("");
 	};
