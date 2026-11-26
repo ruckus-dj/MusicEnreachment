@@ -7,6 +7,10 @@ import {
   sourceInspectorStepNames,
 } from "../../ui/features/sources/sourceInspectorModel";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
+import {
+  sourceDetailHref,
+  sourcesHref,
+} from "../../ui/features/sources/sourcesRoute";
 import { renderSourceError } from "./sourcesApi";
 import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import { useSourceInspector } from "./useSourceInspector";
@@ -105,8 +109,8 @@ export function SourceInspectorScreen({
       page={{
         view: "location",
         locale,
-        sourcesHref: "#/sources",
-        sourceHref: `#/sources/${encodeURIComponent(sourceId)}`,
+        sourcesHref,
+        sourceHref: sourceDetailHref(sourceId),
         file,
         steps,
         sha256: sha256 && {

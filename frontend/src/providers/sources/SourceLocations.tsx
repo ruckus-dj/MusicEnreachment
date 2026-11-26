@@ -17,6 +17,7 @@ import {
 } from "../../ui/features/sources/SourceInventoryOutlet";
 import type { SourceInventoryStatus } from "../../ui/features/sources/SourceInventoryView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
+import { sourceLocationHref } from "../../ui/features/sources/sourcesRoute";
 import {
   inventoryAvailabilityNote,
   inventoryScopeNote,
@@ -169,7 +170,7 @@ export function SourceLocations({
     rows: locations.map((location) => ({
       id: location.id,
       path: location.relative_path,
-      href: `#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`,
+      href: sourceLocationHref(sourceId, location.id),
       sizeBytes: location.size_bytes,
       modifiedAt: location.mtime,
       status: inventoryStatus(location.probe_status),

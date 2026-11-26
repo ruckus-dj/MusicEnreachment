@@ -5,14 +5,14 @@ import {
 } from "../../demo/providers/incoming/incomingGroupsRoute";
 import { libraryRootHref } from "../../demo/providers/library/libraryRoute";
 import {
-	demoSourcesHref,
-	parseDemoSourceRoute,
-} from "../../demo/providers/sources/sourceDemoRoute";
-import {
 	parseLibraryArtistAddress,
 	parseLibraryPositionAddress,
 	parseLibraryReleaseAddress,
 } from "../../ui/features/library/libraryDetailRoute";
+import {
+	parseSourcesRoute,
+	sourcesHref,
+} from "../../ui/features/sources/sourcesRoute";
 import { ApplicationFrame } from "../../ui/shell/ShellStartupView";
 import {
 	type ShellRouteFamily,
@@ -39,7 +39,7 @@ function familyForPath(path: string): ShellRouteFamily | undefined {
 	if (path === "/settings") return "settings";
 	if (path === "/own-catalog") return "local";
 	if (parseIncomingGroupsRoute(path)) return "review";
-	if (parseDemoSourceRoute(path)) return "sources";
+	if (parseSourcesRoute(path)) return "sources";
 	const route = path.split("/", 1)[0];
 	if (
 		route === "operations" ||
@@ -76,7 +76,7 @@ export function DesignShell({
 						review: incomingGroupsListHref(),
 						library: libraryRootHref(),
 						local: "#/own-catalog",
-						sources: demoSourcesHref,
+						sources: sourcesHref,
 						operations: "#/operations",
 						settings: "#/settings",
 					},

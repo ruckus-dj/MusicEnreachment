@@ -35,8 +35,8 @@ import { ProductionOperationsBinder } from "../../providers/operations/Operation
 import { ProductionSettingsBinder } from "../../providers/settings/SettingsScreen";
 import { SetupManager } from "../../providers/setup/SetupManager";
 import { SourcesScreen } from "../../providers/sources/SourcesScreen";
-import { parseSourcesRoute } from "../../providers/sources/sourcesRoute";
 import { ApplicationRouteOutlet } from "../../ui/app/ApplicationRouteOutlet";
+import { parseSourcesRoute } from "../../ui/features/sources/sourcesRoute";
 import {
   ShellStartupContent,
   type ShellStartupFacts,

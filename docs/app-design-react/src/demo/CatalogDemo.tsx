@@ -133,9 +133,9 @@ import {
 	SourcesScreen,
 } from "./providers/sources/SourcesScreen";
 import {
-	demoSourcesHref,
-	parseDemoSourceRoute,
-} from "./providers/sources/sourceDemoRoute";
+	parseSourcesRoute,
+	sourcesHref,
+} from "../ui/features/sources/sourcesRoute";
 import { removeRootFromInventory } from "./providers/sources/sourceInventory";
 import {
 	initialSourceProcessingState,
@@ -681,7 +681,7 @@ export function CatalogDemo({
 			<ShellHomeView
 				locale={locale}
 				sources={{ kind: "ready", count: sourceRoots.length }}
-				sourcesHref={demoSourcesHref}
+				sourcesHref={sourcesHref}
 				onOpenIncoming={openIncomingFromHome}
 			/>
 		);
@@ -1105,7 +1105,7 @@ export function CatalogDemo({
 				}}
 			/>
 		);
-	const sourceRoute = parseDemoSourceRoute(routeName);
+	const sourceRoute = parseSourcesRoute(routeName);
 	if (sourceRoute) {
 		const sourceScreen = (
 			<SourcesScreen
@@ -1113,7 +1113,7 @@ export function CatalogDemo({
 				onRoots={setSourceRoots}
 				files={files}
 				selectedRootId={
-					sourceRoute.view === "list" ? undefined : sourceRoute.rootId
+					sourceRoute.view === "list" ? undefined : sourceRoute.id
 				}
 				selectedLocationId={
 					sourceRoute.view === "location" ? sourceRoute.locationId : undefined
@@ -1251,8 +1251,7 @@ export function CatalogDemo({
 								? "view"
 								: "filtered",
 				onReset: !isPristine ? resetLibrarySearch : undefined,
-				addSourceHref:
-					catalogIsEmpty && isPristine ? demoSourcesHref : undefined,
+				addSourceHref: catalogIsEmpty && isPristine ? sourcesHref : undefined,
 			};
 
 	const missingCounts = new Map(

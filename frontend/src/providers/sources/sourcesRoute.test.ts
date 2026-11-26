@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseSourcesRoute, sourcesListRoute } from "./sourcesRoute";
+import {
+  parseSourcesRoute,
+  sourcesListRoute,
+} from "../../ui/features/sources/sourcesRoute";
 
 describe("parseSourcesRoute", () => {
   it("parses list, detail, and location addresses", () => {

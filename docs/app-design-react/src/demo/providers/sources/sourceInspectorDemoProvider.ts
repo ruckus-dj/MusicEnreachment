@@ -5,9 +5,12 @@ import type {
 	SourceInspectorViewProps,
 } from "../../../ui/features/sources/sourceInspectorModel";
 import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
+import {
+	sourceDetailHref,
+	sourcesHref,
+} from "../../../ui/features/sources/sourcesRoute";
 import type { SourceFiles } from "../library/catalogData";
 import type { SourceRoot } from "./SourcesScreen";
-import { demoSourceRootHref, demoSourcesHref } from "./sourceDemoRoute";
 import {
 	inventoryPathStale,
 	retainedInventoryLocations,
@@ -101,8 +104,8 @@ export function sourceInspectorDemoProvider({
 			: undefined;
 	return {
 		locale,
-		sourcesHref: demoSourcesHref,
-		sourceHref: demoSourceRootHref(rootId),
+		sourcesHref: sourcesHref,
+		sourceHref: sourceDetailHref(rootId),
 		file:
 			root && location
 				? {

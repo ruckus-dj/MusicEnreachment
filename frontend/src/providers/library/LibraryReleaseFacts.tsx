@@ -15,6 +15,7 @@ import type {
   ReleaseOverviewMedia,
 } from "../../ui/features/library/ReleaseOverviewView";
 import { sourceInventoryStatusLabel } from "../../ui/features/sources/SourceInventoryView";
+import { sourceDetailHref } from "../../ui/features/sources/sourcesRoute";
 import { statusLabel } from "../sources/sourcesApi";
 import { libraryArtistRouteHref } from "./libraryRoute";
 
@@ -169,7 +170,7 @@ export function positionSourceItems(
       locations: (source.locations ?? []).map((location) => ({
         id: location.location_id,
         path: location.relative_path,
-        href: `#/sources/${encodeURIComponent(location.root_id)}`,
+        href: sourceDetailHref(location.root_id),
         details: [
           `${copy.root} ${rootStatusLabel(location.root_status, locale)} (${location.root_enabled ? copy.enabled : copy.disabled})`,
           `${copy.probe} ${probeStatusLabel(location.probe_status, locale)}`,

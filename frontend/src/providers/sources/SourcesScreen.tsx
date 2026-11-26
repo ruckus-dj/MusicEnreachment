@@ -11,6 +11,12 @@ import {
 } from "../../ui/features/sources/SourceRegistrationView";
 import type { SourceRootListRow } from "../../ui/features/sources/SourceRootList";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
+import {
+  parseSourcesRoute,
+  type SourcesRoute,
+  sourceDetailHref,
+  sourcesListRoute,
+} from "../../ui/features/sources/sourcesRoute";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
@@ -28,11 +34,6 @@ import {
   sourceSettingsMutationKey,
 } from "./sourcesApi";
 import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
-import {
-  parseSourcesRoute,
-  type SourcesRoute,
-  sourcesListRoute,
-} from "./sourcesRoute";
 
 // AppShell supplies its parsed route, so the mounted application has only one
 // hash subscription. The standalone entry remains useful for embedding/tests.
@@ -207,7 +208,7 @@ function SourceListScreen() {
         notes: notes.length > 0 ? notes : undefined,
       },
       scanning: scans.scanning(root.id),
-      href: `#/sources/${encodeURIComponent(root.id)}`,
+      href: sourceDetailHref(root.id),
     };
   });
 

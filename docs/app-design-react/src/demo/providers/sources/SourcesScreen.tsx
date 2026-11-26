@@ -20,6 +20,11 @@ import {
 } from "../../../ui/features/sources/sourceInventoryMessages";
 import { sourceMessage as sharedSourceMessage } from "../../../ui/features/sources/sourceMessages";
 import {
+	sourceDetailHref,
+	sourceLocationHref,
+	sourcesHref,
+} from "../../../ui/features/sources/sourcesRoute";
+import {
 	browseDemoDirectory,
 	demoDirectoryStart,
 } from "../../fixtures/directoryBrowseDemo";
@@ -27,11 +32,6 @@ import { incomingGroupsListHref } from "../incoming/incomingGroupsRoute";
 import type { SourceFiles } from "../library/catalogData";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
 import { useSourceArtifactCleanupDemoProvider } from "./sourceArtifactCleanupDemoProvider";
-import {
-	demoSourceLocationHref,
-	demoSourceRootHref,
-	demoSourcesHref,
-} from "./sourceDemoRoute";
 import { sourceInspectorDemoProvider } from "./sourceInspectorDemoProvider";
 import {
 	inventoryPathStale,
@@ -255,7 +255,7 @@ export function SourcesScreen({
 		notify("sourceAdded");
 		// Registration only opens the root. Registering never scans, processes,
 		// or invents scan results.
-		window.location.hash = demoSourceRootHref(id);
+		window.location.hash = sourceDetailHref(id);
 	};
 	const saveRoot = async (change: SourceRootChange): Promise<boolean> => {
 		if (!root) return false;
@@ -330,7 +330,7 @@ export function SourcesScreen({
 					notes: item.inventoryCount === 0 ? [m("noInventory")] : undefined,
 				}
 			: { label: sharedSourceMessage(locale, "neverScanned") },
-		href: demoSourceRootHref(item.id),
+		href: sourceDetailHref(item.id),
 	}));
 
 	const noticeMessage = notice ? m(notice.key, notice.values) : undefined;
@@ -374,7 +374,7 @@ export function SourcesScreen({
 								path: root.path,
 								headingId: "source-title",
 								headingRef: rootHeading,
-								sourcesHref: demoSourcesHref,
+								sourcesHref: sourcesHref,
 								incomingHref:
 									root.available === true
 										? incomingGroupsListHref()
@@ -406,7 +406,7 @@ export function SourcesScreen({
 											location.path.startsWith(inventoryPrefix)
 												? location.path.slice(inventoryPrefix.length)
 												: location.path,
-										href: demoSourceLocationHref(root.id, location.id),
+										href: sourceLocationHref(root.id, location.id),
 										sizeBytes: location.size,
 										modifiedAt: location.mtime,
 										status:
@@ -487,7 +487,7 @@ export function SourcesScreen({
 												onRemove(removal.id);
 												notify("rootRemoved");
 												setRemoval(null);
-												window.location.hash = demoSourcesHref;
+												window.location.hash = sourcesHref;
 											},
 										}
 									: undefined,
@@ -502,7 +502,7 @@ export function SourcesScreen({
 							detail: "missing",
 							title: m("sourceNotFound"),
 							id: selectedRootId,
-							back: { href: demoSourcesHref, label: m("backToSources") },
+							back: { href: sourcesHref, label: m("backToSources") },
 						}}
 					>
 						<SourcesOutlet />

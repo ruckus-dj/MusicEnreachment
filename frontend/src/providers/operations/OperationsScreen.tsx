@@ -39,6 +39,10 @@ import type {
 } from "../../ui/features/operations/OperationsList";
 import { operationsControllerCopy as messages } from "../../ui/features/operations/operationsScreenCopy";
 import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";
+import {
+  sourceDetailHref,
+  sourceLocationHref,
+} from "../../ui/features/sources/sourcesRoute";
 import type { Locale } from "../../ui/i18n/locale";
 import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
 import { libraryArtistRouteHref } from "../library/libraryRoute";
@@ -200,9 +204,8 @@ function targetHref(ref: OperationTargetRef | undefined) {
   if (ref.kind === "artist" && artistId)
     return libraryArtistRouteHref(artistId);
   if (ref.kind === "source_location" && rootId && locationId)
-    return `#/sources/${encodeURIComponent(rootId)}/locations/${encodeURIComponent(locationId)}`;
-  if (ref.kind === "source_root" && rootId)
-    return `#/sources/${encodeURIComponent(rootId)}`;
+    return sourceLocationHref(rootId, locationId);
+  if (ref.kind === "source_root" && rootId) return sourceDetailHref(rootId);
   return undefined;
 }
 

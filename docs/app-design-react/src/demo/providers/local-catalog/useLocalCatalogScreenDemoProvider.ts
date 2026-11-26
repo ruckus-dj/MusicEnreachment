@@ -9,6 +9,11 @@ import type {
 	LocalCatalogScreenViewProps,
 } from "../../../ui/features/local-catalog/LocalCatalogScreenView";
 import type { OwnCatalogArtistDraft } from "../../../ui/features/local-catalog/OwnCatalogArtistEditor";
+import {
+	defaultLocalCatalogRoute,
+	localCatalogRouteHref,
+	parseLocalCatalogRoute,
+} from "../../../ui/features/local-catalog/localCatalogRoute";
 import { ownCatalogMessage } from "../../../ui/features/local-catalog/ownCatalogMessages";
 import type { LocalReleaseGenreSelectionAdapter } from "../../../ui/features/local-release/LocalReleaseGenreCatalogOutlet";
 import {
@@ -51,11 +56,6 @@ import {
 	releaseDraftToRecord,
 	releaseRecordToFormValues,
 } from "./localCatalogModel";
-import {
-	defaultLocalCatalogRoute,
-	localCatalogRouteHref,
-	parseLocalCatalogRoute,
-} from "./localCatalogRoute";
 import type {
 	LocalProviderRecord,
 	LocalProviderState,

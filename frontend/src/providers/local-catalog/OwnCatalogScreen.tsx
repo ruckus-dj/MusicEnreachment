@@ -27,6 +27,11 @@ import {
   type ApplicationRouteProviderProps,
 } from "../../ui/app/ApplicationRouteOutlet";
 import type { LocalCatalogEditorSlot } from "../../ui/features/local-catalog/LocalCatalogScreenView";
+import {
+  defaultLocalCatalogRoute,
+  localCatalogRouteHref,
+  parseLocalCatalogRoute,
+} from "../../ui/features/local-catalog/localCatalogRoute";
 import type {
   OwnCatalogListCopy,
   OwnCatalogListRow,
@@ -74,11 +79,6 @@ import {
   releaseRecordRecordings,
   releaseRecordToFormValues,
 } from "./ownCatalogModel";
-import {
-  defaultOwnCatalogRoute,
-  ownCatalogRouteHref,
-  parseOwnCatalogRoute,
-} from "./ownCatalogRoute";
 
 type ListParams = {
   q?: string;
@@ -215,7 +215,7 @@ function LiveReleaseGenreCatalogProvider({
 function useOwnCatalogModel(): ApplicationOwnCatalogModel {
   const { locale } = useI18n();
   const hash = useHashLocation();
-  const route = parseOwnCatalogRoute(hash) ?? defaultOwnCatalogRoute;
+  const route = parseLocalCatalogRoute(hash) ?? defaultLocalCatalogRoute;
   const [filterInput, setFilterInput] = useState("");
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -459,14 +459,14 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       loading: true,
       full: false,
     });
-    const href = ownCatalogRouteHref({ type: kind, id: item.id });
+    const href = localCatalogRouteHref({ type: kind, id: item.id });
     pushCatalogHash(href, { ownCatalogDetail: href });
   };
 
   const closeDetails = () => {
     setNotice(undefined);
     if (!route.id) return;
-    const detailHref = ownCatalogRouteHref({
+    const detailHref = localCatalogRouteHref({
       type: route.type,
       id: route.id,
     });
@@ -475,7 +475,7 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       window.history.back();
       return;
     }
-    replaceCatalogHash(ownCatalogRouteHref({ type: route.type }));
+    replaceCatalogHash(localCatalogRouteHref({ type: route.type }));
   };
 
   const openEditor = (next: EditorDraft) => {
@@ -538,7 +538,7 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
     setNotice(created ? "created" : "updated");
     refreshCatalog(kind);
     if (created) {
-      const href = ownCatalogRouteHref({ type: kind, id: item.id });
+      const href = localCatalogRouteHref({ type: kind, id: item.id });
       pushCatalogHash(href, { ownCatalogDetail: href });
     }
   };
@@ -602,7 +602,7 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
       );
     } finally {
       if (record && !isActiveEditor()) {
-        const currentRoute = parseOwnCatalogRoute(window.location.hash);
+        const currentRoute = parseLocalCatalogRoute(window.location.hash);
         if (currentRoute?.type === type && currentRoute.id === record.id)
           setDetailRetry((attempt) => attempt + 1);
       }
@@ -678,7 +678,7 @@ function useOwnCatalogModel(): ApplicationOwnCatalogModel {
     if (!next || next === route.type) return;
     setNotice(undefined);
     closeEditor();
-    pushCatalogHash(ownCatalogRouteHref({ type: next }));
+    pushCatalogHash(localCatalogRouteHref({ type: next }));
   };
 
   const changeFilter = (value: string) => {
