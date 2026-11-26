@@ -24,6 +24,7 @@ const directoryTree: Record<string, readonly string[]> = {
 	"/mnt/music/Compilations": ["Road Notes"],
 	"/srv": ["media", "music"],
 	"/srv/media": ["library"],
+	"/srv/media/library": [],
 	"/srv/music": ["Albums", "Compilations"],
 	"/srv/music/Albums": ["Northern Lines", "Small Hours"],
 	"/srv/music/Compilations": ["Road Notes"],

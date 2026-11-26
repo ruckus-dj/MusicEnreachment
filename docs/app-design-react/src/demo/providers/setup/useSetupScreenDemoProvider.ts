@@ -42,6 +42,7 @@ type NoticeKey =
 	| "missingTools"
 	| "missingPublication"
 	| "missingGenres"
+	| "summaryChecked"
 	| "staleMove"
 	| "invalidProvider";
 
@@ -138,9 +139,9 @@ export function useSetupScreenDemoProvider({
 		}
 		return undefined;
 	};
-	const toolsReady = (["ffmpeg", "fpcalc"] as const).every((kind) =>
-		Boolean(verifiedInstallation(kind)),
-	);
+	const ffmpeg = verifiedInstallation("ffmpeg");
+	const fpcalc = verifiedInstallation("fpcalc");
+	const toolsReady = Boolean(ffmpeg && fpcalc);
 	const platformMismatch = settings.platformMismatch ?? false;
 	const outputPath = settings.outputCandidate;
 	const format =
@@ -352,7 +353,14 @@ export function useSetupScreenDemoProvider({
 						toolsReady &&
 						publicationReady &&
 						genreCatalogReady;
-	const noticeText = notice ? copy[notice] : "";
+	const noticeText =
+		notice === "summaryChecked"
+			? locale === "ru"
+				? "Настройки прототипа проверены."
+				: "Prototype selections checked."
+			: notice
+				? copy[notice]
+				: "";
 
 	const acoustID = useSetupAcoustIDDraftProvider({
 		active: step === 2 && !platformMismatch,
@@ -373,6 +381,12 @@ export function useSetupScreenDemoProvider({
 		locale,
 		wizard: {
 			step,
+			help:
+				step === 3
+					? locale === "ru"
+						? "Итог составлен по выбранным данным прототипа. Если что-то не готово, вернитесь к нужному шагу."
+						: "The summary uses the prototype’s selections. If anything is not ready, return to the relevant step."
+					: undefined,
 			error: platformMismatch ? copy.conflicts : undefined,
 			notice: noticeText || undefined,
 			nextDisabled: !canProceed || platformMismatch,
@@ -543,23 +557,57 @@ export function useSetupScreenDemoProvider({
 			},
 			values: {
 				publication: {
-					directory: outputPath,
-					format: format || undefined,
-					removeSources: settings.sourceCleanupEnabled,
+					directory: outputPath || setupCopy.notSpecified,
+					format: format || "unselected",
+					explanation:
+						format === "source"
+							? setupCopy.sourceFormatExplanation
+							: format === "mka"
+								? setupCopy.mkaExplanation
+								: format === "m4a"
+									? setupCopy.m4aExplanation
+									: "",
+					removeSources: settings.sourceCleanupEnabled ?? false,
 				},
 				tools: {
-					ffmpeg: verifiedInstallation("ffmpeg")?.release ?? "",
-					fpcalc: verifiedInstallation("fpcalc")?.release ?? "",
+					ffmpeg: ffmpeg
+						? `${setupCopy.ready}${ffmpeg.release}`
+						: setupCopy.unknownToolState,
+					fpcalc: fpcalc
+						? `${setupCopy.ready}${fpcalc.release}`
+						: setupCopy.unknownToolState,
 				},
 				metadata: {
-					lrclibEnabled: settings.lrclibEnabled,
-					hasAcoustIdKey: settings.hasAcoustIDApplicationKey,
+					lrclibEnabled: settings.lrclibEnabled ?? true,
+					hasAcoustIdKey: settings.hasAcoustIDApplicationKey ?? false,
 					musicbrainz:
-						musicBrainzMode === "public"
-							? copy.publicSource
-							: `${copy.privateSource} · ${musicBrainzURL}`,
-					genres: genreCatalogReady ? copy.genreLoaded : copy.genreUnavailable,
+						providerVerified || genreCatalogReady
+							? `${setupCopy.connectionChecked}${musicBrainzMode === "self-hosted" ? musicBrainzURL : setupCopy.publicService}`
+							: setupCopy.connectionNotChecked,
+					genres: genreCatalogReady
+						? setupCopy.genreCatalogLoaded
+						: setupCopy.genreCatalogMissing,
 				},
+				technical: {
+					platform: setupCopy.noData,
+					toolsDirectory: settings.toolsPath || setupCopy.notSpecified,
+					musicbrainzCheckedAt: setupCopy.noData,
+					ffmpegCheckedAt: setupCopy.noData,
+					fpcalcCheckedAt: setupCopy.noData,
+				},
+				showNextStep: true,
+			},
+		},
+		summaryRecheck: {
+			label: setupCopy.updateCheck,
+			disabled: platformMismatch,
+			onPress: () => {
+				if (!genreCatalogReady) {
+					setStep(2);
+					setNotice("missingGenres");
+					return;
+				}
+				setNotice("summaryChecked");
 			},
 		},
 	};
