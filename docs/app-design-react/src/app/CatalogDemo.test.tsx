@@ -238,14 +238,11 @@ it("omits demo publication shortcuts and keeps the position preview contextual",
 	expect(
 		publication.queryByRole("button", { name: "Обновить метаданные" }),
 	).toBeNull();
-	fireEvent.click(publication.getByRole("button", { name: "Другие действия" }));
 	expect(
-		publication.getByRole("button", { name: "Изменить локальное название" }),
+		publication.getByRole("button", { name: "Удалить публикацию" }),
 	).toBeVisible();
 	expect(
-		publication.queryByRole("button", {
-			name: "Улучшить только качество аудио",
-		}),
+		publication.queryByRole("button", { name: "Другие действия" }),
 	).toBeNull();
 	const copy = firstPublicationPreviewMessages.ru;
 	expect(

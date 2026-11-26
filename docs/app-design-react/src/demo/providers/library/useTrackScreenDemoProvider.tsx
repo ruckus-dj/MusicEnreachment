@@ -24,18 +24,16 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
-import type { DeletionOperation } from "./DeletionRequest";
+import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
 import { libraryRootHref } from "./libraryRoute";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
 import { TagsComparison } from "./TagsComparison";
-import { TrackActions } from "./TrackActions";
 
 export type TrackScreenProps = {
 	release: OriginalRelease;
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview?: () => void;
-	onRepublish?: () => void;
 	publicationPreviewNotice?: string;
 	contextualPublication?: DemoPositionPublicationSource;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
@@ -81,7 +79,6 @@ export function useTrackScreenDemoProvider(
 		track,
 		onSource,
 		onPreview,
-		onRepublish,
 		publicationPreviewNotice,
 		contextualPublication,
 		onMutate,
@@ -203,16 +200,14 @@ export function useTrackScreenDemoProvider(
 			previewNotice: publicationPreviewNotice,
 		},
 		contextualPublication,
-		actions: onMutate ? (
-			<TrackActions
-				release={release}
-				track={track}
-				onMutate={onMutate}
-				files={files}
-				onQueueDeletion={onQueueDeletion}
-				onRepublish={onRepublish ?? onPreview}
-			/>
-		) : undefined,
+		deletion:
+			track.published && onQueueDeletion ? (
+				<DeletionRequest
+					release={release}
+					track={track}
+					onQueue={onQueueDeletion}
+				/>
+			) : undefined,
 		technical: {
 			position: trackNumberLabel(release, track),
 			title: track.title,
