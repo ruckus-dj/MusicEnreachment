@@ -345,10 +345,20 @@ describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
 			"#/library?view=artists&publication=all&availability=all",
 		);
 		fireEvent(window, new PopStateEvent("popstate"));
-		await screen.findByRole("dialog");
+		const dialog = await screen.findByRole("dialog");
 		expect(window.location.hash).toBe("#/settings");
 		fireEvent.click(
-			screen.getByRole("button", {
+			within(dialog).getByRole("button", {
+				name: /save and leave|сохранить и уйти/i,
+			}),
+		);
+		expect(within(dialog).getByRole("alert")).toHaveTextContent(
+			/whole number|целым числом/i,
+		);
+		expect(input).toHaveValue("");
+		expect(window.location.hash).toBe("#/settings");
+		fireEvent.click(
+			within(dialog).getByRole("button", {
 				name: /leave and keep draft|уйти, сохранив черновик/i,
 			}),
 		);

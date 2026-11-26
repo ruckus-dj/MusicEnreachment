@@ -454,6 +454,8 @@ export function useSettingsScreenDemoProvider({
 	>({});
 	const [valueReplacement, setValueReplacement] = useState<ValueReplacement>();
 	const [leavePrompt, setLeavePrompt] = useState(false);
+	const [leaveValidation, setLeaveValidation] =
+		useState<Parameters<typeof settingsMessage>[1]>();
 	const pendingHash = useRef<string | null>(null);
 	const allowNavigation = useRef(false);
 	const previousHash = useRef(
@@ -634,6 +636,7 @@ export function useSettingsScreenDemoProvider({
 				"",
 				`${window.location.pathname}${window.location.search}${previousHash.current}`,
 			);
+			setLeaveValidation(undefined);
 			setLeavePrompt(true);
 		};
 		const anchorClicked = (event: MouseEvent) => {
@@ -663,6 +666,7 @@ export function useSettingsScreenDemoProvider({
 				return;
 			event.preventDefault();
 			pendingHash.current = destination.hash;
+			setLeaveValidation(undefined);
 			setLeavePrompt(true);
 		};
 		window.addEventListener("beforeunload", beforeUnload);
@@ -712,6 +716,14 @@ export function useSettingsScreenDemoProvider({
 							? "musicBrainzURL"
 							: "musicBrainzDelay";
 			requestSettingsFocus(first);
+			const leaveMessages = {
+				concurrency: "concurrencyMustBePositive",
+				matchingThreshold: "matchingThresholdMustBeInRange",
+				musicBrainzMode: "saveLeaveInvalid",
+				musicBrainzURL: "invalidMusicBrainzUrl",
+				musicBrainzDelay: "invalidMusicBrainzDelay",
+			} as const;
+			setLeaveValidation(leaveMessages[first]);
 		}
 		return Object.keys(errors).length === 0;
 	};
@@ -1657,16 +1669,22 @@ export function useSettingsScreenDemoProvider({
 		leave: leavePrompt
 			? {
 					locale,
-					error:
-						notice === "invalidTemplate" ||
-						notice === "invalidPath" ||
-						notice === "busy" ||
-						notice === "pathOverlap"
+					error: leaveValidation
+						? settingsMessage(locale, leaveValidation)
+						: notice === "invalidTemplate" ||
+								notice === "invalidPath" ||
+								notice === "busy" ||
+								notice === "pathOverlap"
 							? copy[notice]
 							: undefined,
 					status: draftStorageWarning ? copy.draftStorageWarning : undefined,
 					actions: {
-						stay: { onPress: () => setLeavePrompt(false) },
+						stay: {
+							onPress: () => {
+								setLeaveValidation(undefined);
+								setLeavePrompt(false);
+							},
+						},
 						keepDraft: {
 							onPress: () => leaveWithDraft(false),
 						},
@@ -1676,6 +1694,7 @@ export function useSettingsScreenDemoProvider({
 						save: {
 							isHidden: draftConflicts.length > 0,
 							onPress: () => {
+								setLeaveValidation(undefined);
 								if (outputDirty) {
 									openOutputReset();
 									return;
