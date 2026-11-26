@@ -1,6 +1,5 @@
 import { useI18n } from "../../../../app/i18n/host";
 import type { MetadataFieldState } from "../../../../ui/features/library/MetadataFieldPresentation";
-import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import {
 	releaseMetadataEditorMessages,
@@ -71,8 +70,6 @@ export function useReleaseMetadataEditorDemoProvider({
 	providerLinks: ReleaseMetadataEditorViewProps["providerLinks"];
 } {
 	const { locale } = useI18n();
-	const m = (key: keyof typeof metadataEditorMessages.en) =>
-		metadataEditorMessages[locale][key];
 	const releaseText = releaseMetadataEditorMessages[locale];
 	const titleState = releaseTitleOverrideState(release);
 	const fieldStates: Record<string, MetadataFieldState> = Object.fromEntries(
@@ -243,10 +240,13 @@ export function useReleaseMetadataEditorDemoProvider({
 				return onSave(updated);
 			},
 		},
-		providerLinks: {
-			summary: `${m("providerLinks")} · ${release.provider ?? m("unspecified")}`,
-			provider: { label: m("provider"), value: release.provider ?? "" },
-			id: { label: m("providerId"), value: release.providerId ?? "" },
-		},
+		providerLinks: release.providerId
+			? [
+					{
+						provider: release.provider || "MusicBrainz",
+						id: release.providerId,
+					},
+				]
+			: [],
 	};
 }

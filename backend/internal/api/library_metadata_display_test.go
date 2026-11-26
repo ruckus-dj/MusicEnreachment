@@ -142,7 +142,7 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 	}{
 		{"artist GET includes display baseline", "get-library-artist-metadata", http.MethodGet, "/library/artists/{artist_id}/metadata", displayRef},
 		{"artist PATCH stays desired only", "patch-library-artist-metadata", http.MethodPatch, "/library/artists/{artist_id}/metadata", desiredRef},
-		{"release GET includes display baseline", "get-library-release-metadata", http.MethodGet, "/library/releases/{release_id}/metadata", displayRef},
+		{"release GET includes provider links", "get-library-release-metadata", http.MethodGet, "/library/releases/{release_id}/metadata", "#/components/schemas/LibraryReleaseMetadataGetResponse"},
 		{"release PATCH stays desired only", "patch-library-release-metadata", http.MethodPatch, "/library/releases/{release_id}/metadata", desiredRef},
 		{"recording GET includes display baseline", "get-library-recording-metadata", http.MethodGet, "/library/recordings/{recording_id}/metadata", displayRef},
 		{"recording PATCH stays desired only", "patch-library-recording-metadata", http.MethodPatch, "/library/recordings/{recording_id}/metadata", desiredRef},
@@ -199,11 +199,22 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 	if _, present := desired.Properties["provider_genre_baseline"]; present {
 		t.Error("desired-only response must not expose provider_genre_baseline")
 	}
+	releaseDisplay := document.component(t, "LibraryReleaseMetadataGetResponse")
+	links := releaseDisplay.property(t, "provider_links")
+	if !releaseDisplay.requires("provider_links") || !links.typeNames(t)["array"] ||
+		links.typeNames(t)["null"] || links.Items == nil || links.Items.Ref != "#/components/schemas/LibraryProviderLinkResponse" {
+		t.Errorf("release provider_links must be a required, non-null array: %#v", links)
+	}
+	for _, schema := range []libraryMetadataSpecSchema{display, desired} {
+		if _, present := schema.Properties["provider_links"]; present {
+			t.Error("only the release GET response may expose provider_links")
+		}
+	}
 
 	for _, response := range []struct {
 		name   string
 		schema libraryMetadataSpecSchema
-	}{{"display", display}, {"desired", desired}} {
+	}{{"display", display}, {"release display", releaseDisplay}, {"desired", desired}} {
 		if envelope := response.schema.property(t, "envelope"); envelope.Ref != "#/components/schemas/Envelope" {
 			t.Errorf("%s response envelope = %q, want Envelope reference", response.name, envelope.Ref)
 		}

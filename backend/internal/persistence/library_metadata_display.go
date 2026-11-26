@@ -132,6 +132,14 @@ func readAcceptedProviderReleaseFields(ctx context.Context, tx bun.Tx, ownerID u
 	return &acceptedProviderReleaseFields{source: source, key: row.ProviderKey, fields: fields, evidence: rawEvidence}, nil
 }
 
+func readProviderReleaseLinks(ctx context.Context, tx bun.Tx, releaseID uuid.UUID) ([]LibraryCatalogProviderLink, error) {
+	links := make([]LibraryCatalogProviderLink, 0)
+	if err := tx.NewRaw(`SELECT p.code AS provider_code,pr.provider_key,plr.method FROM provider_local_release plr JOIN provider_release pr ON pr.id=plr.provider_release_id AND pr.provider_id=plr.provider_id JOIN provider p ON p.id=plr.provider_id WHERE plr.local_release_id=? ORDER BY p.code,pr.provider_key`, releaseID).Scan(ctx, &links); err != nil {
+		return nil, fmt.Errorf("read library release provider links: %w", err)
+	}
+	return links, nil
+}
+
 func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, ownerID uuid.UUID) (*ProviderReleaseIdentifierBaseline, error) {
 	accepted, err := readAcceptedProviderReleaseFields(ctx, tx, ownerID)
 	if err != nil || accepted == nil {

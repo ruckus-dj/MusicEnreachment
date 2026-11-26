@@ -75,6 +75,7 @@ import type {
   LibraryReleaseDetailResponse,
   LibraryReleaseGroupEditionTracksResponse,
   LibraryReleaseGroupEditionsResponse,
+  LibraryReleaseMetadataGetResponse,
   LibraryReleaseOptionsPageLibraryCoverCandidateOption,
   LibraryReleaseOptionsPageLibraryRecordingOption,
   LibraryReleaseOptionsPageLibrarySourceVariantOption,
@@ -5774,7 +5775,7 @@ export function usePreviewLibraryReleaseDeletion<TData = Awaited<ReturnType<type
 
 
 export type getLibraryReleaseMetadataResponse200 = {
-  data: LibraryMetadataGetResponse
+  data: LibraryReleaseMetadataGetResponse
   status: 200
 }
 

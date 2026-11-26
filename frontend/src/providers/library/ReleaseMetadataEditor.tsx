@@ -20,6 +20,7 @@ import {
 import type {
   LibraryMetadataGetResponse,
   LibraryMetadataResponse,
+  LibraryReleaseMetadataGetResponse,
   ProviderGenreBaseline,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
@@ -474,6 +475,9 @@ function LibraryScopedMetadataEditorSession({
     useState<LibraryMetadataGetResponse["effective_key"]>();
   const [providerGenreBaseline, setProviderGenreBaseline] =
     useState<ProviderGenreBaseline>();
+  const [providerLinks, setProviderLinks] = useState<
+    LibraryReleaseMetadataGetResponse["provider_links"]
+  >([]);
   const [artistSearchQuery, setArtistSearchQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -527,12 +531,20 @@ function LibraryScopedMetadataEditorSession({
         cache: "no-store",
         signal: controller.signal,
       };
-      const response =
+      const read =
         scope === "release"
-          ? await getLibraryReleaseMetadata(ownerId, options)
-          : scope === "recording"
-            ? await getLibraryRecordingMetadata(ownerId, options)
-            : await getLibraryPositionMetadata(releaseId, ownerId, options);
+          ? { release: await getLibraryReleaseMetadata(ownerId, options) }
+          : {
+              other:
+                scope === "recording"
+                  ? await getLibraryRecordingMetadata(ownerId, options)
+                  : await getLibraryPositionMetadata(
+                      releaseId,
+                      ownerId,
+                      options,
+                    ),
+            };
+      const response = read.release ?? read.other;
       if (controller.signal.aborted || generation !== readGeneration.current)
         return;
       if (response.status !== 200) throw apiResponseError(response);
@@ -556,6 +568,11 @@ function LibraryScopedMetadataEditorSession({
       setMetadata(response.data);
       setSaved(next);
       setProviderGenreBaseline(response.data.provider_genre_baseline);
+      setProviderLinks(
+        read.release?.status === 200
+          ? (read.release.data.provider_links ?? [])
+          : [],
+      );
       setSavedArtistCredit(creditDisplay.draft);
       setArtistCreditBaseline(creditDisplay.baseline);
       setEffectiveArtistCredit({
@@ -1442,7 +1459,22 @@ function LibraryScopedMetadataEditorSession({
 
   if (children !== undefined && scope === "release") {
     return (
-      <ReleaseMetadataEditorDataBinder model={{ editor: editorView }}>
+      <ReleaseMetadataEditorDataBinder
+        model={{
+          editor: editorView,
+          providerLinks: providerLinks.map(
+            ({ provider_code, provider_key }) => ({
+              provider:
+                provider_code === "musicbrainz"
+                  ? "MusicBrainz"
+                  : provider_code === "local"
+                    ? "Local"
+                    : provider_code,
+              id: provider_key,
+            }),
+          ),
+        }}
+      >
         {children}
       </ReleaseMetadataEditorDataBinder>
     );

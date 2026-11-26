@@ -142,7 +142,16 @@ it("keeps release basics visible and editable outside closed metadata groups", a
   vi.stubGlobal("localStorage", storage);
   server.use(
     http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
-      HttpResponse.json(metadata(3)),
+      HttpResponse.json({
+        ...metadata(3),
+        provider_links: [
+          {
+            provider_code: "musicbrainz",
+            provider_key: "exact-edition-key",
+            method: "automatic",
+          },
+        ],
+      }),
     ),
   );
 
@@ -166,8 +175,14 @@ it("keeps release basics visible and editable outside closed metadata groups", a
   expect(additionalGroup).not.toBeNull();
   if (!additionalGroup) throw new Error("Missing additional metadata group");
   expect(additionalGroup).not.toHaveAttribute("open");
+  const providerLinks = openGroup(document.body, "Связи с провайдером").closest(
+    "details",
+  );
+  if (!providerLinks) throw new Error("Missing provider links");
+  expect(within(providerLinks).getByText("exact-edition-key")).toBeVisible();
 
   fireEvent.click(editButton);
+  expect(within(providerLinks).queryByRole("textbox")).not.toBeInTheDocument();
   fireEvent.change(within(release).getByRole("textbox", { name: "Название" }), {
     target: { value: "Edited title" },
   });

@@ -65,6 +65,9 @@ func TestReadMetadataDisplayProviderGenreScopesPostgreSQL(t *testing.T) {
 			if got.ProviderGenreBaseline == nil || len(got.ProviderGenreBaseline.Genres) != 1 || got.ProviderGenreBaseline.Genres[0].Name != tc.want || got.ProviderGenreBaseline.Digest == "" {
 				t.Fatalf("baseline = %+v, want genre %q", got.ProviderGenreBaseline, tc.want)
 			}
+			if tc.scope != librarymetadata.ScopeRelease && len(got.ProviderReleaseLinks) != 0 {
+				t.Fatalf("%s scope provider links = %+v, want none", tc.name, got.ProviderReleaseLinks)
+			}
 		})
 	}
 	releaseDisplay, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopeRelease, fixture.release, fixture.release)
@@ -77,6 +80,9 @@ func TestReadMetadataDisplayProviderGenreScopesPostgreSQL(t *testing.T) {
 	}
 	if identifierBaseline.Evidence["asin"].FetchOrder != 11 || identifierBaseline.Evidence["text-representation"].FetchOrder != 12 {
 		t.Fatalf("identifier baseline evidence = %+v, want both accepted field evidences", identifierBaseline.Evidence)
+	}
+	if len(releaseDisplay.ProviderReleaseLinks) != 1 || releaseDisplay.ProviderReleaseLinks[0].ProviderCode != "musicbrainz" || releaseDisplay.ProviderReleaseLinks[0].ProviderKey != fixture.releaseKey || releaseDisplay.ProviderReleaseLinks[0].Method != "manual" {
+		t.Fatalf("release provider links = %+v, want the stored manual musicbrainz binding", releaseDisplay.ProviderReleaseLinks)
 	}
 	for _, malformedEvidence := range []string{`null`, `{}`, `{"authority":4}`, `{"authority":4,"fetch_order":null}`, `{"authority":-1,"fetch_order":11}`} {
 		updated, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET field_evidence=jsonb_set(field_evidence,'{asin}',?::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, malformedEvidence, fixture.source.ID, fixture.releaseKey).Exec(ctx)

@@ -50,6 +50,7 @@ type LibraryMetadataDisplayResult struct {
 	EffectiveKey                      *librarymetadata.ResolvedField
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
+	ProviderReleaseLinks              []LibraryCatalogProviderLink
 	ArtistCreditBaseline              []LibraryMetadataArtistCredit
 	EffectiveArtistCredit             *EffectiveArtistCredit
 }
@@ -145,6 +146,10 @@ func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope li
 		Metadata:             LibraryMetadataResult{Envelope: display.Metadata.Envelope, Revision: display.Metadata.Revision},
 		EffectiveKey:         display.EffectiveKey,
 		ArtistCreditBaseline: mapLibraryArtistCredits(display.ArtistCreditBaseline),
+	}
+	result.ProviderReleaseLinks = make([]LibraryCatalogProviderLink, 0, len(display.ProviderReleaseLinks))
+	for _, link := range display.ProviderReleaseLinks {
+		result.ProviderReleaseLinks = append(result.ProviderReleaseLinks, LibraryCatalogProviderLink{ProviderCode: link.ProviderCode, ProviderKey: link.ProviderKey, Method: link.Method})
 	}
 	if display.EffectiveArtistCredit != nil {
 		result.EffectiveArtistCredit = &EffectiveArtistCredit{

@@ -56,6 +56,7 @@ type LibraryMetadataDisplay struct {
 	EffectiveKey                      *librarymetadata.ResolvedField
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
+	ProviderReleaseLinks              []LibraryCatalogProviderLink
 	ArtistCreditBaseline              []librarymetadata.ArtistCredit
 	EffectiveArtistCredit             *librarymetadata.ResolvedArtistCredits
 }
@@ -163,6 +164,10 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 		}
 		result.ProviderGenreBaseline = baseline
 		if scope == librarymetadata.ScopeRelease {
+			result.ProviderReleaseLinks, err = readProviderReleaseLinks(ctx, tx, ownerID)
+			if err != nil {
+				return err
+			}
 			result.ProviderReleaseIdentifierBaseline, err = readProviderReleaseIdentifierBaseline(ctx, tx, ownerID)
 			if err != nil {
 				return err

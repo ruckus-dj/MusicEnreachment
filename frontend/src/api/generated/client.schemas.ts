@@ -1435,6 +1435,21 @@ export interface LibraryReleaseItem {
   missing_release_group?: MissingReleaseGroupSummary;
 }
 
+export interface LibraryReleaseMetadataGetResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  artist_credit_baseline: LibraryMetadataArtistCredit[] | null;
+  effective_artist_credit?: EffectiveArtistCredit;
+  effective_key?: ResolvedField;
+  envelope: Envelope;
+  provider_genre_baseline?: ProviderGenreBaseline;
+  provider_links: LibraryProviderLinkResponse[];
+  provider_release_identifier_baseline?: ProviderReleaseIdentifierBaseline;
+  publication_applied: boolean;
+  revision: number;
+}
+
 export interface LibraryReleaseOptionsPageLibraryCoverCandidateOption {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
