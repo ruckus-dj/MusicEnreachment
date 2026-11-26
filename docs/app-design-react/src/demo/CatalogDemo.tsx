@@ -1,4 +1,9 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { useI18n } from "../app/i18n";
 import { ApplicationRouteOutlet } from "../ui/app/ApplicationRouteOutlet";
 import type { IncomingCreationModel } from "../ui/features/incoming/IncomingCreationOutlet";
@@ -129,6 +134,7 @@ import {
 	initialDemoSettings,
 } from "./providers/settings/SettingsScreen";
 import { SetupScreen } from "./providers/setup/SetupScreen";
+import { useSetupToolDownloadsDemoProvider } from "./providers/setup/useSetupToolDownloadsDemoProvider";
 import {
 	initialSourceRoots,
 	SourcesScreen,
@@ -170,9 +176,18 @@ type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
 
 export function CatalogDemo({
 	onIncomingCount,
+	renderFrame,
 }: {
 	onIncomingCount?: (count: number) => void;
+	renderFrame?: (content: ReactNode) => ReactNode;
 } = {}) {
+	const content = useCatalogDemoContent(onIncomingCount);
+	return renderFrame ? renderFrame(content) : content;
+}
+
+// The frame switches between startup and product layouts. Keep the demo data
+// owner above it so neither layout can discard admitted work or saved state.
+function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 	const { locale } = useI18n();
 	const msg = (
 		key: Parameters<typeof catalogMessage>[1],
@@ -188,7 +203,12 @@ export function CatalogDemo({
 	useEffect(() => {
 		onIncomingCount?.(incomingCount);
 	}, [incomingCount, onIncomingCount]);
-	const [settings, setSettings] = useState(initialDemoSettings);
+	// Host-owned so an admitted tool download settles across route changes.
+	const {
+		settings,
+		setSettings,
+		activity: toolDownloads,
+	} = useSetupToolDownloadsDemoProvider(initialDemoSettings);
 	const publicationDestination: PublicationDestination = {
 		outputDirectory:
 			settings.currentOutput ?? fixturePublicationDestination.outputDirectory,
@@ -1101,6 +1121,7 @@ export function CatalogDemo({
 							onSettings: setSettings,
 							step: setupStep,
 							onStepChange: setSetupStep,
+							toolActivity: toolDownloads,
 						},
 					},
 				}}

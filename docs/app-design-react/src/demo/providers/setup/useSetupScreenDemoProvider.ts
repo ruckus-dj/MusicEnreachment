@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../../../app/i18n";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
-import type {
-	SetupScreenToolsStepView,
-	SetupScreenViewProps,
-} from "../../../ui/features/setup/SetupScreenView";
+import type { SetupScreenViewProps } from "../../../ui/features/setup/SetupScreenView";
 import type { SetupToolCard } from "../../../ui/features/setup/SetupToolCardsView";
 import { setupMessages } from "../../../ui/features/setup/setupMessages";
 import { useSetupTriggerFocus } from "../../../ui/features/setup/useSetupTriggerFocus";
@@ -22,7 +19,6 @@ import type {
 	SettingsScreenProps,
 } from "../settings/SettingsScreen";
 import {
-	activateOrCreateDemoInstallation,
 	type DemoInstallPreflight,
 	initialDemoUnmanagedToolFiles,
 	installPreflightDemo,
@@ -33,12 +29,12 @@ import {
 	type SetupToolKind,
 	setupToolExecutables,
 	setupToolReleases,
-	setupToolStateAfterAttempt,
 } from "./setupToolsLifecycle";
 import {
 	setupGenreCatalogEndpoint,
 	useSetupGenreCatalogDemoProvider,
 } from "./useSetupGenreCatalogDemoProvider";
+import type { SetupToolDownloadActivity } from "./useSetupToolDownloadsDemoProvider";
 
 type NoticeKey =
 	| "missingPath"
@@ -93,10 +89,7 @@ export type SetupScreenProps = SettingsScreenProps & {
 	step?: number;
 	onStepChange?: (step: number) => void;
 	/** Current tool activity supplied by the prototype data host, if available. */
-	toolActivity?: Pick<
-		SetupScreenToolsStepView,
-		"operations" | "completed" | "operationError" | "loadingOperations"
-	>;
+	toolActivity?: Partial<SetupToolDownloadActivity>;
 };
 
 /**
@@ -227,27 +220,9 @@ export function useSetupScreenDemoProvider({
 			unmanagedToolFiles,
 		);
 	const beginInstall = (preflight: DemoInstallPreflight) => {
-		const outcome = setupToolStateAfterAttempt(preflight.release, true);
-		update({
-			installations: activateOrCreateDemoInstallation(
-				installations,
-				preflight.kind,
-				preflight.release,
-			),
-			setupVerified: {
-				...settings.setupVerified,
-				[preflight.kind]: outcome.release,
-			},
-			setupFailures: {
-				...settings.setupFailures,
-				[preflight.kind]: undefined,
-			},
-			...(preflight.conflicts.length > 0 && {
-				unmanagedToolFiles: unmanagedToolFiles.filter(
-					(path) => !preflight.conflicts.includes(path),
-				),
-			}),
-		});
+		// The host owns the admitted download lifecycle and settles settings only
+		// while the frozen root and token still match the current state.
+		toolActivity?.start?.(preflight);
 		setInstallPlan(null);
 		setNotice("");
 	};
@@ -385,6 +360,16 @@ export function useSetupScreenDemoProvider({
 		},
 		step === 1,
 	);
+	// Only the portable activity fields belong to the view model; the host's
+	// start and duplicate-package authority stay out of the presentation tree.
+	const toolActivityView = toolActivity
+		? {
+				operations: toolActivity.operations,
+				completed: toolActivity.completed,
+				operationError: toolActivity.operationError,
+				loadingOperations: toolActivity.loadingOperations,
+			}
+		: undefined;
 
 	return {
 		locale,
@@ -417,7 +402,7 @@ export function useSetupScreenDemoProvider({
 			resolveInitialPath: demoDirectoryStart,
 		},
 		tools: {
-			...toolActivity,
+			...toolActivityView,
 			description: copy.toolDescription,
 			cards: {
 				locale,
@@ -437,6 +422,7 @@ export function useSetupScreenDemoProvider({
 						};
 					}
 					const selected = toolSelection[kind];
+					const pendingDownload = toolActivity?.busyKinds?.has(kind) ?? false;
 					return {
 						kind,
 						state: "install",
@@ -444,6 +430,7 @@ export function useSetupScreenDemoProvider({
 							identity,
 						})),
 						selected: selected ?? null,
+						pending: pendingDownload,
 						onSelect: (identity) =>
 							update({
 								selectedRelease: {
@@ -460,7 +447,11 @@ export function useSetupScreenDemoProvider({
 								},
 							}),
 						action: {
-							disabled: !selected || platformMismatch || Boolean(installPlan),
+							disabled:
+								!selected ||
+								platformMismatch ||
+								Boolean(installPlan) ||
+								pendingDownload,
 							onPress: (event) => requestInstall(kind, event.target),
 						},
 						verification: { state: "available" },

@@ -41,6 +41,8 @@ export const availableToolReleases: Record<ManagedToolPackage, string[]> = {
 export type DemoInstallPreflight = {
 	kind: ManagedToolPackage;
 	release: string;
+	/** Exact tools root frozen for this admitted preflight. */
+	toolsRoot: string;
 	targets: string[];
 	conflicts: string[];
 	token: string;
@@ -84,8 +86,9 @@ export function installPreflightDemo(
 	installations: readonly DemoInstallation[],
 	unmanagedFiles: readonly string[],
 ): DemoInstallPreflight {
+	const toolsRoot = toolsDirectory.trim();
 	const targets = demoExecutables(kind).map((executable) =>
-		demoInstallTarget(toolsDirectory, kind, release, executable),
+		demoInstallTarget(toolsRoot, kind, release, executable),
 	);
 	// Only verified installations can account for occupied paths.
 	const known = new Set(
@@ -93,12 +96,7 @@ export function installPreflightDemo(
 			.filter((item) => item.status !== "available")
 			.flatMap((item) =>
 				demoExecutables(item.package).map((executable) =>
-					demoInstallTarget(
-						toolsDirectory,
-						item.package,
-						item.release,
-						executable,
-					),
+					demoInstallTarget(toolsRoot, item.package, item.release, executable),
 				),
 			),
 	);
@@ -108,12 +106,16 @@ export function installPreflightDemo(
 	return {
 		kind,
 		release,
+		toolsRoot,
 		targets,
 		conflicts,
 		token: [
 			"demo-install-preflight",
-			toolsDirectory.trim(),
+			"tools-root",
+			toolsRoot,
+			"kind",
 			kind,
+			"release",
 			release,
 			...targets,
 			...conflicts,

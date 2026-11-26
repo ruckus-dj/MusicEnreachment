@@ -9,9 +9,12 @@ const root = document.getElementById("root");
 function PrototypeApp() {
 	const [incomingCount, setIncomingCount] = useState<number>();
 	return (
-		<DesignShell incomingCount={incomingCount}>
-			<CatalogDemo onIncomingCount={setIncomingCount} />
-		</DesignShell>
+		<CatalogDemo
+			onIncomingCount={setIncomingCount}
+			renderFrame={(content) => (
+				<DesignShell incomingCount={incomingCount}>{content}</DesignShell>
+			)}
+		/>
 	);
 }
 if (!root) throw new Error("Missing design root");
