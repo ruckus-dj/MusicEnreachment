@@ -1,5 +1,6 @@
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import operationKinds from "../../ui/features/operations/operationKindLabels.json";
+import { sourceCleanupOperationCopy } from "../../ui/features/operations/sourceCleanupOperationCopy";
 import { sourceScanOperationStages } from "../../ui/features/operations/sourceScanOperationStages";
 import type { Locale } from "../../ui/i18n/locale";
 
@@ -15,7 +16,7 @@ const operationStateLabels: Record<string, LocalizedText> = {
 };
 
 const operationStageLabels: Record<string, LocalizedText> = {
-  queued: { en: "Queued", ru: "В очереди" },
+  ...sourceCleanupOperationCopy.stages,
   failed: { en: "Failed", ru: "Ошибка" },
   succeeded: { en: "Completed", ru: "Завершена" },
   resolve: { en: "Preparing download", ru: "Подготовка загрузки" },
@@ -40,10 +41,6 @@ const operationStageLabels: Record<string, LocalizedText> = {
     ru: "Расчёт аудиоотпечатка",
   },
   hashing: { en: "Calculating checksum", ru: "Расчёт контрольной суммы" },
-  cleaning_artifacts: {
-    en: "Cleaning analysis files",
-    ru: "Очистка файлов анализа",
-  },
   fetching_provider: {
     en: "Requesting MusicBrainz",
     ru: "Запрос к MusicBrainz",
@@ -80,7 +77,6 @@ const operationStageLabels: Record<string, LocalizedText> = {
   },
   manual_lookup: { en: "Manual lookup", ru: "Ручной поиск" },
   refreshing: { en: "Refreshing catalog", ru: "Обновление каталога" },
-  finished: { en: "Finished", ru: "Завершено" },
   reconciling: { en: "Reconciling publication", ru: "Сверка публикации" },
   waiting: { en: "Waiting", ru: "Ожидание" },
   completed: { en: "Completed", ru: "Завершено" },
@@ -122,10 +118,7 @@ const operationTargetLabels: Record<string, LocalizedText> = {
   move_tools_root: { en: "Tools folder", ru: "Папка инструментов" },
   scan_source: { en: "Source", ru: "Источник" },
   analyze_source: { en: "Source", ru: "Источник" },
-  cleanup_source_analysis_artifacts: {
-    en: "Analysis files",
-    ru: "Файлы анализа",
-  },
+  cleanup_source_analysis_artifacts: sourceCleanupOperationCopy.target,
   provider_release_lookup: { en: "MusicBrainz", ru: "MusicBrainz" },
   provider_recording_lookup: { en: "MusicBrainz", ru: "MusicBrainz" },
   provider_release_search: { en: "MusicBrainz", ru: "MusicBrainz" },

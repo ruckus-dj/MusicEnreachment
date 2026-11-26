@@ -21,6 +21,7 @@ import type {
 } from "../../../ui/features/operations/operationsFilters";
 import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import operationKinds from "../../../ui/features/operations/operationKindLabels.json";
+import { sourceCleanupOperationCopy } from "../../../ui/features/operations/sourceCleanupOperationCopy";
 import { sourceScanOperationStages } from "../../../ui/features/operations/sourceScanOperationStages";
 import { sourceDetailHref } from "../../../ui/features/sources/sourcesRoute";
 import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
@@ -31,6 +32,7 @@ import {
 import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
+import type { SourceArtifactCleanupDemoExecution } from "../sources/sourceArtifactCleanupDemoProvider";
 import type { SourceRoot } from "../sources/SourcesScreen";
 import type {
 	DemoScanAttempt,
@@ -91,6 +93,10 @@ export interface DemoOperationsScreenProps {
 	scanAttempts?: readonly DemoScanAttempt[];
 	sourceRoots?: readonly SourceRoot[];
 	onScanRoot?: (root: SourceRoot) => void;
+	sourceCleanup?: Pick<
+		SourceArtifactCleanupDemoExecution,
+		"operation" | "isPending" | "failedOperations"
+	>;
 	queue?: readonly QueuedOperationFixture[];
 }
 
@@ -114,6 +120,7 @@ function useDemoOperationsModel({
 	scanAttempts = emptyScanAttempts,
 	sourceRoots = emptySourceRoots,
 	onScanRoot,
+	sourceCleanup,
 	queue = queuedOperationFixtures,
 }: DemoOperationsScreenProps): ApplicationOperationsModel {
 	const { locale } = useI18n();
@@ -339,6 +346,25 @@ function useDemoOperationsModel({
 			);
 		}
 
+		const cleanups = [...(sourceCleanup?.failedOperations ?? [])];
+		if (sourceCleanup?.isPending && sourceCleanup.operation)
+			cleanups.push(sourceCleanup.operation);
+		for (const attempt of cleanups) {
+			addRow(
+				attempt.state,
+				"removal",
+				{
+					id: attempt.id,
+					target: sourceCleanupOperationCopy.target[locale],
+					operation:
+						operationKinds.kinds.cleanup_source_analysis_artifacts[locale],
+					stage: sourceCleanupOperationCopy.stages[attempt.stage][locale],
+					error: attempt.safe_error,
+				},
+				attempt.createdAt,
+			);
+		}
+
 		for (const fixture of queue) {
 			result.push({
 				status: "queued",
@@ -368,6 +394,7 @@ function useDemoOperationsModel({
 		onScanRoot,
 		queue,
 		scanAttempts,
+		sourceCleanup,
 		sourceRoots,
 		provider.deletionStates,
 		provider.publicationJobs,

@@ -1182,6 +1182,7 @@ export function CatalogDemo({
 					scanAttempts: sourceScans.attempts,
 					sourceRoots,
 					onScanRoot: sourceScans.start,
+					sourceCleanup: sourceCleanupExecution,
 					positionHrefForTrack: (positionId) => {
 						const release = releases.find((item) =>
 							item.tracks.some((track) => track.id === positionId),

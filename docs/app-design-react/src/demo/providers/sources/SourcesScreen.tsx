@@ -216,7 +216,9 @@ export function SourcesScreen({
 		execution: cleanupExecution,
 	});
 	const hasActiveRootWork = (rootId: string) =>
-		scans.active(rootId) || !canRemoveSourceRoot(processing, rootId);
+		scans.active(rootId) ||
+		cleanupExecution.blocksRoot(rootId) ||
+		!canRemoveSourceRoot(processing, rootId);
 	const requestRootRemoval = (root: SourceRoot) => {
 		if (hasActiveRootWork(root.id)) {
 			notify("rootActive");

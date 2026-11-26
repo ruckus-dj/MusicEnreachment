@@ -17,7 +17,14 @@ import {
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
 
-type DemoOperation = NonNullable<SourceArtifactCleanupViewProps["operation"]>;
+type CleanupIdentity = { id: string; createdAt: number };
+export type DemoSourceCleanupOperation = CleanupIdentity &
+	(
+		| { state: "queued"; stage: "queued"; safe_error?: never }
+		| { state: "running"; stage: "cleaning_artifacts"; safe_error?: never }
+		| { state: "succeeded"; stage: "finished"; safe_error?: never }
+		| { state: "failed"; stage: "finished"; safe_error: string }
+	);
 
 const candidateLimit = 1000;
 
@@ -28,12 +35,14 @@ const candidateLimit = 1000;
  */
 export type SourceArtifactCleanupDemoExecution = {
 	submitted: string[];
-	operation?: DemoOperation;
+	operation?: DemoSourceCleanupOperation;
+	failedOperations: readonly DemoSourceCleanupOperation[];
 	results?: SourceArtifactCleanupResult[];
 	error?: { text: string };
 	isPending: boolean;
 	/** Increments when a started batch reaches its terminal state. */
 	completedRuns: number;
+	blocksRoot: (rootId: string) => boolean;
 	onLoad: () => void;
 	onStart: (ids: readonly string[]) => void;
 };
@@ -48,7 +57,10 @@ export function useSourceArtifactCleanupDemoExecution({
 	updateProcessing: (state: SourceProcessingState) => void;
 }): SourceArtifactCleanupDemoExecution {
 	const [submitted, setSubmitted] = useState<string[]>([]);
-	const [operation, setOperation] = useState<DemoOperation>();
+	const [operation, setOperation] = useState<DemoSourceCleanupOperation>();
+	const [failedOperations, setFailedOperations] = useState<
+		DemoSourceCleanupOperation[]
+	>([]);
 	const [results, setResults] = useState<SourceArtifactCleanupResult[]>();
 	const [error, setError] = useState<{ text: string }>();
 	const [completedRuns, setCompletedRuns] = useState(0);
@@ -97,12 +109,19 @@ export function useSourceArtifactCleanupDemoExecution({
 		}
 
 		pending.current = true;
+		const identity = { id: crypto.randomUUID(), createdAt: Date.now() };
 		setError(undefined);
 		setSubmitted(frozen);
 		setResults(undefined);
-		setOperation({ state: "queued", stage: "queued" });
+		setOperation({ ...identity, state: "queued", stage: "queued" });
 
-		schedule(200, () => setOperation({ state: "running", stage: "removing" }));
+		schedule(200, () =>
+			setOperation({
+				...identity,
+				state: "running",
+				stage: "cleaning_artifacts",
+			}),
+		);
 		schedule(600, () => {
 			const current = processingRef.current;
 			const frozenEligible = new Set(
@@ -125,15 +144,18 @@ export function useSourceArtifactCleanupDemoExecution({
 			setResults(
 				claimed.map((id) => ({ artifact_id: id, state: "succeeded" })),
 			);
-			setOperation(
+			const terminal: DemoSourceCleanupOperation =
 				firstBlocked < 0
-					? { state: "succeeded", stage: "finished" }
+					? { ...identity, state: "succeeded", stage: "finished" }
 					: {
+							...identity,
 							state: "failed",
 							stage: "finished",
 							safe_error: message("cleanupSelectionStale"),
-						},
-			);
+						};
+			setOperation(terminal);
+			if (terminal.state === "failed")
+				setFailedOperations((current) => [...current, terminal]);
 			setCompletedRuns((count) => count + 1);
 			pending.current = false;
 		});
@@ -145,10 +167,16 @@ export function useSourceArtifactCleanupDemoExecution({
 	return {
 		submitted,
 		operation,
+		failedOperations,
 		results,
 		error,
 		isPending,
 		completedRuns,
+		blocksRoot: (rootId) =>
+			isPending &&
+			processing.copies.some(
+				(copy) => copy.rootId === rootId && submitted.includes(copy.id),
+			),
 		onLoad: load,
 		onStart: start,
 	};
