@@ -9,5 +9,5 @@ export type { GenreReference } from "./useGenrePickerDemoProvider";
  * and all of its interaction behavior.
  */
 export function GenrePicker(props: GenrePickerProps) {
-	return <GenrePickerView {...props} />;
+  return <GenrePickerView {...props} />;
 }

@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { MetadataEditorView } from "../../../../ui/features/library/MetadataEditorView";
 import { LibraryPositionMetadataEditorDataBinder } from "../../../../ui/features/library/metadata/LibraryPositionMetadataEditorOutlet";
 import {
-	type MetadataEditorProps,
-	useMetadataEditorProvider,
+  type MetadataEditorProps,
+  useMetadataEditorProvider,
 } from "./useMetadataEditorProvider";
 
 export type { MetadataEditorProps } from "./useMetadataEditorProvider";
@@ -15,15 +15,15 @@ export type { MetadataEditorProps } from "./useMetadataEditorProvider";
  * instead of rendering the view directly.
  */
 export function MetadataEditor({
-	children,
-	...props
+  children,
+  ...props
 }: MetadataEditorProps & { children?: ReactNode }) {
-	const view = useMetadataEditorProvider(props);
-	if (children)
-		return (
-			<LibraryPositionMetadataEditorDataBinder model={view}>
-				{children}
-			</LibraryPositionMetadataEditorDataBinder>
-		);
-	return <MetadataEditorView {...view} />;
+  const view = useMetadataEditorProvider(props);
+  if (children)
+    return (
+      <LibraryPositionMetadataEditorDataBinder model={view}>
+        {children}
+      </LibraryPositionMetadataEditorDataBinder>
+    );
+  return <MetadataEditorView {...view} />;
 }

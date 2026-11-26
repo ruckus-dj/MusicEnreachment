@@ -1,504 +1,504 @@
 import { expect, it } from "vitest";
 import { metadataSnapshotDiff } from "../publication/publicationMetadataDiff";
 import {
-	applyMetadataPreview,
-	type CatalogArtist,
-	catalogData,
-	desiredTags,
-	effectivePublicationTags,
-	metadataChanged,
-	originalFiles,
-	originalReleases,
-	publicationSortTagCollisions,
+  applyMetadataPreview,
+  type CatalogArtist,
+  catalogData,
+  desiredTags,
+  effectivePublicationTags,
+  metadataChanged,
+  originalFiles,
+  originalReleases,
+  publicationSortTagCollisions,
 } from "./catalogData";
 
 it("updates metadata without changing the existing audio codec or source", () => {
-	const release = originalReleases.find((item) => item.id === "north");
-	const track = release?.tracks.find((item) => item.id === "north-t2");
-	expect(track?.published).toBeTruthy();
-	if (!release || !track) throw new Error("Missing baseline fixture");
-	expect(metadataChanged(release, track)).toBe(true);
-	const next = applyMetadataPreview(originalReleases, new Set([track.id]));
-	const nextRelease = next.find((item) => item.id === release.id);
-	const nextTrack = nextRelease?.tracks.find((item) => item.id === track.id);
-	expect(nextTrack?.published?.codec).toBe(track.published?.codec);
-	expect(nextTrack?.published?.sourceId).toBe(track.published?.sourceId);
-	expect(nextTrack?.published?.path).toBe(track.published?.path);
-	if (!nextRelease || !nextTrack) throw new Error("Missing result fixture");
-	expect(metadataChanged(nextRelease, nextTrack)).toBe(false);
-	expect(metadataChanged(release, track)).toBe(true);
+  const release = originalReleases.find((item) => item.id === "north");
+  const track = release?.tracks.find((item) => item.id === "north-t2");
+  expect(track?.published).toBeTruthy();
+  if (!release || !track) throw new Error("Missing baseline fixture");
+  expect(metadataChanged(release, track)).toBe(true);
+  const next = applyMetadataPreview(originalReleases, new Set([track.id]));
+  const nextRelease = next.find((item) => item.id === release.id);
+  const nextTrack = nextRelease?.tracks.find((item) => item.id === track.id);
+  expect(nextTrack?.published?.codec).toBe(track.published?.codec);
+  expect(nextTrack?.published?.sourceId).toBe(track.published?.sourceId);
+  expect(nextTrack?.published?.path).toBe(track.published?.path);
+  if (!nextRelease || !nextTrack) throw new Error("Missing result fixture");
+  expect(metadataChanged(nextRelease, nextTrack)).toBe(false);
+  expect(metadataChanged(release, track)).toBe(true);
 });
 
 it("keeps terminal position credit intent separate from the recording and release", () => {
-	const release = originalReleases.find(({ id }) => id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture?.artistId)
-		throw new Error("Missing artist credit fixture");
-	const track = {
-		...fixture,
-		positionCreditEvidence: { origin: "recording" as const, available: true },
-		recordingArtistCredit: {
-			state: "value" as const,
-			rows: [
-				{
-					artistId: fixture.artistId,
-					creditName: "Recording credit",
-					joinPhrase: "",
-				},
-			],
-		},
-	};
-	const inherited = desiredTags(release, track);
-	expect(inherited.ARTIST).toEqual(["Recording credit"]);
-	expect(
-		desiredTags(release, {
-			...track,
-			positionCreditEvidence: { origin: "provider_position", rows: [] },
-		}).ARTIST,
-	).toEqual([]);
-	const cleared = desiredTags(release, {
-		...track,
-		positionArtistCredit: { state: "absent" },
-	});
-	expect(cleared.ARTIST).toEqual([]);
-	expect(cleared.ALBUMARTIST).toEqual(inherited.ALBUMARTIST);
-	expect(track.published).toBe(fixture.published);
+  const release = originalReleases.find(({ id }) => id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture?.artistId)
+    throw new Error("Missing artist credit fixture");
+  const track = {
+    ...fixture,
+    positionCreditEvidence: { origin: "recording" as const, available: true },
+    recordingArtistCredit: {
+      state: "value" as const,
+      rows: [
+        {
+          artistId: fixture.artistId,
+          creditName: "Recording credit",
+          joinPhrase: "",
+        },
+      ],
+    },
+  };
+  const inherited = desiredTags(release, track);
+  expect(inherited.ARTIST).toEqual(["Recording credit"]);
+  expect(
+    desiredTags(release, {
+      ...track,
+      positionCreditEvidence: { origin: "provider_position", rows: [] },
+    }).ARTIST,
+  ).toEqual([]);
+  const cleared = desiredTags(release, {
+    ...track,
+    positionArtistCredit: { state: "absent" },
+  });
+  expect(cleared.ARTIST).toEqual([]);
+  expect(cleared.ALBUMARTIST).toEqual(inherited.ALBUMARTIST);
+  expect(track.published).toBe(fixture.published);
 });
 
 it("uses neutral contributor comparison and qualified performer file tags", () => {
-	const release = originalReleases.find(({ id }) => id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture) throw new Error("Missing position fixture");
-	const track = {
-		...fixture,
-		recordingContributors: {
-			state: "value" as const,
-			rows: [
-				{ name: "Guest musician", role: "performer", instrument: "Piano" },
-			],
-		},
-	};
-	expect(desiredTags(release, track).PERFORMER).toEqual(["Guest musician"]);
-	expect(
-		desiredTags(release, track, undefined, null, "FLAC")["PERFORMER:PIANO"],
-	).toEqual(["Guest musician"]);
-	expect(
-		desiredTags(release, track, undefined, null, "M4A"),
-	).not.toHaveProperty("PERFORMER:PIANO");
-	expect(
-		desiredTags(release, {
-			...track,
-			positionContributors: { state: "explicit_empty" },
-		}).PERFORMER,
-	).toEqual([]);
-	if (!fixture.published) throw new Error("Missing CURRENT fixture");
-	const current = {
-		...fixture.published,
-		container: "FLAC",
-		tags: { ...fixture.published.tags, "PERFORMER:PIANO": ["Guest musician"] },
-	};
-	expect(
-		effectivePublicationTags(release, {
-			...fixture,
-			published: current,
-			positionContributors: { state: "absent" },
-		})["PERFORMER:PIANO"],
-	).toEqual(["Guest musician"]);
-	expect(
-		effectivePublicationTags(release, {
-			...fixture,
-			published: current,
-			positionContributors: { state: "explicit_empty" },
-		})["PERFORMER:PIANO"],
-	).toEqual([]);
+  const release = originalReleases.find(({ id }) => id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture) throw new Error("Missing position fixture");
+  const track = {
+    ...fixture,
+    recordingContributors: {
+      state: "value" as const,
+      rows: [
+        { name: "Guest musician", role: "performer", instrument: "Piano" },
+      ],
+    },
+  };
+  expect(desiredTags(release, track).PERFORMER).toEqual(["Guest musician"]);
+  expect(
+    desiredTags(release, track, undefined, null, "FLAC")["PERFORMER:PIANO"],
+  ).toEqual(["Guest musician"]);
+  expect(
+    desiredTags(release, track, undefined, null, "M4A"),
+  ).not.toHaveProperty("PERFORMER:PIANO");
+  expect(
+    desiredTags(release, {
+      ...track,
+      positionContributors: { state: "explicit_empty" },
+    }).PERFORMER,
+  ).toEqual([]);
+  if (!fixture.published) throw new Error("Missing CURRENT fixture");
+  const current = {
+    ...fixture.published,
+    container: "FLAC",
+    tags: { ...fixture.published.tags, "PERFORMER:PIANO": ["Guest musician"] },
+  };
+  expect(
+    effectivePublicationTags(release, {
+      ...fixture,
+      published: current,
+      positionContributors: { state: "absent" },
+    })["PERFORMER:PIANO"],
+  ).toEqual(["Guest musician"]);
+  expect(
+    effectivePublicationTags(release, {
+      ...fixture,
+      published: current,
+      positionContributors: { state: "explicit_empty" },
+    })["PERFORMER:PIANO"],
+  ).toEqual([]);
 });
 
 it("projects inherited, cleared and explicitly empty position titles separately", () => {
-	const release = originalReleases.find((item) => item.id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture) throw new Error("Missing position fixture");
-	const track = {
-		...fixture,
-		title: "Recording title",
-		recordingTitle: "Recording title",
-		recordingMetadata: { title: ["Recording title"] },
-	};
-	expect(desiredTags(release, track).TITLE).toEqual(["Recording title"]);
-	expect(
-		desiredTags(release, {
-			...track,
-			positionComparisonOverrides: { title: [] },
-		}).TITLE,
-	).toEqual([]);
-	expect(
-		desiredTags(release, {
-			...track,
-			positionComparisonOverrides: { title: [""] },
-		}).TITLE,
-	).toEqual([""]);
+  const release = originalReleases.find((item) => item.id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture) throw new Error("Missing position fixture");
+  const track = {
+    ...fixture,
+    title: "Recording title",
+    recordingTitle: "Recording title",
+    recordingMetadata: { title: ["Recording title"] },
+  };
+  expect(desiredTags(release, track).TITLE).toEqual(["Recording title"]);
+  expect(
+    desiredTags(release, {
+      ...track,
+      positionComparisonOverrides: { title: [] },
+    }).TITLE,
+  ).toEqual([]);
+  expect(
+    desiredTags(release, {
+      ...track,
+      positionComparisonOverrides: { title: [""] },
+    }).TITLE,
+  ).toEqual([""]);
 });
 
 it("overrides number tags without redefining the displayed position", () => {
-	const release = originalReleases.find((item) => item.id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture) throw new Error("Missing position fixture");
-	const track = { ...fixture, displayedNumber: "A1", medium: 2 };
-	const base = desiredTags(release, track);
-	const overridden = {
-		...track,
-		positionScalarIntent: {
-			track: { state: "value" as const, value: ["9"] },
-			disc: { state: "explicit_empty" as const },
-		},
-	};
-	expect(desiredTags(release, overridden)).toMatchObject({
-		TRACKNUMBER: ["9"],
-		DISCNUMBER: [],
-	});
-	expect(overridden).toMatchObject({ displayedNumber: "A1", medium: 2 });
-	expect(
-		desiredTags(release, { ...overridden, positionScalarIntent: {} }),
-	).toMatchObject({
-		TRACKNUMBER: base.TRACKNUMBER,
-		DISCNUMBER: base.DISCNUMBER,
-	});
+  const release = originalReleases.find((item) => item.id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture) throw new Error("Missing position fixture");
+  const track = { ...fixture, displayedNumber: "A1", medium: 2 };
+  const base = desiredTags(release, track);
+  const overridden = {
+    ...track,
+    positionScalarIntent: {
+      track: { state: "value" as const, value: ["9"] },
+      disc: { state: "explicit_empty" as const },
+    },
+  };
+  expect(desiredTags(release, overridden)).toMatchObject({
+    TRACKNUMBER: ["9"],
+    DISCNUMBER: [],
+  });
+  expect(overridden).toMatchObject({ displayedNumber: "A1", medium: 2 });
+  expect(
+    desiredTags(release, { ...overridden, positionScalarIntent: {} }),
+  ).toMatchObject({
+    TRACKNUMBER: base.TRACKNUMBER,
+    DISCNUMBER: base.DISCNUMBER,
+  });
 });
 
 it("resolves the exact key override before mapping the publication container", () => {
-	const release = originalReleases.find((item) => item.id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture) throw new Error("Missing position fixture");
-	const track = {
-		...fixture,
-		recordingScalarIntent: {
-			key: { state: "value" as const, value: ["C minor"] },
-		},
-		positionScalarIntent: {
-			key: { state: "value" as const, value: ["D minor"] },
-		},
-	};
-	expect(desiredTags(release, track, undefined, null, "M4A")).toMatchObject({
-		INITIALKEY: ["D minor"],
-		KEY: [],
-	});
-	expect(
-		desiredTags(
-			release,
-			{ ...track, positionScalarIntent: {} },
-			undefined,
-			null,
-			"FLAC",
-		),
-	).toMatchObject({
-		KEY: ["C minor"],
-		INITIALKEY: [],
-	});
+  const release = originalReleases.find((item) => item.id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture) throw new Error("Missing position fixture");
+  const track = {
+    ...fixture,
+    recordingScalarIntent: {
+      key: { state: "value" as const, value: ["C minor"] },
+    },
+    positionScalarIntent: {
+      key: { state: "value" as const, value: ["D minor"] },
+    },
+  };
+  expect(desiredTags(release, track, undefined, null, "M4A")).toMatchObject({
+    INITIALKEY: ["D minor"],
+    KEY: [],
+  });
+  expect(
+    desiredTags(
+      release,
+      { ...track, positionScalarIntent: {} },
+      undefined,
+      null,
+      "FLAC",
+    ),
+  ).toMatchObject({
+    KEY: ["C minor"],
+    INITIALKEY: [],
+  });
 });
 
 it("keeps position work clearing terminal without changing the shared recording", () => {
-	const release = originalReleases.find((item) => item.id === "north");
-	const fixture = release?.tracks[0];
-	if (!release || !fixture) throw new Error("Missing position fixture");
-	const track = {
-		...fixture,
-		recordingComposition: {
-			works: { state: "value" as const, value: [{ title: "Recording work" }] },
-			movement: {
-				state: "value" as const,
-				value: { name: "Finale", number: "2", count: "3" },
-			},
-		},
-		positionComposition: { works: { state: "explicit_empty" as const } },
-	};
-	expect(desiredTags(release, track)).toMatchObject({
-		WORK: [],
-		MOVEMENTNAME: ["Finale"],
-		MOVEMENTNUMBER: ["2"],
-		MOVEMENTCOUNT: ["3"],
-	});
-	expect(
-		desiredTags(release, { ...track, positionComposition: {} }).WORK,
-	).toEqual(["Recording work"]);
+  const release = originalReleases.find((item) => item.id === "north");
+  const fixture = release?.tracks[0];
+  if (!release || !fixture) throw new Error("Missing position fixture");
+  const track = {
+    ...fixture,
+    recordingComposition: {
+      works: { state: "value" as const, value: [{ title: "Recording work" }] },
+      movement: {
+        state: "value" as const,
+        value: { name: "Finale", number: "2", count: "3" },
+      },
+    },
+    positionComposition: { works: { state: "explicit_empty" as const } },
+  };
+  expect(desiredTags(release, track)).toMatchObject({
+    WORK: [],
+    MOVEMENTNAME: ["Finale"],
+    MOVEMENTNUMBER: ["2"],
+    MOVEMENTCOUNT: ["3"],
+  });
+  expect(
+    desiredTags(release, { ...track, positionComposition: {} }).WORK,
+  ).toEqual(["Recording work"]);
 });
 
 it("creates only from the explicitly selected available source and skips missing positions", () => {
-	const next = applyMetadataPreview(
-		originalReleases,
-		new Set(["north-t6", "north-t9"]),
-	);
-	const tracks = next.find((release) => release.id === "north")?.tracks;
-	expect(
-		tracks?.find((track) => track.id === "north-t6")?.published?.sourceId,
-	).toBe("north-f6");
-	expect(
-		tracks?.find((track) => track.id === "north-t9")?.published,
-	).toBeNull();
+  const next = applyMetadataPreview(
+    originalReleases,
+    new Set(["north-t6", "north-t9"]),
+  );
+  const tracks = next.find((release) => release.id === "north")?.tracks;
+  expect(
+    tracks?.find((track) => track.id === "north-t6")?.published?.sourceId,
+  ).toBe("north-f6");
+  expect(
+    tracks?.find((track) => track.id === "north-t9")?.published,
+  ).toBeNull();
 });
 
 it("keeps encoder source tags outside library metadata and preserves them when remuxing", () => {
-	const releases = structuredClone(originalReleases);
-	const files = structuredClone(originalFiles);
-	const release = releases.find((item) => item.id === "north");
-	const track = release?.tracks.find((item) => item.id === "north-t6");
-	const file = files["north-f6"];
-	if (!release || !track || !file) throw new Error("Missing source fixture");
-	file.tags.ENCODEDBY = ["Fixture encoder"];
-	file.tags.ENCODING = ["Fixture encoding description"];
-	file.tags.ENCODERSETTINGS = ["Fixture settings"];
-	const previewTags = effectivePublicationTags(
-		release,
-		track,
-		catalogData.artists,
-		files,
-	);
+  const releases = structuredClone(originalReleases);
+  const files = structuredClone(originalFiles);
+  const release = releases.find((item) => item.id === "north");
+  const track = release?.tracks.find((item) => item.id === "north-t6");
+  const file = files["north-f6"];
+  if (!release || !track || !file) throw new Error("Missing source fixture");
+  file.tags.ENCODEDBY = ["Fixture encoder"];
+  file.tags.ENCODING = ["Fixture encoding description"];
+  file.tags.ENCODERSETTINGS = ["Fixture settings"];
+  const previewTags = effectivePublicationTags(
+    release,
+    track,
+    catalogData.artists,
+    files,
+  );
 
-	const originalOutput = applyMetadataPreview(
-		releases,
-		new Set([track.id]),
-		files,
-		catalogData.artists,
-		{ outputDirectory: "/srv/music", format: "original" },
-	);
-	const originalTrack = originalOutput
-		.find((item) => item.id === release.id)
-		?.tracks.find((item) => item.id === track.id);
-	expect(originalTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
-	expect(previewTags).toEqual(originalTrack?.published?.tags);
-	expect(originalTrack?.published?.tags.ENCODING).toEqual([
-		"Fixture encoding description",
-	]);
-	expect(originalTrack?.published?.tags.ENCODERSETTINGS).toEqual([
-		"Fixture settings",
-	]);
+  const originalOutput = applyMetadataPreview(
+    releases,
+    new Set([track.id]),
+    files,
+    catalogData.artists,
+    { outputDirectory: "/srv/music", format: "original" },
+  );
+  const originalTrack = originalOutput
+    .find((item) => item.id === release.id)
+    ?.tracks.find((item) => item.id === track.id);
+  expect(originalTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
+  expect(previewTags).toEqual(originalTrack?.published?.tags);
+  expect(originalTrack?.published?.tags.ENCODING).toEqual([
+    "Fixture encoding description",
+  ]);
+  expect(originalTrack?.published?.tags.ENCODERSETTINGS).toEqual([
+    "Fixture settings",
+  ]);
 
-	const remuxedOutput = applyMetadataPreview(
-		releases,
-		new Set([track.id]),
-		files,
-		catalogData.artists,
-		{ outputDirectory: "/srv/music", format: "mka" },
-	);
-	const remuxedTrack = remuxedOutput
-		.find((item) => item.id === release.id)
-		?.tracks.find((item) => item.id === track.id);
-	expect(remuxedTrack?.published?.codec).toBe(file.codec);
-	expect(remuxedTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
-	expect(remuxedTrack?.published?.tags.ENCODING).toEqual([
-		"Fixture encoding description",
-	]);
-	expect(remuxedTrack?.published?.tags.ENCODERSETTINGS).toEqual([
-		"Fixture settings",
-	]);
+  const remuxedOutput = applyMetadataPreview(
+    releases,
+    new Set([track.id]),
+    files,
+    catalogData.artists,
+    { outputDirectory: "/srv/music", format: "mka" },
+  );
+  const remuxedTrack = remuxedOutput
+    .find((item) => item.id === release.id)
+    ?.tracks.find((item) => item.id === track.id);
+  expect(remuxedTrack?.published?.codec).toBe(file.codec);
+  expect(remuxedTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
+  expect(remuxedTrack?.published?.tags.ENCODING).toEqual([
+    "Fixture encoding description",
+  ]);
+  expect(remuxedTrack?.published?.tags.ENCODERSETTINGS).toEqual([
+    "Fixture settings",
+  ]);
 });
 
 it("treats case and spacing differences as exact metadata changes", () => {
-	const releases = structuredClone(originalReleases);
-	const release = releases.find((item) => item.id === "north");
-	const track = release?.tracks.find((item) => item.id === "north-t2");
-	if (!release || !track) throw new Error("Missing north-t2 fixture");
-	const baseline = applyMetadataPreview(releases, new Set([track.id]));
-	const baselineRelease = baseline.find((item) => item.id === release.id);
-	const baselineTrack = baselineRelease?.tracks.find(
-		(item) => item.id === track.id,
-	);
-	if (!baselineRelease || !baselineTrack)
-		throw new Error("Missing projected publication baseline");
-	baselineTrack.title = `${baselineTrack.title} `;
-	expect(metadataChanged(baselineRelease, baselineTrack)).toBe(true);
+  const releases = structuredClone(originalReleases);
+  const release = releases.find((item) => item.id === "north");
+  const track = release?.tracks.find((item) => item.id === "north-t2");
+  if (!release || !track) throw new Error("Missing north-t2 fixture");
+  const baseline = applyMetadataPreview(releases, new Set([track.id]));
+  const baselineRelease = baseline.find((item) => item.id === release.id);
+  const baselineTrack = baselineRelease?.tracks.find(
+    (item) => item.id === track.id,
+  );
+  if (!baselineRelease || !baselineTrack)
+    throw new Error("Missing projected publication baseline");
+  baselineTrack.title = `${baselineTrack.title} `;
+  expect(metadataChanged(baselineRelease, baselineTrack)).toBe(true);
 });
 
 it("previews explicit sort-name changes and falls back to the linked artist name", () => {
-	const artists = structuredClone(catalogData.artists) as CatalogArtist[];
-	const releases = structuredClone(originalReleases);
-	const files = structuredClone(originalFiles);
-	let release = releases.find((item) => item.id === "north-japan-local");
-	let track = release?.tracks.find(
-		(item) => item.id === "north-japan-local-t1",
-	);
-	if (!release || !track) throw new Error("Missing baseline fixture");
-	const mira = artists.find((artist) => artist.id === "mira");
-	if (!mira) throw new Error("Missing artist fixture");
+  const artists = structuredClone(catalogData.artists) as CatalogArtist[];
+  const releases = structuredClone(originalReleases);
+  const files = structuredClone(originalFiles);
+  let release = releases.find((item) => item.id === "north-japan-local");
+  let track = release?.tracks.find(
+    (item) => item.id === "north-japan-local-t1",
+  );
+  if (!release || !track) throw new Error("Missing baseline fixture");
+  const mira = artists.find((artist) => artist.id === "mira");
+  if (!mira) throw new Error("Missing artist fixture");
 
-	expect(mira.sortName).toBe("Mira Vale");
-	expect(desiredTags(release, track).ARTISTSORT).toEqual(
-		desiredTags(release, track, catalogData.artists).ARTISTSORT,
-	);
-	// Establish a valid publication snapshot from the current metadata projection
-	// before asserting the artist-sort-only delta.
-	const baseline = applyMetadataPreview(
-		releases,
-		new Set([track.id]),
-		files,
-		artists,
-	);
-	release = baseline.find((item) => item.id === release?.id);
-	track = release?.tracks.find((item) => item.id === "north-japan-local-t1");
-	if (!release || !track) throw new Error("Missing projected baseline fixture");
-	expect(track.metadataBaseline?.ARTISTSORT).toEqual(["Mira Vale"]);
-	expect(metadataChanged(release, track)).toBe(false);
-	expect(metadataChanged(release, track, artists)).toBe(false);
+  expect(mira.sortName).toBe("Mira Vale");
+  expect(desiredTags(release, track).ARTISTSORT).toEqual(
+    desiredTags(release, track, catalogData.artists).ARTISTSORT,
+  );
+  // Establish a valid publication snapshot from the current metadata projection
+  // before asserting the artist-sort-only delta.
+  const baseline = applyMetadataPreview(
+    releases,
+    new Set([track.id]),
+    files,
+    artists,
+  );
+  release = baseline.find((item) => item.id === release?.id);
+  track = release?.tracks.find((item) => item.id === "north-japan-local-t1");
+  if (!release || !track) throw new Error("Missing projected baseline fixture");
+  expect(track.metadataBaseline?.ARTISTSORT).toEqual(["Mira Vale"]);
+  expect(metadataChanged(release, track)).toBe(false);
+  expect(metadataChanged(release, track, artists)).toBe(false);
 
-	mira.sortName = "Vale, Mira";
-	expect(metadataChanged(release, track, artists)).toBe(true);
-	expect(track.published?.tags.ARTISTSORT).toEqual(["Mira Vale"]);
-	expect(desiredTags(release, track, artists).ARTISTSORT).toEqual([
-		"Vale, Mira",
-	]);
+  mira.sortName = "Vale, Mira";
+  expect(metadataChanged(release, track, artists)).toBe(true);
+  expect(track.published?.tags.ARTISTSORT).toEqual(["Mira Vale"]);
+  expect(desiredTags(release, track, artists).ARTISTSORT).toEqual([
+    "Vale, Mira",
+  ]);
 
-	delete mira.sortName;
-	expect(desiredTags(release, track, artists).ARTISTSORT).toEqual([
-		"Mira Vale",
-	]);
-	expect(mira.sortName).toBeUndefined();
-	mira.sortName = "Vale, Mira";
+  delete mira.sortName;
+  expect(desiredTags(release, track, artists).ARTISTSORT).toEqual([
+    "Mira Vale",
+  ]);
+  expect(mira.sortName).toBeUndefined();
+  mira.sortName = "Vale, Mira";
 
-	const next = applyMetadataPreview(
-		baseline,
-		new Set([track.id]),
-		files,
-		artists,
-	);
-	const nextTrack = next
-		.find((item) => item.id === release.id)
-		?.tracks.find((item) => item.id === track.id);
-	expect(track.published?.tags.ARTISTSORT).toEqual(["Mira Vale"]);
-	expect(nextTrack?.published?.tags.ARTISTSORT).toEqual(["Vale, Mira"]);
+  const next = applyMetadataPreview(
+    baseline,
+    new Set([track.id]),
+    files,
+    artists,
+  );
+  const nextTrack = next
+    .find((item) => item.id === release.id)
+    ?.tracks.find((item) => item.id === track.id);
+  expect(track.published?.tags.ARTISTSORT).toEqual(["Mira Vale"]);
+  expect(nextTrack?.published?.tags.ARTISTSORT).toEqual(["Vale, Mira"]);
 });
 
 it("derives ordered fallback sort names from linked artists, not credit overrides", () => {
-	const release = structuredClone(
-		originalReleases.find((item) => item.id === "north-japan-local"),
-	);
-	const track = release?.tracks[0];
-	if (!release || !track) throw new Error("Missing local release fixture");
-	const artists: CatalogArtist[] = [
-		{ id: "first", name: "First Artist" },
-		{ id: "middle", name: "Middle Artist" },
-		{ id: "last", name: "Last Artist", sortName: "Artist, Last" },
-	];
-	const recordingCredits = [
-		{ artistId: "first", creditName: "First Alias", joinPhrase: " & " },
-		{ artistId: "middle", creditName: "Middle Alias", joinPhrase: " feat. " },
-		{ artistId: "last", creditName: "Last Alias", joinPhrase: "" },
-	];
-	track.recordingCredits = recordingCredits;
+  const release = structuredClone(
+    originalReleases.find((item) => item.id === "north-japan-local"),
+  );
+  const track = release?.tracks[0];
+  if (!release || !track) throw new Error("Missing local release fixture");
+  const artists: CatalogArtist[] = [
+    { id: "first", name: "First Artist" },
+    { id: "middle", name: "Middle Artist" },
+    { id: "last", name: "Last Artist", sortName: "Artist, Last" },
+  ];
+  const recordingCredits = [
+    { artistId: "first", creditName: "First Alias", joinPhrase: " & " },
+    { artistId: "middle", creditName: "Middle Alias", joinPhrase: " feat. " },
+    { artistId: "last", creditName: "Last Alias", joinPhrase: "" },
+  ];
+  track.recordingCredits = recordingCredits;
 
-	const tags = desiredTags(release, track, artists);
-	expect(tags.ARTISTSSORT).toEqual([
-		"First Artist",
-		"Middle Artist",
-		"Artist, Last",
-	]);
-	expect(tags.ARTISTSORT).toEqual([
-		"First Artist & Middle Artist feat. Artist, Last",
-	]);
-	expect(tags.ARTISTS).toEqual(["First Alias", "Middle Alias", "Last Alias"]);
-	expect(artists.slice(0, 2).map((artist) => artist.sortName)).toEqual([
-		undefined,
-		undefined,
-	]);
-	recordingCredits[1].artistId = "unknown-artist";
-	const unknownLinkedArtistTags = desiredTags(release, track, artists);
-	expect(unknownLinkedArtistTags.ARTISTSSORT).toEqual([
-		"First Artist",
-		"",
-		"Artist, Last",
-	]);
-	expect(unknownLinkedArtistTags.ARTISTSORT).toEqual([]);
+  const tags = desiredTags(release, track, artists);
+  expect(tags.ARTISTSSORT).toEqual([
+    "First Artist",
+    "Middle Artist",
+    "Artist, Last",
+  ]);
+  expect(tags.ARTISTSORT).toEqual([
+    "First Artist & Middle Artist feat. Artist, Last",
+  ]);
+  expect(tags.ARTISTS).toEqual(["First Alias", "Middle Alias", "Last Alias"]);
+  expect(artists.slice(0, 2).map((artist) => artist.sortName)).toEqual([
+    undefined,
+    undefined,
+  ]);
+  recordingCredits[1].artistId = "unknown-artist";
+  const unknownLinkedArtistTags = desiredTags(release, track, artists);
+  expect(unknownLinkedArtistTags.ARTISTSSORT).toEqual([
+    "First Artist",
+    "",
+    "Artist, Last",
+  ]);
+  expect(unknownLinkedArtistTags.ARTISTSORT).toEqual([]);
 });
 
 it("omits only the colliding credit group's sort tags and clears prior values", () => {
-	const release = structuredClone(
-		originalReleases.find((item) => item.id === "north-japan-local"),
-	);
-	const track = release?.tracks[0];
-	if (!release || !track) throw new Error("Missing local release fixture");
-	const artists: CatalogArtist[] = [
-		{ id: "recording-a", name: "Shared" },
-		{ id: "recording-b", name: "Other", sortName: "Shared" },
-		{ id: "release-a", name: "Release A", sortName: "A" },
-		{ id: "release-b", name: "Release B", sortName: "B" },
-	];
-	track.recordingCredits = [
-		{ artistId: "recording-a", creditName: "A", joinPhrase: " & " },
-		{ artistId: "recording-b", creditName: "B", joinPhrase: "" },
-	];
-	release.credits = [
-		{ artistId: "release-a", credit: "Release A", joinPhrase: " & " },
-		{ artistId: "release-b", credit: "Release B", joinPhrase: "" },
-	];
-	expect(publicationSortTagCollisions(release, track, artists)).toEqual({
-		recording: true,
-		release: false,
-	});
-	const tags = desiredTags(release, track, artists);
-	expect(tags.ARTISTSORT).toEqual([]);
-	expect(tags.ARTISTSSORT).toEqual([]);
-	expect(tags.ARTIST).toEqual(["A & B"]);
-	expect(tags.ARTISTS).toEqual(["A", "B"]);
-	expect(tags.ALBUMARTISTSORT).toEqual(["A & B"]);
-	expect(tags.ALBUMARTISTSSORT).toEqual(["A", "B"]);
+  const release = structuredClone(
+    originalReleases.find((item) => item.id === "north-japan-local"),
+  );
+  const track = release?.tracks[0];
+  if (!release || !track) throw new Error("Missing local release fixture");
+  const artists: CatalogArtist[] = [
+    { id: "recording-a", name: "Shared" },
+    { id: "recording-b", name: "Other", sortName: "Shared" },
+    { id: "release-a", name: "Release A", sortName: "A" },
+    { id: "release-b", name: "Release B", sortName: "B" },
+  ];
+  track.recordingCredits = [
+    { artistId: "recording-a", creditName: "A", joinPhrase: " & " },
+    { artistId: "recording-b", creditName: "B", joinPhrase: "" },
+  ];
+  release.credits = [
+    { artistId: "release-a", credit: "Release A", joinPhrase: " & " },
+    { artistId: "release-b", credit: "Release B", joinPhrase: "" },
+  ];
+  expect(publicationSortTagCollisions(release, track, artists)).toEqual({
+    recording: true,
+    release: false,
+  });
+  const tags = desiredTags(release, track, artists);
+  expect(tags.ARTISTSORT).toEqual([]);
+  expect(tags.ARTISTSSORT).toEqual([]);
+  expect(tags.ARTIST).toEqual(["A & B"]);
+  expect(tags.ARTISTS).toEqual(["A", "B"]);
+  expect(tags.ALBUMARTISTSORT).toEqual(["A & B"]);
+  expect(tags.ALBUMARTISTSSORT).toEqual(["A", "B"]);
 
-	const diff = metadataSnapshotDiff(
-		{
-			ARTISTSORT: ["Old ordered sort"],
-			ARTISTSSORT: ["Old A", "Old B"],
-		},
-		tags,
-		{ coverHash: null, lyrics: null },
-		{ coverHash: null, lyrics: null },
-	);
-	expect(diff.flatMap((group) => group.changes)).toEqual(
-		expect.arrayContaining([
-			expect.objectContaining({
-				key: "ARTISTSORT",
-				before: ["Old ordered sort"],
-				after: [],
-			}),
-			expect.objectContaining({
-				key: "ARTISTSSORT",
-				before: ["Old A", "Old B"],
-				after: [],
-			}),
-		]),
-	);
+  const diff = metadataSnapshotDiff(
+    {
+      ARTISTSORT: ["Old ordered sort"],
+      ARTISTSSORT: ["Old A", "Old B"],
+    },
+    tags,
+    { coverHash: null, lyrics: null },
+    { coverHash: null, lyrics: null },
+  );
+  expect(diff.flatMap((group) => group.changes)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        key: "ARTISTSORT",
+        before: ["Old ordered sort"],
+        after: [],
+      }),
+      expect.objectContaining({
+        key: "ARTISTSSORT",
+        before: ["Old A", "Old B"],
+        after: [],
+      }),
+    ]),
+  );
 
-	artists[1].sortName = "Different recording sort";
-	artists[3].sortName = "A";
-	release.credits = [
-		{ artistId: "release-a", credit: "Release A", joinPhrase: " & " },
-		{ artistId: "release-b", credit: "Release B", joinPhrase: "" },
-	];
-	track.recordingCredits = [
-		{ artistId: "recording-a", creditName: "A", joinPhrase: " & " },
-		{ artistId: "recording-b", creditName: "B", joinPhrase: "" },
-	];
-	expect(publicationSortTagCollisions(release, track, artists)).toEqual({
-		recording: false,
-		release: true,
-	});
-	const inverseTags = desiredTags(release, track, artists);
-	expect(inverseTags.ARTISTSORT).toEqual(["Shared & Different recording sort"]);
-	expect(inverseTags.ARTISTSSORT).toEqual([
-		"Shared",
-		"Different recording sort",
-	]);
-	expect(inverseTags.ALBUMARTISTSORT).toEqual([]);
-	expect(inverseTags.ALBUMARTISTSSORT).toEqual([]);
-	expect(inverseTags.ALBUMARTISTS).toEqual(["Release A", "Release B"]);
-	const inverseDiff = metadataSnapshotDiff(
-		{
-			ALBUMARTISTSORT: ["Old release sort"],
-			ALBUMARTISTSSORT: ["Old release A", "Old release B"],
-		},
-		inverseTags,
-		{ coverHash: null, lyrics: null },
-		{ coverHash: null, lyrics: null },
-	);
-	expect(inverseDiff.flatMap((group) => group.changes)).toEqual(
-		expect.arrayContaining([
-			expect.objectContaining({ key: "ALBUMARTISTSORT", after: [] }),
-			expect.objectContaining({ key: "ALBUMARTISTSSORT", after: [] }),
-		]),
-	);
+  artists[1].sortName = "Different recording sort";
+  artists[3].sortName = "A";
+  release.credits = [
+    { artistId: "release-a", credit: "Release A", joinPhrase: " & " },
+    { artistId: "release-b", credit: "Release B", joinPhrase: "" },
+  ];
+  track.recordingCredits = [
+    { artistId: "recording-a", creditName: "A", joinPhrase: " & " },
+    { artistId: "recording-b", creditName: "B", joinPhrase: "" },
+  ];
+  expect(publicationSortTagCollisions(release, track, artists)).toEqual({
+    recording: false,
+    release: true,
+  });
+  const inverseTags = desiredTags(release, track, artists);
+  expect(inverseTags.ARTISTSORT).toEqual(["Shared & Different recording sort"]);
+  expect(inverseTags.ARTISTSSORT).toEqual([
+    "Shared",
+    "Different recording sort",
+  ]);
+  expect(inverseTags.ALBUMARTISTSORT).toEqual([]);
+  expect(inverseTags.ALBUMARTISTSSORT).toEqual([]);
+  expect(inverseTags.ALBUMARTISTS).toEqual(["Release A", "Release B"]);
+  const inverseDiff = metadataSnapshotDiff(
+    {
+      ALBUMARTISTSORT: ["Old release sort"],
+      ALBUMARTISTSSORT: ["Old release A", "Old release B"],
+    },
+    inverseTags,
+    { coverHash: null, lyrics: null },
+    { coverHash: null, lyrics: null },
+  );
+  expect(inverseDiff.flatMap((group) => group.changes)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ key: "ALBUMARTISTSORT", after: [] }),
+      expect.objectContaining({ key: "ALBUMARTISTSSORT", after: [] }),
+    ]),
+  );
 });

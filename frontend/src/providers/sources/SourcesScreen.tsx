@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createSource, listSources } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
+import {
+  MeloTroveSourcesBinder,
+  MeloTroveSourcesContent,
+} from "../../ui/app/MeloTroveProvider";
 import { useViewFocus } from "../../ui/components/useViewFocus";
 import {
   type SourceRegistrationErrorKey,
@@ -33,14 +43,24 @@ import {
   sourceFailure,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
-import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 
-// AppShell supplies its parsed route, so the mounted application has only one
-// hash subscription. The standalone entry remains useful for embedding/tests.
-export function SourcesScreen({ route }: { route?: SourcesRoute } = {}) {
+// The production provider supplies its parsed route, so the mounted
+// application has only one hash subscription. The standalone entry remains
+// useful for embedding/tests.
+export function SourcesScreen({
+  route,
+  children,
+}: {
+  route?: SourcesRoute;
+  children?: ReactNode;
+} = {}) {
   return (
     <SourceScansProvider>
-      {route ? <SourcesView route={route} /> : <StandaloneSourcesScreen />}
+      {route ? (
+        <SourcesView route={route}>{children}</SourcesView>
+      ) : (
+        <StandaloneSourcesScreen />
+      )}
     </SourceScansProvider>
   );
 }
@@ -50,7 +70,13 @@ function StandaloneSourcesScreen() {
   return <SourcesView route={parseSourcesRoute(hash) ?? sourcesListRoute} />;
 }
 
-function SourcesView({ route }: { route: SourcesRoute }) {
+function SourcesView({
+  route,
+  children,
+}: {
+  route: SourcesRoute;
+  children?: ReactNode;
+}) {
   switch (route.view) {
     case "location":
       return (
@@ -58,12 +84,18 @@ function SourcesView({ route }: { route: SourcesRoute }) {
           key={`${route.id}/${route.locationId}`}
           sourceId={route.id}
           locationId={route.locationId}
-        />
+        >
+          {children}
+        </SourceInspectorScreen>
       );
     case "detail":
-      return <SourceDetailScreen key={route.id} sourceId={route.id} />;
+      return (
+        <SourceDetailScreen key={route.id} sourceId={route.id}>
+          {children}
+        </SourceDetailScreen>
+      );
     case "list":
-      return <SourceListScreen />;
+      return <SourceListScreen>{children}</SourceListScreen>;
   }
 }
 
@@ -74,7 +106,7 @@ type RegistrationError =
   | SourceRegistrationErrorKey
   | ReturnType<typeof message>;
 
-function SourceListScreen() {
+function SourceListScreen({ children }: { children?: ReactNode }) {
   const { locale } = useI18n();
   const scans = useSourceScans();
   const pendingSettings = useIsMutating({
@@ -240,8 +272,8 @@ function SourceListScreen() {
     : undefined;
 
   return (
-    <SourcesBinder
-      page={{
+    <MeloTroveSourcesBinder
+      model={{
         view: "list",
         locale,
         ariaBusy: scans.checking,
@@ -302,8 +334,8 @@ function SourceListScreen() {
         cleanup: { Component: SourceArtifactCleanupPanel },
       }}
     >
-      <SourcesOutlet />
-    </SourcesBinder>
+      {children ?? <MeloTroveSourcesContent />}
+    </MeloTroveSourcesBinder>
   );
 }
 

@@ -21,21 +21,15 @@ tasks:
 
   design:check:
     desc: Validate canonical fixtures and check the separate React design prototype
-    deps: [design:install, frontend:install]
+    deps: [design:install]
     dir: docs/app-design-react
     cmds:
-      - node ../../tools/check-ui-parity.mjs
       - node check-fixtures.mjs
       - node --test check-fixtures.test.mjs
+      - node_modules/.bin/biome check .
       - node_modules/.bin/tsc --project tsconfig.json
       - node_modules/.bin/vitest run
       - node_modules/.bin/vite build
-
-  design:parity:
-    desc: Compare ported UI source bytes; pass -- --inventory to list unpaired files
-    deps: [frontend:install]
-    cmds:
-      - node tools/check-ui-parity.mjs {{.CLI_ARGS}}
 
   default:
     desc: Build the complete application

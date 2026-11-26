@@ -17,8 +17,8 @@ import {
   useMeloTroveHomeSources,
 } from "./MeloTroveProvider";
 import {
-  meloTrovePaths,
   type MeloTroveRoute,
+  meloTrovePaths,
   parseMeloTroveRoute,
 } from "./MeloTroveRoute";
 

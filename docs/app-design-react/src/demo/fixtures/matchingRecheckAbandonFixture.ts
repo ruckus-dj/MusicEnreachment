@@ -1,6 +1,6 @@
 import {
-	originalPositionHref,
-	originalReleases,
+  originalPositionHref,
+  originalReleases,
 } from "../providers/library/catalogData";
 import { fixturePublicationDestination } from "../providers/publication/publicationOutput";
 
@@ -19,22 +19,22 @@ export const unfinishedMatchingRecheckTrackId = "signals-t6";
 
 const outputRoot = `${fixturePublicationDestination.outputDirectory.replace(/[\\/]+$/, "")}/`;
 const recheckRelease = originalReleases.find(
-	(release) => release.id === recheckReleaseId,
+  (release) => release.id === recheckReleaseId,
 );
 
 export const matchingRecheckAbandonFixture = {
-	targetHref: originalPositionHref(unfinishedMatchingRecheckTrackId),
-	positions: (recheckRelease?.tracks ?? []).flatMap((track) => {
-		const path = track.published?.path;
-		if (!path) return [];
-		return [
-			{
-				operationId: `recheck-${track.id}`,
-				relativePath: path.startsWith(outputRoot)
-					? path.slice(outputRoot.length)
-					: path,
-				committed: track.id !== unfinishedMatchingRecheckTrackId,
-			},
-		];
-	}),
+  targetHref: originalPositionHref(unfinishedMatchingRecheckTrackId),
+  positions: (recheckRelease?.tracks ?? []).flatMap((track) => {
+    const path = track.published?.path;
+    if (!path) return [];
+    return [
+      {
+        operationId: `recheck-${track.id}`,
+        relativePath: path.startsWith(outputRoot)
+          ? path.slice(outputRoot.length)
+          : path,
+        committed: track.id !== unfinishedMatchingRecheckTrackId,
+      },
+    ];
+  }),
 };

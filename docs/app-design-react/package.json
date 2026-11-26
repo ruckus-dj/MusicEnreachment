@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
   "dependencies": {
     "@tailwindcss/vite": "4.3.3",
     "react": "19.3.0",

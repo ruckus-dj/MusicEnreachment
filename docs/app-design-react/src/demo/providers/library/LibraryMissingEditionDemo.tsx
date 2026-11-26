@@ -1,11 +1,11 @@
-import type { Locale } from "../../../ui/i18n/types";
 import {
-	type LibraryEditionOption,
-	type LibraryEditionsStatus,
-	type LibraryEditionTracks,
-	type LibraryEditionTracksStatus,
-	LibraryMissingEditionView,
+  type LibraryEditionOption,
+  type LibraryEditionsStatus,
+  type LibraryEditionTracks,
+  type LibraryEditionTracksStatus,
+  LibraryMissingEditionView,
 } from "../../../ui/features/library/LibraryMissingEditionView";
+import type { Locale } from "../../../ui/i18n/types";
 
 /**
  * Fixture shape of an absent MusicBrainz release group edition. It carries
@@ -13,40 +13,40 @@ import {
  * completeness are not present and must not be inferred from the titles.
  */
 export type MissingEditionFixture = {
-	id: string;
-	year: string;
-	country: string;
-	format: string;
-	disambiguation: string;
-	titles: string[];
+  id: string;
+  year: string;
+  country: string;
+  format: string;
+  disambiguation: string;
+  titles: string[];
 };
 
 const editionLabel = (edition: MissingEditionFixture) =>
-	[edition.year, edition.country, edition.format, edition.disambiguation]
-		.filter(Boolean)
-		.join(" · ");
+  [edition.year, edition.country, edition.format, edition.disambiguation]
+    .filter(Boolean)
+    .join(" · ");
 
 /**
  * Data-only projection for the shared edition chooser. Hosts and shared list
  * views can consume these typed props without passing rendered controls.
  */
 export interface MissingEditionChooserProps {
-	locale: Locale;
-	groupTitle: string;
-	editions: LibraryEditionOption[];
-	editionsStatus: LibraryEditionsStatus;
-	selectedEditionKey: string;
-	onSelectEdition: (editionKey: string) => void;
-	tracksStatus: LibraryEditionTracksStatus;
-	tracks: LibraryEditionTracks | null;
+  locale: Locale;
+  groupTitle: string;
+  editions: LibraryEditionOption[];
+  editionsStatus: LibraryEditionsStatus;
+  selectedEditionKey: string;
+  onSelectEdition: (editionKey: string) => void;
+  tracksStatus: LibraryEditionTracksStatus;
+  tracks: LibraryEditionTracks | null;
 }
 
 export interface MissingEditionChooserInput {
-	locale: Locale;
-	groupTitle: string;
-	editions: readonly MissingEditionFixture[];
-	selectedEditionKey: string;
-	onSelectEdition: (editionKey: string) => void;
+  locale: Locale;
+  groupTitle: string;
+  editions: readonly MissingEditionFixture[];
+  selectedEditionKey: string;
+  onSelectEdition: (editionKey: string) => void;
 }
 
 /**
@@ -56,41 +56,41 @@ export interface MissingEditionChooserInput {
  * selection is stored by the host under the group ID.
  */
 export function missingEditionChooserProps({
-	locale,
-	groupTitle,
-	editions,
-	selectedEditionKey,
-	onSelectEdition,
+  locale,
+  groupTitle,
+  editions,
+  selectedEditionKey,
+  onSelectEdition,
 }: MissingEditionChooserInput): MissingEditionChooserProps {
-	const options: LibraryEditionOption[] = editions.map((edition) => ({
-		key: edition.id,
-		label: editionLabel(edition),
-		trackCount: null,
-	}));
-	const selected = editions.find(
-		(edition) => edition.id === selectedEditionKey,
-	);
-	const tracks: LibraryEditionTracks | null = selected
-		? {
-				complete: null,
-				trackCount: null,
-				tracks: selected.titles.map((title, index) => ({
-					key: `${selected.id}:${index}`,
-					title,
-				})),
-			}
-		: null;
+  const options: LibraryEditionOption[] = editions.map((edition) => ({
+    key: edition.id,
+    label: editionLabel(edition),
+    trackCount: null,
+  }));
+  const selected = editions.find(
+    (edition) => edition.id === selectedEditionKey,
+  );
+  const tracks: LibraryEditionTracks | null = selected
+    ? {
+        complete: null,
+        trackCount: null,
+        tracks: selected.titles.map((title, index) => ({
+          key: `${selected.id}:${index}`,
+          title,
+        })),
+      }
+    : null;
 
-	return {
-		locale,
-		groupTitle,
-		editions: options,
-		editionsStatus: editions.length ? "ready" : "empty",
-		selectedEditionKey,
-		onSelectEdition,
-		tracksStatus: "ready",
-		tracks,
-	};
+  return {
+    locale,
+    groupTitle,
+    editions: options,
+    editionsStatus: editions.length ? "ready" : "empty",
+    selectedEditionKey,
+    onSelectEdition,
+    tracksStatus: "ready",
+    tracks,
+  };
 }
 
 /**
@@ -98,5 +98,5 @@ export function missingEditionChooserProps({
  * their selection state directly (for example the artist screen).
  */
 export function LibraryMissingEditionDemo(props: MissingEditionChooserInput) {
-	return <LibraryMissingEditionView {...missingEditionChooserProps(props)} />;
+  return <LibraryMissingEditionView {...missingEditionChooserProps(props)} />;
 }

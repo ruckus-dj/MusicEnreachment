@@ -28,6 +28,26 @@ export type OperationsKindSelection = OperationsKindFilter | "all";
 export type OperationsSortColumn = OperationsListSortColumn;
 export type OperationsSortDirection = "asc" | "desc";
 
+/**
+ * Portable operations list state: filters, sort and page offset. URL grammar
+ * and the server offset bound stay in the host.
+ */
+export interface OperationsListQuery {
+  status: OperationsStatusFilter;
+  kind: OperationsKindSelection;
+  sort: OperationsSortColumn;
+  direction: OperationsSortDirection;
+  offset: number;
+}
+
+export const defaultOperationsListQuery: OperationsListQuery = {
+  status: "attention",
+  kind: "all",
+  sort: "created",
+  direction: "desc",
+  offset: 0,
+};
+
 export function isOperationsStatusFilter(
   value: string,
 ): value is OperationsStatusFilter {

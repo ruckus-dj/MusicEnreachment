@@ -1,19 +1,10 @@
-import {
-  type ComponentType,
-  createContext,
-  type ReactNode,
-  useContext,
-} from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import type { ThemePreferenceStore } from "../components/themePreference";
-import type { IncomingGroupsRoute } from "../features/incoming/incomingGroupsRoute";
 import {
   IncomingWorkspaceView,
   type IncomingWorkspaceViewProps,
 } from "../features/incoming/IncomingWorkspaceView";
-import type {
-  LibraryArtistAddress,
-  LibraryIdValidator,
-} from "../features/library/libraryDetailRoute";
+import type { IncomingGroupsRoute } from "../features/incoming/incomingGroupsRoute";
 import {
   LibraryReleaseWorkspaceView,
   type LibraryReleaseWorkspaceViewProps,
@@ -23,18 +14,22 @@ import {
   type LibrarySelectionPreviewViewProps,
 } from "../features/library/LibrarySelectionPreviewView";
 import { LibrarySelectionScreenFrame } from "../features/library/LibrarySelectionScreenFrame";
+import type {
+  LibraryArtistAddress,
+  LibraryIdValidator,
+} from "../features/library/libraryDetailRoute";
 import {
   SetupScreenView,
   type SetupScreenViewProps,
 } from "../features/setup/SetupScreenView";
-import type { SourcesRoute } from "../features/sources/sourcesRoute";
 import {
   type SourcesPage,
   SourcesPageView,
 } from "../features/sources/SourcesRouteOutlet";
+import type { SourcesRoute } from "../features/sources/sourcesRoute";
 import type { Locale } from "../i18n/types";
-import type { ShellFrameData } from "../shell/shellRoute";
 import type { ShellHomeSourceRead } from "../shell/ShellStartupView";
+import type { ShellFrameData } from "../shell/shellRoute";
 import {
   type ApplicationRoute,
   type ApplicationRouteDataProvider,

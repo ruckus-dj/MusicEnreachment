@@ -1,9 +1,4 @@
-import {
-  type ComponentProps,
-  createContext,
-  type ReactNode,
-  useContext,
-} from "react";
+import type { ComponentProps } from "react";
 import { SourceInspectorView } from "./SourceInspectorView";
 import {
   SourceListPageView,
@@ -28,45 +23,21 @@ export type SourcesPage<I extends object = Record<never, never>> =
   | ({ view: "detail"; detail: "missing" } & MissingSourceViewProps)
   | ({ view: "location" } & SourceInspectorViewProps);
 
-/**
- * Creates the paired binder and outlet for one host. Call once at module scope
- * so the context identity stays stable across controller renders.
- */
-export function createSourcesRouteOutlet<
-  I extends object = Record<never, never>,
->() {
-  const SourcesPageContext = createContext<SourcesPage<I> | null>(null);
-
-  function SourcesBinder({
-    page,
-    children,
-  }: {
-    page: SourcesPage<I>;
-    children: ReactNode;
-  }) {
-    return (
-      <SourcesPageContext.Provider value={page}>
-        {children}
-      </SourcesPageContext.Provider>
-    );
+export function SourcesPageView<I extends object>({
+  page,
+}: {
+  page: SourcesPage<I>;
+}) {
+  switch (page.view) {
+    case "list":
+      return <SourceListPageView {...page} />;
+    case "detail":
+      return page.detail === "root" ? (
+        <SourceRootDetailView<I> {...page} />
+      ) : (
+        <MissingSourceView {...page} />
+      );
+    case "location":
+      return <SourceInspectorView {...page} />;
   }
-
-  function SourcesOutlet() {
-    const page = useContext(SourcesPageContext);
-    if (!page) throw new Error("missing sources page model");
-    switch (page.view) {
-      case "list":
-        return <SourceListPageView {...page} />;
-      case "detail":
-        return page.detail === "root" ? (
-          <SourceRootDetailView<I> {...page} />
-        ) : (
-          <MissingSourceView {...page} />
-        );
-      case "location":
-        return <SourceInspectorView {...page} />;
-    }
-  }
-
-  return { SourcesBinder, SourcesOutlet };
 }

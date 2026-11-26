@@ -1,7 +1,7 @@
 import { GenrePicker as LibraryGenrePicker } from "../../../../ui/features/library/GenrePicker";
 import {
-	type GenrePickerProps,
-	useGenrePickerDemoProvider,
+  type GenrePickerProps,
+  useGenrePickerDemoProvider,
 } from "./useGenrePickerDemoProvider";
 
 export type { GenreReference } from "./useGenrePickerDemoProvider";
@@ -13,6 +13,6 @@ export type { GenreReference } from "./useGenrePickerDemoProvider";
  * keyboard behavior.
  */
 export function GenrePickerView(props: GenrePickerProps) {
-	const picker = useGenrePickerDemoProvider(props);
-	return <LibraryGenrePicker {...picker} showLabel />;
+  const picker = useGenrePickerDemoProvider(props);
+  return <LibraryGenrePicker {...picker} showLabel />;
 }

@@ -1,491 +1,491 @@
 import type { OwnCatalogArtistDraft } from "../../../ui/features/local-catalog/OwnCatalogArtistEditor";
 import type { OwnCatalogRecordingDraft } from "../../../ui/features/local-catalog/OwnCatalogRecordingEditor";
 import {
-	formatLocalDuration,
-	type LocalReleaseDraft,
-	parseLocalDuration,
+  formatLocalDuration,
+  type LocalReleaseDraft,
+  parseLocalDuration,
 } from "../../../ui/features/local-release/localReleaseFormModel";
 import type { LocalReleaseFormInitialValues } from "../../../ui/features/local-release/useLocalReleaseForm";
 import type { GenreReference } from "../library/metadata/GenrePicker";
 import type {
-	LocalProviderRecord,
-	LocalProviderState,
-	LocalProviderType,
+  LocalProviderRecord,
+  LocalProviderState,
+  LocalProviderType,
 } from "./localProviderModel";
 
 export const LOCAL_CATALOG_PAGE_SIZE = 3;
 
 export const localCatalogTypes = [
-	"releases",
-	"recordings",
-	"artists",
+  "releases",
+  "recordings",
+  "artists",
 ] as const satisfies readonly LocalProviderType[];
 
 export type LocalCatalogType = (typeof localCatalogTypes)[number];
 
 const normalize = (value: unknown) =>
-	String(value ?? "")
-		.normalize("NFKC")
-		.toLocaleLowerCase()
-		.replace(/\s+/g, " ")
-		.trim();
+  String(value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 
 export function localCatalogRecords(
-	state: LocalProviderState,
-	type: LocalCatalogType,
+  state: LocalProviderState,
+  type: LocalCatalogType,
 ) {
-	return state.items[type].filter((item) => item.provider === "Local");
+  return state.items[type].filter((item) => item.provider === "Local");
 }
 
 export function localCatalogGenreNames(record: LocalProviderRecord) {
-	return (record.genres ?? [])
-		.map((id) => record.genreNamesById?.[id] ?? id)
-		.filter(Boolean);
+  return (record.genres ?? [])
+    .map((id) => record.genreNamesById?.[id] ?? id)
+    .filter(Boolean);
 }
 
 export function localCatalogArtistNames(
-	state: LocalProviderState,
-	artistIds: readonly string[] | undefined,
+  state: LocalProviderState,
+  artistIds: readonly string[] | undefined,
 ) {
-	const names = (artistIds ?? []).flatMap((id) => {
-		const artist = state.items.artists.find((item) => item.id === id);
-		return artist?.name ? [artist.name] : [];
-	});
-	return names;
+  const names = (artistIds ?? []).flatMap((id) => {
+    const artist = state.items.artists.find((item) => item.id === id);
+    return artist?.name ? [artist.name] : [];
+  });
+  return names;
 }
 
 export function localCatalogReleaseTitle(record: LocalProviderRecord) {
-	return (
-		record.metadataValues?.album?.[0] ||
-		record.title ||
-		record.release_group_title ||
-		""
-	);
+  return (
+    record.metadataValues?.album?.[0] ||
+    record.title ||
+    record.release_group_title ||
+    ""
+  );
 }
 
 export function localCatalogRecordingTitle(record: LocalProviderRecord) {
-	return record.title || record.metadataValues?.title?.[0] || "";
+  return record.title || record.metadataValues?.title?.[0] || "";
 }
 
 function searchText(
-	type: LocalCatalogType,
-	record: LocalProviderRecord,
-	state: LocalProviderState,
+  type: LocalCatalogType,
+  record: LocalProviderRecord,
+  state: LocalProviderState,
 ) {
-	const artists = localCatalogArtistNames(state, record.artistIds).join(" ");
-	if (type === "artists") {
-		return normalize(
-			[
-				record.name,
-				record.sortName,
-				record.disambiguation,
-				record.tags,
-				localCatalogGenreNames(record).join(" "),
-				record.key,
-			].join(" "),
-		);
-	}
-	if (type === "recordings") {
-		return normalize(
-			[
-				localCatalogRecordingTitle(record),
-				artists,
-				record.disambiguation,
-				record.isrcs,
-				record.tags,
-				localCatalogGenreNames(record).join(" "),
-				record.key,
-			].join(" "),
-		);
-	}
-	const tracks = (record.tracks ?? []).flatMap((track) => {
-		const recording = state.items.recordings.find(
-			(item) => item.id === track.recordingId,
-		);
-		return [
-			recording ? localCatalogRecordingTitle(recording) : "",
-			track.titleOverride,
-		];
-	});
-	return normalize(
-		[
-			localCatalogReleaseTitle(record),
-			record.release_group_title,
-			artists,
-			record.release_date,
-			record.country_code,
-			record.format,
-			record.label,
-			record.catalog_number,
-			record.disambiguation,
-			record.primaryType,
-			record.language,
-			record.script,
-			record.key,
-			...tracks,
-		].join(" "),
-	);
+  const artists = localCatalogArtistNames(state, record.artistIds).join(" ");
+  if (type === "artists") {
+    return normalize(
+      [
+        record.name,
+        record.sortName,
+        record.disambiguation,
+        record.tags,
+        localCatalogGenreNames(record).join(" "),
+        record.key,
+      ].join(" "),
+    );
+  }
+  if (type === "recordings") {
+    return normalize(
+      [
+        localCatalogRecordingTitle(record),
+        artists,
+        record.disambiguation,
+        record.isrcs,
+        record.tags,
+        localCatalogGenreNames(record).join(" "),
+        record.key,
+      ].join(" "),
+    );
+  }
+  const tracks = (record.tracks ?? []).flatMap((track) => {
+    const recording = state.items.recordings.find(
+      (item) => item.id === track.recordingId,
+    );
+    return [
+      recording ? localCatalogRecordingTitle(recording) : "",
+      track.titleOverride,
+    ];
+  });
+  return normalize(
+    [
+      localCatalogReleaseTitle(record),
+      record.release_group_title,
+      artists,
+      record.release_date,
+      record.country_code,
+      record.format,
+      record.label,
+      record.catalog_number,
+      record.disambiguation,
+      record.primaryType,
+      record.language,
+      record.script,
+      record.key,
+      ...tracks,
+    ].join(" "),
+  );
 }
 
 export function filterLocalCatalogRecords(
-	state: LocalProviderState,
-	type: LocalCatalogType,
-	records: readonly LocalProviderRecord[],
-	query: string,
+  state: LocalProviderState,
+  type: LocalCatalogType,
+  records: readonly LocalProviderRecord[],
+  query: string,
 ) {
-	const terms = normalize(query).split(" ").filter(Boolean);
-	if (!terms.length) return [...records];
-	return records.filter((record) => {
-		const text = searchText(type, record, state);
-		return terms.every((term) => text.includes(term));
-	});
+  const terms = normalize(query).split(" ").filter(Boolean);
+  if (!terms.length) return [...records];
+  return records.filter((record) => {
+    const text = searchText(type, record, state);
+    return terms.every((term) => text.includes(term));
+  });
 }
 
 export function localCatalogFindRecordings(
-	recordings: readonly LocalProviderRecord[],
-	artists: readonly LocalProviderRecord[],
-	query: string,
+  recordings: readonly LocalProviderRecord[],
+  artists: readonly LocalProviderRecord[],
+  query: string,
 ) {
-	const terms = normalize(query).split(" ").filter(Boolean);
-	if (!terms.length) return [];
-	return recordings
-		.map((recording) => localCatalogRecordingWithCredits(recording, artists))
-		.filter((recording) => {
-			const text = normalize(
-				[
-					recording.title,
-					recording.credits?.map((credit) => credit.creditName).join(" "),
-					recording.provider,
-				].join(" "),
-			);
-			return terms.every((term) => text.includes(term));
-		});
+  const terms = normalize(query).split(" ").filter(Boolean);
+  if (!terms.length) return [];
+  return recordings
+    .map((recording) => localCatalogRecordingWithCredits(recording, artists))
+    .filter((recording) => {
+      const text = normalize(
+        [
+          recording.title,
+          recording.credits?.map((credit) => credit.creditName).join(" "),
+          recording.provider,
+        ].join(" "),
+      );
+      return terms.every((term) => text.includes(term));
+    });
 }
 
 export function localCatalogRecordingWithCredits(
-	recording: LocalProviderRecord,
-	artists: readonly LocalProviderRecord[],
+  recording: LocalProviderRecord,
+  artists: readonly LocalProviderRecord[],
 ): LocalProviderRecord {
-	const artistIds = recording.artistIds ?? [];
-	const names = artistIds.flatMap((artistId) => {
-		const name = artists.find((artist) => artist.id === artistId)?.name;
-		return name ? [{ artistId, creditName: name }] : [];
-	});
-	return {
-		...recording,
-		title: localCatalogRecordingTitle(recording),
-		credits: recording.credits?.length
-			? recording.credits
-			: names.map((entry, index) => ({
-					...entry,
-					joinPhrase: index + 1 < names.length ? ", " : "",
-				})),
-	};
+  const artistIds = recording.artistIds ?? [];
+  const names = artistIds.flatMap((artistId) => {
+    const name = artists.find((artist) => artist.id === artistId)?.name;
+    return name ? [{ artistId, creditName: name }] : [];
+  });
+  return {
+    ...recording,
+    title: localCatalogRecordingTitle(recording),
+    credits: recording.credits?.length
+      ? recording.credits
+      : names.map((entry, index) => ({
+          ...entry,
+          joinPhrase: index + 1 < names.length ? ", " : "",
+        })),
+  };
 }
 
 export function localCatalogFindArtists(
-	artists: readonly LocalProviderRecord[],
-	query: string,
+  artists: readonly LocalProviderRecord[],
+  query: string,
 ) {
-	const terms = normalize(query).split(" ").filter(Boolean);
-	return artists.filter((artist) => {
-		const text = normalize(
-			[artist.name, artist.sortName, artist.provider].join(" "),
-		);
-		return terms.every((term) => text.includes(term));
-	});
+  const terms = normalize(query).split(" ").filter(Boolean);
+  return artists.filter((artist) => {
+    const text = normalize(
+      [artist.name, artist.sortName, artist.provider].join(" "),
+    );
+    return terms.every((term) => text.includes(term));
+  });
 }
 
 export const localCatalogPageCount = (totalItems: number) =>
-	Math.max(1, Math.ceil(totalItems / LOCAL_CATALOG_PAGE_SIZE));
+  Math.max(1, Math.ceil(totalItems / LOCAL_CATALOG_PAGE_SIZE));
 
 export function localCatalogPageSlice<T>(
-	items: readonly T[],
-	page: number,
+  items: readonly T[],
+  page: number,
 ): T[] {
-	const start = (Math.max(1, page) - 1) * LOCAL_CATALOG_PAGE_SIZE;
-	return items.slice(start, start + LOCAL_CATALOG_PAGE_SIZE);
+  const start = (Math.max(1, page) - 1) * LOCAL_CATALOG_PAGE_SIZE;
+  return items.slice(start, start + LOCAL_CATALOG_PAGE_SIZE);
 }
 
 function metadataFirst(record: LocalProviderRecord | undefined, key: string) {
-	return record?.metadataValues?.[key]?.[0];
+  return record?.metadataValues?.[key]?.[0];
 }
 
 const firstDefined = (
-	record: LocalProviderRecord | undefined,
-	field: keyof LocalProviderRecord,
-	metadataKey: string,
+  record: LocalProviderRecord | undefined,
+  field: keyof LocalProviderRecord,
+  metadataKey: string,
 ) => {
-	const value = record?.[field];
-	return typeof value === "string"
-		? value
-		: (metadataFirst(record, metadataKey) ?? "");
+  const value = record?.[field];
+  return typeof value === "string"
+    ? value
+    : (metadataFirst(record, metadataKey) ?? "");
 };
 
 export function releaseRecordToFormValues(
-	record: LocalProviderRecord,
+  record: LocalProviderRecord,
 ): LocalReleaseFormInitialValues {
-	const editionTitle = localCatalogReleaseTitle(record);
-	const groupTitle = record.release_group_title || editionTitle;
-	const releaseTitle = editionTitle !== groupTitle ? editionTitle : "";
-	return {
-		title: groupTitle,
-		edition: releaseTitle,
-		artistIds: [...(record.artistIds ?? [])],
-		primaryType: record.primaryType ?? "",
-		secondaryTypes: record.secondaryTypes ?? [],
-		language: record.language ?? "",
-		script: firstDefined(record, "script", "script"),
-		editionDetails: {
-			release_date: firstDefined(record, "release_date", "releasedate"),
-			country: firstDefined(record, "country_code", "releasecountry"),
-			format: firstDefined(record, "format", "media"),
-			label: firstDefined(record, "label", "recordlabel"),
-			catalog_number: firstDefined(record, "catalog_number", "catalognumber"),
-			disambiguation: firstDefined(record, "disambiguation", "albumversion"),
-		},
-		genres: (record.genres ?? []).map((id) => ({
-			id,
-			name: record.genreNamesById?.[id] ?? id,
-			source_name: record.genreNamesById?.[id] ?? id,
-		})),
-		tracks: (record.tracks ?? []).map((track) => ({
-			...structuredClone(track),
-			id: track.id || crypto.randomUUID(),
-			durationInput: formatLocalDuration(track.durationOverrideMs),
-		})),
-	};
+  const editionTitle = localCatalogReleaseTitle(record);
+  const groupTitle = record.release_group_title || editionTitle;
+  const releaseTitle = editionTitle !== groupTitle ? editionTitle : "";
+  return {
+    title: groupTitle,
+    edition: releaseTitle,
+    artistIds: [...(record.artistIds ?? [])],
+    primaryType: record.primaryType ?? "",
+    secondaryTypes: record.secondaryTypes ?? [],
+    language: record.language ?? "",
+    script: firstDefined(record, "script", "script"),
+    editionDetails: {
+      release_date: firstDefined(record, "release_date", "releasedate"),
+      country: firstDefined(record, "country_code", "releasecountry"),
+      format: firstDefined(record, "format", "media"),
+      label: firstDefined(record, "label", "recordlabel"),
+      catalog_number: firstDefined(record, "catalog_number", "catalognumber"),
+      disambiguation: firstDefined(record, "disambiguation", "albumversion"),
+    },
+    genres: (record.genres ?? []).map((id) => ({
+      id,
+      name: record.genreNamesById?.[id] ?? id,
+      source_name: record.genreNamesById?.[id] ?? id,
+    })),
+    tracks: (record.tracks ?? []).map((track) => ({
+      ...structuredClone(track),
+      id: track.id || crypto.randomUUID(),
+      durationInput: formatLocalDuration(track.durationOverrideMs),
+    })),
+  };
 }
 
 export function artistRecordToDraft(
-	record: LocalProviderRecord,
+  record: LocalProviderRecord,
 ): OwnCatalogArtistDraft {
-	return {
-		name: record.name ?? "",
-		sortName: record.sortName ?? "",
-		tags: record.tags ?? "",
-		genres: (record.genres ?? []).map((id) => ({
-			id,
-			name: record.genreNamesById?.[id] ?? id,
-			source_name: record.genreNamesById?.[id] ?? id,
-		})),
-	};
+  return {
+    name: record.name ?? "",
+    sortName: record.sortName ?? "",
+    tags: record.tags ?? "",
+    genres: (record.genres ?? []).map((id) => ({
+      id,
+      name: record.genreNamesById?.[id] ?? id,
+      source_name: record.genreNamesById?.[id] ?? id,
+    })),
+  };
 }
 
 export function recordingRecordToDraft(
-	record: LocalProviderRecord,
-	artists: readonly LocalProviderRecord[],
+  record: LocalProviderRecord,
+  artists: readonly LocalProviderRecord[],
 ): OwnCatalogRecordingDraft {
-	const savedCredits =
-		record.credits?.map((credit) => ({
-			artistId: credit.artistId,
-			creditName: credit.creditName,
-		})) ??
-		(record.artistIds ?? []).map((artistId) => ({
-			artistId,
-			creditName: artists.find((artist) => artist.id === artistId)?.name ?? "",
-		}));
-	return {
-		title: record.title ?? "",
-		durationInput: formatLocalDuration(record.duration_ms),
-		tags: record.tags ?? "",
-		genres: (record.genres ?? []).map((id) => ({
-			id,
-			name: record.genreNamesById?.[id] ?? id,
-			source_name: record.genreNamesById?.[id] ?? id,
-		})),
-		credits: savedCredits,
-	};
+  const savedCredits =
+    record.credits?.map((credit) => ({
+      artistId: credit.artistId,
+      creditName: credit.creditName,
+    })) ??
+    (record.artistIds ?? []).map((artistId) => ({
+      artistId,
+      creditName: artists.find((artist) => artist.id === artistId)?.name ?? "",
+    }));
+  return {
+    title: record.title ?? "",
+    durationInput: formatLocalDuration(record.duration_ms),
+    tags: record.tags ?? "",
+    genres: (record.genres ?? []).map((id) => ({
+      id,
+      name: record.genreNamesById?.[id] ?? id,
+      source_name: record.genreNamesById?.[id] ?? id,
+    })),
+    credits: savedCredits,
+  };
 }
 
 export type LocalArtistFormDraft = {
-	name: string;
-	sortName: string;
-	disambiguation: string;
-	tags: string;
-	genres: GenreReference[];
+  name: string;
+  sortName: string;
+  disambiguation: string;
+  tags: string;
+  genres: GenreReference[];
 };
 
 const genreRecordFields = (genres: readonly GenreReference[]) => ({
-	genres: genres.map((genre) => genre.id ?? genre.name),
-	genreNamesById: Object.fromEntries(
-		genres.map((genre) => [genre.id ?? genre.name, genre.name ?? ""]),
-	),
+  genres: genres.map((genre) => genre.id ?? genre.name),
+  genreNamesById: Object.fromEntries(
+    genres.map((genre) => [genre.id ?? genre.name, genre.name ?? ""]),
+  ),
 });
 
 function syncCredits(
-	existing: LocalProviderRecord | undefined,
-	artistIds: readonly string[],
-	artists: readonly LocalProviderRecord[],
+  existing: LocalProviderRecord | undefined,
+  artistIds: readonly string[],
+  artists: readonly LocalProviderRecord[],
 ) {
-	const same =
-		existing?.credits?.length === artistIds.length &&
-		existing.credits.every(
-			(credit, index) => (credit.artistId ?? "") === artistIds[index],
-		);
-	if (same) return structuredClone(existing?.credits);
-	if (!artistIds.length) return [];
-	return artistIds.map((artistId, index) => {
-		const previous = existing?.credits?.find(
-			(credit) => credit.artistId === artistId,
-		);
-		const name =
-			previous?.creditName ||
-			artists.find((artist) => artist.id === artistId)?.name ||
-			"";
-		return {
-			artistId,
-			creditName: name,
-			joinPhrase: index + 1 < artistIds.length ? ", " : "",
-		};
-	});
+  const same =
+    existing?.credits?.length === artistIds.length &&
+    existing.credits.every(
+      (credit, index) => (credit.artistId ?? "") === artistIds[index],
+    );
+  if (same) return structuredClone(existing?.credits);
+  if (!artistIds.length) return [];
+  return artistIds.map((artistId, index) => {
+    const previous = existing?.credits?.find(
+      (credit) => credit.artistId === artistId,
+    );
+    const name =
+      previous?.creditName ||
+      artists.find((artist) => artist.id === artistId)?.name ||
+      "";
+    return {
+      artistId,
+      creditName: name,
+      joinPhrase: index + 1 < artistIds.length ? ", " : "",
+    };
+  });
 }
 
 function editionMetadata(
-	existing: LocalProviderRecord | undefined,
-	draft: LocalReleaseDraft,
+  existing: LocalProviderRecord | undefined,
+  draft: LocalReleaseDraft,
 ) {
-	const values = structuredClone(existing?.metadataValues ?? {});
-	const set = (key: string, value: string | undefined) => {
-		if (value) values[key] = [value];
-		else delete values[key];
-	};
-	set("album", draft.title);
-	set("releasedate", draft.edition?.release_date);
-	set("releasecountry", draft.edition?.country);
-	set("media", draft.edition?.format);
-	set("recordlabel", draft.edition?.label);
-	if (
-		!existing ||
-		(draft.edition?.catalog_number ?? "") !==
-			firstDefined(existing, "catalog_number", "catalognumber")
-	) {
-		set("catalognumber", draft.edition?.catalog_number);
-	}
-	set("albumversion", draft.edition?.disambiguation);
-	set("script", draft.script);
-	return values;
+  const values = structuredClone(existing?.metadataValues ?? {});
+  const set = (key: string, value: string | undefined) => {
+    if (value) values[key] = [value];
+    else delete values[key];
+  };
+  set("album", draft.title);
+  set("releasedate", draft.edition?.release_date);
+  set("releasecountry", draft.edition?.country);
+  set("media", draft.edition?.format);
+  set("recordlabel", draft.edition?.label);
+  if (
+    !existing ||
+    (draft.edition?.catalog_number ?? "") !==
+      firstDefined(existing, "catalog_number", "catalognumber")
+  ) {
+    set("catalognumber", draft.edition?.catalog_number);
+  }
+  set("albumversion", draft.edition?.disambiguation);
+  set("script", draft.script);
+  return values;
 }
 
 export function releaseDraftToRecord(
-	draft: LocalReleaseDraft,
-	existing: LocalProviderRecord | undefined,
-	artists: readonly LocalProviderRecord[],
+  draft: LocalReleaseDraft,
+  existing: LocalProviderRecord | undefined,
+  artists: readonly LocalProviderRecord[],
 ): LocalProviderRecord {
-	const key = existing?.key || crypto.randomUUID();
-	return {
-		...existing,
-		id: existing?.id || `local-${key}`,
-		key,
-		provider: "Local",
-		title: draft.title,
-		release_group_title: draft.release_group_title,
-		artistIds: [...draft.artistIds],
-		primaryType: draft.primaryType ?? "",
-		language: draft.language ?? "",
-		script: draft.script ?? "",
-		release_date: draft.edition?.release_date ?? "",
-		country_code: draft.edition?.country ?? "",
-		format: draft.edition?.format ?? "",
-		label: draft.edition?.label ?? "",
-		catalog_number: draft.edition?.catalog_number ?? "",
-		disambiguation: draft.edition?.disambiguation ?? "",
-		status: existing?.status ?? "",
-		packaging: existing?.packaging ?? "",
-		barcode: existing?.barcode ?? "",
-		secondaryTypes: draft.secondaryTypes ?? existing?.secondaryTypes ?? [],
-		...genreRecordFields(draft.genres),
-		credits: syncCredits(existing, draft.artistIds, artists),
-		metadataValues: editionMetadata(existing, draft),
-		tracks: draft.tracks.map((track) => ({
-			...existing?.tracks?.find((item) => item.id === track.id),
-			id: track.id,
-			recordingId: track.recordingId,
-			titleOverride: track.titleOverride,
-			durationOverrideMs: track.durationOverrideMs,
-		})),
-	};
+  const key = existing?.key || crypto.randomUUID();
+  return {
+    ...existing,
+    id: existing?.id || `local-${key}`,
+    key,
+    provider: "Local",
+    title: draft.title,
+    release_group_title: draft.release_group_title,
+    artistIds: [...draft.artistIds],
+    primaryType: draft.primaryType ?? "",
+    language: draft.language ?? "",
+    script: draft.script ?? "",
+    release_date: draft.edition?.release_date ?? "",
+    country_code: draft.edition?.country ?? "",
+    format: draft.edition?.format ?? "",
+    label: draft.edition?.label ?? "",
+    catalog_number: draft.edition?.catalog_number ?? "",
+    disambiguation: draft.edition?.disambiguation ?? "",
+    status: existing?.status ?? "",
+    packaging: existing?.packaging ?? "",
+    barcode: existing?.barcode ?? "",
+    secondaryTypes: draft.secondaryTypes ?? existing?.secondaryTypes ?? [],
+    ...genreRecordFields(draft.genres),
+    credits: syncCredits(existing, draft.artistIds, artists),
+    metadataValues: editionMetadata(existing, draft),
+    tracks: draft.tracks.map((track) => ({
+      ...existing?.tracks?.find((item) => item.id === track.id),
+      id: track.id,
+      recordingId: track.recordingId,
+      titleOverride: track.titleOverride,
+      durationOverrideMs: track.durationOverrideMs,
+    })),
+  };
 }
 
 export function artistDraftToRecord(
-	draft: LocalArtistFormDraft,
-	existing: LocalProviderRecord | undefined,
+  draft: LocalArtistFormDraft,
+  existing: LocalProviderRecord | undefined,
 ): LocalProviderRecord {
-	const key = existing?.key || crypto.randomUUID();
-	return {
-		...existing,
-		id: existing?.id || `local-${key}`,
-		key,
-		provider: "Local",
-		name: draft.name,
-		sortName: draft.sortName,
-		disambiguation: draft.disambiguation,
-		tags: draft.tags,
-		...genreRecordFields(draft.genres),
-	};
+  const key = existing?.key || crypto.randomUUID();
+  return {
+    ...existing,
+    id: existing?.id || `local-${key}`,
+    key,
+    provider: "Local",
+    name: draft.name,
+    sortName: draft.sortName,
+    disambiguation: draft.disambiguation,
+    tags: draft.tags,
+    ...genreRecordFields(draft.genres),
+  };
 }
 
 function recordingCredits(
-	existing: LocalProviderRecord | undefined,
-	credits: readonly { artistId: string; creditName: string }[],
+  existing: LocalProviderRecord | undefined,
+  credits: readonly { artistId: string; creditName: string }[],
 ) {
-	const existingCredits = existing?.credits ?? [];
-	const sameOrder =
-		existingCredits.length === credits.length &&
-		existingCredits.every(
-			(credit, index) => credit.artistId === credits[index].artistId,
-		);
-	return credits.map((credit, index) => {
-		const nextArtistId = credits[index + 1]?.artistId;
-		const adjacentCredit = sameOrder
-			? existingCredits[index]
-			: existingCredits.find(
-					(item, position) =>
-						item.artistId === credit.artistId &&
-						existingCredits[position + 1]?.artistId === nextArtistId,
-				);
-		const retainedCredit =
-			adjacentCredit ??
-			existingCredits.find((item) => item.artistId === credit.artistId);
-		return {
-			...retainedCredit,
-			...credit,
-			joinPhrase: adjacentCredit?.joinPhrase ?? (nextArtistId ? ", " : ""),
-		};
-	});
+  const existingCredits = existing?.credits ?? [];
+  const sameOrder =
+    existingCredits.length === credits.length &&
+    existingCredits.every(
+      (credit, index) => credit.artistId === credits[index].artistId,
+    );
+  return credits.map((credit, index) => {
+    const nextArtistId = credits[index + 1]?.artistId;
+    const adjacentCredit = sameOrder
+      ? existingCredits[index]
+      : existingCredits.find(
+          (item, position) =>
+            item.artistId === credit.artistId &&
+            existingCredits[position + 1]?.artistId === nextArtistId,
+        );
+    const retainedCredit =
+      adjacentCredit ??
+      existingCredits.find((item) => item.artistId === credit.artistId);
+    return {
+      ...retainedCredit,
+      ...credit,
+      joinPhrase: adjacentCredit?.joinPhrase ?? (nextArtistId ? ", " : ""),
+    };
+  });
 }
 
 export function recordingDraftToRecord(
-	draft: OwnCatalogRecordingDraft,
-	existing: LocalProviderRecord | undefined,
+  draft: OwnCatalogRecordingDraft,
+  existing: LocalProviderRecord | undefined,
 ): LocalProviderRecord {
-	const key = existing?.key || crypto.randomUUID();
-	const metadata = structuredClone(existing?.metadataValues ?? {});
-	const title = draft.title.trim();
-	const artistIds = draft.credits.map((credit) => credit.artistId);
-	const set = (metadataKey: string, values: string[]) => {
-		if (values.some(Boolean)) metadata[metadataKey] = values;
-		else delete metadata[metadataKey];
-	};
-	set("title", title ? [title] : []);
-	return {
-		...existing,
-		id: existing?.id || `local-${key}`,
-		key,
-		provider: "Local",
-		title,
-		artistIds,
-		duration_ms:
-			existing &&
-			draft.durationInput === formatLocalDuration(existing.duration_ms)
-				? existing.duration_ms
-				: parseLocalDuration(draft.durationInput),
-		disambiguation: existing?.disambiguation ?? "",
-		explicit: existing?.explicit ?? "",
-		isrcs: existing?.isrcs ?? "",
-		tags: draft.tags,
-		credits: recordingCredits(existing, draft.credits),
-		metadataValues: metadata,
-		...genreRecordFields(draft.genres),
-	};
+  const key = existing?.key || crypto.randomUUID();
+  const metadata = structuredClone(existing?.metadataValues ?? {});
+  const title = draft.title.trim();
+  const artistIds = draft.credits.map((credit) => credit.artistId);
+  const set = (metadataKey: string, values: string[]) => {
+    if (values.some(Boolean)) metadata[metadataKey] = values;
+    else delete metadata[metadataKey];
+  };
+  set("title", title ? [title] : []);
+  return {
+    ...existing,
+    id: existing?.id || `local-${key}`,
+    key,
+    provider: "Local",
+    title,
+    artistIds,
+    duration_ms:
+      existing &&
+      draft.durationInput === formatLocalDuration(existing.duration_ms)
+        ? existing.duration_ms
+        : parseLocalDuration(draft.durationInput),
+    disambiguation: existing?.disambiguation ?? "",
+    explicit: existing?.explicit ?? "",
+    isrcs: existing?.isrcs ?? "",
+    tags: draft.tags,
+    credits: recordingCredits(existing, draft.credits),
+    metadataValues: metadata,
+    ...genreRecordFields(draft.genres),
+  };
 }

@@ -32,9 +32,12 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import type { ApplicationIncomingListModel } from "../../ui/app/ApplicationRouteOutlet";
+import {
+  MeloTroveIncomingBinder,
+  MeloTroveIncomingContent,
+} from "../../ui/app/MeloTroveProvider";
 import { focusView } from "../../ui/components/useViewFocus";
 import type { IncomingCreationSource } from "../../ui/features/incoming/IncomingCreationOutlet";
-import { IncomingWorkspaceView } from "../../ui/features/incoming/IncomingWorkspaceView";
 import {
   type IncomingFeedback,
   type IncomingMessageKey,
@@ -271,13 +274,25 @@ function candidateRows(
 
 export function IncomingGroupReviewScreen({
   route,
+  children,
 }: {
   route: IncomingGroupsRoute;
+  children?: ReactNode;
 }) {
-  return <IncomingGroupReviewContent route={route} />;
+  return (
+    <IncomingGroupReviewContent route={route}>
+      {children}
+    </IncomingGroupReviewContent>
+  );
 }
 
-function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
+function IncomingGroupReviewContent({
+  route,
+  children,
+}: {
+  route: IncomingGroupsRoute;
+  children?: ReactNode;
+}) {
   const queryClient = useQueryClient();
   const receipts = useIncomingConfirmReceipts();
   const { locale } = useI18n();
@@ -1733,10 +1748,14 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
       : null;
 
   return (
-    <IncomingWorkspaceView<IncomingCreationEditorProps>
-      creation={creation}
-      list={listModel}
-      matching={groupId ? matchingModel : null}
-    />
+    <MeloTroveIncomingBinder
+      model={{
+        creation,
+        list: listModel,
+        matching: groupId ? matchingModel : null,
+      }}
+    >
+      {children ?? <MeloTroveIncomingContent />}
+    </MeloTroveIncomingBinder>
   );
 }

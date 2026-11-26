@@ -26,10 +26,14 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
 import {
-  type LibraryReleaseOverviewModel,
-  type LibraryReleasePositionEntry,
-  type LibraryReleaseWorkspaceSelection,
-  LibraryReleaseWorkspaceView,
+  MeloTroveReleaseBinder,
+  MeloTroveReleaseContent,
+} from "../../ui/app/MeloTroveProvider";
+import type {
+  LibraryReleaseOverviewModel,
+  LibraryReleasePositionEntry,
+  LibraryReleaseWorkspaceSelection,
+  LibraryReleaseWorkspaceViewProps,
 } from "../../ui/features/library/LibraryReleaseWorkspaceView";
 import { libraryReleaseHref } from "../../ui/features/library/libraryDetailRoute";
 import {
@@ -101,12 +105,25 @@ function isTerminalOperation(state: string) {
   return ["succeeded", "failed", "cancelled"].includes(state);
 }
 
+function LibraryReleaseBinder<Props extends object>({
+  children,
+  ...model
+}: LibraryReleaseWorkspaceViewProps<Props> & { children?: ReactNode }) {
+  return (
+    <MeloTroveReleaseBinder model={model}>
+      {children ?? <MeloTroveReleaseContent />}
+    </MeloTroveReleaseBinder>
+  );
+}
+
 export function LibraryReleaseScreen({
   releaseId,
   positionId,
+  children,
 }: {
   releaseId: string;
   positionId?: string;
+  children?: ReactNode;
 }) {
   const { locale } = useI18n();
   const text = (
@@ -1439,7 +1456,7 @@ export function LibraryReleaseScreen({
 
   if (error)
     return (
-      <LibraryReleaseWorkspaceView
+      <LibraryReleaseBinder
         locale={locale}
         selection={{ kind: "unavailable" }}
         overview={{
@@ -1458,11 +1475,13 @@ export function LibraryReleaseScreen({
           },
         }}
         positions={[]}
-      />
+      >
+        {children}
+      </LibraryReleaseBinder>
     );
   if (!release || loadedReleaseID !== releaseId)
     return (
-      <LibraryReleaseWorkspaceView
+      <LibraryReleaseBinder
         locale={locale}
         selection={{ kind: "unavailable" }}
         overview={{
@@ -1471,7 +1490,9 @@ export function LibraryReleaseScreen({
           unavailable: { status: "loading", message: text("loadingRelease") },
         }}
         positions={[]}
-      />
+      >
+        {children}
+      </LibraryReleaseBinder>
     );
   const releaseRenderScope = scope.current;
   const selectedCoverGeneration =
@@ -1672,7 +1693,7 @@ export function LibraryReleaseScreen({
     },
   };
   return (
-    <LibraryReleaseWorkspaceView<FirstPublicationPreviewBinderProps>
+    <LibraryReleaseBinder<FirstPublicationPreviewBinderProps>
       locale={locale}
       selection={workspaceSelection}
       overview={overview}
@@ -2112,6 +2133,8 @@ export function LibraryReleaseScreen({
           };
         },
       )}
-    />
+    >
+      {children}
+    </LibraryReleaseBinder>
   );
 }

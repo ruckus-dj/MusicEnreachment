@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
@@ -8,20 +9,34 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { act } from "react";
+import { act, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   SetupStateBody,
   SourceRootResponse,
-} from "../../api/generated/client.schemas";
-import { incomingGroupsListHref } from "../../providers/incoming/incomingGroupsRoute";
+} from "../api/generated/client.schemas";
+import { incomingGroupsListHref } from "../providers/incoming/incomingGroupsRoute";
+import { productionMeloTroveProvider } from "../providers/meloTroveProvider";
 import {
   resetSettingsDraftMemory,
   settingsDraftStorageKey,
-} from "../../providers/settings/settingsDraft";
-import { createMemoryStorage } from "../../test/memoryStorage";
-import { server } from "../../test/server";
-import { App } from "../App";
+} from "../providers/settings/settingsDraft";
+import { createMemoryStorage } from "../test/memoryStorage";
+import { server } from "../test/server";
+import { MeloTroveUI } from "../ui/app/MeloTroveUI";
+import { I18nProvider } from "./i18n/host";
+
+function Application() {
+  const [queryClient] = useState(() => new QueryClient());
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <MeloTroveUI provider={productionMeloTroveProvider} />
+      </I18nProvider>
+    </QueryClientProvider>
+  );
+}
 
 const state: SetupStateBody = {
   completed: false,
@@ -124,7 +139,7 @@ afterEach(() => {
   window.location.hash = "";
   vi.unstubAllGlobals();
 });
-describe("AppShell sources routing", () => {
+describe("application integration", () => {
   it("provides a working skip link and one accessible current-section navigation", async () => {
     const setupRequests = vi.fn();
     server.use(
@@ -134,7 +149,7 @@ describe("AppShell sources routing", () => {
       }),
     );
     window.location.hash = "/operations";
-    render(<App />);
+    render(<Application />);
 
     const navigation = await screen.findByRole("navigation", {
       name: "Основная навигация",
@@ -174,7 +189,7 @@ describe("AppShell sources routing", () => {
     expect(window.location.hash).toBe("#/operations");
   });
 
-  it("loads source roots through the production App root without a supplied query context", async () => {
+  it("loads source roots through the production application root without a supplied query context", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
@@ -183,7 +198,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/sources";
-    render(<App />);
+    render(<Application />);
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
@@ -230,7 +245,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/settings";
-    const view = render(<App />);
+    const view = render(<Application />);
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "Настройки" }),
@@ -258,7 +273,7 @@ describe("AppShell sources routing", () => {
     expect(
       await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
     ).toBeVisible();
-    view.rerender(<App />);
+    view.rerender(<Application />);
     fireEvent.click(
       screen.getByRole("button", { name: "Уйти, сохранив черновик" }),
     );
@@ -322,7 +337,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/publications";
-    render(<App />);
+    render(<Application />);
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "Медиатека" }),
@@ -364,7 +379,7 @@ describe("AppShell sources routing", () => {
       }),
     );
     window.location.hash = "/library";
-    render(<App />);
+    render(<Application />);
 
     const navigation = await screen.findByRole("navigation", {
       name: "Основная навигация",
@@ -416,7 +431,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = `/incoming-groups/${groupId}/matching`;
-    render(<App />);
+    render(<Application />);
 
     expect(
       await screen.findByRole("heading", {
@@ -456,7 +471,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/operations";
-    render(<App />);
+    render(<Application />);
 
     expect(
       await screen.findByRole("heading", {

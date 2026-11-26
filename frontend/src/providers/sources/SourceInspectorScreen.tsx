@@ -1,5 +1,10 @@
+import type { ReactNode } from "react";
 import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  MeloTroveSourcesBinder,
+  MeloTroveSourcesContent,
+} from "../../ui/app/MeloTroveProvider";
 import {
   type SourceInspectorStepName,
   type SourceInspectorTechnicalResult,
@@ -12,15 +17,16 @@ import {
   sourcesHref,
 } from "../../ui/features/sources/sourcesRoute";
 import { renderSourceError } from "./sourcesApi";
-import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 import { useSourceInspector } from "./useSourceInspector";
 
 export function SourceInspectorScreen({
   sourceId,
   locationId,
+  children,
 }: {
   readonly sourceId: string;
   readonly locationId: string;
+  readonly children?: ReactNode;
 }) {
   const { locale } = useI18n();
   const t = (
@@ -105,8 +111,8 @@ export function SourceInspectorScreen({
     : undefined;
 
   return (
-    <SourcesBinder
-      page={{
+    <MeloTroveSourcesBinder
+      model={{
         view: "location",
         locale,
         sourcesHref,
@@ -156,8 +162,8 @@ export function SourceInspectorScreen({
         onRetryLoad: () => void inspector.load(),
       }}
     >
-      <SourcesOutlet />
-    </SourcesBinder>
+      {children ?? <MeloTroveSourcesContent />}
+    </MeloTroveSourcesBinder>
   );
 }
 

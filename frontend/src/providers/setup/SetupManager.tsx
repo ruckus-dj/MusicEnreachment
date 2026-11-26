@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   checkSetupPaths,
   completeSetup,
@@ -10,6 +16,10 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  MeloTroveSetupBinder,
+  MeloTroveSetupContent,
+} from "../../ui/app/MeloTroveProvider";
 import { SetupScreenView } from "../../ui/features/setup/SetupScreenView";
 import { setupSteps } from "../../ui/features/setup/SetupWizard";
 import {
@@ -66,9 +76,11 @@ function knownFormat(
 export function SetupManager({
   onCompleted,
   initialState,
+  children,
 }: {
   onCompleted: () => void;
   initialState: SetupStateBody;
+  children?: ReactNode;
 }) {
   const { locale } = useI18n();
   const messages = setupMessages[locale];
@@ -259,7 +271,7 @@ export function SetupManager({
       : providerDirty
         ? "idle"
         : genreCatalog.state;
-  return (
+  const model = (
     <SetupScreenView
       locale={locale}
       wizard={{
@@ -375,6 +387,11 @@ export function SetupManager({
         onPress: () => void verifySummary(),
       }}
     />
+  ).props;
+  return (
+    <MeloTroveSetupBinder model={model}>
+      {children ?? <MeloTroveSetupContent />}
+    </MeloTroveSetupBinder>
   );
   async function verifySummary() {
     setPending(true);

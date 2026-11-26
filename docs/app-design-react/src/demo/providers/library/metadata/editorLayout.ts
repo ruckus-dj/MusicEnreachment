@@ -1,41 +1,41 @@
 import { metadataFilledSummary } from "../../../../ui/features/library/MetadataFieldPresentation";
 import {
-	recordingScalarFields,
-	releaseAdditionalFields,
-	releaseBasicsFields,
-	releaseDetailFields,
-	type ReleaseScalarField,
+  type ReleaseScalarField,
+  recordingScalarFields,
+  releaseAdditionalFields,
+  releaseBasicsFields,
+  releaseDetailFields,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../../ui/i18n/types";
 import { positionScalarFields } from "../catalogData";
 import {
-	fieldByKey,
-	fieldsForScope,
-	type MetadataField,
-	type MetadataScope,
+  fieldByKey,
+  fieldsForScope,
+  type MetadataField,
+  type MetadataScope,
 } from "./registry";
 
 function releaseEditorFields(
-	fields: readonly ReleaseScalarField[],
-	group: string,
+  fields: readonly ReleaseScalarField[],
+  group: string,
 ): MetadataField[] {
-	return fields.map(({ metadataKey, kind }) => ({
-		key: metadataKey,
-		label: metadataKey,
-		tag: fieldByKey(metadataKey)?.tag ?? "",
-		scope: "release",
-		kind,
-		group,
-	}));
+  return fields.map(({ metadataKey, kind }) => ({
+    key: metadataKey,
+    label: metadataKey,
+    tag: fieldByKey(metadataKey)?.tag ?? "",
+    scope: "release",
+    kind,
+    group,
+  }));
 }
 
 export const libraryReleaseEditorFields = [
-	...releaseEditorFields(releaseBasicsFields, "release"),
-	...fieldsForScope("release").filter(
-		({ group }) => group === "release artists",
-	),
-	...releaseEditorFields(releaseDetailFields, "release"),
-	...releaseEditorFields(releaseAdditionalFields, "additional"),
+  ...releaseEditorFields(releaseBasicsFields, "release"),
+  ...fieldsForScope("release").filter(
+    ({ group }) => group === "release artists",
+  ),
+  ...releaseEditorFields(releaseDetailFields, "release"),
+  ...releaseEditorFields(releaseAdditionalFields, "additional"),
 ];
 
 /**
@@ -44,83 +44,83 @@ export const libraryReleaseEditorFields = [
  * position editor supplies its own track-scoped field instead of widening it.
  */
 export const libraryRecordingEditorFields: MetadataField[] = [
-	...recordingScalarFields.map(
-		({ metadataKey, kind, group }): MetadataField => ({
-			key: metadataKey,
-			label: metadataKey,
-			tag: fieldByKey(metadataKey)?.tag ?? "",
-			scope: "recording",
-			kind,
-			group,
-		}),
-	),
-	...fieldsForScope("recording").filter(
-		({ kind }) =>
-			kind === "credits" ||
-			kind === "contributors" ||
-			kind === "works" ||
-			kind === "movement" ||
-			kind === "identity",
-	),
+  ...recordingScalarFields.map(
+    ({ metadataKey, kind, group }): MetadataField => ({
+      key: metadataKey,
+      label: metadataKey,
+      tag: fieldByKey(metadataKey)?.tag ?? "",
+      scope: "recording",
+      kind,
+      group,
+    }),
+  ),
+  ...fieldsForScope("recording").filter(
+    ({ kind }) =>
+      kind === "credits" ||
+      kind === "contributors" ||
+      kind === "works" ||
+      kind === "movement" ||
+      kind === "identity",
+  ),
 ];
 
 export const libraryPositionEditorFields: MetadataField[] = [
-	{
-		key: "title",
-		label: "title",
-		tag: fieldByKey("title")?.tag ?? "TITLE",
-		scope: "track",
-		kind: "text",
-		group: "main",
-	},
-	...positionScalarFields.map(
-		({ metadataKey, tag, kind, group }): MetadataField => ({
-			key: metadataKey,
-			label: metadataKey,
-			tag,
-			kind,
-			scope: "track",
-			group,
-		}),
-	),
-	...fieldsForScope("recording")
-		.filter(({ kind }) => kind === "works" || kind === "movement")
-		.map((field): MetadataField => ({ ...field, scope: "track" })),
-	...fieldsForScope("track").filter(({ kind }) => kind === "identity"),
+  {
+    key: "title",
+    label: "title",
+    tag: fieldByKey("title")?.tag ?? "TITLE",
+    scope: "track",
+    kind: "text",
+    group: "main",
+  },
+  ...positionScalarFields.map(
+    ({ metadataKey, tag, kind, group }): MetadataField => ({
+      key: metadataKey,
+      label: metadataKey,
+      tag,
+      kind,
+      scope: "track",
+      group,
+    }),
+  ),
+  ...fieldsForScope("recording")
+    .filter(({ kind }) => kind === "works" || kind === "movement")
+    .map((field): MetadataField => ({ ...field, scope: "track" })),
+  ...fieldsForScope("track").filter(({ kind }) => kind === "identity"),
 ];
 
 const essentials: Partial<Record<MetadataScope, string[]>> = {
-	release: releaseBasicsFields.map(({ metadataKey }) => metadataKey),
-	recording: ["title", "explicitstatus", "isrc"],
-	track: ["track", "disc"],
+  release: releaseBasicsFields.map(({ metadataKey }) => metadataKey),
+  recording: ["title", "explicitstatus", "isrc"],
+  track: ["track", "disc"],
 };
 
 export function essentialMetadataFields(
-	fields: MetadataField[],
-	scope: MetadataScope,
+  fields: MetadataField[],
+  scope: MetadataScope,
 ): MetadataField[] {
-	if (scope === "audio")
-		return fields.filter((field) => field.kind !== "genres");
-	if (scope === "release") {
-		const selected = new Map(fields.map((field) => [field.key, field]));
-		return releaseBasicsFields.flatMap(({ metadataKey }) => {
-			const field = selected.get(metadataKey);
-			return field && field.kind !== "genres" ? [field] : [];
-		});
-	}
-	const keys = new Set(essentials[scope] ?? []);
-	return fields.filter(
-		(field) => field.kind !== "genres" && keys.has(field.key),
-	);
+  if (scope === "audio")
+    return fields.filter((field) => field.kind !== "genres");
+  if (scope === "release") {
+    const selected = new Map(fields.map((field) => [field.key, field]));
+    return releaseBasicsFields.flatMap(({ metadataKey }) => {
+      const field = selected.get(metadataKey);
+      return field && field.kind !== "genres" ? [field] : [];
+    });
+  }
+  const keys = new Set(essentials[scope] ?? []);
+  return fields.filter(
+    (field) => field.kind !== "genres" && keys.has(field.key),
+  );
 }
 
 export function metadataSummary(
-	fields: MetadataField[],
-	values: Record<string, string[]>,
-	locale: Locale = "ru",
+  fields: MetadataField[],
+  values: Record<string, string[]>,
+  locale: Locale = "ru",
 ): string {
-	const populated = fields.filter((field) =>
-		values[field.key]?.some(Boolean),
-	).length;
-	return metadataFilledSummary(locale, populated);
+  const populated = fields.filter((field) =>
+    values[field.key]?.some(Boolean),
+  ).length;
+  return metadataFilledSummary(locale, populated);
 }

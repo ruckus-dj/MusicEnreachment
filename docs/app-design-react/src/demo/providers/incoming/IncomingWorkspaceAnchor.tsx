@@ -1,103 +1,103 @@
 import { type ReactNode, useRef } from "react";
 import { navigateHash } from "../../../ui/app/hashLocation";
 import {
-	MeloTroveIncomingBinder,
-	MeloTroveIncomingContent,
+  MeloTroveIncomingBinder,
+  MeloTroveIncomingContent,
 } from "../../../ui/app/MeloTroveProvider";
 import type { IncomingCreationModel } from "../../../ui/features/incoming/IncomingCreationOutlet";
 import {
-	IncomingMatchingDataBinder,
-	type IncomingMatchingSource,
+  IncomingMatchingDataBinder,
+  type IncomingMatchingSource,
 } from "../../../ui/features/incoming/IncomingMatchingOutlet";
 import { useMatchingScreenDemoProvider } from "../matching/useMatchingScreenDemoProvider";
 import {
-	type IncomingScreenProps,
-	useIncomingScreenDemoProvider,
+  type IncomingScreenProps,
+  useIncomingScreenDemoProvider,
 } from "./IncomingScreen";
 import {
-	type IncomingGroupsRoute,
-	incomingGroupMatchingHref,
+  type IncomingGroupsRoute,
+  incomingGroupMatchingHref,
 } from "./incomingGroupsRoute";
 
 export type IncomingWorkspaceAnchorProps = {
-	route: IncomingGroupsRoute | undefined;
-	list: IncomingScreenProps;
-	creation: IncomingCreationModel | null;
+  route: IncomingGroupsRoute | undefined;
+  list: IncomingScreenProps;
+  creation: IncomingCreationModel | null;
 };
 
 /** The exact matching route selector retained between matching visits. */
 type MatchingSelector = {
-	groupId: string;
-	releaseId?: string;
-	localReleaseId?: string;
-	prepareReleaseId?: string;
-	creatingLocalRelease?: boolean;
+  groupId: string;
+  releaseId?: string;
+  localReleaseId?: string;
+  prepareReleaseId?: string;
+  creatingLocalRelease?: boolean;
 };
 
 function selectorFromRoute(
-	route: IncomingGroupsRoute,
+  route: IncomingGroupsRoute,
 ): MatchingSelector | undefined {
-	if (route.view !== "matching") return undefined;
-	return {
-		groupId: route.groupId,
-		releaseId: route.releaseId,
-		localReleaseId: route.localReleaseId,
-		prepareReleaseId: route.prepareReleaseId,
-		creatingLocalRelease: route.creatingLocalRelease,
-	};
+  if (route.view !== "matching") return undefined;
+  return {
+    groupId: route.groupId,
+    releaseId: route.releaseId,
+    localReleaseId: route.localReleaseId,
+    prepareReleaseId: route.prepareReleaseId,
+    creatingLocalRelease: route.creatingLocalRelease,
+  };
 }
 
 function MatchingScreenController({
-	selector,
-	list,
-	hidden,
-	children,
+  selector,
+  list,
+  hidden,
+  children,
 }: {
-	selector: MatchingSelector;
-	list: IncomingScreenProps;
-	hidden: boolean;
-	children: ReactNode;
+  selector: MatchingSelector;
+  list: IncomingScreenProps;
+  hidden: boolean;
+  children: ReactNode;
 }) {
-	const matching = useMatchingScreenDemoProvider({
-		destination: list.destination,
-		state: list.state,
-		onState: list.onState,
-		files: list.files,
-		providers: list.providers,
-		artists: list.artists,
-		releases: list.releases,
-		onReleases: list.onReleases,
-		publication: list.publication,
-		groupId: selector.groupId,
-		releaseId: selector.releaseId,
-		localReleaseId: selector.localReleaseId,
-		prepareReleaseId: selector.prepareReleaseId,
-		createLocalReleaseHref: incomingGroupMatchingHref(
-			selector.groupId,
-			selector.releaseId,
-			{
-				localReleaseId: selector.localReleaseId,
-				prepareReleaseId: selector.prepareReleaseId,
-				creatingLocalRelease: true,
-			},
-		),
-		onSelectProviderRelease: (releaseId?: string) => {
-			navigateHash(incomingGroupMatchingHref(selector.groupId, releaseId));
-		},
-		onSelectLocalRelease: (localReleaseId: string) => {
-			navigateHash(
-				incomingGroupMatchingHref(selector.groupId, undefined, {
-					localReleaseId,
-				}),
-			);
-		},
-		hidden: hidden || selector.creatingLocalRelease === true,
-	});
-	return (
-		<IncomingMatchingDataBinder model={matching}>
-			{children}
-		</IncomingMatchingDataBinder>
-	);
+  const matching = useMatchingScreenDemoProvider({
+    destination: list.destination,
+    state: list.state,
+    onState: list.onState,
+    files: list.files,
+    providers: list.providers,
+    artists: list.artists,
+    releases: list.releases,
+    onReleases: list.onReleases,
+    publication: list.publication,
+    groupId: selector.groupId,
+    releaseId: selector.releaseId,
+    localReleaseId: selector.localReleaseId,
+    prepareReleaseId: selector.prepareReleaseId,
+    createLocalReleaseHref: incomingGroupMatchingHref(
+      selector.groupId,
+      selector.releaseId,
+      {
+        localReleaseId: selector.localReleaseId,
+        prepareReleaseId: selector.prepareReleaseId,
+        creatingLocalRelease: true,
+      },
+    ),
+    onSelectProviderRelease: (releaseId?: string) => {
+      navigateHash(incomingGroupMatchingHref(selector.groupId, releaseId));
+    },
+    onSelectLocalRelease: (localReleaseId: string) => {
+      navigateHash(
+        incomingGroupMatchingHref(selector.groupId, undefined, {
+          localReleaseId,
+        }),
+      );
+    },
+    hidden: hidden || selector.creatingLocalRelease === true,
+  });
+  return (
+    <IncomingMatchingDataBinder model={matching}>
+      {children}
+    </IncomingMatchingDataBinder>
+  );
 }
 
 /**
@@ -109,53 +109,53 @@ function MatchingScreenController({
  * while matching is active.
  */
 export function DemoMeloTroveIncomingBinder({
-	route,
-	list,
-	creation,
-	children,
+  route,
+  list,
+  creation,
+  children,
 }: IncomingWorkspaceAnchorProps & { children: ReactNode }) {
-	const listModel = useIncomingScreenDemoProvider(list);
-	const listHidden = route?.view !== "list";
-	const listView = listHidden
-		? {
-				...listModel,
-				hidden: true,
-				panel: listModel.panel
-					? {
-							...listModel.panel,
-							rows: listModel.panel.rows.map((row) => ({
-								...row,
-								opened: false,
-								files: [],
-							})),
-						}
-					: undefined,
-			}
-		: listModel;
-	const lastSelector = useRef<MatchingSelector | null>(null);
-	const currentSelector = route ? selectorFromRoute(route) : undefined;
-	if (currentSelector) lastSelector.current = currentSelector;
-	const selector = lastSelector.current;
-	const matchingSource: IncomingMatchingSource | null = selector
-		? {
-				bind: (children) => (
-					<MatchingScreenController
-						selector={selector}
-						list={list}
-						hidden={route?.view !== "matching"}
-					>
-						{children}
-					</MatchingScreenController>
-				),
-			}
-		: null;
-	return (
-		<MeloTroveIncomingBinder
-			model={{ creation, list: listView, matching: matchingSource }}
-		>
-			{children}
-		</MeloTroveIncomingBinder>
-	);
+  const listModel = useIncomingScreenDemoProvider(list);
+  const listHidden = route?.view !== "list";
+  const listView = listHidden
+    ? {
+        ...listModel,
+        hidden: true,
+        panel: listModel.panel
+          ? {
+              ...listModel.panel,
+              rows: listModel.panel.rows.map((row) => ({
+                ...row,
+                opened: false,
+                files: [],
+              })),
+            }
+          : undefined,
+      }
+    : listModel;
+  const lastSelector = useRef<MatchingSelector | null>(null);
+  const currentSelector = route ? selectorFromRoute(route) : undefined;
+  if (currentSelector) lastSelector.current = currentSelector;
+  const selector = lastSelector.current;
+  const matchingSource: IncomingMatchingSource | null = selector
+    ? {
+        bind: (children) => (
+          <MatchingScreenController
+            selector={selector}
+            list={list}
+            hidden={route?.view !== "matching"}
+          >
+            {children}
+          </MatchingScreenController>
+        ),
+      }
+    : null;
+  return (
+    <MeloTroveIncomingBinder
+      model={{ creation, list: listView, matching: matchingSource }}
+    >
+      {children}
+    </MeloTroveIncomingBinder>
+  );
 }
 
 /**
@@ -164,9 +164,9 @@ export function DemoMeloTroveIncomingBinder({
  * preserves existing imports and prop shape.
  */
 export function IncomingWorkspaceAnchor(props: IncomingWorkspaceAnchorProps) {
-	return (
-		<DemoMeloTroveIncomingBinder {...props}>
-			<MeloTroveIncomingContent />
-		</DemoMeloTroveIncomingBinder>
-	);
+  return (
+    <DemoMeloTroveIncomingBinder {...props}>
+      <MeloTroveIncomingContent />
+    </DemoMeloTroveIncomingBinder>
+  );
 }

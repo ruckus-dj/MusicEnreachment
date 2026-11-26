@@ -8,9 +8,9 @@ import "../ui/styles/index.css";
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing design root");
 createRoot(root).render(
-	<StrictMode>
-		<I18nProvider>
-			<MeloTroveUI provider={demoMeloTroveProvider} />
-		</I18nProvider>
-	</StrictMode>,
+  <StrictMode>
+    <I18nProvider>
+      <MeloTroveUI provider={demoMeloTroveProvider} />
+    </I18nProvider>
+  </StrictMode>,
 );

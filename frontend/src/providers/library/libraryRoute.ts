@@ -37,7 +37,8 @@ const availabilities = new Set<AvailabilityFilter>([
 ]);
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isUuid = (rawId: string) => uuidPattern.test(rawId);
+/** Exact host identifier policy for live release and position path segments. */
+export const isUuid = (rawId: string) => uuidPattern.test(rawId);
 
 export function parseLibraryReleaseRoute(
   hash: string,

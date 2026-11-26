@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   deleteSource,
   getGetSourceQueryKey,
@@ -12,6 +12,10 @@ import {
   updateSource,
 } from "../../api/generated/client";
 import { useI18n } from "../../app/i18n/host";
+import {
+  MeloTroveSourcesBinder,
+  MeloTroveSourcesContent,
+} from "../../ui/app/MeloTroveProvider";
 import { useViewFocus } from "../../ui/components/useViewFocus";
 import type { SourceRootChange } from "../../ui/features/sources/SourceRootSettingsView";
 import { sourceMessage } from "../../ui/features/sources/sourceMessages";
@@ -30,9 +34,14 @@ import {
   sourceResponseError,
   sourceSettingsMutationKey,
 } from "./sourcesApi";
-import { SourcesBinder, SourcesOutlet } from "./sourcesOutlet";
 
-export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
+export function SourceDetailScreen({
+  sourceId,
+  children,
+}: {
+  sourceId: string;
+  children?: ReactNode;
+}) {
   const { locale } = useI18n();
   const queryClient = useQueryClient();
   const scanRevision = useSourceScans().rootRevision(sourceId);
@@ -172,8 +181,8 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   return (
-    <SourcesBinder
-      page={{
+    <MeloTroveSourcesBinder
+      model={{
         view: "detail",
         detail: "root",
         locale,
@@ -260,7 +269,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
           : undefined,
       }}
     >
-      <SourcesOutlet />
-    </SourcesBinder>
+      {children ?? <MeloTroveSourcesContent />}
+    </MeloTroveSourcesBinder>
   );
 }

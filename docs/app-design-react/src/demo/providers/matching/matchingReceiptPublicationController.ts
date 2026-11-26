@@ -1,59 +1,59 @@
 import { useState } from "react";
 import type {
-	IncomingFiles,
-	IncomingReleases,
-	MatchingLinkReceipt,
+  IncomingFiles,
+  IncomingReleases,
+  MatchingLinkReceipt,
 } from "../incoming/incomingModel";
 import type { CatalogArtist } from "../library/catalogData";
 import {
-	fixturePublicationDestination,
-	type PublicationDestination,
+  fixturePublicationDestination,
+  type PublicationDestination,
 } from "../publication/publicationOutput";
 import {
-	type MatchingReceiptPublicationNotice,
-	type MatchingReceiptPublicationPreview,
-	type MatchingReceiptPublicationRow,
-	prepareMatchingReceiptPublication,
+  type MatchingReceiptPublicationNotice,
+  type MatchingReceiptPublicationPreview,
+  type MatchingReceiptPublicationRow,
+  prepareMatchingReceiptPublication,
 } from "./matchingReceiptPublication";
 import type { MatchingReceiptPublicationQueuePort } from "./matchingReceiptPublicationQueue";
 
 /** One exact receipt position that a scoped apply did not publish. */
 export type MatchingReceiptPublicationFailure = {
-	trackId: string;
-	notice: MatchingReceiptPublicationNotice;
+  trackId: string;
+  notice: MatchingReceiptPublicationNotice;
 };
 
 export type MatchingReceiptPublicationOutcome = {
-	/** Positions the operator asked to publish in this confirmation. */
-	attempted: number;
-	published: number;
-	failed: readonly MatchingReceiptPublicationFailure[];
-	rejected: readonly MatchingReceiptPublicationFailure[];
+  /** Positions the operator asked to publish in this confirmation. */
+  attempted: number;
+  published: number;
+  failed: readonly MatchingReceiptPublicationFailure[];
+  rejected: readonly MatchingReceiptPublicationFailure[];
 };
 
 export type MatchingReceiptPublicationController = {
-	rows: readonly MatchingReceiptPublicationRow[];
-	/** Positions with an explicit prepared preview; an empty set is unprepared. */
-	prepared: ReadonlySet<string>;
-	/** Positions with a scheduler job that has not reached a terminal state. */
-	pendingJobs: ReadonlyMap<string, string>;
-	running: ReadonlySet<string>;
-	/** Terminal failure notices, keyed by position. */
-	failures: ReadonlyMap<string, MatchingReceiptPublicationNotice>;
-	included: ReadonlySet<string>;
-	selectedPositionId: string;
-	selectedRow: MatchingReceiptPublicationRow | undefined;
-	canPrepare: boolean;
-	canConfirm: boolean;
-	preparing: boolean;
-	outcome: MatchingReceiptPublicationOutcome | null;
-	/** Explicit saved-file choice; `null` means none was made. */
-	sourceSelection: (trackId: string) => string | null;
-	toggleInclude: (trackId: string) => void;
-	selectPosition: (trackId: string) => void;
-	selectSource: (trackId: string, sourceId: string | null) => void;
-	refresh: () => void;
-	confirm: () => void;
+  rows: readonly MatchingReceiptPublicationRow[];
+  /** Positions with an explicit prepared preview; an empty set is unprepared. */
+  prepared: ReadonlySet<string>;
+  /** Positions with a scheduler job that has not reached a terminal state. */
+  pendingJobs: ReadonlyMap<string, string>;
+  running: ReadonlySet<string>;
+  /** Terminal failure notices, keyed by position. */
+  failures: ReadonlyMap<string, MatchingReceiptPublicationNotice>;
+  included: ReadonlySet<string>;
+  selectedPositionId: string;
+  selectedRow: MatchingReceiptPublicationRow | undefined;
+  canPrepare: boolean;
+  canConfirm: boolean;
+  preparing: boolean;
+  outcome: MatchingReceiptPublicationOutcome | null;
+  /** Explicit saved-file choice; `null` means none was made. */
+  sourceSelection: (trackId: string) => string | null;
+  toggleInclude: (trackId: string) => void;
+  selectPosition: (trackId: string) => void;
+  selectSource: (trackId: string, sourceId: string | null) => void;
+  refresh: () => void;
+  confirm: () => void;
 };
 
 /**
@@ -65,22 +65,22 @@ export type MatchingReceiptPublicationController = {
  * the operator must choose the file to publish.
  */
 function explicitSelections(
-	receipt: MatchingLinkReceipt,
-	chosen: Readonly<Record<string, string | null>>,
+  receipt: MatchingLinkReceipt,
+  chosen: Readonly<Record<string, string | null>>,
 ): Record<string, string | null> {
-	const selections: Record<string, string | null> = {};
-	for (const position of receipt.positions) {
-		const trackId = String(position.trackId);
-		const requested = chosen[trackId];
-		const fallback =
-			position.sourceIds.length === 1 ? (position.sourceIds[0] ?? null) : null;
-		selections[trackId] =
-			requested !== undefined &&
-			(requested === null || position.sourceIds.includes(requested))
-				? requested
-				: fallback;
-	}
-	return selections;
+  const selections: Record<string, string | null> = {};
+  for (const position of receipt.positions) {
+    const trackId = String(position.trackId);
+    const requested = chosen[trackId];
+    const fallback =
+      position.sourceIds.length === 1 ? (position.sourceIds[0] ?? null) : null;
+    selections[trackId] =
+      requested !== undefined &&
+      (requested === null || position.sourceIds.includes(requested))
+        ? requested
+        : fallback;
+  }
+  return selections;
 }
 
 /**
@@ -93,193 +93,193 @@ function explicitSelections(
  * unmount and remount without losing pending status or the terminal outcome.
  */
 export function useMatchingReceiptPublication({
-	receipt,
-	releases,
-	files,
-	artists,
-	savedReceipts,
-	destination = fixturePublicationDestination,
-	publication,
+  receipt,
+  releases,
+  files,
+  artists,
+  savedReceipts,
+  destination = fixturePublicationDestination,
+  publication,
 }: {
-	receipt: MatchingLinkReceipt;
-	releases: IncomingReleases;
-	files: IncomingFiles;
-	artists: readonly CatalogArtist[];
-	savedReceipts: readonly MatchingLinkReceipt[];
-	destination?: PublicationDestination;
-	publication?: MatchingReceiptPublicationQueuePort;
+  receipt: MatchingLinkReceipt;
+  releases: IncomingReleases;
+  files: IncomingFiles;
+  artists: readonly CatalogArtist[];
+  savedReceipts: readonly MatchingLinkReceipt[];
+  destination?: PublicationDestination;
+  publication?: MatchingReceiptPublicationQueuePort;
 }): MatchingReceiptPublicationController {
-	const [included, setIncluded] = useState<ReadonlySet<string>>(
-		() =>
-			new Set(
-				receipt.positions
-					.filter((position) => position.included)
-					.map((position) => String(position.trackId)),
-			),
-	);
-	const [selectedPositionId, selectPosition] = useState(
-		String(receipt.positions[0]?.trackId ?? ""),
-	);
-	const [chosen, setChosen] = useState<Record<string, string | null>>({});
-	const prepareFor = (
-		trackId: string,
-		choice: Readonly<Record<string, string | null>>,
-		catalog: IncomingReleases = releases,
-	) =>
-		prepareMatchingReceiptPublication(
-			receipt,
-			catalog,
-			files,
-			explicitSelections(receipt, choice),
-			destination,
-			[...artists],
-			{ positionId: trackId, savedReceipts },
-		);
-	const batches =
-		publication?.batches.filter((item) => item.receiptId === receipt.id) ?? [];
-	const batch = batches.at(-1);
-	const entryStatus = (entry: { jobId: string | null }) =>
-		entry.jobId ? publication?.states.get(entry.jobId) : "failed";
-	const [prepared, setPrepared] = useState<
-		ReadonlyMap<string, MatchingReceiptPublicationPreview>
-	>(() => new Map());
+  const [included, setIncluded] = useState<ReadonlySet<string>>(
+    () =>
+      new Set(
+        receipt.positions
+          .filter((position) => position.included)
+          .map((position) => String(position.trackId)),
+      ),
+  );
+  const [selectedPositionId, selectPosition] = useState(
+    String(receipt.positions[0]?.trackId ?? ""),
+  );
+  const [chosen, setChosen] = useState<Record<string, string | null>>({});
+  const prepareFor = (
+    trackId: string,
+    choice: Readonly<Record<string, string | null>>,
+    catalog: IncomingReleases = releases,
+  ) =>
+    prepareMatchingReceiptPublication(
+      receipt,
+      catalog,
+      files,
+      explicitSelections(receipt, choice),
+      destination,
+      [...artists],
+      { positionId: trackId, savedReceipts },
+    );
+  const batches =
+    publication?.batches.filter((item) => item.receiptId === receipt.id) ?? [];
+  const batch = batches.at(-1);
+  const entryStatus = (entry: { jobId: string | null }) =>
+    entry.jobId ? publication?.states.get(entry.jobId) : "failed";
+  const [prepared, setPrepared] = useState<
+    ReadonlyMap<string, MatchingReceiptPublicationPreview>
+  >(() => new Map());
 
-	const pendingJobs = new Map<string, string>();
-	const running = new Set<string>();
-	const pendingPreviews = new Map<string, MatchingReceiptPublicationPreview>();
-	for (const admitted of batches) {
-		for (const entry of admitted.entries) {
-			const state = entryStatus(entry);
-			if (!entry.jobId || state === "succeeded" || state === "failed") continue;
-			pendingJobs.set(entry.trackId, entry.jobId);
-			pendingPreviews.set(entry.trackId, entry.preview);
-			if (state === "running") running.add(entry.trackId);
-		}
-	}
-	const failures = new Map<string, MatchingReceiptPublicationNotice>();
-	const rejected: MatchingReceiptPublicationFailure[] = [];
-	let terminal = Boolean(batch);
-	if (batch)
-		for (const entry of batch.entries) {
-			const state = entryStatus(entry);
-			if (state === "succeeded") continue;
-			if (!entry.jobId) {
-				rejected.push({
-					trackId: entry.trackId,
-					notice: entry.notice ?? "matchingReceipt.apply.blocked",
-				});
-				continue;
-			}
-			if (state === "failed") {
-				failures.set(
-					entry.trackId,
-					entry.notice ??
-						batch.results[entry.trackId]?.notice ??
-						"matchingReceipt.apply.blocked",
-				);
-				continue;
-			}
-			terminal = false;
-		}
-	const displayPreviews = new Map([...prepared, ...pendingPreviews]);
-	const rows = [...displayPreviews.values()].flatMap((preview) => preview.rows);
+  const pendingJobs = new Map<string, string>();
+  const running = new Set<string>();
+  const pendingPreviews = new Map<string, MatchingReceiptPublicationPreview>();
+  for (const admitted of batches) {
+    for (const entry of admitted.entries) {
+      const state = entryStatus(entry);
+      if (!entry.jobId || state === "succeeded" || state === "failed") continue;
+      pendingJobs.set(entry.trackId, entry.jobId);
+      pendingPreviews.set(entry.trackId, entry.preview);
+      if (state === "running") running.add(entry.trackId);
+    }
+  }
+  const failures = new Map<string, MatchingReceiptPublicationNotice>();
+  const rejected: MatchingReceiptPublicationFailure[] = [];
+  let terminal = Boolean(batch);
+  if (batch)
+    for (const entry of batch.entries) {
+      const state = entryStatus(entry);
+      if (state === "succeeded") continue;
+      if (!entry.jobId) {
+        rejected.push({
+          trackId: entry.trackId,
+          notice: entry.notice ?? "matchingReceipt.apply.blocked",
+        });
+        continue;
+      }
+      if (state === "failed") {
+        failures.set(
+          entry.trackId,
+          entry.notice ??
+            batch.results[entry.trackId]?.notice ??
+            "matchingReceipt.apply.blocked",
+        );
+        continue;
+      }
+      terminal = false;
+    }
+  const displayPreviews = new Map([...prepared, ...pendingPreviews]);
+  const rows = [...displayPreviews.values()].flatMap((preview) => preview.rows);
 
-	let outcome: MatchingReceiptPublicationOutcome | null = null;
-	if (batch && terminal) {
-		const failed = [...failures].map(([trackId, notice]) => ({
-			trackId,
-			notice,
-		}));
-		outcome = {
-			attempted: batch.entries.length,
-			published: batch.entries.length - failed.length - rejected.length,
-			failed,
-			rejected,
-		};
-	}
+  let outcome: MatchingReceiptPublicationOutcome | null = null;
+  if (batch && terminal) {
+    const failed = [...failures].map(([trackId, notice]) => ({
+      trackId,
+      notice,
+    }));
+    outcome = {
+      attempted: batch.entries.length,
+      published: batch.entries.length - failed.length - rejected.length,
+      failed,
+      rejected,
+    };
+  }
 
-	const ready = [...prepared].filter(
-		([trackId, preview]) =>
-			included.has(trackId) && preview.canApply && !pendingJobs.has(trackId),
-	);
-	const selectedRow = rows.find((row) => row.trackId === selectedPositionId);
-	const selections = explicitSelections(receipt, chosen);
-	const preparable = [...included].filter(
-		(trackId) => !pendingJobs.has(trackId) && Boolean(selections[trackId]),
-	);
+  const ready = [...prepared].filter(
+    ([trackId, preview]) =>
+      included.has(trackId) && preview.canApply && !pendingJobs.has(trackId),
+  );
+  const selectedRow = rows.find((row) => row.trackId === selectedPositionId);
+  const selections = explicitSelections(receipt, chosen);
+  const preparable = [...included].filter(
+    (trackId) => !pendingJobs.has(trackId) && Boolean(selections[trackId]),
+  );
 
-	const toggleInclude = (trackId: string) => {
-		if (pendingJobs.has(trackId)) return;
-		setIncluded((current) => {
-			const next = new Set(current);
-			if (next.has(trackId)) next.delete(trackId);
-			else next.add(trackId);
-			return next;
-		});
-	};
-	const selectSource = (trackId: string, sourceId: string | null) => {
-		if (pendingJobs.has(trackId)) return;
-		setChosen((current) => ({ ...current, [trackId]: sourceId }));
-		// A source change invalidates this position's preview; the operator must
-		// prepare it again before it becomes confirmable.
-		setPrepared((current) => {
-			if (!current.has(trackId)) return current;
-			const next = new Map(current);
-			next.delete(trackId);
-			return next;
-		});
-	};
-	const refresh = () => {
-		if (!preparable.length) return;
-		setPrepared(
-			(current) =>
-				new Map([
-					...current,
-					...preparable.map((id) => [id, prepareFor(id, chosen)] as const),
-				]),
-		);
-	};
+  const toggleInclude = (trackId: string) => {
+    if (pendingJobs.has(trackId)) return;
+    setIncluded((current) => {
+      const next = new Set(current);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return next;
+    });
+  };
+  const selectSource = (trackId: string, sourceId: string | null) => {
+    if (pendingJobs.has(trackId)) return;
+    setChosen((current) => ({ ...current, [trackId]: sourceId }));
+    // A source change invalidates this position's preview; the operator must
+    // prepare it again before it becomes confirmable.
+    setPrepared((current) => {
+      if (!current.has(trackId)) return current;
+      const next = new Map(current);
+      next.delete(trackId);
+      return next;
+    });
+  };
+  const refresh = () => {
+    if (!preparable.length) return;
+    setPrepared(
+      (current) =>
+        new Map([
+          ...current,
+          ...preparable.map((id) => [id, prepareFor(id, chosen)] as const),
+        ]),
+    );
+  };
 
-	const confirm = () => {
-		if (!publication || !ready.length) return;
-		publication.submit({
-			receipt: structuredClone(receipt),
-			selections,
-			destination: { ...destination },
-			artists: [...artists],
-			entries: ready.map(([positionId, preview]) => ({
-				positionId,
-				preview: structuredClone(preview),
-			})),
-		});
-		setPrepared((current) => {
-			const next = new Map(current);
-			for (const [id] of ready) next.delete(id);
-			return next;
-		});
-	};
+  const confirm = () => {
+    if (!publication || !ready.length) return;
+    publication.submit({
+      receipt: structuredClone(receipt),
+      selections,
+      destination: { ...destination },
+      artists: [...artists],
+      entries: ready.map(([positionId, preview]) => ({
+        positionId,
+        preview: structuredClone(preview),
+      })),
+    });
+    setPrepared((current) => {
+      const next = new Map(current);
+      for (const [id] of ready) next.delete(id);
+      return next;
+    });
+  };
 
-	return {
-		rows,
-		prepared: new Set(displayPreviews.keys()),
-		pendingJobs,
-		running,
-		failures,
-		included,
-		selectedPositionId,
-		selectedRow,
-		canPrepare: preparable.length > 0,
-		canConfirm: Boolean(publication) && ready.length > 0,
-		preparing: false,
-		outcome,
-		sourceSelection: (trackId) =>
-			pendingPreviews.get(trackId)?.rows[0]?.sourceId ??
-			chosen[trackId] ??
-			null,
-		toggleInclude,
-		selectPosition,
-		selectSource,
-		refresh,
-		confirm,
-	};
+  return {
+    rows,
+    prepared: new Set(displayPreviews.keys()),
+    pendingJobs,
+    running,
+    failures,
+    included,
+    selectedPositionId,
+    selectedRow,
+    canPrepare: preparable.length > 0,
+    canConfirm: Boolean(publication) && ready.length > 0,
+    preparing: false,
+    outcome,
+    sourceSelection: (trackId) =>
+      pendingPreviews.get(trackId)?.rows[0]?.sourceId ??
+      chosen[trackId] ??
+      null,
+    toggleInclude,
+    selectPosition,
+    selectSource,
+    refresh,
+    confirm,
+  };
 }

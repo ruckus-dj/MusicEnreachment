@@ -1,14 +1,14 @@
 export type ManagedPathObservation =
-	| "present"
-	| "absent"
-	| "replaced"
-	| "unknown";
+  | "present"
+  | "absent"
+  | "replaced"
+  | "unknown";
 /** Operation-level states; `stale` comes only from confirmed-scope rejection. */
 export type ManagedPublicationDeletionResult =
-	| "completed"
-	| "stale"
-	| "retry"
-	| "conflict";
+  | "completed"
+  | "stale"
+  | "retry"
+  | "conflict";
 
 /**
  * Interprets explicit demo observations; it performs no filesystem operation.
@@ -18,12 +18,12 @@ export type ManagedPublicationDeletionResult =
  * absence and is always retried.
  */
 export function resolveManagedPublicationDeletion(
-	path: ManagedPathObservation,
-	deleteSucceeded: boolean,
-	metadataCommitSucceeded: boolean,
+  path: ManagedPathObservation,
+  deleteSucceeded: boolean,
+  metadataCommitSucceeded: boolean,
 ): Exclude<ManagedPublicationDeletionResult, "stale"> {
-	if (path === "unknown") return "retry";
-	if (path === "replaced") return "conflict";
-	if (path === "present" && !deleteSucceeded) return "retry";
-	return metadataCommitSucceeded ? "completed" : "retry";
+  if (path === "unknown") return "retry";
+  if (path === "replaced") return "conflict";
+  if (path === "present" && !deleteSucceeded) return "retry";
+  return metadataCommitSucceeded ? "completed" : "retry";
 }

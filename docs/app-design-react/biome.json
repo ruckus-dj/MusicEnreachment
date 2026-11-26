@@ -1,0 +1,49 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space"
+  },
+  "linter": {
+    "enabled": true,
+    "includes": ["src/ui/**/*.ts", "src/ui/**/*.tsx", "*.mjs", "*.ts"]
+  },
+  "files": {
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "*.mjs", "*.ts"]
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/ui/features/local-release/LocalRecordingArtistField.tsx",
+        "src/ui/features/local-release/LocalReleaseCancelDialog.tsx",
+        "src/ui/features/local-release/LocalReleaseEditor.tsx",
+        "src/ui/features/local-release/LocalReleaseForm.tsx",
+        "src/ui/features/local-release/LocalReleaseRecordingPicker.tsx",
+        "src/ui/features/local-release/localReleaseFormModel.ts",
+        "src/ui/features/local-release/localReleaseMessages.ts",
+        "src/ui/features/local-release/localReleaseUi.tsx",
+        "src/ui/features/local-release/useLocalReleaseForm.ts",
+        "src/ui/features/matching/ManualSearchView.tsx",
+        "src/ui/features/matching/manualSearchContract.ts",
+        "src/ui/features/matching/MatchingBoard.tsx",
+        "src/ui/features/matching/MatchingWorkspaceLayout.tsx",
+        "src/ui/features/matching/matchingSourcePath.ts",
+        "src/ui/features/matching/sourceFileOrder.ts",
+        "src/ui/features/operations/OperationsList.tsx",
+        "src/ui/features/local-catalog/OwnCatalogEditorShell.tsx",
+        "src/ui/features/local-catalog/OwnCatalogPagination.tsx",
+        "src/ui/features/settings/SettingsTabs.tsx",
+        "src/ui/features/sources/SourceRootList.tsx",
+        "src/ui/features/sources/SourceRootOverviewView.tsx",
+        "src/ui/features/sources/SourceRootDetailView.tsx",
+        "src/ui/features/sources/SourceRootSettingsView.tsx",
+        "src/ui/features/sources/SourceRegistrationView.tsx",
+        "src/ui/features/sources/SourceScanPanel.tsx",
+        "src/ui/shell/ShellView.tsx"
+      ],
+      "formatter": {
+        "indentStyle": "tab"
+      }
+    }
+  ]
+}

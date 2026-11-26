@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import {
-	MeloTroveSetupBinder,
-	MeloTroveSetupContent,
+  MeloTroveSetupBinder,
+  MeloTroveSetupContent,
 } from "../../../ui/app/MeloTroveProvider";
 import {
-	type SetupScreenProps,
-	useSetupScreenDemoProvider,
+  type SetupScreenProps,
+  useSetupScreenDemoProvider,
 } from "./useSetupScreenDemoProvider";
 
 export type { SetupScreenProps } from "./useSetupScreenDemoProvider";
@@ -15,11 +15,11 @@ export type { SetupScreenProps } from "./useSetupScreenDemoProvider";
  * composition.
  */
 export function DemoMeloTroveSetupBinder({
-	children,
-	...props
+  children,
+  ...props
 }: SetupScreenProps & { children: ReactNode }) {
-	const model = useSetupScreenDemoProvider(props);
-	return <MeloTroveSetupBinder model={model}>{children}</MeloTroveSetupBinder>;
+  const model = useSetupScreenDemoProvider(props);
+  return <MeloTroveSetupBinder model={model}>{children}</MeloTroveSetupBinder>;
 }
 
 /**
@@ -27,9 +27,9 @@ export function DemoMeloTroveSetupBinder({
  * owns the markup; this facade preserves existing imports and prop shape.
  */
 export function SetupScreen(props: SetupScreenProps) {
-	return (
-		<DemoMeloTroveSetupBinder {...props}>
-			<MeloTroveSetupContent />
-		</DemoMeloTroveSetupBinder>
-	);
+  return (
+    <DemoMeloTroveSetupBinder {...props}>
+      <MeloTroveSetupContent />
+    </DemoMeloTroveSetupBinder>
+  );
 }

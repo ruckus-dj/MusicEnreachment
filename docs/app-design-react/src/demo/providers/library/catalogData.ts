@@ -1,211 +1,211 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import type { MetadataProviderLink } from "../../../ui/features/library/metadata/MetadataProviderLinks";
 import {
-	recordingScalarFields,
-	releaseBasicsFields,
-	releaseScalarFields,
+  recordingScalarFields,
+  releaseBasicsFields,
+  releaseScalarFields,
 } from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../ui/i18n/types";
 import { applyDemoLocalMatchingBindings } from "../../fixtures/localMatchingBindings";
 import original from "../../fixtures/original-fixtures.json";
 import {
-	resolveCatalogGenreName,
-	resolveCatalogGenreValue,
+  resolveCatalogGenreName,
+  resolveCatalogGenreValue,
 } from "../genres/catalogue";
 import { projectArtistCreditGroup } from "./metadata/artistProjection";
 import type { MetadataGenre, MetadataValues } from "./metadata/projection";
 import {
-	metadataManagedTagKeys,
-	metadataTagKeys,
-	metadataValidationMessage,
-	projectMetadataValues,
-	validateMetadataIssues,
-	validateMetadataValues,
+  metadataManagedTagKeys,
+  metadataTagKeys,
+  metadataValidationMessage,
+  projectMetadataValues,
+  validateMetadataIssues,
+  validateMetadataValues,
 } from "./metadata/projection";
 import type { MetadataScope } from "./metadata/registry";
 import { fieldByKey, navidromeFields } from "./metadata/registry";
 import {
-	creditTagKeys,
-	type PositionCreditEvidence,
-	positionCreditValues,
-	recordingCreditValues,
-	releaseCreditValues,
-	type ScopedArtistCredit,
+  creditTagKeys,
+  type PositionCreditEvidence,
+  positionCreditValues,
+  recordingCreditValues,
+  releaseCreditValues,
+  type ScopedArtistCredit,
 } from "./metadata/scopedArtistCredits";
 import {
-	projectCompositionTags,
-	resolvePublicationComposition,
-	type ScopedComposition,
+  projectCompositionTags,
+  resolvePublicationComposition,
+  type ScopedComposition,
 } from "./metadata/scopedComposition";
 import {
-	contributorProjectionIntent,
-	contributorTagKeys,
-	projectScopedContributorTags,
-	retainUnspecifiedContributorTags,
-	type ScopedContributors,
+  contributorProjectionIntent,
+  contributorTagKeys,
+  projectScopedContributorTags,
+  retainUnspecifiedContributorTags,
+  type ScopedContributors,
 } from "./metadata/scopedContributors";
 
 const musicBrainzUUID =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface OriginalTrack {
-	primaryArtistId?: string | null;
-	id: string;
-	title: string;
-	position: number;
-	duration: number | null;
-	artistId: string | null;
-	recordingId?: string | null;
-	providerTrackId?: string | null;
-	/** Native links supplied independently by the exact recording/position owner. */
-	recordingProviderLinks?: readonly MetadataProviderLink[];
-	positionProviderLinks?: readonly MetadataProviderLink[];
-	/** Exact Local catalog position identity bound by the demo fixture adapter. */
-	localProviderTrackId?: string | null;
-	recordingTitle?: string;
-	localRecordingId?: string | null;
-	providerTitle?: string;
-	providerCacheVersion?: number;
-	recovered?: boolean;
-	observedFile?: {
-		mtime?: string;
-		state?: string;
-		rootAvailable?: boolean;
-	} | null;
-	sourceId: string | null;
-	sourceIds?: string[];
-	published: null | {
-		tags: Record<string, string[]>;
-		codec: string;
-		container: string;
-		sourceId: string | null;
-		path: string;
-		readAt: string;
-		coverHash: string | null;
-		lyrics: string | null;
-		matchingConfidence?: number;
-	};
-	metadataBaseline?: Record<string, string[]>;
-	metadataBaselineExtras?: { coverHash: string | null; lyrics: string | null };
-	/** Explicit local overrides recorded only for fields changed in an editor. */
-	recordingComparisonOverrides?: MetadataValues;
-	positionComparisonOverrides?: MetadataValues;
-	/** Explicit per-source audio overrides recorded only for changed audio fields. */
-	audioComparisonOverrides?: Record<string, MetadataValues>;
-	coverHash?: string | null;
-	lyrics?: string | null;
-	recordingGenres?: string[];
-	recordingGenreRefs?: MetadataGenre[];
-	recordingMetadata?: MetadataValues;
-	recordingScalarIntent?: ScopedScalarIntentMap;
-	recordingComposition?: ScopedComposition;
-	recordingContributors?: ScopedContributors;
-	recordingArtistCredit?: ScopedArtistCredit;
-	/** Original distinct position title retained while editing the recording. */
-	positionTitleBaseline?: string;
-	/** Explicit scalar tag intent of this position, not its displayed identity. */
-	positionScalarIntent?: ScopedScalarIntentMap;
-	positionComposition?: ScopedComposition;
-	positionContributors?: ScopedContributors;
-	positionArtistCredit?: ScopedArtistCredit;
-	positionCreditEvidence?: PositionCreditEvidence;
-	positionMetadata?: MetadataValues;
-	audioMetadata?: Record<string, MetadataValues>;
-	recordingCredits?: import("./metadata/model").MetadataCredit[];
-	displayedNumber?: string;
-	mediumPosition?: number;
-	medium?: number;
+  primaryArtistId?: string | null;
+  id: string;
+  title: string;
+  position: number;
+  duration: number | null;
+  artistId: string | null;
+  recordingId?: string | null;
+  providerTrackId?: string | null;
+  /** Native links supplied independently by the exact recording/position owner. */
+  recordingProviderLinks?: readonly MetadataProviderLink[];
+  positionProviderLinks?: readonly MetadataProviderLink[];
+  /** Exact Local catalog position identity bound by the demo fixture adapter. */
+  localProviderTrackId?: string | null;
+  recordingTitle?: string;
+  localRecordingId?: string | null;
+  providerTitle?: string;
+  providerCacheVersion?: number;
+  recovered?: boolean;
+  observedFile?: {
+    mtime?: string;
+    state?: string;
+    rootAvailable?: boolean;
+  } | null;
+  sourceId: string | null;
+  sourceIds?: string[];
+  published: null | {
+    tags: Record<string, string[]>;
+    codec: string;
+    container: string;
+    sourceId: string | null;
+    path: string;
+    readAt: string;
+    coverHash: string | null;
+    lyrics: string | null;
+    matchingConfidence?: number;
+  };
+  metadataBaseline?: Record<string, string[]>;
+  metadataBaselineExtras?: { coverHash: string | null; lyrics: string | null };
+  /** Explicit local overrides recorded only for fields changed in an editor. */
+  recordingComparisonOverrides?: MetadataValues;
+  positionComparisonOverrides?: MetadataValues;
+  /** Explicit per-source audio overrides recorded only for changed audio fields. */
+  audioComparisonOverrides?: Record<string, MetadataValues>;
+  coverHash?: string | null;
+  lyrics?: string | null;
+  recordingGenres?: string[];
+  recordingGenreRefs?: MetadataGenre[];
+  recordingMetadata?: MetadataValues;
+  recordingScalarIntent?: ScopedScalarIntentMap;
+  recordingComposition?: ScopedComposition;
+  recordingContributors?: ScopedContributors;
+  recordingArtistCredit?: ScopedArtistCredit;
+  /** Original distinct position title retained while editing the recording. */
+  positionTitleBaseline?: string;
+  /** Explicit scalar tag intent of this position, not its displayed identity. */
+  positionScalarIntent?: ScopedScalarIntentMap;
+  positionComposition?: ScopedComposition;
+  positionContributors?: ScopedContributors;
+  positionArtistCredit?: ScopedArtistCredit;
+  positionCreditEvidence?: PositionCreditEvidence;
+  positionMetadata?: MetadataValues;
+  audioMetadata?: Record<string, MetadataValues>;
+  recordingCredits?: import("./metadata/model").MetadataCredit[];
+  displayedNumber?: string;
+  mediumPosition?: number;
+  medium?: number;
 }
 
 export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
 
 export type ScopedScalarIntent =
-	| { state: "value"; value: string[] }
-	| { state: "explicit_empty" }
-	| { state: "absent" };
+  | { state: "value"; value: string[] }
+  | { state: "explicit_empty" }
+  | { state: "absent" };
 
 /** Sparse explicit intent; an absent key means the base value stays inherited. */
 export type ScopedScalarIntentMap = Partial<Record<string, ScopedScalarIntent>>;
 
 export interface OriginalRelease {
-	primaryArtistId?: string | null;
-	id: string;
-	releaseGroupId?: string;
-	title: string;
-	disambiguation?: string;
-	artistId: string | null;
-	year: string;
-	country: string;
-	catalog: string;
-	label: string;
-	providerId: string | null;
-	provider?: string;
-	manual?: boolean;
-	credits?: {
-		credit?: string;
-		name?: string;
-		role?: string;
-		artistId?: string | null;
-		joinPhrase?: string;
-	}[];
-	metadataValues?: MetadataValues;
-	metadataGenres?: MetadataGenre[];
-	/** Explicit local overrides recorded only for fields changed in an editor. */
-	comparisonOverrides?: MetadataValues;
-	/** Typed local scalar intent; absent keys inherit the provider base. */
-	releaseScalarIntent?: ScopedScalarIntentMap;
-	releaseArtistCredit?: ScopedArtistCredit;
-	/** Explicit accepted identifier evidence, never derived from the provider label. */
-	providerIdentifierBaseline?: { asin?: string; script?: string };
-	metadata?: {
-		date: string;
-		country: string;
-		label: string;
-		catalogNumber: string;
-		type: string;
-	};
-	media?: { title: string; format: string; positions: unknown[] }[];
-	coverId?: string;
-	color?: string;
-	tracks: OriginalTrack[];
+  primaryArtistId?: string | null;
+  id: string;
+  releaseGroupId?: string;
+  title: string;
+  disambiguation?: string;
+  artistId: string | null;
+  year: string;
+  country: string;
+  catalog: string;
+  label: string;
+  providerId: string | null;
+  provider?: string;
+  manual?: boolean;
+  credits?: {
+    credit?: string;
+    name?: string;
+    role?: string;
+    artistId?: string | null;
+    joinPhrase?: string;
+  }[];
+  metadataValues?: MetadataValues;
+  metadataGenres?: MetadataGenre[];
+  /** Explicit local overrides recorded only for fields changed in an editor. */
+  comparisonOverrides?: MetadataValues;
+  /** Typed local scalar intent; absent keys inherit the provider base. */
+  releaseScalarIntent?: ScopedScalarIntentMap;
+  releaseArtistCredit?: ScopedArtistCredit;
+  /** Explicit accepted identifier evidence, never derived from the provider label. */
+  providerIdentifierBaseline?: { asin?: string; script?: string };
+  metadata?: {
+    date: string;
+    country: string;
+    label: string;
+    catalogNumber: string;
+    type: string;
+  };
+  media?: { title: string; format: string; positions: unknown[] }[];
+  coverId?: string;
+  color?: string;
+  tracks: OriginalTrack[];
 }
 
 export function trackNumberLabel(
-	release: Pick<OriginalRelease, "media"> & {
-		tracks: Pick<OriginalTrack, "medium">[];
-	},
-	track: Pick<
-		OriginalTrack,
-		"displayedNumber" | "medium" | "mediumPosition" | "position"
-	>,
+  release: Pick<OriginalRelease, "media"> & {
+    tracks: Pick<OriginalTrack, "medium">[];
+  },
+  track: Pick<
+    OriginalTrack,
+    "displayedNumber" | "medium" | "mediumPosition" | "position"
+  >,
 ): string {
-	if (track.displayedNumber) return track.displayedNumber;
-	const multiple =
-		(release.media?.length ?? 0) > 1 ||
-		new Set(release.tracks.map((item) => item.medium).filter(Boolean)).size > 1;
-	return multiple && track.mediumPosition
-		? `${track.medium}.${String(track.mediumPosition).padStart(2, "0")}`
-		: String(track.mediumPosition || track.position).padStart(2, "0");
+  if (track.displayedNumber) return track.displayedNumber;
+  const multiple =
+    (release.media?.length ?? 0) > 1 ||
+    new Set(release.tracks.map((item) => item.medium).filter(Boolean)).size > 1;
+  return multiple && track.mediumPosition
+    ? `${track.medium}.${String(track.mediumPosition).padStart(2, "0")}`
+    : String(track.mediumPosition || track.position).padStart(2, "0");
 }
 
 // Sample an available confidence separately from the canonical fixture.
 const demoMatchingConfidence: Partial<Record<string, number>> = {
-	"north-t1": 0.94,
+  "north-t1": 0.94,
 };
 export const originalReleases: OriginalRelease[] =
-	applyDemoLocalMatchingBindings(
-		original.releases.map((release) => ({
-			...release,
-			tracks: release.tracks.map((track) => {
-				const matchingConfidence = demoMatchingConfidence[track.id];
-				if (!track.published || matchingConfidence === undefined) return track;
-				return {
-					...track,
-					published: { ...track.published, matchingConfidence },
-				};
-			}),
-		})),
-	);
+  applyDemoLocalMatchingBindings(
+    original.releases.map((release) => ({
+      ...release,
+      tracks: release.tracks.map((track) => {
+        const matchingConfidence = demoMatchingConfidence[track.id];
+        if (!track.published || matchingConfidence === undefined) return track;
+        return {
+          ...track,
+          published: { ...track.published, matchingConfidence },
+        };
+      }),
+    })),
+  );
 export const recoveryFixture = original.recoveryFixture;
 
 /**
@@ -214,274 +214,274 @@ export const recoveryFixture = original.recoveryFixture;
  * fabricating a release/position pair.
  */
 export function originalPositionHref(positionId: string) {
-	const release = originalReleases.find((item) =>
-		item.tracks.some((track) => track.id === positionId),
-	);
-	return release ? libraryPositionHref(release.id, positionId) : undefined;
+  const release = originalReleases.find((item) =>
+    item.tracks.some((track) => track.id === positionId),
+  );
+  return release ? libraryPositionHref(release.id, positionId) : undefined;
 }
 
 export type CatalogArtist = {
-	id: string;
-	name: string;
-	mbid?: string;
-	sortName?: string;
-	disambiguation?: string;
-	discographyComplete?: boolean;
-	genres?: { id?: string; name?: string }[];
-	genreOverride?: {
-		state: "absent" | "explicit_empty" | "value";
-		inherited: { name?: string }[];
-	};
-	/** Legacy display value for fixtures that predate canonical genre references. */
-	genre?: string;
-	/** Optional demo-only artist tags, edited as comma-separated values. */
-	tags?: string[];
-	color?: string;
+  id: string;
+  name: string;
+  mbid?: string;
+  sortName?: string;
+  disambiguation?: string;
+  discographyComplete?: boolean;
+  genres?: { id?: string; name?: string }[];
+  genreOverride?: {
+    state: "absent" | "explicit_empty" | "value";
+    inherited: { name?: string }[];
+  };
+  /** Legacy display value for fixtures that predate canonical genre references. */
+  genre?: string;
+  /** Optional demo-only artist tags, edited as comma-separated values. */
+  tags?: string[];
+  color?: string;
 };
 // Explicit demo data matching the existing Japan-edition publication fixture.
 // This is not a display-name fallback or a metadata resolution policy.
 const demoSortNames: Partial<Record<string, string>> = { mira: "Mira Vale" };
 export const originalArtists: CatalogArtist[] = original.artists.map(
-	(artist) => ({
-		...artist,
-		sortName: demoSortNames[artist.id],
-		// Simulate the completed provider state; do not infer it from cached rows.
-		discographyComplete: artist.id === "arden",
-	}),
+  (artist) => ({
+    ...artist,
+    sortName: demoSortNames[artist.id],
+    // Simulate the completed provider state; do not infer it from cached rows.
+    discographyComplete: artist.id === "arden",
+  }),
 );
 export const originalArtistName = (
-	id: string | null,
-	artists: CatalogArtist[] = originalArtists,
+  id: string | null,
+  artists: CatalogArtist[] = originalArtists,
 ) => artists.find((artist) => artist.id === id)?.name ?? "Артист не указан";
 export interface SourceFile {
-	id: string;
-	name: string;
-	duration: number;
-	size: string;
-	tags: Record<string, string[]>;
-	available: boolean;
-	locations?: {
-		id: string;
-		rootId: string;
-		path: string;
-		size?: number;
-		mtime?: string;
-	}[];
-	sha256?: string | null;
-	path: string;
-	codec: string;
-	bits?: number | null;
-	sampleRate?: number | null;
-	bitrate?: number | null;
+  id: string;
+  name: string;
+  duration: number;
+  size: string;
+  tags: Record<string, string[]>;
+  available: boolean;
+  locations?: {
+    id: string;
+    rootId: string;
+    path: string;
+    size?: number;
+    mtime?: string;
+  }[];
+  sha256?: string | null;
+  path: string;
+  codec: string;
+  bits?: number | null;
+  sampleRate?: number | null;
+  bitrate?: number | null;
 }
 export const sourceOnlyAudioTagKeys = [
-	"ENCODEDBY",
-	"ENCODING",
-	"ENCODERSETTINGS",
+  "ENCODEDBY",
+  "ENCODING",
+  "ENCODERSETTINGS",
 ] as const;
 export type SourceFiles = Record<string, SourceFile>;
 export const originalFiles: SourceFiles = original.files;
 export const originalProviders: OriginalRelease[] =
-	original.providerReleases.map((release) => ({
-		...release,
-		tracks: release.tracks.map((track) => ({
-			...track,
-			sourceId: track.sourceId ?? null,
-			published: track.published ?? null,
-		})),
-	}));
+  original.providerReleases.map((release) => ({
+    ...release,
+    tracks: release.tracks.map((track) => ({
+      ...track,
+      sourceId: track.sourceId ?? null,
+      published: track.published ?? null,
+    })),
+  }));
 
 const providerRecordingTitles = new Map<string, string>();
 for (const release of originalProviders) {
-	for (const track of release.tracks) {
-		if (track.recordingId && !providerRecordingTitles.has(track.recordingId))
-			providerRecordingTitles.set(track.recordingId, track.title);
-	}
+  for (const track of release.tracks) {
+    if (track.recordingId && !providerRecordingTitles.has(track.recordingId))
+      providerRecordingTitles.set(track.recordingId, track.title);
+  }
 }
 
 type RecordingTitleFacts = Pick<
-	OriginalTrack,
-	| "recordingTitle"
-	| "recordingMetadata"
-	| "recordingId"
-	| "recordingScalarIntent"
-	| "title"
+  OriginalTrack,
+  | "recordingTitle"
+  | "recordingMetadata"
+  | "recordingId"
+  | "recordingScalarIntent"
+  | "title"
 >;
 
 export function recordingTitleBaseline(
-	track: RecordingTitleFacts,
+  track: RecordingTitleFacts,
 ): string | undefined {
-	return (
-		track.recordingTitle ??
-		track.recordingMetadata?.title?.[0] ??
-		(track.recordingId
-			? providerRecordingTitles.get(track.recordingId)
-			: undefined)
-	);
+  return (
+    track.recordingTitle ??
+    track.recordingMetadata?.title?.[0] ??
+    (track.recordingId
+      ? providerRecordingTitles.get(track.recordingId)
+      : undefined)
+  );
 }
 
 export function effectiveRecordingTitle(track: RecordingTitleFacts): string {
-	const intent = track.recordingScalarIntent?.title;
-	if (intent?.state === "value") return intent.value[0] ?? "";
-	if (intent?.state === "explicit_empty") return "";
-	return recordingTitleBaseline(track) ?? track.title;
+  const intent = track.recordingScalarIntent?.title;
+  if (intent?.state === "value") return intent.value[0] ?? "";
+  if (intent?.state === "explicit_empty") return "";
+  return recordingTitleBaseline(track) ?? track.title;
 }
 
 export function positionTitleIntent(track: OriginalTrack): {
-	state: "absent" | "value" | "explicit_empty";
-	value: string;
+  state: "absent" | "value" | "explicit_empty";
+  value: string;
 } {
-	const overrides = track.positionComparisonOverrides;
-	if (overrides && Object.hasOwn(overrides, "title")) {
-		const values = overrides.title ?? [];
-		return values.length
-			? { state: "value", value: values[0] ?? "" }
-			: { state: "explicit_empty", value: "" };
-	}
-	if (track.positionTitleBaseline !== undefined)
-		return { state: "value", value: track.positionTitleBaseline };
-	// The fixture's exact position title can differ from its recording.
-	const baseline = recordingTitleBaseline(track);
-	return baseline !== undefined &&
-		track.title !== effectiveRecordingTitle(track)
-		? { state: "value", value: track.title }
-		: { state: "absent", value: "" };
+  const overrides = track.positionComparisonOverrides;
+  if (overrides && Object.hasOwn(overrides, "title")) {
+    const values = overrides.title ?? [];
+    return values.length
+      ? { state: "value", value: values[0] ?? "" }
+      : { state: "explicit_empty", value: "" };
+  }
+  if (track.positionTitleBaseline !== undefined)
+    return { state: "value", value: track.positionTitleBaseline };
+  // The fixture's exact position title can differ from its recording.
+  const baseline = recordingTitleBaseline(track);
+  return baseline !== undefined &&
+    track.title !== effectiveRecordingTitle(track)
+    ? { state: "value", value: track.title }
+    : { state: "absent", value: "" };
 }
 
 function positionTitleTags(track: OriginalTrack): string[] {
-	const intent = positionTitleIntent(track);
-	if (intent.state === "value") return [intent.value];
-	if (intent.state === "explicit_empty") return [];
-	const recording = track.recordingScalarIntent?.title;
-	if (recording?.state === "value") return [recording.value[0] ?? ""];
-	const value = effectiveRecordingTitle(track);
-	return value ? [value] : [];
+  const intent = positionTitleIntent(track);
+  if (intent.state === "value") return [intent.value];
+  if (intent.state === "explicit_empty") return [];
+  const recording = track.recordingScalarIntent?.title;
+  if (recording?.state === "value") return [recording.value[0] ?? ""];
+  const value = effectiveRecordingTitle(track);
+  return value ? [value] : [];
 }
 
 export function recordingScalarOverrideTags(
-	track: OriginalTrack,
-	purpose: "comparison" | "publication",
+  track: OriginalTrack,
+  purpose: "comparison" | "publication",
 ): MetadataValues {
-	const tags: MetadataValues = {};
-	for (const { metadataKey, kind } of recordingScalarFields) {
-		const intent = track.recordingScalarIntent?.[metadataKey];
-		const tag = fieldByKey(metadataKey)?.tag;
-		if (!intent || !tag || intent.state === "absent") continue;
-		// TITLE has its own resolver; other fields keep the existing recording overlay.
-		if (purpose === "publication" && metadataKey === "title") continue;
-		if (purpose === "publication" && emptyOptionalScalar(intent, kind))
-			continue;
-		tags[tag] = scalarIntentTagValues(intent, kind);
-	}
-	return tags;
+  const tags: MetadataValues = {};
+  for (const { metadataKey, kind } of recordingScalarFields) {
+    const intent = track.recordingScalarIntent?.[metadataKey];
+    const tag = fieldByKey(metadataKey)?.tag;
+    if (!intent || !tag || intent.state === "absent") continue;
+    // TITLE has its own resolver; other fields keep the existing recording overlay.
+    if (purpose === "publication" && metadataKey === "title") continue;
+    if (purpose === "publication" && emptyOptionalScalar(intent, kind))
+      continue;
+    tags[tag] = scalarIntentTagValues(intent, kind);
+  }
+  return tags;
 }
 
 export function recordingIdentity(track: OriginalTrack): string | undefined {
-	if (track.localRecordingId) return `local:${track.localRecordingId}`;
-	if (track.recordingId) return `musicbrainz:${track.recordingId}`;
-	return undefined;
+  if (track.localRecordingId) return `local:${track.localRecordingId}`;
+  if (track.recordingId) return `musicbrainz:${track.recordingId}`;
+  return undefined;
 }
 
 const positionLayoutFields = [
-	{
-		key: "disc_title",
-		metadataKey: "disctitle",
-		tag: "DISCNAME",
-		kind: "text",
-	},
-	{
-		key: "track_number",
-		metadataKey: "track",
-		tag: "TRACKNUMBER",
-		kind: "integer",
-	},
-	{
-		key: "track_total",
-		metadataKey: "tracktotal",
-		tag: "TRACKTOTAL",
-		kind: "integer",
-	},
-	{
-		key: "disc_number",
-		metadataKey: "disc",
-		tag: "DISCNUMBER",
-		kind: "integer",
-	},
-	{
-		key: "disc_total",
-		metadataKey: "disctotal",
-		tag: "DISCTOTAL",
-		kind: "integer",
-	},
+  {
+    key: "disc_title",
+    metadataKey: "disctitle",
+    tag: "DISCNAME",
+    kind: "text",
+  },
+  {
+    key: "track_number",
+    metadataKey: "track",
+    tag: "TRACKNUMBER",
+    kind: "integer",
+  },
+  {
+    key: "track_total",
+    metadataKey: "tracktotal",
+    tag: "TRACKTOTAL",
+    kind: "integer",
+  },
+  {
+    key: "disc_number",
+    metadataKey: "disc",
+    tag: "DISCNUMBER",
+    kind: "integer",
+  },
+  {
+    key: "disc_total",
+    metadataKey: "disctotal",
+    tag: "DISCTOTAL",
+    kind: "integer",
+  },
 ] as const;
 
 export const positionScalarFields = [
-	...recordingScalarFields
-		.filter(({ key }) => key !== "title")
-		.map((field) => ({
-			...field,
-			tag: fieldByKey(field.metadataKey)?.tag ?? "",
-		})),
-	...positionLayoutFields.map((field) => ({
-		...field,
-		group: "position" as const,
-	})),
+  ...recordingScalarFields
+    .filter(({ key }) => key !== "title")
+    .map((field) => ({
+      ...field,
+      tag: fieldByKey(field.metadataKey)?.tag ?? "",
+    })),
+  ...positionLayoutFields.map((field) => ({
+    ...field,
+    group: "position" as const,
+  })),
 ];
 
 function scalarIntentTagValues(
-	intent: Exclude<ScopedScalarIntent, { state: "absent" }>,
-	kind: string,
+  intent: Exclude<ScopedScalarIntent, { state: "absent" }>,
+  kind: string,
 ): string[] {
-	if (intent.state === "explicit_empty") return [];
-	return kind === "advisory"
-		? [intent.value[0] === "clean" ? "2" : "1"]
-		: [...intent.value];
+  if (intent.state === "explicit_empty") return [];
+  return kind === "advisory"
+    ? [intent.value[0] === "clean" ? "2" : "1"]
+    : [...intent.value];
 }
 
 function emptyOptionalScalar(intent: ScopedScalarIntent, kind: string) {
-	if (intent.state !== "value") return false;
-	return kind === "text"
-		? !intent.value[0]
-		: kind === "list" && !intent.value.length;
+  if (intent.state !== "value") return false;
+  return kind === "text"
+    ? !intent.value[0]
+    : kind === "list" && !intent.value.length;
 }
 
 /** The exact raw position tags before any explicit track/disc override. */
 function positionNumberingBaseline(
-	track: Pick<
-		OriginalTrack,
-		"displayedNumber" | "mediumPosition" | "position" | "medium"
-	>,
+  track: Pick<
+    OriginalTrack,
+    "displayedNumber" | "mediumPosition" | "position" | "medium"
+  >,
 ) {
-	return {
-		track: String(
-			track.displayedNumber || track.mediumPosition || track.position,
-		),
-		disc: String(track.medium ?? 1),
-	};
+  return {
+    track: String(
+      track.displayedNumber || track.mediumPosition || track.position,
+    ),
+    disc: String(track.medium ?? 1),
+  };
 }
 
 export function positionScalarOverrideTags(
-	track: OriginalTrack,
-	purpose: "comparison" | "publication",
+  track: OriginalTrack,
+  purpose: "comparison" | "publication",
 ): MetadataValues {
-	const tags: MetadataValues = {};
-	for (const { metadataKey, tag, kind } of positionScalarFields) {
-		const intent = track.positionScalarIntent?.[metadataKey];
-		if (!intent || !tag || intent.state === "absent") continue;
-		if (purpose === "publication" && emptyOptionalScalar(intent, kind))
-			continue;
-		tags[tag] = scalarIntentTagValues(intent, kind);
-	}
-	return tags;
+  const tags: MetadataValues = {};
+  for (const { metadataKey, tag, kind } of positionScalarFields) {
+    const intent = track.positionScalarIntent?.[metadataKey];
+    if (!intent || !tag || intent.state === "absent") continue;
+    if (purpose === "publication" && emptyOptionalScalar(intent, kind))
+      continue;
+    tags[tag] = scalarIntentTagValues(intent, kind);
+  }
+  return tags;
 }
 
 /** Read title override intent from the sparse map, not the merged metadata values. */
 export function releaseTitleOverrideState(
-	release: OriginalRelease,
+  release: OriginalRelease,
 ): ReleaseTitleOverrideState {
-	const overrides = release.comparisonOverrides;
-	if (!overrides || !Object.hasOwn(overrides, "album")) return "absent";
-	return overrides.album.length === 0 ? "explicit_empty" : "value";
+  const overrides = release.comparisonOverrides;
+  if (!overrides || !Object.hasOwn(overrides, "album")) return "absent";
+  return overrides.album.length === 0 ? "explicit_empty" : "value";
 }
 
 /**
@@ -489,44 +489,44 @@ export function releaseTitleOverrideState(
  * title editable, so Value -> Inherit/Clear -> Value preserves typed text.
  */
 export function releaseTitleDraftValues(release: OriginalRelease): string[] {
-	if (releaseTitleOverrideState(release) === "value")
-		return [...(release.comparisonOverrides?.album ?? [""])];
-	return [""];
+  if (releaseTitleOverrideState(release) === "value")
+    return [...(release.comparisonOverrides?.album ?? [""])];
+  return [""];
 }
 
 /** The resolved title for publication tags and new output paths. */
 export function effectiveReleaseTitle(release: OriginalRelease): string {
-	const state = releaseTitleOverrideState(release);
-	if (state === "explicit_empty") return "";
-	if (state === "value") return release.comparisonOverrides?.album?.[0] ?? "";
-	return release.title;
+  const state = releaseTitleOverrideState(release);
+  if (state === "explicit_empty") return "";
+  if (state === "value") return release.comparisonOverrides?.album?.[0] ?? "";
+  return release.title;
 }
 
 /** Provider base values for the non-title release basics. */
 export function releaseBasicsBaseValues(
-	release: OriginalRelease,
+  release: OriginalRelease,
 ): MetadataValues {
-	const metadataDate = release.metadata?.date;
-	const date =
-		metadataDate && metadataDate.slice(0, 4) === release.year
-			? metadataDate
-			: release.year;
-	return {
-		releasedate: date ? [date] : [],
-		releasecountry: release.country ? [release.country] : [],
-		recordlabel: release.label ? [release.label] : [],
-		catalognumber: release.catalog ? [release.catalog] : [],
-		release_primary_type: release.metadata?.type ? [release.metadata.type] : [],
-		release_secondary_types: [],
-	};
+  const metadataDate = release.metadata?.date;
+  const date =
+    metadataDate && metadataDate.slice(0, 4) === release.year
+      ? metadataDate
+      : release.year;
+  return {
+    releasedate: date ? [date] : [],
+    releasecountry: release.country ? [release.country] : [],
+    recordlabel: release.label ? [release.label] : [],
+    catalognumber: release.catalog ? [release.catalog] : [],
+    release_primary_type: release.metadata?.type ? [release.metadata.type] : [],
+    release_secondary_types: [],
+  };
 }
 
 /** Read explicit state only; equality with the base is never intent. */
 export function releaseScalarIntentState(
-	release: OriginalRelease,
-	key: string,
+  release: OriginalRelease,
+  key: string,
 ): ReleaseTitleOverrideState {
-	return release.releaseScalarIntent?.[key]?.state ?? "absent";
+  return release.releaseScalarIntent?.[key]?.state ?? "absent";
 }
 
 /**
@@ -534,141 +534,141 @@ export function releaseScalarIntentState(
  * empty, so choosing a value does not silently copy provider baseline data.
  */
 export function releaseScalarDraftValues(
-	release: OriginalRelease,
-	key: string,
+  release: OriginalRelease,
+  key: string,
 ): string[] {
-	const intent = release.releaseScalarIntent?.[key];
-	return intent?.state === "value" ? [...intent.value] : [];
+  const intent = release.releaseScalarIntent?.[key];
+  return intent?.state === "value" ? [...intent.value] : [];
 }
 
 /** Sparse normalized tags from release intent, not from CURRENT or provider evidence. */
 export function releaseScalarOverrideTags(
-	release: OriginalRelease,
+  release: OriginalRelease,
 ): MetadataValues {
-	const overrides: MetadataValues = {};
-	for (const { key, metadataKey, kind } of releaseScalarFields) {
-		if (key === "title") continue;
-		const intent = release.releaseScalarIntent?.[metadataKey];
-		if (!intent || intent.state === "absent") continue;
-		const tag =
-			key === "release_status" ? "RELEASESTATUS" : fieldByKey(metadataKey)?.tag;
-		if (!tag) continue;
-		overrides[tag] =
-			intent.state === "explicit_empty"
-				? []
-				: kind === "boolean"
-					? [intent.value[0] === "true" ? "1" : "0"]
-					: kind === "advisory"
-						? [intent.value[0] === "clean" ? "2" : "1"]
-						: [...intent.value];
-	}
-	return overrides;
+  const overrides: MetadataValues = {};
+  for (const { key, metadataKey, kind } of releaseScalarFields) {
+    if (key === "title") continue;
+    const intent = release.releaseScalarIntent?.[metadataKey];
+    if (!intent || intent.state === "absent") continue;
+    const tag =
+      key === "release_status" ? "RELEASESTATUS" : fieldByKey(metadataKey)?.tag;
+    if (!tag) continue;
+    overrides[tag] =
+      intent.state === "explicit_empty"
+        ? []
+        : kind === "boolean"
+          ? [intent.value[0] === "true" ? "1" : "0"]
+          : kind === "advisory"
+            ? [intent.value[0] === "clean" ? "2" : "1"]
+            : [...intent.value];
+  }
+  return overrides;
 }
 
 /** An accepted identifier is a fallback only when no desired entry exists. */
 export function acceptedReleaseIdentifier(
-	release: OriginalRelease,
-	key: "asin" | "script",
+  release: OriginalRelease,
+  key: "asin" | "script",
 ): string | undefined {
-	return Object.hasOwn(release.releaseScalarIntent ?? {}, key)
-		? undefined
-		: release.providerIdentifierBaseline?.[key] || undefined;
+  return Object.hasOwn(release.releaseScalarIntent ?? {}, key)
+    ? undefined
+    : release.providerIdentifierBaseline?.[key] || undefined;
 }
 
 /** Effective publication values: typed intent first, otherwise the base value. */
 export function effectiveReleaseBasics(
-	release: OriginalRelease,
+  release: OriginalRelease,
 ): MetadataValues {
-	const base = releaseBasicsBaseValues(release);
-	const result: MetadataValues = {};
-	for (const { key, metadataKey } of releaseBasicsFields) {
-		if (key === "title") continue;
-		const intent = release.releaseScalarIntent?.[metadataKey];
-		if (!intent || intent.state === "absent")
-			result[metadataKey] = [...(base[metadataKey] ?? [])];
-		else if (intent.state === "explicit_empty") result[metadataKey] = [];
-		else result[metadataKey] = [...intent.value];
-	}
-	return result;
+  const base = releaseBasicsBaseValues(release);
+  const result: MetadataValues = {};
+  for (const { key, metadataKey } of releaseBasicsFields) {
+    if (key === "title") continue;
+    const intent = release.releaseScalarIntent?.[metadataKey];
+    if (!intent || intent.state === "absent")
+      result[metadataKey] = [...(base[metadataKey] ?? [])];
+    else if (intent.state === "explicit_empty") result[metadataKey] = [];
+    else result[metadataKey] = [...intent.value];
+  }
+  return result;
 }
 
 /** Publication output paths use the effective year, not the provider row year. */
 export function effectiveReleaseYear(release: OriginalRelease): string {
-	return effectiveReleaseBasics(release).releasedate?.[0]?.slice(0, 4) ?? "";
+  return effectiveReleaseBasics(release).releasedate?.[0]?.slice(0, 4) ?? "";
 }
 
 import {
-	choosePublicationOutput,
-	demoOutputCodec,
-	fixturePublicationDestination,
-	type PublicationDestination,
+  choosePublicationOutput,
+  demoOutputCodec,
+  fixturePublicationDestination,
+  type PublicationDestination,
 } from "../publication/publicationOutput";
 
 export function applyMetadataPreview(
-	releases: OriginalRelease[],
-	selected: Set<string>,
-	files: SourceFiles = originalFiles,
-	artists: CatalogArtist[] = originalArtists,
-	destination: PublicationDestination = fixturePublicationDestination,
+  releases: OriginalRelease[],
+  selected: Set<string>,
+  files: SourceFiles = originalFiles,
+  artists: CatalogArtist[] = originalArtists,
+  destination: PublicationDestination = fixturePublicationDestination,
 ): OriginalRelease[] {
-	const next = structuredClone(releases);
-	for (const release of next)
-		for (const track of release.tracks) {
-			if (!selected.has(track.id)) continue;
-			if (publicationMetadataIssues(release, track).length) continue;
-			const file = track.sourceId ? files[track.sourceId] : undefined;
-			if (!track.published && !(file?.available && file.locations?.length))
-				continue;
-			if (track.published && !metadataChanged(release, track, artists))
-				continue;
-			const output =
-				!track.published && file
-					? choosePublicationOutput(file, {
-							...destination,
-							artist: originalArtistName(release.artistId, artists),
-							year: effectiveReleaseYear(release),
-							release: effectiveReleaseTitle(release),
-							position: track.position,
-							title: track.title,
-						})
-					: undefined;
-			const tags = effectivePublicationTags(
-				release,
-				track,
-				artists,
-				files,
-				output?.container,
-			);
-			const coverHash = track.coverHash || null;
-			const lyrics = track.lyrics || null;
-			if (track.published)
-				track.published = { ...track.published, tags, coverHash, lyrics };
-			else if (file && output)
-				track.published = {
-					tags,
-					coverHash,
-					lyrics,
-					codec: demoOutputCodec(file.codec, destination.format),
-					container: output.container,
-					sourceId: track.sourceId,
-					path: output.path,
-					readAt: "Только в памяти макета",
-				};
-			else continue;
-			track.metadataBaseline = structuredClone(tags);
-			track.metadataBaselineExtras = { coverHash, lyrics };
-		}
-	return next;
+  const next = structuredClone(releases);
+  for (const release of next)
+    for (const track of release.tracks) {
+      if (!selected.has(track.id)) continue;
+      if (publicationMetadataIssues(release, track).length) continue;
+      const file = track.sourceId ? files[track.sourceId] : undefined;
+      if (!track.published && !(file?.available && file.locations?.length))
+        continue;
+      if (track.published && !metadataChanged(release, track, artists))
+        continue;
+      const output =
+        !track.published && file
+          ? choosePublicationOutput(file, {
+              ...destination,
+              artist: originalArtistName(release.artistId, artists),
+              year: effectiveReleaseYear(release),
+              release: effectiveReleaseTitle(release),
+              position: track.position,
+              title: track.title,
+            })
+          : undefined;
+      const tags = effectivePublicationTags(
+        release,
+        track,
+        artists,
+        files,
+        output?.container,
+      );
+      const coverHash = track.coverHash || null;
+      const lyrics = track.lyrics || null;
+      if (track.published)
+        track.published = { ...track.published, tags, coverHash, lyrics };
+      else if (file && output)
+        track.published = {
+          tags,
+          coverHash,
+          lyrics,
+          codec: demoOutputCodec(file.codec, destination.format),
+          container: output.container,
+          sourceId: track.sourceId,
+          path: output.path,
+          readAt: "Только в памяти макета",
+        };
+      else continue;
+      track.metadataBaseline = structuredClone(tags);
+      track.metadataBaselineExtras = { coverHash, lyrics };
+    }
+  return next;
 }
 
 function explicitGenreValues(
-	values: MetadataValues | undefined,
+  values: MetadataValues | undefined,
 ): string[] | undefined {
-	if (!values || !Object.hasOwn(values, "genre")) return undefined;
-	const entries = values.genre;
-	if (!Array.isArray(entries)) return undefined;
-	if (!entries.some(Boolean)) return [];
-	return entries.map((value) => resolveCatalogGenreValue(value));
+  if (!values || !Object.hasOwn(values, "genre")) return undefined;
+  const entries = values.genre;
+  if (!Array.isArray(entries)) return undefined;
+  if (!entries.some(Boolean)) return [];
+  return entries.map((value) => resolveCatalogGenreValue(value));
 }
 
 /**
@@ -677,555 +677,555 @@ function explicitGenreValues(
  * then the ordered recording-artist union.
  */
 export function publicationGenreFallback(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	artists: CatalogArtist[] = originalArtists,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  artists: CatalogArtist[] = originalArtists,
 ): string[] {
-	const recordingOverride = explicitGenreValues(track.recordingMetadata);
-	if (recordingOverride !== undefined) return recordingOverride;
-	const recordingGenres = track.recordingGenreRefs?.length
-		? track.recordingGenreRefs
-		: (track.recordingGenres ?? []).map((name) => ({ name }));
-	if (recordingGenres.length)
-		return recordingGenres.map((genre) => resolveCatalogGenreName(genre));
-	const releaseOverride = explicitGenreValues(release.metadataValues);
-	if (releaseOverride !== undefined) return releaseOverride;
-	if (release.metadataGenres?.length)
-		return release.metadataGenres.map((genre) =>
-			resolveCatalogGenreName(genre),
-		);
-	const recordingCredits = recordingCreditValues(track, artists);
-	const values: string[] = [];
-	const seen = new Set<string>();
-	for (const credit of recordingCredits) {
-		const linkedArtist = artists.find((item) => item.id === credit.artistId);
-		for (const genre of linkedArtist?.genres ?? []) {
-			const name = resolveCatalogGenreName(genre);
-			if (!name) continue;
-			const identity = genre.id ? `id:${genre.id}` : `name:${name}`;
-			if (seen.has(identity)) continue;
-			seen.add(identity);
-			values.push(name);
-		}
-	}
-	return values;
+  const recordingOverride = explicitGenreValues(track.recordingMetadata);
+  if (recordingOverride !== undefined) return recordingOverride;
+  const recordingGenres = track.recordingGenreRefs?.length
+    ? track.recordingGenreRefs
+    : (track.recordingGenres ?? []).map((name) => ({ name }));
+  if (recordingGenres.length)
+    return recordingGenres.map((genre) => resolveCatalogGenreName(genre));
+  const releaseOverride = explicitGenreValues(release.metadataValues);
+  if (releaseOverride !== undefined) return releaseOverride;
+  if (release.metadataGenres?.length)
+    return release.metadataGenres.map((genre) =>
+      resolveCatalogGenreName(genre),
+    );
+  const recordingCredits = recordingCreditValues(track, artists);
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const credit of recordingCredits) {
+    const linkedArtist = artists.find((item) => item.id === credit.artistId);
+    for (const genre of linkedArtist?.genres ?? []) {
+      const name = resolveCatalogGenreName(genre);
+      if (!name) continue;
+      const identity = genre.id ? `id:${genre.id}` : `name:${name}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      values.push(name);
+    }
+  }
+  return values;
 }
 
 export function desiredTags(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	artists: CatalogArtist[] = originalArtists,
-	audioSourceId: string | null = track.sourceId,
-	outputContainer?: string,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  artists: CatalogArtist[] = originalArtists,
+  audioSourceId: string | null = track.sourceId,
+  outputContainer?: string,
 ): Record<string, string[]> {
-	const titleOverride = release.comparisonOverrides
-		? Object.hasOwn(release.comparisonOverrides, "album")
-			? release.comparisonOverrides.album
-			: undefined
-		: undefined;
-	const numbering = positionNumberingBaseline(track);
-	const result: Record<string, string[]> = {
-		ALBUM:
-			titleOverride !== undefined
-				? [...titleOverride]
-				: release.title
-					? [release.title]
-					: [],
-		DATE: [],
-		TRACKNUMBER: [numbering.track],
-		DISCNUMBER: [numbering.disc],
-		GENRE: publicationGenreFallback(release, track, artists),
-		MUSICBRAINZ_ARTISTID: [],
-		MUSICBRAINZ_ALBUMID:
-			release.manual ||
-			release.provider === "Local" ||
-			!release.providerId ||
-			!musicBrainzUUID.test(release.providerId)
-				? []
-				: [release.providerId],
-		MUSICBRAINZ_TRACKID:
-			!track.recordingId || !musicBrainzUUID.test(track.recordingId)
-				? []
-				: [track.recordingId],
-		COMMENT: [],
-	};
-	const recordingCredits = positionCreditValues(track, artists);
-	const releaseCredits = releaseCreditValues(release, artists);
-	const recordingArtistProjection = projectArtistCreditGroup(
-		recordingCredits,
-		artists,
-	);
-	const releaseArtistProjection = projectArtistCreditGroup(
-		releaseCredits,
-		artists,
-	);
-	const sortNameForCredit = (artistId: string) => {
-		const linkedArtist = artists.find((item) => item.id === artistId);
-		return linkedArtist?.sortName || linkedArtist?.name || "";
-	};
-	const recordingSorts = recordingCredits.map((credit) =>
-		sortNameForCredit(credit.artistId),
-	);
-	const releaseSorts = releaseCredits.map((credit) =>
-		sortNameForCredit(credit.artistId),
-	);
-	const recordingSortCollision = hasDistinctArtistSortCollision(
-		recordingCredits.map((credit, index) => ({
-			artistId: credit.artistId,
-			sortName: recordingSorts[index],
-		})),
-	);
-	const releaseSortCollision = hasDistinctArtistSortCollision(
-		releaseCredits.map((credit, index) => ({
-			artistId: credit.artistId,
-			sortName: releaseSorts[index],
-		})),
-	);
-	result.ARTIST = recordingCredits.length
-		? [
-				recordingCredits
-					.map(
-						(credit, index) =>
-							recordingArtistProjection.names[index] +
-							(credit.joinPhrase ?? ""),
-					)
-					.join(""),
-			]
-		: [];
-	result.ARTISTSORT =
-		recordingSorts.length &&
-		recordingSorts.every(Boolean) &&
-		!recordingSortCollision
-			? [
-					recordingCredits
-						.map(
-							(credit, index) =>
-								recordingSorts[index] + (credit.joinPhrase ?? ""),
-						)
-						.join(""),
-				]
-			: [];
-	result.ARTISTSSORT = recordingSortCollision ? [] : recordingSorts;
-	result.ARTISTS = recordingArtistProjection.names;
-	result.MUSICBRAINZ_ARTISTID =
-		recordingArtistProjection.missingMbid ||
-		recordingArtistProjection.nameCollision
-			? []
-			: recordingArtistProjection.mbids;
-	result.ALBUMARTIST = releaseCredits.length
-		? [
-				releaseCredits
-					.map(
-						(credit, index) =>
-							releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
-					)
-					.join(""),
-			]
-		: [];
-	result.ALBUMARTISTS = releaseArtistProjection.names;
-	result.MUSICBRAINZ_ALBUMARTISTID =
-		releaseArtistProjection.missingMbid || releaseArtistProjection.nameCollision
-			? []
-			: releaseArtistProjection.mbids;
-	result.ALBUMARTISTSORT =
-		releaseSorts.length && releaseSorts.every(Boolean) && !releaseSortCollision
-			? [
-					releaseCredits
-						.map(
-							(credit, index) =>
-								releaseSorts[index] + (credit.joinPhrase ?? ""),
-						)
-						.join(""),
-				]
-			: [];
-	result.ALBUMARTISTSSORT = releaseSortCollision ? [] : releaseSorts;
-	const valuesForScope = (values: MetadataValues, scope: string) =>
-		Object.fromEntries(
-			Object.entries(values).filter(
-				([key]) => fieldByKey(key)?.scope === scope,
-			),
-		) as MetadataValues;
-	const explicitReleaseValues = valuesForScope(
-		release.metadataValues ?? {},
-		"release",
-	);
-	for (const { metadataKey } of releaseScalarFields)
-		if (Object.hasOwn(release.releaseScalarIntent ?? {}, metadataKey))
-			delete explicitReleaseValues[metadataKey];
-	// Album title and basic release facts have their own resolved projection.
-	for (const { metadataKey } of releaseBasicsFields)
-		delete explicitReleaseValues[metadataKey];
-	const releaseTags = {
-		...projectMetadataValues(effectiveReleaseBasics(release)).tags,
-		...projectMetadataValues(explicitReleaseValues).tags,
-		...releaseScalarOverrideTags(release),
-	};
-	for (const key of ["asin", "script"] as const) {
-		const value = acceptedReleaseIdentifier(release, key);
-		if (value) releaseTags[key.toUpperCase()] = [value];
-	}
-	const recordingValues = valuesForScope(
-		track.recordingMetadata ?? {},
-		"recording",
-	);
-	delete recordingValues.genre;
-	delete recordingValues.title;
-	for (const { metadataKey } of recordingScalarFields)
-		if (track.recordingScalarIntent?.[metadataKey])
-			delete recordingValues[metadataKey];
-	const explicitValues: MetadataValues = {
-		...valuesForScope(track.positionMetadata ?? {}, "track"),
-		...(audioSourceId
-			? valuesForScope(track.audioMetadata?.[audioSourceId] ?? {}, "audio")
-			: {}),
-	};
-	// Genre overrides are resolved per scope by publicationGenreFallback.
-	delete explicitValues.genre;
-	// Position title authority is resolved independently from generic tag projection.
-	delete explicitValues.title;
-	if (release.releaseArtistCredit) {
-		for (const key of creditTagKeys("ALBUMARTIST")) {
-			delete releaseTags[key];
-		}
-	}
-	if (
-		track.positionArtistCredit ||
-		(track.positionCreditEvidence &&
-			(track.positionCreditEvidence.origin !== "recording" ||
-				track.recordingArtistCredit))
-	) {
-		for (const tag of creditTagKeys("ARTIST")) {
-			const key = tag.toLowerCase();
-			delete recordingValues[key];
-			delete explicitValues[key];
-		}
-	}
-	const projected = {
-		...releaseTags,
-		...projectMetadataValues(recordingValues).tags,
-		...recordingScalarOverrideTags(track, "publication"),
-		...projectMetadataValues(explicitValues).tags,
-		...positionScalarOverrideTags(track, "publication"),
-	};
-	for (const [key, values] of Object.entries(projected)) result[key] = values;
-	const composition = resolvePublicationComposition(
-		track.positionComposition,
-		track.recordingComposition,
-	);
-	if (composition.works) delete result.MUSICBRAINZ_WORKID;
-	if (composition.movement) {
-		delete result.MOVEMENT;
-		delete result.MOVEMENTTOTAL;
-	}
-	Object.assign(result, projectCompositionTags(composition));
-	const contributors = contributorProjectionIntent(
-		track.positionContributors,
-		track.recordingContributors,
-		"publication",
-	);
-	if (contributors) {
-		for (const key of contributorTagKeys(result, track.published?.tags ?? {}))
-			result[key] = [];
-		Object.assign(
-			result,
-			projectScopedContributorTags(contributors, outputContainer),
-		);
-	}
-	const musicalKey = result.KEY;
-	if (musicalKey && outputContainer) {
-		const container = outputContainer.toUpperCase();
-		if (!musicalKey.length || container === "MKA" || container === "FLAC") {
-			result.INITIALKEY = [];
-		} else if (container === "MP3" || container === "M4A") {
-			result.INITIALKEY = musicalKey;
-			result.KEY = [];
-		} else {
-			delete result.KEY;
-		}
-	}
-	const projectedArtistNames = (
-		credits: { creditName: string; joinPhrase?: string }[],
-		names: string[],
-	) => names.some((name, index) => name !== credits[index]?.creditName);
-	if (projectedArtistNames(recordingCredits, recordingArtistProjection.names)) {
-		if (projected.ARTIST?.length)
-			result.ARTIST = [
-				recordingCredits
-					.map(
-						(credit, index) =>
-							recordingArtistProjection.names[index] +
-							(credit.joinPhrase ?? ""),
-					)
-					.join(""),
-			];
-		if (projected.ARTISTS?.length)
-			result.ARTISTS = recordingArtistProjection.names;
-	}
-	if (
-		recordingArtistProjection.missingMbid ||
-		recordingArtistProjection.nameCollision
-	)
-		result.MUSICBRAINZ_ARTISTID = [];
-	if (projectedArtistNames(releaseCredits, releaseArtistProjection.names)) {
-		if (projected.ALBUMARTIST?.length)
-			result.ALBUMARTIST = [
-				releaseCredits
-					.map(
-						(credit, index) =>
-							releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
-					)
-					.join(""),
-			];
-		if (projected.ALBUMARTISTS?.length)
-			result.ALBUMARTISTS = releaseArtistProjection.names;
-	}
-	if (
-		releaseArtistProjection.missingMbid ||
-		releaseArtistProjection.nameCollision
-	)
-		result.MUSICBRAINZ_ALBUMARTISTID = [];
-	// Resolve catalog identities without recasing unrelated legacy/user values.
-	const genreReferences = track.recordingGenreRefs ?? [];
-	result.GENRE = (result.GENRE ?? []).map((value, index) => {
-		const reference = genreReferences[index];
-		return reference && reference.name === value
-			? resolveCatalogGenreName(reference)
-			: resolveCatalogGenreValue(value);
-	});
-	// The recording title cannot overwrite a release position's explicit title.
-	result.TITLE = positionTitleTags(track);
-	return result;
+  const titleOverride = release.comparisonOverrides
+    ? Object.hasOwn(release.comparisonOverrides, "album")
+      ? release.comparisonOverrides.album
+      : undefined
+    : undefined;
+  const numbering = positionNumberingBaseline(track);
+  const result: Record<string, string[]> = {
+    ALBUM:
+      titleOverride !== undefined
+        ? [...titleOverride]
+        : release.title
+          ? [release.title]
+          : [],
+    DATE: [],
+    TRACKNUMBER: [numbering.track],
+    DISCNUMBER: [numbering.disc],
+    GENRE: publicationGenreFallback(release, track, artists),
+    MUSICBRAINZ_ARTISTID: [],
+    MUSICBRAINZ_ALBUMID:
+      release.manual ||
+      release.provider === "Local" ||
+      !release.providerId ||
+      !musicBrainzUUID.test(release.providerId)
+        ? []
+        : [release.providerId],
+    MUSICBRAINZ_TRACKID:
+      !track.recordingId || !musicBrainzUUID.test(track.recordingId)
+        ? []
+        : [track.recordingId],
+    COMMENT: [],
+  };
+  const recordingCredits = positionCreditValues(track, artists);
+  const releaseCredits = releaseCreditValues(release, artists);
+  const recordingArtistProjection = projectArtistCreditGroup(
+    recordingCredits,
+    artists,
+  );
+  const releaseArtistProjection = projectArtistCreditGroup(
+    releaseCredits,
+    artists,
+  );
+  const sortNameForCredit = (artistId: string) => {
+    const linkedArtist = artists.find((item) => item.id === artistId);
+    return linkedArtist?.sortName || linkedArtist?.name || "";
+  };
+  const recordingSorts = recordingCredits.map((credit) =>
+    sortNameForCredit(credit.artistId),
+  );
+  const releaseSorts = releaseCredits.map((credit) =>
+    sortNameForCredit(credit.artistId),
+  );
+  const recordingSortCollision = hasDistinctArtistSortCollision(
+    recordingCredits.map((credit, index) => ({
+      artistId: credit.artistId,
+      sortName: recordingSorts[index],
+    })),
+  );
+  const releaseSortCollision = hasDistinctArtistSortCollision(
+    releaseCredits.map((credit, index) => ({
+      artistId: credit.artistId,
+      sortName: releaseSorts[index],
+    })),
+  );
+  result.ARTIST = recordingCredits.length
+    ? [
+        recordingCredits
+          .map(
+            (credit, index) =>
+              recordingArtistProjection.names[index] +
+              (credit.joinPhrase ?? ""),
+          )
+          .join(""),
+      ]
+    : [];
+  result.ARTISTSORT =
+    recordingSorts.length &&
+    recordingSorts.every(Boolean) &&
+    !recordingSortCollision
+      ? [
+          recordingCredits
+            .map(
+              (credit, index) =>
+                recordingSorts[index] + (credit.joinPhrase ?? ""),
+            )
+            .join(""),
+        ]
+      : [];
+  result.ARTISTSSORT = recordingSortCollision ? [] : recordingSorts;
+  result.ARTISTS = recordingArtistProjection.names;
+  result.MUSICBRAINZ_ARTISTID =
+    recordingArtistProjection.missingMbid ||
+    recordingArtistProjection.nameCollision
+      ? []
+      : recordingArtistProjection.mbids;
+  result.ALBUMARTIST = releaseCredits.length
+    ? [
+        releaseCredits
+          .map(
+            (credit, index) =>
+              releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
+          )
+          .join(""),
+      ]
+    : [];
+  result.ALBUMARTISTS = releaseArtistProjection.names;
+  result.MUSICBRAINZ_ALBUMARTISTID =
+    releaseArtistProjection.missingMbid || releaseArtistProjection.nameCollision
+      ? []
+      : releaseArtistProjection.mbids;
+  result.ALBUMARTISTSORT =
+    releaseSorts.length && releaseSorts.every(Boolean) && !releaseSortCollision
+      ? [
+          releaseCredits
+            .map(
+              (credit, index) =>
+                releaseSorts[index] + (credit.joinPhrase ?? ""),
+            )
+            .join(""),
+        ]
+      : [];
+  result.ALBUMARTISTSSORT = releaseSortCollision ? [] : releaseSorts;
+  const valuesForScope = (values: MetadataValues, scope: string) =>
+    Object.fromEntries(
+      Object.entries(values).filter(
+        ([key]) => fieldByKey(key)?.scope === scope,
+      ),
+    ) as MetadataValues;
+  const explicitReleaseValues = valuesForScope(
+    release.metadataValues ?? {},
+    "release",
+  );
+  for (const { metadataKey } of releaseScalarFields)
+    if (Object.hasOwn(release.releaseScalarIntent ?? {}, metadataKey))
+      delete explicitReleaseValues[metadataKey];
+  // Album title and basic release facts have their own resolved projection.
+  for (const { metadataKey } of releaseBasicsFields)
+    delete explicitReleaseValues[metadataKey];
+  const releaseTags = {
+    ...projectMetadataValues(effectiveReleaseBasics(release)).tags,
+    ...projectMetadataValues(explicitReleaseValues).tags,
+    ...releaseScalarOverrideTags(release),
+  };
+  for (const key of ["asin", "script"] as const) {
+    const value = acceptedReleaseIdentifier(release, key);
+    if (value) releaseTags[key.toUpperCase()] = [value];
+  }
+  const recordingValues = valuesForScope(
+    track.recordingMetadata ?? {},
+    "recording",
+  );
+  delete recordingValues.genre;
+  delete recordingValues.title;
+  for (const { metadataKey } of recordingScalarFields)
+    if (track.recordingScalarIntent?.[metadataKey])
+      delete recordingValues[metadataKey];
+  const explicitValues: MetadataValues = {
+    ...valuesForScope(track.positionMetadata ?? {}, "track"),
+    ...(audioSourceId
+      ? valuesForScope(track.audioMetadata?.[audioSourceId] ?? {}, "audio")
+      : {}),
+  };
+  // Genre overrides are resolved per scope by publicationGenreFallback.
+  delete explicitValues.genre;
+  // Position title authority is resolved independently from generic tag projection.
+  delete explicitValues.title;
+  if (release.releaseArtistCredit) {
+    for (const key of creditTagKeys("ALBUMARTIST")) {
+      delete releaseTags[key];
+    }
+  }
+  if (
+    track.positionArtistCredit ||
+    (track.positionCreditEvidence &&
+      (track.positionCreditEvidence.origin !== "recording" ||
+        track.recordingArtistCredit))
+  ) {
+    for (const tag of creditTagKeys("ARTIST")) {
+      const key = tag.toLowerCase();
+      delete recordingValues[key];
+      delete explicitValues[key];
+    }
+  }
+  const projected = {
+    ...releaseTags,
+    ...projectMetadataValues(recordingValues).tags,
+    ...recordingScalarOverrideTags(track, "publication"),
+    ...projectMetadataValues(explicitValues).tags,
+    ...positionScalarOverrideTags(track, "publication"),
+  };
+  for (const [key, values] of Object.entries(projected)) result[key] = values;
+  const composition = resolvePublicationComposition(
+    track.positionComposition,
+    track.recordingComposition,
+  );
+  if (composition.works) delete result.MUSICBRAINZ_WORKID;
+  if (composition.movement) {
+    delete result.MOVEMENT;
+    delete result.MOVEMENTTOTAL;
+  }
+  Object.assign(result, projectCompositionTags(composition));
+  const contributors = contributorProjectionIntent(
+    track.positionContributors,
+    track.recordingContributors,
+    "publication",
+  );
+  if (contributors) {
+    for (const key of contributorTagKeys(result, track.published?.tags ?? {}))
+      result[key] = [];
+    Object.assign(
+      result,
+      projectScopedContributorTags(contributors, outputContainer),
+    );
+  }
+  const musicalKey = result.KEY;
+  if (musicalKey && outputContainer) {
+    const container = outputContainer.toUpperCase();
+    if (!musicalKey.length || container === "MKA" || container === "FLAC") {
+      result.INITIALKEY = [];
+    } else if (container === "MP3" || container === "M4A") {
+      result.INITIALKEY = musicalKey;
+      result.KEY = [];
+    } else {
+      delete result.KEY;
+    }
+  }
+  const projectedArtistNames = (
+    credits: { creditName: string; joinPhrase?: string }[],
+    names: string[],
+  ) => names.some((name, index) => name !== credits[index]?.creditName);
+  if (projectedArtistNames(recordingCredits, recordingArtistProjection.names)) {
+    if (projected.ARTIST?.length)
+      result.ARTIST = [
+        recordingCredits
+          .map(
+            (credit, index) =>
+              recordingArtistProjection.names[index] +
+              (credit.joinPhrase ?? ""),
+          )
+          .join(""),
+      ];
+    if (projected.ARTISTS?.length)
+      result.ARTISTS = recordingArtistProjection.names;
+  }
+  if (
+    recordingArtistProjection.missingMbid ||
+    recordingArtistProjection.nameCollision
+  )
+    result.MUSICBRAINZ_ARTISTID = [];
+  if (projectedArtistNames(releaseCredits, releaseArtistProjection.names)) {
+    if (projected.ALBUMARTIST?.length)
+      result.ALBUMARTIST = [
+        releaseCredits
+          .map(
+            (credit, index) =>
+              releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
+          )
+          .join(""),
+      ];
+    if (projected.ALBUMARTISTS?.length)
+      result.ALBUMARTISTS = releaseArtistProjection.names;
+  }
+  if (
+    releaseArtistProjection.missingMbid ||
+    releaseArtistProjection.nameCollision
+  )
+    result.MUSICBRAINZ_ALBUMARTISTID = [];
+  // Resolve catalog identities without recasing unrelated legacy/user values.
+  const genreReferences = track.recordingGenreRefs ?? [];
+  result.GENRE = (result.GENRE ?? []).map((value, index) => {
+    const reference = genreReferences[index];
+    return reference && reference.name === value
+      ? resolveCatalogGenreName(reference)
+      : resolveCatalogGenreValue(value);
+  });
+  // The recording title cannot overwrite a release position's explicit title.
+  result.TITLE = positionTitleTags(track);
+  return result;
 }
 
 function hasDistinctArtistSortCollision(
-	credits: { artistId: string; sortName: string }[],
+  credits: { artistId: string; sortName: string }[],
 ): boolean {
-	const artistBySortName = new Map<string, string>();
-	for (const { artistId, sortName } of credits) {
-		if (!artistId || !sortName) continue;
-		const previousArtistId = artistBySortName.get(sortName);
-		if (previousArtistId && previousArtistId !== artistId) return true;
-		artistBySortName.set(sortName, artistId);
-	}
-	return false;
+  const artistBySortName = new Map<string, string>();
+  for (const { artistId, sortName } of credits) {
+    if (!artistId || !sortName) continue;
+    const previousArtistId = artistBySortName.get(sortName);
+    if (previousArtistId && previousArtistId !== artistId) return true;
+    artistBySortName.set(sortName, artistId);
+  }
+  return false;
 }
 
 export function publicationSortTagCollisions(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	artists: CatalogArtist[] = originalArtists,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  artists: CatalogArtist[] = originalArtists,
 ): { recording: boolean; release: boolean } {
-	const linkedSortName = (artistId: string) => {
-		const artist = artists.find((item) => item.id === artistId);
-		return artist?.sortName || artist?.name || "";
-	};
-	const recordingCredits = positionCreditValues(track, artists);
-	const releaseCredits = releaseCreditValues(release, artists);
-	const collides = (credits: { artistId: string }[]) =>
-		hasDistinctArtistSortCollision(
-			credits.map(({ artistId }) => ({
-				artistId,
-				sortName: linkedSortName(artistId),
-			})),
-		);
-	return {
-		recording: collides(recordingCredits),
-		release: collides(releaseCredits),
-	};
+  const linkedSortName = (artistId: string) => {
+    const artist = artists.find((item) => item.id === artistId);
+    return artist?.sortName || artist?.name || "";
+  };
+  const recordingCredits = positionCreditValues(track, artists);
+  const releaseCredits = releaseCreditValues(release, artists);
+  const collides = (credits: { artistId: string }[]) =>
+    hasDistinctArtistSortCollision(
+      credits.map(({ artistId }) => ({
+        artistId,
+        sortName: linkedSortName(artistId),
+      })),
+    );
+  return {
+    recording: collides(recordingCredits),
+    release: collides(releaseCredits),
+  };
 }
 
 /** Metadata-only updates keep audio-scoped tags attached to the published audio. */
 export function effectivePublicationTags(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	artists: CatalogArtist[] = originalArtists,
-	files: SourceFiles = originalFiles,
-	outputContainer = track.published?.container,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  artists: CatalogArtist[] = originalArtists,
+  files: SourceFiles = originalFiles,
+  outputContainer = track.published?.container,
 ): Record<string, string[]> {
-	const tags = desiredTags(
-		release,
-		track,
-		artists,
-		track.published?.sourceId ?? track.sourceId,
-		outputContainer,
-	);
-	if (!track.published) {
-		const sourceFile = track.sourceId ? files[track.sourceId] : undefined;
-		if (sourceFile) {
-			for (const key of sourceOnlyAudioTagKeys) {
-				if (Object.hasOwn(sourceFile.tags, key))
-					tags[key] = [...sourceFile.tags[key]];
-			}
-		}
-		return tags;
-	}
-	retainUnspecifiedContributorTags(
-		tags,
-		track.published.tags,
-		track.positionContributors,
-		track.recordingContributors,
-	);
-	for (const key of sourceOnlyAudioTagKeys) {
-		delete tags[key];
-		if (Object.hasOwn(track.published.tags, key))
-			tags[key] = [...track.published.tags[key]];
-	}
-	for (const field of navidromeFields.filter(
-		(item) => item.scope === "audio",
-	)) {
-		delete tags[field.tag];
-		if (Object.hasOwn(track.published.tags, field.tag))
-			tags[field.tag] = [...track.published.tags[field.tag]];
-	}
-	return tags;
+  const tags = desiredTags(
+    release,
+    track,
+    artists,
+    track.published?.sourceId ?? track.sourceId,
+    outputContainer,
+  );
+  if (!track.published) {
+    const sourceFile = track.sourceId ? files[track.sourceId] : undefined;
+    if (sourceFile) {
+      for (const key of sourceOnlyAudioTagKeys) {
+        if (Object.hasOwn(sourceFile.tags, key))
+          tags[key] = [...sourceFile.tags[key]];
+      }
+    }
+    return tags;
+  }
+  retainUnspecifiedContributorTags(
+    tags,
+    track.published.tags,
+    track.positionContributors,
+    track.recordingContributors,
+  );
+  for (const key of sourceOnlyAudioTagKeys) {
+    delete tags[key];
+    if (Object.hasOwn(track.published.tags, key))
+      tags[key] = [...track.published.tags[key]];
+  }
+  for (const field of navidromeFields.filter(
+    (item) => item.scope === "audio",
+  )) {
+    delete tags[field.tag];
+    if (Object.hasOwn(track.published.tags, field.tag))
+      tags[field.tag] = [...track.published.tags[field.tag]];
+  }
+  return tags;
 }
 
 /** Release genre is a recording-scope override; other fields keep their registered scope. */
 function scopeValidationEntries(
-	values: MetadataValues,
-	scope: MetadataScope,
+  values: MetadataValues,
+  scope: MetadataScope,
 ): [MetadataValues, MetadataScope][] {
-	if (scope !== "release" || !Object.hasOwn(values, "genre"))
-		return [[values, scope]];
-	const { genre, ...releaseValues } = values;
-	return [
-		[releaseValues, scope],
-		[{ genre }, "recording"],
-	];
+  if (scope !== "release" || !Object.hasOwn(values, "genre"))
+    return [[values, scope]];
+  const { genre, ...releaseValues } = values;
+  return [
+    [releaseValues, scope],
+    [{ genre }, "recording"],
+  ];
 }
 
 export function publicationMetadataIssues(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	audioSourceId: string | null = track.published ? null : track.sourceId,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  audioSourceId: string | null = track.published ? null : track.sourceId,
 ): string[] {
-	const scopes = [
-		[release.metadataValues ?? {}, "release"],
-		[track.recordingMetadata ?? {}, "recording"],
-		[track.positionMetadata ?? {}, "track"],
-		[
-			audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
-			"audio",
-		],
-	] as const;
-	return [
-		...new Set(
-			scopes.flatMap(([values, scope]) =>
-				scopeValidationEntries(values, scope).flatMap(
-					([scopedValues, scopedScope]) =>
-						validateMetadataValues(scopedValues, scopedScope),
-				),
-			),
-		),
-	];
+  const scopes = [
+    [release.metadataValues ?? {}, "release"],
+    [track.recordingMetadata ?? {}, "recording"],
+    [track.positionMetadata ?? {}, "track"],
+    [
+      audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
+      "audio",
+    ],
+  ] as const;
+  return [
+    ...new Set(
+      scopes.flatMap(([values, scope]) =>
+        scopeValidationEntries(values, scope).flatMap(
+          ([scopedValues, scopedScope]) =>
+            validateMetadataValues(scopedValues, scopedScope),
+        ),
+      ),
+    ),
+  ];
 }
 
 /** Locale-reactive presentation of publication metadata validation issues. */
 export function publicationMetadataIssueMessages(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	locale: Locale,
-	audioSourceId: string | null = track.published ? null : track.sourceId,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  locale: Locale,
+  audioSourceId: string | null = track.published ? null : track.sourceId,
 ): string[] {
-	const scopes = [
-		[release.metadataValues ?? {}, "release"],
-		[track.recordingMetadata ?? {}, "recording"],
-		[track.positionMetadata ?? {}, "track"],
-		[
-			audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
-			"audio",
-		],
-	] as const;
-	return [
-		...new Set(
-			scopes.flatMap(([values, scope]) =>
-				scopeValidationEntries(values, scope).flatMap(
-					([scopedValues, scopedScope]) =>
-						validateMetadataIssues(scopedValues, scopedScope).map((issue) =>
-							metadataValidationMessage(issue, locale),
-						),
-				),
-			),
-		),
-	];
+  const scopes = [
+    [release.metadataValues ?? {}, "release"],
+    [track.recordingMetadata ?? {}, "recording"],
+    [track.positionMetadata ?? {}, "track"],
+    [
+      audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
+      "audio",
+    ],
+  ] as const;
+  return [
+    ...new Set(
+      scopes.flatMap(([values, scope]) =>
+        scopeValidationEntries(values, scope).flatMap(
+          ([scopedValues, scopedScope]) =>
+            validateMetadataIssues(scopedValues, scopedScope).map((issue) =>
+              metadataValidationMessage(issue, locale),
+            ),
+        ),
+      ),
+    ),
+  ];
 }
 
 export function metadataChanged(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	artists: CatalogArtist[] = originalArtists,
+  release: OriginalRelease,
+  track: OriginalTrack,
+  artists: CatalogArtist[] = originalArtists,
 ): boolean {
-	if (!track.published) return false;
-	const tags = effectivePublicationTags(release, track, artists);
-	const baseline = track.metadataBaseline ?? track.published.tags;
-	const managed = new Set([
-		"TITLE",
-		"ARTIST",
-		"ARTISTSORT",
-		"ARTISTSSORT",
-		"ALBUM",
-		"ALBUMARTIST",
-		"ALBUMARTISTSORT",
-		"ALBUMARTISTSSORT",
-		"DATE",
-		"RELEASECOUNTRY",
-		"RELEASESTATUS",
-		"LABEL",
-		"CATALOGNUMBER",
-		"TRACKNUMBER",
-		"DISCNUMBER",
-		"GENRE",
-		"INITIALKEY",
-		"MOVEMENTCOUNT",
-		"MOVEMENTNUMBER",
-		...metadataManagedTagKeys(),
-		...(track.positionContributors || track.recordingContributors
-			? contributorTagKeys(tags, baseline)
-			: []),
-		...metadataTagKeys({
-			...(release.metadataValues ?? {}),
-			...(track.recordingMetadata ?? {}),
-			...(track.positionMetadata ?? {}),
-			...((track.published?.sourceId ?? track.sourceId)
-				? (track.audioMetadata?.[
-						(track.published?.sourceId ?? track.sourceId) as string
-					] ?? {})
-				: {}),
-		}),
-	]);
-	return (
-		[...managed].some(
-			(key) =>
-				JSON.stringify(tags[key] ?? []) !== JSON.stringify(baseline[key] ?? []),
-		) ||
-		(track.coverHash ?? null) !==
-			((track.metadataBaselineExtras
-				? track.metadataBaselineExtras.coverHash
-				: track.published.coverHash) ?? null) ||
-		(track.lyrics ?? null) !==
-			((track.metadataBaselineExtras
-				? track.metadataBaselineExtras.lyrics
-				: track.published.lyrics) ?? null)
-	);
+  if (!track.published) return false;
+  const tags = effectivePublicationTags(release, track, artists);
+  const baseline = track.metadataBaseline ?? track.published.tags;
+  const managed = new Set([
+    "TITLE",
+    "ARTIST",
+    "ARTISTSORT",
+    "ARTISTSSORT",
+    "ALBUM",
+    "ALBUMARTIST",
+    "ALBUMARTISTSORT",
+    "ALBUMARTISTSSORT",
+    "DATE",
+    "RELEASECOUNTRY",
+    "RELEASESTATUS",
+    "LABEL",
+    "CATALOGNUMBER",
+    "TRACKNUMBER",
+    "DISCNUMBER",
+    "GENRE",
+    "INITIALKEY",
+    "MOVEMENTCOUNT",
+    "MOVEMENTNUMBER",
+    ...metadataManagedTagKeys(),
+    ...(track.positionContributors || track.recordingContributors
+      ? contributorTagKeys(tags, baseline)
+      : []),
+    ...metadataTagKeys({
+      ...(release.metadataValues ?? {}),
+      ...(track.recordingMetadata ?? {}),
+      ...(track.positionMetadata ?? {}),
+      ...((track.published?.sourceId ?? track.sourceId)
+        ? (track.audioMetadata?.[
+            (track.published?.sourceId ?? track.sourceId) as string
+          ] ?? {})
+        : {}),
+    }),
+  ]);
+  return (
+    [...managed].some(
+      (key) =>
+        JSON.stringify(tags[key] ?? []) !== JSON.stringify(baseline[key] ?? []),
+    ) ||
+    (track.coverHash ?? null) !==
+      ((track.metadataBaselineExtras
+        ? track.metadataBaselineExtras.coverHash
+        : track.published.coverHash) ?? null) ||
+    (track.lyrics ?? null) !==
+      ((track.metadataBaselineExtras
+        ? track.metadataBaselineExtras.lyrics
+        : track.published.lyrics) ?? null)
+  );
 }
 export const catalogData = {
-	artists: originalArtists,
-	absentGroups: original.absentGroups,
-	releases: originalReleases.map((release) => ({
-		...release,
-		tracks: release.tracks.map((track) => ({
-			...track,
-			sourceIds: track.sourceIds ?? [],
-			published: Boolean(track.published),
-		})),
-	})),
-	files: Object.fromEntries(
-		Object.entries(original.files).map(([id, file]) => [
-			id,
-			{
-				available: Boolean(file.available),
-				located: Boolean(file.locations?.length),
-			},
-		]),
-	),
+  artists: originalArtists,
+  absentGroups: original.absentGroups,
+  releases: originalReleases.map((release) => ({
+    ...release,
+    tracks: release.tracks.map((track) => ({
+      ...track,
+      sourceIds: track.sourceIds ?? [],
+      published: Boolean(track.published),
+    })),
+  })),
+  files: Object.fromEntries(
+    Object.entries(original.files).map(([id, file]) => [
+      id,
+      {
+        available: Boolean(file.available),
+        located: Boolean(file.locations?.length),
+      },
+    ]),
+  ),
 };
