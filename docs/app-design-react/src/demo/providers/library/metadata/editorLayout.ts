@@ -36,6 +36,23 @@ export const libraryReleaseEditorFields = [
 	...releaseEditorFields(releaseAdditionalFields, "additional"),
 ];
 
+/**
+ * Position metadata keeps its title in the same "Titles" group as the library
+ * editor. The shared registry assigns `title` to the recording scope, so the
+ * position editor supplies its own track-scoped field instead of widening it.
+ */
+export const libraryPositionEditorFields: MetadataField[] = [
+	{
+		key: "title",
+		label: "title",
+		tag: fieldByKey("title")?.tag ?? "TITLE",
+		scope: "track",
+		kind: "text",
+		group: "main",
+	},
+	...fieldsForScope("track"),
+];
+
 const essentials: Partial<Record<MetadataScope, string[]>> = {
 	release: releaseBasicsFields.map(({ metadataKey }) => metadataKey),
 	recording: ["title", "explicitstatus", "isrc"],

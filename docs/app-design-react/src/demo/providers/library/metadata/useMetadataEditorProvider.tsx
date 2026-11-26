@@ -123,6 +123,8 @@ export interface MetadataEditorProps {
 	fieldKinds?: Readonly<Record<string, MetadataFieldDescriptor["kind"]>>;
 	fieldHints?: Readonly<Record<string, string>>;
 	fieldBaselines?: Readonly<Record<string, string>>;
+	/** Explicit editor fields for scopes whose shared registry identity differs. */
+	fields?: readonly MetadataField[];
 	fieldStateDisplay?: {
 		absent: string;
 		explicitEmpty: string;
@@ -252,6 +254,7 @@ export function useMetadataEditorProvider({
 	fieldKinds,
 	fieldHints,
 	fieldBaselines,
+	fields: suppliedFields,
 	fieldStateDisplay,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
@@ -327,8 +330,10 @@ export function useMetadataEditorProvider({
 	const editorRef = useRef<HTMLElement>(null);
 	const scopedRelease = libraryMetadata && scope === "release";
 	const fields = useMemo(
-		() => (scopedRelease ? libraryReleaseEditorFields : fieldsForScope(scope)),
-		[scope, scopedRelease],
+		() =>
+			suppliedFields ??
+			(scopedRelease ? libraryReleaseEditorFields : fieldsForScope(scope)),
+		[suppliedFields, scope, scopedRelease],
 	);
 	const editableFields = fields.filter(
 		(field) => !audioMeasurementKeySet.has(field.key),
@@ -542,7 +547,7 @@ export function useMetadataEditorProvider({
 		const changedValues = Object.fromEntries(
 			[...dirty]
 				.filter((key) => fieldByKey(key)?.scope === scope)
-				.filter((key) => !scopedRelease || !stateControlled(key))
+				.filter((key) => !stateControlled(key))
 				.filter(validatesControlledValue)
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
@@ -599,7 +604,7 @@ export function useMetadataEditorProvider({
 		void complete(update, Object.keys(details).length ? details : undefined);
 	};
 	const foreignFields = Object.keys(values).filter((key) => {
-		if (scopedRelease && stateControlled(key)) return false;
+		if (stateControlled(key)) return false;
 		const field = fieldByKey(key);
 		return field && field.scope !== scope && values[key]?.some(Boolean);
 	});
@@ -753,6 +758,8 @@ export function useMetadataEditorProvider({
 				: rows(current, "genre").map((name): Genre => ({ name }))
 	).map((genre) => ({ ...genre, name: genre.name ?? genre.id ?? "" }));
 	const groupHeading = (group: string) => {
+		if (group === "main")
+			return releaseMetadataEditorMessages[locale].groups.main;
 		if (scopedRelease && (group === "release" || group === "additional"))
 			return releaseMetadataEditorMessages[locale].groups[group];
 		return metadataGroupLabel(group, locale);

@@ -1,13 +1,16 @@
 import { useI18n } from "../../../../app/i18n/host";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { TrackMetadataEditorsViewProps } from "../../../../ui/features/library/metadata/TrackMetadataEditorsView";
+import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import {
 	type CatalogArtist,
 	type OriginalTrack,
-	originalProviders,
+	positionTitleIntent,
+	recordingTitleBaseline,
 	type SourceFiles,
 } from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
+import { libraryPositionEditorFields } from "./editorLayout";
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
@@ -18,19 +21,6 @@ function mergedValues(
 	...values: (MetadataValues | undefined)[]
 ): MetadataValues {
 	return Object.assign({}, ...values.filter(Boolean));
-}
-
-function recordingTitleBaseline(track: OriginalTrack): string | undefined {
-	return (
-		track.recordingTitle ??
-		track.recordingMetadata?.title?.[0] ??
-		(track.recordingId
-			? originalProviders
-					.flatMap((release) => release.tracks)
-					.find((candidate) => candidate.recordingId === track.recordingId)
-					?.title
-			: undefined)
-	);
 }
 
 function recordingValues(track: OriginalTrack): MetadataValues {
@@ -108,12 +98,14 @@ export function useTrackMetadataEditorsDemoProvider({
 			(_, name: string) => String(values[name] ?? `{${name}}`),
 		);
 	const recording = recordingValues(track);
+	const positionTitle = positionTitleIntent(track);
 	const position: MetadataValues = {
 		track: [
 			track.displayedNumber ?? String(track.mediumPosition ?? track.position),
 		],
 		disc: [String(track.medium ?? 1)],
 		...track.positionMetadata,
+		title: [positionTitle.value],
 	};
 	const audioSources = [
 		...new Set([
@@ -129,18 +121,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			value: extended.disambiguation ?? "",
 		},
 	];
-	const titleBaseline = recordingTitleBaseline(track);
-	const positionExtras = [
-		{
-			key: "titleOverride",
-			label: m("positionTitleOverride"),
-			value:
-				track.positionTitleOverride ??
-				(titleBaseline !== undefined && track.title !== titleBaseline
-					? track.title
-					: ""),
-		},
-	];
+	const releaseText = releaseMetadataEditorMessages[locale];
 
 	const selectedId = track.sourceId;
 	const hasSelected = Boolean(selectedId && audioSources.includes(selectedId));
@@ -169,8 +150,7 @@ export function useTrackMetadataEditorsDemoProvider({
 				const titleChanged = title !== recording.title?.[0];
 				const update = (current: OriginalTrack): OriginalTrack => {
 					const explicitPositionTitle =
-						current.positionTitleOverride ||
-						current.positionMetadata?.title?.some(Boolean);
+						positionTitleIntent(current).state !== "absent";
 					const baseline = recordingTitleBaseline(current);
 					const updatePositionTitle =
 						titleChanged &&
@@ -213,16 +193,25 @@ export function useTrackMetadataEditorsDemoProvider({
 				(onRecordingChange ?? onMutate)(update);
 			},
 		},
-		positionSummary: m("positionSummary", {
-			title: positionExtras[0].value || track.title,
-			number: position.track?.[0] ?? "",
-			disc: position.disc?.[0] ?? "1",
-		}),
 		position: {
-			label: m("positionDetails"),
+			label: releaseText.positionTitle,
 			scope: "track",
+			libraryMetadata: true,
 			values: position,
-			extraFields: positionExtras,
+			fields: libraryPositionEditorFields,
+			fieldStates: { title: positionTitle.state },
+			fieldLabels: { title: releaseText.labels.title },
+			fieldStateMode: {
+				label: releaseText.mode,
+				absent: releaseText.absent,
+				value: releaseText.value,
+				explicitEmpty: releaseText.explicitEmpty,
+			},
+			fieldStateDisplay: {
+				absent: releaseText.noOverride,
+				explicitEmpty: releaseText.explicitEmpty,
+				emptyValue: releaseText.emptyValue,
+			},
 			requiredKeys: ["track"],
 			onSave: (values, details) => {
 				const displayedNumber = values.track?.[0] ?? "";
@@ -233,12 +222,9 @@ export function useTrackMetadataEditorsDemoProvider({
 						position,
 						values,
 					);
-					const titleOverride = details?.extraValues?.titleOverride;
-					if (titleOverride !== undefined) {
-						if (titleOverride) comparison.title = [titleOverride];
-						else delete comparison.title;
-					}
-					return {
+					const positionMetadata = { ...values };
+					delete positionMetadata.title;
+					const updated: OriginalTrack = {
 						...current,
 						displayedNumber,
 						mediumPosition:
@@ -247,18 +233,27 @@ export function useTrackMetadataEditorsDemoProvider({
 							current.position,
 						medium:
 							Number.isFinite(medium) && medium > 0 ? medium : current.medium,
-						positionMetadata: values,
+						positionMetadata,
 						positionComparisonOverrides: comparison,
-						...(details?.extraValues?.titleOverride !== undefined
-							? {
-									positionTitleOverride: details.extraValues.titleOverride,
-									title:
-										details.extraValues.titleOverride ||
-										recordingTitleBaseline(current) ||
-										current.title,
-								}
-							: {}),
 					};
+					const titleState = details?.fieldStates?.title;
+					if (titleState !== undefined) {
+						const title = values.title?.[0] ?? "";
+						// Preserve the recording's value before changing the position.
+						const recordingTitle =
+							recordingTitleBaseline(current) ?? current.title;
+						updated.recordingTitle = recordingTitle;
+						delete comparison.title;
+						if (titleState === "explicit_empty") comparison.title = [];
+						else if (titleState === "value") comparison.title = [title];
+						updated.title =
+							titleState === "explicit_empty"
+								? ""
+								: titleState === "value"
+									? title
+									: recordingTitle;
+					}
+					return updated;
 				});
 			},
 		},

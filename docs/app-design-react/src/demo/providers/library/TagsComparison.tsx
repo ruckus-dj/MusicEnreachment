@@ -74,6 +74,8 @@ export function TagsComparison({
 			...(track.positionComparisonOverrides ?? {}),
 		}).tags,
 	};
+	const positionTitleOverride = track.positionComparisonOverrides?.title;
+	if (positionTitleOverride) overrides.TITLE = [...positionTitleOverride];
 	return (
 		<LibraryPositionTagEvidenceFrame
 			locale={locale}

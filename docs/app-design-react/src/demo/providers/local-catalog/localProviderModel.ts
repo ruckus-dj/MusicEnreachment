@@ -150,7 +150,9 @@ export function localProviderReleases(
 						id: `${release.id}-${item.id}`,
 						title: item.titleOverride || recordingTitle,
 						recordingTitle,
-						positionTitleOverride: item.titleOverride,
+						...(item.titleOverride
+							? { positionComparisonOverrides: { title: [item.titleOverride] } }
+							: {}),
 						position: index + 1,
 						duration:
 							duration == null || duration === ""

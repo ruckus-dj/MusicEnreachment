@@ -77,7 +77,6 @@ export interface OriginalTrack {
 	displayedNumber?: string;
 	mediumPosition?: number;
 	medium?: number;
-	positionTitleOverride?: string;
 }
 
 export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
@@ -253,6 +252,52 @@ export const originalProviders: OriginalRelease[] =
 			published: track.published ?? null,
 		})),
 	}));
+
+const providerRecordingTitles = new Map<string, string>();
+for (const release of originalProviders) {
+	for (const track of release.tracks) {
+		if (track.recordingId && !providerRecordingTitles.has(track.recordingId))
+			providerRecordingTitles.set(track.recordingId, track.title);
+	}
+}
+
+export function recordingTitleBaseline(
+	track: OriginalTrack,
+): string | undefined {
+	return (
+		track.recordingTitle ??
+		track.recordingMetadata?.title?.[0] ??
+		(track.recordingId
+			? providerRecordingTitles.get(track.recordingId)
+			: undefined)
+	);
+}
+
+export function positionTitleIntent(track: OriginalTrack): {
+	state: "absent" | "value" | "explicit_empty";
+	value: string;
+} {
+	const overrides = track.positionComparisonOverrides;
+	if (overrides && Object.hasOwn(overrides, "title")) {
+		const values = overrides.title ?? [];
+		return values.length
+			? { state: "value", value: values[0] ?? "" }
+			: { state: "explicit_empty", value: "" };
+	}
+	// The fixture's exact position title can differ from its recording.
+	const baseline = recordingTitleBaseline(track);
+	return baseline !== undefined && track.title !== baseline
+		? { state: "value", value: track.title }
+		: { state: "absent", value: "" };
+}
+
+function positionTitleTags(track: OriginalTrack): string[] {
+	const intent = positionTitleIntent(track);
+	if (intent.state === "value") return [intent.value];
+	if (intent.state === "explicit_empty") return [];
+	const value = recordingTitleBaseline(track) ?? track.title;
+	return value ? [value] : [];
+}
 
 /** Read title override intent from the sparse map, not the merged metadata values. */
 export function releaseTitleOverrideState(
@@ -510,7 +555,6 @@ export function desiredTags(
 			: undefined
 		: undefined;
 	const result: Record<string, string[]> = {
-		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
 		ALBUM:
 			titleOverride !== undefined
@@ -691,6 +735,8 @@ export function desiredTags(
 	};
 	// Genre overrides are resolved per scope by publicationGenreFallback.
 	delete explicitValues.genre;
+	// Position title authority is resolved independently from generic tag projection.
+	delete explicitValues.title;
 	const projected = {
 		...releaseTags,
 		...projectMetadataValues(explicitValues).tags,
@@ -745,7 +791,7 @@ export function desiredTags(
 			: resolveCatalogGenreValue(value);
 	});
 	// The recording title cannot overwrite a release position's explicit title.
-	result.TITLE = track.title ? [track.title] : [];
+	result.TITLE = positionTitleTags(track);
 	return result;
 }
 
