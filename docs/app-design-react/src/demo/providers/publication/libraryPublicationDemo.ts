@@ -226,8 +226,8 @@ export function isReadyPublication(row: DemoPublicationRow) {
 	return row.disposition === "create" || row.disposition === "update";
 }
 
-function publicationPathOwned(
-	catalog: DemoPublicationCatalog,
+export function publicationPathOwned(
+	catalog: Pick<DemoPublicationCatalog, "releases">,
 	position: DemoPublicationPosition,
 	path: string,
 ) {

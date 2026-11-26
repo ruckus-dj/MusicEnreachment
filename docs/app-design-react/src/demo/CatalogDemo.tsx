@@ -113,7 +113,6 @@ import {
 	DemoLocalReleaseGenreCatalogProvider,
 	DemoLocalReleaseGenreLoadProvider,
 } from "./providers/local-release/DemoLocalReleaseGenreCatalogProvider";
-import { formatUiNotice, type UiNotice } from "./providers/notices/uiNotice";
 import { DemoOperationsBinder } from "./providers/operations/OperationsScreen";
 import {
 	type DemoPublicationJob,
@@ -123,6 +122,11 @@ import {
 	DemoPositionPublication,
 	type DemoPositionPublicationSource,
 } from "./providers/publication/ContextPublicationPreview";
+import {
+	commitContextualPublication,
+	type ContextualPublicationPreparation,
+	settleContextualPublication,
+} from "./providers/publication/contextualPublicationJob";
 import {
 	type DemoPublicationCatalog,
 	type DemoPublicationRow,
@@ -178,7 +182,11 @@ function openIncomingFromHome() {
 }
 
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
-type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
+type PublicationJob = DemoPublicationJob &
+	(
+		| { kind: "aggregate"; plan: DemoPublicationRow }
+		| { kind: "contextual"; plan: ContextualPublicationPreparation }
+	);
 
 export function CatalogDemo({
 	onIncomingCount,
@@ -425,14 +433,8 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		positions: LibrarySelectionPreviewPosition[];
 		state: LibrarySelectionPreviewState;
 	} | null>(null);
-	const [positionNotice, setPositionNotice] = useState<{
-		releaseId: string;
-		positionId: string;
-		notice: UiNotice;
-	} | null>(null);
 	useEffect(() => {
 		setSelectionPreview(null);
-		setPositionNotice(null);
 	}, [route]);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
@@ -447,6 +449,28 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		),
 		inventoryVersion: incoming.inventoryVersion,
 	};
+	const publicationPending = (jobId: string) => {
+		const state = operationsProvider.publicationStates?.get(jobId);
+		return !state || state === "queued" || state === "running";
+	};
+	const addPublicationJobs = (jobs: readonly PublicationJob[]) => {
+		setPublicationJobs((current) => {
+			const next = [...current];
+			for (const job of jobs) {
+				if (
+					next.some(
+						(item) =>
+							item.releaseId === job.releaseId &&
+							item.positionId === job.positionId &&
+							publicationPending(item.id),
+					)
+				)
+					continue;
+				next.push(job);
+			}
+			return next.length === current.length ? current : next;
+		});
+	};
 	const queuePublications = (plans: readonly DemoPublicationRow[]) => {
 		const jobs = plans.flatMap((plan) => {
 			const release = releases.find(({ id }) => id === plan.release_id);
@@ -455,6 +479,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 				? [
 						{
 							id: `publication-${crypto.randomUUID()}`,
+							kind: "aggregate" as const,
 							releaseId: plan.release_id,
 							positionId: plan.position_id,
 							title: track.title,
@@ -464,7 +489,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 					]
 				: [];
 		});
-		setPublicationJobs((current) => [...current, ...jobs]);
+		addPublicationJobs(jobs);
 	};
 	const [residualDeletions, setResidualDeletions] = useState(
 		() => new Map<DeletionOperation, DeletionOperation>(),
@@ -479,6 +504,17 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		settlePublication: (job) => {
 			const queued = publicationJobs.find(({ id }) => id === job.id);
 			if (!queued) return false;
+			if (queued.kind === "contextual") {
+				const result = settleContextualPublication(
+					{ ...publicationCatalog, providers, artists: providerArtists },
+					queued.plan,
+				);
+				if (!result) return false;
+				setReleases((current) =>
+					commitContextualPublication(current, queued.plan, result),
+				);
+				return true;
+			}
 			const result = settleDemoPublication(publicationCatalog, queued.plan);
 			if (!result) return false;
 			setReleases((current) =>
@@ -841,10 +877,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 			onQueueDeletion: queueDeletion,
 			publication: {
 				catalog: publicationCatalog,
-				pending: publicationJobs.filter((job) => {
-					const state = operationsProvider.publicationStates?.get(job.id);
-					return !state || state === "queued" || state === "running";
-				}),
+				pending: publicationJobs.filter((job) => publicationPending(job.id)),
 				onQueue: queuePublications,
 			},
 			genresLoaded: settings.genresLoaded,
@@ -859,42 +892,59 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		let position: TrackScreenProps | null = null;
 		if (track) {
 			const identity = recordingIdentity(track);
-			const activePositionNotice =
-				positionNotice &&
-				positionNotice.releaseId === release.id &&
-				positionNotice.positionId === track.id
-					? positionNotice.notice
-					: null;
-			const contextualPublication: DemoPositionPublicationSource = {
-				key: `${release.id}:${track.id}`,
-				Component: DemoPositionPublication,
-				props: {
-					destination: publicationDestination,
-					release,
-					positionId: track.id,
-					state: incoming,
-					files,
-					releases,
-					providers,
-					artists: providerArtists,
-					onReleases: setImportedReleases,
-					hasCustomTemplate: Boolean(publicationCatalog.hasCustomTemplate),
-					onSuccess: (notice) => {
-						setPositionNotice({
-							releaseId: release.id,
-							positionId: track.id,
-							notice,
-						});
-					},
-				},
-			};
+			const lastPublication = publicationJobs
+				.filter(
+					(job) => job.releaseId === release.id && job.positionId === track.id,
+				)
+				.at(-1);
+			const lastPublicationState = lastPublication
+				? operationsProvider.publicationStates?.get(lastPublication.id)
+				: undefined;
+			const contextualPublication: DemoPositionPublicationSource | undefined =
+				lastPublication && publicationPending(lastPublication.id)
+					? undefined
+					: {
+							key: `${release.id}:${track.id}`,
+							Component: DemoPositionPublication,
+							props: {
+								destination: publicationDestination,
+								release,
+								positionId: track.id,
+								state: incoming,
+								files,
+								releases,
+								providers,
+								artists: providerArtists,
+								hasCustomTemplate: Boolean(
+									publicationCatalog.hasCustomTemplate,
+								),
+								onQueue: (plan) => {
+									addPublicationJobs([
+										{
+											kind: "contextual",
+											id: `publication-${crypto.randomUUID()}`,
+											releaseId: release.id,
+											positionId: track.id,
+											title: track.title,
+											createdAt: Date.now(),
+											plan,
+										},
+									]);
+								},
+							},
+						};
 			position = {
 				files,
 				providers,
 				artists,
-				publicationPreviewNotice: activePositionNotice
-					? formatUiNotice(locale, activePositionNotice)
-					: undefined,
+				publicationPreviewNotice:
+					lastPublicationState === "succeeded"
+						? libraryReleaseMessage(locale, "operationCompleted")
+						: lastPublicationState === "failed"
+							? libraryReleaseMessage(locale, "operationEnded", {
+									state: "failed",
+								})
+							: undefined,
 				contextualPublication,
 				onQueueDeletion: queueDeletion,
 				release,

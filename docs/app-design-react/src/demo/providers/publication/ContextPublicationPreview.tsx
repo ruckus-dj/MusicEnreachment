@@ -12,7 +12,6 @@ import {
 	publicationMessage,
 } from "../../../ui/features/publication/publicationMessages";
 import {
-	applyPlan,
 	type IncomingFiles,
 	type IncomingPlan,
 	type IncomingReleases,
@@ -20,9 +19,7 @@ import {
 	makeReleasePlan,
 	planPositionRow,
 	selectedSourceId,
-	sourceIds,
 	type TagMap,
-	usableFile,
 } from "../incoming/incomingModel";
 import {
 	type CatalogArtist,
@@ -34,9 +31,14 @@ import {
 	contributorProjectionIntent,
 	omitsStructuredPerformer,
 } from "../library/metadata/scopedContributors";
-import type { UiNotice } from "../notices/uiNotice";
 import { demoPathInside } from "../sources/demoPathValidation";
+import {
+	type ContextualPublicationPreparation,
+	prepareContextualPublication,
+	retainedCurrentUnavailable,
+} from "./contextualPublicationJob";
 import { individualPublicationDetails } from "./individualPublicationDetails";
+import { publicationPathOwned } from "./libraryPublicationDemo";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
 	fixturePublicationDestination,
@@ -120,8 +122,7 @@ export type ContextPublicationPreviewProps = {
 	artists: CatalogArtist[];
 	inventoryVersion: number;
 	onClose: () => void;
-	onReleases: (releases: OriginalRelease[]) => void;
-	onSuccess: (notice: UiNotice) => void;
+	onQueue: (prepared: ContextualPublicationPreparation) => void;
 	controls?: Pick<
 		ContextPublicationPreviewModel,
 		"workflowControl" | "planControl"
@@ -146,8 +147,7 @@ export function ContextPublicationPreview({
 	artists,
 	inventoryVersion,
 	onClose,
-	onReleases,
-	onSuccess,
+	onQueue,
 	controls,
 	workflow,
 	previewStale = false,
@@ -191,13 +191,19 @@ export function ContextPublicationPreview({
 		release && track
 			? publicationMetadataIssueMessages(release, track, locale, sourceId)
 			: [];
-	const observedCurrent = track?.observedFile;
 	const observedCurrentUnavailable = Boolean(
-		current &&
-			observedCurrent &&
-			(observedCurrent.rootAvailable === false ||
-				["changed", "drift", "missing", "output-unavailable"].includes(
-					observedCurrent.state ?? "",
+		current && retainedCurrentUnavailable(track?.observedFile),
+	);
+	const outputPath = row?.retainedPath ?? row?.renderedPath;
+	const outputBlocked = Boolean(
+		!readOnly &&
+			release &&
+			outputPath &&
+			(!demoPathInside(destination.outputDirectory, outputPath) ||
+				publicationPathOwned(
+					{ releases },
+					{ release_id: release.id, position_id: positionId },
+					outputPath,
 				)),
 	);
 	const templateUnsupported = Boolean(hasCustomTemplate);
@@ -215,6 +221,7 @@ export function ContextPublicationPreview({
 				retainedSourceMismatch ||
 				retainedIssue ||
 				observedCurrentUnavailable ||
+				outputBlocked ||
 				metadataIssues.length > 0 ||
 				templateUnsupported),
 	);
@@ -238,7 +245,9 @@ export function ContextPublicationPreview({
 						? publicationMessage(locale, "currentOutsideOutput")
 						: retainedIssue
 							? publicationMessage(locale, retainedIssue)
-							: "";
+							: outputBlocked
+								? publicationMessage(locale, "pathUndetermined")
+								: "";
 	const rebuildSource = Boolean(
 		source &&
 			(!current ||
@@ -321,32 +330,21 @@ export function ContextPublicationPreview({
 
 	const confirm = () => {
 		if (!canConfirm || !row?.assignment || !track) return;
-		const previouslyLinked = new Set([
-			...(track.sourceIds ?? []),
-			...(track.sourceId ? [track.sourceId] : []),
-		]);
-		const hasNewLinks = sourceIds(row.assignment).some(
-			(id) => usableFile(files[id]) && !previouslyLinked.has(id),
+		const prepared = prepareContextualPublication(
+			{
+				releases,
+				files,
+				providers,
+				artists,
+				destination,
+				inventoryVersion,
+				hasCustomTemplate,
+			},
+			plan,
 		);
-		const next = structuredClone(releases);
-		const applied = applyPlan(
-			{ ...plan, assignments: { [positionId]: row.assignment } },
-			files,
-			next,
-			providers,
-			false,
-			artists,
-			destination,
-			positionId,
-		);
-		if (!applied) return;
-		onReleases(next);
+		if (!prepared) return;
+		onQueue(prepared);
 		onClose();
-		onSuccess({
-			namespace: "publication",
-			id: "applySuccess",
-			params: { count: applied, linkCount: hasNewLinks ? 1 : 0 },
-		});
 	};
 
 	const model: ContextPublicationPreviewModel = {
@@ -381,8 +379,7 @@ export type DemoPositionPublicationProps = {
 	releases: IncomingReleases;
 	providers: IncomingReleases;
 	artists: CatalogArtist[];
-	onReleases: (releases: OriginalRelease[]) => void;
-	onSuccess: (notice: UiNotice) => void;
+	onQueue: (prepared: ContextualPublicationPreparation) => void;
 	hasCustomTemplate?: boolean;
 	children?: ReactNode;
 };
@@ -410,8 +407,7 @@ export function DemoPositionPublication({
 	releases,
 	providers,
 	artists,
-	onReleases,
-	onSuccess,
+	onQueue,
 	hasCustomTemplate = false,
 	children,
 }: DemoPositionPublicationProps) {
@@ -518,8 +514,7 @@ export function DemoPositionPublication({
 			artists={artists}
 			inventoryVersion={state.inventoryVersion}
 			onClose={() => setPrepared(undefined)}
-			onReleases={onReleases}
-			onSuccess={onSuccess}
+			onQueue={onQueue}
 			workflow={effectiveWorkflow}
 			hasCustomTemplate={hasCustomTemplate}
 			controls={controls}

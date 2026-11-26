@@ -22,6 +22,11 @@ import {
 	type DemoPositionPublicationBinderProps,
 } from "./ContextPublicationPreview";
 import {
+	commitContextualPublication,
+	type ContextualPublicationPreparation,
+	settleContextualPublication,
+} from "./contextualPublicationJob";
+import {
 	fixturePublicationDestination,
 	type PublicationDestination,
 } from "./publicationOutput";
@@ -33,6 +38,23 @@ afterEach(() => {
 
 const release = originalReleases.find((item) => item.id === "north")!;
 const publishedTrack = release.tracks.find((track) => track.published)!;
+
+const settleFixture = (
+	releases: typeof originalReleases,
+	destination: PublicationDestination,
+	prepared: ContextualPublicationPreparation,
+) =>
+	settleContextualPublication(
+		{
+			releases,
+			destination,
+			files: originalFiles,
+			providers: providerReleases,
+			artists: originalArtists,
+			inventoryVersion: createIncomingState().inventoryVersion,
+		},
+		prepared,
+	);
 
 it("localizes the publication reason before adding artist warnings", () => {
 	localStorage.setItem("music-design-v2-language", "en");
@@ -61,8 +83,7 @@ it("localizes the publication reason before adding artist warnings", () => {
 						artists: originalArtists,
 						inventoryVersion: state.inventoryVersion,
 						onClose: vi.fn(),
-						onReleases: vi.fn(),
-						onSuccess: vi.fn(),
+						onQueue: vi.fn(),
 					},
 				}}
 			/>
@@ -79,7 +100,7 @@ it("localizes the publication reason before adding artist warnings", () => {
 it("matches demo position controls for unchanged, forced and changed retained previews", async () => {
 	localStorage.setItem("music-design-v2-language", "ru");
 	const state = createIncomingState();
-	const onReleases = vi.fn();
+	const onQueue = vi.fn<(job: ContextualPublicationPreparation) => void>();
 	const copy = firstPublicationPreviewMessages.ru;
 	const signals = originalReleases.find((item) => item.id === "signals")!;
 	const signalsTrack = signals.tracks.find((item) => item.id === "signals-t1")!;
@@ -137,8 +158,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 							releases,
 							providers: providerReleases,
 							artists: originalArtists,
-							onReleases,
-							onSuccess: vi.fn(),
+							onQueue,
 							hasCustomTemplate,
 						},
 					}}
@@ -152,7 +172,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	expect(await screen.findByText(copy.retainedUnchanged)).toBeInTheDocument();
 	let confirm = screen.getByRole("button", { name: copy.retainedRepublish });
 	expect(confirm).toBeDisabled();
-	expect(onReleases).not.toHaveBeenCalled();
+	expect(onQueue).not.toHaveBeenCalled();
 
 	const stale = structuredClone(baseline);
 	stale
@@ -175,7 +195,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	confirm = screen.getByRole("button", { name: copy.retainedRepublish });
 	expect(confirm).toBeDisabled();
 	fireEvent.click(confirm);
-	expect(onReleases).not.toHaveBeenCalled();
+	expect(onQueue).not.toHaveBeenCalled();
 	rerender(view(baseline, baselineDestination, true));
 	expect(screen.getByRole("alert")).toHaveTextContent(
 		publicationMessage("ru", "pathUndetermined"),
@@ -197,7 +217,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	expect(
 		screen.getByRole("button", { name: copy.retainedRepublish }),
 	).toBeDisabled();
-	expect(onReleases).not.toHaveBeenCalled();
+	expect(onQueue).not.toHaveBeenCalled();
 	rerender(view());
 	fireEvent.click(screen.getByRole("button", { name: copy.preview }));
 	expect(
@@ -205,9 +225,19 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	).toBeInTheDocument();
 	confirm = screen.getByRole("button", { name: copy.retainedRepublish });
 	expect(confirm).toBeEnabled();
+	const currentBeforeAdmission = structuredClone(baselineTrack.published);
 	fireEvent.click(confirm);
-	expect(onReleases).toHaveBeenCalledTimes(1);
-	const forcedUpdate = onReleases.mock.calls[0][0] as typeof originalReleases;
+	expect(onQueue).toHaveBeenCalledTimes(1);
+	expect(baselineTrack.published).toEqual(currentBeforeAdmission);
+	const [forcedJob] = onQueue.mock.calls[0];
+	const settled = settleFixture(baseline, baselineDestination, forcedJob);
+	expect(settleFixture(stale, baselineDestination, forcedJob)).toBeNull();
+	if (!settled) throw new Error("Forced publication did not settle");
+	const forcedUpdate = commitContextualPublication(
+		baseline,
+		forcedJob,
+		settled,
+	);
 	const forcedTrack = forcedUpdate
 		.find((item) => item.id === signals.id)!
 		.tracks.find((item) => item.id === signalsTrack.id)!;
@@ -224,7 +254,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 		baselineRelease.tracks.filter((item) => item.id !== signalsTrack.id),
 	);
 
-	onReleases.mockClear();
+	onQueue.mockClear();
 	const changed = structuredClone(baseline);
 	const changedRelease = changed.find((item) => item.id === signals.id)!;
 	const changedTrack = changedRelease.tracks.find(
@@ -244,8 +274,15 @@ it("matches demo position controls for unchanged, forced and changed retained pr
 	confirm = screen.getByRole("button", { name: copy.retainedRepublish });
 	expect(confirm).toBeEnabled();
 	fireEvent.click(confirm);
-	expect(onReleases).toHaveBeenCalledTimes(1);
-	const changedUpdate = onReleases.mock.calls[0][0] as typeof originalReleases;
+	expect(onQueue).toHaveBeenCalledTimes(1);
+	const [changedJob] = onQueue.mock.calls[0];
+	const changedResult = settleFixture(changed, baselineDestination, changedJob);
+	if (!changedResult) throw new Error("Ordinary publication did not settle");
+	const changedUpdate = commitContextualPublication(
+		changed,
+		changedJob,
+		changedResult,
+	);
 	const changedPublished = changedUpdate
 		.find((item) => item.id === signals.id)!
 		.tracks.find((item) => item.id === signalsTrack.id)!.published!;
@@ -287,7 +324,7 @@ it("warns about an output downgrade and confirms a compatible ready retained pla
 		sourceId: source.id,
 		path: retainedPath,
 	};
-	const onReleases = vi.fn();
+	const onQueue = vi.fn<(job: ContextualPublicationPreparation) => void>();
 	render(
 		<I18nProvider>
 			<ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
@@ -303,8 +340,7 @@ it("warns about an output downgrade and confirms a compatible ready retained pla
 						releases,
 						providers: providerReleases,
 						artists: originalArtists,
-						onReleases,
-						onSuccess: vi.fn(),
+						onQueue,
 					},
 				}}
 			/>
@@ -319,11 +355,9 @@ it("warns about an output downgrade and confirms a compatible ready retained pla
 	const confirm = screen.getByRole("button", { name: copy.retainedRepublish });
 	expect(confirm).toBeEnabled();
 	fireEvent.click(confirm);
-	expect(onReleases).toHaveBeenCalledTimes(1);
-	const updated = onReleases.mock.calls[0][0] as typeof originalReleases;
-	const updatedTrack = updated
-		.find((item) => item.id === release.id)!
-		.tracks.find((item) => item.id === track.id)!;
-	expect(updatedTrack.published?.sourceId).toBe(source.id);
-	expect(updatedTrack.published?.path).toBe(retainedPath);
+	expect(onQueue).toHaveBeenCalledTimes(1);
+	const [job] = onQueue.mock.calls[0];
+	const settled = settleFixture(releases, destination, job);
+	expect(settled?.published?.sourceId).toBe(source.id);
+	expect(settled?.published?.path).toBe(retainedPath);
 });
