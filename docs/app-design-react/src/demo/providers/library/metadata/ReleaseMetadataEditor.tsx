@@ -1,5 +1,6 @@
-import { MetadataEditorView } from "../../../../ui/features/library/MetadataEditorView";
-import { ReleaseMetadataEditorView } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
+import type { ReactNode } from "react";
+import { ReleaseMetadataEditorDataBinder } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
+import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { useMetadataEditorProvider } from "./useMetadataEditorProvider";
 import {
 	type ReleaseMetadataEditorProps,
@@ -14,19 +15,24 @@ export type ReleaseMetadataEditorDemoProps = ReleaseMetadataEditorProps & {
 	 * @default true
 	 */
 	visible?: boolean;
+	children: ReactNode;
 };
 
 export function ReleaseMetadataEditor({
 	visible = true,
+	children,
 	...props
 }: ReleaseMetadataEditorDemoProps) {
 	const { editor, providerLinks } = useReleaseMetadataEditorDemoProvider(props);
 	const editorView = useMetadataEditorProvider(editor);
 	if (!visible) return null;
+	const model: ReleaseMetadataEditorViewProps = {
+		editor: editorView,
+		providerLinks,
+	};
 	return (
-		<ReleaseMetadataEditorView
-			editor={<MetadataEditorView {...editorView} />}
-			providerLinks={providerLinks}
-		/>
+		<ReleaseMetadataEditorDataBinder model={model}>
+			{children}
+		</ReleaseMetadataEditorDataBinder>
 	);
 }

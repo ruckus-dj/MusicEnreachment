@@ -14,6 +14,7 @@ import type { LibraryMetadataGetResponse } from "../../api/generated/client.sche
 import { I18nProvider } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
+import { ReleaseMetadataEditorOutlet } from "../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
 import {
   ReleaseMetadataEditor,
   ScopedLibraryMetadataEditor,
@@ -121,6 +122,20 @@ function renderMetadataEditor(children: ReactNode) {
   );
 }
 
+function ReleaseMetadataEditorHarness({ releaseId }: { releaseId: string }) {
+  return (
+    <ReleaseMetadataEditorOutlet
+      source={{
+        bind: (children: ReactNode, visible: boolean) => (
+          <ReleaseMetadataEditor releaseId={releaseId} visible={visible}>
+            {children}
+          </ReleaseMetadataEditor>
+        ),
+      }}
+    />
+  );
+}
+
 it("keeps release basics visible and editable outside closed metadata groups", async () => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "ru");
@@ -131,7 +146,7 @@ it("keeps release basics visible and editable outside closed metadata groups", a
     ),
   );
 
-  renderMetadataEditor(<ReleaseMetadataEditor releaseId={releaseId} />);
+  renderMetadataEditor(<ReleaseMetadataEditorHarness releaseId={releaseId} />);
 
   const release = screen.getByRole("region", { name: "Метаданные релиза" });
   const editButton = within(release).getByRole("button", { name: "Изменить" });
@@ -485,7 +500,7 @@ it("sends exact typed states at the loaded revision and retains the draft on con
     ),
   );
 
-  renderMetadataEditor(<ReleaseMetadataEditor releaseId={releaseId} />);
+  renderMetadataEditor(<ReleaseMetadataEditorHarness releaseId={releaseId} />);
 
   const editButton = screen.getByRole("button", { name: "Изменить" });
   await waitFor(() => expect(editButton).toBeEnabled());
@@ -749,7 +764,7 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
 
   renderMetadataEditor(
     <>
-      <ReleaseMetadataEditor releaseId={releaseId} />
+      <ReleaseMetadataEditorHarness releaseId={releaseId} />
       <ScopedLibraryMetadataEditor scope="recording" ownerId={recordingId} />
       <ScopedLibraryMetadataEditor
         scope="position"

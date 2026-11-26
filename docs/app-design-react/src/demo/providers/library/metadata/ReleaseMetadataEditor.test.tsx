@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { I18nProvider } from "../../../../app/i18n";
+import { ReleaseMetadataEditorOutlet } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
 import { originalArtists, originalReleases } from "../catalogData";
 import { ReleaseMetadataEditor } from "./ReleaseMetadataEditor";
 
@@ -29,12 +31,21 @@ it("persists an explicit empty album metadata override", () => {
 	let saved: typeof release | undefined;
 	render(
 		<I18nProvider>
-			<ReleaseMetadataEditor
-				release={release}
-				artists={originalArtists}
-				genresLoaded
-				onSave={(updated) => {
-					saved = updated;
+			<ReleaseMetadataEditorOutlet
+				source={{
+					bind: (children: ReactNode, visible: boolean) => (
+						<ReleaseMetadataEditor
+							release={release}
+							artists={originalArtists}
+							genresLoaded
+							visible={visible}
+							onSave={(updated) => {
+								saved = updated;
+							}}
+						>
+							{children}
+						</ReleaseMetadataEditor>
+					),
 				}}
 			/>
 		</I18nProvider>,

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   getLibraryPositionMetadata,
@@ -26,6 +33,7 @@ import {
   type MetadataEditorRolesView,
   type MetadataEditorRoleView,
   MetadataEditorView,
+  type MetadataEditorViewProps,
   type MetadataEditorWorksMovementView,
 } from "../../ui/features/library/MetadataEditorView";
 import {
@@ -49,6 +57,7 @@ import {
   focusMetadataAction,
   focusMetadataKey,
 } from "../../ui/features/library/metadata/metadataEditorFocus";
+import { ReleaseMetadataEditorDataBinder } from "../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
 import {
   type ReleaseFieldKey,
   releaseMetadataEditorMessages,
@@ -331,11 +340,13 @@ export function ReleaseMetadataEditor({
   refreshToken,
   onSaved,
   visible = true,
+  children,
 }: {
   releaseId: string;
   refreshToken?: number | string;
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
   visible?: boolean;
+  children: ReactNode;
 }) {
   return (
     <LibraryScopedMetadataEditorSession
@@ -346,7 +357,9 @@ export function ReleaseMetadataEditor({
       refreshToken={refreshToken}
       onSaved={onSaved}
       visible={visible}
-    />
+    >
+      {children}
+    </LibraryScopedMetadataEditorSession>
   );
 }
 
@@ -395,6 +408,7 @@ type LibraryScopedMetadataEditorSessionProps = {
   refreshToken?: number | string;
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
   visible?: boolean;
+  children?: ReactNode;
 } & (
   | { scope: "release"; releaseId?: never }
   | { scope: "recording"; releaseId?: never }
@@ -409,6 +423,7 @@ function LibraryScopedMetadataEditorSession({
   refreshToken,
   onSaved,
   visible = true,
+  children,
 }: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
   const contributorControlPrefix = useId();
@@ -1358,110 +1373,116 @@ function LibraryScopedMetadataEditorSession({
   // this editor is not on the active surface.
   if (!visible) return null;
 
-  return (
-    <MetadataEditorView
-      locale={locale}
-      labels={editorLabels}
-      label={title}
-      editing={editing}
-      saving={saving}
-      readOnly={false}
-      editOrSaveDisabled={
-        loading ||
-        !!readError ||
-        refreshConflict ||
-        (editing && !dirtyFields.size)
-      }
-      hideActions={false}
-      editorRef={editorRef}
-      actionsRef={actionsRef}
-      onEditOrSave={() => (editing ? void saveDraft() : beginEdit())}
-      onCancel={cancelEdit}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || !editing || saving) return;
-        event.preventDefault();
-        event.stopPropagation();
-        cancelEdit();
-      }}
-      showForeignFieldsNotice={false}
-      basics={{
-        fields: scalarDescriptors(
-          genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
-        ),
-        genreKey: "genre",
-        genreControl:
-          genres && genreValue ? (
-            <MetadataGenreSectionView
-              locale={locale}
-              owner="release"
-              value={genreValue}
-              state={genres.state}
-              editing={editing}
-              disabled={saving}
-              genreControl={
-                editing ? (
-                  <ProviderCatalogGenreField
-                    locale={locale}
-                    owner="release"
-                    value={genreValue}
-                    onChange={(value) =>
-                      updateField("genre", {
-                        state: value.length ? "value" : "explicit_empty",
-                        value,
-                      })
-                    }
-                    disabled={saving}
-                  />
-                ) : undefined
-              }
-              onClear={() =>
-                updateField("genre", { state: "explicit_empty", value: [] })
-              }
-              onInherit={() =>
-                updateField("genre", { state: "absent", value: [] })
-              }
-            />
-          ) : undefined,
-      }}
-      providerGenreBaseline={
-        scope === "release" ? (providerGenreBaseline ?? null) : undefined
-      }
-      artistCredits={{
-        label: text.groups.artistCredits,
-        content: (
-          <ArtistCreditRowsEditorView
+  const editorView: MetadataEditorViewProps = {
+    locale,
+    labels: editorLabels,
+    label: title,
+    editing,
+    saving,
+    readOnly: false,
+    editOrSaveDisabled:
+      loading ||
+      !!readError ||
+      refreshConflict ||
+      (editing && !dirtyFields.size),
+    hideActions: false,
+    editorRef,
+    actionsRef,
+    onEditOrSave: () => (editing ? void saveDraft() : beginEdit()),
+    onCancel: cancelEdit,
+    onKeyDown: (event) => {
+      if (event.key !== "Escape" || !editing || saving) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelEdit();
+    },
+    showForeignFieldsNotice: false,
+    basics: {
+      fields: scalarDescriptors(
+        genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
+      ),
+      genreKey: "genre",
+      genreControl:
+        genres && genreValue ? (
+          <MetadataGenreSectionView
             locale={locale}
-            draft={editing ? artistCreditDraft : savedArtistCredit}
-            savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
-            baseline={artistCreditBaseline}
-            effective={effectiveArtistCredit}
-            searchQuery={artistSearchQuery}
-            searchResults={artistCreditSearchResults}
-            searchLoading={artistSearch.isFetching}
-            searchError={artistSearchError}
+            owner="release"
+            value={genreValue}
+            state={genres.state}
             editing={editing}
-            disabled={!editing || saving}
-            onDraftChange={updateArtistCreditDraft}
-            onSearchQueryChange={setArtistSearchQuery}
-            onRetrySearch={() => void artistSearch.refetch()}
+            disabled={saving}
+            genreControl={
+              editing ? (
+                <ProviderCatalogGenreField
+                  locale={locale}
+                  owner="release"
+                  value={genreValue}
+                  onChange={(value) =>
+                    updateField("genre", {
+                      state: value.length ? "value" : "explicit_empty",
+                      value,
+                    })
+                  }
+                  disabled={saving}
+                />
+              ) : undefined
+            }
+            onClear={() =>
+              updateField("genre", { state: "explicit_empty", value: [] })
+            }
+            onInherit={() =>
+              updateField("genre", { state: "absent", value: [] })
+            }
           />
-        ),
-      }}
-      roles={rolesViewWithEmpty}
-      worksMovement={worksMovementView}
-      sections={sections}
-      lyrics={[]}
-      notices={
-        <MetadataEditorNoticesView
+        ) : undefined,
+    },
+    providerGenreBaseline:
+      scope === "release" ? (providerGenreBaseline ?? null) : undefined,
+    artistCredits: {
+      label: text.groups.artistCredits,
+      content: (
+        <ArtistCreditRowsEditorView
           locale={locale}
-          loading={loading}
-          saving={saving}
-          readError={readError}
-          saveError={saveError}
-          refreshConflict={refreshConflict}
-          onRetry={() => void loadMetadata()}
+          draft={editing ? artistCreditDraft : savedArtistCredit}
+          savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
+          baseline={artistCreditBaseline}
+          effective={effectiveArtistCredit}
+          searchQuery={artistSearchQuery}
+          searchResults={artistCreditSearchResults}
+          searchLoading={artistSearch.isFetching}
+          searchError={artistSearchError}
+          editing={editing}
+          disabled={!editing || saving}
+          onDraftChange={updateArtistCreditDraft}
+          onSearchQueryChange={setArtistSearchQuery}
+          onRetrySearch={() => void artistSearch.refetch()}
         />
-      }
-    />
-  );
+      ),
+    },
+    roles: rolesViewWithEmpty,
+    worksMovement: worksMovementView,
+    sections,
+    lyrics: [],
+    notices: (
+      <MetadataEditorNoticesView
+        locale={locale}
+        loading={loading}
+        saving={saving}
+        readError={readError}
+        saveError={saveError}
+        refreshConflict={refreshConflict}
+        onRetry={() => void loadMetadata()}
+      />
+    ),
+  };
+
+  if (children !== undefined) {
+    return (
+      <ReleaseMetadataEditorDataBinder model={{ editor: editorView }}>
+        {children}
+      </ReleaseMetadataEditorDataBinder>
+    );
+  }
+
+  return <MetadataEditorView {...editorView} />;
 }

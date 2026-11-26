@@ -1,9 +1,12 @@
-import type { ReactElement } from "react";
+import {
+  MetadataEditorView,
+  type MetadataEditorViewProps,
+} from "../MetadataEditorView";
 
 type ProviderFact = { label: string; value: string };
 
 export type ReleaseMetadataEditorViewProps = {
-  editor: ReactElement;
+  editor: MetadataEditorViewProps;
   providerLinks?: {
     summary: string;
     provider: ProviderFact;
@@ -17,7 +20,7 @@ export function ReleaseMetadataEditorView({
 }: ReleaseMetadataEditorViewProps) {
   return (
     <div className="grid min-w-0 gap-3">
-      {editor}
+      <MetadataEditorView {...editor} />
       {providerLinks && (
         <details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
           <summary className="cursor-pointer font-semibold">

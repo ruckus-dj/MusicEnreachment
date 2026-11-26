@@ -112,6 +112,7 @@ export function LibraryReleaseWorkspaceView<
           <ReleaseOverviewView
             locale={locale}
             {...overview}
+            metadataEditorVisible={!showPosition}
             {...(overviewProviderRefresh
               ? {
                   providerRefresh: (

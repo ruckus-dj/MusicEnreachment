@@ -42,7 +42,6 @@ function DemoLibraryReleaseWorkspaceForRelease({
 	const overviewModel = useReleaseOverviewDemoModel({
 		...overview,
 		editionControls: !showPosition && notFound === undefined,
-		visible: !showPosition,
 	});
 	const positionModel = useTrackScreenDemoProvider(position);
 	return (

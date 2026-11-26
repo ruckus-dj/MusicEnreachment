@@ -43,7 +43,6 @@ import {
   renderLibraryReleaseText,
 } from "../../ui/features/library/libraryReleaseMessages";
 import { LibraryPositionLyricsView } from "../../ui/features/library/metadata/LibraryPositionLyricsView";
-import { ReleaseMetadataEditorView } from "../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import { TrackMetadataEditorsView } from "../../ui/features/library/metadata/TrackMetadataEditorsView";
 import type { ReleaseOverviewHeading } from "../../ui/features/library/ReleaseOverviewView";
 import { releaseCoverEditorCopy } from "../../ui/features/library/releaseCoverEditorCopy";
@@ -1617,18 +1616,18 @@ export function LibraryReleaseScreen({
     fallbackTracks: overviewMedia.fallbackTracks,
     unassignedTracks: overviewMedia.unassignedTracks,
     primaryArtist: overviewPrimaryArtist,
-    metadataEditor: (
-      <ReleaseMetadataEditorView
-        editor={
-          <ReleaseMetadataEditor
-            releaseId={releaseId}
-            refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-            onSaved={refreshAfterMetadataSave}
-            visible={!showPosition}
-          />
-        }
-      />
-    ),
+    metadataEditor: {
+      bind: (children: ReactNode, visible: boolean) => (
+        <ReleaseMetadataEditor
+          releaseId={releaseId}
+          refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+          onSaved={refreshAfterMetadataSave}
+          visible={visible}
+        >
+          {children}
+        </ReleaseMetadataEditor>
+      ),
+    },
     publication: overviewPublication,
     deletion: overviewDeletion,
     cover: {

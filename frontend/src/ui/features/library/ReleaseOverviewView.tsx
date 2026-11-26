@@ -14,6 +14,10 @@ import {
   type LibraryPrimaryArtistModel,
 } from "./LibraryPrimaryArtistControl";
 import {
+  ReleaseMetadataEditorOutlet,
+  type ReleaseMetadataEditorSource,
+} from "./metadata/ReleaseMetadataEditorOutlet";
+import {
   ReleaseCoverEditorOutlet,
   type ReleaseCoverEditorSource,
 } from "./ReleaseCoverEditorOutlet";
@@ -77,7 +81,8 @@ type ReleaseOverviewContent = {
   /** Saved positions that do not belong to any recorded medium. */
   unassignedTracks?: readonly LibraryArtistReleaseTrackRow[];
   /** Narrow slots for the existing management actors. */
-  metadataEditor?: ReactElement;
+  metadataEditor?: ReleaseMetadataEditorSource;
+  /** Whether the retained metadata editor is on the active surface. */
   publication?: ReactElement;
   deletion?: ReactElement;
   /** Real-only release cover management; not bound by the prototype. */
@@ -87,10 +92,12 @@ type ReleaseOverviewContent = {
   primaryArtist?: LibraryPrimaryArtistModel;
 };
 
-export type ReleaseOverviewViewProps =
+export type ReleaseOverviewViewProps = {
+  locale: Locale;
+  libraryHref: string;
+  metadataEditorVisible?: boolean;
+} & (
   | {
-      locale: Locale;
-      libraryHref: string;
       heading: null;
       unavailable?:
         | { status: "loading"; message: string }
@@ -101,10 +108,8 @@ export type ReleaseOverviewViewProps =
             action: { label: string; onPress: () => void };
           };
     }
-  | ({
-      locale: Locale;
-      libraryHref: string;
-    } & ReleaseOverviewContent);
+  | ReleaseOverviewContent
+);
 
 const selectionClass =
   "group inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] px-[9px] py-[5px] text-xs text-[var(--ink)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 data-[disabled]:cursor-default data-[disabled]:opacity-50";
@@ -253,6 +258,7 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
     fallbackTracks,
     unassignedTracks,
     metadataEditor,
+    metadataEditorVisible,
     publication,
     deletion,
     cover,
@@ -352,7 +358,12 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
       </section>
       {providerRefresh}
       {metadataEditor && (
-        <div className="grid min-w-0 gap-3">{metadataEditor}</div>
+        <div className="grid min-w-0 gap-3">
+          <ReleaseMetadataEditorOutlet
+            source={metadataEditor}
+            visible={metadataEditorVisible ?? true}
+          />
+        </div>
       )}
       <section
         className="grid min-w-0 gap-3"

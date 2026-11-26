@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { catalogueMessage } from "../../../ui/features/library/catalogueMessages";
 import type { LibraryReleaseOverviewModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
@@ -48,13 +48,6 @@ export type ReleaseOverviewScreenProps = {
 	 * @default true
 	 */
 	editionControls?: boolean;
-	/**
-	 * Keep the release metadata editor DOM and portals mounted. A retained
-	 * overview behind an active position passes `false`: the draft provider
-	 * keeps running, but its picker portals cannot remain visible.
-	 * @default true
-	 */
-	visible?: boolean;
 };
 
 /** Resolved facts and narrow actors for one release overview projection. */
@@ -73,7 +66,6 @@ export type ReleaseOverviewDemoModelInput = {
 	/** Uncontrolled local release: the demo owns the saved record. */
 	local: boolean;
 	editionControls: boolean;
-	visible: boolean;
 };
 
 const sourceIds = (track: OriginalTrack) => [
@@ -102,7 +94,6 @@ export function buildReleaseOverviewDemoModel({
 	saveRelease,
 	local,
 	editionControls,
-	visible,
 }: ReleaseOverviewDemoModelInput): LibraryReleaseOverviewModel {
 	const m = (
 		key: Parameters<typeof catalogueMessage>[1],
@@ -255,18 +246,22 @@ export function buildReleaseOverviewDemoModel({
 		media,
 		fallbackTracks,
 		unassignedTracks,
-		metadataEditor: (
-			<ReleaseMetadataEditor
-				key={release.id}
-				release={release}
-				artists={artists}
-				genresLoaded={genresLoaded}
-				onLoadGenres={onLoadGenres}
-				local={local}
-				visible={visible}
-				onSave={saveRelease}
-			/>
-		),
+		metadataEditor: {
+			bind: (children: ReactNode, visible: boolean) => (
+				<ReleaseMetadataEditor
+					key={release.id}
+					release={release}
+					artists={artists}
+					genresLoaded={genresLoaded}
+					onLoadGenres={onLoadGenres}
+					local={local}
+					visible={visible}
+					onSave={saveRelease}
+				>
+					{children}
+				</ReleaseMetadataEditor>
+			),
+		},
 		publication:
 			editionControls && publication ? (
 				<ReleasePublicationDemo
@@ -309,7 +304,6 @@ export function useReleaseOverviewDemoModel({
 	genresLoaded = false,
 	onLoadGenres,
 	editionControls = true,
-	visible = true,
 }: ReleaseOverviewScreenProps): LibraryReleaseOverviewModel {
 	const { locale } = useI18n();
 	const [localRelease, setLocalRelease] = useState(givenRelease);
@@ -333,6 +327,5 @@ export function useReleaseOverviewDemoModel({
 		saveRelease,
 		local: !onUpdateRelease,
 		editionControls,
-		visible,
 	});
 }
