@@ -1,4 +1,5 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
+import { releaseBasicsFields } from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../ui/i18n/types";
 import { applyDemoLocalMatchingBindings } from "../../fixtures/localMatchingBindings";
 import original from "../../fixtures/original-fixtures.json";
@@ -78,6 +79,15 @@ export interface OriginalTrack {
 
 export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
 
+export type ReleaseBasicsIntent =
+	| { state: "value"; value: string[] }
+	| { state: "explicit_empty" };
+
+/** Sparse explicit intent; an absent key means the base value stays inherited. */
+export type ReleaseBasicsIntentMap = Partial<
+	Record<string, ReleaseBasicsIntent>
+>;
+
 export interface OriginalRelease {
 	id: string;
 	releaseGroupId?: string;
@@ -102,6 +112,8 @@ export interface OriginalRelease {
 	metadataGenres?: MetadataGenre[];
 	/** Explicit local overrides recorded only for fields changed in an editor. */
 	comparisonOverrides?: MetadataValues;
+	/** Typed local intent for release basics; absent keys inherit the provider base. */
+	releaseBasicsIntent?: ReleaseBasicsIntentMap;
 	metadata?: {
 		date: string;
 		country: string;
@@ -263,6 +275,80 @@ export function effectiveReleaseTitle(release: OriginalRelease): string {
 	return release.title;
 }
 
+/** Provider base values for the non-title release basics. */
+export function releaseBasicsBaseValues(
+	release: OriginalRelease,
+): MetadataValues {
+	const metadataDate = release.metadata?.date;
+	const date =
+		metadataDate && metadataDate.slice(0, 4) === release.year
+			? metadataDate
+			: release.year;
+	return {
+		releasedate: date ? [date] : [],
+		releasecountry: release.country ? [release.country] : [],
+		recordlabel: release.label ? [release.label] : [],
+		catalognumber: release.catalog ? [release.catalog] : [],
+		release_primary_type: release.metadata?.type ? [release.metadata.type] : [],
+		release_secondary_types: [],
+	};
+}
+
+/** Read explicit state only; equality with the base is never intent. */
+export function releaseBasicsIntentState(
+	release: OriginalRelease,
+	key: string,
+): ReleaseTitleOverrideState {
+	return release.releaseBasicsIntent?.[key]?.state ?? "absent";
+}
+
+/**
+ * Separate edit draft for basic fields. An inherited or cleared field starts
+ * empty, so choosing a value does not silently copy provider baseline data.
+ */
+export function releaseBasicsDraftValues(
+	release: OriginalRelease,
+	key: string,
+): string[] {
+	const intent = release.releaseBasicsIntent?.[key];
+	return intent?.state === "value" ? [...intent.value] : [];
+}
+
+/** Sparse explicit release basics for the comparison Overrides column. */
+export function releaseBasicsOverrides(
+	release: OriginalRelease,
+): MetadataValues {
+	const overrides: MetadataValues = {};
+	for (const { key, metadataKey } of releaseBasicsFields) {
+		if (key === "title") continue;
+		const intent = release.releaseBasicsIntent?.[metadataKey];
+		if (!intent) continue;
+		overrides[metadataKey] = intent.state === "value" ? [...intent.value] : [];
+	}
+	return overrides;
+}
+
+/** Effective publication values: typed intent first, otherwise the base value. */
+export function effectiveReleaseBasics(
+	release: OriginalRelease,
+): MetadataValues {
+	const base = releaseBasicsBaseValues(release);
+	const result: MetadataValues = {};
+	for (const { key, metadataKey } of releaseBasicsFields) {
+		if (key === "title") continue;
+		const intent = release.releaseBasicsIntent?.[metadataKey];
+		if (!intent) result[metadataKey] = [...(base[metadataKey] ?? [])];
+		else if (intent.state === "explicit_empty") result[metadataKey] = [];
+		else result[metadataKey] = [...intent.value];
+	}
+	return result;
+}
+
+/** Publication output paths use the effective year, not the provider row year. */
+export function effectiveReleaseYear(release: OriginalRelease): string {
+	return effectiveReleaseBasics(release).releasedate?.[0]?.slice(0, 4) ?? "";
+}
+
 import {
 	choosePublicationOutput,
 	demoOutputCodec,
@@ -300,7 +386,7 @@ export function applyMetadataPreview(
 						container: choosePublicationOutput(file!, {
 							...destination,
 							artist: originalArtistName(release.artistId, artists),
-							year: release.year,
+							year: effectiveReleaseYear(release),
 							release: effectiveReleaseTitle(release),
 							position: track.position,
 							title: track.title,
@@ -309,7 +395,7 @@ export function applyMetadataPreview(
 						path: choosePublicationOutput(file!, {
 							...destination,
 							artist: originalArtistName(release.artistId, artists),
-							year: release.year,
+							year: effectiveReleaseYear(release),
 							release: effectiveReleaseTitle(release),
 							position: track.position,
 							title: track.title,
@@ -413,10 +499,6 @@ export function desiredTags(
 				? [albumArtist.name]
 				: [],
 		DATE: [],
-		RELEASEDATE: [release.metadata?.date || release.year],
-		COUNTRY: release.country ? [release.country] : [],
-		LABEL: release.label ? [release.label] : [],
-		CATALOGNUMBER: release.catalog ? [release.catalog] : [],
 		TRACKNUMBER: [
 			String(track.displayedNumber || track.mediumPosition || track.position),
 		],
@@ -564,10 +646,18 @@ export function desiredTags(
 	};
 	// Genre overrides are resolved per scope by publicationGenreFallback.
 	delete explicitValues.genre;
-	// The title intent comes from comparisonOverrides, not the merged metadata.
+	// Title intent comes from comparisonOverrides; other basics from typed intent.
 	delete explicitValues.album;
+	for (const { key, metadataKey } of releaseBasicsFields)
+		if (key !== "title") delete explicitValues[metadataKey];
 	const projected = projectMetadataValues(explicitValues).tags;
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	// Typed release basics use the registry projection, including RELEASECOUNTRY.
+	const projectedBasics = projectMetadataValues(
+		effectiveReleaseBasics(release),
+	).tags;
+	for (const [key, values] of Object.entries(projectedBasics))
+		result[key] = values;
 	const projectedArtistNames = (
 		credits: { creditName: string; joinPhrase?: string }[],
 		names: string[],
@@ -797,7 +887,7 @@ export function metadataChanged(
 		"ALBUMARTISTSORT",
 		"ALBUMARTISTSSORT",
 		"DATE",
-		"COUNTRY",
+		"RELEASECOUNTRY",
 		"LABEL",
 		"CATALOGNUMBER",
 		"TRACKNUMBER",

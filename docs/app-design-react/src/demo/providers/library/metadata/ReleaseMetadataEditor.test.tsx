@@ -170,6 +170,115 @@ it("preserves the title draft through state changes and reopens overrides", () =
 	]);
 });
 
+it("keeps typed release basics explicit, inherited and cleared without rewriting base facts", async () => {
+	const fixture = originalReleases.find(
+		(item) => item.id === "north-japan-local",
+	);
+	if (!fixture) throw new Error("Missing release fixture");
+	const release = structuredClone(fixture);
+	const first = renderEditor(release);
+
+	fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Release date — Override state" }),
+		{ target: { value: "value" } },
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	expect(first.saved()).toBeUndefined();
+
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Release date — Override state" }),
+		{ target: { value: "absent" } },
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	expect(first.saved()?.releaseBasicsIntent).toBeUndefined();
+
+	fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Release date — Override state" }),
+		{ target: { value: "value" } },
+	);
+	const dateInput = document.querySelector<HTMLInputElement>(
+		'input[data-metadata-keys~="releasedate"]',
+	);
+	if (!dateInput) throw new Error("Missing release date field");
+	fireEvent.change(dateInput, { target: { value: "2022-03" } });
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Country — Override state" }),
+		{ target: { value: "value" } },
+	);
+	const countryInput = document.querySelector<HTMLInputElement>(
+		'input[data-metadata-keys~="releasecountry"]',
+	);
+	if (!countryInput) throw new Error("Missing release country field");
+	fireEvent.change(countryInput, { target: { value: release.country } });
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Label — Override state" }),
+		{ target: { value: "value" } },
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Add value: Label" }));
+	const labels = [
+		...document.querySelectorAll<HTMLInputElement>(
+			'input[data-metadata-keys~="recordlabel"]',
+		),
+	];
+	expect(labels).toHaveLength(2);
+	fireEvent.change(labels[0]!, { target: { value: "First label" } });
+	fireEvent.change(labels[1]!, { target: { value: "Second label" } });
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+	const valued = first.saved();
+	expect(valued?.releaseBasicsIntent).toEqual({
+		releasedate: { state: "value", value: ["2022-03"] },
+		releasecountry: { state: "value", value: [release.country] },
+		recordlabel: {
+			state: "value",
+			value: ["First label", "Second label"],
+		},
+	});
+	expect(valued?.year).toBe(release.year);
+	expect(valued?.country).toBe(release.country);
+	expect(valued?.label).toBe(release.label);
+	expect(valued?.catalog).toBe(release.catalog);
+	expect(valued?.metadata).toEqual(release.metadata);
+	const valuedTags = desiredTags(valued!, clearedTrack(valued));
+	expect(valuedTags.RELEASEDATE).toEqual(["2022-03"]);
+	expect(valuedTags.RELEASECOUNTRY).toEqual([release.country]);
+	expect(valuedTags.LABEL).toEqual(["First label", "Second label"]);
+	first.unmount();
+
+	const second = renderEditor(valued!);
+	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Country — Override state" }),
+		{ target: { value: "explicit_empty" } },
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	const cleared = second.saved();
+	expect(cleared?.releaseBasicsIntent?.releasecountry).toEqual({
+		state: "explicit_empty",
+	});
+	expect(desiredTags(cleared!, clearedTrack(cleared)).RELEASECOUNTRY).toEqual(
+		[],
+	);
+	expect(cleared?.country).toBe(release.country);
+	second.unmount();
+
+	const third = renderEditor(cleared!);
+	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Country — Override state" }),
+		{ target: { value: "absent" } },
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	const inherited = third.saved();
+	expect(inherited?.releaseBasicsIntent?.releasecountry).toBeUndefined();
+	expect(
+		desiredTags(inherited!, clearedTrack(inherited)).RELEASECOUNTRY,
+	).toEqual([release.country]);
+	expect(inherited?.country).toBe(release.country);
+});
+
 function clearedTrack(release: (typeof originalReleases)[number] | undefined) {
 	const track = release?.tracks.find((item) => item.published);
 	if (!track) throw new Error("Missing published track fixture");

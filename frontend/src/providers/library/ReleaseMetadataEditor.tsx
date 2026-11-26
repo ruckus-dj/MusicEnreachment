@@ -61,6 +61,7 @@ import {
 import { ReleaseMetadataEditorDataBinder } from "../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
 import {
   type ReleaseFieldKey,
+  releaseBasicsFields,
   releaseMetadataEditorMessages,
 } from "../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
@@ -141,6 +142,10 @@ const releaseFields: ReleaseField[] = [
   { key: "license", kind: "text", group: "additional" },
   { key: "website", kind: "text", group: "additional" },
 ];
+
+const releaseBasicFields: ReleaseField[] = releaseBasicsFields.map(
+  ({ key, kind }) => ({ key, kind, group: "release" }),
+);
 
 const titleFields: ReleaseField[] = [
   { key: "title", kind: "text", group: "main" },
@@ -864,19 +869,15 @@ function LibraryScopedMetadataEditorSession({
 
   const basicFieldKeys: MetadataFieldKey[] =
     scope === "release"
-      ? [
-          "title",
-          "release_date",
-          "release_country",
-          "label",
-          "catalog_number",
-          "release_primary_type",
-          "release_secondary_types",
-        ]
+      ? releaseBasicFields.map(({ key }) => key)
       : scope === "recording"
         ? ["title", "content_advisory", "isrc"]
         : ["track_number", "disc_number"];
   const basicFieldKeySet = new Set(basicFieldKeys);
+  const basicFields =
+    scope === "release"
+      ? releaseBasicFields
+      : fields.filter(({ key }) => basicFieldKeySet.has(key));
   const scalarFieldKinds = new Set<ReleaseField["kind"]>([
     "text",
     "date",
@@ -1404,9 +1405,7 @@ function LibraryScopedMetadataEditorSession({
     },
     showForeignFieldsNotice: false,
     basics: {
-      fields: scalarDescriptors(
-        genreFields.filter(({ key }) => basicFieldKeySet.has(key)),
-      ),
+      fields: scalarDescriptors(basicFields),
       genreKey: "genre",
       genreControl:
         genres && genreValue ? (

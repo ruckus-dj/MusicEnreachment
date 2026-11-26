@@ -10,6 +10,7 @@ import {
 	type OriginalTrack,
 	originalArtists,
 	originalProviders,
+	releaseBasicsOverrides,
 	type SourceFiles,
 } from "./catalogData";
 import { projectMetadataValues } from "./metadata/projection";
@@ -66,6 +67,7 @@ export function TagsComparison({
 			: { name: providerName, status: "unavailable" as const };
 	const { tags: overrides } = projectMetadataValues({
 		...(release.comparisonOverrides ?? {}),
+		...releaseBasicsOverrides(release),
 		...(fileId ? (track.audioComparisonOverrides?.[fileId] ?? {}) : {}),
 		...(track.recordingComparisonOverrides ?? {}),
 		...(track.positionComparisonOverrides ?? {}),

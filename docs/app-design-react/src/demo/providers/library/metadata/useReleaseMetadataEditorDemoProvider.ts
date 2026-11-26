@@ -1,10 +1,20 @@
 import { useI18n } from "../../../../app/i18n/host";
+import type { MetadataFieldState } from "../../../../ui/features/library/MetadataFieldPresentation";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
-import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
+import {
+	releaseBasicsFieldHint,
+	releaseBasicsFieldLabel,
+	releaseBasicsFields,
+	releaseMetadataEditorMessages,
+} from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import {
 	type CatalogArtist,
 	type OriginalRelease,
+	type ReleaseBasicsIntentMap,
+	releaseBasicsBaseValues,
+	releaseBasicsDraftValues,
+	releaseBasicsIntentState,
 	releaseTitleDraftValues,
 	releaseTitleOverrideState,
 } from "../catalogData";
@@ -25,23 +35,14 @@ function releaseValues(release: OriginalRelease): MetadataValues {
 			[...entries],
 		]),
 	);
-	// Title intent lives in comparisonOverrides; metadataValues is baseline-merged.
+	// Title intent lives in comparisonOverrides; basic intent is typed separately.
 	values.album = releaseTitleDraftValues(release);
-	if (!("releasedate" in values)) {
-		const metadataDate = release.metadata?.date;
-		values.releasedate = [
-			metadataDate && metadataDate.slice(0, 4) === release.year
-				? metadataDate
-				: release.year,
-		];
+	for (const [key, entries] of Object.entries(releaseBasicsBaseValues(release)))
+		if (!(key in values) && entries.length) values[key] = [...entries];
+	for (const { key, metadataKey } of releaseBasicsFields) {
+		if (key === "title") continue;
+		values[metadataKey] = releaseBasicsDraftValues(release, metadataKey);
 	}
-	if (!("releasecountry" in values)) values.releasecountry = [release.country];
-	if (!("recordlabel" in values)) values.recordlabel = [release.label];
-	if (!("catalognumber" in values)) values.catalognumber = [release.catalog];
-	const primaryType = release.metadata?.type;
-	if (primaryType && !("release_primary_type" in values))
-		values.release_primary_type = [primaryType];
-	// Keep explicit empty values from metadataValues authoritative over legacy fields.
 	return values;
 }
 
@@ -99,6 +100,29 @@ export function useReleaseMetadataEditorDemoProvider({
 		metadataEditorMessages[locale][key];
 	const releaseText = releaseMetadataEditorMessages[locale];
 	const titleState = releaseTitleOverrideState(release);
+	const fieldStates: Record<string, MetadataFieldState> = Object.fromEntries(
+		releaseBasicsFields.map(({ key, metadataKey }) => [
+			metadataKey,
+			key === "title"
+				? titleState
+				: releaseBasicsIntentState(release, metadataKey),
+		]),
+	);
+	const fieldLabels = Object.fromEntries(
+		releaseBasicsFields.map((field) => [
+			field.metadataKey,
+			releaseBasicsFieldLabel(locale, field),
+		]),
+	);
+	const fieldKinds = Object.fromEntries(
+		releaseBasicsFields.map(({ metadataKey, kind }) => [metadataKey, kind]),
+	) as NonNullable<MetadataEditorProps["fieldKinds"]>;
+	const fieldHints = Object.fromEntries(
+		releaseBasicsFields.flatMap((field) => {
+			const hint = releaseBasicsFieldHint(locale, field);
+			return hint ? [[field.metadataKey, hint]] : [];
+		}),
+	);
 	const values = releaseValues(release);
 	const extended = release as ReleaseWithExtras;
 	const extras = [
@@ -113,6 +137,7 @@ export function useReleaseMetadataEditorDemoProvider({
 		editor: {
 			label: releaseText.title,
 			scope: "release",
+			libraryMetadata: true,
 			values,
 			artists: artists.map(({ id, name, sortName }) => ({
 				id,
@@ -124,8 +149,10 @@ export function useReleaseMetadataEditorDemoProvider({
 			genresLoaded,
 			onLoadGenres,
 			extraFields: extras,
-			fieldStates: { album: titleState },
-			fieldLabels: { album: releaseText.labels.title },
+			fieldStates,
+			fieldLabels,
+			fieldKinds,
+			fieldHints,
 			fieldStateMode: {
 				label: releaseText.mode,
 				absent: releaseText.absent,
@@ -148,41 +175,59 @@ export function useReleaseMetadataEditorDemoProvider({
 								? [...next.album]
 								: [""]
 							: [release.title];
-				const date = next.releasedate?.[0] ?? "";
-				const oldDate = values.releasedate?.[0] ?? "";
-				const country = next.releasecountry?.[0] ?? "";
-				const label = next.recordlabel?.[0] ?? "";
-				const catalog = next.catalognumber?.[0] ?? "";
+				const nextBasicsIntent: ReleaseBasicsIntentMap = {
+					...release.releaseBasicsIntent,
+				};
+				for (const { key, metadataKey } of releaseBasicsFields) {
+					if (key === "title") continue;
+					if (
+						!details?.fieldStates ||
+						!Object.hasOwn(details.fieldStates, metadataKey)
+					)
+						continue;
+					const state = details.fieldStates[metadataKey] ?? "absent";
+					if (state === "absent") delete nextBasicsIntent[metadataKey];
+					else if (state === "explicit_empty")
+						nextBasicsIntent[metadataKey] = {
+							state: "explicit_empty",
+						};
+					else
+						nextBasicsIntent[metadataKey] = {
+							state: "value",
+							value: [...(next[metadataKey] ?? [])],
+						};
+				}
 				const credits = details?.credits;
 				const extraValues = details?.extraValues;
-				const metadata = {
-					...(release.metadata ?? {
-						date: release.year,
-						country: release.country,
-						label: release.label,
-						catalogNumber: release.catalog,
-						type: "",
-					}),
-					country,
-					label,
-					catalogNumber: catalog,
-					...(date !== oldDate ? { date } : {}),
-				};
 				const comparisonOverrides = mergeComparisonOverrides(
 					release.comparisonOverrides,
 					values,
 					next,
 				);
+				for (const { key, metadataKey } of releaseBasicsFields)
+					if (key !== "title") delete comparisonOverrides[metadataKey];
 				if (nextTitleState === "absent") delete comparisonOverrides.album;
 				else comparisonOverrides.album = [...titleValues];
+				const metadataValues: MetadataValues = {
+					...next,
+					album: titleValues,
+				};
+				const baseValues = releaseBasicsBaseValues(release);
+				for (const { key, metadataKey } of releaseBasicsFields) {
+					if (key === "title") continue;
+					const intent = nextBasicsIntent[metadataKey];
+					if (!intent)
+						metadataValues[metadataKey] = [...(baseValues[metadataKey] ?? [])];
+					else if (intent.state === "explicit_empty")
+						metadataValues[metadataKey] = [];
+					else metadataValues[metadataKey] = [...intent.value];
+				}
 				const updated = {
 					...release,
-					year: date.slice(0, 4),
-					country,
-					label,
-					catalog,
-					metadata,
-					metadataValues: { ...next, album: titleValues },
+					metadataValues,
+					releaseBasicsIntent: Object.keys(nextBasicsIntent).length
+						? nextBasicsIntent
+						: undefined,
 					comparisonOverrides: {
 						...comparisonOverrides,
 						...(details?.genres

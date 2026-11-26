@@ -35,6 +35,8 @@ import {
 	metadataExtraFieldLabel,
 	metadataMessage,
 } from "../../../../ui/features/library/metadata/metadataFieldMessages";
+import { MetadataEditorNoticesView } from "../../../../ui/features/library/metadata/MetadataEditorNoticesView";
+import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { WorkRowDraft } from "../../../../ui/features/library/WorkRowsView";
 import { audioMeasurementKeys } from "./audioMeasurements";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
@@ -98,6 +100,8 @@ export interface MetadataEditorProps {
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 	readOnly?: boolean;
+	/** Library scope: save only changed fields, and use the library notices. */
+	libraryMetadata?: boolean;
 	editing?: boolean;
 	hideActions?: boolean;
 	onDraftChange?: (values: MetadataValues, details?: SaveDetails) => void;
@@ -107,6 +111,8 @@ export interface MetadataEditorProps {
 	fieldStates?: Partial<Record<string, MetadataFieldState>>;
 	fieldStateMode?: MetadataFieldMode;
 	fieldLabels?: Readonly<Record<string, string>>;
+	fieldKinds?: Readonly<Record<string, MetadataFieldDescriptor["kind"]>>;
+	fieldHints?: Readonly<Record<string, string>>;
 	fieldStateDisplay?: {
 		absent: string;
 		explicitEmpty: string;
@@ -224,6 +230,7 @@ export function useMetadataEditorProvider({
 	genresLoaded = true,
 	onLoadGenres,
 	readOnly = false,
+	libraryMetadata = false,
 	editing: controlledEditing,
 	hideActions = false,
 	onDraftChange,
@@ -232,6 +239,8 @@ export function useMetadataEditorProvider({
 	fieldStates,
 	fieldStateMode,
 	fieldLabels,
+	fieldKinds,
+	fieldHints,
 	fieldStateDisplay,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
@@ -332,11 +341,12 @@ export function useMetadataEditorProvider({
 		readOnlyField: boolean,
 	): MetadataFieldDescriptor => {
 		const fieldRows = rows(current, field.key);
-		const list = field.kind === "list" || field.kind === "identity";
+		const registryList = field.kind === "list" || field.kind === "identity";
 		const fieldLabel =
 			fieldLabels?.[field.key] ?? metadataFieldLabel(field.key, locale);
 		const kind: MetadataFieldDescriptor["kind"] =
-			field.kind === "lyrics"
+			fieldKinds?.[field.key] ??
+			(field.kind === "lyrics"
 				? "lyrics"
 				: field.kind === "integer" ||
 						field.kind === "number" ||
@@ -344,9 +354,10 @@ export function useMetadataEditorProvider({
 						field.kind === "advisory" ||
 						field.kind === "date"
 					? field.kind
-					: list
+					: registryList
 						? "list"
-						: "text";
+						: "text");
+		const list = kind === "list";
 		const hasState = stateControlled(field.key);
 		const fieldState = hasState ? (stateFor(field.key) ?? "absent") : undefined;
 		const displayValue = fieldState
@@ -389,8 +400,13 @@ export function useMetadataEditorProvider({
 								{ value: "4", label: m("value.explicitLegacy") },
 							]
 						: undefined,
-			hint: field.kind === "date" ? m("hint.datePrecision") : undefined,
-			placeholder: field.kind === "date" ? "YYYY[-MM[-DD]]" : undefined,
+			hint:
+				fieldHints?.[field.key] ??
+				(field.kind === "date" ? m("hint.datePrecision") : undefined),
+			placeholder:
+				field.kind === "date" && !fieldHints?.[field.key]
+					? "YYYY[-MM[-DD]]"
+					: undefined,
 			nativeType:
 				field.kind === "integer" || field.kind === "number" ? "number" : "text",
 			inputMode: field.kind === "date" ? "text" : undefined,
@@ -497,12 +513,26 @@ export function useMetadataEditorProvider({
 			focusMetadataKey(editorRef, contributorInputId(missingName.uiKey));
 			return;
 		}
+		const validatesControlledValue = (key: string) => {
+			if (!fieldStates || !Object.hasOwn(fieldStates, key)) return true;
+			return (draftStates[key] ?? fieldStates[key]) === "value";
+		};
 		const changedValues = Object.fromEntries(
 			[...dirty]
 				.filter((key) => fieldByKey(key)?.scope === scope)
+				.filter(validatesControlledValue)
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
 		const errors = validateMetadataIssues(changedValues, scope);
+		const emptyDateKey = [...dirty].find(
+			(key) =>
+				fieldStates &&
+				Object.hasOwn(fieldStates, key) &&
+				validatesControlledValue(key) &&
+				fieldByKey(key)?.kind === "date" &&
+				!(draft[key]?.[0] ?? "").trim(),
+		);
+		if (emptyDateKey) errors.unshift({ key: emptyDateKey, code: "date" });
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
@@ -703,7 +733,9 @@ export function useMetadataEditorProvider({
 		? error.kind === "validation"
 			? [
 					...error.issues.map((issue) =>
-						metadataValidationMessage(issue, locale),
+						libraryMetadata && issue.code === "date"
+							? releaseMetadataEditorMessages[locale].invalidDate
+							: metadataValidationMessage(issue, locale),
 					),
 					...(error.requiredField
 						? [
@@ -1111,6 +1143,10 @@ export function useMetadataEditorProvider({
 		editing,
 		saving,
 		readOnly,
+		editOrSaveDisabled:
+			libraryMetadata && editing
+				? readOnly || (!dirty.size && !dirtyGenres && !dirtyExtras.size)
+				: readOnly,
 		hideActions,
 		editorRef,
 		actionsRef: actionRef,
@@ -1126,6 +1162,17 @@ export function useMetadataEditorProvider({
 		sections: sectionsView,
 		lyrics: lyricsView,
 		extras: extrasView,
-		error: displayedError || undefined,
+		error: libraryMetadata ? undefined : displayedError || undefined,
+		notices: libraryMetadata ? (
+			<MetadataEditorNoticesView
+				locale={locale}
+				loading={false}
+				saving={saving}
+				readError=""
+				saveError={displayedError}
+				refreshConflict={false}
+				onRetry={() => {}}
+			/>
+		) : undefined,
 	};
 }

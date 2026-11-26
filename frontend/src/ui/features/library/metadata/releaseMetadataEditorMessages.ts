@@ -38,6 +38,58 @@ export type ReleaseFieldKey =
   | "disc_number"
   | "disc_total";
 
+export type ReleaseBasicsFieldKind = "text" | "date" | "list";
+
+export type ReleaseBasicsField = {
+  /** Backend metadata key and label catalog key. */
+  key: Exclude<ReleaseFieldKey, "genre">;
+  /** Portable registry key used by the design host. */
+  metadataKey: string;
+  kind: ReleaseBasicsFieldKind;
+  /** Catalog message key for an edit-time hint. */
+  hint?: "dateHint";
+};
+
+/** Shared order, kind and transport identity for release basics in both hosts. */
+export const releaseBasicsFields = [
+  { key: "title", metadataKey: "album", kind: "text" },
+  {
+    key: "release_date",
+    metadataKey: "releasedate",
+    kind: "date",
+    hint: "dateHint",
+  },
+  { key: "release_country", metadataKey: "releasecountry", kind: "text" },
+  { key: "label", metadataKey: "recordlabel", kind: "list" },
+  { key: "catalog_number", metadataKey: "catalognumber", kind: "text" },
+  {
+    key: "release_primary_type",
+    metadataKey: "release_primary_type",
+    kind: "text",
+  },
+  {
+    key: "release_secondary_types",
+    metadataKey: "release_secondary_types",
+    kind: "list",
+  },
+] as const satisfies readonly ReleaseBasicsField[];
+
+export function releaseBasicsFieldLabel(
+  locale: keyof typeof releaseMetadataEditorMessages,
+  field: ReleaseBasicsField,
+): string {
+  return releaseMetadataEditorMessages[locale].labels[field.key];
+}
+
+export function releaseBasicsFieldHint(
+  locale: keyof typeof releaseMetadataEditorMessages,
+  field: ReleaseBasicsField,
+): string | undefined {
+  return field.hint
+    ? releaseMetadataEditorMessages[locale][field.hint]
+    : undefined;
+}
+
 export const releaseMetadataEditorMessages = {
   en: {
     title: "Release metadata",

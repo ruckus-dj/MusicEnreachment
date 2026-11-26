@@ -9,6 +9,7 @@ import {
 	type CatalogArtist,
 	desiredTags,
 	effectiveReleaseTitle,
+	effectiveReleaseYear,
 	type OriginalRelease,
 	type OriginalTrack,
 	originalArtistName,
@@ -403,7 +404,7 @@ function createTarget(
 	const output = choosePublicationOutput(file, {
 		...destination,
 		artist: originalArtistName(release.artistId, artists),
-		year: release.year,
+		year: effectiveReleaseYear(release),
 		release: effectiveReleaseTitle(release),
 		position: track.position,
 		title: track.title,

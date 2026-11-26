@@ -4,6 +4,7 @@ import {
 	type SourceFile as CatalogSourceFile,
 	desiredTags,
 	effectiveReleaseTitle,
+	effectiveReleaseYear,
 	type OriginalRelease,
 	type OriginalTrack,
 	originalArtistName,
@@ -558,7 +559,7 @@ export function planPositionRow(
 		? choosePublicationOutput(row.file, {
 				...destination,
 				artist: originalArtistName(release.artistId, artists),
-				year: release.year,
+				year: effectiveReleaseYear(release),
 				release: effectiveReleaseTitle(release),
 				position: row.targetTrack.position,
 				title: row.targetTrack.title,
@@ -756,7 +757,7 @@ export function applyPlan(
 		const output = choosePublicationOutput(row.file, {
 			...destination,
 			artist: originalArtistName(release.artistId, artists),
-			year: release.year,
+			year: effectiveReleaseYear(release),
 			release: effectiveReleaseTitle(release),
 			position: row.targetTrack.position,
 			title: row.targetTrack.title,

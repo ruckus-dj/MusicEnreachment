@@ -2,6 +2,7 @@ import {
 	type CatalogArtist,
 	effectivePublicationTags,
 	effectiveReleaseTitle,
+	effectiveReleaseYear,
 	metadataChanged,
 	type OriginalRelease,
 	type OriginalTrack,
@@ -113,7 +114,7 @@ function planPosition(
 	const target = choosePublicationOutput(source, {
 		...catalog.destination,
 		artist: originalArtistName(release.artistId, catalog.artists),
-		year: release.year,
+		year: effectiveReleaseYear(release),
 		release: effectiveReleaseTitle(release),
 		position: track.position,
 		title: track.title,
