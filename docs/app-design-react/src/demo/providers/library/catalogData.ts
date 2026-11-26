@@ -36,6 +36,13 @@ import {
 	resolvePublicationComposition,
 	type ScopedComposition,
 } from "./metadata/scopedComposition";
+import {
+	contributorProjectionIntent,
+	contributorTagKeys,
+	projectScopedContributorTags,
+	retainUnspecifiedContributorTags,
+	type ScopedContributors,
+} from "./metadata/scopedContributors";
 
 const musicBrainzUUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -87,12 +94,14 @@ export interface OriginalTrack {
 	recordingMetadata?: MetadataValues;
 	recordingScalarIntent?: ScopedScalarIntentMap;
 	recordingComposition?: ScopedComposition;
+	recordingContributors?: ScopedContributors;
 	recordingArtistCredit?: ScopedArtistCredit;
 	/** Original distinct position title retained while editing the recording. */
 	positionTitleBaseline?: string;
 	/** Explicit scalar tag intent of this position, not its displayed identity. */
 	positionScalarIntent?: ScopedScalarIntentMap;
 	positionComposition?: ScopedComposition;
+	positionContributors?: ScopedContributors;
 	positionArtistCredit?: ScopedArtistCredit;
 	positionCreditEvidence?: PositionCreditEvidence;
 	positionMetadata?: MetadataValues;
@@ -903,6 +912,19 @@ export function desiredTags(
 		delete result.MOVEMENTTOTAL;
 	}
 	Object.assign(result, projectCompositionTags(composition));
+	const contributors = contributorProjectionIntent(
+		track.positionContributors,
+		track.recordingContributors,
+		"publication",
+	);
+	if (contributors) {
+		for (const key of contributorTagKeys(result, track.published?.tags ?? {}))
+			result[key] = [];
+		Object.assign(
+			result,
+			projectScopedContributorTags(contributors, outputContainer),
+		);
+	}
 	const musicalKey = result.KEY;
 	if (musicalKey && outputContainer) {
 		const container = outputContainer.toUpperCase();
@@ -1031,6 +1053,12 @@ export function effectivePublicationTags(
 		}
 		return tags;
 	}
+	retainUnspecifiedContributorTags(
+		tags,
+		track.published.tags,
+		track.positionContributors,
+		track.recordingContributors,
+	);
 	for (const key of sourceOnlyAudioTagKeys) {
 		delete tags[key];
 		if (Object.hasOwn(track.published.tags, key))
@@ -1145,6 +1173,9 @@ export function metadataChanged(
 		"MOVEMENTCOUNT",
 		"MOVEMENTNUMBER",
 		...metadataManagedTagKeys(),
+		...(track.positionContributors || track.recordingContributors
+			? contributorTagKeys(tags, baseline)
+			: []),
 		...metadataTagKeys({
 			...(release.metadataValues ?? {}),
 			...(track.recordingMetadata ?? {}),

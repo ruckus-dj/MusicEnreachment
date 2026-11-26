@@ -22,6 +22,11 @@ import {
 	scopedCreditComparisonTags,
 } from "./metadata/scopedArtistCredits";
 import { projectCompositionTags } from "./metadata/scopedComposition";
+import {
+	contributorProjectionIntent,
+	contributorTagKeys,
+	projectScopedContributorTags,
+} from "./metadata/scopedContributors";
 
 export type TagScope = "artist" | "release" | "track";
 
@@ -94,6 +99,15 @@ export function TagsComparison({
 		}),
 	};
 	const positionTitleOverride = track.positionComparisonOverrides?.title;
+	const contributors = contributorProjectionIntent(
+		track.positionContributors,
+		track.recordingContributors,
+		"comparison",
+	);
+	if (contributors) {
+		for (const key of contributorTagKeys()) delete overrides[key];
+		Object.assign(overrides, projectScopedContributorTags(contributors));
+	}
 	const trackCredit = track.positionArtistCredit ?? track.recordingArtistCredit;
 	if (trackCredit) {
 		for (const key of creditTagKeys("ARTIST")) delete overrides[key];

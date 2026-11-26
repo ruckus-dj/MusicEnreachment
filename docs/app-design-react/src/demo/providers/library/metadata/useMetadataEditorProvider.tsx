@@ -57,6 +57,8 @@ import type {
 } from "../../../../ui/features/library/metadata/structuredMetadataDraft";
 import type { WorkRowDraft } from "../../../../ui/features/library/WorkRowsView";
 import { audioMeasurementKeys } from "./audioMeasurements";
+import type { ScopedContributors } from "./scopedContributors";
+import { useScopedContributorsEditor } from "./useScopedContributorsEditor";
 import {
 	essentialMetadataFields,
 	libraryReleaseEditorFields,
@@ -107,6 +109,7 @@ export type SaveDetails = {
 	fieldStates?: Partial<Record<string, MetadataFieldState>>;
 	/** Changed scoped artist-credit override; omitted when it stays untouched. */
 	scopedArtistCredit?: ArtistCreditDraft;
+	scopedContributors?: ScopedContributors;
 };
 
 export interface MetadataEditorProps {
@@ -165,6 +168,7 @@ export interface MetadataEditorProps {
 		};
 		search: (query: string) => readonly ArtistCreditSearchResult[];
 	};
+	scopedContributors?: ScopedContributors;
 }
 
 const audioMeasurementKeySet = new Set<string>(audioMeasurementKeys);
@@ -325,6 +329,7 @@ export function useMetadataEditorProvider({
 	fields: suppliedFields,
 	fieldStateDisplay,
 	scopedArtistCredit,
+	scopedContributors,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
 	const m = (key: MetadataMessageKey) => metadataMessage(locale, key);
@@ -386,6 +391,12 @@ export function useMetadataEditorProvider({
 		| { kind: "external"; message: string }
 	>();
 	const [saving, setSaving] = useState(false);
+	const contributorEditor = useScopedContributorsEditor(
+		locale,
+		scopedContributors,
+		editing,
+		saving,
+	);
 	const [contributorDrafts, setContributorDrafts] = useState<
 		Record<string, ContributorDraft[]>
 	>({});
@@ -556,6 +567,7 @@ export function useMetadataEditorProvider({
 	};
 	const begin = () => {
 		if (controlled) return;
+		contributorEditor.reset();
 		setContributorDrafts({});
 		contributorBaseline.current = values;
 		setDraft({ ...values });
@@ -621,6 +633,17 @@ export function useMetadataEditorProvider({
 		}
 	};
 	const save = () => {
+		if (contributorEditor.invalid) {
+			focusMetadataKey(editorRef, contributorEditor.invalid);
+			return;
+		}
+		if (contributorEditor.invalidIdentity) {
+			setError({
+				kind: "external",
+				message: "library metadata request is invalid",
+			});
+			return;
+		}
 		const missingName = roles
 			.flatMap((field) => contributorDrafts[field.role ?? field.key] ?? [])
 			.find((row) => row.isNew && !row.name.trim());
@@ -728,6 +751,8 @@ export function useMetadataEditorProvider({
 				.map((field) => field.group),
 		);
 		const details: SaveDetails = {};
+		if (contributorEditor.change)
+			details.scopedContributors = contributorEditor.change;
 		if (creditChanged && scopedCreditDraft)
 			details.scopedArtistCredit = scopedCreditDraft;
 		const creditDirty = [...changedGroups].some(
@@ -1440,7 +1465,11 @@ export function useMetadataEditorProvider({
 		editOrSaveDisabled:
 			libraryMetadata && editing
 				? readOnly ||
-					(!dirty.size && !dirtyGenres && !dirtyExtras.size && !creditChanged)
+					(!dirty.size &&
+						!dirtyGenres &&
+						!dirtyExtras.size &&
+						!creditChanged &&
+						!contributorEditor.change)
 				: readOnly,
 		hideActions,
 		editorRef,
@@ -1480,7 +1509,7 @@ export function useMetadataEditorProvider({
 					),
 				}
 			: undefined,
-		roles: rolesView,
+		roles: contributorEditor.view ?? rolesView,
 		worksMovement,
 		sections: sectionsView,
 		lyrics: lyricsView,

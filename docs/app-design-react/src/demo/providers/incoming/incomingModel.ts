@@ -15,6 +15,7 @@ import {
 	publicationMetadataIssues,
 } from "../library/catalogData";
 import { replaceAudioMeasurements } from "../library/metadata/audioMeasurements";
+import { retainUnspecifiedContributorTags } from "../library/metadata/scopedContributors";
 import { sameTagValues } from "../library/tagEquality";
 import type { UiNotice } from "../notices/uiNotice";
 
@@ -486,6 +487,13 @@ export function planRows(
 				: undefined,
 		);
 		const previous = track?.published ?? undefined;
+		if (plan.mode === "local" && plan.positionId && !plan.groupId && previous)
+			retainUnspecifiedContributorTags(
+				nextTags,
+				previous.tags,
+				track?.positionContributors,
+				track?.recordingContributors,
+			);
 		const outputCodec = file
 			? demoOutputCodec(file.codec, destination.format)
 			: undefined;

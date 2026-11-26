@@ -65,6 +65,54 @@ it("keeps terminal position credit intent separate from the recording and releas
 	expect(track.published).toBe(fixture.published);
 });
 
+it("uses neutral contributor comparison and qualified performer file tags", () => {
+	const release = originalReleases.find(({ id }) => id === "north");
+	const fixture = release?.tracks[0];
+	if (!release || !fixture) throw new Error("Missing position fixture");
+	const track = {
+		...fixture,
+		recordingContributors: {
+			state: "value" as const,
+			rows: [
+				{ name: "Guest musician", role: "performer", instrument: "Piano" },
+			],
+		},
+	};
+	expect(desiredTags(release, track).PERFORMER).toEqual(["Guest musician"]);
+	expect(
+		desiredTags(release, track, undefined, null, "FLAC")["PERFORMER:PIANO"],
+	).toEqual(["Guest musician"]);
+	expect(
+		desiredTags(release, track, undefined, null, "M4A"),
+	).not.toHaveProperty("PERFORMER:PIANO");
+	expect(
+		desiredTags(release, {
+			...track,
+			positionContributors: { state: "explicit_empty" },
+		}).PERFORMER,
+	).toEqual([]);
+	if (!fixture.published) throw new Error("Missing CURRENT fixture");
+	const current = {
+		...fixture.published,
+		container: "FLAC",
+		tags: { ...fixture.published.tags, "PERFORMER:PIANO": ["Guest musician"] },
+	};
+	expect(
+		effectivePublicationTags(release, {
+			...fixture,
+			published: current,
+			positionContributors: { state: "absent" },
+		})["PERFORMER:PIANO"],
+	).toEqual(["Guest musician"]);
+	expect(
+		effectivePublicationTags(release, {
+			...fixture,
+			published: current,
+			positionContributors: { state: "explicit_empty" },
+		})["PERFORMER:PIANO"],
+	).toEqual([]);
+});
+
 it("projects inherited, cleared and explicitly empty position titles separately", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	const fixture = release?.tracks[0];

@@ -137,6 +137,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			fields: libraryRecordingEditorFields,
 			values: recording,
+			scopedContributors: track.recordingContributors ?? { state: "absent" },
 			fieldStates: {
 				...Object.fromEntries(
 					recordingScalarFields.map(({ metadataKey }) => [
@@ -232,6 +233,8 @@ export function useTrackMetadataEditorsDemoProvider({
 						recordingArtistCredit: details?.scopedArtistCredit
 							? saveScopedArtistCredit(details.scopedArtistCredit)
 							: current.recordingArtistCredit,
+						recordingContributors:
+							details?.scopedContributors ?? current.recordingContributors,
 					};
 					if (details?.fieldStates?.title) {
 						if (positionTitle.state === "absent")
@@ -253,6 +256,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			values: position,
 			fields: libraryPositionEditorFields,
+			scopedContributors: track.positionContributors ?? { state: "absent" },
 			scopedArtistCredit: scopedArtistCreditEditor(
 				track.positionArtistCredit,
 				track.positionCreditEvidence && "rows" in track.positionCreditEvidence
@@ -337,6 +341,8 @@ export function useTrackMetadataEditorsDemoProvider({
 						positionArtistCredit: details?.scopedArtistCredit
 							? saveScopedArtistCredit(details.scopedArtistCredit)
 							: current.positionArtistCredit,
+						positionContributors:
+							details?.scopedContributors ?? current.positionContributors,
 						positionComposition: updateComposition(
 							current.positionComposition,
 							values,

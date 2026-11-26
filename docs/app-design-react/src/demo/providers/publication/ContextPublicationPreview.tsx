@@ -30,6 +30,10 @@ import {
 	publicationMetadataIssueMessages,
 } from "../library/catalogData";
 import { sameTagValues } from "../library/tagEquality";
+import {
+	contributorProjectionIntent,
+	omitsStructuredPerformer,
+} from "../library/metadata/scopedContributors";
 import type { UiNotice } from "../notices/uiNotice";
 import { demoPathInside } from "../sources/demoPathValidation";
 import { individualPublicationDetails } from "./individualPublicationDetails";
@@ -270,10 +274,32 @@ export function ContextPublicationPreview({
 							? "selectedMetadataAndAudio"
 							: "newPublicationSelectedSource",
 			);
-	const notices =
+	const notices: string[] =
 		release && track
 			? publicationArtistNotices(release, track, artists, locale)
 			: [];
+	const outputContainer = (
+		rebuildSource
+			? row?.renderedContainer
+			: (current?.container ?? row?.renderedContainer)
+	)?.toUpperCase();
+	if (
+		outputContainer &&
+		omitsStructuredPerformer(
+			contributorProjectionIntent(
+				track?.positionContributors,
+				track?.recordingContributors,
+				"publication",
+			),
+			outputContainer,
+		)
+	) {
+		notices.push(
+			locale === "ru"
+				? `Данные исполнителей не попадут в ${outputContainer}: запись через TagLib не сохраняет их структуру и инструменты.`
+				: `structured performer data is omitted from ${outputContainer} output because the TagLib writer cannot preserve its performer and instrument/subrole structure`,
+		);
+	}
 	const details = row
 		? individualPublicationDetails({
 				workflow: resolvedWorkflow,
