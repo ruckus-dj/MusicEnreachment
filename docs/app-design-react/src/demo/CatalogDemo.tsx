@@ -68,6 +68,7 @@ import {
 	originalFiles,
 	originalProviders,
 	originalReleases,
+	recordingIdentity,
 	recoveryFixture,
 } from "./providers/library/catalogData";
 import {
@@ -167,13 +168,6 @@ function openIncomingFromHome() {
 
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
 type PublicationJob = DemoPublicationJob & { plan: DemoPublicationRow };
-
-const recordingIdentity = (track: OriginalTrack) =>
-	track.localRecordingId
-		? `local:${track.localRecordingId}`
-		: track.recordingId
-			? `musicbrainz:${track.recordingId}`
-			: null;
 
 export function CatalogDemo({
 	onIncomingCount,

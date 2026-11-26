@@ -21,7 +21,7 @@ import {
 } from "./editorLayout";
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
-import type { MetadataGenre, MetadataValues } from "./projection";
+import type { MetadataValues } from "./projection";
 
 function recordingValues(track: OriginalTrack): MetadataValues {
 	const values = { ...(track.recordingMetadata ?? {}) };
@@ -34,7 +34,7 @@ function recordingValues(track: OriginalTrack): MetadataValues {
 					? ["explicit"]
 					: [];
 	}
-	if (!("genre" in values)) values.genre = [...(track.recordingGenres ?? [])];
+	delete values.genre;
 	return values;
 }
 
@@ -67,8 +67,6 @@ function creditsFor(
 export type TrackMetadataEditorsProps = {
 	track: OriginalTrack;
 	artists: CatalogArtist[];
-	genresLoaded: boolean;
-	onLoadGenres?: () => void | Promise<void>;
 	onMutate: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onRecordingChange?: (
 		update: (current: OriginalTrack) => OriginalTrack,
@@ -78,8 +76,6 @@ export type TrackMetadataEditorsProps = {
 export function useTrackMetadataEditorsDemoProvider({
 	track,
 	artists,
-	genresLoaded,
-	onLoadGenres,
 	onMutate,
 	onRecordingChange,
 }: TrackMetadataEditorsProps): Omit<
@@ -154,11 +150,6 @@ export function useTrackMetadataEditorsDemoProvider({
 				sortName,
 			})),
 			credits: creditsFor(track, recording, artists),
-			genres: (track.recordingGenreRefs ??
-				track.recordingGenres?.map((name) => ({ name })) ??
-				[]) as MetadataGenre[],
-			genresLoaded,
-			onLoadGenres,
 			onSave: (values, details) => {
 				const nextIntent: ScopedScalarIntentMap = {
 					...track.recordingScalarIntent,
@@ -181,6 +172,8 @@ export function useTrackMetadataEditorsDemoProvider({
 				const update = (current: OriginalTrack): OriginalTrack => {
 					const positionTitle = positionTitleIntent(current);
 					const nextMetadata = { ...values };
+					if (current.recordingMetadata?.genre)
+						nextMetadata.genre = current.recordingMetadata.genre;
 					const comparison = mergeComparisonOverrides(
 						current.recordingComparisonOverrides,
 						recording,
@@ -197,25 +190,8 @@ export function useTrackMetadataEditorsDemoProvider({
 						recordingTitle: recordingTitleBaseline(current) ?? current.title,
 						recordingScalarIntent: nextIntent,
 						recordingMetadata: nextMetadata,
-						recordingComparisonOverrides: {
-							...comparison,
-							...(details?.genres
-								? {
-										genre: details.genres
-											.map(({ name, id }) => name ?? id ?? "")
-											.filter(Boolean),
-									}
-								: {}),
-						},
+						recordingComparisonOverrides: comparison,
 						...(details?.credits ? { recordingCredits: details.credits } : {}),
-						...(details?.genres
-							? {
-									recordingGenreRefs: details.genres as MetadataGenre[],
-									recordingGenres: details.genres
-										.map((genre) => genre.name ?? genre.id ?? "")
-										.filter(Boolean),
-								}
-							: {}),
 					};
 					if (details?.fieldStates?.title) {
 						if (positionTitle.state === "absent")

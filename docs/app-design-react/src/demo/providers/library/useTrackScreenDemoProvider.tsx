@@ -21,11 +21,13 @@ import {
 	originalArtistName,
 	originalFiles,
 	originalProviders,
+	recordingIdentity,
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
 import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
 import { libraryRootHref } from "./libraryRoute";
+import { RecordingGenreEditor } from "./metadata/RecordingGenreEditor";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
 import { TagsComparison } from "./TagsComparison";
 
@@ -91,6 +93,7 @@ export function useTrackScreenDemoProvider(
 		providers,
 	} = props;
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
+	const recordingId = recordingIdentity(track);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const inspectedFileId =
 		inspectionFileId && sourceIds.includes(inspectionFileId)
@@ -163,13 +166,27 @@ export function useTrackScreenDemoProvider(
 		editors:
 			onMutate || onRecordingChange
 				? {
+						genre:
+							recordingId && onRecordingChange
+								? {
+										bind: (children: ReactNode) => (
+											<RecordingGenreEditor
+												key={recordingId}
+												track={track}
+												genresLoaded={genresLoaded}
+												onLoadGenres={onLoadGenres}
+												onRecordingChange={onRecordingChange}
+											>
+												{children}
+											</RecordingGenreEditor>
+										),
+									}
+								: undefined,
 						metadata: {
 							bind: (children: ReactNode) => (
 								<TrackMetadataEditors
 									track={track}
 									artists={artists ?? catalogData.artists}
-									genresLoaded={genresLoaded}
-									onLoadGenres={onLoadGenres}
 									onMutate={onMutate ?? (() => undefined)}
 									onRecordingChange={onRecordingChange}
 								>

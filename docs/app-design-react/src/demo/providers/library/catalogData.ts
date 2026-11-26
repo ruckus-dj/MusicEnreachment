@@ -345,6 +345,12 @@ export function recordingScalarOverrideTags(
 	return tags;
 }
 
+export function recordingIdentity(track: OriginalTrack): string | undefined {
+	if (track.localRecordingId) return `local:${track.localRecordingId}`;
+	if (track.recordingId) return `musicbrainz:${track.recordingId}`;
+	return undefined;
+}
+
 export const positionLayoutFields = [
 	{
 		key: "disc_title",

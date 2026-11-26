@@ -52,7 +52,7 @@ export const libraryRecordingEditorFields = [
 		return field ? [field] : [];
 	}),
 	...fieldsForScope("recording").filter(
-		({ key }) => !recordingBasicKeys.has(key),
+		({ key, kind }) => kind !== "genres" && !recordingBasicKeys.has(key),
 	),
 ];
 
