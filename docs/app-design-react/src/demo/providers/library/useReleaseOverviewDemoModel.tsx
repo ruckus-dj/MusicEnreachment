@@ -25,9 +25,11 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
+import { demoPrimaryArtist } from "./libraryPrimaryArtistDemo";
 import { libraryRootHref } from "./libraryRoute";
 import { audioProperties } from "./metadata/audioProperties";
 import { ReleaseMetadataEditor } from "./metadata/ReleaseMetadataEditor";
+import { releaseCreditValues } from "./metadata/scopedArtistCredits";
 import {
 	type DemoReleaseCoverEditorModel,
 	type DemoReleaseCoverState,
@@ -141,11 +143,13 @@ export function buildReleaseOverviewDemoModel({
 			? metadataChanged(release, track, artists)
 			: false,
 		filterClass: availabilityRowClass(track, "all", hasAudio),
-		selection: {
-			isSelected: selected.has(track.id),
-			isDisabled: !onSelect,
-			onChange: (value: boolean) => onSelect?.([track.id], value),
-		},
+		selection: onSelect
+			? {
+					isSelected: selected.has(track.id),
+					isDisabled: !onSelect,
+					onChange: (value: boolean) => onSelect?.([track.id], value),
+				}
+			: undefined,
 	}));
 	const trackIds = release.tracks.map((track) => track.id);
 	const everySelected = release.tracks.every((track) => selected.has(track.id));
@@ -220,10 +224,18 @@ export function buildReleaseOverviewDemoModel({
 			? release.tracks.reduce((sum, track) => sum + (track.duration ?? 0), 0)
 			: null;
 	const ariaLabel = `${release.title} · ${release.year} · ${release.catalog || "—"}`;
+	const primary = demoPrimaryArtist(
+		releaseCreditValues(release, artists),
+		artists,
+		release.primaryArtistId,
+		(id) => saveRelease({ ...release, primaryArtistId: id }),
+	);
 
 	return {
 		libraryHref: libraryRootHref(),
-		artistHref: artist ? libraryArtistAddressHref(artist.id) : undefined,
+		artistHref: primary.effectiveId
+			? libraryArtistAddressHref(primary.effectiveId)
+			: undefined,
 		heading: {
 			title: release.title,
 			disambiguation: release.disambiguation,
@@ -247,19 +259,20 @@ export function buildReleaseOverviewDemoModel({
 			counts: {
 				positions: release.tracks.length,
 				published: release.tracks.filter((track) => track.published).length,
-				available: release.tracks.filter(hasAudio).length,
 			},
 			durationSeconds: durationTotal,
-			selection: editionControls
-				? {
-						isSelected: release.tracks.length > 0 && everySelected,
-						isIndeterminate: someSelected && !everySelected,
-						isDisabled: !release.tracks.length || !onSelect,
-						onChange: (value) => onSelect?.(trackIds, value),
-					}
-				: undefined,
+			selection:
+				editionControls && onSelect
+					? {
+							isSelected: release.tracks.length > 0 && everySelected,
+							isIndeterminate: someSelected && !everySelected,
+							isDisabled: !release.tracks.length || !onSelect,
+							onChange: (value) => onSelect?.(trackIds, value),
+						}
+					: undefined,
 		},
 		credentials,
+		primaryArtist: primary.control,
 		media,
 		fallbackTracks,
 		unassignedTracks,
@@ -297,8 +310,7 @@ export function buildReleaseOverviewDemoModel({
 					onQueue={onQueueDeletion}
 				/>
 			) : undefined,
-		// The demo cover editor binds only browser File state; provider refresh
-		// remains an unbound real-only capability.
+		// The demo cover editor binds only browser File state.
 		cover: coverEditor?.source,
 	};
 }

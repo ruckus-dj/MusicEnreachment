@@ -440,14 +440,21 @@ export function makeReleasePlan(
 	const assignments: Record<string, Assignment> = {};
 	for (const track of release.tracks) {
 		const selectedSource = track.sourceId;
-		const file = selectedSource ? files[selectedSource] : undefined;
-		if (!selectedSource || !usableFile(file)) continue;
 		const availableSources = [
-			...new Set([...(track.sourceIds ?? []), selectedSource]),
+			...new Set([
+				...(track.sourceIds ?? []),
+				...(selectedSource ? [selectedSource] : []),
+			]),
 		].filter((id) => usableFile(files[id]));
+		if (!availableSources.length) continue;
 		assignments[String(track.id)] = {
 			sourceIds: availableSources,
-			selectedSourceId: selectedSource,
+			selectedSourceId:
+				selectedSource && availableSources.includes(selectedSource)
+					? selectedSource
+					: availableSources.length === 1
+						? availableSources[0]
+						: null,
 			sourceMeta: {},
 			method: "Текущий выбранный источник",
 			confidence: null,

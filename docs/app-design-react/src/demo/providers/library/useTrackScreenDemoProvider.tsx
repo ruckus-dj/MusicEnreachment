@@ -26,15 +26,16 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
+import { demoPrimaryArtist } from "./libraryPrimaryArtistDemo";
 import { libraryRootHref } from "./libraryRoute";
 import { RecordingGenreEditor } from "./metadata/RecordingGenreEditor";
+import { positionCreditValues } from "./metadata/scopedArtistCredits";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
 import { TagsComparison } from "./TagsComparison";
 
 export type TrackScreenProps = {
 	release: OriginalRelease;
 	track: OriginalTrack;
-	onSource: (id: string) => void;
 	onPreview?: () => void;
 	publicationPreviewNotice?: string;
 	contextualPublication?: DemoPositionPublicationSource;
@@ -79,7 +80,6 @@ export function useTrackScreenDemoProvider(
 	const {
 		release,
 		track,
-		onSource,
 		onPreview,
 		publicationPreviewNotice,
 		contextualPublication,
@@ -94,6 +94,15 @@ export function useTrackScreenDemoProvider(
 	} = props;
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const recordingId = recordingIdentity(track);
+	const localArtists = artists ?? catalogData.artists;
+	const primaryArtist = onMutate
+		? demoPrimaryArtist(
+				positionCreditValues(track, localArtists),
+				localArtists,
+				track.primaryArtistId,
+				(id) => onMutate((current) => ({ ...current, primaryArtistId: id })),
+			).control
+		: undefined;
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const inspectedFileId =
 		inspectionFileId && sourceIds.includes(inspectionFileId)
@@ -166,6 +175,8 @@ export function useTrackScreenDemoProvider(
 		editors:
 			onMutate || onRecordingChange
 				? {
+						primaryArtist,
+						positionNumber: trackNumberLabel(release, track),
 						genre:
 							recordingId && onRecordingChange
 								? {
@@ -199,7 +210,6 @@ export function useTrackScreenDemoProvider(
 		sources: {
 			position: trackNumberLabel(release, track),
 			items: sourceItems,
-			choice: { value: track.sourceId ?? "", onChange: onSource },
 			inspection: {
 				value: tagComparisonOpen ? (inspectedFileId ?? undefined) : undefined,
 				onChange: inspectSource,

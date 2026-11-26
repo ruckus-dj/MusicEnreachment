@@ -1,5 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { useI18n } from "../../../app/i18n";
+import type { PublicationPreviewSource } from "../../../ui/features/library/PublicationPreviewDetailsView";
 import {
 	ContextPublicationPreviewDataBinder,
 	type ContextPublicationPreviewMode,
@@ -19,7 +20,9 @@ import {
 	makeReleasePlan,
 	planPositionRow,
 	selectedSourceId,
+	sourceIds,
 	type TagMap,
+	usableFile,
 } from "../incoming/incomingModel";
 import {
 	type CatalogArtist,
@@ -45,6 +48,59 @@ import {
 	type PublicationDestination,
 	retainedOutputIssue,
 } from "./publicationOutput";
+
+/**
+ * A demo source file is one analyzed media variant with one audio stream. Its
+ * known location and variant are the only source identities available here, so
+ * stream `0` is the variant's single stream rather than a fabricated choice.
+ */
+function publicationSourceCandidates(
+	plan: IncomingPlan,
+	files: IncomingFiles,
+	positionId: string,
+): PublicationPreviewSource[] {
+	const assignment = plan.assignments[positionId];
+	if (!assignment) return [];
+	const selectedId = selectedSourceId(assignment);
+	const linked = [
+		...new Set([...sourceIds(assignment), ...(selectedId ? [selectedId] : [])]),
+	];
+	return linked.flatMap((id) => {
+		const file = files[id];
+		const location = file?.locations?.[0];
+		if (!file || !location || !file.codec || !usableFile(file)) return [];
+		return [
+			{
+				audio_stream_count: 1,
+				codec: file.codec,
+				language: "",
+				location_id: location.id,
+				media_variant_id: file.id,
+				requires_explicit_stream_selection: false,
+				root_id: location.rootId,
+				stream_index: 0,
+				title: file.name,
+				unsupported_audio_stream_count: 0,
+			},
+		];
+	});
+}
+
+function planWithSource(
+	plan: IncomingPlan,
+	positionId: string,
+	sourceId: string | null,
+) {
+	const assignment = plan.assignments[positionId];
+	if (!assignment || selectedSourceId(assignment) === sourceId) return plan;
+	return {
+		...plan,
+		assignments: {
+			...plan.assignments,
+			[positionId]: { ...assignment, selectedSourceId: sourceId },
+		},
+	};
+}
 
 function capturePosition(release: OriginalRelease, positionId: string) {
 	const { tracks, ...releaseFields } = release;
@@ -155,12 +211,44 @@ export function ContextPublicationPreview({
 	children,
 }: ContextPublicationPreviewProps) {
 	const { locale } = useI18n();
+	const [chosenSourceId, setChosenSourceId] = useState<string | null>();
 	const positionId = plan.positionId;
 	if (!positionId || plan.mode !== "local" || plan.groupId) return null;
 
+	const resolvedWorkflow = workflow;
+	const retainedWorkflow = resolvedWorkflow === "retained_same_path";
+	const readOnly = resolvedWorkflow === "comparison";
+	const assignment = plan.assignments[positionId];
+	const defaultSourceId = selectedSourceId(assignment);
+	const sourceCandidates =
+		retainedWorkflow || plan.force
+			? []
+			: publicationSourceCandidates(plan, files, positionId);
+	const chosenCandidate =
+		chosenSourceId === undefined || chosenSourceId === null
+			? undefined
+			: sourceCandidates.find(
+					({ media_variant_id }) => media_variant_id === chosenSourceId,
+				);
+	const selectedChoice = chosenCandidate
+		? {
+				location_id: chosenCandidate.location_id,
+				media_variant_id: chosenCandidate.media_variant_id,
+				stream_index: chosenCandidate.stream_index,
+			}
+		: null;
+	const effectiveSourceId =
+		chosenSourceId === undefined
+			? defaultSourceId
+			: (chosenCandidate?.media_variant_id ?? null);
+	const effectivePlan =
+		effectiveSourceId === defaultSourceId
+			? plan
+			: planWithSource(plan, positionId, effectiveSourceId);
+	const needsExplicitChoice = sourceCandidates.length > 1;
 	const release = releases.find((item) => item.id === plan.localReleaseId);
 	const row = planPositionRow(
-		plan,
+		effectivePlan,
 		files,
 		releases,
 		providers,
@@ -170,9 +258,6 @@ export function ContextPublicationPreview({
 	);
 	const track = row?.track;
 	const current = row?.previous;
-	const resolvedWorkflow = workflow;
-	const retainedWorkflow = resolvedWorkflow === "retained_same_path";
-	const readOnly = resolvedWorkflow === "comparison";
 	const positionChanged =
 		!release ||
 		track?.id !== positionId ||
@@ -262,6 +347,7 @@ export function ContextPublicationPreview({
 			!readOnly &&
 			(!retainedWorkflow || retainedStatus === "ready") &&
 			(!plan.force || current) &&
+			(!needsExplicitChoice || selectedChoice !== null) &&
 			row?.assignment?.included &&
 			source &&
 			metadataIssues.length === 0 &&
@@ -309,7 +395,7 @@ export function ContextPublicationPreview({
 				: `structured performer data is omitted from ${outputContainer} output because the TagLib writer cannot preserve its performer and instrument/subrole structure`,
 		);
 	}
-	const details = row
+	const detailsState = row
 		? individualPublicationDetails({
 				workflow: resolvedWorkflow,
 				retainedCapability: retainedStatus,
@@ -327,6 +413,18 @@ export function ContextPublicationPreview({
 				downgrade,
 			})
 		: undefined;
+	const details = detailsState
+		? {
+				...detailsState,
+				inspection: {
+					...detailsState.inspection,
+					sourceCandidates,
+					selectedChoice,
+					needsExplicitChoice,
+					sourceChoiceDisabled: false,
+				},
+			}
+		: undefined;
 
 	const confirm = () => {
 		if (!canConfirm || !row?.assignment || !track) return;
@@ -340,7 +438,7 @@ export function ContextPublicationPreview({
 				inventoryVersion,
 				hasCustomTemplate,
 			},
-			plan,
+			effectivePlan,
 		);
 		if (!prepared) return;
 		onQueue(prepared);
@@ -356,6 +454,11 @@ export function ContextPublicationPreview({
 		notices,
 		details,
 		sourceGroupName: `demo-publication-source-${positionId}`,
+		onSourceChoice: needsExplicitChoice
+			? (choice) => {
+					setChosenSourceId(choice ? choice.media_variant_id : null);
+				}
+			: undefined,
 		confirmControl: {
 			label: current ? "retainedRepublish" : "publish",
 			disabled: !canConfirm,

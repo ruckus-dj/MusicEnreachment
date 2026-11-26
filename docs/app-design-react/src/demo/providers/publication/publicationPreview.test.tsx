@@ -97,6 +97,65 @@ it("localizes the publication reason before adding artist warnings", () => {
 	);
 });
 
+it("queues only the chosen linked source for a first publication", () => {
+	localStorage.setItem("music-design-v2-language", "en");
+	const releases = structuredClone(originalReleases);
+	const album = releases.find(({ id }) => id === "hours")!;
+	const [track, sibling] = album.tracks;
+	const primary = originalFiles[track.sourceId!];
+	const alternative = originalFiles[sibling.sourceId!];
+	track.sourceIds = [primary.id, alternative.id];
+	const onQueue = vi.fn<(job: ContextualPublicationPreparation) => void>();
+	const state = createIncomingState();
+	const copy = firstPublicationPreviewMessages.en;
+	render(
+		<I18nProvider>
+			<ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
+				source={{
+					key: track.id,
+					Component: DemoPositionPublication,
+					props: {
+						destination: fixturePublicationDestination,
+						release: album,
+						positionId: track.id,
+						state,
+						files: originalFiles,
+						releases,
+						providers: providerReleases,
+						artists: originalArtists,
+						onQueue,
+					},
+				}}
+			/>
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: copy.preview }));
+	const confirm = screen.getByRole("button", { name: copy.publish });
+	expect(confirm).toBeDisabled();
+	fireEvent.click(
+		screen.getByRole("radio", {
+			name: new RegExp(alternative.name.split(".")[0]),
+		}),
+	);
+	expect(track.sourceId).toBe(primary.id);
+	expect(confirm).toBeEnabled();
+	fireEvent.click(confirm);
+	const job = onQueue.mock.calls[0]?.[0];
+	if (!job) throw new Error("Chosen source did not queue");
+	expect(track.published).toBeFalsy();
+	expect(
+		settleFixture(releases, fixturePublicationDestination, job)?.published
+			?.sourceId,
+	).toBe(alternative.id);
+	const withoutAlternative = structuredClone(releases);
+	withoutAlternative.find(({ id }) => id === album.id)!.tracks[0].sourceIds = [
+		primary.id,
+	];
+	expect(
+		settleFixture(withoutAlternative, fixturePublicationDestination, job),
+	).toBeNull();
+});
+
 it("matches demo position controls for unchanged, forced and changed retained previews", async () => {
 	localStorage.setItem("music-design-v2-language", "ru");
 	const state = createIncomingState();

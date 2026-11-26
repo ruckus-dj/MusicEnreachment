@@ -93,6 +93,10 @@ import {
 import type { DeletionOperation } from "./providers/library/DeletionRequest";
 import { DemoLibraryReleaseWorkspace } from "./providers/library/DemoLibraryReleaseWorkspace";
 import {
+	type DemoLibraryProviderRefresh,
+	useDemoLibraryProviderRefresh,
+} from "./providers/library/useDemoLibraryProviderRefresh";
+import {
 	DemoLibraryAlbumRowsProvider,
 	libraryCatalogArtistResults,
 	libraryCatalogTrackResults,
@@ -202,18 +206,27 @@ type PublicationJob = DemoPublicationJob &
 export function CatalogDemo({
 	onIncomingCount,
 	renderFrame,
+	providerRefresh,
 }: {
 	onIncomingCount?: (count: number) => void;
 	renderFrame?: (content: ReactNode) => ReactNode;
+	providerRefresh?: DemoLibraryProviderRefresh;
 } = {}) {
-	const content = useCatalogDemoContent(onIncomingCount);
+	const content = useCatalogDemoContent(onIncomingCount, providerRefresh);
 	return renderFrame ? renderFrame(content) : content;
 }
 
 // The frame switches between startup and product layouts. Keep the demo data
 // owner above it so neither layout can discard admitted work or saved state.
-function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
+function useCatalogDemoContent(
+	onIncomingCount?: (count: number) => void,
+	providerRefresh?: DemoLibraryProviderRefresh,
+) {
 	const { locale } = useI18n();
+	const releaseProviderRefresh = useDemoLibraryProviderRefresh(
+		providerRefresh,
+		locale,
+	);
 	const msg = (
 		key: Parameters<typeof catalogMessage>[1],
 		values?: Record<string, string | number>,
@@ -1062,8 +1075,6 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 			release,
 			artists,
 			files,
-			selected,
-			onSelect: update,
 			onUpdateRelease: (updated) =>
 				setReleases((current) =>
 					current.map((item) => (item.id === updated.id ? updated : item)),
@@ -1083,50 +1094,56 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 					[release.id]: state,
 				})),
 		};
+		const lastPositionPublication = (positionId: string) =>
+			publicationJobs
+				.filter(
+					(job) =>
+						job.releaseId === release.id && job.positionId === positionId,
+				)
+				.at(-1);
+		const contextualPublications = new Map<
+			string,
+			DemoPositionPublicationSource
+		>();
+		for (const item of release.tracks) {
+			const last = lastPositionPublication(item.id);
+			if (last && publicationPending(last.id)) continue;
+			contextualPublications.set(item.id, {
+				key: `${release.id}:${item.id}`,
+				Component: DemoPositionPublication,
+				props: {
+					destination: publicationDestination,
+					release,
+					positionId: item.id,
+					state: incoming,
+					files,
+					releases,
+					providers,
+					artists: providerArtists,
+					hasCustomTemplate: Boolean(publicationCatalog.hasCustomTemplate),
+					onQueue: (plan) => {
+						addPublicationJobs([
+							{
+								kind: "contextual",
+								id: `publication-${crypto.randomUUID()}`,
+								releaseId: release.id,
+								positionId: item.id,
+								title: item.title,
+								createdAt: Date.now(),
+								plan,
+							},
+						]);
+					},
+				},
+			});
+		}
 		let position: TrackScreenProps | null = null;
 		if (track) {
 			const identity = recordingIdentity(track);
-			const lastPublication = publicationJobs
-				.filter(
-					(job) => job.releaseId === release.id && job.positionId === track.id,
-				)
-				.at(-1);
+			const lastPublication = lastPositionPublication(track.id);
 			const lastPublicationState = lastPublication
 				? operationsProvider.publicationStates?.get(lastPublication.id)
 				: undefined;
-			const contextualPublication: DemoPositionPublicationSource | undefined =
-				lastPublication && publicationPending(lastPublication.id)
-					? undefined
-					: {
-							key: `${release.id}:${track.id}`,
-							Component: DemoPositionPublication,
-							props: {
-								destination: publicationDestination,
-								release,
-								positionId: track.id,
-								state: incoming,
-								files,
-								releases,
-								providers,
-								artists: providerArtists,
-								hasCustomTemplate: Boolean(
-									publicationCatalog.hasCustomTemplate,
-								),
-								onQueue: (plan) => {
-									addPublicationJobs([
-										{
-											kind: "contextual",
-											id: `publication-${crypto.randomUUID()}`,
-											releaseId: release.id,
-											positionId: track.id,
-											title: track.title,
-											createdAt: Date.now(),
-											plan,
-										},
-									]);
-								},
-							},
-						};
 			position = {
 				files,
 				providers,
@@ -1139,7 +1156,6 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 									state: "failed",
 								})
 							: undefined,
-				contextualPublication,
 				onQueueDeletion: queueDeletion,
 				release,
 				track,
@@ -1176,47 +1192,16 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 						),
 					);
 				},
-				onSource: (id) => {
-					setReleases((previous) =>
-						previous.map((item) => ({
-							...item,
-							tracks: item.tracks.map((candidate) =>
-								candidate.id === track.id &&
-								(
-									candidate.sourceIds ??
-									(candidate.sourceId ? [candidate.sourceId] : [])
-								).includes(id)
-									? { ...candidate, sourceId: id }
-									: candidate,
-							),
-						})),
-					);
-				},
 			};
 		}
 		return (
-			<LibrarySelectionScreenFrame dockSpace={!track && !missingPosition}>
-				<DemoLibraryReleaseWorkspace
-					overview={overview}
-					position={position}
-					notFound={missingPosition}
-				/>
-				{!track && !missingPosition && (
-					<>
-						<SelectionDock
-							selected={selected}
-							visiblePositionIds={
-								new Set(release.tracks.map((track) => track.id))
-							}
-							releases={releases}
-							onSelect={update}
-							onPreview={openSelectionPreview}
-							onQueueDeletion={queueDeletion}
-						/>
-						{selectionPreviewDialog}
-					</>
-				)}
-			</LibrarySelectionScreenFrame>
+			<DemoLibraryReleaseWorkspace
+				overview={overview}
+				position={position}
+				notFound={missingPosition}
+				contextualPublications={contextualPublications}
+				providerRefresh={releaseProviderRefresh(release.id)}
+			/>
 		);
 	}
 	if (routeName === "/own-catalog")

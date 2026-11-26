@@ -54,11 +54,26 @@ export function prepareContextualPublication(
 	const assignment = plan.assignments[positionId];
 	const sourceId = selectedSourceId(assignment);
 	const source = sourceId ? catalog.files[sourceId] : undefined;
-	if (!release || !assignment?.included || !source || !usableFile(source))
+	if (
+		!release ||
+		!assignment?.included ||
+		!sourceId ||
+		!source ||
+		!usableFile(source)
+	)
 		return null;
 	const { tracks, ...releaseFields } = release;
+	const target = plan.target.tracks.find(({ id }) => id === positionId);
 	const current = tracks.find(({ id }) => id === positionId);
-	if (!current || current.sourceId !== sourceId) return null;
+	// The plan's own source is the stale-authority fence. An explicitly chosen
+	// alternative changes only this assignment, so it must still be a linked
+	// source of the live position.
+	if (!target || !current || current.sourceId !== target.sourceId) return null;
+	const linkedSourceIds = new Set([
+		...(current.sourceIds ?? []),
+		...(current.sourceId ? [current.sourceId] : []),
+	]);
+	if (!linkedSourceIds.has(sourceId)) return null;
 	const published = current.published;
 	if (published) {
 		if (
@@ -69,6 +84,9 @@ export function prepareContextualPublication(
 		)
 			return null;
 	} else if (plan.retainCurrentPath || plan.force) return null;
+	// Forced intent rebuilds the same source; it never becomes an audio
+	// replacement for a different variant.
+	if (plan.force && published?.sourceId !== sourceId) return null;
 	const projected = [structuredClone(release)];
 	const exactPlan = structuredClone({
 		...plan,

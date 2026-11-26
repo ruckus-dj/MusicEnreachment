@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { CatalogDemo } from "../demo/CatalogDemo";
 import { firstPublicationPreviewMessages } from "../ui/features/library/firstPublicationPreviewMessages";
 
@@ -195,9 +195,17 @@ it("shows a read-only preview of the selected library position", async () => {
 	expect(checkbox).toBeChecked();
 });
 
-it("keeps a CURRENT comparison inside the position publication panel", () => {
+it("retains an exact publication preview and provider refresh across edition and position", async () => {
 	window.history.replaceState(null, "", signalsPositionHref);
-	render(<CatalogDemo />);
+	let failRefresh: (() => void) | undefined;
+	const refresh = vi.fn(
+		() =>
+			new Promise<{ state: "failed"; safeError: string }>((resolve) => {
+				failRefresh = () =>
+					resolve({ state: "failed", safeError: "Provider unavailable" });
+			}),
+	);
+	render(<CatalogDemo providerRefresh={{ signals: refresh }} />);
 	const publication = within(
 		screen.getByRole("region", { name: "Публикация" }),
 	);
@@ -226,6 +234,31 @@ it("keeps a CURRENT comparison inside the position publication panel", () => {
 		publication.getByRole("button", { name: copy.retainedRepublish }),
 	).toBeEnabled();
 	expect(screen.queryByRole("dialog")).toBeNull();
+
+	fireEvent.click(
+		screen.getByRole("button", { name: "Обновить данные MusicBrainz" }),
+	);
+	const expectPending = async () =>
+		expect(
+			await screen.findByRole("button", {
+				name: "Обновление MusicBrainz выполняется…",
+			}),
+		).toBeDisabled();
+	await expectPending();
+	act(() => {
+		window.location.hash = "#/library/releases/signals";
+	});
+	await screen.findByRole("heading", { name: "Signals", level: 1 });
+	await expectPending();
+	act(() => {
+		window.location.hash = signalsPositionHref;
+	});
+	await act(async () => failRefresh?.());
+	expect(await screen.findByText("Provider unavailable")).toBeVisible();
+	expect(refresh).toHaveBeenCalledTimes(1);
+	expect(
+		screen.getByRole("button", { name: copy.retainedRepublish }),
+	).toBeEnabled();
 });
 
 it("omits demo publication shortcuts and keeps the position preview contextual", () => {

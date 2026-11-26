@@ -1,8 +1,14 @@
 import { useState } from "react";
 import { useI18n } from "../../../app/i18n/host";
 import { LibraryReleaseWorkspaceView } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
-import type { TrackScreenNotFoundView } from "../../../ui/features/library/TrackScreenView";
-import type { DemoPositionPublicationBinderProps } from "../publication/ContextPublicationPreview";
+import type {
+	TrackProviderRefreshModel,
+	TrackScreenNotFoundView,
+} from "../../../ui/features/library/TrackScreenView";
+import type {
+	DemoPositionPublicationBinderProps,
+	DemoPositionPublicationSource,
+} from "../publication/ContextPublicationPreview";
 import {
 	type ReleaseOverviewScreenProps,
 	useReleaseOverviewDemoModel,
@@ -19,6 +25,8 @@ export type DemoLibraryReleaseWorkspaceProps = {
 	position?: TrackScreenProps | null;
 	/** Requested position absent from the selected release; keeps its overview. */
 	notFound?: TrackScreenNotFoundView;
+	contextualPublications?: ReadonlyMap<string, DemoPositionPublicationSource>;
+	providerRefresh?: TrackProviderRefreshModel;
 };
 
 /**
@@ -26,19 +34,29 @@ export type DemoLibraryReleaseWorkspaceProps = {
  * cold direct position and mounts on the first edition visit; afterwards it
  * stays retained while that release's positions are selected. The retained
  * overview keeps its metadata draft provider alive but hides its DOM and
- * portals behind a position, while the single active position gets its own
- * session that resets on every position entry or return to the edition.
+ * portals behind a position. Viewed positions retain their exact publication
+ * binder; other position panels only render for the active route.
  */
 function DemoLibraryReleaseWorkspaceForRelease({
 	overview,
 	position = null,
 	notFound,
+	contextualPublications,
+	providerRefresh,
 }: DemoLibraryReleaseWorkspaceProps) {
 	const { locale } = useI18n();
 	const showPosition = position !== null;
 	const [visitedEdition, setVisitedEdition] = useState(!showPosition);
 	if (!showPosition && !visitedEdition) setVisitedEdition(true);
 	const positionKey = position ? position.track.id : null;
+	const [visitedPositions, setVisitedPositions] = useState<readonly string[]>(
+		[],
+	);
+	const positionKeys =
+		positionKey && !visitedPositions.includes(positionKey)
+			? [...visitedPositions, positionKey]
+			: visitedPositions;
+	if (positionKeys !== visitedPositions) setVisitedPositions(positionKeys);
 	const overviewModel = useReleaseOverviewDemoModel({
 		...overview,
 		editionControls: !showPosition && notFound === undefined,
@@ -55,11 +73,20 @@ function DemoLibraryReleaseWorkspaceForRelease({
 						: { kind: "edition" }
 			}
 			overview={visitedEdition ? overviewModel : null}
-			positions={
-				positionKey && positionModel
-					? [{ id: positionKey, screen: positionModel }]
-					: []
+			overviewProviderRefresh={
+				!showPosition && !notFound ? providerRefresh : undefined
 			}
+			positions={positionKeys.map((id) => ({
+				id,
+				screen: {
+					...(id === positionKey ? { ...positionModel, providerRefresh } : {}),
+					contextualPublication:
+						contextualPublications?.get(id) ??
+						(id === positionKey
+							? positionModel?.contextualPublication
+							: undefined),
+				},
+			}))}
 		/>
 	);
 }
