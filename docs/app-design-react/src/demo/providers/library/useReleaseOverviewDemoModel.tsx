@@ -28,6 +28,11 @@ import { type DeletionOperation, DeletionRequest } from "./DeletionRequest";
 import { libraryRootHref } from "./libraryRoute";
 import { audioProperties } from "./metadata/audioProperties";
 import { ReleaseMetadataEditor } from "./metadata/ReleaseMetadataEditor";
+import {
+	type DemoReleaseCoverEditorModel,
+	type DemoReleaseCoverState,
+	useReleaseCoverEditorDemoModel,
+} from "./useReleaseCoverEditorDemoModel";
 
 export type ReleaseOverviewScreenProps = {
 	release: OriginalRelease;
@@ -48,6 +53,10 @@ export type ReleaseOverviewScreenProps = {
 	 * @default true
 	 */
 	editionControls?: boolean;
+	/** Saved demo cover Files keyed by the host; omitted for local state. */
+	coverState?: DemoReleaseCoverState;
+	/** Records a locally saved cover state without touching release data. */
+	onCoverStateChange?: (state: DemoReleaseCoverState) => void;
 };
 
 /** Resolved facts and narrow actors for one release overview projection. */
@@ -66,6 +75,8 @@ export type ReleaseOverviewDemoModelInput = {
 	/** Uncontrolled local release: the demo owns the saved record. */
 	local: boolean;
 	editionControls: boolean;
+	/** Browser-only cover controller and its selected preview. */
+	coverEditor?: DemoReleaseCoverEditorModel;
 };
 
 const sourceIds = (track: OriginalTrack) => [
@@ -94,6 +105,7 @@ export function buildReleaseOverviewDemoModel({
 	saveRelease,
 	local,
 	editionControls,
+	coverEditor,
 }: ReleaseOverviewDemoModelInput): LibraryReleaseOverviewModel {
 	const m = (
 		key: Parameters<typeof catalogueMessage>[1],
@@ -226,7 +238,12 @@ export function buildReleaseOverviewDemoModel({
 						? `${release.provider || "MusicBrainz"} · ${release.providerId}`
 						: m("localRelease"),
 			palette: release.color || artist?.color,
-			artwork: {},
+			artwork: coverEditor?.selectedImageSrc
+				? {
+						imageSrc: coverEditor.selectedImageSrc,
+						imageAlt: coverEditor.selectedImageAlt,
+					}
+				: {},
 			counts: {
 				positions: release.tracks.length,
 				published: release.tracks.filter((track) => track.published).length,
@@ -280,8 +297,9 @@ export function buildReleaseOverviewDemoModel({
 					onQueue={onQueueDeletion}
 				/>
 			) : undefined,
-		// Real-only cover and provider refresh capabilities stay unbound until
-		// their controllers exist; do not invent current cover or source data.
+		// The demo cover editor binds only browser File state; provider refresh
+		// remains an unbound real-only capability.
+		cover: coverEditor?.source,
 	};
 }
 
@@ -304,10 +322,17 @@ export function useReleaseOverviewDemoModel({
 	genresLoaded = false,
 	onLoadGenres,
 	editionControls = true,
+	coverState,
+	onCoverStateChange,
 }: ReleaseOverviewScreenProps): LibraryReleaseOverviewModel {
 	const { locale } = useI18n();
 	const [localRelease, setLocalRelease] = useState(givenRelease);
 	const release = onUpdateRelease ? givenRelease : localRelease;
+	const coverEditor = useReleaseCoverEditorDemoModel({
+		releaseId: release.id,
+		state: coverState,
+		onChange: onCoverStateChange,
+	});
 	const saveRelease = (updated: OriginalRelease) => {
 		if (onUpdateRelease) onUpdateRelease(updated);
 		else setLocalRelease(updated);
@@ -327,5 +352,6 @@ export function useReleaseOverviewDemoModel({
 		saveRelease,
 		local: !onUpdateRelease,
 		editionControls,
+		coverEditor,
 	});
 }

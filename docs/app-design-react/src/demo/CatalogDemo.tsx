@@ -93,6 +93,7 @@ import {
 } from "./providers/library/libraryDeletionModel";
 import { SelectionDock } from "./providers/library/SelectionDock";
 import type { ReleaseOverviewScreenProps } from "./providers/library/useReleaseOverviewDemoModel";
+import type { DemoReleaseCoverState } from "./providers/library/useReleaseCoverEditorDemoModel";
 import type { TrackScreenProps } from "./providers/library/useTrackScreenDemoProvider";
 import { DemoLocalCatalogBinder } from "./providers/local-catalog";
 import { releaseDraftToRecord } from "./providers/local-catalog/localCatalogModel";
@@ -267,6 +268,9 @@ export function CatalogDemo({
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
+	const [releaseCovers, setReleaseCovers] = useState<
+		Record<string, DemoReleaseCoverState>
+	>({});
 	const [artists, setArtists] = useState<CatalogArtist[]>(() =>
 		structuredClone(catalogData.artists),
 	);
@@ -768,6 +772,12 @@ export function CatalogDemo({
 			},
 			genresLoaded: settings.genresLoaded,
 			onLoadGenres: loadGenres,
+			coverState: releaseCovers[release.id],
+			onCoverStateChange: (state) =>
+				setReleaseCovers((current) => ({
+					...current,
+					[release.id]: state,
+				})),
 		};
 		let position: TrackScreenProps | null = null;
 		if (track) {
