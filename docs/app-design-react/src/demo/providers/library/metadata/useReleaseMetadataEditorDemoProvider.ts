@@ -12,7 +12,7 @@ import {
 	acceptedReleaseIdentifier,
 	type CatalogArtist,
 	type OriginalRelease,
-	type ReleaseScalarIntentMap,
+	type ScopedScalarIntentMap,
 	releaseBasicsBaseValues,
 	releaseScalarDraftValues,
 	releaseScalarIntentState,
@@ -172,7 +172,7 @@ export function useReleaseMetadataEditorDemoProvider({
 								? [...next.album]
 								: [""]
 							: [release.title];
-				const nextScalarIntent: ReleaseScalarIntentMap = {
+				const nextScalarIntent: ScopedScalarIntentMap = {
 					...release.releaseScalarIntent,
 				};
 				for (const { key, metadataKey, kind } of releaseScalarFields) {

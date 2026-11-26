@@ -40,6 +40,7 @@ import type {
 	SourceFiles,
 } from "./catalogData";
 import {
+	effectiveRecordingTitle,
 	originalArtistName,
 	originalProviders,
 	trackNumberLabel,
@@ -221,7 +222,9 @@ export function libraryCatalogTrackResults({
 			releaseTitle: release.title,
 			releaseHref: releaseHref(release.id),
 			releaseSubtitle: `${originalArtistName(release.artistId, artists)} · ${release.year}`,
-			recordingTitle: track.recordingTitle,
+			recordingTitle: track.recordingScalarIntent?.title
+				? effectiveRecordingTitle(track)
+				: track.recordingTitle,
 			credits,
 			positionLabel: `${
 				release.media?.[(track.medium || 1) - 1]?.title || track.medium || "—"
@@ -328,7 +331,9 @@ export function libraryCatalogAlbumResults({
 				recordingHref: libraryPositionHref(release.id, track.id),
 				tagsHref: libraryPositionHref(release.id, track.id),
 				artist: originalArtistName(track.artistId, artists),
-				recordingTitle: track.recordingTitle,
+				recordingTitle: track.recordingScalarIntent?.title
+					? effectiveRecordingTitle(track)
+					: track.recordingTitle,
 				durationMs:
 					track.duration === null ? null : Math.round(track.duration) * 1000,
 				sourceCount: ids.length,

@@ -379,6 +379,7 @@ export function useMetadataEditorProvider({
 						: "text");
 		const list = kind === "list";
 		const hasState = stateControlled(field.key);
+		const libraryScalar = libraryMetadata && hasState;
 		const fieldState = hasState ? (stateFor(field.key) ?? "absent") : undefined;
 		const providerBaseline =
 			fieldState === "absent" ? fieldBaselines?.[field.key] : undefined;
@@ -408,11 +409,11 @@ export function useMetadataEditorProvider({
 				: undefined,
 			dataKeys: [field.key],
 			emptyChoiceLabel:
-				!scopedRelease &&
+				!libraryScalar &&
 				(field.kind === "boolean" || field.kind === "advisory")
 					? m("state.unspecified")
 					: undefined,
-			choices: scopedRelease
+			choices: libraryScalar
 				? libraryMetadataScalarChoices(locale, kind)
 				: field.kind === "boolean"
 					? [

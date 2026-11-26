@@ -1,5 +1,6 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import {
+	recordingBasicsFields,
 	releaseBasicsFields,
 	releaseScalarFields,
 } from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
@@ -71,6 +72,9 @@ export interface OriginalTrack {
 	recordingGenres?: string[];
 	recordingGenreRefs?: MetadataGenre[];
 	recordingMetadata?: MetadataValues;
+	recordingScalarIntent?: ScopedScalarIntentMap;
+	/** Original distinct position title retained while editing the recording. */
+	positionTitleBaseline?: string;
 	positionMetadata?: MetadataValues;
 	audioMetadata?: Record<string, MetadataValues>;
 	recordingCredits?: import("./metadata/model").MetadataCredit[];
@@ -81,15 +85,13 @@ export interface OriginalTrack {
 
 export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
 
-export type ReleaseScalarIntent =
+export type ScopedScalarIntent =
 	| { state: "value"; value: string[] }
 	| { state: "explicit_empty" }
 	| { state: "absent" };
 
 /** Sparse explicit intent; an absent key means the base value stays inherited. */
-export type ReleaseScalarIntentMap = Partial<
-	Record<string, ReleaseScalarIntent>
->;
+export type ScopedScalarIntentMap = Partial<Record<string, ScopedScalarIntent>>;
 
 export interface OriginalRelease {
 	id: string;
@@ -116,7 +118,7 @@ export interface OriginalRelease {
 	/** Explicit local overrides recorded only for fields changed in an editor. */
 	comparisonOverrides?: MetadataValues;
 	/** Typed local scalar intent; absent keys inherit the provider base. */
-	releaseScalarIntent?: ReleaseScalarIntentMap;
+	releaseScalarIntent?: ScopedScalarIntentMap;
 	/** Explicit accepted identifier evidence, never derived from the provider label. */
 	providerIdentifierBaseline?: { asin?: string; script?: string };
 	metadata?: {
@@ -261,8 +263,17 @@ for (const release of originalProviders) {
 	}
 }
 
+type RecordingTitleFacts = Pick<
+	OriginalTrack,
+	| "recordingTitle"
+	| "recordingMetadata"
+	| "recordingId"
+	| "recordingScalarIntent"
+	| "title"
+>;
+
 export function recordingTitleBaseline(
-	track: OriginalTrack,
+	track: RecordingTitleFacts,
 ): string | undefined {
 	return (
 		track.recordingTitle ??
@@ -271,6 +282,13 @@ export function recordingTitleBaseline(
 			? providerRecordingTitles.get(track.recordingId)
 			: undefined)
 	);
+}
+
+export function effectiveRecordingTitle(track: RecordingTitleFacts): string {
+	const intent = track.recordingScalarIntent?.title;
+	if (intent?.state === "value") return intent.value[0] ?? "";
+	if (intent?.state === "explicit_empty") return "";
+	return recordingTitleBaseline(track) ?? track.title;
 }
 
 export function positionTitleIntent(track: OriginalTrack): {
@@ -284,9 +302,12 @@ export function positionTitleIntent(track: OriginalTrack): {
 			? { state: "value", value: values[0] ?? "" }
 			: { state: "explicit_empty", value: "" };
 	}
+	if (track.positionTitleBaseline !== undefined)
+		return { state: "value", value: track.positionTitleBaseline };
 	// The fixture's exact position title can differ from its recording.
 	const baseline = recordingTitleBaseline(track);
-	return baseline !== undefined && track.title !== baseline
+	return baseline !== undefined &&
+		track.title !== effectiveRecordingTitle(track)
 		? { state: "value", value: track.title }
 		: { state: "absent", value: "" };
 }
@@ -295,8 +316,31 @@ function positionTitleTags(track: OriginalTrack): string[] {
 	const intent = positionTitleIntent(track);
 	if (intent.state === "value") return [intent.value];
 	if (intent.state === "explicit_empty") return [];
-	const value = recordingTitleBaseline(track) ?? track.title;
+	const recording = track.recordingScalarIntent?.title;
+	if (recording?.state === "value") return [recording.value[0] ?? ""];
+	const value = effectiveRecordingTitle(track);
 	return value ? [value] : [];
+}
+
+export function recordingScalarOverrideTags(
+	track: OriginalTrack,
+	purpose: "comparison" | "publication",
+): MetadataValues {
+	const tags: MetadataValues = {};
+	for (const { metadataKey, kind } of recordingBasicsFields) {
+		const intent = track.recordingScalarIntent?.[metadataKey];
+		const tag = fieldByKey(metadataKey)?.tag;
+		if (!intent || !tag || intent.state === "absent") continue;
+		// TITLE has its own resolver; other fields keep the existing recording overlay.
+		if (purpose === "publication" && metadataKey === "title") continue;
+		tags[tag] =
+			intent.state === "explicit_empty"
+				? []
+				: kind === "advisory"
+					? [intent.value[0] === "clean" ? "2" : "1"]
+					: [...intent.value];
+	}
+	return tags;
 }
 
 /** Read title override intent from the sparse map, not the merged metadata values. */
@@ -726,8 +770,16 @@ export function desiredTags(
 		const value = acceptedReleaseIdentifier(release, key);
 		if (value) releaseTags[key.toUpperCase()] = [value];
 	}
+	const recordingValues = valuesForScope(
+		track.recordingMetadata ?? {},
+		"recording",
+	);
+	delete recordingValues.genre;
+	delete recordingValues.title;
+	for (const { metadataKey } of recordingBasicsFields)
+		if (track.recordingScalarIntent?.[metadataKey])
+			delete recordingValues[metadataKey];
 	const explicitValues: MetadataValues = {
-		...valuesForScope(track.recordingMetadata ?? {}, "recording"),
 		...valuesForScope(track.positionMetadata ?? {}, "track"),
 		...(audioSourceId
 			? valuesForScope(track.audioMetadata?.[audioSourceId] ?? {}, "audio")
@@ -739,6 +791,8 @@ export function desiredTags(
 	delete explicitValues.title;
 	const projected = {
 		...releaseTags,
+		...projectMetadataValues(recordingValues).tags,
+		...recordingScalarOverrideTags(track, "publication"),
 		...projectMetadataValues(explicitValues).tags,
 	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;

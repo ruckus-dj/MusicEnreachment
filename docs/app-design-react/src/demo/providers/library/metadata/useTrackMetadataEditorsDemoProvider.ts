@@ -1,21 +1,27 @@
 import { useI18n } from "../../../../app/i18n/host";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { TrackMetadataEditorsViewProps } from "../../../../ui/features/library/metadata/TrackMetadataEditorsView";
-import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
+import {
+	recordingBasicsFields,
+	releaseMetadataEditorMessages,
+} from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import {
 	type CatalogArtist,
+	effectiveRecordingTitle,
 	type OriginalTrack,
 	positionTitleIntent,
 	recordingTitleBaseline,
+	type ScopedScalarIntentMap,
 	type SourceFiles,
 } from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
-import { libraryPositionEditorFields } from "./editorLayout";
+import {
+	libraryPositionEditorFields,
+	libraryRecordingEditorFields,
+} from "./editorLayout";
 import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
-
-type TrackWithExtras = OriginalTrack & { disambiguation?: string };
 
 function mergedValues(
 	...values: (MetadataValues | undefined)[]
@@ -25,8 +31,15 @@ function mergedValues(
 
 function recordingValues(track: OriginalTrack): MetadataValues {
 	const values = { ...(track.recordingMetadata ?? {}) };
-	if (!("title" in values))
-		values.title = [recordingTitleBaseline(track) ?? track.title];
+	for (const { metadataKey, kind } of recordingBasicsFields) {
+		const intent = track.recordingScalarIntent?.[metadataKey];
+		values[metadataKey] =
+			intent?.state === "value"
+				? [...intent.value]
+				: kind === "advisory"
+					? ["explicit"]
+					: [];
+	}
 	if (!("genre" in values)) values.genre = [...(track.recordingGenres ?? [])];
 	return values;
 }
@@ -113,15 +126,18 @@ export function useTrackMetadataEditorsDemoProvider({
 			...(track.sourceId ? [track.sourceId] : []),
 		]),
 	];
-	const extended = track as TrackWithExtras;
-	const recordingExtras = [
-		{
-			key: "disambiguation",
-			label: m("recordingDisambiguation"),
-			value: extended.disambiguation ?? "",
-		},
-	];
 	const releaseText = releaseMetadataEditorMessages[locale];
+	const fieldStateMode = {
+		label: releaseText.mode,
+		absent: releaseText.absent,
+		value: releaseText.value,
+		explicitEmpty: releaseText.explicitEmpty,
+	};
+	const fieldStateDisplay = {
+		absent: releaseText.noOverride,
+		explicitEmpty: releaseText.explicitEmpty,
+		emptyValue: releaseText.emptyValue,
+	};
 
 	const selectedId = track.sourceId;
 	const hasSelected = Boolean(selectedId && audioSources.includes(selectedId));
@@ -130,9 +146,25 @@ export function useTrackMetadataEditorsDemoProvider({
 	return {
 		label: `${m("positionDetails")} ${track.id}`,
 		recording: {
-			label: m("recordingDetails"),
+			label: releaseText.recordingTitle,
 			scope: "recording",
+			libraryMetadata: true,
+			fields: libraryRecordingEditorFields,
 			values: recording,
+			fieldStates: Object.fromEntries(
+				recordingBasicsFields.map(({ metadataKey }) => [
+					metadataKey,
+					track.recordingScalarIntent?.[metadataKey]?.state ?? "absent",
+				]),
+			),
+			fieldLabels: Object.fromEntries(
+				recordingBasicsFields.map(({ key, metadataKey }) => [
+					metadataKey,
+					releaseText.labels[key],
+				]),
+			),
+			fieldStateMode,
+			fieldStateDisplay,
 			artists: artists.map(({ id, name, sortName }) => ({
 				id,
 				name,
@@ -144,30 +176,46 @@ export function useTrackMetadataEditorsDemoProvider({
 				[]) as MetadataGenre[],
 			genresLoaded,
 			onLoadGenres,
-			extraFields: recordingExtras,
 			onSave: (values, details) => {
-				const title = values.title?.[0] ?? "";
-				const titleChanged = title !== recording.title?.[0];
+				const nextIntent: ScopedScalarIntentMap = {
+					...track.recordingScalarIntent,
+				};
+				for (const { metadataKey, kind } of recordingBasicsFields) {
+					const state = details?.fieldStates?.[metadataKey];
+					if (!state) continue;
+					if (state === "absent") delete nextIntent[metadataKey];
+					else if (state === "explicit_empty")
+						nextIntent[metadataKey] = { state };
+					else
+						nextIntent[metadataKey] = {
+							state,
+							value:
+								kind === "list"
+									? [...(values[metadataKey] ?? [])]
+									: [values[metadataKey]?.[0] ?? ""],
+						};
+				}
 				const update = (current: OriginalTrack): OriginalTrack => {
-					const explicitPositionTitle =
-						positionTitleIntent(current).state !== "absent";
-					const baseline = recordingTitleBaseline(current);
-					const updatePositionTitle =
-						titleChanged &&
-						!explicitPositionTitle &&
-						baseline !== undefined &&
-						current.title === baseline;
-					return {
+					const positionTitle = positionTitleIntent(current);
+					const nextMetadata = { ...values };
+					const comparison = mergeComparisonOverrides(
+						current.recordingComparisonOverrides,
+						recording,
+						values,
+					);
+					for (const { metadataKey } of recordingBasicsFields) {
+						delete nextMetadata[metadataKey];
+						delete comparison[metadataKey];
+						const raw = current.recordingMetadata?.[metadataKey];
+						if (raw) nextMetadata[metadataKey] = raw;
+					}
+					const updated: OriginalTrack = {
 						...current,
-						recordingTitle: title,
-						...(updatePositionTitle ? { title } : {}),
-						recordingMetadata: values,
+						recordingTitle: recordingTitleBaseline(current) ?? current.title,
+						recordingScalarIntent: nextIntent,
+						recordingMetadata: nextMetadata,
 						recordingComparisonOverrides: {
-							...mergeComparisonOverrides(
-								current.recordingComparisonOverrides,
-								recording,
-								values,
-							),
+							...comparison,
 							...(details?.genres
 								? {
 										genre: details.genres
@@ -185,10 +233,17 @@ export function useTrackMetadataEditorsDemoProvider({
 										.filter(Boolean),
 								}
 							: {}),
-						...(details?.extraValues?.disambiguation !== undefined
-							? { disambiguation: details.extraValues.disambiguation }
-							: {}),
 					};
+					if (details?.fieldStates?.title) {
+						if (positionTitle.state === "absent")
+							updated.title = effectiveRecordingTitle(updated);
+						else if (
+							positionTitle.state === "value" &&
+							!Object.hasOwn(current.positionComparisonOverrides ?? {}, "title")
+						)
+							updated.positionTitleBaseline = positionTitle.value;
+					}
+					return updated;
 				};
 				(onRecordingChange ?? onMutate)(update);
 			},
@@ -201,17 +256,8 @@ export function useTrackMetadataEditorsDemoProvider({
 			fields: libraryPositionEditorFields,
 			fieldStates: { title: positionTitle.state },
 			fieldLabels: { title: releaseText.labels.title },
-			fieldStateMode: {
-				label: releaseText.mode,
-				absent: releaseText.absent,
-				value: releaseText.value,
-				explicitEmpty: releaseText.explicitEmpty,
-			},
-			fieldStateDisplay: {
-				absent: releaseText.noOverride,
-				explicitEmpty: releaseText.explicitEmpty,
-				emptyValue: releaseText.emptyValue,
-			},
+			fieldStateMode,
+			fieldStateDisplay,
 			requiredKeys: ["track"],
 			onSave: (values, details) => {
 				const displayedNumber = values.track?.[0] ?? "";
@@ -243,6 +289,7 @@ export function useTrackMetadataEditorsDemoProvider({
 						const recordingTitle =
 							recordingTitleBaseline(current) ?? current.title;
 						updated.recordingTitle = recordingTitle;
+						delete updated.positionTitleBaseline;
 						delete comparison.title;
 						if (titleState === "explicit_empty") comparison.title = [];
 						else if (titleState === "value") comparison.title = [title];
@@ -251,7 +298,7 @@ export function useTrackMetadataEditorsDemoProvider({
 								? ""
 								: titleState === "value"
 									? title
-									: recordingTitle;
+									: effectiveRecordingTitle(updated);
 					}
 					return updated;
 				});

@@ -62,6 +62,7 @@ import { ReleaseMetadataEditorDataBinder } from "../../ui/features/library/metad
 import {
   libraryMetadataScalarChoices,
   type ReleaseFieldKey,
+  recordingBasicsFields,
   releaseAdditionalFields,
   releaseBasicsFields,
   releaseDetailFields,
@@ -122,6 +123,9 @@ type ReleaseField = {
 
 const releaseBasicFields: ReleaseField[] = releaseBasicsFields.map(
   ({ key, kind }) => ({ key, kind, group: "release" }),
+);
+const recordingBasicFields: ReleaseField[] = recordingBasicsFields.map(
+  ({ key, kind }) => ({ key, kind, group: "recording" }),
 );
 
 const releaseFields: ReleaseField[] = [
@@ -849,13 +853,15 @@ function LibraryScopedMetadataEditorSession({
     scope === "release"
       ? releaseBasicFields.map(({ key }) => key)
       : scope === "recording"
-        ? ["title", "content_advisory", "isrc"]
+        ? recordingBasicFields.map(({ key }) => key)
         : ["track_number", "disc_number"];
   const basicFieldKeySet = new Set(basicFieldKeys);
   const basicFields =
     scope === "release"
       ? releaseBasicFields
-      : fields.filter(({ key }) => basicFieldKeySet.has(key));
+      : scope === "recording"
+        ? recordingBasicFields
+        : fields.filter(({ key }) => basicFieldKeySet.has(key));
   const scalarFieldKinds = new Set<ReleaseField["kind"]>([
     "text",
     "date",

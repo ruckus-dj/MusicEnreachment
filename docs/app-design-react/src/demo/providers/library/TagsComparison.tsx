@@ -10,6 +10,7 @@ import {
 	type OriginalTrack,
 	originalArtists,
 	originalProviders,
+	recordingScalarOverrideTags,
 	releaseScalarOverrideTags,
 	type SourceFiles,
 } from "./catalogData";
@@ -71,8 +72,9 @@ export function TagsComparison({
 		...projectMetadataValues({
 			...(fileId ? (track.audioComparisonOverrides?.[fileId] ?? {}) : {}),
 			...(track.recordingComparisonOverrides ?? {}),
-			...(track.positionComparisonOverrides ?? {}),
 		}).tags,
+		...recordingScalarOverrideTags(track, "comparison"),
+		...projectMetadataValues(track.positionComparisonOverrides ?? {}).tags,
 	};
 	const positionTitleOverride = track.positionComparisonOverrides?.title;
 	if (positionTitleOverride) overrides.TITLE = [...positionTitleOverride];

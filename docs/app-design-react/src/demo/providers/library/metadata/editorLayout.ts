@@ -1,5 +1,6 @@
 import { metadataFilledSummary } from "../../../../ui/features/library/MetadataFieldPresentation";
 import {
+	recordingBasicsFields,
 	releaseAdditionalFields,
 	releaseBasicsFields,
 	releaseDetailFields,
@@ -41,6 +42,19 @@ export const libraryReleaseEditorFields = [
  * editor. The shared registry assigns `title` to the recording scope, so the
  * position editor supplies its own track-scoped field instead of widening it.
  */
+const recordingBasicKeys = new Set<string>(
+	recordingBasicsFields.map(({ metadataKey }) => metadataKey),
+);
+export const libraryRecordingEditorFields = [
+	...recordingBasicsFields.flatMap(({ metadataKey }) => {
+		const field = fieldByKey(metadataKey);
+		return field ? [field] : [];
+	}),
+	...fieldsForScope("recording").filter(
+		({ key }) => !recordingBasicKeys.has(key),
+	),
+];
+
 export const libraryPositionEditorFields: MetadataField[] = [
 	{
 		key: "title",

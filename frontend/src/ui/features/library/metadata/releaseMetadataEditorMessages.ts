@@ -118,6 +118,12 @@ export const releaseScalarFields = [
   ...releaseAdditionalFields,
 ] as const;
 
+export const recordingBasicsFields = [
+  { key: "title", metadataKey: "title", kind: "text" },
+  { key: "isrc", metadataKey: "isrc", kind: "list" },
+  { key: "content_advisory", metadataKey: "explicitstatus", kind: "advisory" },
+] as const satisfies readonly ReleaseScalarField[];
+
 export function releaseScalarFieldLabel(
   locale: keyof typeof releaseMetadataEditorMessages,
   field: ReleaseScalarField,

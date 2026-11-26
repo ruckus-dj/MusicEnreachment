@@ -15,6 +15,7 @@ import { releaseHref } from "./artistReleaseRoute";
 import {
 	type CatalogArtist,
 	catalogData,
+	effectiveRecordingTitle,
 	type OriginalRelease,
 	type OriginalTrack,
 	originalArtistName,
@@ -217,13 +218,14 @@ export function useTrackScreenDemoProvider(
 			title: track.title,
 			durationMs:
 				track.duration == null ? null : Math.round(track.duration * 1000),
-			recordingTitle:
-				track.recordingTitle ||
-				providerTrack?.title ||
-				trackMessage(
-					locale,
-					track.recordingId ? "linkedRecording" : "unlinkedRecording",
-				),
+			recordingTitle: track.recordingScalarIntent?.title
+				? effectiveRecordingTitle(track)
+				: track.recordingTitle ||
+					providerTrack?.title ||
+					trackMessage(
+						locale,
+						track.recordingId ? "linkedRecording" : "unlinkedRecording",
+					),
 			fileState:
 				outputStatus ??
 				(track.observedFile
