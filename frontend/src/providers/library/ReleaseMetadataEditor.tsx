@@ -60,9 +60,13 @@ import {
 } from "../../ui/features/library/metadata/metadataEditorFocus";
 import { ReleaseMetadataEditorDataBinder } from "../../ui/features/library/metadata/ReleaseMetadataEditorOutlet";
 import {
+  libraryMetadataScalarChoices,
   type ReleaseFieldKey,
+  releaseAdditionalFields,
   releaseBasicsFields,
+  releaseDetailFields,
   releaseMetadataEditorMessages,
+  validLibraryMetadataPartialDate,
 } from "../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
 import {
@@ -116,36 +120,24 @@ type ReleaseField = {
   group: string;
 };
 
-const releaseFields: ReleaseField[] = [
-  { key: "title", kind: "text", group: "release" },
-  { key: "sort_title", kind: "text", group: "release" },
-  { key: "release_date", kind: "date", group: "release" },
-  { key: "original_release_date", kind: "date", group: "release" },
-  { key: "release_country", kind: "text", group: "release" },
-  { key: "label", kind: "list", group: "release" },
-  { key: "catalog_number", kind: "text", group: "release" },
-  { key: "release_primary_type", kind: "text", group: "release" },
-  { key: "release_secondary_types", kind: "list", group: "release" },
-  { key: "release_version", kind: "text", group: "release" },
-  { key: "asin", kind: "text", group: "release" },
-  { key: "script", kind: "text", group: "release" },
-  { key: "barcode", kind: "text", group: "release" },
-  { key: "release_status", kind: "text", group: "release" },
-  { key: "compilation", kind: "boolean", group: "release" },
-  { key: "content_advisory", kind: "advisory", group: "release" },
-  { key: "media", kind: "list", group: "release" },
-  { key: "genre", kind: "genres", group: "release" },
-  { key: "mood", kind: "list", group: "additional" },
-  { key: "grouping", kind: "text", group: "additional" },
-  { key: "comment", kind: "text", group: "additional" },
-  { key: "copyright", kind: "text", group: "additional" },
-  { key: "license", kind: "text", group: "additional" },
-  { key: "website", kind: "text", group: "additional" },
-];
-
 const releaseBasicFields: ReleaseField[] = releaseBasicsFields.map(
   ({ key, kind }) => ({ key, kind, group: "release" }),
 );
+
+const releaseFields: ReleaseField[] = [
+  ...releaseBasicFields,
+  ...releaseDetailFields.map(({ key, kind }) => ({
+    key,
+    kind,
+    group: "release",
+  })),
+  { key: "genre", kind: "genres", group: "release" },
+  ...releaseAdditionalFields.map(({ key, kind }) => ({
+    key,
+    kind,
+    group: "additional",
+  })),
+];
 
 const titleFields: ReleaseField[] = [
   { key: "title", kind: "text", group: "main" },
@@ -319,20 +311,6 @@ function displayValue(
   if (state === "explicit_empty") return text.explicitEmpty;
   const rendered = Array.isArray(value) ? value.join("\n") : String(value);
   return rendered || text.emptyValue;
-}
-
-function validPartialDate(value: string) {
-  if (!/^(?!0000)\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(value)) return false;
-  if (value.length === 4) return true;
-  const date = new Date(
-    `${value.length === 7 ? `${value}-01` : value}T00:00:00Z`,
-  );
-  return (
-    !Number.isNaN(date.valueOf()) &&
-    (value.length === 7
-      ? date.toISOString().slice(0, 7) === value
-      : date.toISOString().slice(0, 10) === value)
-  );
 }
 
 function positiveIntegerDraft(value: string): number | undefined {
@@ -744,7 +722,7 @@ function LibraryScopedMetadataEditorSession({
               wireValue = number;
             } else if (
               definition.kind === "date" &&
-              !validPartialDate(String(field.value))
+              !validLibraryMetadataPartialDate(String(field.value))
             ) {
               invalidKey = key;
               throw new Error(text.invalidDate);
@@ -942,18 +920,6 @@ function LibraryScopedMetadataEditorSession({
         : kind === "boolean"
           ? String(field.value)
           : String(field.value);
-    const choices =
-      kind === "boolean"
-        ? [
-            { value: "true", label: `${text.value}: true` },
-            { value: "false", label: `${text.value}: false` },
-          ]
-        : kind === "advisory"
-          ? [
-              { value: "explicit", label: text.explicit },
-              { value: "clean", label: text.clean },
-            ]
-          : undefined;
     return {
       key,
       label,
@@ -971,7 +937,7 @@ function LibraryScopedMetadataEditorSession({
         value: text.value,
         explicitEmpty: text.explicitEmpty,
       },
-      choices,
+      choices: libraryMetadataScalarChoices(locale, kind),
       hint:
         editing && field.state === "value" && kind === "date"
           ? text.dateHint

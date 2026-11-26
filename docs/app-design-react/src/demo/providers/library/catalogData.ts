@@ -1,5 +1,8 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
-import { releaseBasicsFields } from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
+import {
+	releaseBasicsFields,
+	releaseScalarFields,
+} from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../ui/i18n/types";
 import { applyDemoLocalMatchingBindings } from "../../fixtures/localMatchingBindings";
 import original from "../../fixtures/original-fixtures.json";
@@ -79,13 +82,14 @@ export interface OriginalTrack {
 
 export type ReleaseTitleOverrideState = "absent" | "value" | "explicit_empty";
 
-export type ReleaseBasicsIntent =
+export type ReleaseScalarIntent =
 	| { state: "value"; value: string[] }
-	| { state: "explicit_empty" };
+	| { state: "explicit_empty" }
+	| { state: "absent" };
 
 /** Sparse explicit intent; an absent key means the base value stays inherited. */
-export type ReleaseBasicsIntentMap = Partial<
-	Record<string, ReleaseBasicsIntent>
+export type ReleaseScalarIntentMap = Partial<
+	Record<string, ReleaseScalarIntent>
 >;
 
 export interface OriginalRelease {
@@ -112,8 +116,10 @@ export interface OriginalRelease {
 	metadataGenres?: MetadataGenre[];
 	/** Explicit local overrides recorded only for fields changed in an editor. */
 	comparisonOverrides?: MetadataValues;
-	/** Typed local intent for release basics; absent keys inherit the provider base. */
-	releaseBasicsIntent?: ReleaseBasicsIntentMap;
+	/** Typed local scalar intent; absent keys inherit the provider base. */
+	releaseScalarIntent?: ReleaseScalarIntentMap;
+	/** Explicit accepted identifier evidence, never derived from the provider label. */
+	providerIdentifierBaseline?: { asin?: string; script?: string };
 	metadata?: {
 		date: string;
 		country: string;
@@ -295,37 +301,57 @@ export function releaseBasicsBaseValues(
 }
 
 /** Read explicit state only; equality with the base is never intent. */
-export function releaseBasicsIntentState(
+export function releaseScalarIntentState(
 	release: OriginalRelease,
 	key: string,
 ): ReleaseTitleOverrideState {
-	return release.releaseBasicsIntent?.[key]?.state ?? "absent";
+	return release.releaseScalarIntent?.[key]?.state ?? "absent";
 }
 
 /**
  * Separate edit draft for basic fields. An inherited or cleared field starts
  * empty, so choosing a value does not silently copy provider baseline data.
  */
-export function releaseBasicsDraftValues(
+export function releaseScalarDraftValues(
 	release: OriginalRelease,
 	key: string,
 ): string[] {
-	const intent = release.releaseBasicsIntent?.[key];
+	const intent = release.releaseScalarIntent?.[key];
 	return intent?.state === "value" ? [...intent.value] : [];
 }
 
-/** Sparse explicit release basics for the comparison Overrides column. */
-export function releaseBasicsOverrides(
+/** Sparse normalized tags from release intent, not from CURRENT or provider evidence. */
+export function releaseScalarOverrideTags(
 	release: OriginalRelease,
 ): MetadataValues {
 	const overrides: MetadataValues = {};
-	for (const { key, metadataKey } of releaseBasicsFields) {
+	for (const { key, metadataKey, kind } of releaseScalarFields) {
 		if (key === "title") continue;
-		const intent = release.releaseBasicsIntent?.[metadataKey];
-		if (!intent) continue;
-		overrides[metadataKey] = intent.state === "value" ? [...intent.value] : [];
+		const intent = release.releaseScalarIntent?.[metadataKey];
+		if (!intent || intent.state === "absent") continue;
+		const tag =
+			key === "release_status" ? "RELEASESTATUS" : fieldByKey(metadataKey)?.tag;
+		if (!tag) continue;
+		overrides[tag] =
+			intent.state === "explicit_empty"
+				? []
+				: kind === "boolean"
+					? [intent.value[0] === "true" ? "1" : "0"]
+					: kind === "advisory"
+						? [intent.value[0] === "clean" ? "2" : "1"]
+						: [...intent.value];
 	}
 	return overrides;
+}
+
+/** An accepted identifier is a fallback only when no desired entry exists. */
+export function acceptedReleaseIdentifier(
+	release: OriginalRelease,
+	key: "asin" | "script",
+): string | undefined {
+	return Object.hasOwn(release.releaseScalarIntent ?? {}, key)
+		? undefined
+		: release.providerIdentifierBaseline?.[key] || undefined;
 }
 
 /** Effective publication values: typed intent first, otherwise the base value. */
@@ -336,8 +362,9 @@ export function effectiveReleaseBasics(
 	const result: MetadataValues = {};
 	for (const { key, metadataKey } of releaseBasicsFields) {
 		if (key === "title") continue;
-		const intent = release.releaseBasicsIntent?.[metadataKey];
-		if (!intent) result[metadataKey] = [...(base[metadataKey] ?? [])];
+		const intent = release.releaseScalarIntent?.[metadataKey];
+		if (!intent || intent.state === "absent")
+			result[metadataKey] = [...(base[metadataKey] ?? [])];
 		else if (intent.state === "explicit_empty") result[metadataKey] = [];
 		else result[metadataKey] = [...intent.value];
 	}
@@ -636,8 +663,26 @@ export function desiredTags(
 				([key]) => fieldByKey(key)?.scope === scope,
 			),
 		) as MetadataValues;
+	const explicitReleaseValues = valuesForScope(
+		release.metadataValues ?? {},
+		"release",
+	);
+	for (const { metadataKey } of releaseScalarFields)
+		if (Object.hasOwn(release.releaseScalarIntent ?? {}, metadataKey))
+			delete explicitReleaseValues[metadataKey];
+	// Album title and basic release facts have their own resolved projection.
+	for (const { metadataKey } of releaseBasicsFields)
+		delete explicitReleaseValues[metadataKey];
+	const releaseTags = {
+		...projectMetadataValues(effectiveReleaseBasics(release)).tags,
+		...projectMetadataValues(explicitReleaseValues).tags,
+		...releaseScalarOverrideTags(release),
+	};
+	for (const key of ["asin", "script"] as const) {
+		const value = acceptedReleaseIdentifier(release, key);
+		if (value) releaseTags[key.toUpperCase()] = [value];
+	}
 	const explicitValues: MetadataValues = {
-		...valuesForScope(release.metadataValues ?? {}, "release"),
 		...valuesForScope(track.recordingMetadata ?? {}, "recording"),
 		...valuesForScope(track.positionMetadata ?? {}, "track"),
 		...(audioSourceId
@@ -646,18 +691,11 @@ export function desiredTags(
 	};
 	// Genre overrides are resolved per scope by publicationGenreFallback.
 	delete explicitValues.genre;
-	// Title intent comes from comparisonOverrides; other basics from typed intent.
-	delete explicitValues.album;
-	for (const { key, metadataKey } of releaseBasicsFields)
-		if (key !== "title") delete explicitValues[metadataKey];
-	const projected = projectMetadataValues(explicitValues).tags;
+	const projected = {
+		...releaseTags,
+		...projectMetadataValues(explicitValues).tags,
+	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
-	// Typed release basics use the registry projection, including RELEASECOUNTRY.
-	const projectedBasics = projectMetadataValues(
-		effectiveReleaseBasics(release),
-	).tags;
-	for (const [key, values] of Object.entries(projectedBasics))
-		result[key] = values;
 	const projectedArtistNames = (
 		credits: { creditName: string; joinPhrase?: string }[],
 		names: string[],
@@ -888,6 +926,7 @@ export function metadataChanged(
 		"ALBUMARTISTSSORT",
 		"DATE",
 		"RELEASECOUNTRY",
+		"RELEASESTATUS",
 		"LABEL",
 		"CATALOGNUMBER",
 		"TRACKNUMBER",

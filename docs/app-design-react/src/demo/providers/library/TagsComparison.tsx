@@ -10,7 +10,7 @@ import {
 	type OriginalTrack,
 	originalArtists,
 	originalProviders,
-	releaseBasicsOverrides,
+	releaseScalarOverrideTags,
 	type SourceFiles,
 } from "./catalogData";
 import { projectMetadataValues } from "./metadata/projection";
@@ -65,13 +65,15 @@ export function TagsComparison({
 					tags: desiredTags(boundRelease, providerTrack, originalArtists, null),
 				}
 			: { name: providerName, status: "unavailable" as const };
-	const { tags: overrides } = projectMetadataValues({
-		...(release.comparisonOverrides ?? {}),
-		...releaseBasicsOverrides(release),
-		...(fileId ? (track.audioComparisonOverrides?.[fileId] ?? {}) : {}),
-		...(track.recordingComparisonOverrides ?? {}),
-		...(track.positionComparisonOverrides ?? {}),
-	});
+	const overrides = {
+		...projectMetadataValues(release.comparisonOverrides ?? {}).tags,
+		...releaseScalarOverrideTags(release),
+		...projectMetadataValues({
+			...(fileId ? (track.audioComparisonOverrides?.[fileId] ?? {}) : {}),
+			...(track.recordingComparisonOverrides ?? {}),
+			...(track.positionComparisonOverrides ?? {}),
+		}).tags,
+	};
 	return (
 		<LibraryPositionTagEvidenceFrame
 			locale={locale}

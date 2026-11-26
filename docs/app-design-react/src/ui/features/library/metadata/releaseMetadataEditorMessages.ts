@@ -38,14 +38,19 @@ export type ReleaseFieldKey =
   | "disc_number"
   | "disc_total";
 
-export type ReleaseBasicsFieldKind = "text" | "date" | "list";
+export type ReleaseScalarFieldKind =
+  | "text"
+  | "date"
+  | "list"
+  | "boolean"
+  | "advisory";
 
-export type ReleaseBasicsField = {
+export type ReleaseScalarField = {
   /** Backend metadata key and label catalog key. */
   key: Exclude<ReleaseFieldKey, "genre">;
   /** Portable registry key used by the design host. */
   metadataKey: string;
-  kind: ReleaseBasicsFieldKind;
+  kind: ReleaseScalarFieldKind;
   /** Catalog message key for an edit-time hint. */
   hint?: "dateHint";
 };
@@ -72,22 +77,95 @@ export const releaseBasicsFields = [
     metadataKey: "release_secondary_types",
     kind: "list",
   },
-] as const satisfies readonly ReleaseBasicsField[];
+] as const satisfies readonly ReleaseScalarField[];
 
-export function releaseBasicsFieldLabel(
+/** Shared order, kind and transport identity for release detail fields in both hosts. */
+export const releaseDetailFields = [
+  { key: "sort_title", metadataKey: "albumsort", kind: "text" },
+  {
+    key: "original_release_date",
+    metadataKey: "originaldate",
+    kind: "date",
+    hint: "dateHint",
+  },
+  { key: "release_version", metadataKey: "albumversion", kind: "text" },
+  { key: "asin", metadataKey: "asin", kind: "text" },
+  { key: "script", metadataKey: "script", kind: "text" },
+  { key: "barcode", metadataKey: "barcode", kind: "text" },
+  { key: "release_status", metadataKey: "release_status", kind: "text" },
+  { key: "compilation", metadataKey: "compilation", kind: "boolean" },
+  {
+    key: "content_advisory",
+    metadataKey: "explicitstatus",
+    kind: "advisory",
+  },
+  { key: "media", metadataKey: "media", kind: "list" },
+] as const satisfies readonly ReleaseScalarField[];
+
+/** Shared order, kind and transport identity for additional release fields in both hosts. */
+export const releaseAdditionalFields = [
+  { key: "mood", metadataKey: "mood", kind: "list" },
+  { key: "grouping", metadataKey: "grouping", kind: "text" },
+  { key: "comment", metadataKey: "comment", kind: "text" },
+  { key: "copyright", metadataKey: "copyright", kind: "text" },
+  { key: "license", metadataKey: "license", kind: "text" },
+  { key: "website", metadataKey: "website", kind: "text" },
+] as const satisfies readonly ReleaseScalarField[];
+
+export const releaseScalarFields = [
+  ...releaseBasicsFields,
+  ...releaseDetailFields,
+  ...releaseAdditionalFields,
+] as const;
+
+export function releaseScalarFieldLabel(
   locale: keyof typeof releaseMetadataEditorMessages,
-  field: ReleaseBasicsField,
+  field: ReleaseScalarField,
 ): string {
   return releaseMetadataEditorMessages[locale].labels[field.key];
 }
 
-export function releaseBasicsFieldHint(
+export function releaseScalarFieldHint(
   locale: keyof typeof releaseMetadataEditorMessages,
-  field: ReleaseBasicsField,
+  field: ReleaseScalarField,
 ): string | undefined {
   return field.hint
     ? releaseMetadataEditorMessages[locale][field.hint]
     : undefined;
+}
+
+export function libraryMetadataScalarChoices(
+  locale: keyof typeof releaseMetadataEditorMessages,
+  kind: string,
+) {
+  const text = releaseMetadataEditorMessages[locale];
+  if (kind === "boolean") {
+    return [
+      { value: "true", label: `${text.value}: true` },
+      { value: "false", label: `${text.value}: false` },
+    ];
+  }
+  if (kind === "advisory") {
+    return [
+      { value: "explicit", label: text.explicit },
+      { value: "clean", label: text.clean },
+    ];
+  }
+  return undefined;
+}
+
+export function validLibraryMetadataPartialDate(value: string): boolean {
+  if (!/^(?!0000)\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(value)) return false;
+  if (value.length === 4) return true;
+  const date = new Date(
+    `${value.length === 7 ? `${value}-01` : value}T00:00:00Z`,
+  );
+  return (
+    !Number.isNaN(date.valueOf()) &&
+    (value.length === 7
+      ? date.toISOString().slice(0, 7) === value
+      : date.toISOString().slice(0, 10) === value)
+  );
 }
 
 export const releaseMetadataEditorMessages = {

@@ -175,7 +175,13 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 		(item) => item.id === "north-japan-local",
 	);
 	if (!fixture) throw new Error("Missing release fixture");
-	const release = structuredClone(fixture);
+	const release = {
+		...structuredClone(fixture),
+		providerIdentifierBaseline: { asin: "B000TEST01", script: "Latn" },
+	};
+	const initialTags = desiredTags(release, clearedTrack(release));
+	expect(initialTags.ASIN).toEqual(["B000TEST01"]);
+	expect(initialTags.SCRIPT).toEqual(["Latn"]);
 	const first = renderEditor(release);
 
 	fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
@@ -191,7 +197,7 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 		{ target: { value: "absent" } },
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Save" }));
-	expect(first.saved()?.releaseBasicsIntent).toBeUndefined();
+	expect(first.saved()?.releaseScalarIntent).toBeUndefined();
 
 	fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
 	fireEvent.change(
@@ -225,16 +231,36 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 	expect(labels).toHaveLength(2);
 	fireEvent.change(labels[0]!, { target: { value: "First label" } });
 	fireEvent.change(labels[1]!, { target: { value: "Second label" } });
+	fireEvent.click(
+		screen.getByText(/^Release details/, { selector: "summary" }),
+	);
+	const asin = screen.getByRole("combobox", { name: "ASIN — Override state" });
+	fireEvent.change(asin, { target: { value: "value" } });
+	fireEvent.change(asin, { target: { value: "absent" } });
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Script — Override state" }),
+		{ target: { value: "explicit_empty" } },
+	);
+	fireEvent.change(
+		screen.getByRole("combobox", { name: "Compilation — Override state" }),
+		{ target: { value: "value" } },
+	);
+	expect(
+		screen.getByRole("combobox", { name: "Compilation" }),
+	).toHaveValue("false");
 	fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
 	const valued = first.saved();
-	expect(valued?.releaseBasicsIntent).toEqual({
+	expect(valued?.releaseScalarIntent).toEqual({
 		releasedate: { state: "value", value: ["2022-03"] },
 		releasecountry: { state: "value", value: [release.country] },
 		recordlabel: {
 			state: "value",
 			value: ["First label", "Second label"],
 		},
+		compilation: { state: "value", value: ["false"] },
+		asin: { state: "absent" },
+		script: { state: "explicit_empty" },
 	});
 	expect(valued?.year).toBe(release.year);
 	expect(valued?.country).toBe(release.country);
@@ -245,6 +271,9 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 	expect(valuedTags.RELEASEDATE).toEqual(["2022-03"]);
 	expect(valuedTags.RELEASECOUNTRY).toEqual([release.country]);
 	expect(valuedTags.LABEL).toEqual(["First label", "Second label"]);
+	expect(valuedTags.COMPILATION).toEqual(["0"]);
+	expect(valuedTags.ASIN).toBeUndefined();
+	expect(valuedTags.SCRIPT).toEqual([]);
 	first.unmount();
 
 	const second = renderEditor(valued!);
@@ -255,7 +284,7 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Save" }));
 	const cleared = second.saved();
-	expect(cleared?.releaseBasicsIntent?.releasecountry).toEqual({
+	expect(cleared?.releaseScalarIntent?.releasecountry).toEqual({
 		state: "explicit_empty",
 	});
 	expect(desiredTags(cleared!, clearedTrack(cleared)).RELEASECOUNTRY).toEqual(
@@ -272,7 +301,7 @@ it("keeps typed release basics explicit, inherited and cleared without rewriting
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Save" }));
 	const inherited = third.saved();
-	expect(inherited?.releaseBasicsIntent?.releasecountry).toBeUndefined();
+	expect(inherited?.releaseScalarIntent?.releasecountry).toBeUndefined();
 	expect(
 		desiredTags(inherited!, clearedTrack(inherited)).RELEASECOUNTRY,
 	).toEqual([release.country]);

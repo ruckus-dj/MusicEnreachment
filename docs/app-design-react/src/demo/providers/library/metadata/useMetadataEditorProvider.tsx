@@ -24,6 +24,7 @@ import {
 	type MetadataFieldDescriptor,
 	type MetadataFieldMode,
 	type MetadataFieldState,
+	metadataFilledSummary,
 	metadataListActions,
 } from "../../../../ui/features/library/MetadataFieldPresentation";
 import {
@@ -36,10 +37,18 @@ import {
 	metadataMessage,
 } from "../../../../ui/features/library/metadata/metadataFieldMessages";
 import { MetadataEditorNoticesView } from "../../../../ui/features/library/metadata/MetadataEditorNoticesView";
-import { releaseMetadataEditorMessages } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
+import {
+	libraryMetadataScalarChoices,
+	releaseMetadataEditorMessages,
+	validLibraryMetadataPartialDate,
+} from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { WorkRowDraft } from "../../../../ui/features/library/WorkRowsView";
 import { audioMeasurementKeys } from "./audioMeasurements";
-import { essentialMetadataFields, metadataSummary } from "./editorLayout";
+import {
+	essentialMetadataFields,
+	libraryReleaseEditorFields,
+	metadataSummary,
+} from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
 import {
 	type MetadataContributor,
@@ -113,6 +122,7 @@ export interface MetadataEditorProps {
 	fieldLabels?: Readonly<Record<string, string>>;
 	fieldKinds?: Readonly<Record<string, MetadataFieldDescriptor["kind"]>>;
 	fieldHints?: Readonly<Record<string, string>>;
+	fieldBaselines?: Readonly<Record<string, string>>;
 	fieldStateDisplay?: {
 		absent: string;
 		explicitEmpty: string;
@@ -241,6 +251,7 @@ export function useMetadataEditorProvider({
 	fieldLabels,
 	fieldKinds,
 	fieldHints,
+	fieldBaselines,
 	fieldStateDisplay,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
@@ -314,7 +325,11 @@ export function useMetadataEditorProvider({
 	}, [editing]);
 	const actionRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<HTMLElement>(null);
-	const fields = useMemo(() => fieldsForScope(scope), [scope]);
+	const scopedRelease = libraryMetadata && scope === "release";
+	const fields = useMemo(
+		() => (scopedRelease ? libraryReleaseEditorFields : fieldsForScope(scope)),
+		[scope, scopedRelease],
+	);
 	const editableFields = fields.filter(
 		(field) => !audioMeasurementKeySet.has(field.key),
 	);
@@ -360,9 +375,11 @@ export function useMetadataEditorProvider({
 		const list = kind === "list";
 		const hasState = stateControlled(field.key);
 		const fieldState = hasState ? (stateFor(field.key) ?? "absent") : undefined;
+		const providerBaseline =
+			fieldState === "absent" ? fieldBaselines?.[field.key] : undefined;
 		const displayValue = fieldState
 			? fieldState === "absent"
-				? fieldStateDisplay?.absent
+				? (providerBaseline ?? fieldStateDisplay?.absent)
 				: fieldState === "explicit_empty"
 					? fieldStateDisplay?.explicitEmpty
 					: (list ? fieldRows.join("\n") : (fieldRows[0] ?? "")) ||
@@ -376,6 +393,9 @@ export function useMetadataEditorProvider({
 			editing: !readOnlyField,
 			presentation: hasState ? undefined : "control",
 			displayValue,
+			notices: providerBaseline
+				? [releaseMetadataEditorMessages[locale].providerBaseline]
+				: undefined,
 			state: fieldState,
 			mode: hasState ? fieldStateMode : undefined,
 			onStateChange: hasState
@@ -383,11 +403,13 @@ export function useMetadataEditorProvider({
 				: undefined,
 			dataKeys: [field.key],
 			emptyChoiceLabel:
-				field.kind === "boolean" || field.kind === "advisory"
+				!scopedRelease &&
+				(field.kind === "boolean" || field.kind === "advisory")
 					? m("state.unspecified")
 					: undefined,
-			choices:
-				field.kind === "boolean"
+			choices: scopedRelease
+				? libraryMetadataScalarChoices(locale, kind)
+				: field.kind === "boolean"
 					? [
 							{ value: "1", label: m("value.yes") },
 							{ value: "0", label: m("value.no") },
@@ -520,19 +542,20 @@ export function useMetadataEditorProvider({
 		const changedValues = Object.fromEntries(
 			[...dirty]
 				.filter((key) => fieldByKey(key)?.scope === scope)
+				.filter((key) => !scopedRelease || !stateControlled(key))
 				.filter(validatesControlledValue)
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
 		const errors = validateMetadataIssues(changedValues, scope);
-		const emptyDateKey = [...dirty].find(
+		const invalidDateKey = [...dirty].find(
 			(key) =>
 				fieldStates &&
 				Object.hasOwn(fieldStates, key) &&
 				validatesControlledValue(key) &&
-				fieldByKey(key)?.kind === "date" &&
-				!(draft[key]?.[0] ?? "").trim(),
+				(fieldKinds?.[key] ?? fieldByKey(key)?.kind) === "date" &&
+				!validLibraryMetadataPartialDate(draft[key]?.[0] ?? ""),
 		);
-		if (emptyDateKey) errors.unshift({ key: emptyDateKey, code: "date" });
+		if (invalidDateKey) errors.unshift({ key: invalidDateKey, code: "date" });
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
@@ -576,6 +599,7 @@ export function useMetadataEditorProvider({
 		void complete(update, Object.keys(details).length ? details : undefined);
 	};
 	const foreignFields = Object.keys(values).filter((key) => {
+		if (scopedRelease && stateControlled(key)) return false;
 		const field = fieldByKey(key);
 		return field && field.scope !== scope && values[key]?.some(Boolean);
 	});
@@ -728,7 +752,11 @@ export function useMetadataEditorProvider({
 				? genres
 				: rows(current, "genre").map((name): Genre => ({ name }))
 	).map((genre) => ({ ...genre, name: genre.name ?? genre.id ?? "" }));
-	const groupHeading = (group: string) => metadataGroupLabel(group, locale);
+	const groupHeading = (group: string) => {
+		if (scopedRelease && (group === "release" || group === "additional"))
+			return releaseMetadataEditorMessages[locale].groups[group];
+		return metadataGroupLabel(group, locale);
+	};
 	const displayedError = error
 		? error.kind === "validation"
 			? [
@@ -1076,7 +1104,17 @@ export function useMetadataEditorProvider({
 		([group, sectionFields]) => ({
 			key: group,
 			label: groupHeading(group),
-			summary: metadataSummary(sectionFields, current, locale),
+			summary: scopedRelease
+				? metadataFilledSummary(
+						locale,
+						sectionFields.filter(({ key }) => {
+							const state = stateFor(key);
+							return state === "value"
+								? current[key]?.some(Boolean)
+								: state === "absent" && Boolean(fieldBaselines?.[key]);
+						}).length,
+					)
+				: metadataSummary(sectionFields, current, locale),
 			fields: sectionFields
 				.filter(
 					(field) =>

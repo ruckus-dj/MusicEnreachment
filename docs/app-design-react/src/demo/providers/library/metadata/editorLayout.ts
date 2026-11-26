@@ -1,7 +1,40 @@
 import { metadataFilledSummary } from "../../../../ui/features/library/MetadataFieldPresentation";
-import { releaseBasicsFields } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
+import {
+	releaseAdditionalFields,
+	releaseBasicsFields,
+	releaseDetailFields,
+	type ReleaseScalarField,
+} from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { Locale } from "../../../../ui/i18n/types";
-import type { MetadataField, MetadataScope } from "./registry";
+import {
+	fieldByKey,
+	fieldsForScope,
+	type MetadataField,
+	type MetadataScope,
+} from "./registry";
+
+function releaseEditorFields(
+	fields: readonly ReleaseScalarField[],
+	group: string,
+): MetadataField[] {
+	return fields.map(({ metadataKey, kind }) => ({
+		key: metadataKey,
+		label: metadataKey,
+		tag: fieldByKey(metadataKey)?.tag ?? "",
+		scope: "release",
+		kind,
+		group,
+	}));
+}
+
+export const libraryReleaseEditorFields = [
+	...releaseEditorFields(releaseBasicsFields, "release"),
+	...fieldsForScope("release").filter(
+		({ group }) => group === "release artists",
+	),
+	...releaseEditorFields(releaseDetailFields, "release"),
+	...releaseEditorFields(releaseAdditionalFields, "additional"),
+];
 
 const essentials: Partial<Record<MetadataScope, string[]>> = {
 	release: releaseBasicsFields.map(({ metadataKey }) => metadataKey),

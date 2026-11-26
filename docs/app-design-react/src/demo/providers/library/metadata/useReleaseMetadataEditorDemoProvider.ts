@@ -3,18 +3,19 @@ import type { MetadataFieldState } from "../../../../ui/features/library/Metadat
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { ReleaseMetadataEditorViewProps } from "../../../../ui/features/library/metadata/ReleaseMetadataEditorView";
 import {
-	releaseBasicsFieldHint,
-	releaseBasicsFieldLabel,
-	releaseBasicsFields,
 	releaseMetadataEditorMessages,
+	releaseScalarFieldHint,
+	releaseScalarFieldLabel,
+	releaseScalarFields,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import {
+	acceptedReleaseIdentifier,
 	type CatalogArtist,
 	type OriginalRelease,
-	type ReleaseBasicsIntentMap,
+	type ReleaseScalarIntentMap,
 	releaseBasicsBaseValues,
-	releaseBasicsDraftValues,
-	releaseBasicsIntentState,
+	releaseScalarDraftValues,
+	releaseScalarIntentState,
 	releaseTitleDraftValues,
 	releaseTitleOverrideState,
 } from "../catalogData";
@@ -23,11 +24,6 @@ import type { MetadataEditorProps } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
 
-type ReleaseWithExtras = OriginalRelease & {
-	disambiguation?: string;
-	tags?: string[];
-};
-
 function releaseValues(release: OriginalRelease): MetadataValues {
 	const values: MetadataValues = Object.fromEntries(
 		Object.entries(release.metadataValues ?? {}).map(([key, entries]) => [
@@ -35,13 +31,18 @@ function releaseValues(release: OriginalRelease): MetadataValues {
 			[...entries],
 		]),
 	);
-	// Title intent lives in comparisonOverrides; basic intent is typed separately.
+	// Title intent lives in comparisonOverrides; other scalar intent is separate.
 	values.album = releaseTitleDraftValues(release);
-	for (const [key, entries] of Object.entries(releaseBasicsBaseValues(release)))
-		if (!(key in values) && entries.length) values[key] = [...entries];
-	for (const { key, metadataKey } of releaseBasicsFields) {
+	for (const { key, metadataKey, kind } of releaseScalarFields) {
 		if (key === "title") continue;
-		values[metadataKey] = releaseBasicsDraftValues(release, metadataKey);
+		values[metadataKey] =
+			releaseScalarIntentState(release, metadataKey) === "value"
+				? releaseScalarDraftValues(release, metadataKey)
+				: kind === "boolean"
+					? ["false"]
+					: kind === "advisory"
+						? ["explicit"]
+						: [];
 	}
 	return values;
 }
@@ -101,38 +102,29 @@ export function useReleaseMetadataEditorDemoProvider({
 	const releaseText = releaseMetadataEditorMessages[locale];
 	const titleState = releaseTitleOverrideState(release);
 	const fieldStates: Record<string, MetadataFieldState> = Object.fromEntries(
-		releaseBasicsFields.map(({ key, metadataKey }) => [
+		releaseScalarFields.map(({ key, metadataKey }) => [
 			metadataKey,
 			key === "title"
 				? titleState
-				: releaseBasicsIntentState(release, metadataKey),
+				: releaseScalarIntentState(release, metadataKey),
 		]),
 	);
 	const fieldLabels = Object.fromEntries(
-		releaseBasicsFields.map((field) => [
+		releaseScalarFields.map((field) => [
 			field.metadataKey,
-			releaseBasicsFieldLabel(locale, field),
+			releaseScalarFieldLabel(locale, field),
 		]),
 	);
 	const fieldKinds = Object.fromEntries(
-		releaseBasicsFields.map(({ metadataKey, kind }) => [metadataKey, kind]),
+		releaseScalarFields.map(({ metadataKey, kind }) => [metadataKey, kind]),
 	) as NonNullable<MetadataEditorProps["fieldKinds"]>;
 	const fieldHints = Object.fromEntries(
-		releaseBasicsFields.flatMap((field) => {
-			const hint = releaseBasicsFieldHint(locale, field);
+		releaseScalarFields.flatMap((field) => {
+			const hint = releaseScalarFieldHint(locale, field);
 			return hint ? [[field.metadataKey, hint]] : [];
 		}),
 	);
 	const values = releaseValues(release);
-	const extended = release as ReleaseWithExtras;
-	const extras = [
-		{
-			key: "disambiguation",
-			label: m("disambiguation"),
-			value: extended.disambiguation ?? "",
-		},
-		{ key: "tags", label: m("tags"), value: extended.tags?.join(", ") ?? "" },
-	];
 	return {
 		editor: {
 			label: releaseText.title,
@@ -148,11 +140,16 @@ export function useReleaseMetadataEditorDemoProvider({
 			genres: release.metadataGenres ?? [],
 			genresLoaded,
 			onLoadGenres,
-			extraFields: extras,
 			fieldStates,
 			fieldLabels,
 			fieldKinds,
 			fieldHints,
+			fieldBaselines: Object.fromEntries(
+				(["asin", "script"] as const).flatMap((key) => {
+					const value = acceptedReleaseIdentifier(release, key);
+					return value ? [[key, value]] : [];
+				}),
+			),
 			fieldStateMode: {
 				label: releaseText.mode,
 				absent: releaseText.absent,
@@ -175,10 +172,10 @@ export function useReleaseMetadataEditorDemoProvider({
 								? [...next.album]
 								: [""]
 							: [release.title];
-				const nextBasicsIntent: ReleaseBasicsIntentMap = {
-					...release.releaseBasicsIntent,
+				const nextScalarIntent: ReleaseScalarIntentMap = {
+					...release.releaseScalarIntent,
 				};
-				for (const { key, metadataKey } of releaseBasicsFields) {
+				for (const { key, metadataKey, kind } of releaseScalarFields) {
 					if (key === "title") continue;
 					if (
 						!details?.fieldStates ||
@@ -186,25 +183,30 @@ export function useReleaseMetadataEditorDemoProvider({
 					)
 						continue;
 					const state = details.fieldStates[metadataKey] ?? "absent";
-					if (state === "absent") delete nextBasicsIntent[metadataKey];
-					else if (state === "explicit_empty")
-						nextBasicsIntent[metadataKey] = {
+					if (state === "absent") {
+						if (key === "asin" || key === "script")
+							nextScalarIntent[metadataKey] = { state };
+						else delete nextScalarIntent[metadataKey];
+					} else if (state === "explicit_empty")
+						nextScalarIntent[metadataKey] = {
 							state: "explicit_empty",
 						};
 					else
-						nextBasicsIntent[metadataKey] = {
+						nextScalarIntent[metadataKey] = {
 							state: "value",
-							value: [...(next[metadataKey] ?? [])],
+							value:
+								kind === "list"
+									? [...(next[metadataKey] ?? [])]
+									: [next[metadataKey]?.[0] ?? ""],
 						};
 				}
 				const credits = details?.credits;
-				const extraValues = details?.extraValues;
 				const comparisonOverrides = mergeComparisonOverrides(
 					release.comparisonOverrides,
 					values,
 					next,
 				);
-				for (const { key, metadataKey } of releaseBasicsFields)
+				for (const { key, metadataKey } of releaseScalarFields)
 					if (key !== "title") delete comparisonOverrides[metadataKey];
 				if (nextTitleState === "absent") delete comparisonOverrides.album;
 				else comparisonOverrides.album = [...titleValues];
@@ -213,11 +215,19 @@ export function useReleaseMetadataEditorDemoProvider({
 					album: titleValues,
 				};
 				const baseValues = releaseBasicsBaseValues(release);
-				for (const { key, metadataKey } of releaseBasicsFields) {
+				for (const { key, metadataKey } of releaseScalarFields) {
 					if (key === "title") continue;
-					const intent = nextBasicsIntent[metadataKey];
-					if (!intent)
-						metadataValues[metadataKey] = [...(baseValues[metadataKey] ?? [])];
+					const base = baseValues[metadataKey];
+					// Keep the original underlying facts separate from desired edits.
+					if (!base) {
+						delete metadataValues[metadataKey];
+						const previous = release.metadataValues?.[metadataKey];
+						if (previous) metadataValues[metadataKey] = previous;
+						continue;
+					}
+					const intent = nextScalarIntent[metadataKey];
+					if (!intent || intent.state === "absent")
+						metadataValues[metadataKey] = [...base];
 					else if (intent.state === "explicit_empty")
 						metadataValues[metadataKey] = [];
 					else metadataValues[metadataKey] = [...intent.value];
@@ -225,8 +235,8 @@ export function useReleaseMetadataEditorDemoProvider({
 				const updated = {
 					...release,
 					metadataValues,
-					releaseBasicsIntent: Object.keys(nextBasicsIntent).length
-						? nextBasicsIntent
+					releaseScalarIntent: Object.keys(nextScalarIntent).length
+						? nextScalarIntent
 						: undefined,
 					comparisonOverrides: {
 						...comparisonOverrides,
@@ -250,16 +260,6 @@ export function useReleaseMetadataEditorDemoProvider({
 									artistId: credit.artistId || null,
 									joinPhrase: credit.joinPhrase,
 								})),
-							}
-						: {}),
-					...(extraValues
-						? {
-								disambiguation:
-									extraValues.disambiguation ?? extended.disambiguation,
-								tags: (extraValues.tags ?? extended.tags?.join(", ") ?? "")
-									.split(",")
-									.map((tag) => tag.trim())
-									.filter(Boolean),
 							}
 						: {}),
 				};
