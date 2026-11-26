@@ -436,8 +436,15 @@ export function useMetadataEditorProvider({
 					? "YYYY[-MM[-DD]]"
 					: undefined,
 			nativeType:
-				field.kind === "integer" || field.kind === "number" ? "number" : "text",
-			inputMode: field.kind === "date" ? "text" : undefined,
+				!libraryScalar && (field.kind === "integer" || field.kind === "number")
+					? "number"
+					: "text",
+			inputMode:
+				libraryScalar && kind === "integer"
+					? "numeric"
+					: field.kind === "date"
+						? "text"
+						: undefined,
 			listActions: list ? metadataListActions(locale, fieldLabel) : undefined,
 			onChange: (next) => {
 				const values = Array.isArray(next)
@@ -562,6 +569,23 @@ export function useMetadataEditorProvider({
 				!validLibraryMetadataPartialDate(draft[key]?.[0] ?? ""),
 		);
 		if (invalidDateKey) errors.unshift({ key: invalidDateKey, code: "date" });
+		const invalidInteger =
+			libraryMetadata &&
+			[...dirty].find((key) => {
+				if (
+					!stateControlled(key) ||
+					!validatesControlledValue(key) ||
+					(fieldKinds?.[key] ?? fieldByKey(key)?.kind) !== "integer"
+				)
+					return false;
+				const value = draft[key]?.[0] ?? "";
+				const number = Number(value);
+				return (
+					!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number <= 0
+				);
+			});
+		if (invalidInteger)
+			errors.unshift({ key: invalidInteger, code: "integer" });
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
@@ -771,7 +795,9 @@ export function useMetadataEditorProvider({
 					...error.issues.map((issue) =>
 						libraryMetadata && issue.code === "date"
 							? releaseMetadataEditorMessages[locale].invalidDate
-							: metadataValidationMessage(issue, locale),
+							: libraryMetadata && issue.code === "integer"
+								? releaseMetadataEditorMessages[locale].invalidPositiveInteger
+								: metadataValidationMessage(issue, locale),
 					),
 					...(error.requiredField
 						? [

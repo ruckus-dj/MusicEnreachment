@@ -9,6 +9,7 @@ import {
 	type CatalogArtist,
 	effectiveRecordingTitle,
 	type OriginalTrack,
+	positionNumberingFields,
 	positionTitleIntent,
 	recordingTitleBaseline,
 	type ScopedScalarIntentMap,
@@ -113,11 +114,13 @@ export function useTrackMetadataEditorsDemoProvider({
 	const recording = recordingValues(track);
 	const positionTitle = positionTitleIntent(track);
 	const position: MetadataValues = {
-		track: [
-			track.displayedNumber ?? String(track.mediumPosition ?? track.position),
-		],
-		disc: [String(track.medium ?? 1)],
 		...track.positionMetadata,
+		...Object.fromEntries(
+			positionNumberingFields.map((field) => {
+				const intent = track.positionScalarIntent?.[field];
+				return [field, intent?.state === "value" ? [...intent.value] : []];
+			}),
+		),
 		title: [positionTitle.value],
 	};
 	const audioSources = [
@@ -254,14 +257,19 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			values: position,
 			fields: libraryPositionEditorFields,
-			fieldStates: { title: positionTitle.state },
-			fieldLabels: { title: releaseText.labels.title },
+			fieldStates: {
+				title: positionTitle.state,
+				track: track.positionScalarIntent?.track?.state ?? "absent",
+				disc: track.positionScalarIntent?.disc?.state ?? "absent",
+			},
+			fieldLabels: {
+				title: releaseText.labels.title,
+				track: releaseText.labels.track_number,
+				disc: releaseText.labels.disc_number,
+			},
 			fieldStateMode,
 			fieldStateDisplay,
-			requiredKeys: ["track"],
 			onSave: (values, details) => {
-				const displayedNumber = values.track?.[0] ?? "";
-				const medium = Number(values.disc?.[0] ?? "1");
 				onMutate((current) => {
 					const comparison = mergeComparisonOverrides(
 						current.positionComparisonOverrides,
@@ -270,16 +278,26 @@ export function useTrackMetadataEditorsDemoProvider({
 					);
 					const positionMetadata = { ...values };
 					delete positionMetadata.title;
+					const positionScalarIntent: ScopedScalarIntentMap = {
+						...current.positionScalarIntent,
+					};
+					for (const field of positionNumberingFields) {
+						delete positionMetadata[field];
+						delete comparison[field];
+						const state = details?.fieldStates?.[field];
+						if (state === "absent") delete positionScalarIntent[field];
+						else if (state === "explicit_empty")
+							positionScalarIntent[field] = { state };
+						else if (state === "value")
+							positionScalarIntent[field] = {
+								state,
+								value: [String(Number(values[field]?.[0]))],
+							};
+					}
 					const updated: OriginalTrack = {
 						...current,
-						displayedNumber,
-						mediumPosition:
-							Number(displayedNumber) ||
-							current.mediumPosition ||
-							current.position,
-						medium:
-							Number.isFinite(medium) && medium > 0 ? medium : current.medium,
 						positionMetadata,
+						positionScalarIntent,
 						positionComparisonOverrides: comparison,
 					};
 					const titleState = details?.fieldStates?.title;

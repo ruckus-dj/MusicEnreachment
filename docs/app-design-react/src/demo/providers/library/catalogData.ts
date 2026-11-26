@@ -75,6 +75,8 @@ export interface OriginalTrack {
 	recordingScalarIntent?: ScopedScalarIntentMap;
 	/** Original distinct position title retained while editing the recording. */
 	positionTitleBaseline?: string;
+	/** Typed position-numbering overrides; absent keys inherit raw numbering. */
+	positionScalarIntent?: ScopedScalarIntentMap;
 	positionMetadata?: MetadataValues;
 	audioMetadata?: Record<string, MetadataValues>;
 	recordingCredits?: import("./metadata/model").MetadataCredit[];
@@ -343,6 +345,42 @@ export function recordingScalarOverrideTags(
 	return tags;
 }
 
+export const positionNumberingFields = ["track", "disc"] as const;
+type PositionNumberingField = (typeof positionNumberingFields)[number];
+
+const positionNumberingTags: Record<PositionNumberingField, string> = {
+	track: "TRACKNUMBER",
+	disc: "DISCNUMBER",
+};
+
+/** The exact raw position tags before any explicit track/disc override. */
+function positionNumberingBaseline(
+	track: Pick<
+		OriginalTrack,
+		"displayedNumber" | "mediumPosition" | "position" | "medium"
+	>,
+): Record<PositionNumberingField, string> {
+	return {
+		track: String(
+			track.displayedNumber || track.mediumPosition || track.position,
+		),
+		disc: String(track.medium ?? 1),
+	};
+}
+
+export function positionNumberingOverrideTags(
+	track: OriginalTrack,
+): MetadataValues {
+	const tags: MetadataValues = {};
+	for (const key of positionNumberingFields) {
+		const intent = track.positionScalarIntent?.[key];
+		if (!intent || intent.state === "absent") continue;
+		tags[positionNumberingTags[key]] =
+			intent.state === "explicit_empty" ? [] : [...intent.value];
+	}
+	return tags;
+}
+
 /** Read title override intent from the sparse map, not the merged metadata values. */
 export function releaseTitleOverrideState(
 	release: OriginalRelease,
@@ -598,6 +636,7 @@ export function desiredTags(
 			? release.comparisonOverrides.album
 			: undefined
 		: undefined;
+	const numbering = positionNumberingBaseline(track);
 	const result: Record<string, string[]> = {
 		ARTIST: artist?.name ? [artist.name] : [],
 		ALBUM:
@@ -614,10 +653,8 @@ export function desiredTags(
 				? [albumArtist.name]
 				: [],
 		DATE: [],
-		TRACKNUMBER: [
-			String(track.displayedNumber || track.mediumPosition || track.position),
-		],
-		DISCNUMBER: [String(track.medium ?? 1)],
+		TRACKNUMBER: [numbering.track],
+		DISCNUMBER: [numbering.disc],
 		GENRE: publicationGenreFallback(release, track, artists),
 		MUSICBRAINZ_ARTISTID: [],
 		MUSICBRAINZ_ALBUMID:
@@ -794,6 +831,7 @@ export function desiredTags(
 		...projectMetadataValues(recordingValues).tags,
 		...recordingScalarOverrideTags(track, "publication"),
 		...projectMetadataValues(explicitValues).tags,
+		...positionNumberingOverrideTags(track),
 	};
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
 	const projectedArtistNames = (
