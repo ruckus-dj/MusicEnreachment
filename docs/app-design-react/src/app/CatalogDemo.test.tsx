@@ -5,6 +5,7 @@ import { firstPublicationPreviewMessages } from "../ui/features/library/firstPub
 
 const northernReleaseHref = "#/library/releases/north";
 const northernPositionHref = "#/library/releases/north/positions/north-t1";
+const signalsPositionHref = "#/library/releases/signals/positions/signals-t1";
 
 afterEach(() => {
 	window.history.replaceState(
@@ -189,14 +190,14 @@ it("shows a read-only preview of the selected library position", async () => {
 });
 
 it("keeps a CURRENT comparison inside the position publication panel", () => {
-	window.history.replaceState(null, "", northernPositionHref);
+	window.history.replaceState(null, "", signalsPositionHref);
 	render(<CatalogDemo />);
 	const publication = within(
 		screen.getByRole("region", { name: "Публикация" }),
 	);
 	const copy = firstPublicationPreviewMessages.ru;
 	fireEvent.click(publication.getByRole("button", { name: copy.preview }));
-	expect(window.location.hash).toBe(northernPositionHref);
+	expect(window.location.hash).toBe(signalsPositionHref);
 	expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
 	expect(publication.queryByRole("button", { name: copy.publish })).toBeNull();
 	expect(

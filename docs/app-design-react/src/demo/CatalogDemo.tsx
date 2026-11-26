@@ -899,6 +899,9 @@ export function CatalogDemo({
 								providers,
 								artists: providerArtists,
 								onReleases: setImportedReleases,
+								hasCustomTemplate: Boolean(
+									publicationCatalog.hasCustomTemplate,
+								),
 								onSuccess: (notice) => {
 									setPositionNotice({
 										releaseId: release.id,

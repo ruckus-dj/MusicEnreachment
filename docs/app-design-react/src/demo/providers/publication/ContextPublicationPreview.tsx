@@ -5,6 +5,7 @@ import {
 	type ContextPublicationPreviewMode,
 	type ContextPublicationPreviewModel,
 	type ContextPublicationPreviewSource,
+	type ContextPublicationPreviewWorkflow,
 } from "../../../ui/features/publication/ContextPublicationPreview";
 import {
 	formatPublicationMessage,
@@ -17,23 +18,24 @@ import {
 	type IncomingReleases,
 	type IncomingState,
 	makeReleasePlan,
-	planRows,
+	planPositionRow,
 	selectedSourceId,
 	sourceIds,
+	type TagMap,
 	usableFile,
 } from "../incoming/incomingModel";
 import {
 	type CatalogArtist,
 	type OriginalRelease,
-	originalArtistName,
 	publicationMetadataIssueMessages,
 } from "../library/catalogData";
+import { sameTagValues } from "../library/tagEquality";
 import type { UiNotice } from "../notices/uiNotice";
 import { demoPathInside } from "../sources/demoPathValidation";
 import { individualPublicationDetails } from "./individualPublicationDetails";
 import { publicationArtistNotices } from "./publicationArtistNotices";
 import {
-	choosePublicationOutput,
+	demoOutputCodec,
 	fixturePublicationDestination,
 	type PublicationDestination,
 	retainedOutputIssue,
@@ -45,6 +47,65 @@ function capturePosition(release: OriginalRelease, positionId: string) {
 		releaseFields,
 		tracks.find((track) => track.id === positionId),
 	]);
+}
+
+type PositionPreviewSnapshot = {
+	destination: PublicationDestination;
+	source: { id: string; codec: string; path: string } | null;
+	renderedPath?: string;
+	renderedContainer?: string;
+	tags: TagMap;
+};
+
+function capturePositionPreview(
+	plan: IncomingPlan,
+	destination: PublicationDestination,
+	files: IncomingFiles,
+	releases: IncomingReleases,
+	providers: IncomingReleases,
+	artists: CatalogArtist[],
+	positionId: string,
+): PositionPreviewSnapshot | null {
+	const row = planPositionRow(
+		plan,
+		files,
+		releases,
+		providers,
+		artists,
+		destination,
+		positionId,
+	);
+	if (!row) return null;
+	return {
+		destination: { ...destination },
+		source: row.file
+			? { id: row.file.id, codec: row.file.codec, path: row.file.path }
+			: null,
+		renderedPath: row.renderedPath,
+		renderedContainer: row.renderedContainer,
+		tags: structuredClone(row.nextTags),
+	};
+}
+
+function samePositionPreview(
+	left: PositionPreviewSnapshot | null,
+	right: PositionPreviewSnapshot | null,
+) {
+	if (!left || !right) return left === right;
+	const sameSource =
+		left.source === null || right.source === null
+			? left.source === right.source
+			: left.source.id === right.source.id &&
+				left.source.codec === right.source.codec &&
+				left.source.path === right.source.path;
+	return (
+		left.destination.outputDirectory === right.destination.outputDirectory &&
+		left.destination.format === right.destination.format &&
+		sameSource &&
+		left.renderedPath === right.renderedPath &&
+		left.renderedContainer === right.renderedContainer &&
+		sameTagValues(left.tags, right.tags)
+	);
 }
 
 export type ContextPublicationPreviewProps = {
@@ -63,7 +124,9 @@ export type ContextPublicationPreviewProps = {
 		ContextPublicationPreviewModel,
 		"workflowControl" | "planControl"
 	>;
-	comparisonOnly?: boolean;
+	workflow: ContextPublicationPreviewWorkflow;
+	previewStale?: boolean;
+	hasCustomTemplate?: boolean;
 	children?: ReactNode;
 };
 
@@ -85,7 +148,9 @@ export function ContextPublicationPreview({
 	onReleases,
 	onSuccess,
 	controls,
-	comparisonOnly = false,
+	workflow,
+	previewStale = false,
+	hasCustomTemplate = false,
 	children,
 }: ContextPublicationPreviewProps) {
 	const { locale } = useI18n();
@@ -93,17 +158,20 @@ export function ContextPublicationPreview({
 	if (!positionId || plan.mode !== "local" || plan.groupId) return null;
 
 	const release = releases.find((item) => item.id === plan.localReleaseId);
-	const row = planRows(
+	const row = planPositionRow(
 		plan,
 		files,
 		releases,
 		providers,
 		artists,
 		destination,
-	).find((item) => item.targetTrack.id === positionId);
+		positionId,
+	);
 	const track = row?.track;
 	const current = row?.previous;
-	const readOnly = comparisonOnly || Boolean(current && !plan.force);
+	const resolvedWorkflow = workflow;
+	const retainedWorkflow = resolvedWorkflow === "retained_same_path";
+	const readOnly = resolvedWorkflow === "comparison";
 	const positionChanged =
 		!release ||
 		track?.id !== positionId ||
@@ -122,29 +190,61 @@ export function ContextPublicationPreview({
 		release && track
 			? publicationMetadataIssueMessages(release, track, locale, sourceId)
 			: [];
-	const error = positionChanged
-		? publicationMessage(locale, "stalePreview")
-		: inventoryChanged
-			? publicationMessage(locale, "inventoryChanged")
-			: currentOutsideOutput
-				? publicationMessage(locale, "currentOutsideOutput")
-				: plan.retainCurrentPath && current && source
-					? (() => {
-							const issue = retainedOutputIssue(current, source, destination);
-							return issue ? publicationMessage(locale, issue) : "";
-						})()
-					: "";
-	const output =
-		source && row
-			? choosePublicationOutput(source, {
-					...destination,
-					artist: originalArtistName(plan.target.artistId, artists),
-					year: plan.target.year,
-					release: plan.target.title,
-					position: row.targetTrack.position,
-					title: row.targetTrack.title,
-				})
+	const observedCurrent = track?.observedFile;
+	const observedCurrentUnavailable = Boolean(
+		current &&
+			observedCurrent &&
+			(observedCurrent.rootAvailable === false ||
+				["changed", "drift", "missing", "output-unavailable"].includes(
+					observedCurrent.state ?? "",
+				)),
+	);
+	const templateUnsupported = Boolean(hasCustomTemplate);
+	const retainedIssue =
+		retainedWorkflow && current && source
+			? retainedOutputIssue(current, source, destination)
 			: undefined;
+	const retainedSourceMismatch = Boolean(
+		retainedWorkflow && current && source && current.sourceId !== source.id,
+	);
+	const retainedCodecMismatch = Boolean(
+		retainedWorkflow &&
+			current &&
+			source &&
+			current.codec !== demoOutputCodec(source.codec, destination.format),
+	);
+	const retainedUnavailable = Boolean(
+		retainedWorkflow &&
+			(!current ||
+				!source ||
+				retainedSourceMismatch ||
+				retainedCodecMismatch ||
+				retainedIssue ||
+				observedCurrentUnavailable ||
+				metadataIssues.length > 0 ||
+				templateUnsupported),
+	);
+	const retainedStatus: "ready" | "unchanged" | "blocked" | undefined =
+		retainedWorkflow
+			? retainedUnavailable
+				? "blocked"
+				: row?.ordinaryUnchanged && !plan.force
+					? "unchanged"
+					: "ready"
+			: undefined;
+	const error = previewStale
+		? publicationMessage(locale, "stalePreview")
+		: positionChanged
+			? publicationMessage(locale, "stalePreview")
+			: inventoryChanged
+				? publicationMessage(locale, "inventoryChanged")
+				: templateUnsupported
+					? publicationMessage(locale, "pathUndetermined")
+					: currentOutsideOutput
+						? publicationMessage(locale, "currentOutsideOutput")
+						: retainedIssue
+							? publicationMessage(locale, retainedIssue)
+							: "";
 	const rebuildSource = Boolean(
 		source &&
 			(!current ||
@@ -155,7 +255,9 @@ export function ContextPublicationPreview({
 	const downgrade = Boolean(row?.downgrade && row.assignment?.included);
 	const canConfirm = Boolean(
 		!error &&
+			!templateUnsupported &&
 			!readOnly &&
+			(!retainedWorkflow || retainedStatus === "ready") &&
 			(!plan.force || current) &&
 			row?.assignment?.included &&
 			source &&
@@ -183,23 +285,24 @@ export function ContextPublicationPreview({
 		release && track
 			? publicationArtistNotices(release, track, artists, locale)
 			: [];
-	const details =
-		row &&
-		individualPublicationDetails({
-			current: current ?? null,
-			tags: row.nextTags,
-			path:
-				plan.retainCurrentPath && current
-					? current.path
-					: rebuildSource
-						? output?.path
-						: (current?.path ?? output?.path),
-			renderedPath: output?.path,
-			source: source ? { codec: source.codec, path: source.path } : undefined,
-			coverHash: track?.coverHash ?? null,
-			lyrics: track?.lyrics ?? null,
-			downgrade,
-		});
+	const details = row
+		? individualPublicationDetails({
+				workflow: resolvedWorkflow,
+				retainedCapability: retainedStatus,
+				current: current ?? null,
+				tags: row.nextTags,
+				path:
+					row.retainedPath ??
+					(rebuildSource
+						? row.renderedPath
+						: (current?.path ?? row.renderedPath)),
+				renderedPath: row.renderedPath,
+				source: source ? { codec: source.codec, path: source.path } : undefined,
+				coverHash: track?.coverHash ?? null,
+				lyrics: track?.lyrics ?? null,
+				downgrade,
+			})
+		: undefined;
 
 	const confirm = () => {
 		if (!canConfirm || !row?.assignment || !track) return;
@@ -219,6 +322,7 @@ export function ContextPublicationPreview({
 			false,
 			artists,
 			destination,
+			positionId,
 		);
 		if (!applied) return;
 		onReleases(next);
@@ -274,6 +378,7 @@ export type DemoPositionPublicationProps = {
 	artists: CatalogArtist[];
 	onReleases: (releases: OriginalRelease[]) => void;
 	onSuccess: (notice: UiNotice) => void;
+	hasCustomTemplate?: boolean;
 	children?: ReactNode;
 };
 
@@ -284,6 +389,13 @@ export type DemoPositionPublicationBinderProps = Omit<
 
 export type DemoPositionPublicationSource =
 	ContextPublicationPreviewSource<DemoPositionPublicationBinderProps>;
+
+type PreparedPublication = {
+	plan: IncomingPlan;
+	confirmDowngrade: boolean;
+	destination: PublicationDestination;
+	preview: PositionPreviewSnapshot | null;
+};
 
 export function DemoPositionPublication({
 	destination,
@@ -296,13 +408,11 @@ export function DemoPositionPublication({
 	artists,
 	onReleases,
 	onSuccess,
+	hasCustomTemplate = false,
 	children,
 }: DemoPositionPublicationProps) {
 	const { locale } = useI18n();
-	const [prepared, setPrepared] = useState<{
-		plan: IncomingPlan;
-		confirmDowngrade: boolean;
-	}>();
+	const [prepared, setPrepared] = useState<PreparedPublication>();
 	const [workflow, setWorkflow] = useState<"comparison" | "retained_same_path">(
 		"comparison",
 	);
@@ -310,19 +420,34 @@ export function DemoPositionPublication({
 	const hasCurrent = Boolean(
 		release.tracks.find(({ id }) => id === positionId)?.published,
 	);
-	const compare = hasCurrent && workflow === "comparison";
-	const confirmable = !hasCurrent || !compare;
+	const effectiveWorkflow: ContextPublicationPreviewWorkflow = hasCurrent
+		? workflow
+		: "first";
+	const compare = effectiveWorkflow === "comparison";
+	const confirmable = effectiveWorkflow !== "comparison";
 	const planControl = {
 		disabled: false,
 		onPreview: () => {
 			const plan = makeReleasePlan(state, release, files, positionId);
+			const preparedPlan = {
+				...plan,
+				force: hasCurrent && mode === "forced",
+				retainCurrentPath: hasCurrent && workflow === "retained_same_path",
+			};
+			const destinationSnapshot = { ...destination };
 			setPrepared({
-				plan: {
-					...plan,
-					force: hasCurrent && (!compare || mode === "forced"),
-					retainCurrentPath: hasCurrent && !compare,
-				},
+				plan: preparedPlan,
 				confirmDowngrade: false,
+				destination: destinationSnapshot,
+				preview: capturePositionPreview(
+					preparedPlan,
+					destinationSnapshot,
+					files,
+					releases,
+					providers,
+					artists,
+					positionId,
+				),
 			});
 		},
 	};
@@ -345,6 +470,20 @@ export function DemoPositionPublication({
 				}
 			: undefined,
 	};
+	const currentPreview = prepared
+		? capturePositionPreview(
+				prepared.plan,
+				destination,
+				files,
+				releases,
+				providers,
+				artists,
+				positionId,
+			)
+		: null;
+	const previewStale = Boolean(
+		prepared && !samePositionPreview(prepared.preview, currentPreview),
+	);
 	if (!prepared) {
 		const model: ContextPublicationPreviewModel = {
 			...controls,
@@ -367,7 +506,8 @@ export function DemoPositionPublication({
 	}
 	return (
 		<ContextPublicationPreview
-			destination={destination}
+			destination={prepared.destination}
+			previewStale={previewStale}
 			plan={prepared.plan}
 			files={files}
 			releases={releases}
@@ -376,13 +516,31 @@ export function DemoPositionPublication({
 			inventoryVersion={state.inventoryVersion}
 			confirmDowngrade={prepared.confirmDowngrade}
 			onPlan={(plan, confirmed) =>
-				setPrepared(
-					plan ? { plan, confirmDowngrade: Boolean(confirmed) } : undefined,
+				setPrepared((current) =>
+					plan
+						? current
+							? { ...current, plan, confirmDowngrade: Boolean(confirmed) }
+							: {
+									plan,
+									confirmDowngrade: Boolean(confirmed),
+									destination: { ...destination },
+									preview: capturePositionPreview(
+										plan,
+										destination,
+										files,
+										releases,
+										providers,
+										artists,
+										positionId,
+									),
+								}
+						: undefined,
 				)
 			}
 			onReleases={onReleases}
 			onSuccess={onSuccess}
-			comparisonOnly={compare}
+			workflow={effectiveWorkflow}
+			hasCustomTemplate={hasCustomTemplate}
 			controls={controls}
 		>
 			{children}

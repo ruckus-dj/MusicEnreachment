@@ -1,9 +1,12 @@
 import type { PublicationPreviewDetailsState } from "../../../ui/features/library/PublicationPreviewDetailsView";
+import type { ContextPublicationPreviewWorkflow } from "../../../ui/features/publication/ContextPublicationPreview";
 import type { OriginalTrack } from "../library/catalogData";
 
 type TagValues = Readonly<Record<string, string[]>>;
 
 export function individualPublicationDetails({
+	workflow,
+	retainedCapability,
 	current,
 	tags,
 	path,
@@ -13,6 +16,8 @@ export function individualPublicationDetails({
 	lyrics,
 	downgrade,
 }: {
+	workflow?: ContextPublicationPreviewWorkflow;
+	retainedCapability?: "ready" | "unchanged" | "blocked";
 	current: OriginalTrack["published"];
 	tags: TagValues;
 	path?: string;
@@ -22,6 +27,7 @@ export function individualPublicationDetails({
 	lyrics: string | null;
 	downgrade?: boolean;
 }): PublicationPreviewDetailsState {
+	const resolvedWorkflow = workflow ?? (current ? "comparison" : "first");
 	const before = current?.tags ?? {};
 	const differences = [
 		...new Set([...Object.keys(before), ...Object.keys(tags)]),
@@ -42,12 +48,15 @@ export function individualPublicationDetails({
 		admittedOperationID: "",
 		admissionUncertain: false,
 		inspection: {
-			workflow: current ? "comparison" : "first",
+			workflow: resolvedWorkflow,
 			sourceCandidates: [],
 			selectedChoice: null,
 			needsExplicitChoice: false,
 			sourceChoiceDisabled: true,
 			preview: {
+				confirmation_capability: retainedCapability
+					? { status: retainedCapability }
+					: undefined,
 				desired_tags: tags,
 				resolved_path: path,
 				selected_source: source,

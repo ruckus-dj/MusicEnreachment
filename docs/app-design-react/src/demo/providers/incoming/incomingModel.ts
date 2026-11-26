@@ -13,6 +13,7 @@ import {
 	publicationMetadataIssues,
 } from "../library/catalogData";
 import { replaceAudioMeasurements } from "../library/metadata/audioMeasurements";
+import { sameTagValues } from "../library/tagEquality";
 import type { UiNotice } from "../notices/uiNotice";
 
 export type TagMap = Record<string, string[]>;
@@ -336,6 +337,20 @@ export type PlanRow = {
 	action: "Пропустить" | "Без изменений" | "Заменить" | "Создать";
 	downgrade: boolean;
 };
+
+/**
+ * Complete single-position row. `ordinaryUnchanged` additionally proves the
+ * recorded CURRENT path, container, assets and lyrics, so metadata/cover edits
+ * are not hidden by the generic source/codec/tag gate.
+ */
+export type PositionPlanRow = PlanRow & {
+	/** Path rendered from current settings, independent of retained target. */
+	renderedPath?: string;
+	renderedContainer?: string;
+	/** Path retained from CURRENT; absent outside retained workflow. */
+	retainedPath?: string;
+	ordinaryUnchanged: boolean;
+};
 export type IncomingPlan = {
 	mode: IncomingGroup["mode"];
 	groupId: string;
@@ -435,8 +450,10 @@ export function planRows(
 	const targetTracks = plan.target.tracks;
 	return targetTracks.map((targetTrack) => {
 		const assignment = plan.assignments[String(targetTrack.id)];
-		const track = existing?.tracks.find(
-			(item) => item.position === targetTrack.position,
+		const track = existing?.tracks.find((item) =>
+			plan.positionId && plan.mode === "local"
+				? item.id === targetTrack.id
+				: item.position === targetTrack.position,
 		);
 		const candidate = assignment && files[selectedSourceId(assignment) ?? ""];
 		const file = usableFile(candidate) ? candidate : undefined;
@@ -501,10 +518,100 @@ import {
 	choosePublicationOutput,
 	demoIsLosslessCodec,
 	demoOutputCodec,
+	demoSourceContainer,
 	fixturePublicationDestination,
 	type PublicationDestination,
 	retainedOutputIssue,
 } from "../publication/publicationOutput";
+
+/**
+ * Targeted single-position projection. The generic plan gate proves only
+ * source, codec and tag equality; a contextual position must also prove the
+ * recorded CURRENT path, container, assets and lyrics before calling the row
+ * unchanged. Retaining the destination does not make the rendered path equal
+ * to CURRENT.
+ */
+export function planPositionRow(
+	plan: IncomingPlan,
+	files: IncomingFiles,
+	releases: IncomingReleases,
+	providers: IncomingReleases = providerReleases,
+	artists?: CatalogArtist[],
+	destination: PublicationDestination = fixturePublicationDestination,
+	positionId: string | undefined = plan.positionId,
+): PositionPlanRow | null {
+	const target = plan.target.tracks.find((track) => track.id === positionId);
+	if (!target || plan.mode !== "local" || plan.groupId) return null;
+	const row = planRows(
+		{ ...plan, positionId, target: { ...plan.target, tracks: [target] } },
+		files,
+		releases,
+		providers,
+		artists,
+		destination,
+	)[0];
+	if (!row) return null;
+	const release =
+		releases.find((item) => item.id === plan.localReleaseId) ?? plan.target;
+	const output = row.file
+		? choosePublicationOutput(row.file, {
+				...destination,
+				artist: originalArtistName(release.artistId, artists),
+				year: release.year,
+				release: release.title,
+				position: row.targetTrack.position,
+				title: row.targetTrack.title,
+			})
+		: undefined;
+	const plannedPath =
+		plan.retainCurrentPath && row.previous ? row.previous.path : output?.path;
+	const plannedContainer =
+		plan.retainCurrentPath && row.previous
+			? row.previous.container
+			: output?.container;
+	const renderedPath = output?.path;
+	const renderedContainer = output?.container;
+	const retainedPath = plan.retainCurrentPath ? row.previous?.path : undefined;
+	const copyCompatibleSource = Boolean(
+		row.file &&
+			row.outputCodec &&
+			renderedContainer &&
+			row.file.codec.toUpperCase() === row.outputCodec.toUpperCase() &&
+			demoSourceContainer(row.file) === renderedContainer,
+	);
+	const tagsUnchanged = sameTagValues(row.previous?.tags, row.nextTags);
+	const assetsUnchanged =
+		(row.previous?.coverHash ?? null) === (row.track?.coverHash ?? null) &&
+		(row.previous?.lyrics ?? null) === (row.track?.lyrics ?? null);
+	const ordinaryUnchanged = Boolean(
+		row.previous &&
+			row.file &&
+			row.previous.sourceId === row.file.id &&
+			row.previous.path === plannedPath &&
+			row.previous.path === renderedPath &&
+			row.previous.codec === row.outputCodec &&
+			row.previous.container === plannedContainer &&
+			row.previous.container === renderedContainer &&
+			copyCompatibleSource &&
+			tagsUnchanged &&
+			assetsUnchanged,
+	);
+	return {
+		...row,
+		renderedPath,
+		renderedContainer,
+		retainedPath,
+		ordinaryUnchanged,
+		action:
+			!row.assignment?.included || !row.file
+				? "Пропустить"
+				: ordinaryUnchanged && !plan.force
+					? "Без изменений"
+					: row.previous
+						? "Заменить"
+						: "Создать",
+	};
+}
 
 export function applyPlan(
 	plan: IncomingPlan,
@@ -514,10 +621,23 @@ export function applyPlan(
 	automatic = false,
 	artists?: CatalogArtist[],
 	destination: PublicationDestination = fixturePublicationDestination,
+	positionId?: string,
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
 	if (plan.mode === "local" && !release) return 0;
-	const rows = planRows(plan, files, releases, providers, artists, destination);
+	const rows = positionId
+		? [
+				planPositionRow(
+					plan,
+					files,
+					releases,
+					providers,
+					artists,
+					destination,
+					positionId,
+				),
+			].filter((row): row is PositionPlanRow => row !== null)
+		: planRows(plan, files, releases, providers, artists, destination);
 	const hasApplicableRow = rows.some((row) => {
 		if (
 			!row.assignment?.included ||
@@ -555,10 +675,13 @@ export function applyPlan(
 	}
 	let changed = 0;
 	for (const row of rows) {
-		const track = release.tracks.find(
-			(item) => item.position === row.targetTrack.position,
+		const track = release.tracks.find((item) =>
+			positionId
+				? item.id === positionId
+				: item.position === row.targetTrack.position,
 		);
 		if (!track) continue;
+		if (positionId && row.action === "Без изменений") continue;
 		if (
 			plan.retainCurrentPath &&
 			(!track.published ||

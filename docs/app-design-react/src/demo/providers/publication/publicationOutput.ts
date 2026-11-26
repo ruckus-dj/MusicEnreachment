@@ -61,6 +61,10 @@ function outputExtension(
 		: `.${format}`;
 }
 
+export function demoSourceContainer(source: Pick<SourceFile, "path" | "name">) {
+	return outputExtension(source, "original").slice(1).toUpperCase();
+}
+
 export function retainedOutputIssue(
 	current: { path: string; container: string },
 	source: Pick<SourceFile, "path" | "name">,

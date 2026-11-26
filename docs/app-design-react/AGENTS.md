@@ -94,6 +94,9 @@ unavailable.
 - React Aria pickers render in a portal: scope their tests to the dialog and
   close it before interacting with the underlying form. Escape closes only the
   picker; it must not discard the parent draft.
+- Outlet tests with an inline provider descriptor should specify its binder
+  props type, so inference cannot widen workflow literals or treat the outlet's
+  `children` as host input. Set the test locale before asserting localized copy.
 - Preserve position title overrides when editing a shared recording, including
   legacy fixtures without explicit override slots. Test projection as well as
   state: recording metadata must not overwrite the position's publication title.
