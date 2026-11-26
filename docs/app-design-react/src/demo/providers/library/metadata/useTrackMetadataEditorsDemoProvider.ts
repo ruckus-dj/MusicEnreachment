@@ -137,6 +137,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			fields: libraryRecordingEditorFields,
 			values: recording,
+			providerLinks: track.recordingProviderLinks,
 			scopedContributors: track.recordingContributors ?? { state: "absent" },
 			fieldStates: {
 				...Object.fromEntries(
@@ -251,6 +252,7 @@ export function useTrackMetadataEditorsDemoProvider({
 			},
 		},
 		position: {
+			providerLinks: track.positionProviderLinks,
 			label: releaseText.positionTitle,
 			scope: "track",
 			libraryMetadata: true,

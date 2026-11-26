@@ -246,11 +246,22 @@ it("saves recording and position title overrides through their own scopes", asyn
   };
   server.use(
     http.get(`*/api/library/recordings/${recordingId}/metadata`, () =>
-      HttpResponse.json(metadata(3, "recording")),
+      HttpResponse.json({
+        ...metadata(3, "recording"),
+        provider_links: [
+          { provider_code: "musicbrainz", provider_key: "exact-recording" },
+        ],
+      }),
     ),
     http.get(
       `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
-      () => HttpResponse.json(positionMetadata(5)),
+      () =>
+        HttpResponse.json({
+          ...positionMetadata(5),
+          provider_links: [
+            { provider_code: "musicbrainz", provider_key: "exact-position" },
+          ],
+        }),
     ),
     http.patch(
       `*/api/library/recordings/${recordingId}/metadata`,
@@ -295,6 +306,18 @@ it("saves recording and position title overrides through their own scopes", asyn
     expect(recordingEdit).toBeEnabled();
     expect(positionEdit).toBeEnabled();
   });
+  const recordingLinks = openGroup(recording, "Связи с провайдером").closest(
+    "details",
+  );
+  const positionLinks = openGroup(position, "Связи с провайдером").closest(
+    "details",
+  );
+  if (!recordingLinks || !positionLinks)
+    throw new Error("Missing scoped provider links");
+  expect(within(recordingLinks).getByText("exact-recording")).toBeVisible();
+  expect(within(positionLinks).getByText("exact-position")).toBeVisible();
+  expect(within(recordingLinks).queryByText("exact-position")).toBeNull();
+  expect(within(positionLinks).queryByText("exact-recording")).toBeNull();
   openGroup(position, "Названия");
   openGroup(position, "Сведения о записи");
   expect(within(position).getByText("D♭ minor")).toBeInTheDocument();

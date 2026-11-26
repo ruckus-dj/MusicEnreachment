@@ -531,20 +531,12 @@ function LibraryScopedMetadataEditorSession({
         cache: "no-store",
         signal: controller.signal,
       };
-      const read =
+      const response =
         scope === "release"
-          ? { release: await getLibraryReleaseMetadata(ownerId, options) }
-          : {
-              other:
-                scope === "recording"
-                  ? await getLibraryRecordingMetadata(ownerId, options)
-                  : await getLibraryPositionMetadata(
-                      releaseId,
-                      ownerId,
-                      options,
-                    ),
-            };
-      const response = read.release ?? read.other;
+          ? await getLibraryReleaseMetadata(ownerId, options)
+          : scope === "recording"
+            ? await getLibraryRecordingMetadata(ownerId, options)
+            : await getLibraryPositionMetadata(releaseId, ownerId, options);
       if (controller.signal.aborted || generation !== readGeneration.current)
         return;
       if (response.status !== 200) throw apiResponseError(response);
@@ -568,11 +560,7 @@ function LibraryScopedMetadataEditorSession({
       setMetadata(response.data);
       setSaved(next);
       setProviderGenreBaseline(response.data.provider_genre_baseline);
-      setProviderLinks(
-        read.release?.status === 200
-          ? (read.release.data.provider_links ?? [])
-          : [],
-      );
+      setProviderLinks(response.data.provider_links ?? []);
       setSavedArtistCredit(creditDisplay.draft);
       setArtistCreditBaseline(creditDisplay.baseline);
       setEffectiveArtistCredit({
@@ -1356,6 +1344,17 @@ function LibraryScopedMetadataEditorSession({
   // this editor is not on the active surface.
   if (!visible) return null;
 
+  const providerLinkViews = providerLinks.map(
+    ({ provider_code, provider_key }) => ({
+      provider:
+        provider_code === "musicbrainz"
+          ? "MusicBrainz"
+          : provider_code === "local"
+            ? "Local"
+            : provider_code,
+      id: provider_key,
+    }),
+  );
   const editorView: MetadataEditorViewProps = {
     locale,
     labels: editorLabels,
@@ -1419,6 +1418,7 @@ function LibraryScopedMetadataEditorSession({
     },
     providerGenreBaseline:
       scope === "release" ? (providerGenreBaseline ?? null) : undefined,
+    providerLinks: scope !== "release" ? providerLinkViews : undefined,
     artistCredits: {
       label: text.groups.artistCredits,
       content: (
@@ -1462,17 +1462,7 @@ function LibraryScopedMetadataEditorSession({
       <ReleaseMetadataEditorDataBinder
         model={{
           editor: editorView,
-          providerLinks: providerLinks.map(
-            ({ provider_code, provider_key }) => ({
-              provider:
-                provider_code === "musicbrainz"
-                  ? "MusicBrainz"
-                  : provider_code === "local"
-                    ? "Local"
-                    : provider_code,
-              id: provider_key,
-            }),
-          ),
+          providerLinks: providerLinkViews,
         }}
       >
         {children}

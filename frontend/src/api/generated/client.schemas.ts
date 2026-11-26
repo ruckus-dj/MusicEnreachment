@@ -941,6 +941,21 @@ export interface LibraryMetadataResponse {
   revision: number;
 }
 
+export interface LibraryPositionMetadataGetResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  artist_credit_baseline: LibraryMetadataArtistCredit[] | null;
+  effective_artist_credit?: EffectiveArtistCredit;
+  effective_key?: ResolvedField;
+  envelope: Envelope;
+  provider_genre_baseline?: ProviderGenreBaseline;
+  provider_links: LibraryProviderLinkResponse[];
+  provider_release_identifier_baseline?: ProviderReleaseIdentifierBaseline;
+  publication_applied: boolean;
+  revision: number;
+}
+
 export interface PublicationAudioResponse {
   alac_capabilities_verified: boolean;
   bit_depth?: number;
@@ -1148,6 +1163,21 @@ export interface LibraryPublicationSelectionPreviewResponse {
   readonly $schema?: string;
   items: LibraryPublicationSelectionPreviewItemResponse[];
   mode: string;
+}
+
+export interface LibraryRecordingMetadataGetResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  artist_credit_baseline: LibraryMetadataArtistCredit[] | null;
+  effective_artist_credit?: EffectiveArtistCredit;
+  effective_key?: ResolvedField;
+  envelope: Envelope;
+  provider_genre_baseline?: ProviderGenreBaseline;
+  provider_links: LibraryProviderLinkResponse[];
+  provider_release_identifier_baseline?: ProviderReleaseIdentifierBaseline;
+  publication_applied: boolean;
+  revision: number;
 }
 
 export interface LibraryReleaseOptionCredit {

@@ -4,6 +4,8 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -83,6 +85,108 @@ func TestReadMetadataDisplayProviderGenreScopesPostgreSQL(t *testing.T) {
 	}
 	if len(releaseDisplay.ProviderReleaseLinks) != 1 || releaseDisplay.ProviderReleaseLinks[0].ProviderCode != "musicbrainz" || releaseDisplay.ProviderReleaseLinks[0].ProviderKey != fixture.releaseKey || releaseDisplay.ProviderReleaseLinks[0].Method != "manual" {
 		t.Fatalf("release provider links = %+v, want the stored manual musicbrainz binding", releaseDisplay.ProviderReleaseLinks)
+	}
+	recordingKey := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	recordingDisplay, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopeRecording, fixture.release, recording)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recordingDisplay.ProviderRecordingLinks) != 1 || recordingDisplay.ProviderRecordingLinks[0].ProviderCode != "musicbrainz" ||
+		recordingDisplay.ProviderRecordingLinks[0].ProviderKey != recordingKey || recordingDisplay.ProviderRecordingLinks[0].Method != "manual" {
+		t.Fatalf("recording provider links = %+v, want the exact manual musicbrainz recording binding", recordingDisplay.ProviderRecordingLinks)
+	}
+	if len(recordingDisplay.ProviderReleaseLinks) != 0 || len(recordingDisplay.ProviderPositionLinks) != 0 {
+		t.Fatalf("recording scope leaked other provider links: %+v %+v", recordingDisplay.ProviderReleaseLinks, recordingDisplay.ProviderPositionLinks)
+	}
+
+	nativeTrackKey := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	var trackID uuid.UUID
+	var trackMedium, trackPosition, trackAuthority int
+	var trackFetchOrder int64
+	if err := fixture.f.db.NewRaw(`SELECT track.track_id,track.medium,track.position,track.authority,track.fetch_order
+		FROM provider_source_release_track track
+		JOIN provider_local_track binding ON binding.provider_id=track.provider_id AND binding.provider_track_id=track.track_id
+		JOIN release_track position ON position.track_id=binding.local_track_id
+		WHERE track.provider_source_id=? AND position.id=? AND track.present`, fixture.source.ID, fixture.position).Scan(ctx, &trackID, &trackMedium, &trackPosition, &trackAuthority, &trackFetchOrder); err != nil {
+		t.Fatal(err)
+	}
+	if trackID.String() == nativeTrackKey || uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:track:"+nativeTrackKey)) != trackID {
+		t.Fatalf("accepted native track %q does not derive internal track %s", nativeTrackKey, trackID)
+	}
+	seedPositionMediaEvidence(t, ctx, fixture, nativeTrackKey, recordingKey, trackMedium, trackPosition, trackAuthority, trackFetchOrder)
+	positionDisplay, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopePosition, fixture.release, fixture.position)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positionDisplay.ProviderPositionLinks) != 1 || positionDisplay.ProviderPositionLinks[0].ProviderCode != "musicbrainz" ||
+		positionDisplay.ProviderPositionLinks[0].ProviderKey != nativeTrackKey || positionDisplay.ProviderPositionLinks[0].Method != "manual" {
+		t.Fatalf("position provider links = %+v, want the accepted native track key", positionDisplay.ProviderPositionLinks)
+	}
+	if positionDisplay.ProviderPositionLinks[0].ProviderKey == trackID.String() {
+		t.Fatal("position provider link exposed the internal SHA1-derived provider track id")
+	}
+	if len(positionDisplay.ProviderReleaseLinks) != 0 || len(positionDisplay.ProviderRecordingLinks) != 0 {
+		t.Fatalf("position scope leaked other provider links: %+v %+v", positionDisplay.ProviderReleaseLinks, positionDisplay.ProviderRecordingLinks)
+	}
+
+	// Missing media evidence and a conflicting native track MBID both yield no
+	// position key while the accepted normalized/__tracks evidence stays intact.
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET field_evidence=field_evidence-'media' WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopePosition, fixture.release, fixture.position)
+	if err != nil || len(missing.ProviderPositionLinks) != 0 {
+		t.Fatalf("position without media evidence = %+v, err=%v", missing.ProviderPositionLinks, err)
+	}
+	seedPositionMediaEvidence(t, ctx, fixture, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", recordingKey, trackMedium, trackPosition, trackAuthority, trackFetchOrder)
+	conflicting, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopePosition, fixture.release, fixture.position)
+	if err != nil || len(conflicting.ProviderPositionLinks) != 0 {
+		t.Fatalf("position with a non-deriving native track = %+v, err=%v", conflicting.ProviderPositionLinks, err)
+	}
+	seedPositionMediaEvidence(t, ctx, fixture, nativeTrackKey, recordingKey, trackMedium, trackPosition, trackAuthority, trackFetchOrder)
+	// A different internal track claiming the same normalized slot is ambiguous.
+	var fieldsText string
+	if err := fixture.f.db.NewRaw(`SELECT fields::text FROM provider_source_entity WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Scan(ctx, &fieldsText); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(fieldsText), &fields); err != nil {
+		t.Fatal(err)
+	}
+	var normalized []json.RawMessage
+	if err := json.Unmarshal(fields["normalized_tracks"], &normalized); err != nil {
+		t.Fatal(err)
+	}
+	originalNormalized := append([]json.RawMessage(nil), normalized...)
+	var sameSlot map[string]json.RawMessage
+	if err := json.Unmarshal(normalized[0], &sameSlot); err != nil {
+		t.Fatal(err)
+	}
+	sameSlot["id"], err = json.Marshal(uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTrack, err := json.Marshal(sameSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicated, err := json.Marshal(append(normalized, otherTrack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{normalized_tracks}',?::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, string(duplicated), fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopePosition, fixture.release, fixture.position)
+	if err != nil || len(ambiguous.ProviderPositionLinks) != 0 {
+		t.Fatalf("position with duplicate normalized tracks = %+v, err=%v", ambiguous.ProviderPositionLinks, err)
+	}
+	restored, err := json.Marshal(originalNormalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{normalized_tracks}',?::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, string(restored), fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+		t.Fatal(err)
 	}
 	for _, malformedEvidence := range []string{`null`, `{}`, `{"authority":4}`, `{"authority":4,"fetch_order":null}`, `{"authority":-1,"fetch_order":11}`} {
 		updated, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET field_evidence=jsonb_set(field_evidence,'{asin}',?::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, malformedEvidence, fixture.source.ID, fixture.releaseKey).Exec(ctx)
@@ -223,5 +327,34 @@ func setTestArtistGenreFetchOrder(t *testing.T, ctx context.Context, fixture pen
 	count, err := result.RowsAffected()
 	if err != nil || count != 1 {
 		t.Fatalf("update artist genre evidence for local artist %s affected %d rows, err=%v", artistID, count, err)
+	}
+}
+
+func seedPositionMediaEvidence(t *testing.T, ctx context.Context, fixture pendingGraphFixture, nativeTrackKey, recordingKey string, medium, position, authority int, fetchOrder int64) {
+	t.Helper()
+	media := make([]map[string]any, medium+1)
+	for index := range media {
+		media[index] = map[string]any{"position": index + 1, "tracks": []any{}}
+	}
+	tracks := make([]map[string]any, position+1)
+	for index := range tracks {
+		tracks[index] = map[string]any{}
+	}
+	tracks[position] = map[string]any{
+		"id": nativeTrackKey, "number": "1",
+		"recording": map[string]any{"id": recordingKey, "title": "Track"},
+	}
+	media[medium]["tracks"] = tracks
+	encoded, err := json.Marshal(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := fmt.Sprintf(`{"media":{"authority":%d,"fetch_order":%d}}`, authority, fetchOrder)
+	result, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{media}',?::jsonb,true), field_evidence=field_evidence || ?::jsonb WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, string(encoded), evidence, fixture.source.ID, fixture.releaseKey).Exec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		t.Fatalf("seed position media evidence affected %d rows, err=%v", count, err)
 	}
 }

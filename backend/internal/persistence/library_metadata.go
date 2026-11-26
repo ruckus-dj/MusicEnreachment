@@ -57,6 +57,8 @@ type LibraryMetadataDisplay struct {
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
 	ProviderReleaseLinks              []LibraryCatalogProviderLink
+	ProviderRecordingLinks            []LibraryCatalogProviderLink
+	ProviderPositionLinks             []LibraryCatalogProviderLink
 	ArtistCreditBaseline              []librarymetadata.ArtistCredit
 	EffectiveArtistCredit             *librarymetadata.ResolvedArtistCredits
 }
@@ -163,12 +165,23 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 			return err
 		}
 		result.ProviderGenreBaseline = baseline
-		if scope == librarymetadata.ScopeRelease {
+		switch scope {
+		case librarymetadata.ScopeRelease:
 			result.ProviderReleaseLinks, err = readProviderReleaseLinks(ctx, tx, ownerID)
 			if err != nil {
 				return err
 			}
 			result.ProviderReleaseIdentifierBaseline, err = readProviderReleaseIdentifierBaseline(ctx, tx, ownerID)
+			if err != nil {
+				return err
+			}
+		case librarymetadata.ScopeRecording:
+			result.ProviderRecordingLinks, err = readProviderRecordingLinks(ctx, tx, ownerID)
+			if err != nil {
+				return err
+			}
+		case librarymetadata.ScopePosition:
+			result.ProviderPositionLinks, err = readProviderPositionLinks(ctx, tx, releaseID, ownerID)
 			if err != nil {
 				return err
 			}

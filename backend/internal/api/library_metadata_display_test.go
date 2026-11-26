@@ -144,11 +144,11 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 		{"artist PATCH stays desired only", "patch-library-artist-metadata", http.MethodPatch, "/library/artists/{artist_id}/metadata", desiredRef},
 		{"release GET includes provider links", "get-library-release-metadata", http.MethodGet, "/library/releases/{release_id}/metadata", "#/components/schemas/LibraryReleaseMetadataGetResponse"},
 		{"release PATCH stays desired only", "patch-library-release-metadata", http.MethodPatch, "/library/releases/{release_id}/metadata", desiredRef},
-		{"recording GET includes display baseline", "get-library-recording-metadata", http.MethodGet, "/library/recordings/{recording_id}/metadata", displayRef},
+		{"recording GET includes provider links", "get-library-recording-metadata", http.MethodGet, "/library/recordings/{recording_id}/metadata", "#/components/schemas/LibraryRecordingMetadataGetResponse"},
 		{"recording PATCH stays desired only", "patch-library-recording-metadata", http.MethodPatch, "/library/recordings/{recording_id}/metadata", desiredRef},
 		{"track GET stays desired only", "get-library-track-metadata", http.MethodGet, "/library/tracks/{track_id}/metadata", desiredRef},
 		{"track PATCH stays desired only", "patch-library-track-metadata", http.MethodPatch, "/library/tracks/{track_id}/metadata", desiredRef},
-		{"position GET includes display credits", "get-library-position-metadata", http.MethodGet, "/library/releases/{release_id}/positions/{position_id}/metadata", displayRef},
+		{"position GET includes provider links", "get-library-position-metadata", http.MethodGet, "/library/releases/{release_id}/positions/{position_id}/metadata", "#/components/schemas/LibraryPositionMetadataGetResponse"},
 		{"position PATCH stays desired only", "patch-library-position-metadata", http.MethodPatch, "/library/releases/{release_id}/positions/{position_id}/metadata", desiredRef},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -199,22 +199,38 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 	if _, present := desired.Properties["provider_genre_baseline"]; present {
 		t.Error("desired-only response must not expose provider_genre_baseline")
 	}
-	releaseDisplay := document.component(t, "LibraryReleaseMetadataGetResponse")
-	links := releaseDisplay.property(t, "provider_links")
-	if !releaseDisplay.requires("provider_links") || !links.typeNames(t)["array"] ||
-		links.typeNames(t)["null"] || links.Items == nil || links.Items.Ref != "#/components/schemas/LibraryProviderLinkResponse" {
-		t.Errorf("release provider_links must be a required, non-null array: %#v", links)
+	scopeDisplays := []struct {
+		name   string
+		schema libraryMetadataSpecSchema
+	}{
+		{"release", document.component(t, "LibraryReleaseMetadataGetResponse")},
+		{"recording", document.component(t, "LibraryRecordingMetadataGetResponse")},
+		{"position", document.component(t, "LibraryPositionMetadataGetResponse")},
+	}
+	for _, scopeDisplay := range scopeDisplays {
+		links := scopeDisplay.schema.property(t, "provider_links")
+		if !scopeDisplay.schema.requires("provider_links") || !links.typeNames(t)["array"] ||
+			links.typeNames(t)["null"] || links.Items == nil || links.Items.Ref != "#/components/schemas/LibraryProviderLinkResponse" {
+			t.Errorf("%s provider_links must be a required, non-null array: %#v", scopeDisplay.name, links)
+		}
 	}
 	for _, schema := range []libraryMetadataSpecSchema{display, desired} {
 		if _, present := schema.Properties["provider_links"]; present {
-			t.Error("only the release GET response may expose provider_links")
+			t.Error("only scope-specific GET responses may expose provider_links")
 		}
 	}
 
-	for _, response := range []struct {
+	responses := []struct {
 		name   string
 		schema libraryMetadataSpecSchema
-	}{{"display", display}, {"release display", releaseDisplay}, {"desired", desired}} {
+	}{{"display", display}, {"desired", desired}}
+	for _, scopeDisplay := range scopeDisplays {
+		responses = append(responses, struct {
+			name   string
+			schema libraryMetadataSpecSchema
+		}{scopeDisplay.name + " display", scopeDisplay.schema})
+	}
+	for _, response := range responses {
 		if envelope := response.schema.property(t, "envelope"); envelope.Ref != "#/components/schemas/Envelope" {
 			t.Errorf("%s response envelope = %q, want Envelope reference", response.name, envelope.Ref)
 		}
@@ -357,6 +373,57 @@ func TestLibraryMetadataDisplayReturnsProviderBaselineFields(t *testing.T) {
 				if got.Genres[index] != genres[index] {
 					t.Fatalf("provider genre %d = %#v, want %#v", index, got.Genres[index], genres[index])
 				}
+			}
+		})
+	}
+}
+
+func TestLibraryMetadataDisplayReturnsScopeProviderLinks(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		scope   librarymetadata.Scope
+		owner   uuid.UUID
+		display persistence.LibraryMetadataDisplay
+		wantKey string
+	}{
+		{
+			name:  "recording",
+			scope: librarymetadata.ScopeRecording,
+			owner: uuid.New(),
+			display: persistence.LibraryMetadataDisplay{ProviderRecordingLinks: []persistence.LibraryCatalogProviderLink{
+				{ProviderCode: "musicbrainz", ProviderKey: "recording-provider-key", Method: "manual"},
+			}},
+			wantKey: "recording-provider-key",
+		},
+		{
+			name:  "position",
+			scope: librarymetadata.ScopePosition,
+			owner: uuid.New(),
+			display: persistence.LibraryMetadataDisplay{ProviderPositionLinks: []persistence.LibraryCatalogProviderLink{
+				{ProviderCode: "musicbrainz", ProviderKey: "native-track-mbid", Method: "automatic"},
+			}},
+			wantKey: "native-track-mbid",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := libraryMetadataSeed(test.scope)
+			test.display.Metadata = metadata
+			repository := &libraryMetadataRepositoryFixture{read: metadata, display: &test.display}
+			handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+			response := libraryMetadataRequest(t, handler, http.MethodGet, libraryMetadataDisplayPath(test.scope, test.owner), "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET status = %d: %s", response.Code, response.Body)
+			}
+			var body struct {
+				Revision      int64                         `json:"revision"`
+				ProviderLinks []LibraryProviderLinkResponse `json:"provider_links"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Revision != metadata.Revision || len(body.ProviderLinks) != 1 ||
+				body.ProviderLinks[0].ProviderCode != "musicbrainz" || body.ProviderLinks[0].ProviderKey != test.wantKey {
+				t.Fatalf("%s provider links = %#v", test.name, body)
 			}
 		})
 	}

@@ -124,6 +124,7 @@ export interface MetadataEditorProps {
 	credits?: MetadataCredit[];
 	genres?: Genre[];
 	providerGenreBaseline?: { genres: GenreReference[] } | null;
+	providerLinks?: MetadataEditorViewProps["providerLinks"];
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 	readOnly?: boolean;
@@ -311,6 +312,7 @@ export function useMetadataEditorProvider({
 	credits: initialCredits,
 	genres,
 	providerGenreBaseline,
+	providerLinks,
 	genresLoaded = true,
 	onLoadGenres,
 	readOnly = false,
@@ -1480,6 +1482,7 @@ export function useMetadataEditorProvider({
 		showForeignFieldsNotice: foreignFields.length > 0,
 		basics,
 		providerGenreBaseline,
+		providerLinks,
 		artists: scopedArtistCredit ? undefined : artistsView,
 		artistCredits: scopedArtistCredit
 			? {

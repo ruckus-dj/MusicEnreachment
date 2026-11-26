@@ -62,12 +62,14 @@ import type {
   LibraryMetadataBody,
   LibraryMetadataGetResponse,
   LibraryMetadataResponse,
+  LibraryPositionMetadataGetResponse,
   LibraryPositionPage,
   LibraryPrimaryArtistBody,
   LibraryPrimaryArtistResponse,
   LibraryPublicationResponse,
   LibraryPublicationSelectionPreviewInputBody,
   LibraryPublicationSelectionPreviewResponse,
+  LibraryRecordingMetadataGetResponse,
   LibraryRecordingSearchBody,
   LibraryRecordingSearchResultOutputBody,
   LibraryReleaseCoverApplyInputBody,
@@ -4257,7 +4259,7 @@ export function useGetLibraryRecordingSearch<TData = Awaited<ReturnType<typeof g
 
 
 export type getLibraryRecordingMetadataResponse200 = {
-  data: LibraryMetadataGetResponse
+  data: LibraryRecordingMetadataGetResponse
   status: 200
 }
 
@@ -6252,7 +6254,7 @@ export function usePreviewLibraryPublicationDeletion<TData = Awaited<ReturnType<
 
 
 export type getLibraryPositionMetadataResponse200 = {
-  data: LibraryMetadataGetResponse
+  data: LibraryPositionMetadataGetResponse
   status: 200
 }
 

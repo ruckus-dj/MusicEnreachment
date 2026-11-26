@@ -51,6 +51,8 @@ type LibraryMetadataDisplayResult struct {
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
 	ProviderReleaseLinks              []LibraryCatalogProviderLink
+	ProviderRecordingLinks            []LibraryCatalogProviderLink
+	ProviderPositionLinks             []LibraryCatalogProviderLink
 	ArtistCreditBaseline              []LibraryMetadataArtistCredit
 	EffectiveArtistCredit             *EffectiveArtistCredit
 }
@@ -150,6 +152,14 @@ func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope li
 	result.ProviderReleaseLinks = make([]LibraryCatalogProviderLink, 0, len(display.ProviderReleaseLinks))
 	for _, link := range display.ProviderReleaseLinks {
 		result.ProviderReleaseLinks = append(result.ProviderReleaseLinks, LibraryCatalogProviderLink{ProviderCode: link.ProviderCode, ProviderKey: link.ProviderKey, Method: link.Method})
+	}
+	result.ProviderRecordingLinks = make([]LibraryCatalogProviderLink, 0, len(display.ProviderRecordingLinks))
+	for _, link := range display.ProviderRecordingLinks {
+		result.ProviderRecordingLinks = append(result.ProviderRecordingLinks, LibraryCatalogProviderLink{ProviderCode: link.ProviderCode, ProviderKey: link.ProviderKey, Method: link.Method})
+	}
+	result.ProviderPositionLinks = make([]LibraryCatalogProviderLink, 0, len(display.ProviderPositionLinks))
+	for _, link := range display.ProviderPositionLinks {
+		result.ProviderPositionLinks = append(result.ProviderPositionLinks, LibraryCatalogProviderLink{ProviderCode: link.ProviderCode, ProviderKey: link.ProviderKey, Method: link.Method})
 	}
 	if display.EffectiveArtistCredit != nil {
 		result.EffectiveArtistCredit = &EffectiveArtistCredit{

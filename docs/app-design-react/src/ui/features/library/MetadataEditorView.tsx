@@ -14,6 +14,10 @@ import {
 } from "./MetadataFieldPresentation";
 import { MovementFieldsView } from "./MovementFieldsView";
 import {
+  type MetadataProviderLink,
+  MetadataProviderLinks,
+} from "./metadata/MetadataProviderLinks";
+import {
   ProviderGenreBaselineRow,
   type ProviderGenreBaselineValue,
 } from "./ProviderGenreBaselineRow";
@@ -189,6 +193,7 @@ export type MetadataEditorViewProps = {
   showForeignFieldsNotice: boolean;
   basics?: MetadataEditorBasicsView;
   providerGenreBaseline?: ProviderGenreBaselineValue | null;
+  providerLinks?: readonly MetadataProviderLink[];
   artists?: MetadataEditorArtistsView;
   artistCredits?: { label: string; content: ReactNode };
   roles?: MetadataEditorRolesView;
@@ -273,6 +278,7 @@ export function MetadataEditorView({
   lyrics,
   extras,
   notices,
+  providerLinks,
   error,
 }: MetadataEditorViewProps) {
   return (
@@ -677,6 +683,7 @@ export function MetadataEditorView({
           />
         )}
       </div>
+      <MetadataProviderLinks locale={locale} links={providerLinks} />
       {notices}
       {error && (
         <p role="alert" className="m-0 text-sm text-[var(--error)]">

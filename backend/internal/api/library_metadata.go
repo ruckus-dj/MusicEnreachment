@@ -53,6 +53,20 @@ type libraryReleaseMetadataGetResponse struct {
 type libraryReleaseMetadataGetOutput struct {
 	Body libraryReleaseMetadataGetResponse `json:"body"`
 }
+type libraryRecordingMetadataGetResponse struct {
+	LibraryMetadataGetResponse
+	ProviderLinks []LibraryProviderLinkResponse `json:"provider_links" nullable:"false"`
+}
+type libraryRecordingMetadataGetOutput struct {
+	Body libraryRecordingMetadataGetResponse `json:"body"`
+}
+type libraryPositionMetadataGetResponse struct {
+	LibraryMetadataGetResponse
+	ProviderLinks []LibraryProviderLinkResponse `json:"provider_links" nullable:"false"`
+}
+type libraryPositionMetadataGetOutput struct {
+	Body libraryPositionMetadataGetResponse `json:"body"`
+}
 
 func libraryMetadataGetBody(result service.LibraryMetadataDisplayResult) LibraryMetadataGetResponse {
 	return LibraryMetadataGetResponse{
@@ -230,12 +244,19 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				return register(ctx, s.scope, id, id, &in.Body)
 			})
 		case librarymetadata.ScopeRecording:
-			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataRecordingGetInput) (*libraryMetadataGetOutput, error) {
+			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataRecordingGetInput) (*libraryRecordingMetadataGetOutput, error) {
 				id, e := parse(in.RecordingID)
 				if e != nil {
 					return nil, huma.Error400BadRequest("library recording ID is invalid")
 				}
-				return read(ctx, s.scope, uuid.Nil, id)
+				result, err := readDisplay(ctx, s.scope, uuid.Nil, id)
+				if err != nil {
+					return nil, err
+				}
+				return &libraryRecordingMetadataGetOutput{Body: libraryRecordingMetadataGetResponse{
+					LibraryMetadataGetResponse: libraryMetadataGetBody(result),
+					ProviderLinks:              libraryProviderLinks(result.ProviderRecordingLinks),
+				}}, nil
 			})
 			huma.Register(api, huma.Operation{OperationID: "patch-" + s.operation, Method: http.MethodPatch, Path: s.path, Summary: "Update desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataRecordingInput) (*libraryMetadataOutput, error) {
 				id, e := parse(in.RecordingID)
@@ -260,7 +281,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				return register(ctx, s.scope, uuid.Nil, id, &in.Body)
 			})
 		case librarymetadata.ScopePosition:
-			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionGetInput) (*libraryMetadataGetOutput, error) {
+			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionGetInput) (*libraryPositionMetadataGetOutput, error) {
 				r, e := parse(in.ReleaseID)
 				if e != nil {
 					return nil, huma.Error400BadRequest("library release ID is invalid")
@@ -269,7 +290,14 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				if e != nil {
 					return nil, huma.Error400BadRequest("library position ID is invalid")
 				}
-				return read(ctx, s.scope, r, p)
+				result, err := readDisplay(ctx, s.scope, r, p)
+				if err != nil {
+					return nil, err
+				}
+				return &libraryPositionMetadataGetOutput{Body: libraryPositionMetadataGetResponse{
+					LibraryMetadataGetResponse: libraryMetadataGetBody(result),
+					ProviderLinks:              libraryProviderLinks(result.ProviderPositionLinks),
+				}}, nil
 			})
 			huma.Register(api, huma.Operation{OperationID: "patch-" + s.operation, Method: http.MethodPatch, Path: s.path, Summary: "Update desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionInput) (*libraryMetadataOutput, error) {
 				r, e := parse(in.ReleaseID)

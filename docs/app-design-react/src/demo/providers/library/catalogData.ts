@@ -1,4 +1,5 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
+import type { MetadataProviderLink } from "../../../ui/features/library/metadata/MetadataProviderLinks";
 import {
 	recordingScalarFields,
 	releaseBasicsFields,
@@ -55,6 +56,9 @@ export interface OriginalTrack {
 	artistId: string | null;
 	recordingId?: string | null;
 	providerTrackId?: string | null;
+	/** Native links supplied independently by the exact recording/position owner. */
+	recordingProviderLinks?: readonly MetadataProviderLink[];
+	positionProviderLinks?: readonly MetadataProviderLink[];
 	/** Exact Local catalog position identity bound by the demo fixture adapter. */
 	localProviderTrackId?: string | null;
 	recordingTitle?: string;
