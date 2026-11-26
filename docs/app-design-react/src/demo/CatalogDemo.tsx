@@ -22,7 +22,6 @@ import {
 } from "../ui/features/library/libraryDetailRoute";
 import { libraryReleaseMessage } from "../ui/features/library/libraryReleaseMessages";
 import { matchingMessage } from "../ui/features/matching/matchingWorkspaceMessages";
-import { ScreenFeedbackView } from "../ui/shell/ScreenFeedbackView";
 import { ShellStartupContent } from "../ui/shell/ShellStartupContent";
 import { ShellHomeView } from "../ui/shell/ShellStartupView";
 import { useShellPageEffects } from "../ui/shell/useShellPageEffects";
@@ -681,15 +680,6 @@ export function CatalogDemo({
 			onClose={() => setSelectionPreview(null)}
 		/>
 	);
-	if (!routeName || routeName === "/")
-		return (
-			<ShellHomeView
-				locale={locale}
-				sources={{ kind: "ready", count: sourceRoots.length }}
-				sourcesHref={sourcesHref}
-				onOpenIncoming={openIncomingFromHome}
-			/>
-		);
 	if (artistAddress) {
 		const artistId = artistAddress.artistId;
 		return (
@@ -1225,12 +1215,13 @@ export function CatalogDemo({
 				}}
 			/>
 		);
-	if (route && routeName !== "/library")
+	if (routeName !== "/library")
 		return (
-			<ScreenFeedbackView
-				title={msg("screenNotMoved")}
-				message={msg("routeNotMoved", { route })}
-				link={{ href: libraryRootHref(), label: msg("goToReactLibrary") }}
+			<ShellHomeView
+				locale={locale}
+				sources={{ kind: "ready", count: sourceRoots.length }}
+				sourcesHref={sourcesHref}
+				onOpenIncoming={openIncomingFromHome}
 			/>
 		);
 	const librarySummary = {

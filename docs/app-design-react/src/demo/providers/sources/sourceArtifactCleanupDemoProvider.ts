@@ -65,6 +65,7 @@ export function useSourceArtifactCleanupDemoExecution({
 	const [error, setError] = useState<{ text: string }>();
 	const [completedRuns, setCompletedRuns] = useState(0);
 	const pending = useRef(false);
+	const sequence = useRef(0);
 	const timers = useRef<Set<number>>(new Set());
 	const processingRef = useRef(processing);
 	processingRef.current = processing;
@@ -108,8 +109,11 @@ export function useSourceArtifactCleanupDemoExecution({
 			return;
 		}
 
+		const identity = {
+			id: `cleanup-${++sequence.current}`,
+			createdAt: Date.now(),
+		};
 		pending.current = true;
-		const identity = { id: crypto.randomUUID(), createdAt: Date.now() };
 		setError(undefined);
 		setSubmitted(frozen);
 		setResults(undefined);
