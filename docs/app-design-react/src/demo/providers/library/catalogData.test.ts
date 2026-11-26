@@ -29,6 +29,42 @@ it("updates metadata without changing the existing audio codec or source", () =>
 	expect(metadataChanged(release, track)).toBe(true);
 });
 
+it("keeps terminal position credit intent separate from the recording and release", () => {
+	const release = originalReleases.find(({ id }) => id === "north");
+	const fixture = release?.tracks[0];
+	if (!release || !fixture?.artistId)
+		throw new Error("Missing artist credit fixture");
+	const track = {
+		...fixture,
+		positionCreditEvidence: { origin: "recording" as const, available: true },
+		recordingArtistCredit: {
+			state: "value" as const,
+			rows: [
+				{
+					artistId: fixture.artistId,
+					creditName: "Recording credit",
+					joinPhrase: "",
+				},
+			],
+		},
+	};
+	const inherited = desiredTags(release, track);
+	expect(inherited.ARTIST).toEqual(["Recording credit"]);
+	expect(
+		desiredTags(release, {
+			...track,
+			positionCreditEvidence: { origin: "provider_position", rows: [] },
+		}).ARTIST,
+	).toEqual([]);
+	const cleared = desiredTags(release, {
+		...track,
+		positionArtistCredit: { state: "absent" },
+	});
+	expect(cleared.ARTIST).toEqual([]);
+	expect(cleared.ALBUMARTIST).toEqual(inherited.ALBUMARTIST);
+	expect(track.published).toBe(fixture.published);
+});
+
 it("projects inherited, cleared and explicitly empty position titles separately", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	const fixture = release?.tracks[0];

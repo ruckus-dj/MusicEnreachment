@@ -273,6 +273,7 @@ export function useTrackScreenDemoProvider(
 			onOpenChange: setTagComparisonOpen,
 			comparison: (
 				<TagsComparison
+					artists={artists}
 					release={release}
 					track={track}
 					files={files}

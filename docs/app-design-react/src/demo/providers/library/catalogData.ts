@@ -24,6 +24,14 @@ import {
 import type { MetadataScope } from "./metadata/registry";
 import { fieldByKey, navidromeFields } from "./metadata/registry";
 import {
+	creditTagKeys,
+	type PositionCreditEvidence,
+	positionCreditValues,
+	recordingCreditValues,
+	releaseCreditValues,
+	type ScopedArtistCredit,
+} from "./metadata/scopedArtistCredits";
+import {
 	projectCompositionTags,
 	resolvePublicationComposition,
 	type ScopedComposition,
@@ -79,11 +87,14 @@ export interface OriginalTrack {
 	recordingMetadata?: MetadataValues;
 	recordingScalarIntent?: ScopedScalarIntentMap;
 	recordingComposition?: ScopedComposition;
+	recordingArtistCredit?: ScopedArtistCredit;
 	/** Original distinct position title retained while editing the recording. */
 	positionTitleBaseline?: string;
 	/** Explicit scalar tag intent of this position, not its displayed identity. */
 	positionScalarIntent?: ScopedScalarIntentMap;
 	positionComposition?: ScopedComposition;
+	positionArtistCredit?: ScopedArtistCredit;
+	positionCreditEvidence?: PositionCreditEvidence;
 	positionMetadata?: MetadataValues;
 	audioMetadata?: Record<string, MetadataValues>;
 	recordingCredits?: import("./metadata/model").MetadataCredit[];
@@ -128,6 +139,7 @@ export interface OriginalRelease {
 	comparisonOverrides?: MetadataValues;
 	/** Typed local scalar intent; absent keys inherit the provider base. */
 	releaseScalarIntent?: ScopedScalarIntentMap;
+	releaseArtistCredit?: ScopedArtistCredit;
 	/** Explicit accepted identifier evidence, never derived from the provider label. */
 	providerIdentifierBaseline?: { asin?: string; script?: string };
 	metadata?: {
@@ -667,18 +679,7 @@ export function publicationGenreFallback(
 		return release.metadataGenres.map((genre) =>
 			resolveCatalogGenreName(genre),
 		);
-	const artist = artists.find((item) => item.id === track.artistId);
-	const recordingCredits =
-		track.recordingCredits ??
-		(artist
-			? [
-					{
-						artistId: artist.id,
-						creditName: artist.name,
-						joinPhrase: "",
-					},
-				]
-			: []);
+	const recordingCredits = recordingCreditValues(track, artists);
 	const values: string[] = [];
 	const seen = new Set<string>();
 	for (const credit of recordingCredits) {
@@ -702,8 +703,6 @@ export function desiredTags(
 	audioSourceId: string | null = track.sourceId,
 	outputContainer?: string,
 ): Record<string, string[]> {
-	const artist = artists.find((item) => item.id === track.artistId);
-	const albumArtist = artists.find((item) => item.id === release.artistId);
 	const titleOverride = release.comparisonOverrides
 		? Object.hasOwn(release.comparisonOverrides, "album")
 			? release.comparisonOverrides.album
@@ -711,20 +710,12 @@ export function desiredTags(
 		: undefined;
 	const numbering = positionNumberingBaseline(track);
 	const result: Record<string, string[]> = {
-		ARTIST: artist?.name ? [artist.name] : [],
 		ALBUM:
 			titleOverride !== undefined
 				? [...titleOverride]
 				: release.title
 					? [release.title]
 					: [],
-		ALBUMARTIST: release.credits?.length
-			? release.credits
-					.map((credit) => credit.credit || credit.name || "")
-					.filter(Boolean)
-			: albumArtist
-				? [albumArtist.name]
-				: [],
 		DATE: [],
 		TRACKNUMBER: [numbering.track],
 		DISCNUMBER: [numbering.disc],
@@ -743,34 +734,8 @@ export function desiredTags(
 				: [track.recordingId],
 		COMMENT: [],
 	};
-	const recordingCredits =
-		track.recordingCredits ??
-		(artist
-			? [
-					{
-						artistId: artist.id,
-						creditName: artist.name,
-						joinPhrase: "",
-					},
-				]
-			: []);
-	const releaseCredits = release.credits?.length
-		? release.credits
-				.map((credit) => ({
-					artistId: credit.artistId ?? "",
-					creditName: credit.credit || credit.name || "",
-					joinPhrase: credit.joinPhrase ?? "",
-				}))
-				.filter((credit) => credit.creditName)
-		: albumArtist
-			? [
-					{
-						artistId: albumArtist.id,
-						creditName: albumArtist.name,
-						joinPhrase: "",
-					},
-				]
-			: [];
+	const recordingCredits = positionCreditValues(track, artists);
+	const releaseCredits = releaseCreditValues(release, artists);
 	const recordingArtistProjection = projectArtistCreditGroup(
 		recordingCredits,
 		artists,
@@ -806,7 +771,8 @@ export function desiredTags(
 				recordingCredits
 					.map(
 						(credit, index) =>
-							recordingArtistProjection.names[index] + credit.joinPhrase,
+							recordingArtistProjection.names[index] +
+							(credit.joinPhrase ?? ""),
 					)
 					.join(""),
 			]
@@ -836,7 +802,7 @@ export function desiredTags(
 				releaseCredits
 					.map(
 						(credit, index) =>
-							releaseArtistProjection.names[index] + credit.joinPhrase,
+							releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
 					)
 					.join(""),
 			]
@@ -850,7 +816,10 @@ export function desiredTags(
 		releaseSorts.length && releaseSorts.every(Boolean) && !releaseSortCollision
 			? [
 					releaseCredits
-						.map((credit, index) => releaseSorts[index] + credit.joinPhrase)
+						.map(
+							(credit, index) =>
+								releaseSorts[index] + (credit.joinPhrase ?? ""),
+						)
 						.join(""),
 				]
 			: [];
@@ -899,6 +868,23 @@ export function desiredTags(
 	delete explicitValues.genre;
 	// Position title authority is resolved independently from generic tag projection.
 	delete explicitValues.title;
+	if (release.releaseArtistCredit) {
+		for (const key of creditTagKeys("ALBUMARTIST")) {
+			delete releaseTags[key];
+		}
+	}
+	if (
+		track.positionArtistCredit ||
+		(track.positionCreditEvidence &&
+			(track.positionCreditEvidence.origin !== "recording" ||
+				track.recordingArtistCredit))
+	) {
+		for (const tag of creditTagKeys("ARTIST")) {
+			const key = tag.toLowerCase();
+			delete recordingValues[key];
+			delete explicitValues[key];
+		}
+	}
 	const projected = {
 		...releaseTags,
 		...projectMetadataValues(recordingValues).tags,
@@ -939,7 +925,8 @@ export function desiredTags(
 				recordingCredits
 					.map(
 						(credit, index) =>
-							recordingArtistProjection.names[index] + credit.joinPhrase,
+							recordingArtistProjection.names[index] +
+							(credit.joinPhrase ?? ""),
 					)
 					.join(""),
 			];
@@ -957,7 +944,7 @@ export function desiredTags(
 				releaseCredits
 					.map(
 						(credit, index) =>
-							releaseArtistProjection.names[index] + credit.joinPhrase,
+							releaseArtistProjection.names[index] + (credit.joinPhrase ?? ""),
 					)
 					.join(""),
 			];
@@ -1004,21 +991,8 @@ export function publicationSortTagCollisions(
 		const artist = artists.find((item) => item.id === artistId);
 		return artist?.sortName || artist?.name || "";
 	};
-	const recordingCredits =
-		track.recordingCredits ??
-		(track.artistId
-			? [{ artistId: track.artistId, creditName: "", joinPhrase: "" }]
-			: []);
-	const releaseCredits = release.credits?.length
-		? release.credits
-				.map((credit) => ({
-					artistId: credit.artistId ?? "",
-					creditName: credit.credit || credit.name || "",
-				}))
-				.filter((credit) => credit.creditName)
-		: release.artistId
-			? [{ artistId: release.artistId }]
-			: [];
+	const recordingCredits = positionCreditValues(track, artists);
+	const releaseCredits = releaseCreditValues(release, artists);
 	const collides = (credits: { artistId: string }[]) =>
 		hasDistinctArtistSortCollision(
 			credits.map(({ artistId }) => ({

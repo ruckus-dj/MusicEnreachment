@@ -841,7 +841,9 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 							...item,
 							tracks: item.tracks.map((candidate) =>
 								(identity && recordingIdentity(candidate) === identity) ||
-								(!identity && candidate.id === track.id)
+								(!identity &&
+									item.id === release.id &&
+									candidate.id === track.id)
 									? updateTrack(candidate)
 									: candidate,
 							),
@@ -850,12 +852,18 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 				},
 				onMutate: (updateTrack) => {
 					setReleases((previous) =>
-						previous.map((item) => ({
-							...item,
-							tracks: item.tracks.map((candidate) =>
-								candidate.id === track.id ? updateTrack(candidate) : candidate,
-							),
-						})),
+						previous.map((item) =>
+							item.id === release.id
+								? {
+										...item,
+										tracks: item.tracks.map((candidate) =>
+											candidate.id === track.id
+												? updateTrack(candidate)
+												: candidate,
+										),
+									}
+								: item,
+						),
 					);
 				},
 				onSource: (id) => {

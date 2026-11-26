@@ -7,6 +7,10 @@ import {
 	publicationSortTagCollisions,
 } from "../library/catalogData";
 import { projectArtistCreditGroup } from "../library/metadata/artistProjection";
+import {
+	positionCreditValues,
+	releaseCreditValues,
+} from "../library/metadata/scopedArtistCredits";
 
 export function publicationArtistNotices(
 	release: OriginalRelease,
@@ -14,38 +18,15 @@ export function publicationArtistNotices(
 	artists: CatalogArtist[],
 	locale: Locale,
 ) {
-	const recordingCredits = track.recordingCredits?.length
-		? track.recordingCredits
-		: track.artistId
-			? [
-					{
-						artistId: track.artistId,
-						creditName:
-							artists.find((artist) => artist.id === track.artistId)?.name ??
-							"",
-					},
-				]
-			: [];
-	const releaseCredits = release.credits?.length
-		? release.credits
-				.map((credit) => ({
-					artistId: credit.artistId ?? "",
-					creditName: credit.credit || credit.name || "",
-				}))
-				.filter((credit) => credit.creditName)
-		: release.artistId
-			? [
-					{
-						artistId: release.artistId,
-						creditName:
-							artists.find((artist) => artist.id === release.artistId)?.name ??
-							"",
-					},
-				]
-			: [];
 	const collisions = publicationSortTagCollisions(release, track, artists);
-	const recording = projectArtistCreditGroup(recordingCredits, artists);
-	const releaseProjection = projectArtistCreditGroup(releaseCredits, artists);
+	const recording = projectArtistCreditGroup(
+		positionCreditValues(track, artists),
+		artists,
+	);
+	const releaseProjection = projectArtistCreditGroup(
+		releaseCreditValues(release, artists),
+		artists,
+	);
 	return [
 		...(collisions.recording
 			? [publicationMessage(locale, "recordingSortCollision")]

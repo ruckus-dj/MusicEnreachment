@@ -5,6 +5,7 @@ import {
 	LibraryPositionTagEvidenceView,
 } from "../../../ui/features/library/LibraryPositionTagEvidenceView";
 import {
+	type CatalogArtist,
 	desiredTags,
 	type OriginalRelease,
 	type OriginalTrack,
@@ -16,6 +17,10 @@ import {
 	type SourceFiles,
 } from "./catalogData";
 import { projectMetadataValues } from "./metadata/projection";
+import {
+	creditTagKeys,
+	scopedCreditComparisonTags,
+} from "./metadata/scopedArtistCredits";
 import { projectCompositionTags } from "./metadata/scopedComposition";
 
 export type TagScope = "artist" | "release" | "track";
@@ -24,12 +29,14 @@ export function TagsComparison({
 	release,
 	track,
 	providers = originalProviders,
+	artists = originalArtists,
 	files,
 	fileId,
 }: {
 	release: OriginalRelease;
 	track: OriginalTrack;
 	providers?: OriginalRelease[];
+	artists?: CatalogArtist[];
 	files: SourceFiles;
 	fileId?: string | null;
 }) {
@@ -87,6 +94,25 @@ export function TagsComparison({
 		}),
 	};
 	const positionTitleOverride = track.positionComparisonOverrides?.title;
+	const trackCredit = track.positionArtistCredit ?? track.recordingArtistCredit;
+	if (trackCredit) {
+		for (const key of creditTagKeys("ARTIST")) delete overrides[key];
+		Object.assign(
+			overrides,
+			scopedCreditComparisonTags(trackCredit, artists, "ARTIST"),
+		);
+	}
+	if (release.releaseArtistCredit) {
+		for (const key of creditTagKeys("ALBUMARTIST")) delete overrides[key];
+		Object.assign(
+			overrides,
+			scopedCreditComparisonTags(
+				release.releaseArtistCredit,
+				artists,
+				"ALBUMARTIST",
+			),
+		);
+	}
 	if (positionTitleOverride) overrides.TITLE = [...positionTitleOverride];
 	return (
 		<LibraryPositionTagEvidenceFrame

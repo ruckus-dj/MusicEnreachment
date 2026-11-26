@@ -21,8 +21,12 @@ import {
 } from "../catalogData";
 import { mergeComparisonOverrides } from "../comparisonOverrides";
 import type { MetadataEditorProps } from "./MetadataEditor";
-import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
+import {
+	releaseCreditBaseline,
+	saveScopedArtistCredit,
+	scopedArtistCreditEditor,
+} from "./scopedArtistCredits";
 
 function releaseValues(release: OriginalRelease): MetadataValues {
 	const values: MetadataValues = Object.fromEntries(
@@ -45,36 +49,6 @@ function releaseValues(release: OriginalRelease): MetadataValues {
 						: [];
 	}
 	return values;
-}
-
-function releaseCredits(
-	release: OriginalRelease,
-	values: MetadataValues,
-	artists: CatalogArtist[],
-): MetadataCredit[] {
-	if (release.credits?.length) {
-		return release.credits.map((credit) => ({
-			artistId: credit.artistId ?? "",
-			creditName: credit.credit ?? credit.name ?? "",
-			joinPhrase: credit.joinPhrase ?? "",
-		}));
-	}
-	const names = values.albumartist ?? values.albumartists ?? [];
-	const ids = values.musicbrainz_albumartistid ?? [];
-	if (!names.length && !ids.length && release.artistId) {
-		const artist = artists.find((item) => item.id === release.artistId);
-		if (artist)
-			return [{ artistId: artist.id, creditName: artist.name, joinPhrase: "" }];
-	}
-	return Array.from(
-		{ length: Math.max(names.length, ids.length) },
-		(_, index) => ({
-			artistId: "",
-			mbid: ids[index] || undefined,
-			creditName: names[index] ?? "",
-			joinPhrase: "",
-		}),
-	);
 }
 
 export type ReleaseMetadataEditorProps = {
@@ -131,12 +105,13 @@ export function useReleaseMetadataEditorDemoProvider({
 			scope: "release",
 			libraryMetadata: true,
 			values,
-			artists: artists.map(({ id, name, sortName }) => ({
-				id,
-				name,
-				sortName,
-			})),
-			credits: releaseCredits(release, values, artists),
+			scopedArtistCredit: scopedArtistCreditEditor(
+				release.releaseArtistCredit,
+				releaseCreditBaseline(release, artists),
+				artists,
+				"release",
+				releaseText.groups.artistCredits,
+			),
 			genres: release.metadataGenres ?? [],
 			genresLoaded,
 			onLoadGenres,
@@ -211,7 +186,6 @@ export function useReleaseMetadataEditorDemoProvider({
 									: [next[metadataKey]?.[0] ?? ""],
 						};
 				}
-				const credits = details?.credits;
 				const comparisonOverrides = mergeComparisonOverrides(
 					release.comparisonOverrides,
 					values,
@@ -262,17 +236,9 @@ export function useReleaseMetadataEditorDemoProvider({
 					...(details?.genres
 						? { metadataGenres: details.genres as MetadataGenre[] }
 						: {}),
-					...(credits
-						? {
-								credits: credits.map((credit, index) => ({
-									credit: credit.creditName,
-									name: credit.creditName,
-									role: release.credits?.[index]?.role ?? "albumartist",
-									artistId: credit.artistId || null,
-									joinPhrase: credit.joinPhrase,
-								})),
-							}
-						: {}),
+					releaseArtistCredit: details?.scopedArtistCredit
+						? saveScopedArtistCredit(details.scopedArtistCredit)
+						: release.releaseArtistCredit,
 				};
 				return onSave(updated);
 			},

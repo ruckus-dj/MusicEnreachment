@@ -36,6 +36,13 @@ import {
 	metadataExtraFieldLabel,
 	metadataMessage,
 } from "../../../../ui/features/library/metadata/metadataFieldMessages";
+import { ArtistCreditRowsEditorView } from "../../../../ui/features/library/metadata/ArtistCreditRowsEditorView";
+import type {
+	ArtistCreditDraft,
+	ArtistCreditResolutionStatus,
+	ArtistCreditRow,
+	ArtistCreditSearchResult,
+} from "../../../../ui/features/library/metadata/artistCreditDraft";
 import { MetadataEditorNoticesView } from "../../../../ui/features/library/metadata/MetadataEditorNoticesView";
 import {
 	libraryMetadataScalarChoices,
@@ -98,6 +105,8 @@ export type SaveDetails = {
 	genres?: Genre[];
 	extraValues?: Record<string, string>;
 	fieldStates?: Partial<Record<string, MetadataFieldState>>;
+	/** Changed scoped artist-credit override; omitted when it stays untouched. */
+	scopedArtistCredit?: ArtistCreditDraft;
 };
 
 export interface MetadataEditorProps {
@@ -144,6 +153,17 @@ export interface MetadataEditorProps {
 		absent: string;
 		explicitEmpty: string;
 		emptyValue: string;
+	};
+	/** Local scoped artist-credit editor: saved draft, view facts and local search. */
+	scopedArtistCredit?: {
+		label: string;
+		saved: ArtistCreditDraft;
+		baseline: readonly ArtistCreditRow[];
+		effective: {
+			status: ArtistCreditResolutionStatus;
+			origin: string | null;
+		};
+		search: (query: string) => readonly ArtistCreditSearchResult[];
 	};
 }
 
@@ -218,6 +238,39 @@ function move<T>(items: T[], index: number, delta: number): T[] {
 	return next;
 }
 
+function artistCreditRowsEqual(
+	left: readonly ArtistCreditRow[],
+	right: readonly ArtistCreditRow[],
+) {
+	return (
+		left.length === right.length &&
+		left.every((row, index) => {
+			const other = right[index];
+			return (
+				row.id === other.id &&
+				row.credit_name === other.credit_name &&
+				row.join_phrase === other.join_phrase &&
+				row.role === other.role
+			);
+		})
+	);
+}
+
+/** Change detection follows the persisted shape, not derived view identity. */
+export function artistCreditDraftChanged(
+	draft: ArtistCreditDraft,
+	saved: ArtistCreditDraft,
+) {
+	return (
+		draft.hasDesiredOverride !== saved.hasDesiredOverride ||
+		draft.state !== saved.state ||
+		!artistCreditRowsEqual(
+			draft.state === "value" ? draft.rows : [],
+			saved.state === "value" ? saved.rows : [],
+		)
+	);
+}
+
 function creditRows(
 	credits: MetadataCredit[],
 	artists: ArtistOption[],
@@ -271,6 +324,7 @@ export function useMetadataEditorProvider({
 	fieldBaselines,
 	fields: suppliedFields,
 	fieldStateDisplay,
+	scopedArtistCredit,
 }: MetadataEditorProps): MetadataEditorViewProps {
 	const { locale } = useI18n();
 	const m = (key: MetadataMessageKey) => metadataMessage(locale, key);
@@ -307,6 +361,14 @@ export function useMetadataEditorProvider({
 	>({});
 	const [dirty, setDirty] = useState<Set<string>>(new Set());
 	const [draftCredits, setDraftCredits] = useState<MetadataCredit[]>([]);
+	const [scopedCreditDraft, setScopedCreditDraft] =
+		useState<ArtistCreditDraft>();
+	const [artistSearchQuery, setArtistSearchQuery] = useState("");
+	const creditChanged = Boolean(
+		scopedCreditDraft &&
+			scopedArtistCredit &&
+			artistCreditDraftChanged(scopedCreditDraft, scopedArtistCredit.saved),
+	);
 	const [draftCreditKeys, setDraftCreditKeys] = useState<string[]>();
 	const nextCreditKey = useRef(0);
 	const [draftGenres, setDraftGenres] = useState<Genre[]>([]);
@@ -497,6 +559,8 @@ export function useMetadataEditorProvider({
 		setContributorDrafts({});
 		contributorBaseline.current = values;
 		setDraft({ ...values });
+		setScopedCreditDraft(scopedArtistCredit?.saved);
+		setArtistSearchQuery("");
 		const context = scope === "release" ? "albumartist" : "artist";
 		setDraftCredits(
 			creditsWithMbids(
@@ -664,6 +728,8 @@ export function useMetadataEditorProvider({
 				.map((field) => field.group),
 		);
 		const details: SaveDetails = {};
+		if (creditChanged && scopedCreditDraft)
+			details.scopedArtistCredit = scopedCreditDraft;
 		const creditDirty = [...changedGroups].some(
 			(group) => group === "recording artists" || group === "release artists",
 		);
@@ -1373,7 +1439,8 @@ export function useMetadataEditorProvider({
 		readOnly,
 		editOrSaveDisabled:
 			libraryMetadata && editing
-				? readOnly || (!dirty.size && !dirtyGenres && !dirtyExtras.size)
+				? readOnly ||
+					(!dirty.size && !dirtyGenres && !dirtyExtras.size && !creditChanged)
 				: readOnly,
 		hideActions,
 		editorRef,
@@ -1384,7 +1451,35 @@ export function useMetadataEditorProvider({
 		showForeignFieldsNotice: foreignFields.length > 0,
 		basics,
 		providerGenreBaseline,
-		artists: artistsView,
+		artists: scopedArtistCredit ? undefined : artistsView,
+		artistCredits: scopedArtistCredit
+			? {
+					label: scopedArtistCredit.label,
+					content: (
+						<ArtistCreditRowsEditorView
+							locale={locale}
+							draft={
+								editing && scopedCreditDraft
+									? scopedCreditDraft
+									: scopedArtistCredit.saved
+							}
+							savedHasDesiredOverride={
+								scopedArtistCredit.saved.hasDesiredOverride
+							}
+							baseline={scopedArtistCredit.baseline}
+							effective={scopedArtistCredit.effective}
+							searchQuery={editing ? artistSearchQuery : ""}
+							searchResults={
+								editing ? scopedArtistCredit.search(artistSearchQuery) : []
+							}
+							editing={editing}
+							disabled={!editing || saving}
+							onDraftChange={setScopedCreditDraft}
+							onSearchQueryChange={setArtistSearchQuery}
+						/>
+					),
+				}
+			: undefined,
 		roles: rolesView,
 		worksMovement,
 		sections: sectionsView,

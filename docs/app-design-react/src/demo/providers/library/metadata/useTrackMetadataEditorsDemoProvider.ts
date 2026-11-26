@@ -21,8 +21,13 @@ import {
 	libraryRecordingEditorFields,
 } from "./editorLayout";
 import type { MetadataEditorProps } from "./MetadataEditor";
-import type { MetadataCredit } from "./model";
 import type { MetadataValues } from "./projection";
+import {
+	knownArtistCredit,
+	recordingCreditBaseline,
+	saveScopedArtistCredit,
+	scopedArtistCreditEditor,
+} from "./scopedArtistCredits";
 import {
 	compositionDraftValues,
 	compositionKeys,
@@ -43,32 +48,6 @@ function recordingValues(track: OriginalTrack): MetadataValues {
 	}
 	delete values.genre;
 	return values;
-}
-
-function creditsFor(
-	track: OriginalTrack,
-	values: MetadataValues,
-	artists: CatalogArtist[],
-): MetadataCredit[] {
-	if (track.recordingCredits) return track.recordingCredits;
-	const names = values.artist ?? values.artists ?? [];
-	if (!names.length && track.artistId) {
-		const artist = artists.find((candidate) => candidate.id === track.artistId);
-		if (artist)
-			return [
-				{
-					artistId: artist.id,
-					creditName: artist.name,
-					joinPhrase: "",
-				},
-			];
-	}
-	return names.map((creditName, index) => ({
-		artistId: "",
-		mbid: values.musicbrainz_artistid?.[index] || undefined,
-		creditName,
-		joinPhrase: "",
-	}));
 }
 
 export type TrackMetadataEditorsProps = {
@@ -123,6 +102,7 @@ export function useTrackMetadataEditorsDemoProvider({
 		title: [positionTitle.value],
 	};
 	const releaseText = releaseMetadataEditorMessages[locale];
+	const positionArtist = artists.find(({ id }) => id === track.artistId);
 	const recordingKey = track.recordingScalarIntent?.key;
 	const inheritedKey =
 		(recordingKey?.state === "value" && recordingKey.value[0]) ||
@@ -186,12 +166,13 @@ export function useTrackMetadataEditorsDemoProvider({
 			),
 			fieldStateMode,
 			fieldStateDisplay,
-			artists: artists.map(({ id, name, sortName }) => ({
-				id,
-				name,
-				sortName,
-			})),
-			credits: creditsFor(track, recording, artists),
+			scopedArtistCredit: scopedArtistCreditEditor(
+				track.recordingArtistCredit,
+				recordingCreditBaseline(track, artists),
+				artists,
+				"recording",
+				releaseText.groups.artistCredits,
+			),
 			onSave: (values, details) => {
 				const nextIntent: ScopedScalarIntentMap = {
 					...track.recordingScalarIntent,
@@ -248,7 +229,9 @@ export function useTrackMetadataEditorsDemoProvider({
 						),
 						recordingMetadata: nextMetadata,
 						recordingComparisonOverrides: comparison,
-						...(details?.credits ? { recordingCredits: details.credits } : {}),
+						recordingArtistCredit: details?.scopedArtistCredit
+							? saveScopedArtistCredit(details.scopedArtistCredit)
+							: current.recordingArtistCredit,
 					};
 					if (details?.fieldStates?.title) {
 						if (positionTitle.state === "absent")
@@ -270,6 +253,16 @@ export function useTrackMetadataEditorsDemoProvider({
 			libraryMetadata: true,
 			values: position,
 			fields: libraryPositionEditorFields,
+			scopedArtistCredit: scopedArtistCreditEditor(
+				track.positionArtistCredit,
+				track.positionCreditEvidence && "rows" in track.positionCreditEvidence
+					? track.positionCreditEvidence.rows
+					: knownArtistCredit(positionArtist),
+				artists,
+				"position",
+				releaseText.groups.artistCredits,
+				track.positionCreditEvidence,
+			),
 			fieldStates: {
 				title: positionTitle.state,
 				...compositionStates(track.positionComposition),
@@ -341,6 +334,9 @@ export function useTrackMetadataEditorsDemoProvider({
 						...current,
 						positionMetadata,
 						positionScalarIntent,
+						positionArtistCredit: details?.scopedArtistCredit
+							? saveScopedArtistCredit(details.scopedArtistCredit)
+							: current.positionArtistCredit,
 						positionComposition: updateComposition(
 							current.positionComposition,
 							values,

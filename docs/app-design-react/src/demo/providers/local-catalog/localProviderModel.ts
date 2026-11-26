@@ -159,6 +159,10 @@ export function localProviderReleases(
 								? null
 								: Number(duration) / 1000,
 						artistId: recording?.artistIds?.[0] ?? artistId,
+						positionCreditEvidence: {
+							origin: "recording" as const,
+							available: Boolean(recording),
+						},
 						recordingMetadata: structuredClone(recording?.metadataValues ?? {}),
 						recordingCredits: structuredClone(
 							recording?.credits ??
