@@ -36,6 +36,7 @@ import type { CatalogArtist } from "../library/catalogData";
 import { formatUiNotice, type UiNotice } from "../notices/uiNotice";
 import { MatchingReceiptPublicationView } from "./MatchingReceiptPublicationView";
 import { MatchingReleasePreparation } from "./MatchingReleasePreparation";
+import type { MatchingReceiptPublicationQueuePort } from "./matchingReceiptPublicationQueue";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
 import { saveMatchingLinks } from "./matchingLinks";
 
@@ -55,6 +56,8 @@ export type MatchingScreenProps = {
 	localReleaseId?: string;
 	onSelectProviderRelease?: (releaseId?: string) => void;
 	onSelectLocalRelease?: (localReleaseId: string) => void;
+	/** Shared publication scheduler owned above this route. */
+	publication?: MatchingReceiptPublicationQueuePort;
 	/** Hide the matching surface without unmounting its drafts and search state. */
 	hidden?: boolean;
 };
@@ -96,6 +99,7 @@ export function useMatchingScreenDemoProvider({
 	localReleaseId,
 	onSelectProviderRelease,
 	onSelectLocalRelease,
+	publication,
 	hidden = false,
 }: MatchingScreenProps): MatchingScreenViewModel {
 	const [localState, setLocalState] = useState(createIncomingState);
@@ -262,7 +266,7 @@ export function useMatchingScreenDemoProvider({
 							artists={artists}
 							savedReceipts={state.receipts}
 							destination={destination}
-							onReleases={setReleases}
+							publication={publication}
 						>
 							{children}
 						</MatchingReceiptPublicationView>

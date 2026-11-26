@@ -9,6 +9,7 @@ import type {
 import type { CatalogArtist } from "../library/catalogData";
 import type { PublicationDestination } from "../publication/publicationOutput";
 import { useMatchingReceiptPublication } from "./matchingReceiptPublicationController";
+import type { MatchingReceiptPublicationQueuePort } from "./matchingReceiptPublicationQueue";
 import { buildMatchingReceiptPublicationReady } from "./matchingReceiptPublicationReady";
 
 export type MatchingReceiptPublicationViewProps = {
@@ -19,15 +20,17 @@ export type MatchingReceiptPublicationViewProps = {
 	artists: readonly CatalogArtist[];
 	savedReceipts: readonly MatchingLinkReceipt[];
 	destination?: PublicationDestination;
-	onReleases: (releases: IncomingReleases) => void;
+	/** Shared publication scheduler owned by the host above the route. */
+	publication?: MatchingReceiptPublicationQueuePort;
 };
 
 /**
  * Saved-result publication provider boundary.
  *
  * Mounts the per-receipt controller and binds only render-ready values into
- * the portable outlet frame. The controller is mounted with this binder, so
- * the host keeps it alive only while the publication surface is open.
+ * the portable outlet frame. The controller may remount across routes; the
+ * host-owned confirmation batch and scheduler state keep pending work and its
+ * terminal outcome visible.
  */
 export function MatchingReceiptPublicationView({
 	locale,
@@ -37,7 +40,7 @@ export function MatchingReceiptPublicationView({
 	artists,
 	savedReceipts,
 	destination,
-	onReleases,
+	publication,
 	children,
 }: MatchingReceiptPublicationViewProps & { children: ReactNode }) {
 	const controller = useMatchingReceiptPublication({
@@ -47,7 +50,7 @@ export function MatchingReceiptPublicationView({
 		artists,
 		savedReceipts,
 		destination,
-		onReleases,
+		publication,
 	});
 	const model = buildMatchingReceiptPublicationReady({
 		locale,

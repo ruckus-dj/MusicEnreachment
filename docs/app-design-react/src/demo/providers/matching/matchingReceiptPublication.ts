@@ -16,6 +16,9 @@ import {
 	originalArtists,
 	type SourceFile,
 } from "../library/catalogData";
+import { demoPathInside } from "../sources/demoPathValidation";
+import { retainedCurrentUnavailable } from "../publication/contextualPublicationJob";
+import { publicationPathOwned } from "../publication/libraryPublicationDemo";
 import { compareDemoAudioUpgrade } from "../publication/audioUpgradeQuality";
 import {
 	choosePublicationOutput,
@@ -303,6 +306,7 @@ function publicationDigest(
 	positions: readonly MatchingLinkReceiptPosition[],
 	destination: PublicationDestination,
 	rows: readonly MatchingReceiptPublicationRow[],
+	files: IncomingFiles,
 ): string {
 	return stableStringify({
 		version: "melo:matching-receipt-publication:prototype:v2",
@@ -328,6 +332,7 @@ function publicationDigest(
 			title: row.title,
 			sourceId: row.sourceId,
 			sourceName: row.sourceName ?? null,
+			source: row.sourceId ? files[row.sourceId] : undefined,
 			current: row.current,
 			target: row.target,
 			action: row.action,
@@ -414,7 +419,10 @@ export function prepareMatchingReceiptPublication(
 					reason = "matchingReceipt.willCreate";
 					target = createTarget(release, track, file, destination, artists);
 				}
-			} else if (!current.path) {
+			} else if (
+				!current.path ||
+				retainedCurrentUnavailable(track.observedFile)
+			) {
 				rowBlockers.push("matchingReceipt.currentPathMissing");
 			} else if (current.sourceId === sourceId) {
 				action = "unchanged";
@@ -451,7 +459,15 @@ export function prepareMatchingReceiptPublication(
 					}
 				}
 			}
-			if (target && !target.path)
+			if (
+				target &&
+				(!demoPathInside(destination.outputDirectory, target.path) ||
+					publicationPathOwned(
+						{ releases },
+						{ release_id: receipt.releaseId, position_id: trackId },
+						target.path,
+					))
+			)
 				rowBlockers.push("matchingReceipt.outputPathMissing");
 		}
 
@@ -495,7 +511,7 @@ export function prepareMatchingReceiptPublication(
 		changed,
 		canApply:
 			changed > 0 && !blockers.some((code) => receiptBlockerCodes.has(code)),
-		digest: publicationDigest(receipt, positions, destination, rows),
+		digest: publicationDigest(receipt, positions, destination, rows, files),
 	};
 }
 

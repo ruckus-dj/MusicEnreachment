@@ -63,6 +63,7 @@ function MatchingScreenController({
 		artists: list.artists,
 		releases: list.releases,
 		onReleases: list.onReleases,
+		publication: list.publication,
 		groupId: selector.groupId,
 		releaseId: selector.releaseId,
 		localReleaseId: selector.localReleaseId,

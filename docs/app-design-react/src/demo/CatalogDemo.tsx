@@ -119,6 +119,16 @@ import {
 	useOperationsDemoProvider,
 } from "./providers/operations/useOperationsDemoProvider";
 import {
+	type MatchingReceiptPublicationBatch,
+	type MatchingReceiptPublicationBatchEntry,
+	type MatchingReceiptPublicationJobPlan,
+	type MatchingReceiptPublicationQueuePort,
+	type MatchingReceiptPublicationSettlement,
+	type MatchingReceiptPublicationSubmission,
+	commitMatchingReceiptPublication,
+	settleMatchingReceiptPublicationJob,
+} from "./providers/matching/matchingReceiptPublicationQueue";
+import {
 	DemoPositionPublication,
 	type DemoPositionPublicationSource,
 } from "./providers/publication/ContextPublicationPreview";
@@ -186,6 +196,7 @@ type PublicationJob = DemoPublicationJob &
 	(
 		| { kind: "aggregate"; plan: DemoPublicationRow }
 		| { kind: "contextual"; plan: ContextualPublicationPreparation }
+		| { kind: "receipt"; plan: MatchingReceiptPublicationJobPlan }
 	);
 
 export function CatalogDemo({
@@ -302,9 +313,20 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 				routeName === "/own-catalog"
 			? routeName
 			: route;
-	const [releases, setReleases] = useState(() =>
+	const [releases, renderReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
+	const releasesRef = useRef(releases);
+	const setReleases = (
+		update:
+			| OriginalRelease[]
+			| ((current: OriginalRelease[]) => OriginalRelease[]),
+	) => {
+		const next =
+			typeof update === "function" ? update(releasesRef.current) : update;
+		releasesRef.current = next;
+		renderReleases(next);
+	};
 	const [releaseCovers, setReleaseCovers] = useState<
 		Record<string, DemoReleaseCoverState>
 	>({});
@@ -438,6 +460,16 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 	}, [route]);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const [publicationJobs, setPublicationJobs] = useState<PublicationJob[]>([]);
+	const [receiptPublicationBatches, setReceiptPublicationBatches] = useState<
+		MatchingReceiptPublicationBatch[]
+	>([]);
+	// Synchronous mirror: two confirmations in one render must see the first
+	// confirmation's jobs before React has published scheduler state.
+	const publicationJobsRef = useRef<PublicationJob[]>([]);
+	const replacePublicationJobs = (next: PublicationJob[]) => {
+		publicationJobsRef.current = next;
+		setPublicationJobs(next);
+	};
 	const publicationCatalog: DemoPublicationCatalog = {
 		releases,
 		files,
@@ -454,22 +486,24 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		return !state || state === "queued" || state === "running";
 	};
 	const addPublicationJobs = (jobs: readonly PublicationJob[]) => {
-		setPublicationJobs((current) => {
-			const next = [...current];
-			for (const job of jobs) {
-				if (
-					next.some(
-						(item) =>
-							item.releaseId === job.releaseId &&
-							item.positionId === job.positionId &&
-							publicationPending(item.id),
-					)
+		const current = publicationJobsRef.current;
+		const next = [...current];
+		const accepted: PublicationJob[] = [];
+		for (const job of jobs) {
+			if (
+				next.some(
+					(item) =>
+						item.releaseId === job.releaseId &&
+						item.positionId === job.positionId &&
+						publicationPending(item.id),
 				)
-					continue;
-				next.push(job);
-			}
-			return next.length === current.length ? current : next;
-		});
+			)
+				continue;
+			next.push(job);
+			accepted.push(job);
+		}
+		if (accepted.length) replacePublicationJobs(next);
+		return accepted;
 	};
 	const queuePublications = (plans: readonly DemoPublicationRow[]) => {
 		const jobs = plans.flatMap((plan) => {
@@ -491,6 +525,94 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		});
 		addPublicationJobs(jobs);
 	};
+	const submitReceiptPublication = (
+		submission: MatchingReceiptPublicationSubmission,
+	) => {
+		if (
+			publicationJobsRef.current.some(
+				(job) =>
+					job.kind === "receipt" &&
+					job.plan.receipt.id === submission.receipt.id &&
+					publicationPending(job.id),
+			)
+		)
+			return;
+		const release = releasesRef.current.find(
+			(item) => item.id === submission.receipt.releaseId,
+		);
+		const jobs: PublicationJob[] = [];
+		const rejected = new Map<string, MatchingReceiptPublicationBatchEntry>();
+		for (const entry of submission.entries) {
+			const track = release?.tracks.find(
+				(item) => String(item.id) === entry.positionId,
+			);
+			const plan = {
+				receipt: submission.receipt,
+				selections: submission.selections,
+				positionId: entry.positionId,
+				preview: entry.preview,
+			};
+			const proof = settleMatchingReceiptPublicationJob(
+				{
+					...publicationCatalog,
+					releases: releasesRef.current,
+					artists: providerArtists,
+					savedReceipts: incoming.receipts,
+				},
+				plan,
+			);
+			if (!proof.applied || !track) {
+				rejected.set(entry.positionId, {
+					trackId: entry.positionId,
+					jobId: null,
+					preview: entry.preview,
+					notice: proof.applied
+						? "matchingReceipt.apply.blocked"
+						: proof.notice,
+				});
+				continue;
+			}
+			jobs.push({
+				kind: "receipt",
+				id: `publication-${crypto.randomUUID()}`,
+				releaseId: submission.receipt.releaseId,
+				positionId: entry.positionId,
+				title: track.title,
+				createdAt: Date.now(),
+				plan,
+			});
+		}
+		const accepted = addPublicationJobs(jobs);
+		const acceptedIds = new Set(accepted.map((job) => job.id));
+		const entries: MatchingReceiptPublicationBatchEntry[] =
+			submission.entries.map(({ positionId, preview }) => {
+				const job = jobs.find(
+					({ positionId: queued }) => queued === positionId,
+				);
+				return (
+					rejected.get(positionId) ??
+					(job && acceptedIds.has(job.id)
+						? { trackId: positionId, jobId: job.id, preview }
+						: {
+								trackId: positionId,
+								jobId: null,
+								preview,
+								notice: "matchingReceipt.apply.blocked",
+							})
+				);
+			});
+		if (!entries.length) return;
+		const batch = {
+			id: `receipt-publication-${crypto.randomUUID()}`,
+			receiptId: submission.receipt.id,
+			entries,
+			results: {},
+		};
+		setReceiptPublicationBatches((current) => [
+			...current.filter((batch) => batch.receiptId !== submission.receipt.id),
+			batch,
+		]);
+	};
 	const [residualDeletions, setResidualDeletions] = useState(
 		() => new Map<DeletionOperation, DeletionOperation>(),
 	);
@@ -498,15 +620,45 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		setDeletions((previous) => [...previous, operation]);
 		window.location.hash = "/operations";
 	};
+	const recordReceiptPublicationResult = (
+		jobId: string,
+		settlement: MatchingReceiptPublicationSettlement,
+	) => {
+		setReceiptPublicationBatches((current) =>
+			current.map((batch) => {
+				const entry = batch.entries.find((item) => item.jobId === jobId);
+				if (!entry) return batch;
+				return {
+					...batch,
+					results: {
+						...batch.results,
+						[entry.trackId]: settlement.applied
+							? { status: "succeeded" as const }
+							: {
+									status: "failed" as const,
+									notice: settlement.notice,
+								},
+					},
+				};
+			}),
+		);
+	};
 	const operationsProvider = useOperationsDemoProvider({
 		deletions,
 		publicationJobs,
 		settlePublication: (job) => {
-			const queued = publicationJobs.find(({ id }) => id === job.id);
+			const queued = publicationJobsRef.current.find(
+				(item) => item.id === job.id,
+			);
 			if (!queued) return false;
 			if (queued.kind === "contextual") {
 				const result = settleContextualPublication(
-					{ ...publicationCatalog, providers, artists: providerArtists },
+					{
+						...publicationCatalog,
+						releases: releasesRef.current,
+						providers,
+						artists: providerArtists,
+					},
 					queued.plan,
 				);
 				if (!result) return false;
@@ -515,7 +667,28 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 				);
 				return true;
 			}
-			const result = settleDemoPublication(publicationCatalog, queued.plan);
+			if (queued.kind === "receipt") {
+				const settlement = settleMatchingReceiptPublicationJob(
+					{
+						releases: releasesRef.current,
+						files: publicationCatalog.files,
+						artists: providerArtists,
+						destination: publicationCatalog.destination,
+						savedReceipts: incoming.receipts,
+					},
+					queued.plan,
+				);
+				recordReceiptPublicationResult(queued.id, settlement);
+				if (!settlement.applied) return false;
+				setReleases((current) =>
+					commitMatchingReceiptPublication(current, settlement),
+				);
+				return true;
+			}
+			const result = settleDemoPublication(
+				{ ...publicationCatalog, releases: releasesRef.current },
+				queued.plan,
+			);
 			if (!result) return false;
 			setReleases((current) =>
 				current.map((release) =>
@@ -573,9 +746,15 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 			return true;
 		},
 	});
+	const receiptPublicationPort: MatchingReceiptPublicationQueuePort = {
+		batches: receiptPublicationBatches,
+		states: operationsProvider.publicationStates ?? new Map(),
+		submit: submitReceiptPublication,
+	};
 	const completeDeletion = (operation: DeletionOperation) => {
 		const confirmedOperation = residualDeletions.get(operation) ?? operation;
-		const tracks = releases.flatMap((release) => release.tracks);
+		const currentReleases = releasesRef.current;
+		const tracks = currentReleases.flatMap((release) => release.tracks);
 		const selectedTracks = new Set(confirmedOperation.libraryTrackIds);
 		// Fixtures supply observations, not real unlink or database commit results.
 		const paths = Object.fromEntries(
@@ -591,7 +770,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 		);
 		const next = completeManagedLibraryDeletion(
 			confirmedOperation,
-			releases,
+			currentReleases,
 			artists,
 			{
 				paths,
@@ -1183,6 +1362,7 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 						artists: providerArtists,
 						releases,
 						onReleases: setImportedReleases,
+						publication: receiptPublicationPort,
 					}}
 					creation={creation}
 				/>
@@ -1210,7 +1390,8 @@ function useCatalogDemoContent(onIncomingCount?: (count: number) => void) {
 								resetSourceProcessingQueue(previous),
 							);
 							operationsProvider.reset();
-							setPublicationJobs([]);
+							replacePublicationJobs([]);
+							setReceiptPublicationBatches([]);
 							setReleases((previous) =>
 								previous.map((release) => ({
 									...release,

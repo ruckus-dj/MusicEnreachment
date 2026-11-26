@@ -174,6 +174,7 @@ function detailsFor(
 	row: MatchingReceiptPublicationRow,
 	files: IncomingFiles,
 	text: ReceiptPublicationText,
+	options: { admittedOperationID?: string; error?: string } = {},
 ) {
 	const file = row.sourceId ? files[row.sourceId] : undefined;
 	if (row.target) {
@@ -185,12 +186,14 @@ function detailsFor(
 			source: file ? { codec: file.codec, path: file.path } : undefined,
 			coverHash: row.target.coverHash,
 			lyrics: row.target.lyrics,
+			admittedOperationID: options.admittedOperationID,
+			error: options.error,
 		});
 	}
 	const current = row.current;
 	const blocker = noticeText(text, row.blockers[0] ?? row.reason);
 	return {
-		error: "",
+		error: options.error ?? "",
 		loading: false,
 		admittedOperationID: "",
 		admissionUncertain: false,
@@ -248,23 +251,49 @@ export function buildMatchingReceiptPublicationReady({
 		unprocessable: 0,
 		blocked: 0,
 	};
-	const positions: AggregatePositionView[] = controller.rows.map((row) => {
-		const isIncluded = controller.included.has(row.trackId);
-		const disposition = dispositionFor(row, isIncluded);
-		counts[disposition] += 1;
-		return {
-			id: row.trackId,
-			label: rowLabel(row),
-			status: { kind: "disposition", disposition },
-			diagnostic: {
-				kind: "text",
-				text: rowDiagnostic(row, isIncluded, text),
-			},
-		};
-	});
+	const positions: AggregatePositionView[] = receipt.positions.map(
+		(position) => {
+			const trackId = String(position.trackId);
+			const row = controller.rows.find((item) => item.trackId === trackId);
+			const isIncluded = controller.included.has(trackId);
+			const pendingJob = controller.pendingJobs.get(trackId);
+			const failure = controller.failures.get(trackId);
+			const isPrepared = controller.prepared.has(trackId);
+			const disposition: AggregateDisposition = !isIncluded
+				? "skipped"
+				: pendingJob || failure || !row || !isPrepared
+					? "blocked"
+					: dispositionFor(row, true);
+			counts[disposition] += 1;
+			return {
+				id: trackId,
+				label: row
+					? rowLabel(row)
+					: `${position.displayedNumber ?? position.position} · ${position.title}`,
+				status: pendingJob
+					? { kind: "queued" }
+					: !isPrepared && !failure
+						? { kind: "not-prepared" }
+						: { kind: "disposition", disposition },
+				diagnostic: failure
+					? { kind: "text", text: noticeText(text, failure) }
+					: row && isPrepared
+						? { kind: "text", text: rowDiagnostic(row, isIncluded, text) }
+						: undefined,
+			};
+		},
+	);
 	const selectedReceiptPosition = receipt.positions.find(
 		(position) => String(position.trackId) === controller.selectedPositionId,
 	);
+	const selectedTrackId = String(
+		selectedReceiptPosition?.trackId ?? controller.selectedPositionId,
+	);
+	const selectedRow =
+		controller.selectedRow ??
+		controller.rows.find((row) => row.trackId === selectedTrackId);
+	const selectedPendingJob = controller.pendingJobs.get(selectedTrackId);
+	const selectedFailure = controller.failures.get(selectedTrackId);
 	const fileChoice =
 		selectedReceiptPosition && selectedReceiptPosition.sourceIds.length > 1
 			? {
@@ -276,6 +305,7 @@ export function buildMatchingReceiptPublicationReady({
 					selectedId: controller.sourceSelection(
 						String(selectedReceiptPosition.trackId),
 					),
+					disabled: Boolean(selectedPendingJob),
 					onSelect: (sourceId: string | null) =>
 						controller.selectSource(
 							String(selectedReceiptPosition.trackId),
@@ -283,16 +313,36 @@ export function buildMatchingReceiptPublicationReady({
 						),
 				}
 			: undefined;
-	const inspector: AggregateInspectorPresentation = controller.selectedRow
+	const emptyDetails = individualPublicationDetails({
+		current: null,
+		tags: {},
+		coverHash: null,
+		lyrics: null,
+	});
+	const inspector: AggregateInspectorPresentation = selectedReceiptPosition
 		? {
 				kind: "publication",
-				details: detailsFor(controller.selectedRow, files, text),
+				details: selectedRow
+					? detailsFor(selectedRow, files, text, {
+							admittedOperationID: selectedPendingJob,
+							error: selectedFailure
+								? noticeText(text, selectedFailure)
+								: undefined,
+						})
+					: {
+							...emptyDetails,
+							inspection: { ...emptyDetails.inspection, preview: undefined },
+						},
 				fileChoice,
 				fileLabel:
-					!fileChoice && controller.selectedRow.sourceName
+					!fileChoice &&
+					(selectedRow?.sourceName || selectedReceiptPosition.sourceIds[0])
 						? {
 								caption: matchingReceiptFileChoiceLabels(locale).legend,
-								value: controller.selectedRow.sourceName,
+								value:
+									selectedRow?.sourceName ??
+									files[selectedReceiptPosition.sourceIds[0]]?.name ??
+									selectedReceiptPosition.sourceIds[0],
 							}
 						: undefined,
 				onRefresh: controller.refresh,
@@ -303,6 +353,14 @@ export function buildMatchingReceiptPublicationReady({
 			? {
 					attempted: controller.outcome.attempted,
 					published: controller.outcome.published,
+					issues: controller.outcome.rejected.map(({ trackId, notice }) => ({
+						id: trackId,
+						label:
+							positions.find((position) => position.id === trackId)?.label ??
+							trackId,
+						kind: "stale",
+						detail: noticeText(text, notice),
+					})),
 					failures: controller.outcome.failed.map(({ trackId, notice }) => {
 						const row = positions.find((position) => position.id === trackId);
 						const position = receipt.positions.find(
@@ -326,9 +384,9 @@ export function buildMatchingReceiptPublicationReady({
 		positions,
 		included: controller.included,
 		selectedPositionId: controller.selectedPositionId,
-		canPrepare: controller.included.size > 0,
+		canPrepare: controller.canPrepare,
 		canConfirm: controller.canConfirm,
-		preparing: false,
+		preparing: controller.preparing,
 		inspector,
 		outcome,
 		onToggleInclude: controller.toggleInclude,

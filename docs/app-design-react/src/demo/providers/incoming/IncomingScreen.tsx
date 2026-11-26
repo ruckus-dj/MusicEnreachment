@@ -48,6 +48,8 @@ export type IncomingScreenProps = {
 	onState?: (state: IncomingState) => void;
 	onFiles?: (files: IncomingFiles) => void;
 	onReleases?: (releases: IncomingReleases) => void;
+	/** Shared publication scheduler owned above the Incoming workspace. */
+	publication?: import("../matching/matchingReceiptPublicationQueue").MatchingReceiptPublicationQueuePort;
 };
 
 export function useIncomingScreenDemoProvider({

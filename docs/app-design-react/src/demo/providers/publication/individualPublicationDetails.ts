@@ -15,6 +15,8 @@ export function individualPublicationDetails({
 	coverHash,
 	lyrics,
 	downgrade,
+	admittedOperationID = "",
+	error = "",
 }: {
 	workflow?: ContextPublicationPreviewWorkflow;
 	retainedCapability?: "ready" | "unchanged" | "blocked";
@@ -26,6 +28,8 @@ export function individualPublicationDetails({
 	coverHash: string | null;
 	lyrics: string | null;
 	downgrade?: boolean;
+	admittedOperationID?: string;
+	error?: string;
 }): PublicationPreviewDetailsState {
 	const resolvedWorkflow = workflow ?? (current ? "comparison" : "first");
 	const before = current?.tags ?? {};
@@ -44,8 +48,8 @@ export function individualPublicationDetails({
 	const priorLyrics = current?.lyrics ?? null;
 	return {
 		loading: false,
-		error: "",
-		admittedOperationID: "",
+		error,
+		admittedOperationID,
 		admissionUncertain: false,
 		inspection: {
 			workflow: resolvedWorkflow,

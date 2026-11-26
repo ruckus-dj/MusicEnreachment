@@ -10,12 +10,12 @@ import {
 	type PublicationDestination,
 } from "../publication/publicationOutput";
 import {
-	applyMatchingReceiptPublication,
 	type MatchingReceiptPublicationNotice,
 	type MatchingReceiptPublicationPreview,
 	type MatchingReceiptPublicationRow,
 	prepareMatchingReceiptPublication,
 } from "./matchingReceiptPublication";
+import type { MatchingReceiptPublicationQueuePort } from "./matchingReceiptPublicationQueue";
 
 /** One exact receipt position that a scoped apply did not publish. */
 export type MatchingReceiptPublicationFailure = {
@@ -28,14 +28,23 @@ export type MatchingReceiptPublicationOutcome = {
 	attempted: number;
 	published: number;
 	failed: readonly MatchingReceiptPublicationFailure[];
+	rejected: readonly MatchingReceiptPublicationFailure[];
 };
 
 export type MatchingReceiptPublicationController = {
 	rows: readonly MatchingReceiptPublicationRow[];
+	/** Positions with an explicit prepared preview; an empty set is unprepared. */
+	prepared: ReadonlySet<string>;
+	/** Positions with a scheduler job that has not reached a terminal state. */
+	pendingJobs: ReadonlyMap<string, string>;
+	/** Terminal failure notices, keyed by position. */
+	failures: ReadonlyMap<string, MatchingReceiptPublicationNotice>;
 	included: ReadonlySet<string>;
 	selectedPositionId: string;
 	selectedRow: MatchingReceiptPublicationRow | undefined;
+	canPrepare: boolean;
 	canConfirm: boolean;
+	preparing: boolean;
 	outcome: MatchingReceiptPublicationOutcome | null;
 	/** Explicit saved-file choice; `null` means none was made. */
 	sourceSelection: (trackId: string) => string | null;
@@ -76,10 +85,11 @@ function explicitSelections(
 /**
  * Prototype controller for publishing one saved matching result.
  *
- * Saving links never calls this controller. It only prepares a preview and,
- * on explicit confirmation, applies every included position as its own
- * scoped operation. The saved receipt is passed unchanged to the provider so
- * its receipt authority check compares the exact saved positions.
+ * Saving links never calls this controller. It prepares an explicit preview;
+ * a source choice invalidates that position's preview instead of silently
+ * preparing a new confirmation. Confirmation submits the frozen previews and
+ * selections to the shared publication scheduler, so this controller can
+ * unmount and remount without losing pending status or the terminal outcome.
  */
 export function useMatchingReceiptPublication({
 	receipt,
@@ -88,7 +98,7 @@ export function useMatchingReceiptPublication({
 	artists,
 	savedReceipts,
 	destination = fixturePublicationDestination,
-	onReleases,
+	publication,
 }: {
 	receipt: MatchingLinkReceipt;
 	releases: IncomingReleases;
@@ -96,7 +106,7 @@ export function useMatchingReceiptPublication({
 	artists: readonly CatalogArtist[];
 	savedReceipts: readonly MatchingLinkReceipt[];
 	destination?: PublicationDestination;
-	onReleases: (releases: IncomingReleases) => void;
+	publication?: MatchingReceiptPublicationQueuePort;
 }): MatchingReceiptPublicationController {
 	const [included, setIncluded] = useState<ReadonlySet<string>>(
 		() =>
@@ -110,13 +120,10 @@ export function useMatchingReceiptPublication({
 		String(receipt.positions[0]?.trackId ?? ""),
 	);
 	const [chosen, setChosen] = useState<Record<string, string | null>>({});
-	const [outcome, setOutcome] =
-		useState<MatchingReceiptPublicationOutcome | null>(null);
-
-	const prepare = (
+	const prepareFor = (
 		trackId: string,
 		choice: Readonly<Record<string, string | null>>,
-		catalog = releases,
+		catalog: IncomingReleases = releases,
 	) =>
 		prepareMatchingReceiptPublication(
 			receipt,
@@ -127,25 +134,80 @@ export function useMatchingReceiptPublication({
 			[...artists],
 			{ positionId: trackId, savedReceipts },
 		);
-	const prepareAll = () =>
+	const prepareAllFor = (
+		choice: Readonly<Record<string, string | null>>,
+		catalog: IncomingReleases = releases,
+	) =>
 		new Map(
 			receipt.positions.map(({ trackId }) => [
-				trackId,
-				prepare(trackId, chosen),
+				String(trackId),
+				prepareFor(String(trackId), choice, catalog),
 			]),
 		);
-	const [prepared, setPrepared] =
-		useState<ReadonlyMap<string, MatchingReceiptPublicationPreview>>(
-			prepareAll,
-		);
-	const rows = [...prepared.values()].flatMap((preview) => preview.rows);
+	const batch = publication?.batches
+		.filter((item) => item.receiptId === receipt.id)
+		.at(-1);
+	const entryStatus = (entry: { jobId: string | null }) =>
+		entry.jobId ? publication?.states.get(entry.jobId) : "failed";
+	const [prepared, setPrepared] = useState<
+		ReadonlyMap<string, MatchingReceiptPublicationPreview>
+	>(() => new Map());
+
+	const pendingJobs = new Map<string, string>();
+	const pendingPreviews = new Map<string, MatchingReceiptPublicationPreview>();
+	const failures = new Map<string, MatchingReceiptPublicationNotice>();
+	const rejected: MatchingReceiptPublicationFailure[] = [];
+	let terminal = Boolean(batch);
+	if (batch)
+		for (const entry of batch.entries) {
+			const state = entryStatus(entry);
+			if (state === "succeeded") continue;
+			if (!entry.jobId) {
+				rejected.push({
+					trackId: entry.trackId,
+					notice: entry.notice ?? "matchingReceipt.apply.blocked",
+				});
+				continue;
+			}
+			if (state === "failed") {
+				failures.set(
+					entry.trackId,
+					entry.notice ??
+						batch.results[entry.trackId]?.notice ??
+						"matchingReceipt.apply.blocked",
+				);
+				continue;
+			}
+			terminal = false;
+			pendingJobs.set(entry.trackId, entry.jobId);
+			pendingPreviews.set(entry.trackId, entry.preview);
+		}
+	const pendingAny = pendingJobs.size > 0;
+	const displayPreviews = new Map([...prepared, ...pendingPreviews]);
+	const rows = [...displayPreviews.values()].flatMap((preview) => preview.rows);
+
+	let outcome: MatchingReceiptPublicationOutcome | null = null;
+	if (batch && terminal) {
+		const failed = [...failures].map(([trackId, notice]) => ({
+			trackId,
+			notice,
+		}));
+		outcome = {
+			attempted: batch.entries.length,
+			published: batch.entries.length - failed.length - rejected.length,
+			failed,
+			rejected,
+		};
+	}
+
 	const ready = [...prepared].filter(
-		([id, preview]) => included.has(id) && preview.canApply,
+		([trackId, preview]) =>
+			included.has(trackId) && preview.canApply && !pendingJobs.has(trackId),
 	);
 	const selectedRow = rows.find((row) => row.trackId === selectedPositionId);
 
 	const toggleInclude = (trackId: string) => {
-		setOutcome(null);
+		if (pendingJobs.has(trackId)) return;
 		setIncluded((current) => {
 			const next = new Set(current);
 			if (next.has(trackId)) next.delete(trackId);
@@ -154,67 +216,57 @@ export function useMatchingReceiptPublication({
 		});
 	};
 	const selectSource = (trackId: string, sourceId: string | null) => {
-		setOutcome(null);
-		const next = { ...chosen, [trackId]: sourceId };
-		setChosen(next);
-		setPrepared(new Map(prepared).set(trackId, prepare(trackId, next)));
+		if (pendingJobs.has(trackId)) return;
+		setChosen((current) => ({ ...current, [trackId]: sourceId }));
+		// A source change invalidates this position's preview; the operator must
+		// prepare it again before it becomes confirmable.
+		setPrepared((current) => {
+			if (!current.has(trackId)) return current;
+			const next = new Map(current);
+			next.delete(trackId);
+			return next;
+		});
 	};
 	const refresh = () => {
-		setOutcome(null);
-		setPrepared(prepareAll());
+		if (pendingAny) return;
+		setPrepared(prepareAllFor(chosen));
 	};
 
 	const confirm = () => {
-		if (!ready.length) return;
-		const next = structuredClone(releases);
-		const nextPrepared = new Map(prepared);
-		const failed: MatchingReceiptPublicationFailure[] = [];
-		let published = 0;
-		for (const [trackId, preview] of ready) {
-			const result = applyMatchingReceiptPublication(
-				preview,
-				receipt,
-				next,
-				files,
-				explicitSelections(receipt, chosen),
-				destination,
-				[...artists],
-				{ positionId: trackId, savedReceipts },
-			);
-			if (result.applied) {
-				published++;
-				nextPrepared.set(trackId, prepare(trackId, chosen, next));
-			} else {
-				const notice =
-					result.reason ??
-					result.results[0]?.notice ??
-					"matchingReceipt.apply.blocked";
-				failed.push({ trackId, notice });
-				nextPrepared.set(trackId, {
-					...preview,
-					canApply: false,
-					rows: preview.rows.map((row) => ({
-						...row,
-						action: "blocked",
-						reason: notice,
-						blockers: [notice],
-					})),
-				});
-			}
-		}
-		if (published) onReleases(next);
-		setPrepared(nextPrepared);
-		setOutcome({ attempted: ready.length, published, failed });
+		if (!publication || pendingAny || !ready.length) return;
+		publication.submit({
+			receipt: structuredClone(receipt),
+			selections: explicitSelections(receipt, chosen),
+			destination: { ...destination },
+			artists: [...artists],
+			entries: ready.map(([positionId, preview]) => ({
+				positionId,
+				preview: structuredClone(preview),
+			})),
+		});
+		setPrepared((current) => {
+			const next = new Map(current);
+			for (const [id] of ready) next.delete(id);
+			return next;
+		});
 	};
 
 	return {
 		rows,
+		prepared: new Set(displayPreviews.keys()),
+		pendingJobs,
+		failures,
 		included,
 		selectedPositionId,
 		selectedRow,
-		canConfirm: ready.length > 0,
+		canPrepare: included.size > 0 && !pendingAny,
+		canConfirm: Boolean(publication) && ready.length > 0 && !pendingAny,
+		preparing: false,
 		outcome,
-		sourceSelection: (trackId) => chosen[trackId] ?? null,
+		sourceSelection: (trackId) =>
+			pendingPreviews.get(trackId)?.rows[0]?.sourceId ??
+			chosen[trackId] ??
+			null,
 		toggleInclude,
 		selectPosition,
 		selectSource,
