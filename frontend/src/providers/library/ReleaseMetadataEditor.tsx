@@ -63,11 +63,13 @@ import {
   libraryMetadataScalarChoices,
   type ReleaseFieldKey,
   recordingBasicsFields,
+  recordingScalarFields,
   releaseAdditionalFields,
   releaseBasicsFields,
   releaseDetailFields,
   releaseMetadataEditorMessages,
   validLibraryMetadataPartialDate,
+  validLibraryMetadataPositiveNumber,
 } from "../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import { ProviderCatalogGenreField } from "../local-release/ProviderCatalogGenreField";
 import {
@@ -143,29 +145,20 @@ const releaseFields: ReleaseField[] = [
   })),
 ];
 
-const titleFields: ReleaseField[] = [
-  { key: "title", kind: "text", group: "main" },
-  { key: "sort_title", kind: "text", group: "main" },
-];
+const scopedScalarFields = recordingScalarFields.map(
+  ({ key, kind, group }) => ({
+    key,
+    kind,
+    group,
+  }),
+);
 
 const recordingFields: ReleaseField[] = [
-  ...titleFields,
+  ...scopedScalarFields.filter(({ group }) => group === "main"),
   { key: "contributors", kind: "contributors", group: "contributors" },
   { key: "works", kind: "works", group: "worksMovement" },
   { key: "movement", kind: "movement", group: "worksMovement" },
-  { key: "recording_date", kind: "date", group: "recording" },
-  { key: "isrc", kind: "list", group: "recording" },
-  { key: "bpm", kind: "number", group: "recording" },
-  { key: "key", kind: "text", group: "recording" },
-  { key: "language", kind: "text", group: "additional" },
-  { key: "content_advisory", kind: "advisory", group: "additional" },
-  { key: "mood", kind: "list", group: "additional" },
-  { key: "grouping", kind: "text", group: "additional" },
-  { key: "comment", kind: "text", group: "additional" },
-  { key: "copyright", kind: "text", group: "additional" },
-  { key: "license", kind: "text", group: "additional" },
-  { key: "website", kind: "text", group: "additional" },
-  { key: "subtitle", kind: "text", group: "additional" },
+  ...scopedScalarFields.filter(({ group }) => group !== "main"),
 ];
 
 const positionFields: ReleaseField[] = [
@@ -318,9 +311,9 @@ function displayValue(
 }
 
 function positiveIntegerDraft(value: string): number | undefined {
-  if (!/^\d+$/.test(value)) return undefined;
-  const number = Number(value);
-  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+  return validLibraryMetadataPositiveNumber("integer", value)
+    ? Number(value)
+    : undefined;
 }
 
 export function ReleaseMetadataEditor({
@@ -704,17 +697,11 @@ function LibraryScopedMetadataEditorSession({
           let wireValue: unknown = field.value;
           if (field.state === "value" && definition) {
             if (definition.kind === "integer" || definition.kind === "number") {
-              const number = Number(field.value);
-              const rawValue = String(field.value);
-              const validNumberSyntax =
-                definition.kind === "integer"
-                  ? /^\d+$/.test(rawValue)
-                  : /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(rawValue);
               if (
-                !validNumberSyntax ||
-                !Number.isFinite(number) ||
-                number <= 0 ||
-                (definition.kind === "integer" && !Number.isSafeInteger(number))
+                !validLibraryMetadataPositiveNumber(
+                  definition.kind,
+                  String(field.value),
+                )
               ) {
                 invalidKey = key;
                 throw new Error(
@@ -723,7 +710,7 @@ function LibraryScopedMetadataEditorSession({
                     : text.invalidPositiveNumber,
                 );
               }
-              wireValue = number;
+              wireValue = Number(field.value);
             } else if (
               definition.kind === "date" &&
               !validLibraryMetadataPartialDate(String(field.value))

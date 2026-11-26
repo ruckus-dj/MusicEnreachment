@@ -2,8 +2,9 @@ import { useI18n } from "../../../../app/i18n/host";
 import { metadataEditorMessages } from "../../../../ui/features/library/metadata/metadataEditorMessages";
 import type { TrackMetadataEditorsViewProps } from "../../../../ui/features/library/metadata/TrackMetadataEditorsView";
 import {
-	recordingBasicsFields,
+	recordingScalarFields,
 	releaseMetadataEditorMessages,
+	releaseScalarFieldHint,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import {
 	type CatalogArtist,
@@ -25,7 +26,7 @@ import type { MetadataValues } from "./projection";
 
 function recordingValues(track: OriginalTrack): MetadataValues {
 	const values = { ...(track.recordingMetadata ?? {}) };
-	for (const { metadataKey, kind } of recordingBasicsFields) {
+	for (const { metadataKey, kind } of recordingScalarFields) {
 		const intent = track.recordingScalarIntent?.[metadataKey];
 		values[metadataKey] =
 			intent?.state === "value"
@@ -131,16 +132,28 @@ export function useTrackMetadataEditorsDemoProvider({
 			fields: libraryRecordingEditorFields,
 			values: recording,
 			fieldStates: Object.fromEntries(
-				recordingBasicsFields.map(({ metadataKey }) => [
+				recordingScalarFields.map(({ metadataKey }) => [
 					metadataKey,
 					track.recordingScalarIntent?.[metadataKey]?.state ?? "absent",
 				]),
 			),
 			fieldLabels: Object.fromEntries(
-				recordingBasicsFields.map(({ key, metadataKey }) => [
+				recordingScalarFields.map(({ key, metadataKey }) => [
 					metadataKey,
 					releaseText.labels[key],
 				]),
+			),
+			fieldKinds: Object.fromEntries(
+				recordingScalarFields.map(({ metadataKey, kind }) => [
+					metadataKey,
+					kind,
+				]),
+			),
+			fieldHints: Object.fromEntries(
+				recordingScalarFields.flatMap((field) => {
+					const hint = releaseScalarFieldHint(locale, field);
+					return hint ? [[field.metadataKey, hint]] : [];
+				}),
 			),
 			fieldStateMode,
 			fieldStateDisplay,
@@ -154,7 +167,7 @@ export function useTrackMetadataEditorsDemoProvider({
 				const nextIntent: ScopedScalarIntentMap = {
 					...track.recordingScalarIntent,
 				};
-				for (const { metadataKey, kind } of recordingBasicsFields) {
+				for (const { metadataKey, kind } of recordingScalarFields) {
 					const state = details?.fieldStates?.[metadataKey];
 					if (!state) continue;
 					if (state === "absent") delete nextIntent[metadataKey];
@@ -166,7 +179,11 @@ export function useTrackMetadataEditorsDemoProvider({
 							value:
 								kind === "list"
 									? [...(values[metadataKey] ?? [])]
-									: [values[metadataKey]?.[0] ?? ""],
+									: [
+											kind === "number"
+												? String(Number(values[metadataKey]?.[0]))
+												: (values[metadataKey]?.[0] ?? ""),
+										],
 						};
 				}
 				const update = (current: OriginalTrack): OriginalTrack => {
@@ -179,7 +196,7 @@ export function useTrackMetadataEditorsDemoProvider({
 						recording,
 						values,
 					);
-					for (const { metadataKey } of recordingBasicsFields) {
+					for (const { metadataKey } of recordingScalarFields) {
 						delete nextMetadata[metadataKey];
 						delete comparison[metadataKey];
 						const raw = current.recordingMetadata?.[metadataKey];

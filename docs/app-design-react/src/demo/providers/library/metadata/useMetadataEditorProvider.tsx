@@ -41,6 +41,7 @@ import {
 	libraryMetadataScalarChoices,
 	releaseMetadataEditorMessages,
 	validLibraryMetadataPartialDate,
+	validLibraryMetadataPositiveNumber,
 } from "../../../../ui/features/library/metadata/releaseMetadataEditorMessages";
 import type { WorkRowDraft } from "../../../../ui/features/library/WorkRowsView";
 import { audioMeasurementKeys } from "./audioMeasurements";
@@ -442,9 +443,11 @@ export function useMetadataEditorProvider({
 			inputMode:
 				libraryScalar && kind === "integer"
 					? "numeric"
-					: field.kind === "date"
-						? "text"
-						: undefined,
+					: libraryScalar && kind === "number"
+						? "decimal"
+						: field.kind === "date"
+							? "text"
+							: undefined,
 			listActions: list ? metadataListActions(locale, fieldLabel) : undefined,
 			onChange: (next) => {
 				const values = Array.isArray(next)
@@ -560,32 +563,22 @@ export function useMetadataEditorProvider({
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
 		const errors = validateMetadataIssues(changedValues, scope);
-		const invalidDateKey = [...dirty].find(
-			(key) =>
-				fieldStates &&
-				Object.hasOwn(fieldStates, key) &&
-				validatesControlledValue(key) &&
-				(fieldKinds?.[key] ?? fieldByKey(key)?.kind) === "date" &&
-				!validLibraryMetadataPartialDate(draft[key]?.[0] ?? ""),
-		);
-		if (invalidDateKey) errors.unshift({ key: invalidDateKey, code: "date" });
-		const invalidInteger =
-			libraryMetadata &&
-			[...dirty].find((key) => {
-				if (
-					!stateControlled(key) ||
-					!validatesControlledValue(key) ||
-					(fieldKinds?.[key] ?? fieldByKey(key)?.kind) !== "integer"
-				)
-					return false;
+		if (libraryMetadata) {
+			for (const key of dirty) {
+				if (!stateControlled(key) || !validatesControlledValue(key)) continue;
+				const kind =
+					fieldKinds?.[key] ?? fields.find((field) => field.key === key)?.kind;
 				const value = draft[key]?.[0] ?? "";
-				const number = Number(value);
-				return (
-					!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number <= 0
-				);
-			});
-		if (invalidInteger)
-			errors.unshift({ key: invalidInteger, code: "integer" });
+				if (
+					(kind === "date" && !validLibraryMetadataPartialDate(value)) ||
+					((kind === "integer" || kind === "number") &&
+						!validLibraryMetadataPositiveNumber(kind, value))
+				) {
+					errors.unshift({ key, code: kind });
+					break;
+				}
+			}
+		}
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
@@ -785,8 +778,11 @@ export function useMetadataEditorProvider({
 	const groupHeading = (group: string) => {
 		if (group === "main")
 			return releaseMetadataEditorMessages[locale].groups.main;
-		if (libraryMetadata && scope === "track" && group === "position")
-			return releaseMetadataEditorMessages[locale].groups.position;
+		if (
+			libraryMetadata &&
+			(group === "position" || group === "recording" || group === "additional")
+		)
+			return releaseMetadataEditorMessages[locale].groups[group];
 		if (scopedRelease && (group === "release" || group === "additional"))
 			return releaseMetadataEditorMessages[locale].groups[group];
 		return metadataGroupLabel(group, locale);
@@ -799,7 +795,9 @@ export function useMetadataEditorProvider({
 							? releaseMetadataEditorMessages[locale].invalidDate
 							: libraryMetadata && issue.code === "integer"
 								? releaseMetadataEditorMessages[locale].invalidPositiveInteger
-								: metadataValidationMessage(issue, locale),
+								: libraryMetadata && issue.code === "number"
+									? releaseMetadataEditorMessages[locale].invalidPositiveNumber
+									: metadataValidationMessage(issue, locale),
 					),
 					...(error.requiredField
 						? [

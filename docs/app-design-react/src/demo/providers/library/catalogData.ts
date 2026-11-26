@@ -1,6 +1,6 @@
 import { libraryPositionHref } from "../../../ui/features/library/libraryDetailRoute";
 import {
-	recordingBasicsFields,
+	recordingScalarFields,
 	releaseBasicsFields,
 	releaseScalarFields,
 } from "../../../ui/features/library/metadata/releaseMetadataEditorMessages";
@@ -329,18 +329,20 @@ export function recordingScalarOverrideTags(
 	purpose: "comparison" | "publication",
 ): MetadataValues {
 	const tags: MetadataValues = {};
-	for (const { metadataKey, kind } of recordingBasicsFields) {
+	for (const { metadataKey, kind } of recordingScalarFields) {
 		const intent = track.recordingScalarIntent?.[metadataKey];
 		const tag = fieldByKey(metadataKey)?.tag;
 		if (!intent || !tag || intent.state === "absent") continue;
 		// TITLE has its own resolver; other fields keep the existing recording overlay.
 		if (purpose === "publication" && metadataKey === "title") continue;
-		tags[tag] =
+		const values =
 			intent.state === "explicit_empty"
 				? []
 				: kind === "advisory"
 					? [intent.value[0] === "clean" ? "2" : "1"]
 					: [...intent.value];
+		tags[tag] = values;
+		if (metadataKey === "key") tags.INITIALKEY = [...values];
 	}
 	return tags;
 }
@@ -843,7 +845,7 @@ export function desiredTags(
 	);
 	delete recordingValues.genre;
 	delete recordingValues.title;
-	for (const { metadataKey } of recordingBasicsFields)
+	for (const { metadataKey } of recordingScalarFields)
 		if (track.recordingScalarIntent?.[metadataKey])
 			delete recordingValues[metadataKey];
 	const explicitValues: MetadataValues = {

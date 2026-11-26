@@ -43,6 +43,8 @@ export type ReleaseScalarFieldKind =
   | "date"
   | "list"
   | "boolean"
+  | "integer"
+  | "number"
   | "advisory";
 
 export type ReleaseScalarField = {
@@ -53,6 +55,8 @@ export type ReleaseScalarField = {
   kind: ReleaseScalarFieldKind;
   /** Catalog message key for an edit-time hint. */
   hint?: "dateHint";
+  /** Editor group heading key when the shared list spans several groups. */
+  group?: "main" | "recording" | "additional";
 };
 
 /** Shared order, kind and transport identity for release basics in both hosts. */
@@ -118,11 +122,64 @@ export const releaseScalarFields = [
   ...releaseAdditionalFields,
 ] as const;
 
-export const recordingBasicsFields = [
-  { key: "title", metadataKey: "title", kind: "text" },
-  { key: "isrc", metadataKey: "isrc", kind: "list" },
-  { key: "content_advisory", metadataKey: "explicitstatus", kind: "advisory" },
+/** Shared order, kind, transport identity and group for recording scalars in both hosts. */
+export const recordingScalarFields = [
+  { key: "title", metadataKey: "title", kind: "text", group: "main" },
+  {
+    key: "sort_title",
+    metadataKey: "titlesort",
+    kind: "text",
+    group: "main",
+  },
+  {
+    key: "recording_date",
+    metadataKey: "recordingdate",
+    kind: "date",
+    hint: "dateHint",
+    group: "recording",
+  },
+  { key: "isrc", metadataKey: "isrc", kind: "list", group: "recording" },
+  { key: "bpm", metadataKey: "bpm", kind: "number", group: "recording" },
+  { key: "key", metadataKey: "key", kind: "text", group: "recording" },
+  {
+    key: "language",
+    metadataKey: "language",
+    kind: "text",
+    group: "additional",
+  },
+  {
+    key: "content_advisory",
+    metadataKey: "explicitstatus",
+    kind: "advisory",
+    group: "additional",
+  },
+  { key: "mood", metadataKey: "mood", kind: "list", group: "additional" },
+  {
+    key: "grouping",
+    metadataKey: "grouping",
+    kind: "text",
+    group: "additional",
+  },
+  { key: "comment", metadataKey: "comment", kind: "text", group: "additional" },
+  {
+    key: "copyright",
+    metadataKey: "copyright",
+    kind: "text",
+    group: "additional",
+  },
+  { key: "license", metadataKey: "license", kind: "text", group: "additional" },
+  { key: "website", metadataKey: "website", kind: "text", group: "additional" },
+  {
+    key: "subtitle",
+    metadataKey: "subtitle",
+    kind: "text",
+    group: "additional",
+  },
 ] as const satisfies readonly ReleaseScalarField[];
+
+export const recordingBasicsFields = recordingScalarFields.filter(
+  ({ key }) => key === "title" || key === "isrc" || key === "content_advisory",
+);
 
 export function releaseScalarFieldLabel(
   locale: keyof typeof releaseMetadataEditorMessages,
@@ -171,6 +228,24 @@ export function validLibraryMetadataPartialDate(value: string): boolean {
     (value.length === 7
       ? date.toISOString().slice(0, 7) === value
       : date.toISOString().slice(0, 10) === value)
+  );
+}
+
+/** Shared positive-number admission rule for integer and number scalar kinds. */
+export function validLibraryMetadataPositiveNumber(
+  kind: "integer" | "number",
+  value: string,
+): boolean {
+  const number = Number(value);
+  const validNumberSyntax =
+    kind === "integer"
+      ? /^\d+$/.test(value)
+      : /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value);
+  return (
+    validNumberSyntax &&
+    Number.isFinite(number) &&
+    number > 0 &&
+    (kind !== "integer" || Number.isSafeInteger(number))
   );
 }
 
