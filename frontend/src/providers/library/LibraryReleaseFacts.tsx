@@ -2,14 +2,10 @@ import type {
   LibraryReleaseDetailResponse,
   LibraryReleaseTrackResponse,
 } from "../../api/generated/client.schemas";
-import { useI18n } from "../../app/i18n/host";
 import type { LibraryArtistReleaseTrackRow } from "../../ui/features/library/LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "../../ui/features/library/LibraryPositionSourcesView";
 import { libraryPositionHref } from "../../ui/features/library/libraryDetailRoute";
-import {
-  ReleaseCreditListView,
-  type ReleaseCreditView,
-} from "../../ui/features/library/ReleaseCreditListView";
+import type { ReleaseCreditView } from "../../ui/features/library/ReleaseCreditListView";
 import type {
   ReleaseOverviewCredit,
   ReleaseOverviewMedia,
@@ -31,20 +27,6 @@ export function releaseCreditViews(
     joinPhrase: credit.join_phrase,
     role: credit.role,
   }));
-}
-
-export function ReleaseCreditList({
-  credits,
-}: {
-  credits: LibraryReleaseDetailResponse["artists"];
-}) {
-  const { locale } = useI18n();
-  return (
-    <ReleaseCreditListView
-      locale={locale}
-      credits={releaseCreditViews(credits)}
-    />
-  );
 }
 
 export function releaseOverviewCredits(

@@ -50,15 +50,10 @@ type MatchingLocalAssignment struct {
 }
 
 type MatchingLocalIntent struct {
-	ProviderReleaseID uuid.UUID                 `json:"provider_release_id,omitempty"`
-	Assignments       []MatchingLocalAssignment `json:"assignments,omitempty"`
-	// Legacy direct-library fields are retained for the pending frontend cutover.
-	LocalReleaseID            *uuid.UUID            `json:"local_release_id,omitempty"`
-	ExpectedGroupRevision     string                `json:"expected_group_revision"`
-	ExpectedAuthorityRevision int64                 `json:"expected_authority_revision"`
-	ReleaseTitle              string                `json:"release_title"`
-	ReleaseArtists            []MatchingLocalArtist `json:"release_artists"`
-	Tracks                    []MatchingLocalTrack  `json:"tracks"`
+	ProviderReleaseID         uuid.UUID                 `json:"provider_release_id,omitempty"`
+	Assignments               []MatchingLocalAssignment `json:"assignments,omitempty"`
+	ExpectedGroupRevision     string                    `json:"expected_group_revision"`
+	ExpectedAuthorityRevision int64                     `json:"expected_authority_revision"`
 }
 
 type MatchingLocalSource struct {
@@ -143,16 +138,10 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingLocal(ctx con
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "local-matching-request:"+requestID.String()); err != nil {
 			return err
 		}
-		canonical, err := json.Marshal(struct {
-			Group  uuid.UUID
-			Intent MatchingLocalIntent
-			Digest string
-		}{groupID, intent, previewDigest})
+		intentHash, err := matchingLocalReceiptIntentHash(groupID, intent, previewDigest)
 		if err != nil {
 			return err
 		}
-		hash := sha256.Sum256(canonical)
-		intentHash := hex.EncodeToString(hash[:])
 		var receipt struct {
 			IntentHash string `bun:"intent_hash"`
 			Response   []byte `bun:"response"`
@@ -712,6 +701,22 @@ func canonicalMatchingLocalIntent(intent MatchingLocalIntent) (MatchingLocalInte
 		return intent.Assignments[i].FileMemberID.String() < intent.Assignments[j].FileMemberID.String()
 	})
 	return intent, nil
+}
+
+// matchingLocalReceiptIntentHash binds a confirmation request to the exact
+// canonical intent and preview digest. Repeating the same request produces the
+// same hash, while any changed intent or digest is treated as a conflict.
+func matchingLocalReceiptIntentHash(groupID uuid.UUID, intent MatchingLocalIntent, previewDigest string) (string, error) {
+	canonical, err := json.Marshal(struct {
+		Group  uuid.UUID
+		Intent MatchingLocalIntent
+		Digest string
+	}{groupID, intent, previewDigest})
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(canonical)
+	return hex.EncodeToString(hash[:]), nil
 }
 
 func insertLocalCredits(ctx context.Context, tx bun.Tx, ownerID uuid.UUID, table string, artists []MatchingLocalArtist) error {

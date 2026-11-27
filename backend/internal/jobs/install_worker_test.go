@@ -213,34 +213,6 @@ func (repository *workerRepository) FailInstallationDelivery(_ context.Context, 
 	return true, nil
 }
 
-func (repository *workerRepository) FailOrphanedInstallationRecovery(_ context.Context, operationID uuid.UUID, attempt int, installationID uuid.UUID, stage, safe string) (bool, error) {
-	operation := repository.operation
-	if operation == nil || operation.ID != operationID || operation.Kind != "install" || operation.Attempt != attempt ||
-		operation.RiverJobID != nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installationID ||
-		operation.State == "succeeded" || operation.State == "failed" {
-		return false, nil
-	}
-	if repository.installation == nil || repository.installation.ID != installationID {
-		return false, errors.New("missing installation")
-	}
-	repository.installation.State = "failed"
-	operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
-	return true, nil
-}
-
-func (repository *workerRepository) FailUndeliveredInstallationRecovery(_ context.Context, operationID uuid.UUID, attempt int, inputSnapshot json.RawMessage, stage, safe string) (bool, error) {
-	operation := repository.operation
-	if operation == nil || operation.ID != operationID || operation.Kind != "install" || operation.Attempt != attempt ||
-		operation.RiverJobID != nil || operation.TargetInstallationID != nil ||
-		(operation.State != "queued" && operation.State != "running") || string(operation.InputSnapshot) != string(inputSnapshot) {
-		return false, nil
-	}
-	now := time.Now().UTC()
-	operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
-	operation.FinishedAt, operation.UpdatedAt = &now, now
-	return true, nil
-}
-
 func (repository *workerRepository) ActivateInstallationDuringSetup(_ context.Context, id uuid.UUID, _, _, _, _ string) (bool, error) {
 	installation, err := repository.GetInstallation(context.Background(), id)
 	if err != nil {

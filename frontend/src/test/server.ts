@@ -7,7 +7,7 @@ import type { SourceArtifactCleanupCandidatesBody } from "../api/generated/clien
 // Baseline handlers live on the shared server so resetHandlers() restores them
 // after every test. Suites that need other behavior call server.use(...), which
 // takes priority for that test only.
-export const defaultHandlers = [
+const defaultHandlers = [
   http.post(
     "/api/library/releases/:releaseId/cover/prepare",
     () => new HttpResponse(null, { status: 204 }),

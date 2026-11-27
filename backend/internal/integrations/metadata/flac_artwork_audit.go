@@ -188,36 +188,6 @@ func addFLACMetadataBudget(current, blockSize uint64) (uint64, bool) {
 	return current + 4 + blockSize, true
 }
 
-func WritePreservingFlacArtwork(ctx context.Context, path string, tags map[string][]string, before FlacArtworkSnapshot) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if path == "" || before.path != path {
-		return errors.New("FLAC artwork snapshot does not match path")
-	}
-	current, err := SnapshotFlacArtwork(ctx, path)
-	if err != nil {
-		return fmt.Errorf("verify FLAC artwork before write: %w", err)
-	}
-	if current.identity == nil || before.identity == nil || !os.SameFile(current.identity, before.identity) || !sameFlacArtworkFacts(current, before) {
-		return errors.New("FLAC changed since artwork snapshot")
-	}
-	if err := safeWriteTags(taglib.WriteTags, path, nonEmptyTags(tags), taglib.Clear); err != nil {
-		return fmt.Errorf("write FLAC tags: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	after, err := SnapshotFlacArtwork(ctx, path)
-	if err != nil {
-		return fmt.Errorf("verify FLAC after tag write: %w", err)
-	}
-	if after.count != before.count || after.pictureHash != before.pictureHash || after.imageHash != before.imageHash || after.pictureType != before.pictureType || after.description != before.description || after.mime != before.mime || after.streamInfo != before.streamInfo || after.audioHash != before.audioHash {
-		return errors.New("FLAC artwork or audio changed during tag write; no restoration was attempted")
-	}
-	return nil
-}
-
 func sameFlacArtworkFacts(a, b FlacArtworkSnapshot) bool {
 	return a.path == b.path && a.streamInfo == b.streamInfo && a.audioHash == b.audioHash &&
 		a.pictureHash == b.pictureHash && a.imageHash == b.imageHash && a.count == b.count &&
@@ -405,11 +375,6 @@ func parseFLACPicture(b []byte) (flacPicture, error) {
 		return bad()
 	}
 	return flacPicture{hash: sha256.Sum256(b), typ: t, mime: mime, description: desc}, nil
-}
-
-func hasPictureComment(b []byte) bool {
-	found, err := parseVorbisComments(b)
-	return err == nil && found
 }
 
 func parseVorbisComments(b []byte) (bool, error) {

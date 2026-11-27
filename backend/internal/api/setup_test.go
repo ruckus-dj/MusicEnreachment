@@ -57,7 +57,7 @@ func (store failingSettingsStore) Set(ctx context.Context, key, value string) er
 }
 
 // failingRuntimeSnapshotStore keeps individual setting reads working while
-// failing the coherent snapshot used by full configuration health.
+// failing the coherent snapshot used by setup state.
 type failingRuntimeSnapshotStore struct {
 	apiSettingsStore
 	snapshotReads int
@@ -229,20 +229,14 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/setup/health", nil))
-	if response.Code != http.StatusInternalServerError {
-		t.Fatalf("full health status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
-	}
-
-	response = httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodPost, "/setup/complete", strings.NewReader(`{"configuration_identity":"test-revision"}`))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("complete with unavailable setup state = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
 	}
-	if store.snapshotReads != 2 {
-		t.Fatalf("runtime snapshot reads = %d, want one each for health and complete", store.snapshotReads)
+	if store.snapshotReads != 1 {
+		t.Fatalf("runtime snapshot reads = %d, want one for complete", store.snapshotReads)
 	}
 
 	if err := registry.CompleteSetup(context.Background()); err != nil {

@@ -42,7 +42,7 @@ func (service *LibraryPublications) prepareFirstCover(ctx context.Context, relea
 	if snapshot == nil || snapshot.Library == nil {
 		return nil, errors.New("first publication context is incomplete")
 	}
-	if (service.artwork == nil && service.coverAcquisition == nil) || !firstPublicationCoverPreparationEligible(snapshot) {
+	if service.artwork == nil || !firstPublicationCoverPreparationEligible(snapshot) {
 		return snapshot, nil
 	}
 	if err := service.preparePublicationArtwork(ctx, releaseID); err != nil {

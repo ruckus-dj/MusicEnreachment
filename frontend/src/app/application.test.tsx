@@ -15,7 +15,6 @@ import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
-import { incomingGroupsListHref } from "../providers/incoming/incomingGroupsRoute";
 import { productionMeloTroveProvider } from "../providers/meloTroveProvider";
 import {
   resetSettingsDraftMemory,
@@ -24,6 +23,7 @@ import {
 import { createMemoryStorage } from "../test/memoryStorage";
 import { server } from "../test/server";
 import { MeloTroveUI } from "../ui/app/MeloTroveUI";
+import { incomingGroupsListHref } from "../ui/features/incoming/incomingGroupsRoute";
 import { I18nProvider } from "./i18n/host";
 
 function Application() {
@@ -320,35 +320,6 @@ describe("application integration", () => {
     expect(
       await screen.findByRole("link", { name: "Операции", current: "page" }),
     ).toBeVisible();
-  });
-
-  it("keeps the legacy publications URL inside the library without standalone navigation", async () => {
-    server.use(
-      http.get("/api/setup", () => HttpResponse.json(completedState)),
-      http.get("*/api/library/artists", () =>
-        HttpResponse.json({
-          items: [],
-          total: 0,
-          limit: 50,
-          offset: 0,
-          summary: {
-            artist_count: 0,
-            release_count: 0,
-            position_count: 0,
-            published_position_count: 0,
-          },
-        }),
-      ),
-    );
-    window.location.hash = "/publications";
-    render(<Application />);
-
-    expect(
-      await screen.findByRole("heading", { level: 1, name: "Медиатека" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("navigation", { name: "Основная навигация" }),
-    ).not.toHaveTextContent("Публикации");
   });
 
   it("shows the incoming count on a library route without loading the full group list", async () => {

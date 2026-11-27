@@ -1,11 +1,7 @@
 import type { LibraryPositionPage } from "../../api/generated/client.schemas";
-import { useI18n } from "../../app/i18n/host";
 import type { ArtistCardSelectionControl } from "../../ui/features/library/LibraryArtistCards";
 import type { LibraryCatalogTrackResults } from "../../ui/features/library/LibraryCatalogResults";
-import {
-  LibraryTrackListView,
-  type LibraryTrackRow,
-} from "../../ui/features/library/LibraryTrackListView";
+import type { LibraryTrackRow } from "../../ui/features/library/LibraryTrackListView";
 import {
   libraryPositionHref,
   libraryReleaseHref,
@@ -74,17 +70,4 @@ export function libraryPositionRowsModel({
     rows,
     pageSelection: selectionControl({ kind: "page" }),
   };
-}
-
-export function LibraryPositionRows({
-  items,
-  selectionControl,
-}: LibraryPositionRowsProps) {
-  const { locale } = useI18n();
-  return (
-    <LibraryTrackListView
-      locale={locale}
-      {...libraryPositionRowsModel({ items, selectionControl, locale })}
-    />
-  );
 }

@@ -132,7 +132,6 @@ export interface SourceInspectorViewProps {
   >;
   readonly sha256?: SourceInspectorSHA256Success;
   readonly probe?: SourceInspectorProbe;
-  readonly fingerprintReady: boolean;
   readonly metadata?: SourceInspectorMetadataSuccess;
   readonly artifact?: SourceInspectorArtifact;
   readonly retryAvailable: Readonly<
@@ -141,6 +140,9 @@ export interface SourceInspectorViewProps {
   readonly onRetryStep: (step: SourceInspectorStepName) => void;
   readonly fingerprintRerunAvailable: boolean;
   readonly onRerunFingerprint: () => void;
+  // Whether a saved fingerprint exists. The fingerprint value and its
+  // version/provenance stay out of the inspector.
+  readonly fingerprintReady: boolean;
   // Absent matching evidence renders as unknown instead of claiming either
   // availability or a reason that the provider did not supply.
   readonly matching?: SourceInspectorMatching;

@@ -8,10 +8,8 @@ import type { MatchingWorkspaceRelease } from "../../ui/features/matching/types"
 
 export {
   matchingBoardAutomaticForRelease,
-  matchingBoardPercent,
   matchingBoardSavedScore,
   matchingBoardSavedTrack,
-  matchingBoardScoresForRelease,
 } from "../../ui/features/matching/scoring";
 export type {
   MatchingWorkspaceAutomaticAssignments as MatchingBoardAutomaticAssignments,

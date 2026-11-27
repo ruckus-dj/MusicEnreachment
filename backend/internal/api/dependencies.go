@@ -41,7 +41,6 @@ type Dependencies struct {
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
 	LibraryTagComparisons  *service.LibraryTagComparisons
 	LibraryCatalog         *service.LibraryCatalog
-	LibraryReleaseOptions  *service.LibraryReleaseOptions
 	LibraryRecordingSearch *service.LibraryRecordingSearch
 	LibraryProviderRefresh *service.LibraryProviderRefresh
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists

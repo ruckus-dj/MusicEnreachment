@@ -35,6 +35,7 @@ export interface MissingEditionChooserProps {
   groupTitle: string;
   editions: LibraryEditionOption[];
   editionsStatus: LibraryEditionsStatus;
+  soleEdition: boolean;
   selectedEditionKey: string;
   onSelectEdition: (editionKey: string) => void;
   tracksStatus: LibraryEditionTracksStatus;
@@ -67,8 +68,12 @@ export function missingEditionChooserProps({
     label: editionLabel(edition),
     trackCount: null,
   }));
+  // The production host selects a single known edition automatically. Mirror
+  // that so the compact label and its tracks render without a picker.
+  const effectiveEditionKey =
+    selectedEditionKey || (editions.length === 1 ? editions[0]?.id : "") || "";
   const selected = editions.find(
-    (edition) => edition.id === selectedEditionKey,
+    (edition) => edition.id === effectiveEditionKey,
   );
   const tracks: LibraryEditionTracks | null = selected
     ? {
@@ -86,7 +91,8 @@ export function missingEditionChooserProps({
     groupTitle,
     editions: options,
     editionsStatus: editions.length ? "ready" : "empty",
-    selectedEditionKey,
+    soleEdition: editions.length === 1,
+    selectedEditionKey: effectiveEditionKey,
     onSelectEdition,
     tracksStatus: "ready",
     tracks,

@@ -12,7 +12,7 @@ import (
 	"go.senan.xyz/taglib"
 )
 
-func TestWritePreservingFlacArtworkRoundTripsNativePicture(t *testing.T) {
+func TestWriteFlacTagsPreservingArtworkRoundTripsNativePicture(t *testing.T) {
 	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
 	if err != nil {
 		t.Fatal(err)
@@ -46,8 +46,12 @@ func TestWritePreservingFlacArtworkRoundTripsNativePicture(t *testing.T) {
 		taglib.Title:  {"題名 – 雪と音楽 🎶"},
 		taglib.Lyrics: {"一行目\nSecond line – 🎵\n"},
 	}
-	if err := WritePreservingFlacArtwork(context.Background(), path, wantTags, before); err != nil {
-		t.Fatalf("WritePreservingFlacArtwork: %v", err)
+	result, err := WriteFlacTagsPreservingArtwork(context.Background(), path, wantTags, before)
+	if err != nil {
+		t.Fatalf("WriteFlacTagsPreservingArtwork: %v", err)
+	}
+	for key, values := range wantTags {
+		assertValues(t, result.Tags, key, values)
 	}
 	after, err := SnapshotFlacArtwork(context.Background(), path)
 	if err != nil {
@@ -221,7 +225,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 	return data
 }
 
-func TestWritePreservingFlacArtworkRejectsReplacedIdenticalFile(t *testing.T) {
+func TestWriteFlacTagsPreservingArtworkRejectsReplacedIdenticalFile(t *testing.T) {
 	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +252,7 @@ func TestWritePreservingFlacArtworkRejectsReplacedIdenticalFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = WritePreservingFlacArtwork(context.Background(), path, map[string][]string{taglib.Title: {"must not write"}}, before)
+	_, err = WriteFlacTagsPreservingArtwork(context.Background(), path, map[string][]string{taglib.Title: {"must not write"}}, before)
 	if err == nil || !strings.Contains(err.Error(), "FLAC changed since artwork snapshot") {
 		t.Fatalf("write did not reject replacement by identity: %v", err)
 	}
@@ -295,7 +299,7 @@ func TestSnapshotFlacArtworkRejectsAmbiguousArtworkWithoutWriting(t *testing.T) 
 			if _, err := SnapshotFlacArtwork(context.Background(), path); err == nil || !strings.Contains(err.Error(), test.wantAuditError) {
 				t.Fatal("ambiguous artwork passed the pre-write audit")
 			}
-			if err := WritePreservingFlacArtwork(context.Background(), path, map[string][]string{taglib.Title: {"must not write"}}, before); err == nil {
+			if _, err := WriteFlacTagsPreservingArtwork(context.Background(), path, map[string][]string{taglib.Title: {"must not write"}}, before); err == nil {
 				t.Fatal("write accepted artwork that failed the baseline audit")
 			}
 			after, err := os.ReadFile(path)

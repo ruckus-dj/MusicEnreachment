@@ -564,10 +564,10 @@ func TestPreviewFirstShowsCoverFactsWithoutAcquiringThem(t *testing.T) {
 		EffectiveCoverInput: persistence.PublicationAttemptCoverInput{ReleaseID: releaseID, Revision: 1, Mode: "automatic", State: "absent"},
 		TemplateTokens:      map[string]string{},
 	}
-	acquisition := &coverAcquisitionFixture{}
+	acquisition := &artworkPreparationFixture{}
 	service := newLibraryPublications(
 		firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "mka", template: "Track"}, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"},
-	).WithCoverAcquisition(acquisition)
+	).WithPublicationArtwork(acquisition)
 	preview, err := service.PreviewFirst(context.Background(), releaseID, positionID)
 	if err != nil {
 		t.Fatal(err)

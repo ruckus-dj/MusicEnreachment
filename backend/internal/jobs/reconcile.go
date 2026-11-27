@@ -31,14 +31,6 @@ type matchingRuntimeScannerOwnership interface {
 	IsMatchingRuntimeScannerOwnedOperation(context.Context, uuid.UUID) (bool, error)
 }
 
-type orphanedInstallationRecovery interface {
-	FailOrphanedInstallationRecovery(context.Context, uuid.UUID, int, uuid.UUID, string, string) (bool, error)
-}
-
-type undeliveredInstallationRecovery interface {
-	FailUndeliveredInstallationRecovery(context.Context, uuid.UUID, int, json.RawMessage, string, string) (bool, error)
-}
-
 type interruptedOperationSettings interface {
 	GetToolsDirectory(context.Context) (string, bool, error)
 	SetupCompleted(context.Context) (bool, error)
@@ -446,34 +438,10 @@ func cleanupTerminalInstallations(ctx context.Context, repository interruptedOpe
 }
 
 func failInterruptedInstallation(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation, safe string) (bool, error) {
-	if operation.TargetInstallationID == nil {
-		if operation.RiverJobID != nil {
-			return false, fmt.Errorf("installation delivery identity is unavailable")
-		}
-		recovery, ok := repository.(undeliveredInstallationRecovery)
-		if !ok {
-			return false, fmt.Errorf("undelivered installation recovery is unavailable")
-		}
-		changed, err := recovery.FailUndeliveredInstallationRecovery(ctx, operation.ID, operation.Attempt, operation.InputSnapshot, operation.Stage, safe)
-		if err != nil {
-			return false, err
-		}
-		if changed {
-			operations.Notify(operation.ID)
-		}
-		return changed, nil
+	if operation.RiverJobID == nil || operation.TargetInstallationID == nil {
+		return false, fmt.Errorf("installation delivery identity is unavailable")
 	}
-	var changed bool
-	var err error
-	if operation.RiverJobID == nil {
-		recovery, ok := repository.(orphanedInstallationRecovery)
-		if !ok {
-			return false, fmt.Errorf("installation recovery identity is unavailable")
-		}
-		changed, err = recovery.FailOrphanedInstallationRecovery(ctx, operation.ID, operation.Attempt, *operation.TargetInstallationID, operation.Stage, safe)
-	} else {
-		changed, err = repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, *operation.TargetInstallationID, operation.Stage, safe)
-	}
+	changed, err := repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, *operation.TargetInstallationID, operation.Stage, safe)
 	if err != nil {
 		return false, err
 	}

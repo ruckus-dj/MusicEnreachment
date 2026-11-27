@@ -97,14 +97,6 @@ func TestReconcilePublicationOnlySettlesPersistedTerminalDelivery(t *testing.T) 
 	}
 }
 
-func (repository *multipleOperationRepository) FailUndeliveredInstallationRecovery(ctx context.Context, id uuid.UUID, attempt int, snapshot json.RawMessage, stage, safe string) (bool, error) {
-	operation, err := repository.GetOperation(ctx, id)
-	if err != nil {
-		return false, err
-	}
-	return (&workerRepository{operation: operation}).FailUndeliveredInstallationRecovery(ctx, id, attempt, snapshot, stage, safe)
-}
-
 type recordedSetupActivation struct {
 	installationID uuid.UUID
 	packageKind    string
@@ -359,8 +351,8 @@ func (rejectedInstallRecoveryRunner) Run(context.Context, string, ...string) ([]
 	return nil, errors.New("executable rejected for recovery test")
 }
 
-func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T) {
-	operationID, installationID, untouchedID := uuid.New(), uuid.New(), uuid.New()
+func TestReconcileInvalidInstallPublicationFailsLocally(t *testing.T) {
+	operationID, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
 		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: root,
@@ -373,14 +365,18 @@ func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T
 		ID: operationID, Kind: "install", State: "running", Stage: "materialize", Attempt: 1, RiverJobID: workerDeliveryID(),
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
-	untouched := &persistence.Operation{ID: untouchedID, Kind: "install", State: "queued", Stage: "materialize"}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "preparing",
 	}
+	laterJobID := *operation.RiverJobID + 1
+	later := &persistence.Operation{
+		ID: uuid.New(), Kind: (service.ProviderFetchOperationArgs{}).Kind(),
+		State: "running", Stage: "fetch", Attempt: 1, RiverJobID: &laterJobID,
+	}
 	repository := &multipleOperationRepository{
 		workerRepository: &workerRepository{operation: operation, installation: installation},
-		rows:             []*persistence.Operation{operation, untouched},
+		rows:             []*persistence.Operation{operation, later},
 	}
 	staging, err := tools.EnsureOperationStaging(root, operationID)
 	if err != nil {
@@ -403,11 +399,11 @@ func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T
 	if installation.State != "failed" {
 		t.Fatalf("invalid-journal installation state = %s; want failed/deletable", installation.State)
 	}
+	if later.State != "failed" || later.SafeError == nil || *later.SafeError == invalidEvidenceError {
+		t.Fatalf("later operation state/error = %q/%v; want independent recovery", later.State, later.SafeError)
+	}
 	if repository.activated {
 		t.Fatal("invalid publication recovery changed the active installation selection")
-	}
-	if untouched.State != "failed" || untouched.SafeError == nil || *untouched.SafeError != "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation." {
-		t.Fatalf("later operation = %s safe error %v; want generic reconciliation to continue", untouched.State, untouched.SafeError)
 	}
 	if _, err := os.Stat(staging); err != nil {
 		t.Fatalf("invalid publication staging was removed: %v", err)

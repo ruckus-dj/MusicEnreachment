@@ -70,10 +70,7 @@ export function parseMeloTroveRoute(
 ): MeloTroveRoute {
   const path = location.startsWith("#") ? location.slice(1) : location;
   const [originalPath, search] = path.split("?", 2);
-  const pathname =
-    originalPath === "/publications" || originalPath === "publication-list"
-      ? "/library"
-      : originalPath || "/";
+  const pathname = originalPath || "/";
   const hash = `#${pathname}${search === undefined ? "" : `?${search}`}`;
   const destination = parseDestination(hash, pathname, validateLibraryId);
   return {

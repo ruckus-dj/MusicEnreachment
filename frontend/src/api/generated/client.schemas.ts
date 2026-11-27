@@ -755,19 +755,6 @@ export interface LibraryArtistResolution {
   status: string;
 }
 
-export interface LibraryCoverCandidateOption {
-  /** @nullable */
-  height: number | null;
-  label: string;
-  media_variant_id: string;
-  metadata_result_id: string;
-  mime: string;
-  sha256: string;
-  size: number;
-  /** @nullable */
-  width: number | null;
-}
-
 export interface LibraryDeletionArtistReleaseResponse {
   title: string;
 }
@@ -1195,26 +1182,6 @@ export interface LibraryRecordingMetadataGetResponse {
   revision: number;
 }
 
-export interface LibraryReleaseOptionCredit {
-  artist_id: string;
-  join_phrase: string;
-  name: string;
-}
-
-export interface LibraryReleaseOptionProviderLink {
-  provider_code: string;
-  provider_key: string;
-}
-
-export interface LibraryRecordingOption {
-  artists: LibraryReleaseOptionCredit[];
-  /** @nullable */
-  duration_ms: number | null;
-  id: string;
-  provider_links: LibraryReleaseOptionProviderLink[];
-  title: string;
-}
-
 export interface LibraryRecordingSearchArtistOutput {
   join_phrase: string;
   name: string;
@@ -1525,55 +1492,6 @@ export interface LibraryReleaseMetadataGetResponse {
   revision: number;
 }
 
-export interface LibraryReleaseOptionsPageLibraryCoverCandidateOption {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: LibraryCoverCandidateOption[];
-  limit: number;
-  offset: number;
-  total: number;
-}
-
-export interface LibraryReleaseOptionsPageLibraryRecordingOption {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: LibraryRecordingOption[];
-  limit: number;
-  offset: number;
-  total: number;
-}
-
-export interface LibrarySourceVariantLocation {
-  location_id: string;
-  relative_path: string;
-  root_display_name: string;
-  root_enabled: boolean;
-  root_status: string;
-  source_root_id: string;
-}
-
-export interface LibrarySourceVariantOption {
-  codec: string;
-  container: string;
-  /** @nullable */
-  duration_ms: number | null;
-  filename: string;
-  locations: LibrarySourceVariantLocation[];
-  media_variant_id: string;
-  /** @nullable */
-  metadata_result_id: string | null;
-  title: string;
-}
-
-export interface LibraryReleaseOptionsPageLibrarySourceVariantOption {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: LibrarySourceVariantOption[];
-  limit: number;
-  offset: number;
-  total: number;
-}
-
 export interface LibraryReleasePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1834,6 +1752,18 @@ export interface MatchingLocalAssignment {
   provider_track_id: string;
 }
 
+export interface MatchingLocalConfirmBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  assignments: MatchingLocalAssignment[] | null;
+  expected_authority_revision: number;
+  expected_group_revision: string;
+  preview_digest: string;
+  provider_release_id: string;
+  request_id: string;
+}
+
 export interface MatchingLocalTrack {
   /** @nullable */
   artists: MatchingLocalArtist[] | null;
@@ -1856,25 +1786,6 @@ export interface MatchingLocalRelease {
   title: string;
   /** @nullable */
   tracks: MatchingLocalTrack[] | null;
-}
-
-export interface MatchingLocalCatalog {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @nullable */
-  releases: MatchingLocalRelease[] | null;
-}
-
-export interface MatchingLocalConfirmBody {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @nullable */
-  assignments: MatchingLocalAssignment[] | null;
-  expected_authority_revision: number;
-  expected_group_revision: string;
-  preview_digest: string;
-  provider_release_id: string;
-  request_id: string;
 }
 
 export interface MatchingLocalSource {
@@ -2756,26 +2667,6 @@ export const ListLibraryArtistsAvailability = {
   missing: 'missing',
 } as const;
 
-export type ListLibraryCoverCandidatesParams = {
-q?: string;
-/**
- * @minimum 1
- * @maximum 100
- */
-limit: number;
-/**
- * @minimum 0
- */
-offset: number;
-};
-
-export type GetLibraryCoverCandidateImageParams = {
-/**
- * @pattern ^[0-9a-f]{64}$
- */
-expected_sha256: string;
-};
-
 export type ListLibraryPositionsParams = {
 /**
  * @minimum 1
@@ -2810,19 +2701,6 @@ export const ListLibraryPositionsAvailability = {
   available: 'available',
   missing: 'missing',
 } as const;
-
-export type ListLibraryRecordingsParams = {
-q?: string;
-/**
- * @minimum 1
- * @maximum 100
- */
-limit: number;
-/**
- * @minimum 0
- */
-offset: number;
-};
 
 export type ListLibraryReleaseGroupEditionsParams = {
 /**
@@ -2879,19 +2757,6 @@ mode?: string;
 receipt_kind?: string;
 receipt_request_id?: string;
 receipt_track_source_id?: string;
-};
-
-export type ListLibrarySourceVariantsParams = {
-q?: string;
-/**
- * @minimum 1
- * @maximum 100
- */
-limit: number;
-/**
- * @minimum 0
- */
-offset: number;
 };
 
 export type ListOperationsParams = {

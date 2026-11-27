@@ -120,9 +120,8 @@ func TestRunJobCommandUnixTransportsFileInputOnDescriptorThree(t *testing.T) {
 	if _, err := input.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	fileRequest := BuildTechnicalFileCommandRequest("/unused", input)
 	request := unixJobCommand(t, "file-input")
-	request.FileInput = fileRequest.Input
+	request.FileInput = input
 	var stdout bytes.Buffer
 	request.Stdout = &stdout
 	result, err := runUnixJobHelper(t, "file-input", request)

@@ -98,9 +98,9 @@ export function SourceInspectorScreen({
   const stagedArtifact = detail?.staged_artifact;
   const artifact = stagedArtifact
     ? {
-        state: stagedArtifact.state ?? "unknown",
+        state: stagedArtifact.state,
         requestedSteps: stagedArtifact.requested_steps ?? [],
-        requestedStepsKnown: stagedArtifact.requested_steps_known === true,
+        requestedStepsKnown: stagedArtifact.requested_steps_known,
         reusedFromOtherOperation:
           !!stagedArtifact.creator_operation_id &&
           !!stagedArtifact.borrower_operation_id &&

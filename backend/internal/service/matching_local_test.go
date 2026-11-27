@@ -27,10 +27,6 @@ func (r *matchingLocalTestRepository) ConfirmMatchingLocal(_ context.Context, _ 
 	return r.preview, r.err
 }
 
-func (*matchingLocalTestRepository) ListLocalReleases(context.Context) (persistence.MatchingLocalReleaseCatalog, error) {
-	return persistence.MatchingLocalReleaseCatalog{}, nil
-}
-
 func TestMatchingLocalServicePassesProviderAssignmentsInCanonicalOrder(t *testing.T) {
 	groupID, releaseID, trackA, trackB := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	memberA := uuid.MustParse("00000000-0000-4000-8000-000000000001")

@@ -158,8 +158,8 @@ func TestAutomaticAlbumAdmissionPreparesCoverBeforePositionLoop(t *testing.T) {
 		OutputEpoch: guard.OutputEpoch, ReleaseID: releaseID,
 		Scope: []persistence.PublicationAutoAlbumPosition{{PositionID: positionID, WorkIDs: []uuid.UUID{repository.snapshot.Sources[0].Input.WorkID}}},
 	}
-	acquisition := &coverAcquisitionFixture{}
-	service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}).WithCoverAcquisition(acquisition)
+	acquisition := &artworkPreparationFixture{}
+	service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}).WithPublicationArtwork(acquisition)
 	// The fixture intentionally lacks the album admission repository method, so
 	// the per-position loop fails after cover preparation. The failure must not
 	// be the optional cover error.
@@ -173,8 +173,8 @@ func TestAutomaticAlbumAdmissionPreparesCoverBeforePositionLoop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	acquisition = &coverAcquisitionFixture{}
-	service.WithCoverAcquisition(acquisition)
+	acquisition = &artworkPreparationFixture{}
+	service.WithPublicationArtwork(acquisition)
 	if err := service.AdmitAutomaticAlbum(ctx, request); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled automatic album error = %v", err)
 	}
@@ -236,8 +236,8 @@ func TestAutomaticAlbumPreparesCoverFromNextEligiblePosition(t *testing.T) {
 			{PositionID: eligiblePosition, WorkIDs: []uuid.UUID{eligible.Sources[0].Input.WorkID}},
 		},
 	}
-	acquisition := &coverAcquisitionFixture{}
-	service := newLibraryPublications(repository, firstPreviewSettings{format: "mka"}, libraryPublicationsTestRiver{}, tools.Platform{}).WithCoverAcquisition(acquisition)
+	acquisition := &artworkPreparationFixture{}
+	service := newLibraryPublications(repository, firstPreviewSettings{format: "mka"}, libraryPublicationsTestRiver{}, tools.Platform{}).WithPublicationArtwork(acquisition)
 	_ = service.AdmitAutomaticAlbum(context.Background(), request)
 	if acquisition.calls != 1 || len(acquisition.releases) != 1 || acquisition.releases[0] != releaseID {
 		t.Fatalf("cover acquisition calls/releases = %d/%v", acquisition.calls, acquisition.releases)

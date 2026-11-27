@@ -71,33 +71,9 @@ type MatchingLocalRelease struct {
 	Tracks  []MatchingLocalTrack  `json:"tracks"`
 }
 
-type MatchingLocalCatalog struct {
-	Releases []MatchingLocalRelease `json:"releases"`
-}
-
 type MatchingLocalRepository interface {
 	PreviewMatchingLocal(context.Context, uuid.UUID, persistence.MatchingLocalIntent) (persistence.MatchingLocalPreview, error)
 	ConfirmMatchingLocal(context.Context, uuid.UUID, persistence.MatchingLocalIntent, string, uuid.UUID) (persistence.MatchingLocalPreview, error)
-	ListLocalReleases(context.Context) (persistence.MatchingLocalReleaseCatalog, error)
-}
-
-func (s *MatchingLocalService) List(ctx context.Context) (MatchingLocalCatalog, error) {
-	if s == nil || s.repository == nil {
-		return MatchingLocalCatalog{}, errors.New("local matching is unavailable")
-	}
-	catalog, err := s.repository.ListLocalReleases(ctx)
-	if err != nil {
-		return MatchingLocalCatalog{}, err
-	}
-	result := MatchingLocalCatalog{Releases: make([]MatchingLocalRelease, 0, len(catalog.Releases))}
-	for _, release := range catalog.Releases {
-		item := MatchingLocalRelease{ID: release.ID, Title: release.Title, Artists: localArtists(release.Artists), Tracks: make([]MatchingLocalTrack, 0, len(release.Tracks))}
-		for _, track := range release.Tracks {
-			item.Tracks = append(item.Tracks, localTrack(track))
-		}
-		result.Releases = append(result.Releases, item)
-	}
-	return result, nil
 }
 
 type MatchingLocalService struct{ repository MatchingLocalRepository }

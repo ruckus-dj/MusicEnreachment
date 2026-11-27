@@ -124,7 +124,7 @@ export interface LocalMatchingController {
  * Pure projection from the Local catalog shape to the neutral matching
  * workspace release shape. Local releases have a single flat medium.
  */
-export function localMatchingWorkspaceRelease(
+function localMatchingWorkspaceRelease(
   release: LocalProviderItem | undefined,
 ): MatchingWorkspaceRelease | undefined {
   if (!release) return undefined;

@@ -89,6 +89,10 @@ const english = {
     "Next: add a music source and start a scan. Import does not start automatically.",
   loadingToolsState: "Could not load tool status.",
   saveKeyError: "Could not save the AcoustID key.",
+  acoustidKeyRejected:
+    "AcoustID rejected this application key. Check the key and try again.",
+  acoustidCheckUnavailable:
+    "Could not verify the key with AcoustID. Try again later.",
   toolCatalogRefresh: "Refresh catalog",
   confirmOverwrite: "Overwrite only these files:",
   confirmOverwriteButton: "Confirm overwrite",
@@ -208,6 +212,10 @@ const russian: SetupMessages = {
     "Следующий шаг: добавьте источник музыки и запустите сканирование. Импорт не запускается автоматически.",
   loadingToolsState: "Не удалось загрузить состояние инструментов.",
   saveKeyError: "Не удалось сохранить ключ AcoustID.",
+  acoustidKeyRejected:
+    "AcoustID отклонил этот ключ приложения. Проверьте ключ и повторите попытку.",
+  acoustidCheckUnavailable:
+    "Не удалось проверить ключ через API AcoustID. Повторите попытку позже.",
   toolCatalogRefresh: "Обновить каталог",
   confirmOverwrite: "Перезапись только следующих файлов:",
   confirmOverwriteButton: "Подтвердить перезапись",

@@ -13,6 +13,16 @@ const messages = {
       "Cover application started. Waiting for validation of the published data.",
     coverWarning:
       "Cover warning: {warning}. This does not confirm successful embedding.",
+    loadCoverCandidatesFailed: "Could not load Cover Art Archive artwork.",
+    selectCoverCandidateFailed: "Could not select cover artwork.",
+    coverCandidateConflict:
+      "The cover changed since the artwork list loaded. The cover state was refreshed; select the artwork again.",
+    coverCandidateRefreshFailed:
+      "The cover changed and could not be refreshed. Try again.",
+    coverCandidatePendingSaved:
+      "Artwork saved as pending cover. Publications were not changed.",
+    coverCandidateSelected: "Artwork selected as the release cover.",
+    coverCandidateSaved: "Artwork choice saved.",
     library: "Library",
     incoming: "Incoming",
     libraryNavigation: "Library navigation",
@@ -107,6 +117,17 @@ const messages = {
       "Применение обложки запущено. Ожидается проверка опубликованных данных.",
     coverWarning:
       "Предупреждение обложки: {warning}. Это не подтверждение успешного встраивания.",
+    loadCoverCandidatesFailed:
+      "Не удалось загрузить обложки Cover Art Archive.",
+    selectCoverCandidateFailed: "Не удалось выбрать обложку.",
+    coverCandidateConflict:
+      "Обложка изменилась после загрузки списка. Данные обложки обновлены; выберите изображение ещё раз.",
+    coverCandidateRefreshFailed:
+      "Обложка изменилась, но обновить её данные не удалось. Повторите попытку.",
+    coverCandidatePendingSaved:
+      "Обложка сохранена как ожидающая. Публикации не изменены.",
+    coverCandidateSelected: "Обложка выбрана как обложка релиза.",
+    coverCandidateSaved: "Выбор обложки сохранён.",
     library: "Медиатека",
     incoming: "Входящие",
     libraryNavigation: "Навигация по медиатеке",

@@ -120,7 +120,7 @@ export function statusLabel(
   return sourceMessage(locale, "sourceUnchecked");
 }
 
-export function fileCount(count: number, locale: Locale): string {
+function fileCount(count: number, locale: Locale): string {
   const formatted = new Intl.NumberFormat(
     locale === "ru" ? "ru-RU" : "en-US",
   ).format(count);

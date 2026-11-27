@@ -11,9 +11,9 @@ import { I18nProvider } from "../../app/i18n/host";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
 
-export const rootPath = "/api/sources/root-refresh";
+const rootPath = "/api/sources/root-refresh";
 export const operationPath = "/api/operations/scan-refresh";
-export const rootError = "The source directory is not readable.";
+const rootError = "The source directory is not readable.";
 export const operationError =
   "The source tree could not be read. Retry the scan.";
 
@@ -42,7 +42,7 @@ const runningOperation: OperationResponse = {
   created_at: "2026-10-01T00:00:00Z",
   updated_at: "2026-10-01T00:00:01Z",
 };
-export const savedLocation: SourceLocationResponse = {
+const savedLocation: SourceLocationResponse = {
   id: "saved-location",
   relative_path: "Album/01.flac",
   size_bytes: 1536,

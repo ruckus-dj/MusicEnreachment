@@ -122,11 +122,12 @@ The application starts from a single embedded transactional baseline that
 creates the current schema directly, without replaying development migrations
 or converting old rows.
 
-Databases created with the old development chain are not upgraded. Point
-`DATABASE_URL` at a fresh database; recreate an existing one only if its data is
-explicitly disposable. Do not edit Bun's migration-history rows to bypass this
-boundary. For a disposable local test stand, `task stand:reset` clears the
-stand's generated data but preserves `test_stand/data/downloads`.
+Databases created with earlier development migrations or baselines are not
+upgraded. Point `DATABASE_URL` at a fresh database; recreate an existing one
+only if its data is explicitly disposable. Do not edit Bun's migration-history
+rows to bypass this boundary. For a disposable local test stand,
+`task stand:reset` clears the stand's generated data but preserves
+`test_stand/data/downloads`.
 Baseline rollback refuses populated application tables and never drops River's
 schema/history or unrelated tables. Stop the server before manual rollback.
 
@@ -362,6 +363,8 @@ prototype branch is merged, so Go imports remain valid in the meantime.
   decisions.
 - [Repository architecture](docs/design/repository-architecture.md) describes
   component responsibilities and runtime structure.
+- [UI prototype](docs/app-design-react/README.md) explains how to transfer its
+  UI and backport frontend changes without discarding prototype experiments.
 - [Deployment and first setup](docs/design/deployment.md) explains server paths,
   read-only source mounts, managed tools ownership and platform recovery.
 - [Plans](docs/plans/README.md) explain completed, executable, and future work.

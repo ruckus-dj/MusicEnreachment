@@ -13,10 +13,20 @@ import { LibraryArtistCards } from "./LibraryArtistCards";
 import { LibraryTrackListView } from "./LibraryTrackListView";
 
 /** Typed artist leaf model; the page supplies the locale. */
+export type LibraryCatalogArtistView = ComponentType<
+  ComponentProps<typeof LibraryArtistCards>
+>;
+
 export type LibraryCatalogArtistResults = Omit<
   ComponentProps<typeof LibraryArtistCards>,
   "locale"
->;
+> & {
+  /**
+   * Optional host view with the same props. Production supplies a wrapper that
+   * binds artist photos; portable hosts keep the default card view.
+   */
+  View?: LibraryCatalogArtistView;
+};
 
 /** Typed track leaf model; the page supplies the locale. */
 export type LibraryCatalogTrackResults = Omit<
@@ -85,14 +95,16 @@ export function LibraryCatalogResultView({
   results: LibraryCatalogResults;
 }) {
   switch (results.kind) {
-    case "artists":
+    case "artists": {
+      const View = results.View ?? LibraryArtistCards;
       return (
-        <LibraryArtistCards
+        <View
           locale={locale}
           artists={results.artists}
           pageSelectionControl={results.pageSelectionControl}
         />
       );
+    }
     case "tracks":
       return (
         <LibraryTrackListView

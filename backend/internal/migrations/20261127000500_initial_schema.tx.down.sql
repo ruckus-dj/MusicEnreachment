@@ -16,8 +16,7 @@
 DO $baseline_rollback$
 DECLARE
     owned_tables text[] := ARRAY[
-        'app_setting', 'collection', 'collection_artist', 'collection_release',
-        'cover_art_archive_image', 'cover_art_archive_release', 'genre_catalog', 'incoming_group',
+        'app_setting', 'cover_art_archive_image', 'cover_art_archive_release', 'genre_catalog', 'incoming_group',
         'incoming_group_matching_authority', 'incoming_group_member', 'incoming_group_member_location', 'incoming_group_return_automatic_receipt',
         'incoming_group_unlink_receipt', 'incoming_grouping_state', 'incoming_match_evaluation', 'incoming_match_evaluation_location',
         'incoming_match_evaluation_member', 'incoming_matching_automatic_admission', 'incoming_matching_generation', 'incoming_matching_reconcile_event',
@@ -254,8 +253,7 @@ DROP FUNCTION IF EXISTS
 -- One RESTRICT drop resolves foreign keys among the listed tables while
 -- refusing to remove or cascade into anything outside this baseline.
 DROP TABLE IF EXISTS
-    public.app_setting, public.collection, public.collection_artist, public.collection_release,
-    public.cover_art_archive_image, public.cover_art_archive_release, public.genre_catalog, public.incoming_group,
+    public.app_setting, public.cover_art_archive_image, public.cover_art_archive_release, public.genre_catalog, public.incoming_group,
     public.incoming_group_matching_authority, public.incoming_group_member, public.incoming_group_member_location, public.incoming_group_return_automatic_receipt,
     public.incoming_group_unlink_receipt, public.incoming_grouping_state, public.incoming_match_evaluation, public.incoming_match_evaluation_location,
     public.incoming_match_evaluation_member, public.incoming_matching_automatic_admission, public.incoming_matching_generation, public.incoming_matching_reconcile_event,

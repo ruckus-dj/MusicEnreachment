@@ -11,29 +11,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type MatchingLocalReleaseCatalog struct {
-	Releases []MatchingLocalRelease `json:"releases"`
-}
-
-func (repository *IncomingMatchCandidateRepository) ListLocalReleases(ctx context.Context) (MatchingLocalReleaseCatalog, error) {
-	var ids []uuid.UUID
-	err := repository.db.NewRaw(`SELECT id FROM provider_release WHERE provider_id=? ORDER BY title,id`, localProviderID).Scan(ctx, &ids)
-	if err != nil {
-		return MatchingLocalReleaseCatalog{}, fmt.Errorf("list local releases: %w", err)
-	}
-	result := MatchingLocalReleaseCatalog{Releases: make([]MatchingLocalRelease, 0, len(ids))}
-	for _, id := range ids {
-		release, err := loadMatchingProviderRelease(ctx, repository.db, id, false)
-		if err != nil {
-			return MatchingLocalReleaseCatalog{}, fmt.Errorf("list local releases: %w", err)
-		}
-		if release != nil {
-			result.Releases = append(result.Releases, *release)
-		}
-	}
-	return result, nil
-}
-
 func loadMatchingProviderRelease(ctx context.Context, db bun.IDB, id uuid.UUID, locking bool) (*MatchingLocalRelease, error) {
 	if id == uuid.Nil {
 		return nil, errors.New("local provider release id is invalid")

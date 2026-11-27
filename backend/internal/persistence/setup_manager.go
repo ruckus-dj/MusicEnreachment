@@ -662,53 +662,10 @@ func refuseAmbiguousReadyInstallationsTx(ctx context.Context, tx bun.Tx, package
 // FailInstallationDelivery atomically fails only the installation and operation
 // still owned by this delivery. A stale delivery must not fail a retried target.
 func (repository *SetupManagerRepository) FailInstallationDelivery(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, stage, safe string) (bool, error) {
-	return repository.failInstallationDelivery(ctx, operationID, attempt, &riverJobID, installationID, stage, safe, false)
+	return repository.failInstallationDelivery(ctx, operationID, attempt, riverJobID, installationID, stage, safe)
 }
 
-// FailOrphanedInstallationRecovery fails a legacy installation operation that
-// has no River job identity. Recovery is allowed only while the persisted row
-// still matches the snapshot identity and remains an orphaned active operation.
-func (repository *SetupManagerRepository) FailOrphanedInstallationRecovery(ctx context.Context, operationID uuid.UUID, attempt int, installationID uuid.UUID, stage, safe string) (bool, error) {
-	return repository.failInstallationDelivery(ctx, operationID, attempt, nil, installationID, stage, safe, true)
-}
-
-// FailUndeliveredInstallationRecovery fails only an active legacy operation
-// that has neither a River delivery nor a target installation. Its snapshot is
-// compared under the operation lock so recovery cannot settle a replaced row.
-func (repository *SetupManagerRepository) FailUndeliveredInstallationRecovery(ctx context.Context, operationID uuid.UUID, attempt int, inputSnapshot json.RawMessage, stage, safe string) (bool, error) {
-	changed := false
-	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
-			return fmt.Errorf("fail undelivered installation recovery: lock tools move gate: %w", err)
-		}
-		if err := lockSetupCompletion(ctx, tx); err != nil {
-			return fmt.Errorf("fail undelivered installation recovery: lock setup completion: %w", err)
-		}
-		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
-			return fmt.Errorf("fail undelivered installation recovery: lock package selections: %w", err)
-		}
-		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
-		if err != nil {
-			return err
-		}
-		if operation.Kind != "install" || (operation.State != "queued" && operation.State != "running") ||
-			operation.Attempt != attempt || operation.RiverJobID != nil || operation.TargetInstallationID != nil ||
-			string(operation.InputSnapshot) != string(inputSnapshot) {
-			return nil
-		}
-		now := time.Now().UTC()
-		operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
-		operation.FinishedAt, operation.UpdatedAt = &now, now
-		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
-			return fmt.Errorf("settle undelivered installation operation: %w", err)
-		}
-		changed = true
-		return nil
-	})
-	return changed, err
-}
-
-func (repository *SetupManagerRepository) failInstallationDelivery(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID *int64, installationID uuid.UUID, stage, safe string, orphanRecovery bool) (bool, error) {
+func (repository *SetupManagerRepository) failInstallationDelivery(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, stage, safe string) (bool, error) {
 	changed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
@@ -736,11 +693,7 @@ func (repository *SetupManagerRepository) failInstallationDelivery(ctx context.C
 			operation.TargetInstallationID == nil || *operation.TargetInstallationID != installationID {
 			return nil
 		}
-		if orphanRecovery {
-			if (operation.State != "queued" && operation.State != "running") || operation.RiverJobID != nil {
-				return nil
-			}
-		} else if operation.RiverJobID == nil || *operation.RiverJobID != *riverJobID {
+		if operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
 			return nil
 		}
 		if installation.State == "preparing" {
@@ -748,7 +701,7 @@ func (repository *SetupManagerRepository) failInstallationDelivery(ctx context.C
 				Where("id = ?", installationID).Where("state = 'preparing'").Exec(ctx); err != nil {
 				return fmt.Errorf("mark installation failed: %w", err)
 			}
-		} else if installation.State != "failed" && (!orphanRecovery || installation.State != "ready") {
+		} else if installation.State != "failed" {
 			return fmt.Errorf("fail installation delivery: target is not preparing or failed")
 		}
 		now := time.Now().UTC()

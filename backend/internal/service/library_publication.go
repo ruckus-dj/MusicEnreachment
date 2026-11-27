@@ -119,12 +119,8 @@ type LibraryPublications struct {
 	commands    PublicationCommandRunner
 	lyrics      *PublicationLyricsResolver
 	// artwork is the narrow primary-service boundary for first-publication
-	// artwork preparation. coverAcquisition remains as the legacy optional
-	// acquisition until all wiring uses WithPublicationArtwork.
-	artwork          publicationArtworkPreparer
-	coverAcquisition interface {
-		Ensure(context.Context, uuid.UUID) error
-	}
+	// artwork preparation.
+	artwork           publicationArtworkPreparer
 	artistDiscography interface {
 		EnsureArtistDiscography(context.Context, string) error
 	}
@@ -143,13 +139,6 @@ func (service *LibraryPublications) WithPublicationCommands(commands Publication
 
 func (service *LibraryPublications) WithLyricsResolver(resolver *PublicationLyricsResolver) *LibraryPublications {
 	service.lyrics = resolver
-	return service
-}
-
-func (service *LibraryPublications) WithCoverAcquisition(acquisition interface {
-	Ensure(context.Context, uuid.UUID) error
-}) *LibraryPublications {
-	service.coverAcquisition = acquisition
 	return service
 }
 

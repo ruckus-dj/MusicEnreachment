@@ -496,6 +496,7 @@ export function libraryCatalogAlbumResults({
             groupTitle: chooser.groupTitle,
             editions: chooser.editions,
             editionsStatus: chooser.editionsStatus,
+            soleEdition: chooser.soleEdition,
             selectedEditionKey: chooser.selectedEditionKey,
             onSelectEdition: chooser.onSelectEdition,
             tracksStatus: chooser.tracksStatus,

@@ -106,7 +106,6 @@ export const localProviderMessages = createNamespace({
       "Editing metadata does not itself start publication. This screen does not define deletion or dependency behavior.",
     selectOrCreate: "Select a record or explicitly create a new one.",
     changesSavedNotice: "Demo changes are kept in this page's memory.",
-    legacyNotice: "The Local provider was updated.",
   },
   ru: {
     artists: "Артисты",
@@ -215,6 +214,5 @@ export const localProviderMessages = createNamespace({
     selectOrCreate: "Выберите запись или явно создайте новую.",
     changesSavedNotice:
       "Демонстрационные изменения сохраняются в памяти этой страницы.",
-    legacyNotice: "Состояние провайдера Local обновлено.",
   },
 });

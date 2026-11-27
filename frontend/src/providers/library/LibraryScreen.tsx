@@ -146,7 +146,7 @@ function artistMonogram(name: string) {
  * Pure artist-card projection for the portable artist leaf. The live screen
  * and tests can build the typed result without mounting the route.
  */
-export function libraryArtistCardsModel({
+function libraryArtistCardsModel({
   items,
   route,
   selectionControl,
@@ -185,7 +185,7 @@ export function libraryArtistCardsModel({
  * the hash route. The filter maps to the API's independent publication and
  * availability axes, while page maps to the server offset at PAGE_SIZE.
  */
-export function useLibraryController() {
+function useLibraryController() {
   const observation = useHashObservation();
   const initialRoute =
     libraryControllerRoute(observation.hash) ?? fallbackRoute;

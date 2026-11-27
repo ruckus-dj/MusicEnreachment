@@ -557,54 +557,6 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionCatalogCacheKeys
 	return keys, nil
 }
 
-func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDigest [32]byte, captured []MatchingAcquisitionCapturedMember) (MatchingAcquisitionIntent, error) {
-	if len(admission.Providers) != 1 || admission.Providers[0].Operation == nil || admission.Providers[0].Operation.Kind != "provider_artist_search" {
-		return MatchingAcquisitionIntent{}, fmt.Errorf("matching acquisition currently requires exactly one initial artist search")
-	}
-	initial := admission.Providers[0].Operation
-	var search struct {
-		SchemaVersion int    `json:"schema_version"`
-		Query         string `json:"query"`
-		Offset        int    `json:"offset"`
-		Limit         int    `json:"limit"`
-	}
-	if initial.ProviderCacheKey == nil || json.Unmarshal(initial.InputSnapshot, &search) != nil || search.SchemaVersion != 1 ||
-		strings.TrimSpace(search.Query) == "" || search.Offset != 0 || search.Limit < 1 || search.Limit > 100 ||
-		*initial.ProviderCacheKey != fmt.Sprintf("artist-search:0:%d:%s", search.Limit, strings.TrimSpace(search.Query)) {
-		return MatchingAcquisitionIntent{}, fmt.Errorf("matching acquisition initial artist search intent is invalid")
-	}
-	targets := append([]MatchingTarget(nil), admission.Targets...)
-	sort.Slice(targets, func(i, j int) bool { return targets[i].GroupID.String() < targets[j].GroupID.String() })
-	captured = append([]MatchingAcquisitionCapturedMember(nil), captured...)
-	sort.Slice(captured, func(i, j int) bool { return captured[i].MemberID.String() < captured[j].MemberID.String() })
-	captured, err := normalizeCapturedMatchingMembers(captured)
-	if err != nil {
-		return MatchingAcquisitionIntent{}, fmt.Errorf("canonicalize matching metadata capture: %w", err)
-	}
-	captureDigest, err := matchingMetadataCaptureDigest(captured)
-	if err != nil {
-		return MatchingAcquisitionIntent{}, fmt.Errorf("digest matching metadata capture: %w", err)
-	}
-	intent := MatchingAcquisitionIntent{
-		SchemaVersion: matchingAcquisitionIntentVersion, GroupingEpoch: admission.GroupingEpoch,
-		PlanDigest: fmt.Sprintf("%x", planDigest[:]), CaptureDigest: captureDigest,
-		CapturedMembers: captured, PolicyVersion: admission.PolicyVersion,
-		Targets:               targets,
-		InitialProviderInputs: make([]MatchingAcquisitionProviderRequest, 0, len(admission.Providers)),
-	}
-	for _, provider := range admission.Providers {
-		if provider.Operation == nil || provider.Operation.ProviderCacheKey == nil {
-			return MatchingAcquisitionIntent{}, fmt.Errorf("matching admission: acquisition provider input is incomplete")
-		}
-		intent.InitialProviderInputs = append(intent.InitialProviderInputs, MatchingAcquisitionProviderRequest{
-			OperationID: provider.Operation.ID, Kind: provider.Operation.Kind,
-			CacheKey: *provider.Operation.ProviderCacheKey,
-			Input:    append(json.RawMessage(nil), provider.Operation.InputSnapshot...),
-		})
-	}
-	return intent, nil
-}
-
 // GetMatchingAcquisitionMetadataCapture returns the immutable metadata captured
 // at admission only when the durable acquisition is in the requested phase.
 func (repository *SetupManagerRepository) GetMatchingAcquisitionMetadataCapture(ctx context.Context, runID uuid.UUID, expectedPhase string) ([]MatchingAcquisitionCapturedMember, string, bool, error) {
@@ -942,24 +894,6 @@ func equalMatchingTargets(left, right []MatchingTarget) bool {
 		}
 	}
 	return true
-}
-
-func createMatchingAcquisitionLedger(ctx context.Context, tx bun.Tx, runID uuid.UUID, intent MatchingAcquisitionIntent) error {
-	encoded, err := canonicalMatchingAcquisitionIntentBytes(intent)
-	if err != nil {
-		return fmt.Errorf("encode matching acquisition intent: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	if _, err := tx.NewRaw(`INSERT INTO matching_acquisition(run_id, intent_version, intent, intent_digest, current_phase)
-		VALUES (?, ?, ?::jsonb, ?, 'admitted')`, runID, intent.SchemaVersion, string(encoded), digest[:]).Exec(ctx); err != nil {
-		return err
-	}
-	input, _ := json.Marshal(map[string]string{"intent_digest": fmt.Sprintf("%x", digest[:])})
-	if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id, revision, phase, input, output, response_provenance)
-		VALUES (?, 0, 'admitted', ?::jsonb, '{"state":"admitted"}'::jsonb, '[]'::jsonb)`, runID, string(input)).Exec(ctx); err != nil {
-		return err
-	}
-	return nil
 }
 
 // AdvanceMatchingAcquisitionForDelivery atomically appends an evidence-backed

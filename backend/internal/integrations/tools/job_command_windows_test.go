@@ -72,36 +72,45 @@ func TestRunJobCommandStreamsInputAndOutput(t *testing.T) {
 	if _, err := input.WriteString("borrowed-input"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := input.Seek(0, io.SeekStart); err != nil {
-		t.Fatal(err)
-	}
 	defer input.Close()
-	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
 	executable, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := RunJobCommand(context.Background(), JobCommandRequest{
-		Executable: executable,
-		Args:       []string{"-test.run=^TestRunJobCommandStreamsInputAndOutput$", "--", "arg with spaces", "quote\"arg"},
-		Input:      input,
-		Stdout:     stdout,
-		Stderr:     stderr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.QuiescenceEstablished || result.ExitCode != 7 {
-		t.Fatalf("RunJobCommand() result = %+v, want quiescent exit 7", result)
-	}
-	if got, want := stdout.String(), `arg with spaces|quote"arg:borrowed-input`; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
-	}
-	if got, want := stderr.String(), "helper-stderr"; got != want {
-		t.Fatalf("stderr = %q, want %q", got, want)
-	}
-	if _, err := input.Seek(0, io.SeekCurrent); err != nil {
-		t.Fatalf("borrowed input was closed: %v", err)
+	for _, name := range []string{"stream", "file"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := input.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+			stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+			request := JobCommandRequest{
+				Executable: executable,
+				Args:       []string{"-test.run=^TestRunJobCommandStreamsInputAndOutput$", "--", "arg with spaces", "quote\"arg"},
+				Stdout:     stdout,
+				Stderr:     stderr,
+			}
+			if name == "file" {
+				request.FileInput = input
+			} else {
+				request.Input = input
+			}
+			result, err := RunJobCommand(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.QuiescenceEstablished || result.ExitCode != 7 {
+				t.Fatalf("RunJobCommand() result = %+v, want quiescent exit 7", result)
+			}
+			if got, want := stdout.String(), `arg with spaces|quote"arg:borrowed-input`; got != want {
+				t.Fatalf("stdout = %q, want %q", got, want)
+			}
+			if got, want := stderr.String(), "helper-stderr"; got != want {
+				t.Fatalf("stderr = %q, want %q", got, want)
+			}
+			if _, err := input.Seek(0, io.SeekCurrent); err != nil {
+				t.Fatalf("borrowed input was closed: %v", err)
+			}
+		})
 	}
 }
 

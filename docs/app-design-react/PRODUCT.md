@@ -24,9 +24,10 @@ reorganizing its presentation and navigation where useful. Preserve Russian
 and English localization and both light and dark themes.
 Use React Aria examples and accessible primitives where appropriate.
 
-The prototype evolves independently from `frontend/`. Do not copy its UI
-into the application without a separate explicit request. Demo data and
-providers remain outside `src/ui/`; source files and stand data remain intact.
+The prototype can lead the application while exploring UX. Bring
+frontend-originated UI fixes back into the prototype without discarding its
+newer work, as described in the [product contract](../design/decisions.md#интерфейс).
+Demo data and providers remain outside `src/ui/`.
 
 ## Brand commitments
 

@@ -218,3 +218,84 @@ func assertMatchingLayoutTargetEvidenceFences(t *testing.T, fixture automaticTar
 		}
 	}, `UPDATE media_metadata_result SET tag_encoding=?::jsonb WHERE id=?`, string(revision), *captures[0].CaptureAnalysisID)
 }
+
+func matchingCoordinatorStringPtr(value string) *string { return &value }
+
+func TestMatchingEvaluationRetryAdvancesDeliveryWithoutChangingTargetGenerationPostgreSQL(t *testing.T) {
+	t.Parallel()
+	fixture := newAutomaticMatchingTargetFenceFixture(t)
+	ctx, db, repository := fixture.ctx, fixture.db, fixture.repository
+
+	var before struct {
+		Attempt          int        `bun:"attempt"`
+		ExecutionEpoch   int64      `bun:"execution_epoch"`
+		CurrentJobID     int64      `bun:"current_river_job_id"`
+		TargetGeneration int64      `bun:"target_generation"`
+		HighWater        int64      `bun:"high_water"`
+		CurrentRunID     *uuid.UUID `bun:"current_run_id"`
+	}
+	if err := db.NewRaw(`SELECT operation.attempt, run.execution_epoch, run.current_river_job_id,
+			target.target_generation, generation.high_water, generation.current_run_id
+		FROM operation
+		JOIN matching_run run ON run.id=operation.id
+		JOIN matching_run_target target ON target.run_id=run.id
+		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+		WHERE operation.id=?`, fixture.runID).Scan(ctx, &before); err != nil {
+		t.Fatalf("read retry baseline: %v", err)
+	}
+	if _, err := db.NewRaw(`UPDATE operation SET state='failed', stage='evaluation_failed', safe_error='retry fixture', finished_at=now(), updated_at=now() WHERE id=?`, fixture.runID).Exec(ctx); err != nil {
+		t.Fatalf("mark matching operation failed: %v", err)
+	}
+	if _, err := db.NewRaw(`UPDATE matching_run SET state='failed', updated_at=now() WHERE id=?`, fixture.runID).Exec(ctx); err != nil {
+		t.Fatalf("mark matching run failed: %v", err)
+	}
+
+	client := openScanEnqueueRiver(t, db)
+	retried, err := repository.RetryMatchingEvaluationOperationAndEnqueue(ctx, fixture.runID, client,
+		persistence.MatchingEvaluationWakeArgs{OperationID: fixture.runID}, nil)
+	if err != nil {
+		t.Fatalf("retry failed matching evaluation: %v", err)
+	}
+	if retried == nil || retried.State != "queued" || retried.Stage != "retry:evaluation_failed" ||
+		retried.Attempt != before.Attempt+1 || retried.RiverJobID == nil || *retried.RiverJobID == before.CurrentJobID {
+		t.Fatalf("retried operation = %+v; want queued retry with the next attempt and delivery", retried)
+	}
+
+	var after struct {
+		State            string     `bun:"state"`
+		ExecutionEpoch   int64      `bun:"execution_epoch"`
+		CurrentJobID     int64      `bun:"current_river_job_id"`
+		ActiveJobID      *int64     `bun:"active_river_job_id"`
+		ActiveAttempt    *int       `bun:"active_river_attempt"`
+		ActiveEpoch      *int64     `bun:"active_execution_epoch"`
+		TargetGeneration int64      `bun:"target_generation"`
+		HighWater        int64      `bun:"high_water"`
+		CurrentRunID     *uuid.UUID `bun:"current_run_id"`
+	}
+	if err := db.NewRaw(`SELECT run.state, run.execution_epoch, run.current_river_job_id,
+			run.active_river_job_id, run.active_river_attempt, run.active_execution_epoch,
+			target.target_generation, generation.high_water, generation.current_run_id
+		FROM matching_run run
+		JOIN matching_run_target target ON target.run_id=run.id
+		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+		WHERE run.id=?`, fixture.runID).Scan(ctx, &after); err != nil {
+		t.Fatalf("read retried matching run: %v", err)
+	}
+	if after.State != "queued" || after.ExecutionEpoch != before.ExecutionEpoch+1 ||
+		after.CurrentJobID != *retried.RiverJobID || after.ActiveJobID != nil || after.ActiveAttempt != nil || after.ActiveEpoch != nil {
+		t.Fatalf("retried run = %+v; want one queued delivery epoch and no active claim", after)
+	}
+	if after.TargetGeneration != before.TargetGeneration || after.HighWater != before.HighWater ||
+		(after.CurrentRunID == nil) != (before.CurrentRunID == nil) ||
+		after.CurrentRunID != nil && before.CurrentRunID != nil && *after.CurrentRunID != *before.CurrentRunID {
+		t.Fatalf("retry changed captured target generation: before=%+v after=%+v", before, after)
+	}
+	var deliveryAttempt int
+	if err := db.NewRaw(`SELECT operation_attempt FROM matching_delivery WHERE run_id=? AND river_job_id=?`,
+		fixture.runID, *retried.RiverJobID).Scan(ctx, &deliveryAttempt); err != nil {
+		t.Fatalf("read registered retry delivery: %v", err)
+	}
+	if deliveryAttempt != retried.Attempt {
+		t.Fatalf("retry delivery attempt = %d, want operation attempt %d", deliveryAttempt, retried.Attempt)
+	}
+}

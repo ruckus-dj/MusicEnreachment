@@ -25,17 +25,17 @@ import { useHashLocation } from "../../app/navigation/hashLocation";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import {
-  nextIncomingConfirmOrder,
-  saveIncomingConfirmReceipt,
-} from "./confirmReceipts";
-import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
-import {
   type IncomingGroupsRoute,
   incomingGroupMatchingHref,
   incomingGroupsListHref,
   incomingGroupsListRoute,
   parseIncomingGroupsRoute,
-} from "./incomingGroupsRoute";
+} from "../../ui/features/incoming/incomingGroupsRoute";
+import {
+  nextIncomingConfirmOrder,
+  saveIncomingConfirmReceipt,
+} from "./confirmReceipts";
+import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
 
 const ids = {
   group: "group-1",

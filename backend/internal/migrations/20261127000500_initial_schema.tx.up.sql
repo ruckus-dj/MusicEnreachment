@@ -1922,33 +1922,6 @@ CREATE TABLE public.app_setting (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.collection (
-    id uuid NOT NULL,
-    title text DEFAULT ''::text NOT NULL,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    metadata_version integer DEFAULT 1 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT collection_metadata_check CHECK ((jsonb_typeof(metadata) = 'object'::text)),
-    CONSTRAINT collection_metadata_version_check CHECK ((metadata_version >= 1))
-);
-
-CREATE TABLE public.collection_artist (
-    collection_id uuid NOT NULL,
-    "position" integer NOT NULL,
-    artist_id uuid NOT NULL,
-    name text DEFAULT ''::text NOT NULL,
-    name_join_phrase text DEFAULT ''::text NOT NULL,
-    CONSTRAINT collection_artist_position_check CHECK (("position" >= 0))
-);
-
-CREATE TABLE public.collection_release (
-    collection_id uuid NOT NULL,
-    "position" integer NOT NULL,
-    release_id uuid NOT NULL,
-    CONSTRAINT collection_release_position_check CHECK (("position" >= 0))
-);
-
 CREATE TABLE public.cover_art_archive_image (
     release_mbid uuid NOT NULL,
     image_id text NOT NULL,
@@ -3877,15 +3850,6 @@ ALTER TABLE ONLY public.matching_delivery ALTER COLUMN id SET DEFAULT nextval('p
 ALTER TABLE ONLY public.app_setting
     ADD CONSTRAINT app_setting_pkey PRIMARY KEY (setting_name);
 
-ALTER TABLE ONLY public.collection_artist
-    ADD CONSTRAINT collection_artist_pkey PRIMARY KEY (collection_id, "position");
-
-ALTER TABLE ONLY public.collection
-    ADD CONSTRAINT collection_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.collection_release
-    ADD CONSTRAINT collection_release_pkey PRIMARY KEY (collection_id, "position");
-
 ALTER TABLE ONLY public.cover_art_archive_image
     ADD CONSTRAINT cover_art_archive_image_pkey PRIMARY KEY (release_mbid, image_id);
 
@@ -4760,18 +4724,6 @@ CREATE TRIGGER source_work_variant_identity_no_rekey BEFORE UPDATE ON public.sou
 CREATE TRIGGER source_work_variant_identity_requires_live_identity BEFORE INSERT ON public.source_work_variant_identity FOR EACH ROW EXECUTE FUNCTION public.source_work_variant_identity_requires_live_identity();
 
 -- Foreign keys
-ALTER TABLE ONLY public.collection_artist
-    ADD CONSTRAINT collection_artist_artist_id_fkey FOREIGN KEY (artist_id) REFERENCES public.local_artist(id) ON DELETE RESTRICT;
-
-ALTER TABLE ONLY public.collection_artist
-    ADD CONSTRAINT collection_artist_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collection(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.collection_release
-    ADD CONSTRAINT collection_release_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collection(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.collection_release
-    ADD CONSTRAINT collection_release_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.local_release(id) ON DELETE RESTRICT;
-
 ALTER TABLE ONLY public.cover_art_archive_image
     ADD CONSTRAINT cover_art_archive_image_release_fkey FOREIGN KEY (release_mbid) REFERENCES public.cover_art_archive_release(release_mbid) ON DELETE CASCADE;
 

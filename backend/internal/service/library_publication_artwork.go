@@ -94,15 +94,6 @@ func (service *LibraryPublications) preparePublicationArtwork(ctx context.Contex
 			}
 			return fmt.Errorf("%w: %w", ErrPublicationArtwork, err)
 		}
-		return nil
-	}
-	if service.coverAcquisition != nil {
-		if err := service.coverAcquisition.Ensure(ctx, releaseID); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
-			}
-			return fmt.Errorf("%w: %w", ErrPublicationArtwork, err)
-		}
 	}
 	return nil
 }

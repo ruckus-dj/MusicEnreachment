@@ -47,22 +47,24 @@ func TestParseFLACPictureBoundsAndDigest(t *testing.T) {
 	}
 }
 
-func TestHasPictureCommentCaseInsensitiveIncludingEmpty(t *testing.T) {
+func TestParseVorbisCommentsCaseInsensitiveIncludingEmpty(t *testing.T) {
 	for _, value := range []string{"METADATA_BLOCK_PICTURE", "CoverArt", "coverartmime"} {
-		if !hasPictureComment(vorbisComment(value, "")) {
-			t.Errorf("did not detect %q", value)
+		found, err := parseVorbisComments(vorbisComment(value, ""))
+		if err != nil || !found {
+			t.Errorf("artwork comment %q: found=%t err=%v", value, found, err)
 		}
 	}
-	if hasPictureComment(vorbisComment("TITLE", "ordinary coverart metadata_block_picture")) {
-		t.Fatal("ordinary comment classified as artwork")
+	found, err := parseVorbisComments(vorbisComment("TITLE", "ordinary coverart metadata_block_picture"))
+	if err != nil || found {
+		t.Fatalf("ordinary comment classified as artwork: found=%t err=%v", found, err)
 	}
 	for name, malformed := range map[string][]byte{
 		"length":       {1, 0},
 		"invalid utf8": vorbisComment("TITLE", string([]byte{0xff})),
 		"empty key":    vorbisComment("", "coverart"),
 	} {
-		if _, err := parseVorbisComments(malformed); err == nil {
-			t.Errorf("accepted malformed %s", name)
+		if found, err := parseVorbisComments(malformed); err == nil || found {
+			t.Errorf("accepted malformed %s: found=%t err=%v", name, found, err)
 		}
 	}
 }
@@ -122,8 +124,8 @@ func vorbisComment(key, value string) []byte {
 	return out
 }
 
-func TestWritePreservingFlacArtworkRejectsZeroSnapshot(t *testing.T) {
-	if err := WritePreservingFlacArtwork(t.Context(), "some.flac", nil, FlacArtworkSnapshot{}); err == nil {
+func TestWriteFlacTagsPreservingArtworkRejectsZeroSnapshot(t *testing.T) {
+	if _, err := WriteFlacTagsPreservingArtwork(t.Context(), "some.flac", nil, FlacArtworkSnapshot{}); err == nil {
 		t.Fatal("zero snapshot accepted")
 	}
 	if _, err := writeFlacTagsPreservingArtwork(t.Context(), "some.flac", nil, FlacArtworkSnapshot{}, nil, nil); err == nil {

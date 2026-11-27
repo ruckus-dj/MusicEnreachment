@@ -1,8 +1,11 @@
-package persistence
+//go:build integration
+
+package persistence_test
 
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,11 +14,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type CollectionRepository struct {
-	db *bun.DB
-}
+// The former CollectionRepository had no production callers. It existed only
+// to exercise the live track_source and provider_local_* tables from tests, so
+// its write helpers now live here as test fixtures.
 
-type ProviderIdentityLink struct {
+type collectionTestProviderIdentityLink struct {
 	ProviderID       uuid.UUID
 	ProviderEntityID uuid.UUID
 	LocalEntityID    uuid.UUID
@@ -23,52 +26,67 @@ type ProviderIdentityLink struct {
 	PolicyVersion    *string
 }
 
-func NewCollectionRepository(db *bun.DB) *CollectionRepository {
-	return &CollectionRepository{db: db}
+type collectionTestTrackSourceDecision struct {
+	ID                     uuid.UUID
+	TrackID                uuid.UUID
+	MediaVariantID         uuid.UUID
+	Selected               bool
+	Compatible             bool
+	Method                 string
+	PolicyVersion          *string
+	Metadata               json.RawMessage
+	SourceMetadataResultID *uuid.UUID
 }
 
-// UpsertTrackSourceDecision persists an explicit track/variant association.
+type collectionTestRepository struct {
+	db *bun.DB
+}
+
+func newCollectionTestRepository(db *bun.DB) *collectionTestRepository {
+	return &collectionTestRepository{db: db}
+}
+
+// upsertTrackSourceDecision persists an explicit track/variant association.
 // Automatic decisions cannot replace a manual decision; selection remains false
 // unless the caller explicitly asks to select this row.
-func (repository *CollectionRepository) UpsertTrackSourceDecision(ctx context.Context, decision TrackSourceDecision) error {
+func (repository *collectionTestRepository) upsertTrackSourceDecision(ctx context.Context, decision collectionTestTrackSourceDecision) error {
 	if decision.TrackID == uuid.Nil || decision.MediaVariantID == uuid.Nil {
 		return fmt.Errorf("upsert track source: track and media variant are required")
 	}
 	if decision.ID == uuid.Nil {
 		decision.ID = uuid.New()
 	}
-	if err := validateCollectionDecision(decision.Method, decision.PolicyVersion); err != nil {
+	if err := validateCollectionTestDecision(decision.Method, decision.PolicyVersion); err != nil {
 		return fmt.Errorf("upsert track source: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-			return fmt.Errorf("upsert track source: lock source mutation gate: %w", err)
+		var existing struct {
+			ID             uuid.UUID `bun:"id"`
+			DecisionMethod string    `bun:"decision_method"`
 		}
-		if err := rejectCleanupOwnedSourceVariant(ctx, tx, decision.MediaVariantID); err != nil {
-			return fmt.Errorf("upsert track source: %w", err)
-		}
-		var existing TrackSource
-		err := tx.NewSelect().Model(&existing).
-			Where("track_id = ? AND media_variant_id = ?", decision.TrackID, decision.MediaVariantID).
-			For("UPDATE").Scan(ctx)
+		err := tx.NewRaw(`SELECT id,decision_method FROM track_source WHERE track_id=? AND media_variant_id=? FOR UPDATE`,
+			decision.TrackID, decision.MediaVariantID).Scan(ctx, &existing)
 		if err != nil && err != sql.ErrNoRows {
 			return fmt.Errorf("upsert track source: read existing decision: %w", err)
 		}
 		if err == nil && existing.DecisionMethod == "manual" && decision.Method != "manual" {
 			return fmt.Errorf("upsert track source: automatic decision cannot replace manual decision")
 		}
-		row := TrackSource{ID: decision.ID, TrackID: decision.TrackID, MediaVariantID: decision.MediaVariantID,
-			SourceMetadataResultID: decision.SourceMetadataResultID,
-			Selected:               decision.Selected, Compatible: decision.Compatible, DecisionMethod: decision.Method,
-			PolicyVersion: decision.PolicyVersion, Metadata: decision.Metadata, UpdatedAt: time.Now().UTC()}
+		metadata := decision.Metadata
+		if len(metadata) == 0 {
+			metadata = json.RawMessage(`{}`)
+		}
+		now := time.Now().UTC()
 		if err == nil {
-			row.ID = existing.ID
-			row.CreatedAt = existing.CreatedAt
-			_, err = tx.NewUpdate().Model(&row).Column("selected", "compatible", "decision_method", "policy_version", "metadata", "source_metadata_result_id", "updated_at").
-				Where("id = ?", existing.ID).Exec(ctx)
+			_, err = tx.NewRaw(`UPDATE track_source SET selected=?,compatible=?,decision_method=?,policy_version=?,metadata=?::jsonb,
+				source_metadata_result_id=?,updated_at=? WHERE id=?`,
+				decision.Selected, decision.Compatible, decision.Method, decision.PolicyVersion, string(metadata),
+				decision.SourceMetadataResultID, now, existing.ID).Exec(ctx)
 		} else {
-			row.CreatedAt = row.UpdatedAt
-			_, err = tx.NewInsert().Model(&row).Exec(ctx)
+			_, err = tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata,source_metadata_result_id,created_at,updated_at)
+				VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?)`,
+				decision.ID, decision.TrackID, decision.MediaVariantID, decision.Selected, decision.Compatible,
+				decision.Method, decision.PolicyVersion, string(metadata), decision.SourceMetadataResultID, now, now).Exec(ctx)
 		}
 		if err != nil {
 			return fmt.Errorf("upsert track source: write decision: %w", err)
@@ -77,9 +95,9 @@ func (repository *CollectionRepository) UpsertTrackSourceDecision(ctx context.Co
 	})
 }
 
-// RemoveTrackSourceDecision deletes an association only when the caller's
+// removeTrackSourceDecision deletes an association only when the caller's
 // decision authority permits it. Manual rows require a manual removal.
-func (repository *CollectionRepository) RemoveTrackSourceDecision(ctx context.Context, trackID, mediaVariantID uuid.UUID, method string) error {
+func (repository *collectionTestRepository) removeTrackSourceDecision(ctx context.Context, trackID, mediaVariantID uuid.UUID, method string) error {
 	if trackID == uuid.Nil || mediaVariantID == uuid.Nil {
 		return fmt.Errorf("remove track source: track and media variant are required")
 	}
@@ -87,13 +105,12 @@ func (repository *CollectionRepository) RemoveTrackSourceDecision(ctx context.Co
 		return fmt.Errorf("remove track source: method must be manual or automatic")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-			return fmt.Errorf("remove track source: lock source mutation gate: %w", err)
+		var existing struct {
+			ID             uuid.UUID `bun:"id"`
+			DecisionMethod string    `bun:"decision_method"`
 		}
-		var existing TrackSource
-		err := tx.NewSelect().Model(&existing).
-			Where("track_id = ? AND media_variant_id = ?", trackID, mediaVariantID).
-			For("UPDATE").Scan(ctx)
+		err := tx.NewRaw(`SELECT id,decision_method FROM track_source WHERE track_id=? AND media_variant_id=? FOR UPDATE`,
+			trackID, mediaVariantID).Scan(ctx, &existing)
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -103,34 +120,28 @@ func (repository *CollectionRepository) RemoveTrackSourceDecision(ctx context.Co
 		if existing.DecisionMethod == "manual" && method != "manual" {
 			return fmt.Errorf("remove track source: automatic removal cannot remove manual decision")
 		}
-		if err := rejectCleanupOwnedSourceVariant(ctx, tx, mediaVariantID); err != nil {
-			return fmt.Errorf("remove track source: %w", err)
-		}
-		if _, err := tx.NewDelete().Model(&existing).Where("id = ?", existing.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM track_source WHERE id=?`, existing.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("remove track source: delete decision: %w", err)
 		}
 		return nil
 	})
 }
 
-// UpsertProviderIdentityLink writes one provider-scoped identity decision.
+// upsertProviderIdentityLink writes one provider-scoped identity decision.
 // entityKind is restricted to the four local/provider entity pairs represented
 // by this schema; provider and provider-entity IDs are never rewritten.
-func (repository *CollectionRepository) UpsertProviderIdentityLink(ctx context.Context, entityKind string, link ProviderIdentityLink) error {
-	table, providerColumn, localColumn, err := providerLinkTable(entityKind)
+func (repository *collectionTestRepository) upsertProviderIdentityLink(ctx context.Context, entityKind string, link collectionTestProviderIdentityLink) error {
+	table, providerColumn, localColumn, err := collectionTestProviderLinkTable(entityKind)
 	if err != nil {
 		return err
 	}
 	if link.ProviderID == uuid.Nil || link.ProviderEntityID == uuid.Nil || link.LocalEntityID == uuid.Nil {
 		return fmt.Errorf("upsert provider identity link: provider and entity IDs are required")
 	}
-	if err := validateCollectionDecision(link.Method, link.PolicyVersion); err != nil {
+	if err := validateCollectionTestDecision(link.Method, link.PolicyVersion); err != nil {
 		return fmt.Errorf("upsert provider identity link: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-			return fmt.Errorf("upsert provider identity link: lock source mutation gate: %w", err)
-		}
 		var existingMethod string
 		query := fmt.Sprintf(`SELECT method FROM %s WHERE provider_id=? AND %s=? FOR UPDATE`, table, providerColumn)
 		err := tx.NewRaw(query, link.ProviderID, link.ProviderEntityID).Scan(ctx, &existingMethod)
@@ -157,7 +168,7 @@ func (repository *CollectionRepository) UpsertProviderIdentityLink(ctx context.C
 	})
 }
 
-func providerLinkTable(entityKind string) (table, providerColumn, localColumn string, err error) {
+func collectionTestProviderLinkTable(entityKind string) (table, providerColumn, localColumn string, err error) {
 	switch entityKind {
 	case "artist":
 		return "provider_local_artist", "provider_artist_id", "local_artist_id", nil
@@ -172,7 +183,7 @@ func providerLinkTable(entityKind string) (table, providerColumn, localColumn st
 	}
 }
 
-func validateCollectionDecision(method string, policyVersion *string) error {
+func validateCollectionTestDecision(method string, policyVersion *string) error {
 	switch method {
 	case "manual":
 		if policyVersion != nil {
@@ -180,7 +191,7 @@ func validateCollectionDecision(method string, policyVersion *string) error {
 		}
 	case "automatic":
 		// The policy version is an opaque algorithm token owned by the caller;
-		// the repository only requires that an automatic decision carries one.
+		// the fixture only requires that an automatic decision carries one.
 		if policyVersion == nil || strings.TrimSpace(*policyVersion) == "" {
 			return fmt.Errorf("automatic decision requires a non-blank policy version")
 		}

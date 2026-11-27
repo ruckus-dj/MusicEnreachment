@@ -10,8 +10,8 @@ import {
 } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { useI18n } from "../app/i18n/host";
-import { useHashLocation } from "../app/navigation/hashLocation";
 import { themePreferenceStore } from "../app/theme/themePreferenceHost";
+import { useMeloTroveHashLocation } from "../ui/app/hashLocation";
 import {
   bindMeloTroveRoute,
   bindMeloTroveScreen,
@@ -65,15 +65,6 @@ function ProductionHomeBinder({ children }: { children: ReactNode }) {
   return (
     <MeloTroveHomeBinder sources={sourceRead}>{children}</MeloTroveHomeBinder>
   );
-}
-
-function navigateHash(href: string) {
-  if (window.location.hash === href) return;
-  window.location.hash = href;
-}
-
-function useProductionMeloTroveLocation() {
-  return { hash: useHashLocation(), navigate: navigateHash };
 }
 
 function useProductionMeloTroveModel(route: MeloTroveRoute): MeloTroveModel {
@@ -212,7 +203,7 @@ function useProductionMeloTroveModel(route: MeloTroveRoute): MeloTroveModel {
 }
 
 export const productionMeloTroveProvider = {
-  useLocation: useProductionMeloTroveLocation,
+  useLocation: useMeloTroveHashLocation,
   useModel: useProductionMeloTroveModel,
   validateLibraryId: isUuid,
 } satisfies MeloTroveProvider;

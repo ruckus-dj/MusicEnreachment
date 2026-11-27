@@ -33,21 +33,6 @@ func (repository *coverPreparationRepository) ReadLibraryFirstPublicationContext
 	return repository.snapshots[index], nil
 }
 
-type coverAcquisitionFixture struct {
-	calls    int
-	releases []uuid.UUID
-	err      error
-}
-
-func (fixture *coverAcquisitionFixture) Ensure(ctx context.Context, releaseID uuid.UUID) error {
-	fixture.calls++
-	fixture.releases = append(fixture.releases, releaseID)
-	if ctx != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return fixture.err
-}
-
 func firstPublicationCoverSnapshot(releaseID, positionID uuid.UUID, cover persistence.EffectiveReleaseCoverSummary) *persistence.LibraryFirstPublicationContext {
 	return &persistence.LibraryFirstPublicationContext{
 		Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID},
@@ -62,34 +47,34 @@ func TestPrepareFirstCoverPreparesEveryOrdinaryFirstPublication(t *testing.T) {
 	tests := []struct {
 		name         string
 		snapshot     *persistence.LibraryFirstPublicationContext
-		acquisition  *coverAcquisitionFixture
+		acquisition  *artworkPreparationFixture
 		wantCalls    int
 		wantReads    int
 		wantError    error
 		wantContains string
 	}{
-		{name: "automatic absent first publication", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent), acquisition: &coverAcquisitionFixture{}, wantCalls: 1, wantReads: 2},
+		{name: "automatic absent first publication", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent), acquisition: &artworkPreparationFixture{}, wantCalls: 1, wantReads: 2},
 		{name: "current publication is read-only", snapshot: func() *persistence.LibraryFirstPublicationContext {
 			snapshot := firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent)
 			snapshot.Library.Current = &persistence.LibraryPublicationCurrent{}
 			return snapshot
-		}(), acquisition: &coverAcquisitionFixture{}, wantReads: 1},
+		}(), acquisition: &artworkPreparationFixture{}, wantReads: 1},
 		{name: "active attempt is read-only", snapshot: func() *persistence.LibraryFirstPublicationContext {
 			snapshot := firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent)
 			snapshot.Library.ActiveAttempt = &persistence.LibraryPublicationOperation{}
 			return snapshot
-		}(), acquisition: &coverAcquisitionFixture{}, wantReads: 1},
-		{name: "manual authority still prepares gallery", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, persistence.EffectiveReleaseCoverSummary{Revision: 2, Mode: "manual", State: "absent"}), acquisition: &coverAcquisitionFixture{}, wantCalls: 1, wantReads: 2},
-		{name: "selected automatic cover still prepares gallery", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, persistence.EffectiveReleaseCoverSummary{Revision: 2, Mode: "automatic", State: "value", Generation: &generation}), acquisition: &coverAcquisitionFixture{}, wantCalls: 1, wantReads: 2},
+		}(), acquisition: &artworkPreparationFixture{}, wantReads: 1},
+		{name: "manual authority still prepares gallery", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, persistence.EffectiveReleaseCoverSummary{Revision: 2, Mode: "manual", State: "absent"}), acquisition: &artworkPreparationFixture{}, wantCalls: 1, wantReads: 2},
+		{name: "selected automatic cover still prepares gallery", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, persistence.EffectiveReleaseCoverSummary{Revision: 2, Mode: "automatic", State: "value", Generation: &generation}), acquisition: &artworkPreparationFixture{}, wantCalls: 1, wantReads: 2},
 		{name: "missing acquisition service is a no-op", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent), acquisition: nil, wantReads: 1},
-		{name: "acquisition failure is classified as pending artwork", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent), acquisition: &coverAcquisitionFixture{err: errors.New("provider unavailable")}, wantCalls: 1, wantReads: 1, wantError: ErrPublicationArtwork, wantContains: "provider unavailable"},
+		{name: "artwork preparation failure is classified as pending artwork", snapshot: firstPublicationCoverSnapshot(releaseID, positionID, automaticAbsent), acquisition: &artworkPreparationFixture{err: errors.New("provider unavailable")}, wantCalls: 1, wantReads: 1, wantError: ErrPublicationArtwork, wantContains: "provider unavailable"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &coverPreparationRepository{snapshots: []*persistence.LibraryFirstPublicationContext{test.snapshot, refreshedCoverSnapshot(releaseID, positionID)}}
 			service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{})
 			if test.acquisition != nil {
-				service.WithCoverAcquisition(test.acquisition)
+				service.WithPublicationArtwork(test.acquisition)
 			}
 			err := service.PrepareFirstCover(context.Background(), releaseID, positionID)
 			if test.wantError != nil && !errors.Is(err, test.wantError) {
@@ -121,8 +106,8 @@ func TestPrepareFirstCoverHonorsCancellation(t *testing.T) {
 	repository := &coverPreparationRepository{snapshots: []*persistence.LibraryFirstPublicationContext{
 		firstPublicationCoverSnapshot(releaseID, positionID, persistence.EffectiveReleaseCoverSummary{Revision: 1, Mode: "automatic", State: "absent"}),
 	}}
-	acquisition := &coverAcquisitionFixture{err: errors.New("ignored")}
-	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithCoverAcquisition(acquisition)
+	acquisition := &artworkPreparationFixture{err: errors.New("ignored")}
+	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithPublicationArtwork(acquisition)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := service.PrepareFirstCover(ctx, releaseID, positionID); !errors.Is(err, context.Canceled) {
@@ -162,8 +147,8 @@ func TestPrepareSelectionCoversAcquiresOncePerEligibleRelease(t *testing.T) {
 		positions[4]: firstPublicationCoverSnapshot(releaseC, positions[4].PositionID, persistence.EffectiveReleaseCoverSummary{Revision: 2, Mode: "manual", State: "absent"}),
 	}
 	repository := &selectionCoverPreparationRepository{snapshots: snapshots}
-	acquisition := &coverAcquisitionFixture{}
-	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithCoverAcquisition(acquisition)
+	acquisition := &artworkPreparationFixture{}
+	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithPublicationArtwork(acquisition)
 	if err := service.prepareSelectionCovers(context.Background(), positions, repository); err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +173,8 @@ func TestPrepareSelectionCoversReportsPendingArtworkAndHonorsCancellation(t *tes
 	}
 	repository := &selectionCoverPreparationRepository{snapshots: snapshots}
 
-	acquisition := &coverAcquisitionFixture{err: errors.New("provider failure")}
-	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithCoverAcquisition(acquisition)
+	acquisition := &artworkPreparationFixture{err: errors.New("provider failure")}
+	service := newLibraryPublications(repository, firstPreviewSettings{}, nil, tools.Platform{}).WithPublicationArtwork(acquisition)
 	if err := service.prepareSelectionCovers(context.Background(), positions, repository); !errors.Is(err, ErrPublicationArtwork) {
 		t.Fatalf("pending artwork error = %v, want ErrPublicationArtwork", err)
 	}

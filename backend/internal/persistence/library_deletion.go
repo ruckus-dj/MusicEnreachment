@@ -101,7 +101,6 @@ type libraryDeletionDependencies struct {
 	RecordingCredits        []json.RawMessage `json:"recording_credits"`
 	MediumIDs               []uuid.UUID       `json:"medium_ids"`
 	ReleaseCredits          []json.RawMessage `json:"release_credits"`
-	CollectionLinks         []json.RawMessage `json:"collection_links"`
 	ProviderLinks           []json.RawMessage `json:"provider_links"`
 	CoverRevision           *int64            `json:"cover_revision,omitempty"`
 }
@@ -120,11 +119,6 @@ type libraryDeletionCredit struct {
 	Name       string    `bun:"name"`
 	JoinPhrase string    `bun:"join_phrase"`
 	Role       string    `bun:"role"`
-}
-
-type libraryDeletionCollectionLink struct {
-	CollectionID uuid.UUID `bun:"collection_id"`
-	Position     int       `bun:"position"`
 }
 
 type libraryDeletionProviderLink struct {
@@ -413,7 +407,7 @@ func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, re
 		CandidateTrackIDs: []uuid.UUID{}, CandidateRecordingIDs: []uuid.UUID{},
 		TrackMappings: []json.RawMessage{}, TrackCredits: []json.RawMessage{}, TrackSources: []json.RawMessage{},
 		RecordingMappings: []json.RawMessage{}, RecordingCredits: []json.RawMessage{}, MediumIDs: []uuid.UUID{},
-		ReleaseCredits: []json.RawMessage{}, CollectionLinks: []json.RawMessage{}, ProviderLinks: []json.RawMessage{},
+		ReleaseCredits: []json.RawMessage{}, ProviderLinks: []json.RawMessage{},
 	}
 	if kind == "release" {
 		links := make([]libraryDeletionPositionTrackLink, 0)
@@ -504,17 +498,6 @@ func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, re
 				return preview, fmt.Errorf("preview library deletion: encode release credit: %w", err)
 			}
 			dependency.ReleaseCredits = append(dependency.ReleaseCredits, raw)
-		}
-		collections := make([]libraryDeletionCollectionLink, 0)
-		if err := tx.NewRaw(`SELECT collection_id,position FROM collection_release WHERE release_id=? ORDER BY collection_id,position`, releaseID).Scan(ctx, &collections); err != nil {
-			return preview, fmt.Errorf("preview library deletion: read collection links: %w", err)
-		}
-		for _, item := range collections {
-			raw, err := json.Marshal(item)
-			if err != nil {
-				return preview, fmt.Errorf("preview library deletion: encode collection link: %w", err)
-			}
-			dependency.CollectionLinks = append(dependency.CollectionLinks, raw)
 		}
 		providerLinks := make([]libraryDeletionProviderLink, 0)
 		if err := tx.NewRaw(`SELECT provider_id,provider_release_id FROM provider_local_release WHERE local_release_id=? ORDER BY provider_id,provider_release_id`, releaseID).Scan(ctx, &providerLinks); err != nil {
@@ -1814,9 +1797,6 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 			if _, err := tx.NewRaw(`DELETE FROM provider_local_release WHERE local_release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete provider release links: %w", err)
 			}
-			if _, err := tx.NewRaw(`DELETE FROM collection_release WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
-				return fmt.Errorf("finalize library deletion: delete collection links: %w", err)
-			}
 			if _, err := tx.NewRaw(`DELETE FROM release_artist WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete release credits: %w", err)
 			}
@@ -1847,9 +1827,8 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 			var retainedReferences bool
 			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_artist WHERE artist_id=? UNION ALL
 				SELECT 1 FROM local_release WHERE primary_artist_id=? UNION ALL SELECT 1 FROM release_track WHERE primary_artist_id=? UNION ALL
-				SELECT 1 FROM collection_artist WHERE artist_id=? UNION ALL
 				SELECT 1 FROM track_artist WHERE artist_id=? UNION ALL SELECT 1 FROM recording_artist WHERE artist_id=?)`,
-				snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID).Scan(ctx, &retainedReferences); err != nil {
+				snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID).Scan(ctx, &retainedReferences); err != nil {
 				return fmt.Errorf("finalize library deletion: inspect retained artist references: %w", err)
 			}
 			if retainedReferences {

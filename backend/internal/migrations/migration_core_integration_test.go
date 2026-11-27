@@ -17,7 +17,7 @@ import (
 )
 
 // A fresh installation starts from a single baseline migration.
-var baselineMigrationNames = []string{"20261127000400"}
+var baselineMigrationNames = []string{"20261127000500"}
 
 func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()
@@ -52,7 +52,7 @@ func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) 
 		t.Fatalf("rollback clean baseline migration group: %v", err)
 	}
 	assertMigrationGroup(t, rolledBack, baselineMigrationNames, "rolled back")
-	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track", "publication_manual_lyrics_receipt"} {
+	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track", "publication_manual_lyrics_receipt", "collection", "collection_artist", "collection_release"} {
 		if relationName(t, db, table) != nil {
 			t.Errorf("application table %s remains after baseline rollback", table)
 		}
@@ -380,6 +380,7 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	var deletionShape, deletionTargetShape, manualReceiptOriginalRelease, manualReceiptRetirementShape, artistCatalogVisibility, artistDeletionScopeShape int
 	var deletionOperationKind, deletionMutationTarget, deletionTargetIdentity, deletionUUIDArrayValidator, manualReceiptRetirementGuard, manualReceiptDeleteGuard, manualReceiptWriteOnce int
 	var tagEncodingColumns, tagEncodingConstraint int
+	var obsoleteCollectionTables int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -414,6 +415,7 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_write_once' AND NOT tgisinternal`, &manualReceiptWriteOnce, 0},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='media_metadata_result' AND column_name='tag_encoding' AND data_type='jsonb' AND is_nullable='YES'`, &tagEncodingColumns, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_tag_encoding_check' AND contype='c'`, &tagEncodingConstraint, 1},
+		{`SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN ('collection','collection_artist','collection_release')`, &obsoleteCollectionTables, 0},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

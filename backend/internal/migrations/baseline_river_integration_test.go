@@ -28,7 +28,7 @@ func TestCurrentSchemaRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		WHERE n.nspname='public' AND c.relkind='r' AND c.relname NOT LIKE 'bun\_%' ESCAPE '\'`).Scan(ctx, &tableCount); err != nil {
 		t.Fatal(err)
 	}
-	const currentApplicationTables = 120
+	const currentApplicationTables = 117
 	if tableCount != currentApplicationTables {
 		t.Fatalf("current schema contains %d application tables, want %d", tableCount, currentApplicationTables)
 	}

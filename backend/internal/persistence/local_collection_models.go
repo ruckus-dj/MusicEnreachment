@@ -8,16 +8,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type Collection struct {
-	bun.BaseModel   `bun:"table:collection"`
-	ID              uuid.UUID       `bun:"id,pk,type:uuid"`
-	Title           string          `bun:"title"`
-	Metadata        json.RawMessage `bun:"metadata,type:jsonb"`
-	MetadataVersion int             `bun:"metadata_version"`
-	CreatedAt       time.Time       `bun:"created_at"`
-	UpdatedAt       time.Time       `bun:"updated_at"`
-}
-
 type LocalArtist struct {
 	bun.BaseModel   `bun:"table:local_artist"`
 	ID              uuid.UUID       `bun:"id,pk,type:uuid"`
@@ -81,16 +71,4 @@ type TrackSource struct {
 	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
 	CreatedAt              time.Time       `bun:"created_at"`
 	UpdatedAt              time.Time       `bun:"updated_at"`
-}
-
-type TrackSourceDecision struct {
-	ID                     uuid.UUID
-	TrackID                uuid.UUID
-	MediaVariantID         uuid.UUID
-	Selected               bool
-	Compatible             bool
-	Method                 string
-	PolicyVersion          *string
-	Metadata               json.RawMessage
-	SourceMetadataResultID *uuid.UUID
 }

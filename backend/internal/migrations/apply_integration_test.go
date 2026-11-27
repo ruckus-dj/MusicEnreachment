@@ -43,6 +43,7 @@ func TestApplyRejectsUnknownAppliedMigrationWithoutTouchingSchema(t *testing.T) 
 	}{
 		{name: "20261015000001", reason: "historical migration name"},
 		{name: "20261127000300", reason: "superseded pre-release baseline"},
+		{name: "20261127000400", reason: "superseded pre-release baseline"},
 		{name: "20990101000000", reason: "unknown newer migration name"},
 	} {
 		t.Run(applied.name, func(t *testing.T) {

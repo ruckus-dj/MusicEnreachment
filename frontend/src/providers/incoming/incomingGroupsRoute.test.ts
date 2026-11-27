@@ -3,7 +3,7 @@ import {
   incomingGroupMatchingHref,
   incomingGroupsListHref,
   parseIncomingGroupsRoute,
-} from "./incomingGroupsRoute";
+} from "../../ui/features/incoming/incomingGroupsRoute";
 
 describe("incoming groups route", () => {
   it("parses the list route and its expanded groups", () => {

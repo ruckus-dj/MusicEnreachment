@@ -247,14 +247,19 @@ function StagedArtifactStatus({
 }) {
   const t = (key: SourceInspectorMessageKey) =>
     sourceInspectorMessage(locale, key);
-  // The current server always sends an explicit projection, but legacy or
-  // malformed payloads may omit it or leave fields out. Absent registry facts
-  // stay explicitly unknown instead of being cast into a shape the server did
-  // not send, and nullable requested_steps are read safely.
-  const state = artifact?.state ?? "unknown";
-  const stateLabel = t(artifactStateMessages[state] ?? "unknown");
+  // The artifact is optional because a location may have no staged delivery.
+  // Absent registry facts stay explicitly unknown; nullable requested_steps
+  // are read as an empty list.
+  // The API is typed, but a runtime payload can still carry a state added by a
+  // newer server. Normalize it before indexing the complete message map.
+  const reportedState = artifact?.state;
+  const state =
+    reportedState && Object.hasOwn(artifactStateMessages, reportedState)
+      ? reportedState
+      : "unknown";
+  const stateLabel = t(artifactStateMessages[state]);
   const requestedSteps = artifact?.requestedSteps ?? [];
-  const requestedStepsKnown = artifact?.requestedStepsKnown === true;
+  const requestedStepsKnown = artifact?.requestedStepsKnown ?? false;
 
   return (
     <section className={panel} aria-labelledby="staged-artifact-title">

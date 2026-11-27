@@ -1,6 +1,6 @@
 export const settingsDraftStorageKey = "melotrove.settings-text-draft.v1";
 
-export const settingsDraftFields = [
+const settingsDraftFields = [
   "outputDirectory",
   "workDirectory",
   "publicationPathTemplate",

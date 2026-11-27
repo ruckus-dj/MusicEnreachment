@@ -5,16 +5,32 @@ package persistence_test
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
+
+type failMatchingWakeInserter struct {
+	delegate persistence.RiverInserter
+	fail     bool
+}
+
+func (inserter *failMatchingWakeInserter) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	if inserter.fail && args.Kind() == "matching_evaluation_v1" {
+		return nil, errors.New("injected matching wake failure")
+	}
+	return inserter.delegate.InsertTx(ctx, tx, args, options)
+}
 
 func TestManualLookupCacheReuseCapturesExactResponseBeforeSettlementPostgres(t *testing.T) {
 	t.Parallel()
@@ -96,6 +112,42 @@ func TestManualLookupCacheReuseCapturesExactResponseBeforeSettlementPostgres(t *
 		t.Fatalf("capture exact manual lookup response: captured=%t err=%v", captured, err)
 	}
 
+	// Dependency wake insertion and the manual lookup seal share the provider
+	// completion transaction. A failed wake must roll both back so a retry
+	// settles the completion once and registers exactly one wake.
+	settlementClient := &failMatchingWakeInserter{delegate: client, fail: true}
+	settled, err := repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, childID, operation.Attempt,
+		*operation.RiverJobID, epoch, settlementClient, func(operation *persistence.Operation) error {
+			operation.State, operation.Stage = "succeeded", "provider_cache_reused"
+			finished := time.Now().UTC()
+			operation.FinishedAt = &finished
+			return nil
+		})
+	if err == nil || settled {
+		t.Fatalf("settlement with a failing matching wake = settled %t, err %v; want rollback", settled, err)
+	}
+	var rolledBack struct {
+		State        string  `bun:"state"`
+		Stage        string  `bun:"stage"`
+		Sealed       bool    `bun:"sealed"`
+		Outcome      *string `bun:"terminal_outcome"`
+		WakeDelivery int     `bun:"wake_delivery"`
+	}
+	if err := db.NewRaw(`SELECT operation.state,operation.stage,
+			seal.sealed_at IS NOT NULL AS sealed,
+			dependency.terminal_outcome,
+			(SELECT count(*) FROM matching_delivery delivery WHERE delivery.run_id=? AND delivery.river_job_id<>?) AS wake_delivery
+		FROM operation
+		JOIN manual_matching_admission admission ON admission.lookup_operation_id=operation.id
+		JOIN manual_matching_lookup_seal seal ON seal.request_id=admission.request_id
+		JOIN matching_provider_dependency dependency ON dependency.request_id=operation.id
+		WHERE operation.id=?`, parent.ID, *parent.RiverJobID, childID).Scan(ctx, &rolledBack); err != nil {
+		t.Fatalf("read rolled-back manual completion: %v", err)
+	}
+	if rolledBack.State != "running" || rolledBack.Stage != "fetching_provider" || rolledBack.Sealed || rolledBack.Outcome != nil || rolledBack.WakeDelivery != 0 {
+		t.Fatalf("failed wake settlement did not roll back: %+v", rolledBack)
+	}
+
 	// A later accepted cache replacement must not rewrite the immutable A receipt.
 	payloadB := json.RawMessage(`{"release":"replacement-b"}`)
 	replacement, err := cache.BeginRefresh(ctx, source.ID, cacheKey, identity)
@@ -107,15 +159,36 @@ func TestManualLookupCacheReuseCapturesExactResponseBeforeSettlementPostgres(t *
 	}); err != nil {
 		t.Fatalf("publish replacement cache response: %v", err)
 	}
-	settled, err := repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, childID, operation.Attempt,
-		*operation.RiverJobID, epoch, client, func(operation *persistence.Operation) error {
+	settlementClient.fail = false
+	settled, err = repository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, childID, operation.Attempt,
+		*operation.RiverJobID, epoch, settlementClient, func(operation *persistence.Operation) error {
 			operation.State, operation.Stage = "succeeded", "provider_cache_reused"
 			finished := time.Now().UTC()
 			operation.FinishedAt = &finished
 			return nil
 		})
 	if err != nil || !settled {
-		t.Fatalf("settle cached lookup after replacement: settled=%t err=%v", settled, err)
+		t.Fatalf("retry cached lookup settlement after replacement: settled=%t err=%v", settled, err)
+	}
+	var settledWake struct {
+		State        string  `bun:"state"`
+		Sealed       bool    `bun:"sealed"`
+		Outcome      *string `bun:"terminal_outcome"`
+		WakeDelivery int     `bun:"wake_delivery"`
+	}
+	if err := db.NewRaw(`SELECT operation.state,
+			seal.sealed_at IS NOT NULL AS sealed,
+			dependency.terminal_outcome,
+			(SELECT count(*) FROM matching_delivery delivery WHERE delivery.run_id=? AND delivery.river_job_id<>?) AS wake_delivery
+		FROM operation
+		JOIN manual_matching_admission admission ON admission.lookup_operation_id=operation.id
+		JOIN manual_matching_lookup_seal seal ON seal.request_id=admission.request_id
+		JOIN matching_provider_dependency dependency ON dependency.request_id=operation.id
+		WHERE operation.id=?`, parent.ID, *parent.RiverJobID, childID).Scan(ctx, &settledWake); err != nil {
+		t.Fatalf("read retried manual completion: %v", err)
+	}
+	if settledWake.State != "succeeded" || !settledWake.Sealed || settledWake.Outcome == nil || *settledWake.Outcome != "succeeded" || settledWake.WakeDelivery != 1 {
+		t.Fatalf("retried settlement = %+v; want one succeeded wake and sealed receipt", settledWake)
 	}
 	var receiptDigest []byte
 	if err := db.NewRaw(`SELECT payload_sha256 FROM manual_matching_lookup_seal WHERE request_id=? AND sealed_at IS NOT NULL`, requestID).Scan(ctx, &receiptDigest); err != nil {

@@ -54,7 +54,7 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	survivorPosition := uuid.New()
 	targetTrack, foreignTrack := uuid.New(), uuid.New()
 	targetRecording, sharedRecording := uuid.New(), uuid.New()
-	artistID, foreignPrimaryArtistID, collectionID := uuid.New(), uuid.New(), uuid.New()
+	artistID, foreignPrimaryArtistID := uuid.New(), uuid.New()
 	providerID, providerReleaseID, providerRecordingID, providerTrackID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	targetVariant, sharedVariant := uuid.New(), uuid.New()
 	targetSourceID, sharedSourceID := uuid.New(), uuid.New()
@@ -91,8 +91,6 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			{`INSERT INTO media_variant(id,size_bytes) VALUES (?,1)`, []any{sharedVariant}},
 			{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, []any{targetSourceID, targetTrack, targetVariant}},
 			{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, []any{sharedSourceID, foreignTrack, sharedVariant}},
-			{`INSERT INTO collection(id,title) VALUES (?, 'retained collection')`, []any{collectionID}},
-			{`INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,0,?)`, []any{collectionID, foreignRelease}},
 			{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/target.flac','{"size":11}','{}','{}','{}',1,now())`, []any{targetPosition, epoch, targetGeneration}},
 			{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/foreign.flac','{"size":12}','{}','{}','{}',1,now())`, []any{foreignPosition, epoch, foreignGeneration}},
 		} {
@@ -193,9 +191,6 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			if _, err := db.ExecContext(ctx, `UPDATE operation SET input_snapshot=jsonb_set(input_snapshot,'{dependencies}','{}'::jsonb) WHERE id=?`, operation.ID); err == nil || !strings.Contains(err.Error(), "library deletion confirmation and residual scope are immutable") {
 				t.Fatalf("frozen dependency mutation: expected immutable confirmation rejection, got %v", err)
 			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,1,?)`, collectionID, releaseID); err != nil {
-				t.Fatalf("change release scope after admission: %v", err)
-			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,1,?,?)`, survivorPosition, foreignRelease, targetTrack, targetRecording); err != nil {
 				t.Fatalf("add a survivor reference after admission: %v", err)
 			}
@@ -210,15 +205,12 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			if err != nil || repeated == nil || repeated.ID != operation.ID || repeated.RiverJobID == nil || jobID == nil || *repeated.RiverJobID != *jobID {
 				t.Fatalf("resolve repeated admission after scope change: operation=%v err=%v", repeated, err)
 			}
-			result, err := db.ExecContext(ctx, `DELETE FROM collection_release WHERE collection_id=? AND position=1 AND release_id=?`, collectionID, releaseID)
+			result, err := db.ExecContext(ctx, `DELETE FROM release_track WHERE id=?`, survivorPosition)
 			if err != nil {
-				t.Fatalf("restore admitted release scope: %v", err)
+				t.Fatalf("restore survivor reference: %v", err)
 			}
 			if rows, err := result.RowsAffected(); err != nil || rows != 1 {
-				t.Fatalf("restore admitted release scope rows=%d err=%v, want one", rows, err)
-			}
-			if _, err := db.ExecContext(ctx, `DELETE FROM release_track WHERE id=?`, survivorPosition); err != nil {
-				t.Fatalf("restore survivor reference: %v", err)
+				t.Fatalf("restore survivor reference rows=%d err=%v, want one", rows, err)
 			}
 		}
 		repeated, err := repository.AdmitLibraryDeletionOperation(ctx, operationID, confirmationDigest, expiresAt, preview, witnesses, client, nil)
@@ -339,12 +331,11 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	if finalized, err := repository.FinalizeLibraryDeletion(ctx, publicationGuard); err != nil || !finalized {
 		t.Fatalf("finalize publication-only deletion: finalized=%t err=%v", finalized, err)
 	}
-	var retainedPositions, retainedTrackArtists, retainedReleaseArtists, retainedCollectionLinks int
+	var retainedPositions, retainedTrackArtists, retainedReleaseArtists int
 	for query, destination := range map[string]*int{
-		`SELECT count(*) FROM release_track WHERE id=? AND release_id=? AND track_id=?`:  &retainedPositions,
-		`SELECT count(*) FROM track_artist WHERE track_id=? AND artist_id=?`:             &retainedTrackArtists,
-		`SELECT count(*) FROM release_artist WHERE release_id=? AND artist_id=?`:         &retainedReleaseArtists,
-		`SELECT count(*) FROM collection_release WHERE collection_id=? AND release_id=?`: &retainedCollectionLinks,
+		`SELECT count(*) FROM release_track WHERE id=? AND release_id=? AND track_id=?`: &retainedPositions,
+		`SELECT count(*) FROM track_artist WHERE track_id=? AND artist_id=?`:            &retainedTrackArtists,
+		`SELECT count(*) FROM release_artist WHERE release_id=? AND artist_id=?`:        &retainedReleaseArtists,
 	} {
 		var args []any
 		switch query {
@@ -354,16 +345,14 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			args = []any{foreignTrack, artistID}
 		case `SELECT count(*) FROM release_artist WHERE release_id=? AND artist_id=?`:
 			args = []any{foreignRelease, artistID}
-		case `SELECT count(*) FROM collection_release WHERE collection_id=? AND release_id=?`:
-			args = []any{collectionID, foreignRelease}
 		}
 		if err := db.NewRaw(query, args...).Scan(ctx, destination); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if retainedPositions != 1 || retainedTrackArtists != 1 || retainedReleaseArtists != 1 || retainedCollectionLinks != 1 {
-		t.Fatalf("publication-only deletion removed library associations: position=%d track_artist=%d release_artist=%d collection_release=%d",
-			retainedPositions, retainedTrackArtists, retainedReleaseArtists, retainedCollectionLinks)
+	if retainedPositions != 1 || retainedTrackArtists != 1 || retainedReleaseArtists != 1 {
+		t.Fatalf("publication-only deletion removed library associations: position=%d track_artist=%d release_artist=%d",
+			retainedPositions, retainedTrackArtists, retainedReleaseArtists)
 	}
 
 	artistTargetRelease, artistTargetPosition, artistTargetPosition2 := uuid.New(), uuid.New(), uuid.New()

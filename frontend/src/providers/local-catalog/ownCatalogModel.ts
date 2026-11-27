@@ -25,7 +25,7 @@ export type OwnCatalogType = (typeof ownCatalogTypes)[number];
 export const ownCatalogPageCount = (total: number) =>
   Math.max(1, Math.ceil(total / OWN_CATALOG_PAGE_SIZE));
 
-export function ownCatalogProviderCodeLabel(code: string) {
+function ownCatalogProviderCodeLabel(code: string) {
   if (code === "local") return "Local";
   if (code === "musicbrainz") return "MusicBrainz";
   return code;
@@ -35,7 +35,7 @@ export function ownCatalogReleaseTitle(item: LocalProviderItem) {
   return item.title || item.release_group_title || "";
 }
 
-export function ownCatalogRecordingTitle(item: LocalProviderItem) {
+function ownCatalogRecordingTitle(item: LocalProviderItem) {
   return item.title || "";
 }
 
@@ -162,7 +162,7 @@ export function releaseRecordRecordings(
   return recordings;
 }
 
-export function splitCatalogList(value: string) {
+function splitCatalogList(value: string) {
   return value
     .split(",")
     .map((part) => part.trim())
@@ -320,7 +320,7 @@ export function recordingRecordToDraft(
   };
 }
 
-export function recordingDuration(
+function recordingDuration(
   existing: LocalProviderItem | undefined,
   draft: RecordingFormDraft,
 ): number | undefined {
@@ -363,7 +363,7 @@ export function recordingDraftToWrite(
   };
 }
 
-export function recordingCreditsFromItem(item: LocalProviderItem) {
+function recordingCreditsFromItem(item: LocalProviderItem) {
   return (item.credits ?? []).map<LocalRecordingCreditSelection>((credit) => ({
     artistId: credit.artist_id,
     creditName: credit.credit_name,

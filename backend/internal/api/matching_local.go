@@ -37,21 +37,8 @@ type matchingLocalConfirmInput struct {
 }
 
 type matchingLocalOutput struct{ Body service.MatchingLocalPreview }
-type matchingLocalCatalogOutput struct{ Body service.MatchingLocalCatalog }
 
 func registerMatchingLocal(api huma.API, local *service.MatchingLocalService) {
-	huma.Register(api, huma.Operation{OperationID: "list-local-releases", Method: http.MethodGet,
-		Path: "/local-releases", Summary: "List pure local releases", Tags: []string{"Sources"}},
-		func(ctx context.Context, _ *struct{}) (*matchingLocalCatalogOutput, error) {
-			if local == nil {
-				return nil, huma.Error503ServiceUnavailable("local matching is unavailable")
-			}
-			result, err := local.List(ctx)
-			if err != nil {
-				return nil, matchingLocalHTTPError(err)
-			}
-			return &matchingLocalCatalogOutput{Body: result}, nil
-		})
 	huma.Register(api, huma.Operation{OperationID: "preview-incoming-group-local-matching", Method: http.MethodPost,
 		Path: "/incoming-groups/{group_id}/matching/local/preview", Summary: "Preview an explicit local release for an incoming group", Tags: []string{"Sources"}},
 		func(ctx context.Context, input *matchingLocalPreviewInput) (*matchingLocalOutput, error) {

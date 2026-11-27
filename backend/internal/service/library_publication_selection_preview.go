@@ -157,7 +157,7 @@ func (service *LibraryPublications) PreviewPublicationSelection(ctx context.Cont
 	// authority the preparation just froze. A pending provider answer is reported
 	// to the caller instead of being converted into "no cover"; the retry can
 	// resume from any originals already cached.
-	if request.PrepareCovers && mode == firstPublicationPreviewModeOrdinary && (service.artwork != nil || service.coverAcquisition != nil) {
+	if request.PrepareCovers && mode == firstPublicationPreviewModeOrdinary && service.artwork != nil {
 		coverContext, cancelCover := context.WithTimeout(ctx, libraryPublicationSelectionCoverPreparationTimeout)
 		err := service.prepareSelectionCovers(coverContext, request.Positions, repository)
 		cancelCover()

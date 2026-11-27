@@ -113,37 +113,3 @@ func ReadIncomingMembershipActivity(ctx context.Context, db bun.IDB, groupID uui
 	}
 	return result, nil
 }
-
-// ReadIncomingWorkActivity reports whether each supplied source work still has
-// an active incoming identity. A work is active when none of its canonical
-// media identities has a live track_source association. Missing works carry no
-// identity and are reported active; callers must still validate the source
-// rows they intend to mutate through their normal locks.
-func ReadIncomingWorkActivity(ctx context.Context, db bun.IDB, workIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	active := make(map[uuid.UUID]bool, len(workIDs))
-	for _, workID := range workIDs {
-		active[workID] = true
-	}
-	if len(workIDs) == 0 {
-		return active, nil
-	}
-	var rows []struct {
-		WorkID uuid.UUID `bun:"work_id"`
-		Linked bool      `bun:"linked"`
-	}
-	if err := db.NewRaw(`SELECT work.id AS work_id,
-		EXISTS (
-			SELECT 1 FROM source_work_variant_identity identity
-			JOIN track_source link ON link.media_variant_id=identity.media_variant_id
-			WHERE identity.work_id=work.id
-		) AS linked
-		FROM source_analysis_work work
-		WHERE work.id IN (?)
-		ORDER BY work.id`, bun.List(workIDs)).Scan(ctx, &rows); err != nil {
-		return nil, fmt.Errorf("read incoming work activity: %w", err)
-	}
-	for _, row := range rows {
-		active[row.WorkID] = !row.Linked
-	}
-	return active, nil
-}

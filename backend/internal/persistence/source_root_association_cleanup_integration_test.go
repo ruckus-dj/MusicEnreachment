@@ -20,7 +20,7 @@ func TestDeleteSourceRootCleansAssociationsForUnlocatedVariantsWithPostgreSQL(t 
 	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	collections := persistence.NewCollectionRepository(database)
+	collections := newCollectionTestRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/root-association-cleanup")
 
 	shaVariant := insertAssociationCleanupVariant(t, ctx, database, true)
@@ -42,7 +42,7 @@ func TestDeleteSourceRootCleansAssociationsForUnlocatedVariantsWithPostgreSQL(t 
 		if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'Root deletion association')`, trackID); err != nil {
 			t.Fatalf("insert track: %v", err)
 		}
-		if err := collections.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+		if err := collections.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 			TrackID: trackID, MediaVariantID: association.variant, Method: association.method,
 			Selected: association.selectIt, Compatible: true, PolicyVersion: association.policy, Metadata: json.RawMessage(`{}`),
 		}); err != nil {
@@ -74,7 +74,7 @@ func TestDeleteSourceRootPreservesSharedVariantAssociationsUntilLastLocationWith
 	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	collections := persistence.NewCollectionRepository(database)
+	collections := newCollectionTestRepository(database)
 	firstRoot := createInventoryRoot(t, ctx, inventory, "/srv/shared-association-first")
 	secondRoot := createInventoryRoot(t, ctx, inventory, "/srv/shared-association-second")
 	variant := insertAssociationCleanupVariant(t, ctx, database, true)
@@ -84,7 +84,7 @@ func TestDeleteSourceRootPreservesSharedVariantAssociationsUntilLastLocationWith
 	if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'Shared root association')`, trackID); err != nil {
 		t.Fatalf("insert track: %v", err)
 	}
-	if err := collections.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := collections.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: trackID, MediaVariantID: variant, Method: "manual", Selected: true,
 		Compatible: true, Metadata: json.RawMessage(`{}`),
 	}); err != nil {

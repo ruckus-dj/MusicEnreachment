@@ -316,7 +316,6 @@ func TestSHA256ProjectionAcrossReadRoutes(t *testing.T) {
 		path string
 	}{
 		{name: "setup state", path: "/setup"},
-		{name: "configuration health", path: "/setup/health"},
 		{name: "settings", path: "/settings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,7 +354,6 @@ func TestSHA256ReadFailureIsSafeAcrossReadRoutes(t *testing.T) {
 		path string
 	}{
 		{name: "setup state", path: "/setup"},
-		{name: "configuration health", path: "/setup/health"},
 		{name: "settings", path: "/settings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

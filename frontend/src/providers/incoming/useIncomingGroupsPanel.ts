@@ -17,6 +17,11 @@ import { focusView } from "../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../ui/features/incoming/IncomingGroupsPanel";
 import type { IncomingScreenViewProps } from "../../ui/features/incoming/IncomingScreenView";
+import {
+  incomingGroupMatchingHref,
+  incomingGroupsListHref,
+  parseIncomingGroupsRoute,
+} from "../../ui/features/incoming/incomingGroupsRoute";
 import { incomingMessage } from "../../ui/features/incoming/incomingOverviewMessages";
 import {
   incomingMessages,
@@ -32,11 +37,6 @@ import {
   incomingGroupNameText,
 } from "./incomingGroupNames";
 import { incomingGroupCountQueryKey } from "./incomingGroupsQueryKeys";
-import {
-  incomingGroupMatchingHref,
-  incomingGroupsListHref,
-  parseIncomingGroupsRoute,
-} from "./incomingGroupsRoute";
 import { incomingOverviewOrder } from "./incomingOverviewOrder";
 
 function tag(file: IncomingFileResponse | undefined, ...keys: string[]) {

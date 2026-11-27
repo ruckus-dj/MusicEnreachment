@@ -288,23 +288,6 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "get-configuration-health",
-		Method:      http.MethodGet,
-		Path:        "/setup/health",
-		Summary:     "Get configuration health status",
-		Tags:        []string{"Setup"},
-	}, func(ctx context.Context, _ *struct{}) (*SetupStateOutput, error) {
-		if setup == nil {
-			return nil, huma.Error503ServiceUnavailable("setup service is unavailable")
-		}
-		state, err := setup.State(ctx)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to compute health")
-		}
-		return setupStateOutput(state), nil
-	})
-
-	huma.Register(api, huma.Operation{
 		OperationID: "save-setup-musicbrainz", Method: http.MethodPut, Path: "/setup/musicbrainz",
 		Summary: "Save setup MusicBrainz configuration", Tags: []string{"Setup"},
 	}, func(ctx context.Context, input *SaveSetupMusicBrainzInput) (*SetupMusicBrainzIdentityOutput, error) {

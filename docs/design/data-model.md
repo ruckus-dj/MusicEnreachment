@@ -25,6 +25,10 @@ runtime-таблицы/worker.
 
 ### Локальная медиатека
 
+Названия `collection_*` ниже относятся к логической схеме DBML. В рабочей БД
+сущности медиатеки хранятся в `local_*`; отдельных таблиц `collection`,
+`collection_artist` и `collection_release` нет.
+
 - `collection_artist` представляет артиста.
 - `collection_release` представляет альбом/релиз и имеет упорядоченный набор
   артистов через `collection_release_artist`.

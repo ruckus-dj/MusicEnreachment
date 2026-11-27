@@ -198,12 +198,8 @@ func TestLibraryDeletionServiceNativePartialSettlementAndExplicitRetryPostgreSQL
 	}
 	setJobRunning := func(jobID int64) { setJobState(jobID, "running") }
 	setJobRunning(firstJobID)
-	collectionID := uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO collection(id,title) VALUES (?,'post-confirm deletion scope')`, collectionID); err != nil {
-		t.Fatalf("seed post-confirm collection: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,0,?)`, collectionID, releaseID); err != nil {
-		t.Fatalf("change frozen collection scope: %v", err)
+	if _, err := db.ExecContext(ctx, `INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,1,'Post-confirm scope','')`, releaseID, artistID); err != nil {
+		t.Fatalf("change frozen release scope: %v", err)
 	}
 	opener.opens.Store(0)
 	if err := deletion.ExecuteDelivery(ctx, operation.ID, firstJobID, 1); err == nil {
@@ -232,11 +228,8 @@ func TestLibraryDeletionServiceNativePartialSettlementAndExplicitRetryPostgreSQL
 	}
 
 	setJobState(firstJobID, "completed")
-	if _, err := db.ExecContext(ctx, `DELETE FROM collection_release WHERE collection_id=? AND release_id=?`, collectionID, releaseID); err != nil {
-		t.Fatalf("restore frozen collection scope: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM collection WHERE id=?`, collectionID); err != nil {
-		t.Fatalf("remove post-confirm collection: %v", err)
+	if _, err := db.ExecContext(ctx, `DELETE FROM release_artist WHERE release_id=? AND position=1`, releaseID); err != nil {
+		t.Fatalf("restore frozen release scope: %v", err)
 	}
 	if _, err := deletion.Retry(ctx, operation.ID, riverClient); err != nil {
 		t.Fatalf("explicitly retry deletion after restoring frozen scope: %v", err)

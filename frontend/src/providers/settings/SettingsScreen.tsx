@@ -68,6 +68,13 @@ import {
   settingsHttpError,
   settingsMessage,
 } from "../../ui/features/settings/settingsMessages";
+import {
+  isSettingsTabID,
+  parseSettingsRoute,
+  type SettingsTabID,
+  settingsTabFromHash,
+  settingsTabHash,
+} from "../../ui/features/settings/settingsRoute";
 import { browseServerDirectory } from "../components/DirectoryPicker";
 import { GitHubTokenFormProvider } from "../tools/GitHubTokenForm";
 import {
@@ -84,13 +91,6 @@ import {
   settingsDraftIsDirty,
   writeSettingsDraft,
 } from "./settingsDraft";
-import {
-  isSettingsTabID,
-  parseSettingsRoute,
-  type SettingsTabID,
-  settingsTabFromHash,
-  settingsTabHash,
-} from "./settingsRoute";
 
 const catalogCheckedKey = "melotrove.catalog-checked-at";
 const cooldownMs = 24 * 60 * 60 * 1000;

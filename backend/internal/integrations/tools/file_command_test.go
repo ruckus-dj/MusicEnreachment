@@ -4,29 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
 
-func TestBuildTechnicalFileCommandRequestUsesOnlyFDTransport(t *testing.T) {
-	input, err := os.CreateTemp(t.TempDir(), "input")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := input.Close(); err != nil {
-			t.Errorf("close input: %v", err)
-		}
-	})
-	request := BuildTechnicalFileCommandRequest("/managed/ffprobe", input)
-	if request.Executable != "/managed/ffprobe" || request.Input != input {
-		t.Fatalf("unexpected request: %#v", request)
-	}
-	joined := strings.Join(request.Args, " ")
-	for _, required := range []string{"-protocol_whitelist fd", "-show_format", "-show_streams", "-show_chapters", "-of json", "fd:"} {
+func TestTechnicalFileArgumentsUseOnlyFDTransport(t *testing.T) {
+	args := technicalFileArguments()
+	joined := strings.Join(args, " ")
+	for _, required := range []string{"-protocol_whitelist fd", "-show_format", "-show_streams", "-of json", "fd:"} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("arguments %q missing %q", joined, required)
 		}
@@ -34,13 +20,13 @@ func TestBuildTechnicalFileCommandRequestUsesOnlyFDTransport(t *testing.T) {
 	if !strings.Contains(joined, "-fd "+fileTransportDescriptor()) {
 		t.Errorf("arguments %q lack platform descriptor", joined)
 	}
-	for _, forbidden := range []string{input.Name(), "file:", "http", "concat", "pipe:"} {
+	for _, forbidden := range []string{"file:", "http", "concat", "pipe:"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("arguments contain forbidden %q: %q", forbidden, joined)
 		}
 	}
-	if slices.Contains(request.Args, "-show_entries") {
-		t.Fatalf("technical request unexpectedly filters fields: %q", request.Args)
+	if slices.Contains(args, "-show_entries") {
+		t.Fatalf("technical request unexpectedly filters fields: %q", args)
 	}
 }
 
@@ -91,36 +77,6 @@ func TestBuildPublicationFileCommandRequestUsesClosedDemuxerAllowlist(t *testing
 		if request, err := BuildPublicationFileCommandRequest("/managed/ffprobe", demuxer, input); err == nil || request.Executable != "" || request.Args != nil {
 			t.Errorf("unsupported demuxer %q returned request %#v, error %v", demuxer, request, err)
 		}
-	}
-}
-
-func TestConfigureFileCommandUsesExistingTransportWithoutStarting(t *testing.T) {
-	input, err := os.CreateTemp(t.TempDir(), "input")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := input.Close(); err != nil {
-			t.Errorf("close input: %v", err)
-		}
-	})
-	request := BuildTechnicalFileCommandRequest("/managed/ffprobe", input)
-	cmd := &exec.Cmd{}
-	if err := ConfigureFileCommand(context.Background(), cmd, request); err != nil {
-		t.Fatal(err)
-	}
-	if cmd.Path != request.Executable || len(cmd.Args) != len(request.Args)+1 || cmd.Args[0] != request.Executable {
-		t.Fatalf("command not configured: %#v", cmd)
-	}
-	if runtime.GOOS == "windows" {
-		if cmd.Stdin != input || len(cmd.ExtraFiles) != 0 {
-			t.Fatalf("unexpected Windows transport: stdin=%v extra=%v", cmd.Stdin, cmd.ExtraFiles)
-		}
-	} else if len(cmd.ExtraFiles) != 1 || cmd.ExtraFiles[0] != input {
-		t.Fatalf("unexpected Unix transport: %v", cmd.ExtraFiles)
-	}
-	if _, err := input.Stat(); err != nil {
-		t.Fatalf("configuration closed borrowed input: %v", err)
 	}
 }
 

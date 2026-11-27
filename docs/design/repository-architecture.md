@@ -57,8 +57,6 @@
 │   │   ├── features/               # UI-функции и экраны предметной области
 │   │   ├── routes/                 # Маршруты desktop web-приложения
 │   │   └── styles/                 # Tailwind entry point и глобальные стили
-│   ├── public/                     # Статические frontend-ресурсы
-│   ├── e2e/                        # Зарезервировано для будущих Playwright-сценариев
 │   ├── package.json
 │   ├── package-lock.json            # Зафиксированные npm-зависимости
 │   └── vite.config.ts
@@ -152,8 +150,8 @@ hooks и mock-сценарии в `frontend/src/api/generated/`. Эта кома
 создаёт актуальную схему сразу, без переноса данных из дорелизных схем:
 
 ```text
-20261127000400_initial_schema.tx.up.sql
-20261127000400_initial_schema.tx.down.sql
+20261127000500_initial_schema.tx.up.sql
+20261127000500_initial_schema.tx.down.sql
 ```
 
 При запуске сервер вызывает `migrations.Apply`: проверяет историю Bun и

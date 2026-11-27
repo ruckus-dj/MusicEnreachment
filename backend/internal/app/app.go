@@ -244,7 +244,6 @@ func Run(ctx context.Context, config Config) error {
 	localProviderCatalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), persistence.NewGenreCatalogRepository(db))
 	libraryCatalog := service.NewLibraryCatalog(libraryRepository)
 	libraryArtistPhotos := service.NewLibraryArtistPhotos(libraryRepository, registry, providerFactory, newLibraryArtistPhotoResolver())
-	libraryReleaseOptions := service.NewLibraryReleaseOptions(libraryRepository)
 	libraryRecordingSearch := service.NewLibraryRecordingSearch(providerFetch, setupManagerRepository, libraryRepository)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
 	libraryProviderRefresh := service.NewLibraryProviderRefresh(libraryRepository, providerFetch)
@@ -562,7 +561,6 @@ func Run(ctx context.Context, config Config) error {
 		LibraryReleaseDetails:         libraryReleaseDetails,
 		LibraryTagComparisons:         service.NewLibraryTagComparisons(libraryRepository),
 		LibraryCatalog:                libraryCatalog,
-		LibraryReleaseOptions:         libraryReleaseOptions,
 		LibraryRecordingSearch:        libraryRecordingSearch,
 		LibraryProviderRefresh:        libraryProviderRefresh,
 		GenreCatalog:                  genreCatalog,

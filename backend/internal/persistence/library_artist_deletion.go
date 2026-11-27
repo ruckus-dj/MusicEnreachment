@@ -51,12 +51,10 @@ func readLibraryArtistDeletionPreview(ctx context.Context, tx bun.IDB, artistID 
 		UNION ALL
 		SELECT 'position_primary',rt.id,rt.position,rt.primary_artist_id,'','' FROM release_track rt WHERE rt.primary_artist_id=?
 		UNION ALL
-		SELECT 'collection',ca.collection_id,ca.position,ca.artist_id,ca.name,ca.name_join_phrase FROM collection_artist ca WHERE ca.artist_id=?
-		UNION ALL
 		SELECT 'track',ta.track_id,ta.position,ta.artist_id,ta.name,ta.name_join_phrase FROM track_artist ta WHERE ta.artist_id=?
 		UNION ALL
 		SELECT 'recording',ra.recording_id,ra.position,ra.artist_id,ra.name,ra.name_join_phrase FROM recording_artist ra WHERE ra.artist_id=?
-		ORDER BY kind,owner_id,position`, artistID, artistID, artistID, artistID, artistID, artistID).Scan(ctx, &references); err != nil {
+		ORDER BY kind,owner_id,position`, artistID, artistID, artistID, artistID, artistID).Scan(ctx, &references); err != nil {
 		return preview, fmt.Errorf("preview library artist deletion: read artist references: %w", err)
 	}
 	targetReleases := make([]uuid.UUID, 0)
@@ -136,7 +134,7 @@ func readLibraryArtistDeletionPreview(ctx context.Context, tx bun.IDB, artistID 
 		CandidateRecordingIDs: []uuid.UUID{}, OrphanRecordingIDs: []uuid.UUID{}, TrackMappings: []json.RawMessage{},
 		TrackCredits: []json.RawMessage{}, TrackSources: []json.RawMessage{}, RecordingMappings: []json.RawMessage{},
 		RecordingCredits: []json.RawMessage{}, MediumIDs: []uuid.UUID{}, ReleaseCredits: []json.RawMessage{},
-		CollectionLinks: []json.RawMessage{}, ProviderLinks: []json.RawMessage{}, ArtistReleaseProofs: []json.RawMessage{},
+		ProviderLinks: []json.RawMessage{}, ArtistReleaseProofs: []json.RawMessage{},
 		ArtistReferenceProofs: []json.RawMessage{},
 	}
 	positions := make([]uuid.UUID, 0)
@@ -165,7 +163,6 @@ func readLibraryArtistDeletionPreview(ctx context.Context, tx bun.IDB, artistID 
 		}
 		dependency.MediumIDs = append(dependency.MediumIDs, release.dependencies.MediumIDs...)
 		dependency.ReleaseCredits = append(dependency.ReleaseCredits, release.dependencies.ReleaseCredits...)
-		dependency.CollectionLinks = append(dependency.CollectionLinks, release.dependencies.CollectionLinks...)
 		dependency.ProviderLinks = append(dependency.ProviderLinks, release.dependencies.ProviderLinks...)
 		releaseReceipts := make([]uuid.UUID, 0)
 		if err := tx.NewRaw(`SELECT request_id FROM manual_matching_receipt WHERE original_local_release_id=? ORDER BY request_id`, releaseID).Scan(ctx, &releaseReceipts); err != nil {
@@ -278,10 +275,6 @@ func lockLibraryDeletionArtistReferences(ctx context.Context, tx bun.IDB, artist
 	}
 	if err := tx.NewRaw(`SELECT id FROM release_track WHERE primary_artist_id=? ORDER BY id FOR UPDATE`, artistID).Scan(ctx, &positionPrimaries); err != nil {
 		return fmt.Errorf("lock library deletion artist primary positions: %w", err)
-	}
-	var collections []uuid.UUID
-	if err := tx.NewRaw(`SELECT collection_id FROM collection_artist WHERE artist_id=? ORDER BY collection_id,position FOR UPDATE`, artistID).Scan(ctx, &collections); err != nil {
-		return fmt.Errorf("lock library deletion artist collection references: %w", err)
 	}
 	if err := tx.NewRaw(`SELECT track_id FROM track_artist WHERE artist_id=? ORDER BY track_id,position FOR UPDATE`, artistID).Scan(ctx, &trackCredits); err != nil {
 		return fmt.Errorf("lock library deletion artist track credits: %w", err)

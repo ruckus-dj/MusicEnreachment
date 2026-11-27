@@ -18,16 +18,11 @@ import type {
 import { useI18n } from "../../app/i18n/host";
 import { useHashLocation } from "../../app/navigation/hashLocation";
 import {
-  defaultOperationsLocation,
-  type OperationsLocation,
-  operationsLocationHref,
-  parseOperationsLocation,
-} from "../../app/navigation/operationsLocation";
-import {
   ApplicationOperationsBinder,
   type ApplicationOperationsModel,
   type ApplicationRouteProviderProps,
 } from "../../ui/app/ApplicationRouteOutlet";
+import { incomingGroupMatchingHref } from "../../ui/features/incoming/incomingGroupsRoute";
 import {
   libraryPositionHref,
   libraryReleaseHref,
@@ -38,6 +33,12 @@ import type {
   OperationsListRow,
   OperationsListStatus,
 } from "../../ui/features/operations/OperationsList";
+import {
+  defaultOperationsLocation,
+  type OperationsLocation,
+  operationsLocationHref,
+  parseOperationsLocation,
+} from "../../ui/features/operations/operationsLocation";
 import { operationsControllerCopy as messages } from "../../ui/features/operations/operationsScreenCopy";
 import { formatOperationTimestamp } from "../../ui/features/operations/operationTimestamp";
 import { useOperationsHeadingFocus } from "../../ui/features/operations/useOperationsHeadingFocus";
@@ -46,7 +47,6 @@ import {
   sourceLocationHref,
 } from "../../ui/features/sources/sourcesRoute";
 import type { Locale } from "../../ui/i18n/locale";
-import { incomingGroupMatchingHref } from "../incoming/incomingGroupsRoute";
 import { libraryArtistRouteHref } from "../library/libraryRoute";
 import {
   operationKindLabel,

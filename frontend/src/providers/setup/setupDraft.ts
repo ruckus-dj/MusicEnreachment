@@ -80,7 +80,7 @@ export function setupDraftEntry<Value, Saved>(
   return Object.is(value, saved) ? undefined : { value, saved };
 }
 
-export function hasSetupDraftContent(draft: SetupDraft): boolean {
+function hasSetupDraftContent(draft: SetupDraft): boolean {
   return Boolean(
     draft.directories?.tools ||
       draft.directories?.output ||

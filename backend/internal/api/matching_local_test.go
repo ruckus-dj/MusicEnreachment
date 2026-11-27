@@ -31,26 +31,17 @@ func (r *matchingLocalHTTPRepository) ConfirmMatchingLocal(_ context.Context, gr
 	r.intent, r.digest, r.requestID = intent, digest, requestID
 	return persistence.MatchingLocalPreview{GroupID: group, GroupRevision: intent.ExpectedGroupRevision, PreviewDigest: digest}, nil
 }
-func (*matchingLocalHTTPRepository) ListLocalReleases(context.Context) (persistence.MatchingLocalReleaseCatalog, error) {
-	return persistence.MatchingLocalReleaseCatalog{Releases: []persistence.MatchingLocalRelease{{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), Title: "Local"}}}, nil
-}
-
 func TestMatchingLocalRoutesAcceptProviderReleaseAssignmentsAndReceiptIdentity(t *testing.T) {
 	repository := &matchingLocalHTTPRepository{}
 	service := service.NewMatchingLocalService(repository)
 	router := chi.NewRouter()
 	api := New(router)
 	registerMatchingLocal(api, service)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/local-releases", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "00000000-0000-0000-0000-000000000001") {
-		t.Fatalf("local release catalog response %d: %s", response.Code, response.Body.String())
-	}
 	group, member, request, releaseID, trackID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	payload := map[string]any{"expected_group_revision": "r1", "expected_authority_revision": 0, "provider_release_id": releaseID.String(),
 		"assignments": []any{map[string]any{"file_member_id": member.String(), "provider_track_id": trackID.String()}}}
 	encoded, _ := json.Marshal(payload)
-	response = httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/incoming-groups/"+group.String()+"/matching/local/preview", strings.NewReader(string(encoded))))
 	if response.Code != http.StatusOK {
 		t.Fatalf("preview status %d: %s", response.Code, response.Body.String())

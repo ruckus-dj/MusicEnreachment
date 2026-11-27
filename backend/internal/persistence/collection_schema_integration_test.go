@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -48,8 +47,8 @@ func TestCollectionFoundationLinksCreditsAndTrackSourcesWithPostgreSQL(t *testin
 		t.Fatal("provider identity link accepted another provider's artist ID")
 	}
 	automaticPolicy := "matching-go-v1"
-	repository := persistence.NewCollectionRepository(db)
-	if err := repository.UpsertProviderIdentityLink(ctx, "artist", persistence.ProviderIdentityLink{
+	repository := newCollectionTestRepository(db)
+	if err := repository.upsertProviderIdentityLink(ctx, "artist", collectionTestProviderIdentityLink{
 		ProviderID: providerA, ProviderEntityID: providerArtistA, LocalEntityID: artist,
 		Method: "automatic", PolicyVersion: &automaticPolicy,
 	}); err == nil {
@@ -72,7 +71,7 @@ func TestCollectionFoundationLinksCreditsAndTrackSourcesWithPostgreSQL(t *testin
 	if _, err := db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,source_sha256,sha256_calculated_at,sha256_algorithm,sha256_applied_operation_id) VALUES (?,123,?,now(),'SHA-256',?)`, variantWithSHA, digest, uuid.New()); err != nil {
 		t.Fatalf("insert SHA-enabled media variant: %v", err)
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: localTrack, MediaVariantID: variantWithoutSHA, Method: "manual", Compatible: true,
 		Metadata: json.RawMessage(`{}`),
 	}); err != nil {
@@ -82,22 +81,22 @@ func TestCollectionFoundationLinksCreditsAndTrackSourcesWithPostgreSQL(t *testin
 	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'Second track')`, secondTrack); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: secondTrack, MediaVariantID: variantWithoutSHA, Method: "manual", Compatible: true,
 		Metadata: json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatalf("associate one variant to multiple tracks: %v", err)
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: localTrack, MediaVariantID: variantWithoutSHA, Method: "automatic", PolicyVersion: &automaticPolicy,
 		Selected: true, Compatible: true, Metadata: json.RawMessage(`{}`),
 	}); err == nil {
 		t.Fatal("automatic update replaced manual decision")
 	}
-	if err := repository.RemoveTrackSourceDecision(ctx, localTrack, variantWithoutSHA, "automatic"); err == nil {
+	if err := repository.removeTrackSourceDecision(ctx, localTrack, variantWithoutSHA, "automatic"); err == nil {
 		t.Fatal("automatic removal deleted manual decision")
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: localTrack, MediaVariantID: variantWithSHA, Method: "manual", Compatible: true,
 		Metadata: json.RawMessage(`{}`),
 	}); err != nil {
@@ -107,13 +106,13 @@ func TestCollectionFoundationLinksCreditsAndTrackSourcesWithPostgreSQL(t *testin
 	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE track_id=? AND selected`, localTrack).Scan(ctx, &selected); err != nil || selected != 0 {
 		t.Fatalf("new associations selected by default = %d, %v; want none", selected, err)
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: localTrack, MediaVariantID: variantWithSHA, Method: "manual", Selected: true, Compatible: true,
 		Metadata: json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+	if err := repository.upsertTrackSourceDecision(ctx, collectionTestTrackSourceDecision{
 		TrackID: localTrack, MediaVariantID: variantWithoutSHA, Method: "manual", Selected: true, Compatible: true,
 		Metadata: json.RawMessage(`{}`),
 	}); err == nil {
@@ -243,7 +242,7 @@ func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing
 	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixtures := seedCollectionProviderFixtures(t, db)
-	repository := persistence.NewCollectionRepository(db)
+	repository := newCollectionTestRepository(db)
 	policy := "matching-go-v1"
 
 	manual := []struct {
@@ -257,12 +256,12 @@ func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing
 		{"track", fixtures.manualTrack, fixtures.localTrackFirst, fixtures.localTrackSecond},
 	}
 	for _, testCase := range manual {
-		if err := repository.UpsertProviderIdentityLink(ctx, testCase.kind, persistence.ProviderIdentityLink{
+		if err := repository.upsertProviderIdentityLink(ctx, testCase.kind, collectionTestProviderIdentityLink{
 			ProviderID: fixtures.manualProvider, ProviderEntityID: testCase.providerID, LocalEntityID: testCase.first, Method: "manual",
 		}); err != nil {
 			t.Fatalf("%s: insert manual provider link: %v", testCase.kind, err)
 		}
-		if err := repository.UpsertProviderIdentityLink(ctx, testCase.kind, persistence.ProviderIdentityLink{
+		if err := repository.upsertProviderIdentityLink(ctx, testCase.kind, collectionTestProviderIdentityLink{
 			ProviderID: fixtures.manualProvider, ProviderEntityID: testCase.providerID, LocalEntityID: testCase.second, Method: "manual",
 		}); err != nil {
 			t.Fatalf("%s: update manual provider link: %v", testCase.kind, err)
@@ -280,12 +279,12 @@ func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing
 		{"track", fixtures.automaticTrack, fixtures.localTrackFirst, fixtures.localTrackSecond},
 	}
 	for _, testCase := range automatic {
-		if err := repository.UpsertProviderIdentityLink(ctx, testCase.kind, persistence.ProviderIdentityLink{
+		if err := repository.upsertProviderIdentityLink(ctx, testCase.kind, collectionTestProviderIdentityLink{
 			ProviderID: fixtures.automaticProvider, ProviderEntityID: testCase.providerID, LocalEntityID: testCase.first, Method: "automatic", PolicyVersion: &policy,
 		}); err != nil {
 			t.Fatalf("%s: insert automatic provider link: %v", testCase.kind, err)
 		}
-		if err := repository.UpsertProviderIdentityLink(ctx, testCase.kind, persistence.ProviderIdentityLink{
+		if err := repository.upsertProviderIdentityLink(ctx, testCase.kind, collectionTestProviderIdentityLink{
 			ProviderID: fixtures.automaticProvider, ProviderEntityID: testCase.providerID, LocalEntityID: testCase.second, Method: "automatic", PolicyVersion: &policy,
 		}); err != nil {
 			t.Fatalf("%s: update automatic provider link: %v", testCase.kind, err)
@@ -294,7 +293,7 @@ func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing
 }
 
 // TestCollectionFoundationDecisionConstraintsWithPostgreSQL inserts rows directly
-// to prove the database, not only the repository, enforces the decision policy
+// to prove the database, not only the fixture helper, enforces the decision policy
 // invariant: an automatic decision must carry the policy version and a manual
 // decision must not carry one. A NULL policy version must not slip past the
 // automatic branch of the CHECK.
@@ -341,7 +340,7 @@ func TestCollectionFoundationDecisionConstraintsWithPostgreSQL(t *testing.T) {
 
 // TestCollectionFoundationPolicyVersionIsOpaqueWithPostgreSQL proves the
 // decision policy version is an opaque, caller-owned algorithm token rather
-// than a fixed constant: the schema and repository accept any non-blank text
+// than a fixed constant: the schema and fixture helper accept any non-blank text
 // (not only the currently shipped matching-go-v1 value), a manual decision
 // carries no version, and a blank or whitespace-only version is still rejected.
 func TestCollectionFoundationPolicyVersionIsOpaqueWithPostgreSQL(t *testing.T) {
@@ -387,20 +386,20 @@ func TestCollectionFoundationPolicyVersionIsOpaqueWithPostgreSQL(t *testing.T) {
 		}
 	}
 
-	// The repository must accept the same opaque version and reject blank text.
-	repository := persistence.NewCollectionRepository(db)
-	if err := repository.UpsertProviderIdentityLink(ctx, "artist", persistence.ProviderIdentityLink{
+	// The fixture helper must accept the same opaque version and reject blank text.
+	repository := newCollectionTestRepository(db)
+	if err := repository.upsertProviderIdentityLink(ctx, "artist", collectionTestProviderIdentityLink{
 		ProviderID: fixtures.automaticProvider, ProviderEntityID: fixtures.automaticArtist, LocalEntityID: fixtures.localArtistSecond,
 		Method: "automatic", PolicyVersion: &policy,
 	}); err != nil {
-		t.Fatalf("repository rejected automatic policy version %q: %v", policy, err)
+		t.Fatalf("fixture helper rejected automatic policy version %q: %v", policy, err)
 	}
 	blank := ""
-	if err := repository.UpsertProviderIdentityLink(ctx, "artist", persistence.ProviderIdentityLink{
+	if err := repository.upsertProviderIdentityLink(ctx, "artist", collectionTestProviderIdentityLink{
 		ProviderID: fixtures.automaticProvider, ProviderEntityID: fixtures.automaticArtist, LocalEntityID: fixtures.localArtistSecond,
 		Method: "automatic", PolicyVersion: &blank,
 	}); err == nil {
-		t.Fatal("repository accepted a blank automatic policy version")
+		t.Fatal("fixture helper accepted a blank automatic policy version")
 	}
 
 	// Blank and whitespace-only versions remain invalid at the schema level. A
