@@ -57,6 +57,7 @@ export interface LibraryMissingEditionViewProps {
   locale: "en" | "ru";
   groupTitle?: string;
   pickerVisible?: boolean;
+  soleEdition?: boolean;
   /** Options for the loaded page; the host must include an off-page selection. */
   editions: readonly LibraryEditionOption[];
   editionsStatus: LibraryEditionsStatus;
@@ -183,6 +184,7 @@ export function LibraryMissingEditionView({
   locale,
   groupTitle,
   pickerVisible = true,
+  soleEdition = false,
   editions,
   editionsStatus,
   editionsError,
@@ -223,6 +225,8 @@ export function LibraryMissingEditionView({
           <p className={styles.muted}>{text.noKnownEditions}</p>
         ) : editions.length === 0 ? (
           <p className={styles.muted}>{text.emptyEditionPage}</p>
+        ) : soleEdition ? (
+          <p className={styles.label}>{selectedEdition?.label}</p>
         ) : (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={selectId}>

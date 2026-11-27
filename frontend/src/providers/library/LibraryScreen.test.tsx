@@ -504,7 +504,13 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
   expect(row).not.toHaveTextContent("0 / 0");
 });
 
-it("loads a missing group’s edition and tracks only after explicit selection", async () => {
+it.each([
+  { total: 1, needsChoice: false },
+  { total: 51, needsChoice: true },
+])("requires an edition choice only when the group has multiple editions ($total)", async ({
+  total,
+  needsChoice,
+}) => {
   window.location.hash = "#/library?view=albums";
   const groupID = "group-mbid";
   const releaseID = "edition-mbid";
@@ -556,7 +562,7 @@ it("loads a missing group’s edition and tracks only after explicit selection",
             track_count: null,
           },
         ],
-        total: 1,
+        total,
         limit: 50,
         offset: 0,
       });
@@ -605,15 +611,20 @@ it("loads a missing group’s edition and tracks only after explicit selection",
   expect(details).toHaveAttribute("role", "row");
   expect(details.firstElementChild).toHaveAttribute("colspan", "9");
   expect(details).not.toHaveTextContent(groupID);
-  const picker = await within(details).findByRole("combobox", {
-    name: "Choose an edition",
-  });
-  await waitFor(() => expect(editionRequests).toBe(1));
-  expect(picker).toHaveValue("");
-  expect(trackRequests).toBe(0);
-  fireEvent.change(picker, { target: { value: releaseID } });
+  if (needsChoice) {
+    const picker = await within(details).findByRole("combobox", {
+      name: "Choose an edition",
+    });
+    expect(picker).toHaveValue("");
+    expect(trackRequests).toBe(0);
+    fireEvent.change(picker, { target: { value: releaseID } });
+  }
 
   expect(await within(details).findByText(/Known track/)).toBeInTheDocument();
+  expect(editionRequests).toBe(1);
+  if (!needsChoice) {
+    expect(within(details).queryByRole("combobox")).not.toBeInTheDocument();
+  }
   expect(
     within(details).getByText(
       "The cached track list is incomplete; it may not represent the full edition.",

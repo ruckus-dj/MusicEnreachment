@@ -104,6 +104,7 @@ function MissingGroupChooser({ group }: { group: MissingReleaseGroupSummary }) {
     <ArtistMissingGroupChooser
       locale={projection.locale}
       isExpanded={projection.pickerOpen}
+      hasSoleEdition={projection.hasSoleEdition}
       onToggle={projection.togglePicker}
     >
       {projection.showEditionView && (

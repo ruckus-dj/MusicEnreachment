@@ -81,8 +81,9 @@ function resetEditionSelection(
 /**
  * Headless MusicBrainz edition projection for one missing release group.
  * Editions load only while the picker is visible; the read-only track list is
- * fetched only after an explicit edition choice and stays visible when the
- * picker closes. The shared picker owns rendering and control labels.
+ * fetched for the sole known edition on expansion or after an explicit
+ * choice among multiple editions. An explicit choice stays visible when
+ * the picker closes.
  */
 export function useMissingReleaseGroupEditions(
   group: MissingReleaseGroupSummary | null,
@@ -120,12 +121,25 @@ export function useMissingReleaseGroupEditions(
     });
   }
 
-  const selectedEditionID = active.selectedEdition?.provider_key ?? "";
   const editionsQuery = useListLibraryReleaseGroupEditions(
     groupKey,
     { limit: EDITION_PAGE_SIZE, offset: active.editionOffset },
     { query: { enabled: enabled && group !== null && active.pickerOpen } },
   );
+  const editions =
+    editionsQuery.data?.status === 200 ? editionsQuery.data.data : undefined;
+  const pageEditions = editions?.editions ?? [];
+  const editionsError = responseError(editionsQuery);
+  const soleEdition =
+    editionsError === null && editions?.total === 1 && pageEditions.length === 1
+      ? pageEditions[0]
+      : undefined;
+  const selectedEditionID =
+    (soleEdition
+      ? active.pickerOpen
+        ? soleEdition.provider_key
+        : undefined
+      : active.selectedEdition?.provider_key) ?? "";
   const tracksQuery = useGetLibraryReleaseGroupEditionTracks(
     groupKey,
     selectedEditionID,
@@ -142,10 +156,8 @@ export function useMissingReleaseGroupEditions(
       },
     },
   );
-  const editions =
-    editionsQuery.data?.status === 200 ? editionsQuery.data.data : undefined;
-  const pageEditions = editions?.editions ?? [];
   const editionOptions =
+    !soleEdition &&
     active.selectedEdition &&
     !pageEditions.some(
       (edition) =>
@@ -153,7 +165,6 @@ export function useMissingReleaseGroupEditions(
     )
       ? [active.selectedEdition, ...pageEditions]
       : pageEditions;
-  const editionsError = responseError(editionsQuery);
   const tracksError = responseError(tracksQuery);
   const trackList =
     tracksQuery.data?.status === 200 ? tracksQuery.data.data : undefined;
@@ -208,6 +219,7 @@ export function useMissingReleaseGroupEditions(
       : null;
   const viewProps: Omit<LibraryMissingEditionViewProps, "locale"> = {
     pickerVisible: active.pickerOpen,
+    soleEdition: Boolean(soleEdition),
     editions: editionChoices,
     editionsStatus,
     editionsError,
@@ -233,6 +245,7 @@ export function useMissingReleaseGroupEditions(
     credits: creditNames(group?.artists ?? []),
     originalReleaseDate: group?.original_release_date ?? null,
     pickerOpen: active.pickerOpen,
+    hasSoleEdition: Boolean(soleEdition),
     togglePicker: () => update({ pickerOpen: !active.pickerOpen }),
     showEditionView: active.pickerOpen || selectedEditionID !== "",
     viewProps,
