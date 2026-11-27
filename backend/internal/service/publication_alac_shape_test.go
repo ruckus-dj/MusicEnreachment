@@ -6,7 +6,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
-func TestALACProofPreservesPrivateSourceShape(t *testing.T) {
+func TestALACCandidateShapePreservesPrivateSource(t *testing.T) {
 	number := func(v int64) *int64 { return &v }
 	text := func(v string) *string { return &v }
 	source := SourceTechnicalAudioStream{
