@@ -404,8 +404,8 @@ func (repository *SetupManagerRepository) startMatchingReleaseHydration(
 type MatchingAcquisitionIntent struct {
 	SchemaVersion int `json:"schema_version"`
 	FenceVersion  int `json:"fence_version,omitempty"`
-	// EvaluationRevisionCaptured distinguishes new admission-time CAS evidence
-	// from historical sealed intents, whose hashes must remain byte-identical.
+	// EvaluationRevisionCaptured confirms that automatic artist admission read
+	// the current evaluation; a nil expected revision means none existed.
 	EvaluationRevisionCaptured bool                                 `json:"evaluation_revision_captured,omitempty"`
 	ExpectedEvaluationRevision *string                              `json:"expected_evaluation_revision,omitempty"`
 	GroupingEpoch              int64                                `json:"grouping_epoch"`

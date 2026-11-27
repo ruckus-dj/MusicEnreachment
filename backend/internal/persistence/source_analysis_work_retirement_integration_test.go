@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	appsettings "github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -156,7 +157,7 @@ func runDeletingRootCleansArtifactsAndAnalysisState(t *testing.T, database *bun.
 		t.Fatalf("read unreadable work: %v", err)
 	}
 	artifactID := insertStagedAnalysisArtifact(t, ctx, database, retainedID, first.ID, first.Attempt, *first.RiverJobID, "", 5, mtime)
-	artifactRelativePath := filepath.Join("analysis", "staging", root.ID.String(), retainedID.String(), artifactID.String())
+	artifactRelativePath := filepath.FromSlash(sourcefs.StagedArtifactPath(root.ID, retainedID, artifactID, "retained.flac"))
 	artifactPath := filepath.Join(workDir, artifactRelativePath)
 	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
 		t.Fatalf("create staged artifact directory: %v", err)
@@ -261,10 +262,11 @@ func insertStagedAnalysisArtifact(t *testing.T, ctx context.Context, database *b
 	artifactID := uuid.New()
 	if relativePath == "" {
 		var rootID uuid.UUID
-		if err := database.NewRaw(`SELECT source_root_id FROM source_analysis_work WHERE id=?`, workID).Scan(ctx, &rootID); err != nil {
+		var relativeSource string
+		if err := database.NewRaw(`SELECT source_root_id, relative_path FROM source_analysis_work WHERE id=?`, workID).Scan(ctx, &rootID, &relativeSource); err != nil {
 			t.Fatalf("read source root for artifact %s: %v", workID, err)
 		}
-		relativePath = filepath.ToSlash(filepath.Join("analysis", "staging", rootID.String(), workID.String(), artifactID.String()))
+		relativePath = sourcefs.StagedArtifactPath(rootID, workID, artifactID, relativeSource)
 	}
 	if _, err := database.NewRaw(`INSERT INTO source_analysis_work_execution
 		(work_id,operation_id,operation_attempt,job_id,processing_mode)

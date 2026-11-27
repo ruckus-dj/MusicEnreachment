@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -23,7 +24,9 @@ func RollbackLastGroup(ctx context.Context, db *bun.DB) (*migrate.MigrationGroup
 		known[migration.Name] = migration.String() + ".tx.down.sql"
 	}
 	var group *migrate.MigrationGroup
-	err = db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	// Down migrations may lock application tables before checking for data.
+	// Read committed lets those checks see writes that commit while we wait.
+	err = db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.ExecContext(ctx, `LOCK TABLE bun_migrations IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return fmt.Errorf("lock application migration history: %w", err)
 		}

@@ -272,6 +272,8 @@ func TestReleaseCoverThumbnailWaitsForSlotBeforeRepositoryReadAndTimesOut(t *tes
 		t.Fatalf("queued thumbnail read repository %d times before acquiring a slot", fixture.selectedReadCalls)
 	}
 	<-covers.thumbnailSlots
+	// Only the blocked request needs the short deadline.
+	covers.thumbnailTimeout = releaseCoverThumbnailTimeout
 	if _, err := covers.Thumbnail(context.Background(), releaseID, generation); err != nil {
 		t.Fatalf("thumbnail after waiting for a slot: %v", err)
 	}

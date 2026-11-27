@@ -186,11 +186,21 @@ func runCleanupRecoveryWaitsForActiveDeliveryClaim(t *testing.T, database *bun.D
 	go func() {
 		deliveryDone <- repository.RunSourceAnalysisArtifactCleanupDelivery(ctx, fence, func(context.Context, SourceAnalysisArtifact) (SourceAnalysisArtifactCleanupOutcome, error) {
 			close(executorEntered)
-			<-releaseExecutor
-			return SourceAnalysisArtifactCleanupOutcome{Succeeded: true}, nil
+			select {
+			case <-releaseExecutor:
+				return SourceAnalysisArtifactCleanupOutcome{Succeeded: true}, nil
+			case <-ctx.Done():
+				return SourceAnalysisArtifactCleanupOutcome{}, ctx.Err()
+			}
 		})
 	}()
-	<-executorEntered
+	select {
+	case <-executorEntered:
+	case err := <-deliveryDone:
+		t.Fatalf("cleanup delivery finished before entering the executor: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("cleanup delivery did not enter the executor: %v", ctx.Err())
+	}
 	recoveryDone := make(chan error, 1)
 	go func() {
 		recoveryDone <- repository.RecoverInterruptedSourceAnalysisArtifactCleanupAtStartup(ctx, fence.OperationID, fence.OperationAttempt, fence.JobID)

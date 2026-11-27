@@ -10,7 +10,7 @@ import (
 
 func TestMatchingFallbackSealAuthorityCanonicalBytes(t *testing.T) {
 	authority := MatchingFallbackSealAuthority{
-		SchemaVersion:         matchingFallbackSealAuthoritySchemaVersion,
+		SchemaVersion:         MatchingFrozenAuthorityVersion,
 		Disposition:           "review_exhausted",
 		RunID:                 uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
 		WaitRevision:          9,

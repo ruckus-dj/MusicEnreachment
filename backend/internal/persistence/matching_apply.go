@@ -1475,8 +1475,7 @@ func matchingApplyHistoricalCalculationContext(
 		return MatchingFallbackCalculationContext{}, fmt.Errorf("referenced immutable calculation receipt is missing")
 	}
 	if receipt.AcquisitionRevision != ref.AcquisitionRevision || receipt.StageIndex != ref.StageIndex ||
-		receipt.SchemaVersion != ref.SchemaVersion || receipt.CalculatorVersion != ref.CalculatorVersion ||
-		receipt.DigestVersion != ref.DigestVersion || receipt.InputDigest != ref.InputDigest || receipt.DecisionDigest != ref.DecisionDigest ||
+		receipt.SchemaVersion != ref.SchemaVersion || receipt.InputDigest != ref.InputDigest || receipt.DecisionDigest != ref.DecisionDigest ||
 		!matchingJSONEqual(receipt.Context, seal.FullEvaluationContext) {
 		return MatchingFallbackCalculationContext{}, fmt.Errorf("immutable calculation receipt differs from original seal")
 	}

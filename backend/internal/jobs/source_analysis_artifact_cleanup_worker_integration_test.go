@@ -49,7 +49,8 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	for index := range allArtifactIDs {
 		allArtifactIDs[index] = uuid.New()
 		paths[index] = filepath.Join("analysis", "staging", rootID.String(), workID.String(), allArtifactIDs[index].String())
-		if index%2 == 1 {
+		// Only the last path lacks the source's required extension.
+		if index < len(artifactIDs) {
 			paths[index] += ".flac"
 		}
 		fullPath := filepath.Join(outputRoot, paths[index])
@@ -85,8 +86,8 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	}
 
 	candidates, err := repository.ListAutomaticSourceAnalysisArtifactCleanupCandidates(ctx, len(allArtifactIDs))
-	if err != nil || len(candidates) != len(allArtifactIDs) {
-		t.Fatalf("list cleanup candidates = %v, %v; want both current and legacy paths", candidates, err)
+	if err != nil || len(candidates) != len(artifactIDs) {
+		t.Fatalf("list cleanup candidates = %v, %v; want only canonical paths", candidates, err)
 	}
 	cleanup := service.NewSourceAnalysisArtifactCleanup(repository, riverClient)
 	operation, err := cleanup.Admit(ctx, artifactIDs)

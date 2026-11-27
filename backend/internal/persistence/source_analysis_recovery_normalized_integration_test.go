@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/uptrace/bun"
@@ -57,7 +58,7 @@ func runRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedStep
 		t.Fatalf("claim normalized SHA step: %v", err)
 	}
 	artifactID := uuid.New()
-	artifactPath := "analysis/staging/" + root.ID.String() + "/" + work.ID.String() + "/" + artifactID.String()
+	artifactPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath)
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
 		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
 		VALUES (?,?,?,?,?,?,?,?, 'ready')`, artifactID, work.ID, artifactPath, work.SizeBytes, work.Mtime, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
@@ -153,7 +154,7 @@ func runRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWit
 		t.Fatalf("claim normalized SHA step: %v", err)
 	}
 	artifactID := uuid.New()
-	artifactPath := "analysis/staging/" + root.ID.String() + "/" + work.ID.String() + "/" + artifactID.String()
+	artifactPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath)
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
 		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
 		VALUES (?,?,?,?,?,?,?,?, 'ready')`, artifactID, work.ID, artifactPath, work.SizeBytes, work.Mtime, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
@@ -223,7 +224,7 @@ func runRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterCr
 		t.Fatalf("commit successful SHA result: %v", err)
 	}
 	artifactID := uuid.New()
-	artifactPath := "analysis/staging/" + root.ID.String() + "/" + work.ID.String() + "/" + artifactID.String()
+	artifactPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath)
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
 		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
 		VALUES (?,?,?,?,?,?,?,?, 'ready')`, artifactID, work.ID, artifactPath, work.SizeBytes, work.Mtime, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
@@ -275,7 +276,7 @@ func runRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowe
 	}
 	insertNormalizedStagedExecution(t, ctx, database, work.ID, operation.ID, operation.Attempt, *operation.RiverJobID)
 	artifactID := uuid.New()
-	artifactPath := "analysis/staging/" + root.ID.String() + "/" + work.ID.String() + "/" + artifactID.String()
+	artifactPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath)
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
 		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
 		VALUES (?,?,?,?,?,?,?,?, 'ready')`, artifactID, work.ID, artifactPath, work.SizeBytes, work.Mtime, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {

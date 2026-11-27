@@ -439,12 +439,6 @@ func (preparer *SourceAnalysisInputPreparer) prepareRetained(
 	if artifact.State != persistence.SourceAnalysisArtifactReady {
 		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact is not ready")
 	}
-	legacyPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifact.ID, "")
-	if artifact.RelativeOutputPath == legacyPath && legacyPath != sourcefs.StagedArtifactPath(root.ID, work.ID, artifact.ID, work.RelativePath) {
-		// Acquire replaces this binding only if its previous owners are idle,
-		// leaving the old path registered for cleanup.
-		return nil, false, nil
-	}
 	bound, err := repository.BindRetained(ctx, artifact.ID, fence)
 	if err != nil {
 		return nil, false, fmt.Errorf("prepare source analysis input: bind retained artifact: %w", err)

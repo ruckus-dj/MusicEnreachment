@@ -89,9 +89,6 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 			// the steps and no retryable failure still belongs to the old ID.
 			base := tx.NewSelect().TableExpr("operation AS op").
 				Where("op.state IN (?)", bun.List(states)).
-				// These matching runs have handed off their result to Incoming.
-				// A human decision is not a pending background delivery.
-				Where("NOT (op.kind='matching_evaluation_v1' AND op.state='running' AND op.stage='manual_review')").
 				Where(`NOT EXISTS (SELECT 1 FROM matching_run retired
 					WHERE retired.operation_id=op.id AND retired.quiesced_at IS NOT NULL)`).
 				// Fenced v2 single-target runs can be superseded by a newer

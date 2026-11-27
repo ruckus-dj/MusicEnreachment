@@ -32,9 +32,9 @@ func StagedArtifactPath(rootID, workID, artifactID uuid.UUID, relativeSource str
 	return path.Join("analysis", "staging", rootID.String(), workID.String(), artifactID.String()+stagedArtifactSuffix(relativeSource))
 }
 
-// MatchesStagedArtifactPath accepts the exact current or pre-extension path
-// for the registered identity, including legacy files that still need cleanup.
+// MatchesStagedArtifactPath accepts only the exact canonical path for the
+// registered identity. Sources without a portable extension stay supported
+// because StagedArtifactPath itself then has no suffix.
 func MatchesStagedArtifactPath(relativePath string, rootID, workID, artifactID uuid.UUID, relativeSource string) bool {
-	return relativePath == StagedArtifactPath(rootID, workID, artifactID, relativeSource) ||
-		relativePath == StagedArtifactPath(rootID, workID, artifactID, "")
+	return relativePath == StagedArtifactPath(rootID, workID, artifactID, relativeSource)
 }

@@ -56,7 +56,7 @@ func SerializeFrozenFallbackEvaluation(prepared PreparedFrozenFallbackEvaluation
 	sort.Slice(members, func(i, j int) bool { return members[i].FileMemberID.String() < members[j].FileMemberID.String() })
 	return persistence.FrozenMatchingPublication{
 		Authority: persistence.FrozenMatchingAuthorityIdentity{
-			SealSchemaVersion: 3, RunID: a.RunID, WaitRevision: a.WaitRevision, SealDigest: a.Digest, SealDisposition: a.Disposition,
+			SealSchemaVersion: persistence.MatchingFrozenAuthorityVersion, RunID: a.RunID, WaitRevision: a.WaitRevision, SealDigest: a.Digest, SealDisposition: a.Disposition,
 			TargetFenceVersion: a.TargetFenceVersion, TargetCaptureDigest: a.TargetCaptureDigest, TargetCapture: a.TargetCapture,
 			Intent: a.Intent, SourceID: a.SourceID, ProviderID: a.ProviderID, Endpoint: a.Endpoint, SourceConfiguration: a.SourceConfiguration,
 			RunProviderConfiguration: a.RunProviderConfig, RunSourceID: a.RunSourceID, RunProviderID: a.RunProviderID,

@@ -28,7 +28,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/migrate"
 )
 
 const (
@@ -400,15 +399,7 @@ func migratedTemplate(t *testing.T, admin *bun.DB, withRiver bool) string {
 
 func applyMigrations(t *testing.T, database *bun.DB) {
 	t.Helper()
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migrations: %v", err)
-	}
-	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if err := migrator.Init(context.Background()); err != nil {
-		t.Fatalf("initialize migrations: %v", err)
-	}
-	if _, err := migrator.Migrate(context.Background()); err != nil {
+	if err := migrations.Apply(context.Background(), database); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 }

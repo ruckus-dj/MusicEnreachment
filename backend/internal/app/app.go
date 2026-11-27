@@ -33,7 +33,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/migrate"
 )
 
 type operationRepository interface {
@@ -174,7 +173,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
 	defer func() { _ = db.Close() }()
-	if err := applyMigrations(ctx, db); err != nil {
+	if err := migrations.Apply(ctx, db); err != nil {
 		return err
 	}
 	logger.InfoContext(ctx, "application migrations complete")
@@ -605,21 +604,6 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP: %w", serveErr)
-	}
-	return nil
-}
-
-func applyMigrations(ctx context.Context, db *bun.DB) error {
-	collection, err := migrations.Collection()
-	if err != nil {
-		return err
-	}
-	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if err := migrator.Init(ctx); err != nil {
-		return fmt.Errorf("initialize migrations: %w", err)
-	}
-	if _, err := migrator.Migrate(ctx); err != nil {
-		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
 }

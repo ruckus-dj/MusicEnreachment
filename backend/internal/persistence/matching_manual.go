@@ -271,10 +271,10 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 	if state.header.EvaluationRevision != expectedRevision {
 		return result, state, ErrIncomingMatchConflict
 	}
-	// Version 3 evaluations are rooted in a verified historical seal. Branch
-	// before decoding provider_fences: frozen headers intentionally have none of
-	// the legacy mutable-cache fence semantics.
-	if state.header.FrozenAuthorityVersion != nil && *state.header.FrozenAuthorityVersion == 3 {
+	// Frozen-authority evaluations are rooted in a verified historical seal.
+	// Branch before decoding provider_fences: frozen headers intentionally have
+	// none of the legacy mutable-cache fence semantics.
+	if state.header.FrozenAuthorityVersion != nil && *state.header.FrozenAuthorityVersion == MatchingFrozenAuthorityVersion {
 		return repository.previewFrozenMatchingManualTx(ctx, tx, groupID, expectedRevision, releaseID, assignments, locking, state)
 	}
 	if err := json.Unmarshal(state.header.ProviderFences, &state.fence); err != nil {
@@ -476,7 +476,7 @@ func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualT
 		return result, state, ErrIncomingMatchConflict
 	}
 	seal, found, err := readMatchingFallbackAuthoritySeal(ctx, tx, *state.header.FrozenRunID, *state.header.FrozenWaitRevision)
-	if err != nil || !found || seal.SchemaVersion != 3 || seal.Digest != hex.EncodeToString(state.header.FrozenSealDigest) ||
+	if err != nil || !found || seal.SchemaVersion != MatchingFrozenAuthorityVersion || seal.Digest != hex.EncodeToString(state.header.FrozenSealDigest) ||
 		seal.Target.GroupID != groupID || seal.Target.GroupRevision != state.header.GroupRevision || seal.SourceID != state.header.ProviderSourceID || seal.ProviderID != state.header.ProviderID {
 		return result, state, ErrIncomingMatchConflict
 	}

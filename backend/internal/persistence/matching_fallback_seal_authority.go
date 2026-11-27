@@ -14,16 +14,17 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const matchingFallbackSealAuthoritySchemaVersion = 3
+// MatchingFrozenAuthorityVersion is the single supported discriminator for
+// persisted frozen matching authority: fallback authority seals, frozen
+// evaluation headers and handoffs, and schema-2 frozen apply requests.
+const MatchingFrozenAuthorityVersion = 1
 
 // MatchingFallbackSealCalculationReference points at an immutable saved
-// calculation. The version fields identify the current calculation format.
+// calculation. The schema version identifies the calculation format.
 type MatchingFallbackSealCalculationReference struct {
 	AcquisitionRevision int64  `json:"acquisition_revision"`
 	StageIndex          int    `json:"stage_index"`
 	SchemaVersion       int    `json:"schema_version"`
-	CalculatorVersion   int    `json:"calculator_version"`
-	DigestVersion       int    `json:"digest_version"`
 	InputDigest         string `json:"input_digest"`
 	DecisionDigest      string `json:"decision_digest"`
 }
@@ -75,8 +76,7 @@ func validateMatchingFallbackCalculationDecisionBinding(receipt *MatchingFallbac
 func matchingFallbackSealCalculationReference(receipt *MatchingFallbackCalculationReceipt) MatchingFallbackSealCalculationReference {
 	return MatchingFallbackSealCalculationReference{
 		AcquisitionRevision: receipt.AcquisitionRevision, StageIndex: receipt.StageIndex,
-		SchemaVersion: receipt.SchemaVersion, CalculatorVersion: receipt.CalculatorVersion,
-		DigestVersion: receipt.DigestVersion, InputDigest: receipt.InputDigest,
+		SchemaVersion: receipt.SchemaVersion, InputDigest: receipt.InputDigest,
 		DecisionDigest: receipt.DecisionDigest,
 	}
 }
@@ -326,7 +326,7 @@ func buildMatchingFallbackSealAuthority(
 	} else if wait.ReviewHydration != 0 {
 		return result, false, fmt.Errorf("build fallback seal authority: unexpected review-only hydration")
 	}
-	result.SchemaVersion = matchingFallbackSealAuthoritySchemaVersion
+	result.SchemaVersion = MatchingFrozenAuthorityVersion
 	result.RunID, result.WaitRevision = runID, revision
 	result.Intent = sealed.Intent
 	result.Target = sealed.Target

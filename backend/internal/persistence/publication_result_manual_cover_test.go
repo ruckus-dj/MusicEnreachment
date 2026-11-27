@@ -8,7 +8,7 @@ import (
 
 func TestManualCoverAuthorityUsesSelectedGenerationNotRevision(t *testing.T) {
 	selected := uuid.New()
-	frozen := PublicationManualCoverInput{ReleaseID: uuid.New(), AuthorityRevision: 2, SelectedGeneration: selected}
+	frozen := PublicationManualCoverInput{ReleaseID: uuid.New(), AuthorityRevision: 2, SelectedGeneration: selected, AuthorityMode: "manual"}
 
 	if !manualCoverAuthorityMatches("manual", &selected, frozen) {
 		t.Fatal("selected manual cover generation should remain current")
@@ -29,9 +29,8 @@ func TestManualCoverAuthorityModeIsFrozen(t *testing.T) {
 	selected := uuid.New()
 	manual := PublicationManualCoverInput{SelectedGeneration: selected, AuthorityMode: "manual"}
 	automatic := PublicationManualCoverInput{SelectedGeneration: selected, AuthorityMode: "automatic"}
-	legacy := PublicationManualCoverInput{SelectedGeneration: selected}
-	if !manualCoverAuthorityMatches("manual", &selected, legacy) || !manualCoverAuthorityMatches("manual", &selected, manual) {
-		t.Fatal("manual and legacy frozen authority should match manual mode")
+	if !manualCoverAuthorityMatches("manual", &selected, manual) {
+		t.Fatal("manual frozen authority should match manual mode")
 	}
 	if !manualCoverAuthorityMatches("automatic", &selected, automatic) {
 		t.Fatal("automatic frozen authority should match automatic mode")

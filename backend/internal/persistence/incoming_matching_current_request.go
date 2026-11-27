@@ -50,18 +50,6 @@ func RequestIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB, 
 }
 
 func requestAllAutomaticIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB, groupingInvalidated bool) error {
-	var currentRequestsAvailable bool
-	if err := tx.NewRaw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.columns
-		WHERE table_schema=current_schema() AND table_name='incoming_matching_generation' AND column_name='requested_generation'
-	)`).Scan(ctx, &currentRequestsAvailable); err != nil {
-		return fmt.Errorf("check current incoming matching request schema: %w", err)
-	}
-	// Migration rollback/incremental migration tests exercise older schemas.
-	// Runtime startup applies all migrations before these writes can occur.
-	if !currentRequestsAvailable {
-		return nil
-	}
 	result, err := tx.NewRaw(`INSERT INTO incoming_matching_generation (group_id, requested_generation)
 		SELECT groups.id, 1 FROM incoming_group groups
 		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=groups.id

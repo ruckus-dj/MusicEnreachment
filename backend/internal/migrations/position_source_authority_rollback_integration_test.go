@@ -10,7 +10,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
 
 func TestPositionSourceAuthorityRollbackRefusesLiveStatePostgreSQL(t *testing.T) {
@@ -19,16 +18,8 @@ func TestPositionSourceAuthorityRollbackRefusesLiveStatePostgreSQL(t *testing.T)
 			db := testpostgres.Open(t)
 			testpostgres.Reset(t, db)
 			ctx := context.Background()
-			collection, err := migrations.Collection()
-			if err != nil {
-				t.Fatal(err)
-			}
-			migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-			if err := migrator.Init(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := migrator.Migrate(ctx); err != nil {
-				t.Fatal(err)
+			if err := migrations.Apply(ctx, db); err != nil {
+				t.Fatalf("apply baseline migrations: %v", err)
 			}
 			releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 			if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -74,7 +65,7 @@ func TestPositionSourceAuthorityRollbackRefusesLiveStatePostgreSQL(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			if _, err := migrator.Rollback(ctx); err == nil {
+			if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
 				t.Fatal("rollback discarded live source authority")
 			}
 			var retained bool

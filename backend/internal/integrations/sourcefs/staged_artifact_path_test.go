@@ -28,11 +28,15 @@ func TestStagedArtifactPathPreservesPortableSourceExtension(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := StagedArtifactPath(root, work, artifact, tc.source)
-			if want := stem + tc.suffix; got != want {
+			want := stem + tc.suffix
+			if got != want {
 				t.Errorf("StagedArtifactPath(%q) = %q, want %q", tc.source, got, want)
 			}
-			if !validRegisteredArtifactPath(got) || !MatchesStagedArtifactPath(stem, root, work, artifact, tc.source) {
-				t.Errorf("registered or legacy path rejected for %q", tc.source)
+			if !validRegisteredArtifactPath(got) || !MatchesStagedArtifactPath(got, root, work, artifact, tc.source) {
+				t.Errorf("canonical path rejected for %q", tc.source)
+			}
+			if accepted := MatchesStagedArtifactPath(stem, root, work, artifact, tc.source); accepted != (tc.suffix == "") {
+				t.Errorf("stem-only path acceptance for %q = %t, want %t", tc.source, accepted, tc.suffix == "")
 			}
 		})
 	}

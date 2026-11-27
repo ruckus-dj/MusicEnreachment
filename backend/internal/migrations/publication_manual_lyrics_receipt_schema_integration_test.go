@@ -4,14 +4,12 @@ package migrations_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
 
 func TestPublicationManualLyricsReceiptRollbackRefusesPopulatedTablePostgreSQL(t *testing.T) {
@@ -19,34 +17,8 @@ func TestPublicationManualLyricsReceiptRollbackRefusesPopulatedTablePostgreSQL(t
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatal(err)
-	}
-	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
-	for _, migration := range collection.Sorted() {
-		if migration.Name < "20261015000005" {
-			prior.Add(migration)
-		} else if migration.Name == "20261015000005" {
-			target.Add(migration)
-		}
-	}
-	if len(target.Sorted()) != 1 {
-		t.Fatalf("receipt target migrations = %d, want one", len(target.Sorted()))
-	}
-	priorMigrator := migrate.NewMigrator(database, prior, migrate.WithMarkAppliedOnSuccess(true))
-	if err := priorMigrator.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := priorMigrator.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	targetMigrator := migrate.NewMigrator(database, target, migrate.WithMarkAppliedOnSuccess(true))
-	if err := targetMigrator.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := targetMigrator.Migrate(ctx); err != nil {
-		t.Fatal(err)
+	if err := migrations.Apply(ctx, database); err != nil {
+		t.Fatalf("apply baseline migrations: %v", err)
 	}
 	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -72,11 +44,15 @@ func TestPublicationManualLyricsReceiptRollbackRefusesPopulatedTablePostgreSQL(t
 		VALUES (?,?,0,?,?,'value',repeat('a',64))`, positionID, uuid.New(), uuid.New(), uuid.New()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := targetMigrator.Rollback(ctx); err == nil || !strings.Contains(err.Error(), "refusing to drop populated publication_manual_lyrics_receipt") {
-		t.Fatalf("rollback with populated receipt table = %v, want guarded refusal", err)
+	if _, err := migrations.RollbackLastGroup(ctx, database); err == nil {
+		t.Fatal("rollback with a populated manual lyrics receipt table succeeded")
 	}
 	var retained bool
 	if err := database.NewRaw(`SELECT to_regclass('public.publication_manual_lyrics_receipt') IS NOT NULL`).Scan(ctx, &retained); err != nil || !retained {
 		t.Fatalf("receipt table retained after refused rollback = %t, %v", retained, err)
+	}
+	var receipts int
+	if err := database.NewRaw(`SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`, positionID).Scan(ctx, &receipts); err != nil || receipts != 1 {
+		t.Fatalf("manual lyrics receipt after refused rollback = %d, %v; want it retained", receipts, err)
 	}
 }

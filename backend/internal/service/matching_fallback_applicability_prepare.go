@@ -78,7 +78,7 @@ func PrepareFrozenFallbackEvaluation(
 	if err != nil || !exists {
 		return PreparedFrozenFallbackEvaluation{}, exists, err
 	}
-	if seal.SchemaVersion != 3 || seal.RunID != runID || seal.WaitRevision != waitRevision || !isFallbackSHA256(seal.Digest) {
+	if seal.SchemaVersion != persistence.MatchingFrozenAuthorityVersion || seal.RunID != runID || seal.WaitRevision != waitRevision || !isFallbackSHA256(seal.Digest) {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: sealed calculation context is unavailable")
 	}
 	sealDigest := seal.Digest
@@ -113,8 +113,8 @@ func PrepareFrozenFallbackEvaluation(
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: selected context identity does not match seal")
 	}
 	var digest string
-	if ref.SchemaVersion != 4 || ref.CalculatorVersion != 4 || ref.DigestVersion != 4 {
-		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported selected calculation version tuple")
+	if ref.SchemaVersion != 1 {
+		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported selected calculation schema version")
 	}
 	digest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
 	if err != nil || digest != ref.InputDigest {

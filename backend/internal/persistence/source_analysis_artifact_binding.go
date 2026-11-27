@@ -196,11 +196,7 @@ func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, work *SourceAnalysisWo
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? AND work_id=? FOR UPDATE`, previousArtifactID, fence.WorkID).Scan(ctx, previous); err != nil {
 			return fmt.Errorf("lock prior acquired artifact: %w", err)
 		}
-		legacyPath := sourcefs.StagedArtifactPath(work.SourceRootID, work.ID, previous.ID, "")
-		legacyReady := previous.State == SourceAnalysisArtifactReady && previous.RelativeOutputPath == legacyPath &&
-			legacyPath != sourcefs.StagedArtifactPath(work.SourceRootID, work.ID, previous.ID, work.RelativePath) &&
-			previous.SourceSizeBytes == work.SizeBytes && sourceAnalysisMtime(previous.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime))
-		if previous.State != SourceAnalysisArtifactAcquiring && !legacyReady {
+		if previous.State != SourceAnalysisArtifactAcquiring {
 			return fmt.Errorf("acquire source analysis artifact: another artifact is bound to work")
 		}
 		liveCreator, err := liveArtifactDelivery(ctx, tx, previous.OwnerOperationID, previous.OwnerOperationAttempt, previous.OwnerJobID)
@@ -225,11 +221,6 @@ func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, work *SourceAnalysisWo
 		}
 		if _, err := tx.NewRaw(`DELETE FROM source_analysis_work_artifact_binding WHERE work_id=? AND artifact_id=?`, fence.WorkID, previousArtifactID).Exec(ctx); err != nil {
 			return fmt.Errorf("delete stale acquired artifact binding: %w", err)
-		}
-		if legacyReady {
-			if _, err := tx.NewRaw(`UPDATE source_analysis_artifact SET state='cleanup_eligible',updated_at=now() WHERE id=?`, previousArtifactID).Exec(ctx); err != nil {
-				return fmt.Errorf("retire extensionless staged artifact: %w", err)
-			}
 		}
 	}
 	_, err = tx.NewRaw(`INSERT INTO source_analysis_work_artifact_binding

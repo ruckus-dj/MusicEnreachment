@@ -65,7 +65,7 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	input.DesiredTags = tags
 	_, input.Tools, _ = pinnedToolFixture(t, true)
 	releaseID, generation := uuid.New(), uuid.New()
-	input.ManualCover = &persistence.PublicationManualCoverInput{ReleaseID: releaseID, AuthorityRevision: 4, SelectedGeneration: generation}
+	input.ManualCover = &persistence.PublicationManualCoverInput{ReleaseID: releaseID, AuthorityRevision: 4, SelectedGeneration: generation, AuthorityMode: "manual"}
 	imageB := simpleCoverPNG(t, color.RGBA{B: 255, A: 255})
 	mime := "image/png"
 	coverDigest := sha256.Sum256(imageB)

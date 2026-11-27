@@ -30,8 +30,7 @@ func recheckFrozenFallbackProviderHistory(ctx context.Context, tx bun.Tx, seal M
 			return err
 		}
 		if receipt == nil || proof.StageIndex != receipt.StageIndex || proof.InputDigest != receipt.InputDigest ||
-			proof.DecisionDigest != receipt.DecisionDigest || proof.SchemaVersion != receipt.SchemaVersion ||
-			proof.CalculatorVersion != receipt.CalculatorVersion || proof.DigestVersion != receipt.DigestVersion {
+			proof.DecisionDigest != receipt.DecisionDigest || proof.SchemaVersion != receipt.SchemaVersion {
 			return errors.New("fallback layout proof differs from its saved calculation")
 		}
 		var stage MatchingFallbackCalculationContext

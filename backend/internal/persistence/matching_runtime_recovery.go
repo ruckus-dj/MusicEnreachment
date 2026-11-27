@@ -23,8 +23,8 @@ type matchingRuntimeRecoveryCandidate struct {
 	CurrentJob *int64    `bun:"current_river_job_id"`
 }
 
-// RecoverMatchingRuntime settles legacy manual-review handoffs and repairs
-// eligible automatic fallback waits and sealed evaluation wakes.
+// RecoverMatchingRuntime repairs eligible automatic fallback waits and sealed
+// evaluation wakes left behind by a crashed or restarted worker.
 func (repository *SetupManagerRepository) RecoverMatchingRuntime(ctx context.Context, client RiverInserter) error {
 	if client == nil {
 		client = repository.riverInserter
@@ -34,9 +34,6 @@ func (repository *SetupManagerRepository) RecoverMatchingRuntime(ctx context.Con
 	}
 	if err := repository.QuiesceObsoleteAutomaticMatchingRuns(ctx); err != nil {
 		return fmt.Errorf("recover matching runtime: quiesce obsolete automatic runs: %w", err)
-	}
-	if err := repository.completeParkedManualReviewOperations(ctx); err != nil {
-		return err
 	}
 	var candidates []matchingRuntimeRecoveryCandidate
 	err := repository.db.NewRaw(`
@@ -83,36 +80,6 @@ func (repository *SetupManagerRepository) RecoverMatchingRuntime(ctx context.Con
 		if _, _, err := repository.ContinueMatchingFallbackSeal(ctx, client, candidate.RunID, candidate.Attempt, candidate.Revision); err != nil {
 			return fmt.Errorf("recover matching runtime: continue fallback seal: %w", err)
 		}
-	}
-	return nil
-}
-
-// completeParkedManualReviewOperations upgrades the previous execution state
-// only when the persisted park already consumed the delivery without leaving
-// any provider dependency or registered work. Review evidence stays in place.
-func (repository *SetupManagerRepository) completeParkedManualReviewOperations(ctx context.Context) error {
-	_, err := repository.db.NewRaw(`UPDATE operation op
-		SET state='succeeded', safe_error=NULL, finished_at=delivery.consumed_at, updated_at=now()
-		FROM matching_run run
-		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
-		JOIN matching_acquisition_phase phase
-			ON phase.run_id=run.id AND phase.revision=acquisition.revision
-		JOIN matching_delivery delivery
-			ON delivery.run_id=run.id AND delivery.river_job_id=run.current_river_job_id
-		WHERE op.id=run.operation_id AND op.kind='matching_evaluation_v1'
-			AND op.state='running' AND op.stage='manual_review'
-			AND run.state='waiting_policy' AND run.quiesced_at IS NULL
-			AND run.active_river_job_id IS NULL AND run.active_river_attempt IS NULL AND run.active_execution_epoch IS NULL
-			AND acquisition.current_phase='waiting_policy' AND phase.phase='waiting_policy'
-			AND phase.output->>'state'='waiting_policy'
-			AND phase.output->>'reason' IN ('artist_search_no_results','artist_not_fit','catalog_no_results','no_candidates')
-			AND delivery.river_job_id=op.river_job_id AND delivery.operation_attempt=op.attempt AND delivery.consumed_at IS NOT NULL
-			AND NOT EXISTS (SELECT 1 FROM matching_delivery pending
-				WHERE pending.run_id=run.id AND pending.consumed_at IS NULL)
-			AND NOT EXISTS (SELECT 1 FROM matching_provider_dependency pending
-				WHERE pending.parent_run_id=run.id AND pending.terminal_outcome IS NULL)`).Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("recover matching runtime: complete parked manual-review operations: %w", err)
 	}
 	return nil
 }
@@ -390,11 +357,8 @@ func (repository *SetupManagerRepository) IsMatchingRuntimeScannerOwnedOperation
 	return owned, nil
 }
 
-// automaticArtistReviewWaitStillCurrent recognizes only the durable v2
-// automatic artist-search review publication. New handoffs complete their
-// operation successfully, while rows parked before that change are still
-// running; both are durable review waits, so this does not protect queued or
-// running work generally. Its accepted empty-search receipt must have been
+// automaticArtistReviewWaitStillCurrent recognizes a completed automatic
+// artist-search review handoff. The accepted search receipt must have been
 // consumed and published against the still-current target.
 func (repository *SetupManagerRepository) automaticArtistReviewWaitStillCurrent(ctx context.Context, operationID uuid.UUID) (bool, error) {
 	var runID uuid.UUID
@@ -403,7 +367,7 @@ func (repository *SetupManagerRepository) automaticArtistReviewWaitStillCurrent(
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
 		JOIN matching_acquisition_phase phase ON phase.run_id=run.id AND phase.revision=acquisition.revision
 		WHERE operation.id=? AND operation.kind='matching_evaluation_v1'
-		AND operation.state IN ('running','succeeded') AND operation.stage='manual_review'
+		AND operation.state='succeeded' AND operation.stage='manual_review'
 		AND run.state='waiting_policy' AND run.quiesced_at IS NULL
 		AND run.current_river_job_id=operation.river_job_id
 		AND acquisition.intent_version=2 AND acquisition.current_phase='waiting_policy'

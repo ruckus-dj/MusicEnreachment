@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -126,6 +127,33 @@ func TestPublicationInputsManualLyricsRequiresExactNonEmptySyncedLyrics(t *testi
 			invalid.ManualLyrics.Value = value
 			if err := invalid.Validate(); err == nil {
 				t.Fatalf("Validate accepted manual lyrics %q", value)
+			}
+		})
+	}
+}
+
+func TestPublicationInputsManualCoverRequiresExplicitAuthorityMode(t *testing.T) {
+	input := publicationInputsFixture(t, "rewrite")
+	input.Format = publication.AudioFormatSource
+	input.ManualCover = &PublicationManualCoverInput{
+		ReleaseID: uuid.New(), AuthorityRevision: 1, SelectedGeneration: uuid.New(), AuthorityMode: "manual",
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("valid manual cover authority rejected: %v", err)
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"authority_mode":"manual"`)) {
+		t.Fatal("manual cover authority mode was not serialized")
+	}
+	for _, mode := range []string{"", "unknown"} {
+		t.Run(fmt.Sprintf("reject %q", mode), func(t *testing.T) {
+			invalid := input.Clone()
+			invalid.ManualCover.AuthorityMode = mode
+			if err := invalid.Validate(); err == nil {
+				t.Fatalf("Validate accepted manual cover authority mode %q", mode)
 			}
 		})
 	}

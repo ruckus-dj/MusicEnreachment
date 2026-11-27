@@ -148,7 +148,7 @@ func persistMatchingFallbackAuthoritySeal(ctx context.Context, tx bun.Tx, author
 	if err == nil {
 		existingCanonical, canonicalErr := canonicalMatchingJSON(existing.Payload)
 		newCanonical, newCanonicalErr := canonicalMatchingJSON(encoded)
-		if existing.Schema != matchingFallbackSealAuthoritySchemaVersion || canonicalErr != nil || newCanonicalErr != nil || !bytes.Equal(existingCanonical, newCanonical) || !equalDigest(existing.Digest, digest) {
+		if existing.Schema != MatchingFrozenAuthorityVersion || canonicalErr != nil || newCanonicalErr != nil || !bytes.Equal(existingCanonical, newCanonical) || !equalDigest(existing.Digest, digest) {
 			return fmt.Errorf("seal fallback authority: existing seal conflicts with derived authority")
 		}
 		return nil
@@ -157,8 +157,8 @@ func persistMatchingFallbackAuthoritySeal(ctx context.Context, tx bun.Tx, author
 		return fmt.Errorf("seal fallback authority: read existing seal: %w", err)
 	}
 	if _, err := tx.NewRaw(`INSERT INTO matching_fallback_authority_seal
-		(run_id,wait_revision,schema_version,authority,authority_digest) VALUES (?,?,3,?::jsonb,?)`,
-		authority.RunID, authority.WaitRevision, string(encoded), digest).Exec(ctx); err != nil {
+		(run_id,wait_revision,schema_version,authority,authority_digest) VALUES (?,?,?,?::jsonb,?)`,
+		authority.RunID, authority.WaitRevision, MatchingFrozenAuthorityVersion, string(encoded), digest).Exec(ctx); err != nil {
 		return fmt.Errorf("seal fallback authority: persist seal: %w", err)
 	}
 	return nil
@@ -198,7 +198,7 @@ func readMatchingFallbackAuthoritySeal(ctx context.Context, database bun.IDB, ru
 	if err != nil {
 		return result, false, fmt.Errorf("read fallback authority seal: %w", err)
 	}
-	if schema != matchingFallbackSealAuthoritySchemaVersion {
+	if schema != MatchingFrozenAuthorityVersion {
 		return result, false, fmt.Errorf("read fallback authority seal: unsupported schema version %d", schema)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))

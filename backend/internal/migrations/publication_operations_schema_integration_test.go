@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
 
 func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testing.T) {
@@ -187,24 +187,9 @@ func TestPublicationOperationContractRollbackRequiresSettlementPostgreSQL(t *tes
 	ctx := context.Background()
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
-	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
-	for _, migration := range loadMigrations(t).Sorted() {
-		if migration.Name < "20261015000005" {
-			prior.Add(migration)
-		} else if migration.Name == "20261015000005" {
-			target.Add(migration)
-		}
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatalf("apply baseline migrations: %v", err)
 	}
-	for _, collection := range []*migrate.Migrations{prior, target} {
-		migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-		if err := migrator.Init(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := migrator.Migrate(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertMigrationInventory(t, target, []string{"20261015000005"})
 	id := uuid.New()
 	summary, err := json.Marshal(map[string]any{"version": 1, "position_id": uuid.NewString(), "output_epoch": uuid.NewString()})
 	if err != nil {
@@ -214,16 +199,15 @@ func TestPublicationOperationContractRollbackRequiresSettlementPostgreSQL(t *tes
 		VALUES (?,'cleanup_publication_sources_v1','succeeded','complete',?::jsonb,now())`, id, string(summary)).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	migrator := migrate.NewMigrator(db, target, migrate.WithMarkAppliedOnSuccess(true))
-	if _, err := migrator.Rollback(ctx); err == nil || !strings.Contains(err.Error(), "cannot roll back publication operation contract while publication state is live") {
-		t.Fatalf("unsafe operation contract rollback = %v", err)
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
+		t.Fatal("unsafe operation contract rollback with live publication state succeeded")
 	}
 	if _, err := db.NewRaw(`DELETE FROM operation WHERE id=?`, id).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := migrator.Rollback(ctx)
+	group, err := migrations.RollbackLastGroup(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationGroup(t, group, []string{"20261015000005"}, "rolled back publication operation contract")
+	assertMigrationGroup(t, group, baselineMigrationNames, "rolled back publication operation contract")
 }

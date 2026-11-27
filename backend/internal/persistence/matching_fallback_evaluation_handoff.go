@@ -13,8 +13,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const matchingFallbackEvaluationProposalAuthorityVersion = 3
-
 const MatchingAcquisitionFallbackEvaluationSealed = "fallback_evaluation_sealed"
 
 // MatchingFallbackEvaluationHandoff identifies the immutable seal and the
@@ -111,7 +109,7 @@ func (repository *SetupManagerRepository) continueMatchingFallbackSealTx(
 	err = tx.NewRaw(`SELECT provider_authority_version,seal_digest,river_job_id,operation_attempt,wait_revision
 			FROM matching_fallback_evaluation_handoff WHERE run_id=? AND wait_revision=?`, runID, expectedWaitRevision).Scan(ctx, &existing)
 	if err == nil {
-		if existing.Version != matchingFallbackEvaluationProposalAuthorityVersion || existing.Attempt != expectedOperationAttempt ||
+		if existing.Version != MatchingFrozenAuthorityVersion || existing.Attempt != expectedOperationAttempt ||
 			existing.Revision != expectedWaitRevision || operation.RiverJobID == nil || *operation.RiverJobID != existing.JobID || existing.JobID < 1 ||
 			len(existing.Digest) != sha256.Size {
 			return fmt.Errorf("continue fallback seal: existing handoff conflicts with current operation")
@@ -208,7 +206,7 @@ func (repository *SetupManagerRepository) continueMatchingFallbackSealTx(
 	phaseOutput, _ := json.Marshal(struct {
 		State                    string `json:"state"`
 		ProviderAuthorityVersion int    `json:"provider_authority_version"`
-	}{MatchingAcquisitionFallbackEvaluationSealed, matchingFallbackEvaluationProposalAuthorityVersion})
+	}{MatchingAcquisitionFallbackEvaluationSealed, MatchingFrozenAuthorityVersion})
 	if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id,revision,phase,input,output,response_provenance)
 			VALUES (?,?,?,?::jsonb,?::jsonb,'[]'::jsonb)`, runID, expectedWaitRevision+1,
 		MatchingAcquisitionFallbackEvaluationSealed, string(phaseInput), string(phaseOutput)).Exec(ctx); err != nil {
@@ -235,7 +233,7 @@ func (repository *SetupManagerRepository) continueMatchingFallbackSealTx(
 	}
 	if _, err := tx.NewRaw(`INSERT INTO matching_fallback_evaluation_handoff
 			(run_id,wait_revision,provider_authority_version,seal_digest,river_job_id,operation_attempt)
-			VALUES (?,?,3,?,?,?)`, runID, expectedWaitRevision, digest, jobID, expectedOperationAttempt).Exec(ctx); err != nil {
+			VALUES (?,?,?,?,?,?)`, runID, expectedWaitRevision, MatchingFrozenAuthorityVersion, digest, jobID, expectedOperationAttempt).Exec(ctx); err != nil {
 		return fmt.Errorf("continue fallback seal: persist evaluation handoff: %w", err)
 	}
 	now := time.Now().UTC()
@@ -247,7 +245,7 @@ func (repository *SetupManagerRepository) continueMatchingFallbackSealTx(
 	if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "river_job_id", "updated_at").WherePK().Exec(ctx); err != nil {
 		return fmt.Errorf("continue fallback seal: queue matching operation: %w", err)
 	}
-	*handoff = MatchingFallbackEvaluationHandoff{ProviderAuthorityVersion: matchingFallbackEvaluationProposalAuthorityVersion,
+	*handoff = MatchingFallbackEvaluationHandoff{ProviderAuthorityVersion: MatchingFrozenAuthorityVersion,
 		RunID: runID, WaitRevision: expectedWaitRevision, SealDigest: authority.Digest, RiverJobID: jobID, OperationAttempt: expectedOperationAttempt}
 	return nil
 }

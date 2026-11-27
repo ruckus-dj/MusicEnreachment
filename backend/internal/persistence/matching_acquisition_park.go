@@ -296,27 +296,9 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			}
 			acceptedSearchPayload = payload
 		}
-		legacyAutomaticArtistSearch := acquisition.Version == matchingAutomaticAcquisitionIntentVersion && !catalogEmpty && !intent.EvaluationRevisionCaptured
-		if acquisition.Version == matchingAutomaticAcquisitionIntentVersion && !catalogEmpty && !legacyAutomaticArtistSearch {
+		if acquisition.Version == matchingAutomaticAcquisitionIntentVersion && !catalogEmpty {
 			if err := persistAutomaticArtistSearchReview(ctx, tx, operationID, intent, phase.Input, provenance[0], acceptedSearchPayload, sourceFence); err != nil {
 				return fmt.Errorf("park matching acquisition: persist artist-search review: %w", err)
-			}
-		}
-		if legacyAutomaticArtistSearch {
-			for _, target := range targets {
-				authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, target.GroupID)
-				if err != nil {
-					return fmt.Errorf("park matching acquisition: lock current matching authority: %w", err)
-				}
-				var manual bool
-				if err := tx.NewRaw(`SELECT manual FROM incoming_group WHERE id=?`, target.GroupID).Scan(ctx, &manual); err != nil {
-					return fmt.Errorf("park matching acquisition: read current matching mode: %w", err)
-				}
-				if !manual && authority.Mode == "automatic" {
-					if err := RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{target.GroupID}); err != nil {
-						return fmt.Errorf("park matching acquisition: request current automatic evaluation: %w", err)
-					}
-				}
 			}
 		}
 

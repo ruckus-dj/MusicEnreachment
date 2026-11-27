@@ -47,7 +47,7 @@ func (repository *SetupManagerRepository) ListFrozenMatchingReviewRefreshCandida
 		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=evaluation.group_id
 		WHERE evaluation.group_id > ?
 			AND evaluation.evaluation_revision IS NOT NULL
-			AND evaluation.frozen_authority_version=3
+			AND evaluation.frozen_authority_version=?
 			AND evaluation.frozen_run_id=evaluation.target_run_id
 			AND evaluation.frozen_wait_revision > 0
 			AND evaluation.frozen_seal_digest IS NOT NULL
@@ -81,7 +81,7 @@ func (repository *SetupManagerRepository) ListFrozenMatchingReviewRefreshCandida
 				WHERE delivery.run_id=run.id AND delivery.consumed_at IS NULL AND job.finalized_at IS NULL
 			)
 		ORDER BY evaluation.group_id
-		LIMIT ?`, after, limit).Scan(ctx, &rows); err != nil {
+		LIMIT ?`, after, MatchingFrozenAuthorityVersion, limit).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("list frozen matching review refresh candidates: %w", err)
 	}
 	candidates := make([]FrozenMatchingReviewRefreshCandidate, 0, len(rows))
@@ -249,7 +249,7 @@ func validateFrozenMatchingReviewRefreshCurrent(ctx context.Context, tx bun.Tx, 
 		}
 		return false, fmt.Errorf("refresh frozen matching review: read current evaluation: %w", err)
 	}
-	if header.Revision != candidate.EvaluationRevision || header.FrozenAuthority == nil || *header.FrozenAuthority != 3 ||
+	if header.Revision != candidate.EvaluationRevision || header.FrozenAuthority == nil || *header.FrozenAuthority != MatchingFrozenAuthorityVersion ||
 		header.FrozenRunID == nil || *header.FrozenRunID != candidate.RunID ||
 		header.FrozenWaitRevision == nil || *header.FrozenWaitRevision != candidate.WaitRevision ||
 		!equalDigest(header.FrozenSealDigest, mustDecodeSHA256(seal.Digest)) ||

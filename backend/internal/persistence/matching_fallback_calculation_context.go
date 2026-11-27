@@ -55,8 +55,9 @@ type MatchingFallbackCalculationContext struct {
 }
 
 // MatchingFallbackCalculationInputDigest hashes the complete persistence-owned
-// authority snapshot using receipt digest version 3. JSON object key ordering is
-// canonicalized; all registered inputs and accepted receipt payloads remain bound.
+// authority snapshot under the canonical calculation digest domain. JSON object
+// key ordering is canonicalized; all registered inputs and accepted receipt
+// payloads remain bound.
 func MatchingFallbackCalculationInputDigest(snapshot MatchingFallbackCalculationContext) (string, error) {
 	canonical, err := canonicalMatchingFallbackCalculationContextBytes(snapshot)
 	if err != nil {

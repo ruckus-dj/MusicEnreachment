@@ -16,7 +16,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
 
 func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChangesWithPostgreSQL(t *testing.T) {
@@ -31,12 +30,7 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 		t.Fatalf("insert populated analysis result: %v", err)
 	}
 
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load current migration collection: %v", err)
-	}
-	rollback := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if _, err := rollback.Rollback(ctx); err == nil {
+	if _, err := migrations.RollbackLastGroup(ctx, database); err == nil {
 		t.Fatal("rollback with persisted analysis results succeeded, want refusal")
 	}
 	if relation := relationName(t, database, "media_variant"); relation == nil {

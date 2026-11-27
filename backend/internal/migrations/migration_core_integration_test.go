@@ -16,48 +16,10 @@ import (
 	"github.com/uptrace/bun/migrate"
 )
 
-// The fresh-instance schema is represented by ordered baseline migrations.
-var baselineMigrationNames = []string{
-	"20261015000001",
-	"20261015000002",
-	"20261015000003",
-	"20261015000004",
-	"20261015000005",
-	"20261108000001",
-	"20261108000002",
-	"20261108000003",
-	"20261109000001",
-	"20261111000001",
-	"20261112000001",
-	"20261121000001",
-	"20261121000002",
-	"20261122000001",
-	"20261122000002",
-	"20261122000003",
-	"20261122000100",
-	"20261122000101",
-	"20261122000102",
-	"20261122000103",
-	"20261122000104",
-	"20261122000105",
-	"20261122000106",
-	"20261122000107",
-	"20261123000001",
-	"20261127000001",
-	"20261127000201",
-}
+// A fresh installation starts from a single baseline migration.
+var baselineMigrationNames = []string{"20261127000400"}
 
-var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
-
-var preSourceRepublishResultMigrationNames = []string{
-	"20261015000001",
-	"20261015000002",
-	"20261015000003",
-	"20261015000004",
-	"20261015000005",
-}
-
-func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
+func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
@@ -69,92 +31,43 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 		t.Fatalf("insert River-owned row: %v", err)
 	}
 	collection := loadMigrations(t)
-	assertMigrationInventory(t, collection, currentMigrationNames)
+	assertMigrationInventory(t, collection, baselineMigrationNames)
 
 	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
-		t.Fatalf("initialize current migrations: %v", err)
+		t.Fatalf("initialize baseline migrations: %v", err)
 	}
 	group, err := migrator.Migrate(ctx)
 	if err != nil {
-		t.Fatalf("apply current migrations: %v", err)
+		t.Fatalf("apply baseline migrations: %v", err)
 	}
-	assertMigrationGroup(t, group, currentMigrationNames, "applied")
+	assertMigrationGroup(t, group, baselineMigrationNames, "applied")
 	assertCurrentSchema(t, db)
 	if group, err = migrator.Migrate(ctx); err != nil || group == nil || len(group.Migrations) != 0 {
-		t.Fatalf("reapplying current schema = %#v, %v; want an empty migration group", group, err)
+		t.Fatalf("reapplying baseline schema = %#v, %v; want an empty migration group", group, err)
 	}
 
 	rolledBack, err := migrations.RollbackLastGroup(ctx, db)
 	if err != nil {
-		t.Fatalf("rollback clean migration group: %v", err)
+		t.Fatalf("rollback clean baseline migration group: %v", err)
 	}
-	assertMigrationGroup(t, rolledBack, currentMigrationNames, "rolled back")
+	assertMigrationGroup(t, rolledBack, baselineMigrationNames, "rolled back")
 	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track", "publication_manual_lyrics_receipt"} {
 		if relationName(t, db, table) != nil {
-			t.Errorf("application table %s remains after current rollback", table)
+			t.Errorf("application table %s remains after baseline rollback", table)
 		}
 	}
 	var riverState string
 	if err := db.NewRaw(`SELECT state FROM river_job WHERE id=1`).Scan(ctx, &riverState); err != nil || riverState != "available" {
 		t.Fatalf("River data after clean rollback = %q, %v; want unchanged", riverState, err)
 	}
-	// Reapply with the recheck migration in a separate group, as on a stand
-	// that already has the preceding schema and data.
-	prior := migrate.NewMigrations()
-	sorted := collection.Sorted()
-	recheckIndex := slices.IndexFunc(sorted, func(migration migrate.Migration) bool { return migration.Name == "20261121000002" })
-	if recheckIndex < 0 {
-		t.Fatal("missing Local recheck migration")
-	}
-	for _, migration := range sorted[:recheckIndex] {
-		prior.Add(migration)
-	}
-	priorMigrator := migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
-	group, err = priorMigrator.Migrate(ctx)
+
+	group, err = migrator.Migrate(ctx)
 	if err != nil {
-		t.Fatalf("reapply prior migrations: %v", err)
+		t.Fatalf("reapply baseline migrations after rollback: %v", err)
 	}
-	assertMigrationGroup(t, group, currentMigrationNames[:recheckIndex], "reapplied")
-	if _, err := db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES('rollback-guard','preserve')`); err != nil {
-		t.Fatal(err)
-	}
-	// Keep the recheck rollback test on the migration that owns its data.
-	prior.Add(sorted[recheckIndex])
-	priorMigrator = migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
-	group, err = priorMigrator.Migrate(ctx)
-	if err != nil {
-		t.Fatalf("apply last additive migration: %v", err)
-	}
-	lastMigration := []string{"20261121000002"}
-	assertMigrationGroup(t, group, lastMigration, "applied")
+	assertMigrationGroup(t, group, baselineMigrationNames, "reapplied")
 	assertCurrentSchema(t, db)
-	operationID, recheckID := uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'matching_apply_v1','succeeded','succeeded','{}',now())`, operationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO matching_local_recheck(id,local_apply_operation_id,state,next_recheck_at,incumbent_snapshot)
-		VALUES (?,?,'waiting',now(),'{"version":1}')`, recheckID, operationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil || !strings.Contains(err.Error(), "durable recheck owners remain") {
-		t.Fatalf("rollback with a retained recheck owner: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM matching_local_recheck WHERE id=?`, recheckID); err != nil {
-		t.Fatal(err)
-	}
-	group, err = migrations.RollbackLastGroup(ctx, db)
-	if err != nil {
-		t.Fatalf("roll back last additive migration: %v", err)
-	}
-	assertMigrationGroup(t, group, lastMigration, "rolled back")
-	if relationName(t, db, "matching_local_recheck") != nil || relationName(t, db, "matching_local_recheck_source") != nil {
-		t.Fatal("recheck tables survived successful additive rollback")
-	}
-	var setting string
-	if err := db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='rollback-guard'`).Scan(ctx, &setting); err != nil || setting != "preserve" {
-		t.Fatalf("additive rollback touched earlier application data: %q, %v", setting, err)
-	}
 }
 
 func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
@@ -162,7 +75,6 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
 	ctx := context.Background()
-	// The complete fresh-instance baseline has one atomic rollback group.
 	collection := loadMigrations(t)
 	assertMigrationInventory(t, collection, baselineMigrationNames)
 	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
@@ -231,18 +143,56 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	}
 }
 
+func TestBaselineRollbackRefusesRetainedRecheckOwners(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.Open(t)
+	testpostgres.Reset(t, db)
+	ctx := context.Background()
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatalf("apply baseline migrations: %v", err)
+	}
+	operationID, recheckID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'matching_apply_v1','succeeded','succeeded','{}',now())`, operationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO matching_local_recheck(id,local_apply_operation_id,state,next_recheck_at,incumbent_snapshot)
+		VALUES (?,?,'waiting',now(),'{"version":1}')`, recheckID, operationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
+		t.Fatal("rollback discarded a durable Local recheck owner")
+	}
+	var rechecks int
+	if err := db.NewRaw(`SELECT count(*) FROM matching_local_recheck WHERE id=?`, recheckID).Scan(ctx, &rechecks); err != nil || rechecks != 1 {
+		t.Fatalf("recheck owner after refused rollback = %d, %v; want it retained", rechecks, err)
+	}
+	var applied int
+	if err := db.NewRaw(`SELECT count(*) FROM bun_migrations WHERE name=?`, baselineMigrationNames[0]).Scan(ctx, &applied); err != nil || applied != 1 {
+		t.Fatalf("baseline history after refused rollback = %d, %v; want it retained", applied, err)
+	}
+
+	// Once the retained owner and its operation are gone, the baseline can be
+	// rolled back again; the guard is data-driven, not permanent.
+	if _, err := db.ExecContext(ctx, `DELETE FROM matching_local_recheck WHERE id=?`, recheckID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM operation WHERE id=?`, operationID); err != nil {
+		t.Fatal(err)
+	}
+	group, err := migrations.RollbackLastGroup(ctx, db)
+	if err != nil {
+		t.Fatalf("roll back baseline after clearing retained recheck owners: %v", err)
+	}
+	assertMigrationGroup(t, group, baselineMigrationNames, "rolled back")
+}
+
 func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
 	ctx := context.Background()
-	collection := loadMigrations(t)
-	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if err := migrator.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrator.Migrate(ctx); err != nil {
-		t.Fatal(err)
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatalf("apply baseline migrations: %v", err)
 	}
 	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -263,19 +213,15 @@ func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	coverProjection, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
 		VALUES (?,?,?,'Track.flac','{}','{}','{}','{}',jsonb_build_object(
 		'version',2,'generation',?::text,'receipt_operation_id',?::text,'receipt_release_id',?::text,
 		'receipt_revision',1,'receipt_mode','automatic','requested_generation',?::text,
 		'requested_sha256',repeat('a',64),'outcome','preparation_failed','warning_code','decode_failed'),1,now())`,
-		positionID, uuid.New(), uuid.New(), uuid.New(), uuid.New(), releaseID, uuid.New())
-	if err != nil {
+		positionID, uuid.New(), uuid.New(), uuid.New(), uuid.New(), releaseID, uuid.New()); err != nil {
 		t.Fatalf("insert retained preparation failure projection: %v", err)
 	}
-	if _, err := coverProjection.RowsAffected(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrator.Rollback(ctx); err == nil {
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
 		t.Fatal("rollback discarded a retained cover preparation failure outcome")
 	}
 	var retained bool
@@ -284,36 +230,13 @@ func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
 	}
 }
 
-func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
+func TestCoverProjectionOutcomeConstraintAndBaselineRollback(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
 	ctx := context.Background()
-	collection := loadMigrations(t)
-	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
-	for _, migration := range collection.Sorted() {
-		if migration.Name < "20261108000003" {
-			prior.Add(migration)
-		} else if migration.Name == "20261108000003" {
-			target.Add(migration)
-		}
-	}
-	if len(target.Sorted()) != 1 {
-		t.Fatalf("recovered optional projection migrations = %d, want one", len(target.Sorted()))
-	}
-	priorMigrator := migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
-	if err := priorMigrator.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := priorMigrator.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	targetMigrator := migrate.NewMigrator(db, target, migrate.WithMarkAppliedOnSuccess(true))
-	if err := targetMigrator.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := targetMigrator.Migrate(ctx); err != nil {
-		t.Fatal(err)
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatalf("apply baseline migrations: %v", err)
 	}
 
 	insertProjection := func(positionID, releaseID uuid.UUID, projection string) error {
@@ -340,7 +263,7 @@ func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
 		})
 	}
 
-	// Version 1 keeps its pre-recovery contract.
+	// Version 1 keeps its pre-recovery contract in the final schema.
 	v1Position := uuid.New()
 	v1Projection := fmt.Sprintf(`{"version":1,"generation":%q,"receipt_operation_id":%q,"receipt_release_id":%q,"receipt_revision":1,"receipt_mode":"automatic","requested_generation":%q,"requested_sha256":"%s","outcome":"mismatch","warning_code":"cover_mismatch"}`,
 		uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), strings.Repeat("a", 64))
@@ -348,7 +271,7 @@ func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
 		t.Fatalf("insert legacy v1 cover projection: %v", err)
 	}
 
-	// The new v2 outcome requires all projection keys and its exact diagnostic.
+	// The recovered outcome requires all projection keys and its exact diagnostic.
 	recoveredPosition, recoveredRelease := uuid.New(), uuid.New()
 	recoveredProjection := fmt.Sprintf(`{"version":2,"generation":%q,"receipt_operation_id":%q,"receipt_release_id":%q,"receipt_revision":1,"receipt_mode":"automatic","requested_generation":%q,"requested_sha256":"%s","outcome":"absent_after_interruption","warning_code":"cover_absent_after_interruption"}`,
 		uuid.NewString(), uuid.NewString(), recoveredRelease.String(), uuid.NewString(), strings.Repeat("b", 64))
@@ -363,7 +286,7 @@ func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
 		t.Fatal("cover projection with missing required warning_code was accepted")
 	}
 
-	if _, err := targetMigrator.Rollback(ctx); err == nil {
+	if _, err := migrations.RollbackLastGroup(ctx, db); err == nil {
 		t.Fatal("rollback discarded retained recovered cover outcome")
 	}
 	var retained bool
@@ -376,7 +299,7 @@ func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
 	}
 }
 
-func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.T) {
+func TestBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.T) {
 	for name, update := range map[string]string{
 		"successful refresh": `UPDATE genre_catalog SET items='["retained"]'::jsonb, updated_at=now(), last_attempt_at=now(), configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
 		"failed refresh":     `UPDATE genre_catalog SET last_attempt_at=now(), last_error='provider unavailable', configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
@@ -386,12 +309,7 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 			db := testpostgres.Open(t)
 			testpostgres.Reset(t, db)
 			ctx := context.Background()
-			collection := loadMigrations(t)
-			migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-			if err := migrator.Init(ctx); err != nil {
-				t.Fatalf("initialize baseline migrations: %v", err)
-			}
-			if _, err := migrator.Migrate(ctx); err != nil {
+			if err := migrations.Apply(ctx, db); err != nil {
 				t.Fatalf("apply baseline migrations: %v", err)
 			}
 			if _, err := db.ExecContext(ctx, update); err != nil {
@@ -406,13 +324,9 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 					t.Fatalf("baseline table %s survived refused rollback = %v, %v", table, present, err)
 				}
 			}
-			var applied int
-			if err := db.NewRaw(`SELECT count(*) FROM bun_migrations WHERE name IN ('20261015000001', '20261015000002', '20261015000003', '20261015000004', '20261015000005')`).Scan(ctx, &applied); err != nil || applied != len(preSourceRepublishResultMigrationNames) {
-				t.Fatalf("pre-source-republish migrations retained after baseline rollback refusal = %d, %v; want %d", applied, err, len(preSourceRepublishResultMigrationNames))
-			}
-			var newMigrationApplied bool
-			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM bun_migrations WHERE name='20261108000001')`).Scan(ctx, &newMigrationApplied); err != nil || !newMigrationApplied {
-				t.Fatalf("new optional-result migration remains applied after refused group rollback = %t, %v", newMigrationApplied, err)
+			var history int
+			if err := db.NewRaw(`SELECT count(*) FROM bun_migrations WHERE name=?`, baselineMigrationNames[0]).Scan(ctx, &history); err != nil || history != 1 {
+				t.Fatalf("baseline history after refused rollback = %d, %v; want it retained", history, err)
 			}
 			var retained bool
 			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM genre_catalog WHERE refresh_request->>'status'='finished')`).Scan(ctx, &retained); err != nil || !retained {

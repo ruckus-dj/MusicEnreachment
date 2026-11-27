@@ -14,6 +14,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/uptrace/bun"
 )
 
@@ -107,7 +108,7 @@ func insertCleanupAcceptanceArtifactAtRoot(t *testing.T, ctx context.Context, db
 	rootID, locationID, workID, creatorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	jobID := cleanupAcceptanceJobID.Add(1) + 700000
 	artifactID := uuid.New()
-	relativeOutputPath := "analysis/staging/" + rootID.String() + "/" + workID.String() + "/" + artifactID.String()
+	relativeOutputPath := sourcefs.StagedArtifactPath(rootID, workID, artifactID, "music/song.flac")
 	for _, queryArgs := range []struct {
 		query string
 		args  []any

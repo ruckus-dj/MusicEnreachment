@@ -158,7 +158,7 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 			}
 			for _, release := range proposal.Releases {
 				positions := append([]MatchingReviewLayoutPosition(nil), release.Positions...)
-				if snapshot.Header.FrozenAuthorityVersion != nil && *snapshot.Header.FrozenAuthorityVersion == 3 {
+				if snapshot.Header.FrozenAuthorityVersion != nil && *snapshot.Header.FrozenAuthorityVersion == persistence.MatchingFrozenAuthorityVersion {
 					for index := range positions {
 						positions[index].Medium--
 						positions[index].Position--

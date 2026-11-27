@@ -22,12 +22,7 @@ func TestSourceAnalysisDatabaseGroupWithPostgreSQL(t *testing.T) {
 		runSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWithPostgreSQL(t, database)
 	})
 	t.Run("scenario_03", func(t *testing.T) {
-		t.Run("interrupted-copy", func(t *testing.T) {
-			runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t, database, false)
-		})
-		t.Run("extensionless-ready-copy", func(t *testing.T) {
-			runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t, database, true)
-		})
+		runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t, database)
 	})
 	t.Run("scenario_04", func(t *testing.T) {
 		runSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWithPostgreSQL(t, database)
@@ -321,7 +316,7 @@ func runSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWit
 	}
 }
 
-func runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t *testing.T, database *bun.DB, legacyReady bool) {
+func runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
@@ -349,19 +344,6 @@ func runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL
 	if _, err := artifacts.Acquire(ctx, oldArtifactID, first); err != nil {
 		t.Fatalf("acquire first artifact: %v", err)
 	}
-	if legacyReady {
-		if _, err := artifacts.MarkReady(ctx, oldArtifactID, first, fixture.work.SizeBytes); err != nil {
-			t.Fatalf("mark legacy fixture ready: %v", err)
-		}
-		if _, err := fixture.database.NewRaw(`UPDATE source_analysis_artifact
-			SET relative_output_path=left(relative_output_path,-5) WHERE id=?`, oldArtifactID).Exec(ctx); err != nil {
-			t.Fatalf("seed legacy extensionless path: %v", err)
-		}
-		if _, err := artifacts.Acquire(ctx, uuid.New(), first); err == nil {
-			t.Fatal("acquire replaced an extensionless ready copy with a live owner")
-		}
-	}
-
 	second := first
 	second.OperationAttempt++
 	setupTx, err := fixture.database.BeginTx(ctx, nil)
@@ -420,9 +402,6 @@ func runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL
 		t.Fatal(err)
 	}
 	wantState := persistence.SourceAnalysisArtifactAcquiring
-	if legacyReady {
-		wantState = persistence.SourceAnalysisArtifactCleanupEligible
-	}
 	if retainedState != wantState {
 		t.Fatalf("old artifact state = %q, want %q", retainedState, wantState)
 	}

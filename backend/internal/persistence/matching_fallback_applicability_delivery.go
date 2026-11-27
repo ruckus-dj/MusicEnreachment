@@ -145,8 +145,8 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 	if receipt == nil {
 		return fmt.Errorf("advance fallback applicability: saved calculation receipt is missing")
 	}
-	if receipt.SchemaVersion != matchingFallbackCalculationSchemaVersion || receipt.CalculatorVersion != matchingFallbackCalculationCalculatorVersion || receipt.DigestVersion != matchingFallbackCalculationDigestVersion {
-		return fmt.Errorf("advance fallback applicability: saved calculation version is unsupported")
+	if receipt.SchemaVersion != matchingFallbackCalculationSchemaVersion {
+		return fmt.Errorf("advance fallback applicability: saved calculation schema version is unsupported")
 	}
 	if err := validateMatchingFallbackCalculationDecisionBinding(receipt); err != nil {
 		return fmt.Errorf("advance fallback applicability: saved layout decision is invalid: %w", err)

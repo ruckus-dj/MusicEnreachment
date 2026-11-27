@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	matchingFallbackCalculationSchemaVersion     = 4
-	matchingFallbackCalculationCalculatorVersion = 4
-	matchingFallbackCalculationDigestVersion     = 4
+	matchingFallbackCalculationSchemaVersion = 1
+	// matchingFallbackCalculationDigestVersion tags the canonical input-digest
+	// domain. It is not a persisted receipt field; the domain separation label
+	// and SHA-256 algorithm are unchanged.
+	matchingFallbackCalculationDigestVersion = 1
 )
 
 // MatchingFallbackCalculationReceipt is the immutable calculation handoff. The
@@ -29,18 +31,14 @@ type MatchingFallbackCalculationReceipt struct {
 	AcquisitionRevision int64                  `json:"acquisition_revision"`
 	StageIndex          int                    `json:"stage_index"`
 	SchemaVersion       int                    `json:"schema_version"`
-	CalculatorVersion   int                    `json:"calculator_version"`
-	DigestVersion       int                    `json:"digest_version"`
 	InputDigest         string                 `json:"input_digest"`
 	Context             json.RawMessage        `json:"context"`
 	LayoutDecision      MatchingLayoutDecision `json:"layout_decision"`
 	DecisionDigest      string                 `json:"decision_digest"`
 }
 
-func supportedMatchingFallbackCalculationVersion(schemaVersion, calculatorVersion, digestVersion int) bool {
-	return schemaVersion == matchingFallbackCalculationSchemaVersion &&
-		calculatorVersion == matchingFallbackCalculationCalculatorVersion &&
-		digestVersion == matchingFallbackCalculationDigestVersion
+func supportedMatchingFallbackCalculationVersion(schemaVersion int) bool {
+	return schemaVersion == matchingFallbackCalculationSchemaVersion
 }
 
 // GetMatchingFallbackCalculationReceipt returns immutable saved evidence.
@@ -58,15 +56,15 @@ func getMatchingFallbackCalculationReceipt(
 	}
 	var receipt MatchingFallbackCalculationReceipt
 	var contextJSON, decisionJSON string
-	var schemaVersion, calculatorVersion, digestVersion int
+	var schemaVersion int
 	err := database.NewRaw(`SELECT receipt.run_id,receipt.acquisition_revision,receipt.stage_index,
 		encode(receipt.input_digest,'hex'),receipt.context::text,receipt.layout_decision::text,
 		encode(receipt.decision_digest,'hex'),
-		receipt.schema_version,receipt.calculator_version,receipt.digest_version
+		receipt.schema_version
 		FROM matching_fallback_calculation_receipt receipt
 		WHERE receipt.run_id=? AND receipt.acquisition_revision=?`, runID, acquisitionRevision).
 		Scan(ctx, &receipt.RunID, &receipt.AcquisitionRevision, &receipt.StageIndex, &receipt.InputDigest,
-			&contextJSON, &decisionJSON, &receipt.DecisionDigest, &schemaVersion, &calculatorVersion, &digestVersion)
+			&contextJSON, &decisionJSON, &receipt.DecisionDigest, &schemaVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,15 +73,13 @@ func getMatchingFallbackCalculationReceipt(
 	}
 	receipt.Context = json.RawMessage(contextJSON)
 	receipt.SchemaVersion = schemaVersion
-	receipt.CalculatorVersion = calculatorVersion
-	receipt.DigestVersion = digestVersion
 	if receipt.RunID != runID || receipt.AcquisitionRevision != acquisitionRevision || receipt.StageIndex < 0 ||
 		!json.Valid(receipt.Context) || !json.Valid([]byte(decisionJSON)) ||
 		json.Unmarshal([]byte(decisionJSON), &receipt.LayoutDecision) != nil {
 		return nil, fmt.Errorf("read fallback calculation receipt: saved identity or evidence is invalid")
 	}
-	if !supportedMatchingFallbackCalculationVersion(schemaVersion, calculatorVersion, digestVersion) {
-		return nil, fmt.Errorf("read fallback calculation receipt: stored version tuple is unsupported")
+	if !supportedMatchingFallbackCalculationVersion(schemaVersion) {
+		return nil, fmt.Errorf("read fallback calculation receipt: stored schema version is unsupported")
 	}
 	decodedDigest, decodeErr := hex.DecodeString(receipt.InputDigest)
 	if decodeErr != nil || len(decodedDigest) != sha256.Size || hex.EncodeToString(decodedDigest) != receipt.InputDigest {
@@ -280,15 +276,15 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 		}
 		if priorReceipt {
 			var oldDigest, oldContext, oldDecision, oldDecisionDigest string
-			var oldStage, oldSchema, oldCalculator, oldDigestVersion int
+			var oldStage, oldSchema int
 			if err := tx.NewRaw(`SELECT encode(input_digest,'hex'),context::text,layout_decision::text,encode(decision_digest,'hex'),
-				stage_index,schema_version,calculator_version,digest_version
+				stage_index,schema_version
 				FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=? FOR UPDATE`, runID, expectedRevision).
-				Scan(ctx, &oldDigest, &oldContext, &oldDecision, &oldDecisionDigest, &oldStage, &oldSchema, &oldCalculator, &oldDigestVersion); err != nil {
+				Scan(ctx, &oldDigest, &oldContext, &oldDecision, &oldDecisionDigest, &oldStage, &oldSchema); err != nil {
 				return fmt.Errorf("record fallback calculation receipt: read prior receipt: %w", err)
 			}
-			if !supportedMatchingFallbackCalculationVersion(oldSchema, oldCalculator, oldDigestVersion) {
-				return errors.New("record fallback calculation receipt: stored version tuple is unsupported")
+			if !supportedMatchingFallbackCalculationVersion(oldSchema) {
+				return errors.New("record fallback calculation receipt: stored schema version is unsupported")
 			}
 			var oldSnapshot MatchingFallbackCalculationContext
 			var oldContextCanonical []byte
@@ -319,10 +315,9 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 			return fmt.Errorf("record fallback calculation receipt: serialize persisted context: %w", err)
 		}
 		_, err = tx.NewRaw(`INSERT INTO matching_fallback_calculation_receipt
-			(run_id,acquisition_revision,stage_index,schema_version,calculator_version,digest_version,input_digest,context,layout_decision,decision_digest)
-			VALUES (?,?, ?,?,?,?, ?,?::jsonb,?::jsonb,?)`, runID, expectedRevision, persisted.StageIndex,
-			matchingFallbackCalculationSchemaVersion, matchingFallbackCalculationCalculatorVersion,
-			matchingFallbackCalculationDigestVersion, digest, string(contextJSON), string(decisionJSON), decisionDigestBytes).Exec(ctx)
+			(run_id,acquisition_revision,stage_index,schema_version,input_digest,context,layout_decision,decision_digest)
+			VALUES (?,?, ?,?, ?,?::jsonb,?::jsonb,?)`, runID, expectedRevision, persisted.StageIndex,
+			matchingFallbackCalculationSchemaVersion, digest, string(contextJSON), string(decisionJSON), decisionDigestBytes).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("record fallback calculation receipt: insert: %w", err)
 		}

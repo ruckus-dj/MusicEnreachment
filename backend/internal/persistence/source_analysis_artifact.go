@@ -231,10 +231,10 @@ const stagedArtifactPathJoins = `
 	) AS staged_path`
 
 const stagedArtifactPathPredicate = `
-	(artifact.relative_output_path = staged_path.stem OR (
-		octet_length(staged_path.suffix) <= ? AND
-		artifact.relative_output_path = staged_path.stem || staged_path.suffix
-	))`
+	(artifact.relative_output_path = staged_path.stem || CASE
+		WHEN octet_length(staged_path.suffix) <= ? THEN staged_path.suffix
+		ELSE ''
+	END)`
 
 func artifactOwnedByFence(artifact *SourceAnalysisArtifact, fence SourceAnalysisArtifactFence) bool {
 	return artifact.OwnerOperationID == fence.OperationID && artifact.OwnerOperationAttempt == fence.OperationAttempt && artifact.OwnerJobID == fence.JobID

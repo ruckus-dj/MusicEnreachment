@@ -118,14 +118,15 @@ CORS.
 
 ### Application schema baseline
 
-The unpublished prototype starts from five embedded transactional baselines:
-application core, source inventory/analysis, provider cache, local library, and
-incoming/matching. They create the current schema directly, without replaying
-the previous development-only migration history.
+The application starts from a single embedded transactional baseline that
+creates the current schema directly, without replaying development migrations
+or converting old rows.
 
-Databases created with the old development chain are not upgraded by this reset.
-Use a fresh database; recreate an existing one only if its data is explicitly
-disposable. Do not edit Bun's migration-history rows to bypass this boundary.
+Databases created with the old development chain are not upgraded. Point
+`DATABASE_URL` at a fresh database; recreate an existing one only if its data is
+explicitly disposable. Do not edit Bun's migration-history rows to bypass this
+boundary. For a disposable local test stand, `task stand:reset` clears the
+stand's generated data but preserves `test_stand/data/downloads`.
 Baseline rollback refuses populated application tables and never drops River's
 schema/history or unrelated tables. Stop the server before manual rollback.
 

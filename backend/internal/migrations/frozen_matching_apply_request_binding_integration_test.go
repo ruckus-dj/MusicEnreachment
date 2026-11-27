@@ -4,9 +4,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -19,7 +21,7 @@ func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 	sealDigest[0] = 1
 	if _, err := database.NewRaw(`INSERT INTO matching_fallback_authority_seal
 		(run_id,wait_revision,schema_version,authority,authority_digest)
-		VALUES (?,1,3,'{"schema_version":3}'::jsonb,?)`, parentRunID, sealDigest).Exec(ctx); err != nil {
+		VALUES (?,1,1,'{"schema_version":1}'::jsonb,?)`, parentRunID, sealDigest).Exec(ctx); err != nil {
 		t.Fatalf("insert referenced authority seal: %v", err)
 	}
 
@@ -33,7 +35,7 @@ func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 		targetCaptureSHA256    any
 	}
 	validV2 := binding{
-		schemaVersion: 2, inputSHA256: make([]byte, 32), frozenAuthorityVersion: 3,
+		schemaVersion: 2, inputSHA256: make([]byte, 32), frozenAuthorityVersion: 1,
 		parentExecutionEpoch: int64(1), sealWaitRevision: int64(1), sealDigest: sealDigest,
 		targetCaptureSHA256: make([]byte, 32),
 	}
@@ -62,8 +64,8 @@ func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 		})
 	}
 
-	if _, err := insert("legacy-v1", binding{schemaVersion: 1}); err != nil {
-		t.Fatalf("insert legacy schema-1 request: %v", err)
+	if _, err := insert("ordinary-v1", binding{schemaVersion: 1}); err != nil {
+		t.Fatalf("insert ordinary schema-1 request: %v", err)
 	}
 	frozenRequestID, err := insert("frozen-v2", validV2)
 	if err != nil {
@@ -87,6 +89,16 @@ func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 	}
 
 	assertRejected("unsupported schema version", binding{schemaVersion: 3})
+	formerAuthority := validV2
+	formerAuthority.frozenAuthorityVersion = 3
+	if _, err := insert("former-frozen-authority-v3-"+uuid.NewString(), formerAuthority); err == nil {
+		t.Fatal("former frozen authority version 3 was accepted")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.SQLState() != "23514" || pgErr.ConstraintName != "matching_apply_request_v2_binding" {
+			t.Fatalf("former frozen authority version 3 error = %v, want matching_apply_request_v2_binding check violation", err)
+		}
+	}
 	invalidAuthority := validV2
 	invalidAuthority.frozenAuthorityVersion = 4
 	assertRejected("unsupported frozen authority version", invalidAuthority)

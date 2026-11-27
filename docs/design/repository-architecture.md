@@ -148,15 +148,16 @@ hooks и mock-сценарии в `frontend/src/api/generated/`. Эта кома
 ## Миграции
 
 `backend/internal/migrations/migrations.go` объявляет `embed.FS` через
-`//go:embed *.sql` и вызывает `Migrations.Discover(files)`. Рядом с ним лежат
-versioned SQL-пары, например:
+`//go:embed *.sql` и вызывает `Migrations.Discover(files)`. Начальная SQL-пара
+создаёт актуальную схему сразу, без переноса данных из дорелизных схем:
 
 ```text
-20260926180000_create_albums.tx.up.sql
-20260926180000_create_albums.tx.down.sql
+20261127000400_initial_schema.tx.up.sql
+20261127000400_initial_schema.tx.down.sql
 ```
 
-`cmd/server` создаёт `*bun.DB`, запускает `Migrator.Init` и применение только
-неприменённых миграций с `WithMarkAppliedOnSuccess(true)`, затем запускает River
-и HTTP server. Embedded SQL делает собранный Go-бинарник самодостаточным для
-Docker-образа: отдельные SQL-файлы в образе не нужны.
+При запуске сервер вызывает `migrations.Apply`: проверяет историю Bun и
+применяет только новые миграции. Нераспознанная история блокирует запуск;
+для перехода с дорелизной схемы нужна пустая БД. Миграции River применяются
+отдельно. SQL встроен в Go-бинарник, поэтому в Docker-образе отдельные
+SQL-файлы не нужны.

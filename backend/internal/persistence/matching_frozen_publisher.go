@@ -231,7 +231,7 @@ func settleFrozenEvaluationDelivery(ctx context.Context, tx bun.Tx, operation *O
 func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB, runID uuid.UUID, publication FrozenMatchingPublication) (MatchingFallbackSealAuthority, MatchingFallbackCalculationContext, error) {
 	a := publication.Authority
 	var seal MatchingFallbackSealAuthority
-	if a.RunID != runID || a.WaitRevision < 1 || a.SealSchemaVersion != matchingFallbackSealAuthoritySchemaVersion || a.TargetFenceVersion != 2 {
+	if a.RunID != runID || a.WaitRevision < 1 || a.SealSchemaVersion != MatchingFrozenAuthorityVersion || a.TargetFenceVersion != 2 {
 		return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: caller authority identity is invalid")
 	}
 	var handoff struct {
@@ -243,7 +243,7 @@ func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB,
 	err := tx.NewRaw(`SELECT acquisition.current_phase,acquisition.revision,handoff.provider_authority_version,encode(handoff.seal_digest,'hex') AS seal_digest
 		FROM matching_acquisition acquisition JOIN matching_fallback_evaluation_handoff handoff ON handoff.run_id=acquisition.run_id
 		WHERE acquisition.run_id=? AND handoff.wait_revision=?`, runID, a.WaitRevision).Scan(ctx, &handoff)
-	if err != nil || handoff.Phase != MatchingAcquisitionFallbackEvaluationSealed || handoff.Revision != a.WaitRevision+1 || handoff.Version != matchingFallbackEvaluationProposalAuthorityVersion {
+	if err != nil || handoff.Phase != MatchingAcquisitionFallbackEvaluationSealed || handoff.Revision != a.WaitRevision+1 || handoff.Version != MatchingFrozenAuthorityVersion {
 		return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: persisted fallback evaluation handoff is not current")
 	}
 	derived, found, err := buildMatchingFallbackSealAuthority(ctx, tx, runID, a.WaitRevision, true)
@@ -261,7 +261,7 @@ func validateFrozenMatchingPublicationAuthority(ctx context.Context, tx bun.IDB,
 	if err := tx.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=?`, runID, a.WaitRevision).Scan(ctx, &stored); err != nil {
 		return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: read persisted authority seal: %w", err)
 	}
-	if stored.Schema != matchingFallbackSealAuthoritySchemaVersion || !equalDigest(stored.Digest, mustDecodeSHA256(derived.Digest)) || derived.Digest != a.SealDigest {
+	if stored.Schema != MatchingFrozenAuthorityVersion || !equalDigest(stored.Digest, mustDecodeSHA256(derived.Digest)) || derived.Digest != a.SealDigest {
 		return seal, MatchingFallbackCalculationContext{}, fmt.Errorf("publish frozen matching evaluation: persisted seal digest does not match caller authority")
 	}
 	var storedAuthority MatchingFallbackSealAuthority
@@ -410,7 +410,7 @@ func (repository *SetupManagerRepository) enqueueFrozenMatchingApplyTx(
 	captureHash, _ := hex.DecodeString(seal.Target.CaptureDigest)
 	_, err = tx.NewRaw(`INSERT INTO matching_apply_request
 		(group_id,parent_run_id,evaluation_revision,apply_operation_id,schema_version,input_sha256,frozen_authority_version,parent_execution_epoch,seal_wait_revision,seal_digest,target_capture_sha256)
-		VALUES (?,?,?,?,2,?,3,?,?,?,?)`, seal.Target.GroupID, seal.RunID, evaluationRevision, operationID, inputHash, parentExecutionEpoch, seal.WaitRevision, sealHash, captureHash).Exec(ctx)
+		VALUES (?,?,?,?,2,?,?,?,?,?,?)`, seal.Target.GroupID, seal.RunID, evaluationRevision, operationID, inputHash, MatchingFrozenAuthorityVersion, parentExecutionEpoch, seal.WaitRevision, sealHash, captureHash).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("publish frozen matching evaluation: persist frozen apply request: %w", err)
 	}
@@ -431,7 +431,7 @@ func persistFrozenReviewEvaluation(ctx context.Context, tx bun.Tx, publication F
 	if _, err := tx.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, groupID).Exec(ctx); err != nil {
 		return "", fmt.Errorf("publish frozen matching evaluation: replace prior review: %w", err)
 	}
-	providerFences, _ := json.Marshal(map[string]any{"frozen_authority_version": 3, "run_id": seal.RunID, "wait_revision": seal.WaitRevision, "seal_digest": seal.Digest})
+	providerFences, _ := json.Marshal(map[string]any{"frozen_authority_version": MatchingFrozenAuthorityVersion, "run_id": seal.RunID, "wait_revision": seal.WaitRevision, "seal_digest": seal.Digest})
 	evidenceValue := map[string]any{"frozen_publication": publication, "review_proposal": frozenReviewProposal(publication)}
 	if decision.Version != 0 {
 		evidenceValue["evaluation_decision"] = decision
@@ -447,9 +447,9 @@ func persistFrozenReviewEvaluation(ctx context.Context, tx bun.Tx, publication F
 		provider_source_id,provider_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,
 		provider_snapshot_revision,provider_fences,matching_authority_mode,matching_authority_revision,fence_version,target_run_id,target_capture,target_capture_digest,
 		frozen_authority_version,frozen_run_id,frozen_wait_revision,frozen_seal_digest)
-		VALUES(?,?,?::jsonb,?,?,0,?,?,?,?,?,?,NULL,NULL,NULL,?::jsonb,?,?,2,?,?,?,3,?,?,?)`, groupID, evaluationRevision, string(evidence), seal.Target.GroupRevision,
+		VALUES(?,?,?::jsonb,?,?,0,?,?,?,?,?,?,NULL,NULL,NULL,?::jsonb,?,?,2,?,?,?,?,?,?,?)`, groupID, evaluationRevision, string(evidence), seal.Target.GroupRevision,
 		"frozen:"+seal.Digest, seal.Intent.PolicyVersion, seal.SourceID, seal.ProviderID, seal.RunProviderConfiguration, "frozen", seal.Endpoint, string(providerFences), seal.GroupAuthority.Mode, seal.GroupAuthority.Revision,
-		seal.RunID, string(seal.Target.Capture), mustDecodeSHA256(seal.Target.CaptureDigest), seal.RunID, seal.WaitRevision, sealDigest).Exec(ctx); err != nil {
+		seal.RunID, string(seal.Target.Capture), mustDecodeSHA256(seal.Target.CaptureDigest), MatchingFrozenAuthorityVersion, seal.RunID, seal.WaitRevision, sealDigest).Exec(ctx); err != nil {
 		return "", fmt.Errorf("publish frozen matching evaluation: insert frozen header: %w", err)
 	}
 	memberByID := make(map[uuid.UUID]FrozenMatchingReviewMember, len(publication.Inventory.Members))

@@ -88,7 +88,7 @@ func BuildMatchingApplyInputSnapshotV2(
 	decision persistedMatchingDecision,
 ) (MatchingApplyInputSnapshotV2, string, error) {
 	var result MatchingApplyInputSnapshotV2
-	if seal.SchemaVersion != matchingFallbackSealAuthoritySchemaVersion || seal.Disposition != "qualified" || seal.RunID == uuid.Nil || seal.WaitRevision < 1 ||
+	if seal.SchemaVersion != MatchingFrozenAuthorityVersion || seal.Disposition != "qualified" || seal.RunID == uuid.Nil || seal.WaitRevision < 1 ||
 		seal.Digest == "" || seal.Target.Version != 2 || seal.Target.GroupID == uuid.Nil || seal.Target.GroupRevision == "" ||
 		seal.SourceID == uuid.Nil || seal.ProviderID == uuid.Nil || seal.Endpoint == "" || seal.SourceConfiguration == "" ||
 		seal.RunProviderConfiguration == "" || seal.Intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion ||
@@ -163,7 +163,7 @@ func BuildMatchingApplyInputSnapshotV2(
 		Authority: MatchingApplySnapshotAuthorityV2{ParentRunID: seal.RunID, GroupID: seal.Target.GroupID, SealDisposition: seal.Disposition,
 			EvaluationRevision: evaluationRevision, ExecutionEpoch: context.SearchReceipt.ExecutionEpoch,
 			WaitRevision: seal.WaitRevision, SealDigest: seal.Digest, DecisionDigest: decisionDigest, TargetFenceVersion: seal.Target.Version,
-			TargetCaptureDigest: seal.Target.CaptureDigest, PolicyVersion: seal.Intent.PolicyVersion, AuthorityVersion: 3},
+			TargetCaptureDigest: seal.Target.CaptureDigest, PolicyVersion: seal.Intent.PolicyVersion, AuthorityVersion: MatchingFrozenAuthorityVersion},
 		Source: MatchingApplySnapshotSourceV2{ID: seal.SourceID, ProviderID: seal.ProviderID, Endpoint: seal.Endpoint,
 			ConfigurationIdentity: seal.SourceConfiguration, RunConfiguration: seal.RunProviderConfiguration},
 		Captured: cloneCapturedMembers(seal.CapturedMetadata), TargetCapture: cloneRawJSON(seal.Target.Capture),
@@ -196,7 +196,7 @@ func ValidateMatchingApplyInputSnapshotV2(snapshot MatchingApplyInputSnapshotV2,
 	if snapshot.SchemaVersion != 2 || seal.Disposition != "qualified" || snapshot.Authority.ParentRunID != seal.RunID || snapshot.Authority.GroupID != seal.Target.GroupID || snapshot.Authority.SealDisposition != seal.Disposition ||
 		snapshot.Authority.WaitRevision != seal.WaitRevision || snapshot.Authority.SealDigest != seal.Digest || snapshot.Authority.DecisionDigest != decisionDigest ||
 		snapshot.Authority.TargetFenceVersion != 2 || snapshot.Authority.TargetCaptureDigest != seal.Target.CaptureDigest ||
-		snapshot.Authority.PolicyVersion != seal.Intent.PolicyVersion || snapshot.Authority.AuthorityVersion != 3 ||
+		snapshot.Authority.PolicyVersion != seal.Intent.PolicyVersion || snapshot.Authority.AuthorityVersion != MatchingFrozenAuthorityVersion ||
 		snapshot.Source.ID != seal.SourceID || snapshot.Source.ProviderID != seal.ProviderID || snapshot.Source.Endpoint != seal.Endpoint ||
 		snapshot.Source.ConfigurationIdentity != seal.SourceConfiguration || snapshot.Source.RunConfiguration != seal.RunProviderConfiguration ||
 		!matchingJSONEqual(snapshot.TargetCapture, seal.Target.Capture) || !matchingJSONEqual(snapshot.Evaluation, seal.FullEvaluationContext) ||
