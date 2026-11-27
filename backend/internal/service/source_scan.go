@@ -83,8 +83,8 @@ func (s *SourceScan) EnumerateObserved(ctx context.Context, request SourceScanRe
 	if err != nil {
 		return nil, fmt.Errorf("enumerate source root: %w", err)
 	}
-	if !root.Enabled || (request.ExpectedConfiguredPath != "" && request.ExpectedConfiguredPath != root.ConfiguredPath) {
-		return nil, fmt.Errorf("enumerate source root: root is disabled or its configured path changed")
+	if request.ExpectedConfiguredPath != "" && request.ExpectedConfiguredPath != root.ConfiguredPath {
+		return nil, fmt.Errorf("enumerate source root: its configured path changed")
 	}
 	if err := sourcefs.ValidateRootPathSupport(root.ConfiguredPath); err != nil {
 		return nil, fmt.Errorf("enumerate source root: %w", err)

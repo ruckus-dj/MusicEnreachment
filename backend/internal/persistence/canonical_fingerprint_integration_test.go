@@ -181,7 +181,7 @@ func insertFingerprintPromotionWork(t *testing.T, ctx context.Context, db *bun.D
 	t.Helper()
 	rootID, locationID, workID := uuid.New(), uuid.New(), uuid.New()
 	rootPath := "/fingerprint-promotion-" + rootID.String()
-	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path) VALUES(?,?,?,1,'/inventory')`, rootID, rootPath, "test"); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode) VALUES(?,?,?,1,'/inventory','in_place')`, rootID, rootPath, "test"); err != nil {
 		t.Fatalf("insert fingerprint promotion root: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status) VALUES(?,?,?,1,?,1,'audio')`, locationID, rootID, suffix+".flac", time.Now().UTC()); err != nil {

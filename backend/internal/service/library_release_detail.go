@@ -98,7 +98,6 @@ type LibrarySourceLocationDetail struct {
 	Mtime        sql.NullTime
 	ProbeStatus  string
 	RootStatus   string
-	RootEnabled  bool
 }
 
 type LibraryArtistResolutionStatus string
@@ -192,7 +191,7 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 				locationList = append(locationList, LibrarySourceLocationDetail{
 					RootID: location.RootID, LocationID: location.LocationID, RelativePath: location.RelativePath,
 					SizeBytes: location.SizeBytes, Mtime: location.Mtime, ProbeStatus: location.ProbeStatus,
-					RootStatus: location.RootStatus, RootEnabled: location.RootEnabled,
+					RootStatus: location.RootStatus,
 				})
 			}
 			item.Sources = append(item.Sources, LibraryTrackSourceDetail{

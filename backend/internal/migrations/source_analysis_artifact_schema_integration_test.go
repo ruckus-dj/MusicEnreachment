@@ -87,8 +87,8 @@ func insertArtifactOwnershipFixture(t *testing.T, ctx context.Context, database 
 	workID, operationID := uuid.New(), uuid.New()
 	jobID := artifactOwnershipJobID.Add(1) + 900
 	rootPath := "/srv/artifact-ownership/" + uuid.NewString()
-	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name)
-		VALUES (?, ?, 'artifact ownership')`, rootID, rootPath); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name, processing_mode)
+		VALUES (?, ?, 'artifact ownership', 'staged')`, rootID, rootPath); err != nil {
 		t.Fatalf("insert artifact fixture root: %v", err)
 	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_location

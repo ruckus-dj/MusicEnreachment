@@ -95,7 +95,7 @@ func TestPendingSourceAnalysisCurrentPopulationIncludesBothPolicies(t *testing.T
 
 func pendingWork(rootID uuid.UUID, rootPath, relativePath string, size int64, mtime time.Time, shaEnabled bool) persistence.SourceAnalysisPendingWork {
 	return persistence.SourceAnalysisPendingWork{
-		Root:     persistence.SourceRoot{ID: rootID, ConfiguredPath: rootPath, InventoryPath: &rootPath, Enabled: true},
+		Root:     persistence.SourceRoot{ID: rootID, ConfiguredPath: rootPath, InventoryPath: &rootPath},
 		Work:     persistence.SourceAnalysisWork{ID: uuid.New(), SourceRootID: rootID, ConfiguredPath: rootPath, InventoryPath: rootPath, RelativePath: relativePath, SizeBytes: size, Mtime: mtime, SHA256Enabled: shaEnabled},
 		Location: persistence.SourceLocation{SourceRootID: rootID, RelativePath: relativePath, SizeBytes: size, Mtime: mtime},
 	}
@@ -104,14 +104,15 @@ func pendingWork(rootID uuid.UUID, rootPath, relativePath string, size int64, mt
 func TestPendingSourceFileCurrentRejectsUnavailableOrMismatchedWorkBeforeOpening(t *testing.T) {
 	configuredPath := "/music"
 	work := persistence.SourceAnalysisPendingWork{
-		Root:     persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: configuredPath, InventoryPath: &configuredPath, Enabled: false},
+		Root:     persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: configuredPath, InventoryPath: &configuredPath},
 		Work:     persistence.SourceAnalysisWork{ConfiguredPath: configuredPath, InventoryPath: configuredPath, RelativePath: "song.flac"},
 		Location: persistence.SourceLocation{RelativePath: "song.flac"},
 	}
+	work.Root.InventoryPath = nil
 	if pendingSourceFileCurrent(t.Context(), work) {
-		t.Fatal("disabled root should not be dispatched")
+		t.Fatal("work on a root without inventory should not be dispatched")
 	}
-	work.Root.Enabled = true
+	work.Root.InventoryPath = &configuredPath
 	work.Work.RelativePath = "other.flac"
 	if pendingSourceFileCurrent(t.Context(), work) {
 		t.Fatal("work whose immutable path differs from the location should not be dispatched")

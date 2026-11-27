@@ -71,21 +71,19 @@ func (fixture *sourceRootRepositoryFixture) ListSourceRoots(context.Context) ([]
 	return roots, nil
 }
 
-func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
+func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) error {
 	for _, stored := range fixture.roots {
 		if stored.ID != patch.ID {
 			continue
 		}
 		if stored.ScanGeneration != patch.ExpectedScanGeneration {
-			return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root changed since it was read")
+			return fmt.Errorf("update source root: root changed since it was read")
 		}
-		result := persistence.SourceRootUpdateResult{EnabledBefore: stored.Enabled}
 		displayNameChanged := patch.DisplayName != nil && *patch.DisplayName != stored.DisplayName
 		configuredPathChanged := patch.ConfiguredPath != nil && *patch.ConfiguredPath != stored.ConfiguredPath
 		processingModeChanged := patch.ProcessingMode != nil && *patch.ProcessingMode != stored.ProcessingMode
-		enabledChanged := patch.Enabled != nil && *patch.Enabled != stored.Enabled
-		if fixture.busy && (configuredPathChanged || enabledChanged) {
-			return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
+		if fixture.busy && configuredPathChanged {
+			return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
 		}
 		if displayNameChanged {
 			stored.DisplayName = *patch.DisplayName
@@ -96,13 +94,10 @@ func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, 
 		if processingModeChanged {
 			stored.ProcessingMode = *patch.ProcessingMode
 		}
-		if enabledChanged {
-			stored.Enabled = *patch.Enabled
-		}
 		fixture.updated++
-		return result, nil
+		return nil
 	}
-	return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root does not exist")
+	return fmt.Errorf("update source root: root does not exist")
 }
 
 func (fixture *sourceRootRepositoryFixture) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {
@@ -131,24 +126,6 @@ type sourceRootsFixture struct {
 	source      string
 	normalized  string // the source path as NormalizePath stores it
 	otherSource string
-}
-
-type pendingSourceRootFixture struct {
-	calls           int
-	rootID          uuid.UUID
-	isCommitted     func() bool
-	committedAtCall bool
-	admissionErr    error
-}
-
-func (fixture *pendingSourceRootFixture) AdmitPending(_ context.Context, rootID uuid.UUID) (*persistence.Operation, error) {
-	fixture.calls++
-	fixture.rootID = rootID
-	fixture.committedAtCall = fixture.isCommitted == nil || fixture.isCommitted()
-	if !fixture.committedAtCall {
-		return nil, errors.New("source root was not committed before pending admission")
-	}
-	return nil, fixture.admissionErr
 }
 
 func newSourceRootsFixture(t *testing.T) sourceRootsFixture {
@@ -217,8 +194,7 @@ func TestWindowsUNCSourcePathsAreRefusedWithoutMutation(t *testing.T) {
 	}
 	fixture := newSourceRootsFixture(t)
 	stored := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "legacy UNC", ConfiguredPath: `\\server\share`, Enabled: true,
-	}
+		ID: uuid.New(), DisplayName: "legacy UNC", ConfiguredPath: `\\server\share`}
 	fixture.repository.roots = append(fixture.repository.roots, stored)
 
 	unsupported := []string{
@@ -439,8 +415,8 @@ func TestCreateSourceRootAcceptsReadOnlyDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read-only source directory rejected: %v", err)
 	}
-	if view.ConfiguredPath != normalizedPath(t, readOnly) || !view.Enabled {
-		t.Fatalf("created root = %+v, want the read-only path and an enabled root", view)
+	if view.ConfiguredPath != normalizedPath(t, readOnly) {
+		t.Fatalf("created root = %+v, want the read-only path", view)
 	}
 	entries, err := os.ReadDir(readOnly)
 	if err != nil || len(entries) != 0 {
@@ -531,7 +507,7 @@ func TestOverlappingSourceRootsKeepTheirOwnInventory(t *testing.T) {
 	}
 }
 
-func TestEditSourceRootChangesNamePathAndEnabled(t *testing.T) {
+func TestEditSourceRootChangesNameAndPath(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
 	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
@@ -544,17 +520,17 @@ func TestEditSourceRootChangesNamePathAndEnabled(t *testing.T) {
 	fixture.repository.roots[0] = &stored
 	fixture.repository.locations[created.ID] = 4
 
-	name, enabled := "Archive", false
+	name := "Archive"
 	view, err := fixture.roots.Edit(ctx, created.ID, service.SourceRootEdit{
-		DisplayName: &name, ConfiguredPath: &fixture.otherSource, Enabled: &enabled,
+		DisplayName: &name, ConfiguredPath: &fixture.otherSource,
 	})
 	if err != nil {
 		t.Fatalf("edit the root: %v", err)
 	}
 
 	edited := *fixture.repository.roots[0]
-	if edited.DisplayName != "Archive" || edited.ConfiguredPath != normalizedPath(t, fixture.otherSource) || edited.Enabled {
-		t.Fatalf("edited root = %+v, want the new name, path and disabled state", edited)
+	if edited.DisplayName != "Archive" || edited.ConfiguredPath != normalizedPath(t, fixture.otherSource) {
+		t.Fatalf("edited root = %+v, want the new name and path", edited)
 	}
 	if edited.InventoryPath == nil || *edited.InventoryPath != fixture.normalized || edited.ScanGeneration != 3 {
 		t.Fatalf("edited root inventory = %v/%d, want the inventory of the previous path kept",
@@ -569,7 +545,7 @@ type modeChangingSourceRootRepository struct {
 	*sourceRootRepositoryFixture
 }
 
-func (repository modeChangingSourceRootRepository) UpdateSourceRoot(ctx context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
+func (repository modeChangingSourceRootRepository) UpdateSourceRoot(ctx context.Context, patch persistence.SourceRootPatch) error {
 	// Simulate a mode edit that commits after the service read but before this
 	// unrelated edit reaches the repository.
 	repository.roots[0].ProcessingMode = service.SourceProcessingModeStaged
@@ -613,7 +589,7 @@ func TestEditSourceRootKeepsPreviousStateWhenThePathIsRejected(t *testing.T) {
 	}
 
 	stored := *fixture.repository.roots[0]
-	if stored.DisplayName != "Music" || stored.ConfiguredPath != fixture.normalized || !stored.Enabled {
+	if stored.DisplayName != "Music" || stored.ConfiguredPath != fixture.normalized {
 		t.Fatalf("root after the rejected edit = %+v, want the previous data", stored)
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
@@ -635,10 +611,8 @@ func TestEditSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 		t.Fatalf("mode edit while work is queued = %+v, %v; want accepted staged mode", view, err)
 	}
 
-	disabled := false
 	for _, edit := range []service.SourceRootEdit{
 		{ConfiguredPath: &fixture.otherSource},
-		{Enabled: &disabled},
 	} {
 		view, err := fixture.roots.Edit(ctx, created.ID, edit)
 		if !errors.Is(err, service.ErrSourceRootBusy) {
@@ -646,7 +620,7 @@ func TestEditSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 		}
 	}
 	stored := *fixture.repository.roots[0]
-	if stored.ConfiguredPath != fixture.normalized || !stored.Enabled || stored.ProcessingMode != staged {
+	if stored.ConfiguredPath != fixture.normalized || stored.ProcessingMode != staged {
 		t.Fatalf("root after the refused edits = %+v, want the previous data", stored)
 	}
 }
@@ -693,32 +667,5 @@ func TestDeleteSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 	}
 	if _, err := fixture.roots.Get(ctx, created.ID); err != nil {
 		t.Fatalf("root after the refused deletion: %v", err)
-	}
-}
-
-func TestEditEnabledSourceRootAdmitsPendingAfterCommitBestEffort(t *testing.T) {
-	ctx := context.Background()
-	fixture := newSourceRootsFixture(t)
-	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: fixture.normalized, ProcessingMode: service.SourceProcessingModeInPlace, Enabled: false}
-	fixture.repository.roots = append(fixture.repository.roots, root)
-	dispatcher := &pendingSourceRootFixture{
-		admissionErr: errors.New("pending service unavailable"),
-		isCommitted:  func() bool { return fixture.repository.roots[0].Enabled },
-	}
-	fixture.roots.SetPendingDispatcher(dispatcher)
-	enabled := true
-
-	updated, err := fixture.roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &enabled})
-	if err != nil {
-		t.Fatalf("enable root despite downstream admission failure: %v", err)
-	}
-	if !updated.Enabled || !fixture.repository.roots[0].Enabled {
-		t.Fatalf("committed root enabled = (%t returned, %t stored), want true", updated.Enabled, fixture.repository.roots[0].Enabled)
-	}
-	if dispatcher.calls != 1 || dispatcher.rootID != root.ID {
-		t.Fatalf("pending admission = (%d calls, root %s), want (1, %s)", dispatcher.calls, dispatcher.rootID, root.ID)
-	}
-	if !dispatcher.committedAtCall {
-		t.Fatal("pending admission ran before the root edit committed")
 	}
 }

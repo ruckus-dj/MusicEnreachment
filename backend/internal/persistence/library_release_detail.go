@@ -95,7 +95,6 @@ type LibrarySourceLocationDetail struct {
 	Mtime        sql.NullTime
 	ProbeStatus  string
 	RootStatus   string
-	RootEnabled  bool
 }
 
 type LibraryRepository struct {
@@ -315,7 +314,7 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 				LibrarySourceLocationDetail
 			}
 			if err := tx.NewRaw(`SELECT location.media_variant_id,root.id AS root_id,location.id AS location_id,
-				location.relative_path,location.size_bytes,location.mtime,location.probe_status,root.status AS root_status,root.enabled AS root_enabled
+				location.relative_path,location.size_bytes,location.mtime,location.probe_status,root.status AS root_status
 				FROM source_location location JOIN source_root root ON root.id=location.source_root_id
 				WHERE location.media_variant_id IN (?)
 				ORDER BY location.media_variant_id,root.id,location.relative_path,location.id`, bun.List(variantIDs)).Scan(ctx, &locations); err != nil {

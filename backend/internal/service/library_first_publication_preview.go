@@ -318,13 +318,9 @@ func foldFirstPublicationCurrentAudioEvidenceDigest(preview *FirstPublicationPre
 	return nil
 }
 
-// buildFirstPublicationPreview performs deterministic planning from captured
-// inputs only. Callers that admit a publication can use the same builder with
-// the tool selections captured by their transaction.
-func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID) (FirstPublicationPreview, error) {
-	return buildFirstPublicationPreviewSelected(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, nil)
-}
-
+// buildFirstPublicationPreviewSelected performs deterministic planning from
+// captured inputs only. Callers that admit a publication can use the same
+// builder with the tool selections captured by their transaction.
 func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
 	return buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary)
 }

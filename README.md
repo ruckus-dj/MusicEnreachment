@@ -13,30 +13,20 @@ separate from the writable output directory containing managed publications.
 The separately enabled publication source-cleanup workflow may remove a source
 file after successful publication, subject to its ownership and freshness checks.
 
-Deleting a registered source root is not a file operation. It removes only that
-root's inventory rows from the database and leaves the source files on disk and
-the managed output library in place. Removing a registered root is not the
-publication source-cleanup action and never authorizes deletion of host source
-files. Current gaps in association and owned-copy cleanup are tracked in plan 13.
+Deleting a registered source root removes that root's inventory and cleans up
+its managed staged analysis copies. It leaves the original source files and
+the managed output library in place. This is separate from the optional
+publication source-cleanup workflow.
 
 A source root is registered by its absolute path on the server that runs
-MeloTrove, never by a path on the browser workstation. The current slice reads a
-source in either of two per-root modes: `in_place` reads the source directly;
-`staged` creates a temporary audio copy under the managed output path and analyzes
-that copy. The approved target instead requires one independent operator-selected
-work directory for staged copies; that setting and its reset lifecycle are not
-yet implemented. Source roots and
-runtime paths are database-backed settings, not environment variables. Scan
-reconciliation updates locations in observed areas and removes locations in
-unreadable areas; existing managed publications remain untouched.
+MeloTrove, never by a path on the browser workstation. Choose a processing mode
+for each root: `in_place` reads the source directly; `staged` analyzes an audio
+copy in a separate working directory configured in Settings. Source roots and
+runtime paths are stored in the database, not in environment variables. A
+successful scan reconciles inventory without changing managed publications.
 
-The current Windows implementation rejects SMB/UNC source roots (for example,
-`\\server\share`, including slash aliases) before filesystem access; legacy
-entries remain readable, while scan and analysis fail with an actionable
-unsupported-path message. This is an implementation limitation, not a permanent
-product prohibition. If NAS/UNC access is required, it may be implemented using
-ordinary pathname and `stat` checks subject to functional requirements; this
-README does not claim that UNC currently works.
+On Windows, MeloTrove does not support SMB/UNC source roots such as
+`\\server\share`. It rejects those paths before accessing the filesystem.
 
 ## Supported platforms and external tools
 
@@ -127,7 +117,8 @@ upgraded. Point `DATABASE_URL` at a fresh database; recreate an existing one
 only if its data is explicitly disposable. Do not edit Bun's migration-history
 rows to bypass this boundary. For a disposable local test stand,
 `task stand:reset` clears the stand's generated data but preserves
-`test_stand/data/downloads`.
+`test_stand/data/downloads`. Run it only from the checkout that owns the stand;
+the Compose project name is shared across checkouts.
 Baseline rollback refuses populated application tables and never drops River's
 schema/history or unrelated tables. Stop the server before manual rollback.
 
@@ -144,7 +135,8 @@ stores its cluster in `18/docker` below that directory. An existing PostgreSQL 1
 volume is **not automatically upgraded**: stop the old deployment and preserve its
 data with an explicit dump/restore or `pg_upgrade` before using PostgreSQL 18.
 Do not delete the old volume or assume a newly initialized empty cluster contains
-the previous data. See [deployment notes](docs/design/deployment.md#postgresql).
+the previous data. This upgrades PostgreSQL, not the MeloTrove schema described
+above. See [deployment notes](docs/design/deployment.md#postgresql).
 
 To use an external PostgreSQL instance, run `task build` and start
 `./build/backend/server` with `DATABASE_URL` set to its PostgreSQL connection
@@ -288,17 +280,18 @@ existing results.
 
 Analysis applies the same freshness criterion as scan: a location is current when
 its observed size and mtime match. In `in_place` mode tools read the source; in
-`staged` mode they currently read its output-managed temporary copy. This differs
-from the approved independent work-directory contract tracked in plan 13. Automatic
-analysis never creates, changes or deletes a file below a source root. Eligible staged copies are
-removed only by an explicit cleanup action; a failed cleanup retains the ownership
-record for a later explicit attempt. Changing the required output path validates
-the new path and, when no execution is running or claimed, invalidates queued work
-and all database references to old output while leaving old physical files
-untouched.
+`staged` mode they read a temporary copy in the configured work directory.
+Analysis never creates, changes, or deletes files below a source root. The
+application removes each staged copy when its readers finish. If cleanup fails,
+the owned copy remains available for an explicit cleanup attempt.
+
+Changing the output directory is blocked while execution is running or claimed.
+It resets queued work and database references tied to the old output without
+deleting physical files. The source inventory, saved analysis results, and staged
+copies are independent of that reset.
+
 After a successful scan observes changed size or mtime, the stored results no
-longer describe the location and are replaced by new analysis. Deleting a root
-removes only that root's inventory rows; source files and managed output remain.
+longer describe the location and are replaced by new analysis.
 
 **Current implementation:** incoming groups, matching with AcoustID and
 MusicBrainz, the local library, and publication are implemented. Main interface
@@ -351,10 +344,6 @@ Build output is always generated locally in `build/` and is never committed.
 Task stages the frontend only transiently for Go embedding; those assets are
 ignored as well. Commit source code, lockfiles, and generated API contracts
 only — never build artifacts.
-
-The GitHub repository name and Go module/import path temporarily retain the
-legacy `MusicEnreachment` identifier. They will be renamed together after the
-prototype branch is merged, so Go imports remain valid in the meantime.
 
 ## Design documentation
 

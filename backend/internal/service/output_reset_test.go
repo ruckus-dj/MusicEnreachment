@@ -22,11 +22,12 @@ func outputResetTestTempDir(t *testing.T) string {
 }
 
 type outputResetRepositoryStub struct {
-	prepareErr error
-	calls      int
-	journal    persistence.OutputResetJournal
-	request    persistence.OutputResetRequest
-	manifest   []persistence.OutputResetDirectory
+	prepareErr       error
+	calls            int
+	journal          persistence.OutputResetJournal
+	request          persistence.OutputResetRequest
+	manifest         []persistence.OutputResetDirectory
+	semanticsRequest persistence.OutputSemanticsRefreshRequest
 }
 
 func (r *outputResetRepositoryStub) RunOutputResetRequest(ctx context.Context, request persistence.OutputResetRequest) (uuid.UUID, error) {
@@ -50,6 +51,12 @@ func (r *outputResetRepositoryStub) RunOutputResetRequest(ctx context.Context, r
 	return uuid.New(), request.Finish(ctx, r.journal)
 }
 
+func (r *outputResetRepositoryStub) RunOutputSemanticsRefresh(ctx context.Context, request persistence.OutputSemanticsRefreshRequest) error {
+	r.semanticsRequest = request
+	_, err := request.Refresh(ctx)
+	return err
+}
+
 type outputResetSettingsStore struct {
 	settings.Store
 	values map[string]string
@@ -65,6 +72,12 @@ func (r *outputResetRepositoryStub) RecoverOutputReset(ctx context.Context, call
 	return callback(ctx, r.journal)
 }
 
+func newOutputResetTestService(repository outputResetRepository, logicalAreas []string) *OutputReset {
+	service := NewOutputReset(repository, settings.NewResetFilesystem(), logicalAreas)
+	service.registry = settings.New(outputResetSettingsStore{values: map[string]string{}}, nil)
+	return service
+}
+
 func TestOutputResetDefersFilesystemMutationUntilRepositoryPreparation(t *testing.T) {
 	parent := outputResetTestTempDir(t)
 	oldRoot := filepath.Join(parent, "old")
@@ -76,8 +89,8 @@ func TestOutputResetDefersFilesystemMutationUntilRepositoryPreparation(t *testin
 		t.Fatal(err)
 	}
 	repository := &outputResetRepositoryStub{prepareErr: errors.New("journal unavailable")}
-	service := NewOutputReset(repository, settings.NewResetFilesystem(), []string{"analysis"})
-	if _, err := service.Reset(context.Background(), oldRoot, newRoot); err == nil {
+	service := newOutputResetTestService(repository, []string{"analysis"})
+	if _, err := service.ResetRuntime(context.Background(), "", oldRoot, newRoot, settings.RuntimeUpdate{}); err == nil {
 		t.Fatal("expected reset error")
 	}
 	if _, err := os.Lstat(filepath.Join(newRoot, "analysis")); !os.IsNotExist(err) {
@@ -87,7 +100,7 @@ func TestOutputResetDefersFilesystemMutationUntilRepositoryPreparation(t *testin
 		t.Fatalf("repository called %d times", repository.calls)
 	}
 	if repository.request.ExpectedToolsRoot != "" {
-		t.Fatalf("request expected tools root without a registry = %q, want empty", repository.request.ExpectedToolsRoot)
+		t.Fatalf("request expected tools root without an explicit expectation = %q, want empty", repository.request.ExpectedToolsRoot)
 	}
 }
 
@@ -99,8 +112,8 @@ func TestOutputResetRunsPreparedDirectoriesThroughJournalCallback(t *testing.T) 
 		t.Fatal(err)
 	}
 	repository := new(outputResetRepositoryStub)
-	service := NewOutputReset(repository, settings.NewResetFilesystem(), []string{"analysis", "media"})
-	if _, err := service.Reset(context.Background(), oldRoot, newRoot); err != nil {
+	service := newOutputResetTestService(repository, []string{"analysis", "media"})
+	if _, err := service.ResetRuntime(context.Background(), "", oldRoot, newRoot, settings.RuntimeUpdate{}); err != nil {
 		t.Fatal(err)
 	}
 	ancestor := filepath.Join(parent, "missing")
@@ -136,7 +149,7 @@ func TestOutputResetRunsPreparedDirectoriesThroughJournalCallback(t *testing.T) 
 	}
 }
 
-func TestOutputResetPassesRegistryToolsRootAsCapturedExpectation(t *testing.T) {
+func TestOutputResetPassesExpectedToolsRootToDurableRequest(t *testing.T) {
 	parent := outputResetTestTempDir(t)
 	oldRoot := filepath.Join(parent, "old")
 	newRoot := filepath.Join(parent, "new")
@@ -145,26 +158,28 @@ func TestOutputResetPassesRegistryToolsRootAsCapturedExpectation(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := new(outputResetRepositoryStub)
-	service := NewOutputReset(repository, settings.NewResetFilesystem(), nil)
-	service.registry = settings.New(outputResetSettingsStore{values: map[string]string{
-		settings.ToolsDirectoryKey: toolsRoot,
-	}}, nil)
-	if _, err := service.Reset(context.Background(), oldRoot, newRoot); err != nil {
+	service := newOutputResetTestService(repository, nil)
+	if _, err := service.ResetRuntime(context.Background(), toolsRoot, oldRoot, newRoot, settings.RuntimeUpdate{}); err != nil {
 		t.Fatal(err)
 	}
 	if repository.request.ExpectedToolsRoot != toolsRoot {
-		t.Fatalf("request expected tools root = %q, want captured registry value %q", repository.request.ExpectedToolsRoot, toolsRoot)
+		t.Fatalf("request expected tools root = %q, want captured expectation %q", repository.request.ExpectedToolsRoot, toolsRoot)
 	}
+}
 
+func TestSetupRuntimeUpdateStopsBeforeOutputResetWhenToolsRootLookupFails(t *testing.T) {
+	parent := outputResetTestTempDir(t)
 	lookupErr := errors.New("tools root lookup failed")
-	failingRepository := new(outputResetRepositoryStub)
-	failingService := NewOutputReset(failingRepository, settings.NewResetFilesystem(), nil)
-	failingService.registry = settings.New(outputResetSettingsStore{err: lookupErr}, nil)
-	if _, err := failingService.Reset(context.Background(), oldRoot, filepath.Join(parent, "next")); !errors.Is(err, lookupErr) {
-		t.Fatalf("reset error = %v, want tools-root lookup failure %v", err, lookupErr)
+	store := outputResetSettingsStore{err: lookupErr}
+	registry := settings.New(store, nil)
+	repository := new(outputResetRepositoryStub)
+	service := NewSetup(store, registry, settings.PlatformState{}, nil, nil).WithOutputReset(newOutputResetTestService(repository, []string{"analysis"}))
+	candidate := filepath.Join(parent, "new")
+	if err := service.SaveRuntimeUpdate(context.Background(), RuntimeUpdateRequest{OutputDirectory: &candidate}); !errors.Is(err, lookupErr) {
+		t.Fatalf("runtime update error = %v, want tools-root lookup failure %v", err, lookupErr)
 	}
-	if failingRepository.calls != 0 {
-		t.Fatalf("repository called %d times after tools-root lookup failed", failingRepository.calls)
+	if repository.calls != 0 {
+		t.Fatalf("output reset repository called %d times after tools-root lookup failed", repository.calls)
 	}
 }
 
@@ -174,12 +189,15 @@ func TestOutputResetSameCanonicalRootIsNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := new(outputResetRepositoryStub)
-	service := NewOutputReset(repository, settings.NewResetFilesystem(), []string{"analysis"})
-	if token, err := service.Reset(context.Background(), root, root); err != nil || token != uuid.Nil {
+	service := newOutputResetTestService(repository, []string{"analysis"})
+	if token, err := service.ResetRuntime(context.Background(), "", root, root, settings.RuntimeUpdate{}); err != nil || token != uuid.Nil {
 		t.Fatalf("same-root reset = (%s, %v), want no-op", token, err)
 	}
 	if repository.calls != 0 {
 		t.Fatalf("same-root reset called repository %d times", repository.calls)
+	}
+	if repository.semanticsRequest.ExpectedOutputRoot != root {
+		t.Fatalf("semantics refresh root = %q, want %q", repository.semanticsRequest.ExpectedOutputRoot, root)
 	}
 	if _, err := os.Stat(filepath.Join(root, "keep")); err != nil {
 		t.Fatalf("populated output root changed: %v", err)

@@ -391,7 +391,7 @@ func currentManualMatchingMembers(ctx context.Context, tx bun.Tx, groupID uuid.U
 		var current *IncomingGroupingCapture
 		for index := range byMember[member.FileMemberID] {
 			capture := &byMember[member.FileMemberID][index]
-			if capture.WorkID == uuid.Nil || !capture.Ready || !capture.RootEnabled || capture.RootStale ||
+			if capture.WorkID == uuid.Nil || !capture.Ready || capture.RootStale ||
 				capture.RootID == uuid.Nil || capture.LocationID == uuid.Nil || capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath || capture.RelativePath == "" ||
 				len(capture.SourceSHA256) != 0 && len(capture.SourceSHA256) != sha256.Size {
 				continue

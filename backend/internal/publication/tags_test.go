@@ -192,17 +192,15 @@ func TestProjectTagsProjectsOptionalSortMovementAndWorkMappings(t *testing.T) {
 	position := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
 		Desired: map[string]librarymetadata.FieldValue{
-			"sort_title":        librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Été, Pt. 2", true),
-			"artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Zed", "Ångström"}, true),
-			"movement":          librarymetadata.ManualFieldValue(librarymetadata.StateValue, librarymetadata.Movement{Name: "序曲", Number: 2, Count: 7}, true),
-			"works":             librarymetadata.ManualFieldValue(librarymetadata.StateValue, []librarymetadata.Work{{Name: "作品一", MBID: &workID}, {Name: "作品二", MBID: ptrString(workID)}}, true),
+			"sort_title": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Été, Pt. 2", true),
+			"movement":   librarymetadata.ManualFieldValue(librarymetadata.StateValue, librarymetadata.Movement{Name: "序曲", Number: 2, Count: 7}, true),
+			"works":      librarymetadata.ManualFieldValue(librarymetadata.StateValue, []librarymetadata.Work{{Name: "作品一", MBID: &workID}, {Name: "作品二", MBID: ptrString(workID)}}, true),
 		},
 	}
 	release := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
 		Desired: map[string]librarymetadata.FieldValue{
-			"sort_title":              librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Album, The", true),
-			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Artist, A", "Artist, B"}, true),
+			"sort_title": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Album, The", true),
 		},
 	}
 	result, err := ProjectTags(TagProjectionInput{
@@ -351,16 +349,9 @@ func TestProjectTagsMapsMusicalKeyByOutputContainer(t *testing.T) {
 	}
 }
 
-func TestProjectTagsReleaseArtistSortNameUsesArtistSortNotAlbumArtistSort(t *testing.T) {
-	release := librarymetadata.Envelope{
-		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
-		Desired: map[string]librarymetadata.FieldValue{
-			"artist_sort_names":       librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"legacy artist sort"}, false),
-			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"legacy album sort"}, false),
-		},
-	}
+func TestProjectTagsSeparatesTrackAndAlbumArtistSortNames(t *testing.T) {
 	result, err := ProjectTags(TagProjectionInput{
-		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Sort Album Artist"}}, Desired: &release},
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Sort Album Artist"}}},
 		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "The Artist"}}},
 	})
 	if err != nil {

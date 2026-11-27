@@ -241,9 +241,6 @@ func (service *LibraryMetadataService) update(ctx context.Context, scope library
 		if definition.Canonical && name != "title" && name != "artist_credit" && name != "artists" {
 			return LibraryMetadataResult{}, fmt.Errorf("%w: canonical field %q is edited through matching", ErrLibraryMetadataInvalidRequest, name)
 		}
-		if name == "artist_sort_names" || name == "album_artist_sort_names" {
-			return LibraryMetadataResult{}, fmt.Errorf("%w: artist sort lists are derived from artist credits and cannot be written independently", ErrLibraryMetadataInvalidRequest)
-		}
 		var wire struct {
 			State librarymetadata.ValueState `json:"state"`
 			Value json.RawMessage            `json:"value"`

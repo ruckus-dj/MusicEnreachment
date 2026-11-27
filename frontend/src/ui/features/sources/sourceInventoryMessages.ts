@@ -22,7 +22,6 @@ export const sourcesMessages = createNamespace({
     checkUnavailable:
       "Source unavailable in the fixed fixture; no filesystem check was performed.",
     scan: "Scan and process",
-    scanDisabled: "Scanning is available only for a source marked available.",
     scanStarted:
       "Inventory scan completed for {path}; processing started for {count} file records.",
     noInventory:
@@ -73,8 +72,6 @@ export const sourcesMessages = createNamespace({
     checkUnavailable:
       "Источник недоступен в фиксированных данных; файловая система не проверялась.",
     scan: "Сканировать и обработать",
-    scanDisabled:
-      "Сканирование доступно только для отмеченного доступным источника.",
     scanStarted:
       "Сканирование инвентаря {path} завершено; обработка начата для записей о файлах: {count}.",
     noInventory:

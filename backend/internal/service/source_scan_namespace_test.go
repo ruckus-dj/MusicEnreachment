@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 )
 
 func TestEnumerateSourceTreeRejectsReplacedRootNamespace(t *testing.T) {
@@ -24,7 +26,7 @@ func TestEnumerateSourceTreeRejectsReplacedRootNamespace(t *testing.T) {
 		_ = os.RemoveAll(moved)
 	})
 	var replaced bool
-	_, err = EnumerateSourceTree(context.Background(), root, func(SourceWalkEntry) error {
+	_, err = enumerateSourceTree(context.Background(), sourcefs.NewOpener(), root, func(SourceWalkEntry) error {
 		if replaced {
 			return nil
 		}

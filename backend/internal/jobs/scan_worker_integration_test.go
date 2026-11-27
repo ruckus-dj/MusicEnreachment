@@ -70,7 +70,7 @@ func (validator *recordingScanPathValidator) ValidateSourcePath(ctx context.Cont
 // TestSourceScanWorkerRiverDispatchPostgreSQL drives the scan worker through the
 // real River dispatcher and real PostgreSQL: a delivery scans, applies and
 // succeeds; a duplicate delivery does not walk the tree again; a traversal that
-// fails and a disabled root each fail the operation
+// fails each fails the operation
 // with a safe reason while the previous inventory stays exactly as it was; and
 // only a root directory the worker cannot access is recorded as unavailable,
 // which the next successful scan restores.
@@ -290,23 +290,6 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if delta := scanDispatchProbeCount(t, probes) - beforeToolFailure; delta != 0 {
 		t.Fatalf("probes during enumeration without ffprobe = %d, want none", delta)
 	}
-
-	// Given a root the operator disabled while a scan of it was already queued...
-	disabled := false
-	if _, err := roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &disabled}); err != nil {
-		t.Fatalf("disable the source root: %v", err)
-	}
-	queued := createScanDispatchOperation(t, ctx, setupManager, inventory, restored.InputSnapshot, root.ID, root.ConfiguredPath)
-	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, queued.ID))
-
-	// Then the worker re-checks the flag it reloaded and refuses the scan, and the
-	// inventory of the disabled root stays visible.
-	assertOperationStage(t, ctx, setupManager, queued.ID, "failed", service.SourceScanStageQueued)
-	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, queued.ID), scanSafeDisabled)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
-	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), fourthLocations)
-	// Disabling a root reports no directory problem.
-	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 }
 
 // writeScanDispatchFFmpeg materializes the native scan fixture binaries. Their

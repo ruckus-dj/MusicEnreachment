@@ -105,7 +105,7 @@ func TestAcceptedPublicationGenresUsesBoundRecordingThenReleaseThenRecordingArti
 	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":` + recordingGenre + `,"artist-credit":[]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
 	context.Release.Fields = json.RawMessage(`{"genres":` + releaseGenre + `}`)
 	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"genres": {}}
-	genres, err := acceptedPublicationGenres(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
+	genres, _, err := acceptedPublicationGenresWithScope(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestAcceptedPublicationGenresUsesBoundRecordingThenReleaseThenRecordingArti
 		t.Fatalf("recording genre winner = %#v", genres)
 	}
 	context.Recording.Fields = json.RawMessage(`{"genres":[]}`)
-	genres, err = acceptedPublicationGenres(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
+	genres, _, err = acceptedPublicationGenresWithScope(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestAcceptedPublicationGenresUsesBoundRecordingThenReleaseThenRecordingArti
 		{Kind: "artist", ProviderKey: artistA, Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000003","name":"artist one"},{"id":"00000000-0000-4000-8000-000000000004","name":"shared"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)},
 		{Kind: "artist", ProviderKey: artistB, Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000004","name":"shared"},{"id":"00000000-0000-4000-8000-000000000005","name":"artist two"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)},
 	}
-	genres, err = acceptedPublicationGenres(context, map[string]json.RawMessage{})
+	genres, _, err = acceptedPublicationGenresWithScope(context, map[string]json.RawMessage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestAcceptedPublicationGenresDoesNotUseUnboundRecordingOrReleaseArtists(t *
 	context.Position.RecordingProviderKey = "recording-key"
 	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"not bound"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
 	context.ArtistEntities = []MatchingProjectionEntity{{Kind: "artist", ProviderKey: "release-artist", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000002","name":"not recording artist"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}}
-	genres, err := acceptedPublicationGenres(context, map[string]json.RawMessage{"artist-credit": json.RawMessage(`[{"name":"X","artist":{"id":"release-artist"}}]`)})
+	genres, _, err := acceptedPublicationGenresWithScope(context, map[string]json.RawMessage{"artist-credit": json.RawMessage(`[{"name":"X","artist":{"id":"release-artist"}}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

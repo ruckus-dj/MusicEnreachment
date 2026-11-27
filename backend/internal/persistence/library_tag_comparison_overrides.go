@@ -106,7 +106,7 @@ func readLibraryTagComparisonOverrides(ctx context.Context, tx bun.Tx, releaseID
 	}
 	for _, definition := range librarymetadata.Fields() {
 		switch definition.Name {
-		case "artist_credit", "genre", "works", "movement", "contributors", "artist_sort_names", "album_artist_sort_names":
+		case "artist_credit", "genre", "works", "movement", "contributors":
 			continue
 		}
 		owners.applyManualField(tags, definition)

@@ -118,7 +118,7 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if err != nil {
 		return nil, fmt.Errorf("prepare source analysis input: read source root: %w", err)
 	}
-	if root == nil || !root.Enabled || root.Stale() || root.InventoryPath == nil ||
+	if root == nil || root.Stale() || root.InventoryPath == nil ||
 		*root.InventoryPath != root.ConfiguredPath || work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
 		work.SourceRootID != root.ID || location.ID != work.LocationID || location.SourceRootID != root.ID ||
 		location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sameSourceMtime(location.Mtime, work.Mtime) {

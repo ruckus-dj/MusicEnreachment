@@ -121,13 +121,6 @@ type SourceRootPatch struct {
 	DisplayName            *string
 	ConfiguredPath         *string
 	ProcessingMode         *string
-	Enabled                *bool
-}
-
-// SourceRootUpdateResult reports the locked state before the patch was applied,
-// so a caller reacts to an actual transition instead of its pre-lock read.
-type SourceRootUpdateResult struct {
-	EnabledBefore bool
 }
 
 type SourceInventoryRepository struct {
@@ -145,13 +138,16 @@ func (root *SourceRoot) Stale() bool {
 	return root.InventoryPath != nil && *root.InventoryPath != root.ConfiguredPath
 }
 
-// CreateSourceRoot creates a root with generation 0 and no inventory. A supplied
-// processing mode overrides the transitional database default; an empty mode
-// leaves that default for legacy writers and migration fixtures. A root with a
-// duplicate normalized configured path is rejected by the schema.
+// CreateSourceRoot creates a root with generation 0 and no inventory. The
+// processing mode is required, because the schema has no default: every writer
+// must choose in_place or staged explicitly. A root with a duplicate normalized
+// configured path is rejected by the schema.
 func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Context, root *SourceRoot) error {
 	if root.ID == uuid.Nil {
 		root.ID = uuid.New()
+	}
+	if root.ProcessingMode == "" {
+		return fmt.Errorf("create source root: processing mode is required")
 	}
 	if root.Status == "" {
 		root.Status = "unknown"
@@ -163,21 +159,7 @@ func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Contex
 		if err := validateSourceRootAgainstWorkDirectory(ctx, tx, root.ConfiguredPath); err != nil {
 			return err
 		}
-		insert := tx.NewInsert().Model(root)
-		if root.ProcessingMode != "" {
-			// The in_place database default is transitional for pre-mode writers and
-			// migration fixtures; the source-root service always supplies a mode.
-			// ProcessingMode is scan-only on the model so empty legacy values leave
-			// the database default intact. Include every model column explicitly here
-			// because Bun's Value appends an expression rather than selecting the
-			// scan-only field from the model.
-			insert = insert.Column(
-				"id", "configured_path", "display_name", "processing_mode", "enabled",
-				"scan_generation", "inventory_path", "last_successful_scan_at",
-				"last_applied_operation_id", "status", "safe_error", "created_at", "updated_at",
-			)
-		}
-		if _, err := insert.Exec(ctx); err != nil {
+		if _, err := tx.NewInsert().Model(root).Exec(ctx); err != nil {
 			return fmt.Errorf("create source root: %w", err)
 		}
 		return nil
@@ -203,21 +185,19 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 }
 
 // UpdateSourceRoot applies one explicit patch to the operator-owned fields of a
-// root: its display name, processing mode, enabled flag and configured path. A
-// nil field is never written, so an edit that omits the configured path cannot
-// restore a path another writer changed. The patch carries the generation the
-// caller read; the edit is refused when another writer advanced the root's
-// generation between that read and this call, which is the value every scan
-// apply moves. The row is locked for the read, the comparison and the write, so
-// an edit racing a scan apply loses instead of resurrecting a generation the
-// apply already advanced; a competing path is rejected by the schema's unique
-// constraint.
+// root: its display name, processing mode and configured path. A nil field is
+// never written, so an edit that omits the configured path cannot restore a path
+// another writer changed. The patch carries the generation the caller read; the
+// edit is refused when another writer advanced the root's generation between
+// that read and this call, which is the value every scan apply moves. The row is
+// locked for the read, the comparison and the write, so an edit racing a scan
+// apply loses instead of resurrecting a generation the apply already advanced; a
+// competing path is rejected by the schema's unique constraint.
 //
 // Guards are evaluated against the locked row and only when the patch actually
-// changes the guarded field: a configured_path or enabled change refuses while a
-// scan of the root is queued or running, because the path the running scan
-// carries is the one it would publish and a disabled root must not keep a scan
-// it no longer owns. A processing-mode change is serialized without blocking
+// changes the guarded field: a configured_path change refuses while a scan of the
+// root is queued or running, because the path the running scan carries is the one
+// it would publish. A processing-mode change is serialized without blocking
 // queued work, which reads the current mode at execution. A display-name change
 // is unrelated to queued work.
 //
@@ -226,9 +206,8 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // until a successful scan of the new path replaces it, which is what keeps the
 // old files from being attributed to the new path. The update invalidates the
 // incoming grouping because the operator-visible root set changed.
-func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, patch SourceRootPatch) (SourceRootUpdateResult, error) {
-	result := SourceRootUpdateResult{}
-	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, patch SourceRootPatch) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
 			return err
 		}
@@ -242,15 +221,13 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 			}
 			return fmt.Errorf("update source root: lock source root: %w", err)
 		}
-		result.EnabledBefore = current.Enabled
 		if current.ScanGeneration != patch.ExpectedScanGeneration {
 			return fmt.Errorf("update source root: root changed since it was read")
 		}
 		displayNameChanged := patch.DisplayName != nil && *patch.DisplayName != current.DisplayName
 		configuredPathChanged := patch.ConfiguredPath != nil && *patch.ConfiguredPath != current.ConfiguredPath
 		processingModeChanged := patch.ProcessingMode != nil && *patch.ProcessingMode != current.ProcessingMode
-		enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
-		if configuredPathChanged || enabledChanged {
+		if configuredPathChanged {
 			active, err := activeSourceScan(ctx, tx, patch.ID)
 			if err != nil {
 				return fmt.Errorf("update source root: check active scan: %w", err)
@@ -271,7 +248,7 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
 			}
 		}
-		if !displayNameChanged && !configuredPathChanged && !processingModeChanged && !enabledChanged {
+		if !displayNameChanged && !configuredPathChanged && !processingModeChanged {
 			return nil
 		}
 		update := tx.NewUpdate().Model((*SourceRoot)(nil)).Where("id = ?", patch.ID)
@@ -284,9 +261,6 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 		if processingModeChanged {
 			update = update.Set("processing_mode = ?", *patch.ProcessingMode)
 		}
-		if enabledChanged {
-			update = update.Set("enabled = ?", *patch.Enabled)
-		}
 		if _, err := update.Set("updated_at = now()").Exec(ctx); err != nil {
 			return fmt.Errorf("update source root: %w", err)
 		}
@@ -295,10 +269,6 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 		}
 		return nil
 	})
-	if err != nil {
-		return SourceRootUpdateResult{}, err
-	}
-	return result, nil
 }
 
 // DeleteSourceRoot removes a root and every one of its locations in one
@@ -572,8 +542,8 @@ func deleteRootAnalysisState(ctx context.Context, tx bun.IDB, workIDs, operation
 
 // activeSourceScan reports whether a scan or an analysis of the root is still
 // queued or running. Both kinds target the root, and the root exclusivity rule
-// makes them mutually exclusive, so a root edit that changes its path or enabled
-// state, a root deletion and a scan start all refuse while either is active.
+// makes them mutually exclusive, so a root edit that changes its path, a root
+// deletion and a scan start all refuse while either is active.
 // Callers hold the root row lock, which serializes this read against admission.
 func activeSourceScan(ctx context.Context, database bun.IDB, rootID uuid.UUID) (bool, error) {
 	var active uuid.UUID

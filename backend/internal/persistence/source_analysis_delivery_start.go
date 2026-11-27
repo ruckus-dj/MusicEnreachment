@@ -148,7 +148,7 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
 			return fmt.Errorf("start source analysis delivery: lock source root: %w", err)
 		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+		if root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
 			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
 		}
 		type heldWork struct {

@@ -150,8 +150,8 @@ hooks и mock-сценарии в `frontend/src/api/generated/`. Эта кома
 создаёт актуальную схему сразу, без переноса данных из дорелизных схем:
 
 ```text
-20261127000500_initial_schema.tx.up.sql
-20261127000500_initial_schema.tx.down.sql
+20261127000600_initial_schema.tx.up.sql
+20261127000600_initial_schema.tx.down.sql
 ```
 
 При запуске сервер вызывает `migrations.Apply`: проверяет историю Bun и

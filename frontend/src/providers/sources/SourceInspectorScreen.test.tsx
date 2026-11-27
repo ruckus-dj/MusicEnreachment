@@ -38,7 +38,7 @@ it.each([
     probe_status: "audio",
     analysis_state: "analyzed",
     matching_eligible: saved,
-    root: { status: "available", enabled: true, stale: false },
+    root: { status: "available", stale: false },
     staged_artifact: {
       state: "unknown",
       requested_steps: [],

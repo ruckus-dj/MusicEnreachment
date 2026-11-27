@@ -118,7 +118,7 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 	}{
 		{"source size", `UPDATE source_location SET size_bytes=size_bytes+1 WHERE id IN (SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=?)`, admitted.OperationID},
 		{"source mtime", `UPDATE source_location SET mtime=mtime+interval '1 microsecond' WHERE id IN (SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=?)`, admitted.OperationID},
-		{"source root disabled", `UPDATE source_root SET enabled=false WHERE id IN (SELECT source_root_id FROM source_cleanup_owner WHERE operation_id=?)`, admitted.OperationID},
+		{"source root unavailable", `UPDATE source_root SET status='unavailable',safe_error='source unavailable' WHERE id IN (SELECT source_root_id FROM source_cleanup_owner WHERE operation_id=?)`, admitted.OperationID},
 		{"link selection", `UPDATE track_source SET selected=NOT selected WHERE media_variant_id=?`, variantID},
 		{"link revision", `UPDATE track_source SET updated_at=updated_at+interval '1 microsecond' WHERE media_variant_id=?`, variantID},
 		{"link policy value", `UPDATE track_source SET policy_version='cleanup-validation-v2' WHERE media_variant_id=?`, variantID},
@@ -459,7 +459,7 @@ func insertMatchingLocalRecheckSourceProtection(t *testing.T, ctx context.Contex
 		work, location, root, variant = uuid.New(), uuid.New(), uuid.New(), uuid.New()
 		relativePath = filepath.ToSlash(filepath.Join(filepath.Base(rootPath), filepath.FromSlash(relativePath)))
 		rootPath = filepath.Dir(rootPath)
-		if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name) VALUES (?,?,'overlapping root')`, root, rootPath); err != nil {
+		if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,processing_mode) VALUES (?,?,'overlapping root','in_place')`, root, rootPath); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -608,7 +608,7 @@ func newInputPreparerFixture(t *testing.T, wrap func(sourcefs.OutputFile) source
 	work := &persistence.SourceAnalysisWork{ID: workID, LocationID: locationID, SourceRootID: rootID, ConfiguredPath: sourcePath,
 		InventoryPath: sourcePath, RelativePath: "audio.bin", SizeBytes: info.Size(), Mtime: info.ModTime()}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: work.RelativePath, SizeBytes: info.Size(), Mtime: info.ModTime()}
-	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: sourcePath, InventoryPath: &inventoryPath, ProcessingMode: "staged", Enabled: true}
+	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: sourcePath, InventoryPath: &inventoryPath, ProcessingMode: "staged"}
 	fence := persistence.SourceAnalysisArtifactFence{WorkID: workID, OperationID: uuid.New(), OperationAttempt: 1, JobID: 71}
 	artifactID := uuid.New()
 	repository := &inputPreparerRepository{work: work, location: location, root: root}

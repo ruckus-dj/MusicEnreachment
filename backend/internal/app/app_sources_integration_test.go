@@ -233,7 +233,7 @@ func TestApplicationSourcesEndpointsRequireSetup(t *testing.T) {
 
 // TestApplicationSourcesEndpointsRefuseScanOnAMismatchedPlatform pins the scan
 // mutation guard on a setup-complete instance whose platform is diagnostic: the
-// refusal is the platform 503, not the disabled root and not the setup 409.
+// refusal is the platform 503, not the setup 409.
 func TestApplicationSourcesEndpointsRefuseScanOnAMismatchedPlatform(t *testing.T) {
 	t.Parallel()
 	fixture := newSourceApplicationFixture(t, startSourceApplicationDatabase(t))
@@ -283,7 +283,7 @@ func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
 	}
 
 	root := fixture.createRoot(t, "Music", source)
-	if root.DisplayName != "Music" || root.ConfiguredPath != normalizedSourcePath(t, source) || !root.Enabled {
+	if root.DisplayName != "Music" || root.ConfiguredPath != normalizedSourcePath(t, source) {
 		t.Fatalf("created root = %+v", root)
 	}
 

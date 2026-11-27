@@ -251,7 +251,7 @@ func TestInterruptedSourceRepublishAcquiresStickyRecoveryClaimAndPreservesLegacy
 	}
 	rootID := input.Audio.RootID
 	locationID, workID, variantID := input.Audio.LocationID, input.Audio.WorkID, input.Audio.MediaVariantID
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path) VALUES (?,?, 'Republish source',1,?)`,
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode) VALUES (?,?, 'Republish source',1,?,'in_place')`,
 		rootID, rootPath, input.Audio.InventoryRootPath); err != nil {
 		t.Fatal(err)
 	}

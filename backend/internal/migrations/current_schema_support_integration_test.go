@@ -17,13 +17,13 @@ func TestCurrentMatchingReconciliationOriginConstraintWithPostgreSQL(t *testing.
 	ctx := context.Background()
 	ordinaryID := uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO incoming_matching_reconcile_event
-		(id,source_operation_id,source_attempt,reason,source_input_snapshot)
-		VALUES (?, ?, 1, 'analysis_success', '{}'::jsonb)`, ordinaryID, uuid.New()); err != nil {
+		(id,source_operation_id,source_attempt,reason)
+		VALUES (?, ?, 1, 'analysis_success')`, ordinaryID, uuid.New()); err != nil {
 		t.Fatalf("insert current source-origin event: %v", err)
 	}
 	startupID := uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO incoming_matching_reconcile_event
-		(id,reason,source_input_snapshot) VALUES (?, 'startup', '{}'::jsonb)`, startupID); err != nil {
+		(id,reason) VALUES (?, 'startup')`, startupID); err != nil {
 		t.Fatalf("insert current startup event: %v", err)
 	}
 	for _, invalid := range []struct {
@@ -31,9 +31,8 @@ func TestCurrentMatchingReconciliationOriginConstraintWithPostgreSQL(t *testing.
 		stmt string
 		args []any
 	}{
-		{name: "partial source identity", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,reason,source_input_snapshot) VALUES (?,?,'analysis_success','{}'::jsonb)`, args: []any{uuid.New(), uuid.New()}},
-		{name: "startup with fabricated source", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,source_attempt,reason,source_input_snapshot) VALUES (?,?,1,'startup','{}'::jsonb)`, args: []any{uuid.New(), uuid.New()}},
-		{name: "startup nonempty snapshot", stmt: `INSERT INTO incoming_matching_reconcile_event (id,reason,source_input_snapshot) VALUES (?,'startup','{"fake":true}'::jsonb)`, args: []any{uuid.New()}},
+		{name: "partial source identity", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,reason) VALUES (?,?,'analysis_success')`, args: []any{uuid.New(), uuid.New()}},
+		{name: "startup with fabricated source", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,source_attempt,reason) VALUES (?,?,1,'startup')`, args: []any{uuid.New(), uuid.New()}},
 	} {
 		t.Run(invalid.name, func(t *testing.T) {
 			if _, err := db.ExecContext(ctx, invalid.stmt, invalid.args...); err == nil {

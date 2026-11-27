@@ -22,7 +22,7 @@ func TestCleanupOperationDeliveryTransitionUsesPostgreSQLFences(t *testing.T) {
 	ctx := context.Background()
 	baseJobID := int64(781203)
 	sourceRootID := uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name) VALUES(?,?,?)`, sourceRootID, "/cleanup-transition/"+uuid.NewString(), "cleanup transition"); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,processing_mode) VALUES(?,?,?,'in_place')`, sourceRootID, "/cleanup-transition/"+uuid.NewString(), "cleanup transition"); err != nil {
 		t.Fatalf("create source root for unsupported scan operation: %v", err)
 	}
 

@@ -347,7 +347,7 @@ func matchingLayoutTargetReadyCaptures(target automaticArtistTargetCapture) ([]I
 			if !capture.Ready || capture.CaptureAnalysisID == nil {
 				continue
 			}
-			if *capture.CaptureAnalysisID == uuid.Nil || !capture.RootEnabled || capture.RootStale ||
+			if *capture.CaptureAnalysisID == uuid.Nil || capture.RootStale ||
 				capture.RootID == uuid.Nil || capture.WorkID == uuid.Nil || capture.RelativePath == "" ||
 				capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath {
 				return nil, fmt.Errorf("lock matching layout target: ready member has no current capture: %w", ErrIncomingMatchConflict)

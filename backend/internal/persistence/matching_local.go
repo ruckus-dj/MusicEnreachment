@@ -356,7 +356,7 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 		}
 		if err := tx.NewRaw(`SELECT root.configured_path || '/' || location.relative_path FROM incoming_group_member_location member_location
 			JOIN source_root root ON root.id=member_location.source_root_id JOIN source_location location ON location.id=member_location.location_id
-			WHERE member_location.group_id=? AND member_location.variant_id=? AND root.enabled=true
+			WHERE member_location.group_id=? AND member_location.variant_id=?
 			AND root.configured_path=member_location.configured_path AND root.inventory_path=member_location.inventory_path
 			AND location.relative_path=member_location.relative_path AND location.size_bytes=member_location.size_bytes AND location.mtime=member_location.mtime
 				ORDER BY root.configured_path,location.relative_path`, groupID, id).Scan(ctx, &source.Locations); err != nil {
@@ -647,7 +647,7 @@ func validateMatchingLocalCaptures(group IncomingGroupingGroup, captures []Incom
 		if !member {
 			continue
 		}
-		if !capture.RootEnabled || capture.RootStale || capture.RootID == uuid.Nil || capture.LocationID == uuid.Nil || capture.WorkID == uuid.Nil ||
+		if capture.RootStale || capture.RootID == uuid.Nil || capture.LocationID == uuid.Nil || capture.WorkID == uuid.Nil ||
 			capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath || capture.RelativePath == "" || ready != capture.Ready {
 			return nil, ErrIncomingMatchConflict
 		}

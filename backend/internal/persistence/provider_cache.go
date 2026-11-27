@@ -1031,6 +1031,14 @@ func providerJSON(value json.RawMessage, objectOnly bool) (string, error) {
 }
 
 func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTicket, graph ProviderGraph) error {
+	if len(graph.Entities) == 0 {
+		if len(graph.Artists) > 0 || len(graph.Releases) > 0 || len(graph.Recordings) > 0 ||
+			len(graph.Credits) > 0 || len(graph.Tracks) > 0 {
+			return fmt.Errorf("provider graph entities are required for a nonempty graph")
+		}
+		// A valid empty search response carries no graph rows to project.
+		return nil
+	}
 	providerID := ticket.ProviderID
 	artistIDs := make(map[uuid.UUID]uuid.UUID, len(graph.Artists))
 	releaseIDs := make(map[uuid.UUID]uuid.UUID, len(graph.Releases))
@@ -1240,49 +1248,6 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 		if _, err := tx.NewRaw(`INSERT INTO provider_source_release_track(provider_source_id, provider_id, track_id, release_id, recording_id, medium, position, displayed_number, authority, fetch_order)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, ticket.ProviderSourceID, providerID, track.ID, track.ReleaseID, track.RecordingID, track.Medium, track.Position, track.DisplayedNumber, accepted.authority, ticket.FetchOrder).Exec(ctx); err != nil {
 			return err
-		}
-	}
-	// Preserve the original global collection behavior for legacy graph callers
-	// that do not supply source entities. Normalized provider responses always
-	// use the source-scoped path above.
-	if len(graph.Entities) == 0 {
-		legacyRank := 0
-		if graph.Complete {
-			legacyRank = 32767
-		}
-		if graph.Complete {
-			for _, release := range graph.Releases {
-				if _, err := tx.NewRaw(`UPDATE provider_release_track SET present=false, medium=NULL, position=NULL, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
-					AND (authority < ? OR (authority = ? AND fetch_order < ?))`, legacyRank, ticket.FetchOrder, providerID, release.ID, legacyRank, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
-					return err
-				}
-				if _, err := tx.NewRaw(`UPDATE provider_release_artist_credit SET present=false, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
-					AND (authority < ? OR (authority = ? AND fetch_order < ?))`, legacyRank, ticket.FetchOrder, providerID, release.ID, legacyRank, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.NewRaw(`SET CONSTRAINTS ALL DEFERRED`).Exec(ctx); err != nil {
-				return err
-			}
-		}
-		for _, credit := range graph.Credits {
-			if _, err := tx.NewRaw(`INSERT INTO provider_release_artist_credit(provider_id, release_id, position, artist_id, name_join_phrase, present, authority, fetch_order)
-				VALUES (?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, release_id, position) DO UPDATE
-				SET artist_id=EXCLUDED.artist_id, name_join_phrase=EXCLUDED.name_join_phrase, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
-				WHERE EXCLUDED.authority > provider_release_artist_credit.authority OR (EXCLUDED.authority = provider_release_artist_credit.authority AND (EXCLUDED.fetch_order > provider_release_artist_credit.fetch_order OR (EXCLUDED.fetch_order = provider_release_artist_credit.fetch_order AND NOT provider_release_artist_credit.present)))`,
-				providerID, credit.ReleaseID, credit.Position, credit.ArtistID, credit.NameJoinPhrase, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
-				return err
-			}
-		}
-		for _, track := range graph.Tracks {
-			if _, err := tx.NewRaw(`INSERT INTO provider_release_track(id, provider_id, release_id, recording_id, medium, position, displayed_number, present, authority, fetch_order)
-				VALUES (?, ?, ?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, id) DO UPDATE SET
-				release_id=EXCLUDED.release_id, recording_id=EXCLUDED.recording_id, medium=EXCLUDED.medium, position=EXCLUDED.position,
-				displayed_number=EXCLUDED.displayed_number, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
-				WHERE EXCLUDED.authority > provider_release_track.authority OR (EXCLUDED.authority = provider_release_track.authority AND (EXCLUDED.fetch_order > provider_release_track.fetch_order OR (EXCLUDED.fetch_order = provider_release_track.fetch_order AND NOT provider_release_track.present)))`,
-				track.ID, providerID, track.ReleaseID, track.RecordingID, track.Medium, track.Position, track.DisplayedNumber, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

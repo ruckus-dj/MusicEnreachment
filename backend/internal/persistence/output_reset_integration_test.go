@@ -156,8 +156,7 @@ func TestOutputResetRejectsWorkDirectoryChangeWithRetainedAnalysisOperation(t *t
 	}
 	root := &SourceRoot{
 		ID: uuid.New(), DisplayName: "Analysis fixture", ConfiguredPath: nativeTestPath(t, "/music/source"),
-		ProcessingMode: "in_place", Enabled: true,
-	}
+		ProcessingMode: "in_place"}
 	if err := NewSourceInventoryRepository(database).CreateSourceRoot(ctx, root); err != nil {
 		t.Fatalf("create source root: %v", err)
 	}

@@ -190,7 +190,6 @@ export function SourceInspectorView(props: SourceInspectorViewProps) {
                 </dd>
               </div>
             </dl>
-            {!file.enabled && <p className={note}>{t("disabledAnalysis")}</p>}
             {file.stale && <p className={note}>{t("staleInventory")}</p>}
             {file.availability === "unavailable" && (
               <p className={note}>

@@ -1,8 +1,12 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { IncomingWorkspaceView } from "../../../ui/features/incoming/IncomingWorkspaceView";
 import { I18nProvider } from "../demoPreferences";
-import { MatchingScreen } from "../matching/MatchingScreen";
+import {
+  type MatchingScreenProps,
+  useMatchingScreenDemoProvider,
+} from "../matching/useMatchingScreenDemoProvider";
 import { initialSourceRoots } from "../sources/SourcesScreen";
 import { IncomingScreen } from "./IncomingScreen";
 import {
@@ -13,6 +17,12 @@ import {
   makeGroupPlan,
 } from "./incomingModel";
 import { splitFileIntoNewGroup } from "./incomingSplitModel";
+
+function MatchingRoute(props: MatchingScreenProps) {
+  return (
+    <IncomingWorkspaceView matching={useMatchingScreenDemoProvider(props)} />
+  );
+}
 
 function renderOverview(state = createIncomingState()) {
   return render(
@@ -372,7 +382,7 @@ it("renders the existing Matching route for the split group without a dangling t
 
   render(
     <I18nProvider>
-      <MatchingScreen
+      <MatchingRoute
         groupId={group.id}
         state={split}
         files={files}

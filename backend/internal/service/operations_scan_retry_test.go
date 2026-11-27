@@ -179,11 +179,11 @@ func TestScanRetryNeverFallsBackToTheGenericJobKind(t *testing.T) {
 }
 
 // TestScanRetryReportsTheTransactionRefusal pins that a refusal decided under
-// the root lock (a disabled root or an active scan) reaches the caller unchanged
-// and wakes nobody: nothing was requeued.
+// the root lock (an active scan) reaches the caller unchanged and wakes nobody:
+// nothing was requeued.
 func TestScanRetryReportsTheTransactionRefusal(t *testing.T) {
 	scan := failedScanRetryOperation(&persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: "/srv/unit-retry"}, service.SourceScanStageTraversing)
-	refusal := fmt.Errorf("retry source scan: the root %q is disabled: %w", "Music", persistence.ErrSourceRootDisabled)
+	refusal := fmt.Errorf("retry source scan: %w", persistence.ErrSourceRootActiveScan)
 	fixture := &scanRetryRepositoryFixture{
 		operationRetryRepositoryFixture: newOperationRetryRepositoryFixture(scan),
 		scanErr:                         refusal,
@@ -192,8 +192,8 @@ func TestScanRetryReportsTheTransactionRefusal(t *testing.T) {
 	wake, unsubscribe := operations.Subscribe(scan.ID)
 	defer unsubscribe()
 
-	if _, err := operations.Retry(context.Background(), scan.ID); !errors.Is(err, persistence.ErrSourceRootDisabled) {
-		t.Fatalf("retry of a scan on a disabled root = %v, want ErrSourceRootDisabled", err)
+	if _, err := operations.Retry(context.Background(), scan.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+		t.Fatalf("retry of a scan on a root with an active scan = %v, want ErrSourceRootActiveScan", err)
 	}
 	select {
 	case <-wake:

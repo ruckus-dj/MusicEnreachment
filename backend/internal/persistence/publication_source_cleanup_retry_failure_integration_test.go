@@ -49,7 +49,7 @@ func TestPublicationSourceCleanupExplicitRetryFailureFencesPostgreSQL(t *testing
 				if _, err := f.fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(f.ctx); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.fixture.db.NewRaw(`UPDATE source_root SET enabled=false WHERE id IN (SELECT source_root_id FROM source_cleanup_owner WHERE operation_id=?)`, f.originalID).Exec(f.ctx); err != nil {
+				if _, err := f.fixture.db.NewRaw(`UPDATE source_root SET status='unavailable',safe_error='source unavailable' WHERE id IN (SELECT source_root_id FROM source_cleanup_owner WHERE operation_id=?)`, f.originalID).Exec(f.ctx); err != nil {
 					t.Fatal(err)
 				}
 				if failed, err := f.repository.FailPublicationSourceCleanupExplicitRetryDelivery(f.ctx, f.newGuard, "  retry callback returned uncertain  "); err != nil || !failed {

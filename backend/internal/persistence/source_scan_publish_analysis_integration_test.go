@@ -90,7 +90,7 @@ func publishTestRoot(t *testing.T, ctx context.Context, db *bun.DB, path string)
 	t.Helper()
 	path = t.TempDir()
 	repository := NewSourceInventoryRepository(db)
-	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: path, DisplayName: "publish test", Enabled: true, Status: SourceRootStatusAvailable}
+	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: path, DisplayName: "publish test", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 	if err := repository.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}

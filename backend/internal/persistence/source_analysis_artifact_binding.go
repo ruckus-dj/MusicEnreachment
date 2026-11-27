@@ -58,7 +58,7 @@ func (repository *SourceAnalysisArtifactRepository) ListRetained(ctx context.Con
 		JOIN source_root AS root ON root.id=work.source_root_id
 		JOIN source_location AS location ON location.id=work.current_location_id AND location.source_root_id=work.source_root_id`+stagedArtifactPathJoins+`
 		WHERE work.id=? AND work.current_location_id=work.location_id AND work.invalidated_at IS NULL
-		  AND root.enabled AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
+		  AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
 		  AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path
 		  AND location.relative_path=work.relative_path AND location.size_bytes=work.size_bytes AND location.mtime=work.mtime
 		  AND artifact.state='ready'

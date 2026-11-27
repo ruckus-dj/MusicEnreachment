@@ -171,9 +171,6 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 			installation.PackageKind != string(file.PackageKind) || installation.ReleaseIdentity != file.ReleaseIdentity {
 			return worker.fail(ctx, operation, fmt.Errorf("move snapshot does not match managed installation identity"))
 		}
-		if file.Version != "" && file.Version != installation.Version {
-			return worker.fail(ctx, operation, fmt.Errorf("move snapshot does not match managed installation version"))
-		}
 		targets[filepath.Clean(file.TargetPath)] = struct{}{}
 	}
 	if len(targets) != len(expectedTargets) {
@@ -184,13 +181,54 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 			return worker.fail(ctx, operation, fmt.Errorf("move snapshot contains an unowned conflict path"))
 		}
 	}
+	// Forward execution requires the canonical version frozen for every file.
+	// If the move was interrupted during target publication, a version error
+	// must not discard evidence needed to roll back those filesystem changes.
+	var versionErr error
+	for _, file := range snapshot.Files {
+		installation := expectedTargets[filepath.Clean(file.TargetPath)]
+		if file.Version == "" || file.Version != installation.Version {
+			versionErr = fmt.Errorf("move snapshot does not match managed installation version")
+			break
+		}
+	}
+	rollbackInterrupted := moveNeedsPreSwitchRollbackOnRetry(operation.Stage) &&
+		(operation.State == "queued" || operation.State == "running" && versionErr != nil)
+	retainedStaging := filepath.Join(snapshot.NewRoot, ".staging", operation.ID.String())
+	if err := tools.HasSymlinkAncestors(snapshot.NewRoot, retainedStaging); err != nil {
+		if rollbackInterrupted {
+			return err
+		}
+		return worker.fail(ctx, operation, err)
+	}
+	publication, err := loadMovePublication(retainedStaging, operation.ID, snapshot)
+	if err != nil {
+		return err
+	}
+	if rollbackInterrupted && publication != nil {
+		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
+		if err != nil {
+			return err
+		}
+		ownedTargets, err := ownedMoveTargets(snapshot, staging, publication)
+		if err != nil {
+			return err
+		}
+		cause := versionErr
+		if cause == nil {
+			cause = fmt.Errorf("tools root move was interrupted before switching roots")
+		}
+		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, cause)
+	}
+	if versionErr != nil {
+		if rollbackInterrupted {
+			return fmt.Errorf("cannot roll back interrupted tools root move without its journal: %w", versionErr)
+		}
+		return worker.fail(ctx, operation, versionErr)
+	}
 	staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 	if err != nil {
 		return worker.fail(ctx, operation, err)
-	}
-	publication, err := loadMovePublication(staging, operation.ID, snapshot)
-	if err != nil {
-		return err
 	}
 	var ownedTargets []string
 	if publication != nil {
@@ -198,9 +236,6 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		if err != nil {
 			return err
 		}
-	}
-	if operation.State == "queued" && publication != nil && moveNeedsPreSwitchRollbackOnRetry(operation.Stage) {
-		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, fmt.Errorf("tools root move was interrupted before switching roots"))
 	}
 	if err := worker.operations.RunningForDelivery(ctx, operation, "copy"); err != nil {
 		return err
@@ -237,8 +272,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		if _, done := verified[file.InstallationID]; done {
 			continue
 		}
-		installation := expectedTargets[filepath.Clean(file.TargetPath)]
-		if err := worker.verifyInstallationVersion(ctx, payloadRoot, file, installation.Version); err != nil {
+		if err := worker.verifyInstallationVersion(ctx, payloadRoot, file); err != nil {
 			return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 		}
 		verified[file.InstallationID] = struct{}{}
@@ -825,17 +859,17 @@ func (worker *MoveWorker) verifyTargets(ctx context.Context, snapshot service.Mo
 	}
 	verified := make(map[uuid.UUID]struct{})
 	for _, file := range snapshot.Files {
-		if _, done := verified[file.InstallationID]; done {
-			continue
-		}
 		installation, ok := byID[file.InstallationID]
 		if !ok || filepath.Clean(installation.RelativePath) != filepath.Clean(file.RelativePath) || installation.PackageKind != string(file.PackageKind) || installation.ReleaseIdentity != file.ReleaseIdentity {
 			return fmt.Errorf("move snapshot does not match managed installation identity")
 		}
-		if file.Version != "" && file.Version != installation.Version {
+		if file.Version == "" || file.Version != installation.Version {
 			return fmt.Errorf("move snapshot does not match managed installation version")
 		}
-		if err := worker.verifyInstallationVersion(ctx, snapshot.NewRoot, file, installation.Version); err != nil {
+		if _, done := verified[file.InstallationID]; done {
+			continue
+		}
+		if err := worker.verifyInstallationVersion(ctx, snapshot.NewRoot, file); err != nil {
 			return err
 		}
 		verified[file.InstallationID] = struct{}{}
@@ -843,19 +877,12 @@ func (worker *MoveWorker) verifyTargets(ctx context.Context, snapshot service.Mo
 	return nil
 }
 
-func (worker *MoveWorker) verifyInstallationVersion(ctx context.Context, root string, file service.MoveFileIdentity, installedVersion string) error {
+func (worker *MoveWorker) verifyInstallationVersion(ctx context.Context, root string, file service.MoveFileIdentity) error {
 	verified, err := worker.lifecycle.VerifyInstallationVerified(ctx, root, file.RelativePath, file.PackageKind, file.ReleaseIdentity, worker.platform.GOOS)
 	if err != nil {
 		return err
 	}
-	expected := file.Version
-	if expected == "" {
-		// Older retained move snapshots did not freeze Version. Their exact
-		// installation ID/path/release identity is checked against the current
-		// row before reaching here, so use that row's stored canonical version.
-		expected = installedVersion
-	}
-	if expected == "" || verified.Version != expected {
+	if file.Version == "" || verified.Version != file.Version {
 		return fmt.Errorf("verified managed installation canonical version changed")
 	}
 	return nil

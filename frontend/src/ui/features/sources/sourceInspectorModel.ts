@@ -107,7 +107,6 @@ export interface SourceInspectorFileSummary {
   readonly sizeBytes?: number;
   readonly modifiedAt?: string;
   readonly availability: SourceInspectorRootStatus;
-  readonly enabled: boolean;
   readonly stale: boolean;
   readonly safeError?: string;
 }

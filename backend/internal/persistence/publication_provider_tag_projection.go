@@ -309,11 +309,6 @@ func acceptedReleaseLabelInfo(raw json.RawMessage) ([]string, []string, error) {
 	return labels, catalogNumbers, nil
 }
 
-func acceptedPublicationGenres(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, error) {
-	genres, _, err := acceptedPublicationGenresWithScope(context, releaseFields)
-	return genres, err
-}
-
 func acceptedPublicationGenresWithScope(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, librarymetadata.Scope, error) {
 	// A genre list is authoritative only when the provider supplied field-level
 	// evidence. The recording must also be explicitly bound to this local edge;

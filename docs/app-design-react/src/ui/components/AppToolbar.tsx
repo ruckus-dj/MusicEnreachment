@@ -44,12 +44,3 @@ export function AppActionToolbar({
     </Toolbar>
   );
 }
-
-export function ToolbarSeparator() {
-  return (
-    <span
-      aria-hidden="true"
-      className="mx-1 hidden h-6 w-px shrink-0 bg-[var(--line)] sm:block"
-    />
-  );
-}

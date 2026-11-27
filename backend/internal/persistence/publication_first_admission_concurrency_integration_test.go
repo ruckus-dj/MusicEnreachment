@@ -59,7 +59,7 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 		query string
 		args  []any
 	}{
-		{`INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, []any{rootID, rootPath, rootPath}},
+		{`INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode,status) VALUES (?,?, 'Source',1,?,'in_place','available')`, []any{rootID, rootPath, rootPath}},
 		{`INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'scan_source','succeeded','succeeded','{}'::jsonb,now())`, []any{scanID}},
 		{`INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?,42,1,'ffprobe 1','{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]}','{}'::jsonb,?,?,1)`, []any{variantID, now, scanID}},
 		{`INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?, 'track.flac',42,?,1,'audio',?)`, []any{locationID, rootID, now, variantID}},

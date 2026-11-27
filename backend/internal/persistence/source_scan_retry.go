@@ -102,9 +102,6 @@ func (repository *SetupManagerRepository) RetrySourceScanOperationAndEnqueue(ctx
 		}
 		locked.InputSnapshot = minimalSnapshot
 		locked.TargetSourceRootID = &root.ID
-		if !root.Enabled {
-			return fmt.Errorf("retry source scan: the root %q is disabled: %w", root.DisplayName, ErrSourceRootDisabled)
-		}
 		active, err := activeSourceScan(ctx, tx, root.ID)
 		if err != nil {
 			return fmt.Errorf("retry source scan: check the active scan of the root: %w", err)

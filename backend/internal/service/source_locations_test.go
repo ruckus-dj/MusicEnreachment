@@ -63,7 +63,7 @@ func (fixture *sourceLocationRepositoryFixture) ListSourceLocationsPage(_ contex
 
 func newSourceLocationsFixture(t *testing.T, paths ...string) (*service.SourceLocations, *sourceLocationRepositoryFixture, *persistence.SourceRoot) {
 	t.Helper()
-	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: "/music", Enabled: true, Status: persistence.SourceRootStatusAvailable}
+	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: "/music", Status: persistence.SourceRootStatusAvailable}
 	mtime := time.Date(2026, time.September, 4, 10, 0, 0, 0, time.UTC)
 	locations := make([]persistence.SourceLocation, 0, len(paths))
 	for _, path := range paths {

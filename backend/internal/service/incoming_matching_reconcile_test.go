@@ -106,51 +106,66 @@ func (stub *reconcileAdmissionStub) AdmitAutomaticArtistMatchingRun(_ context.Co
 	return persistence.AutomaticArtistMatchingAdmissionResult{AlreadyAdmitted: prior}, nil
 }
 
-func TestIncomingMatchingReconciliationPlansAllGroupsAndReplaysAdmissions(t *testing.T) {
+func TestIncomingMatchingCurrentReconciliationPlansAllGroupsAndReplaysAdmissions(t *testing.T) {
 	firstID, secondID := uuid.New(), uuid.New()
 	snapshot := reconcileTestSnapshot(t, map[uuid.UUID]string{firstID: "First", secondID: "Second"}, nil)
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{
+		{GroupID: firstID, RequestedGeneration: 1}, {GroupID: secondID, RequestedGeneration: 1},
+	}}
 	refresh, provider, admission := &reconcileRefreshStub{}, &reconcileProviderStub{}, &reconcileAdmissionStub{}
-	service := NewIncomingMatchingReconciliation(refresh, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{})
+	service := NewIncomingMatchingReconciliation(refresh, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{}, requests)
 	delivery := IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9}
-	if err := service.Reconcile(context.Background(), delivery); err != nil {
+	if err := service.ReconcileCurrent(context.Background(), delivery); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Reconcile(context.Background(), delivery); err != nil {
+	if err := service.ReconcileCurrent(context.Background(), delivery); err != nil {
 		t.Fatal(err)
 	}
-	if refresh.calls != 2 || len(provider.queries) != 4 || len(admission.groups) != 4 || !admission.seen[firstID] || !admission.seen[secondID] {
-		t.Fatalf("refresh=%d queries=%v admitted=%v", refresh.calls, provider.queries, admission.groups)
+	if refresh.calls != 2 || len(provider.queries) != 4 || len(admission.groups) != 4 || len(requests.acked) != 4 ||
+		!admission.seen[firstID] || !admission.seen[secondID] {
+		t.Fatalf("refresh=%d queries=%v admitted=%v acknowledged=%v", refresh.calls, provider.queries, admission.groups, requests.acked)
 	}
 }
 
-func TestIncomingMatchingReconciliationDefersWithoutArtistsAfterProcessingPlannedGroups(t *testing.T) {
-	plannedID, deferredID := uuid.New(), uuid.New()
+func TestIncomingMatchingCurrentReconciliationDefersWithoutArtistsAfterProcessingPlannedGroups(t *testing.T) {
+	// Current reconciliation visits pending generations in group-ID order. Use
+	// fixed IDs so the artist-bearing group is processed before the artistless
+	// fallback defers the delivery.
+	plannedID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	deferredID := uuid.MustParse("00000000-0000-4000-8000-000000000002")
 	snapshot := reconcileTestSnapshot(t, map[uuid.UUID]string{plannedID: "Artist", deferredID: ""}, nil)
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{
+		{GroupID: plannedID, RequestedGeneration: 2}, {GroupID: deferredID, RequestedGeneration: 3},
+	}}
 	provider, admission := &reconcileProviderStub{}, &reconcileAdmissionStub{}
-	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{})
-	err := service.Reconcile(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9})
-	if !errors.Is(err, ErrIncomingMatchingReconciliationDeferred) || len(admission.groups) != 1 || admission.groups[0] != plannedID {
-		t.Fatalf("error=%v admissions=%v", err, admission.groups)
+	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{}, requests)
+	err := service.ReconcileCurrent(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9})
+	if !errors.Is(err, ErrIncomingMatchingReconciliationDeferred) || len(admission.groups) != 1 || admission.groups[0] != plannedID || len(requests.acked) != 1 {
+		t.Fatalf("error=%v admissions=%v acknowledgements=%v", err, admission.groups, requests.acked)
 	}
 }
 
-func TestIncomingMatchingReconciliationDefersWhenMusicBrainzConfigMissing(t *testing.T) {
+func TestIncomingMatchingCurrentReconciliationDefersWhenMusicBrainzConfigMissing(t *testing.T) {
 	groupID := uuid.New()
 	snapshot := reconcileTestSnapshot(t, map[uuid.UUID]string{groupID: "Artist"}, nil)
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{{GroupID: groupID, RequestedGeneration: 4}}}
 	provider := &reconcileProviderStub{err: ErrMusicBrainzConfigurationMissing}
 	admission := &reconcileAdmissionStub{}
-	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{})
-	err := service.Reconcile(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9})
-	if !errors.Is(err, ErrIncomingMatchingReconciliationDeferred) || len(admission.groups) != 0 {
-		t.Fatalf("error=%v admissions=%v", err, admission.groups)
+	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{}, requests)
+	err := service.ReconcileCurrent(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9})
+	if !errors.Is(err, ErrIncomingMatchingReconciliationDeferred) || len(admission.groups) != 0 || len(requests.acked) != 0 {
+		t.Fatalf("error=%v admissions=%v acknowledgements=%v", err, admission.groups, requests.acked)
 	}
 }
 
-func TestIncomingMatchingReconciliationReturnsInfrastructureFailureForRetry(t *testing.T) {
+func TestIncomingMatchingCurrentReconciliationReturnsInfrastructureFailureForRetry(t *testing.T) {
 	firstID, secondID := uuid.New(), uuid.New()
 	snapshot := reconcileTestSnapshot(t, map[uuid.UUID]string{firstID: "First", secondID: "Second"}, nil)
-	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, &reconcileProviderStub{}, &reconcileAdmissionStub{failOnCall: 2}, reconcileRiverStub{})
-	if err := service.Reconcile(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9}); err == nil || errors.Is(err, ErrIncomingMatchingReconciliationDeferred) {
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{
+		{GroupID: firstID, RequestedGeneration: 5}, {GroupID: secondID, RequestedGeneration: 5},
+	}}
+	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, &reconcileProviderStub{}, &reconcileAdmissionStub{failOnCall: 2}, reconcileRiverStub{}, requests)
+	if err := service.ReconcileCurrent(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9}); err == nil || errors.Is(err, ErrIncomingMatchingReconciliationDeferred) {
 		t.Fatalf("error=%v, want retryable admission error", err)
 	}
 }

@@ -16,9 +16,8 @@ import (
 // TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL pins the root
 // exclusivity the enqueue decides under the operation table lock: an active
 // analysis excludes another analysis and a scan start, a root edit that changes
-// the path or the enabled state and a root deletion all refuse while it runs,
-// while a display-name edit is accepted and a root deletion succeeds once the
-// analysis is terminal.
+// the path and a root deletion all refuse while it runs, while a display-name
+// edit is accepted and a root deletion succeeds once the analysis is terminal.
 func runSourceAnalysisEnqueueRootExclusivity(t *testing.T, database *bun.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -51,19 +50,13 @@ func runSourceAnalysisEnqueueRootExclusivity(t *testing.T, database *bun.DB) {
 	}
 
 	renamed := "Renamed"
-	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+	if err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
 		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, DisplayName: &renamed,
 	}); err != nil {
 		t.Fatalf("display-name edit with an active analysis = %v, want it accepted", err)
 	}
-	disabled := false
-	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
-		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, Enabled: &disabled,
-	}); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
-		t.Fatalf("disable with an active analysis = %v, want ErrSourceRootActiveScan", err)
-	}
 	moved := root.ConfiguredPath + "-moved"
-	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+	if err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
 		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, ConfiguredPath: &moved,
 	}); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("path change with an active analysis = %v, want ErrSourceRootActiveScan", err)
@@ -72,7 +65,7 @@ func runSourceAnalysisEnqueueRootExclusivity(t *testing.T, database *bun.DB) {
 	// writes only its mode, so the sibling display-name edit survives even
 	// though the patch still carries the old generation and no name.
 	staged := service.SourceProcessingModeStaged
-	if _, err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
+	if err := inventory.UpdateSourceRoot(ctx, persistence.SourceRootPatch{
 		ID: root.ID, ExpectedScanGeneration: root.ScanGeneration, ProcessingMode: &staged,
 	}); err != nil {
 		t.Fatalf("mode edit after a sibling display-name edit = %v, want it accepted", err)

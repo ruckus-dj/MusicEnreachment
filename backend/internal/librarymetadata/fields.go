@@ -52,8 +52,6 @@ var fieldDefinitions = []FieldDefinition{
 	{Name: "sort_title", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "artist_credit", Type: TypeArtistCredit, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}, Canonical: true},
 	{Name: "artists", Type: TypeStringList, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
-	{Name: "artist_sort_names", Type: TypeStringList, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
-	{Name: "album_artist_sort_names", Type: TypeStringList, Scopes: []Scope{ScopeRelease}},
 	{Name: "release_date", Type: TypeDate, Scopes: []Scope{ScopeRelease}},
 	{Name: "original_release_date", Type: TypeDate, Scopes: []Scope{ScopeRelease}},
 	{Name: "recording_date", Type: TypeDate, Scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},

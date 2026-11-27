@@ -271,23 +271,6 @@ func TestSourceScanStartRefusesAnUnusablePlatformAndAnUnfinishedSetup(t *testing
 	}
 }
 
-// TestSourceScanStartRefusesADisabledRootThroughTheRepository pins the mapping
-// the start applies to the root state only the transaction can decide: the
-// disabled refusal is reported as ErrSourceScanDisabled and carries no
-// operation.
-func TestSourceScanStartRefusesADisabledRootThroughTheRepository(t *testing.T) {
-	fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
-	fixture.repository.enqueueErr = fmt.Errorf("enqueue source scan: the root %q is disabled: %w", fixture.root.DisplayName, persistence.ErrSourceRootDisabled)
-
-	operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
-	if !errors.Is(err, service.ErrSourceScanDisabled) {
-		t.Fatalf("start on a disabled root = %+v, %v; want ErrSourceScanDisabled", operation, err)
-	}
-	if operation != nil {
-		t.Fatalf("refused start returned the operation %+v, want none", operation)
-	}
-}
-
 // TestSourceScanStartRecordsAProvenInaccessibleRootWithoutAnOperation pins the
 // start half of the unavailable state: a registered directory the validator
 // proves inaccessible is recorded on the root with a nonempty safe reason, and
@@ -348,8 +331,7 @@ func TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure(t *te
 	t.Run("duplicate configured path", func(t *testing.T) {
 		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
 		fixture.repository.roots = append(fixture.repository.roots, &persistence.SourceRoot{
-			ID: uuid.New(), DisplayName: "Duplicate", ConfiguredPath: fixture.root.ConfiguredPath, Enabled: true,
-		})
+			ID: uuid.New(), DisplayName: "Duplicate", ConfiguredPath: fixture.root.ConfiguredPath})
 
 		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
 

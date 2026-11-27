@@ -36,6 +36,26 @@ func TestApplyInstallsBaselineAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyRequiresAnExplicitSourceRootProcessingMode(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	if columnExists(t, db, "source_root", "enabled") {
+		t.Error("source roots still have a disabled state")
+	}
+	var explicitMode bool
+	err := db.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'source_root'
+		  AND column_name = 'processing_mode' AND column_default IS NULL AND is_nullable = 'NO'
+	)`).Scan(t.Context(), &explicitMode)
+	if err != nil {
+		t.Fatalf("read processing mode column: %v", err)
+	}
+	if !explicitMode {
+		t.Error("source root processing mode must be required and have no default")
+	}
+}
+
 func TestApplyRejectsUnknownAppliedMigrationWithoutTouchingSchema(t *testing.T) {
 	for _, applied := range []struct {
 		name   string
@@ -44,6 +64,7 @@ func TestApplyRejectsUnknownAppliedMigrationWithoutTouchingSchema(t *testing.T) 
 		{name: "20261015000001", reason: "historical migration name"},
 		{name: "20261127000300", reason: "superseded pre-release baseline"},
 		{name: "20261127000400", reason: "superseded pre-release baseline"},
+		{name: "20261127000500", reason: "superseded pre-release baseline"},
 		{name: "20990101000000", reason: "unknown newer migration name"},
 	} {
 		t.Run(applied.name, func(t *testing.T) {

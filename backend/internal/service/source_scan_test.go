@@ -79,7 +79,7 @@ func newSourceScanFixture(t *testing.T) (*sourceScanRepositoryFixture, *SourceSc
 		t.Fatal(err)
 	}
 	repository := &sourceScanRepositoryFixture{
-		root:       &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: rootPath, Enabled: true},
+		root:       &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: rootPath},
 		candidates: make(map[uuid.UUID][]persistence.SourceScanCandidateInput),
 	}
 	request := SourceScanRequest{OperationID: uuid.New(), RootID: repository.root.ID, ExpectedConfiguredPath: rootPath, ExpectedAttempt: 1, ExpectedJobID: 11}
@@ -134,20 +134,15 @@ func TestSourceScanRequiresDeliveryIdentityAndRefusesStaleRootBeforeWrites(t *te
 	for _, test := range []struct {
 		name   string
 		mutate func(*SourceScanRequest)
-		root   func(*persistence.SourceRoot)
 	}{
 		{name: "missing attempt", mutate: func(request *SourceScanRequest) { request.ExpectedAttempt = 0 }},
 		{name: "missing job", mutate: func(request *SourceScanRequest) { request.ExpectedJobID = 0 }},
-		{name: "disabled", root: func(root *persistence.SourceRoot) { root.Enabled = false }},
 		{name: "path changed", mutate: func(request *SourceScanRequest) { request.ExpectedConfiguredPath += "-old" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := request
 			if test.mutate != nil {
 				test.mutate(&current)
-			}
-			if test.root != nil {
-				test.root(repository.root)
 			}
 			before := len(repository.deletions)
 			if _, err := scan.EnumerateObserved(context.Background(), current); err == nil {
@@ -156,7 +151,6 @@ func TestSourceScanRequiresDeliveryIdentityAndRefusesStaleRootBeforeWrites(t *te
 			if len(repository.deletions) != before {
 				t.Fatal("invalid delivery or stale root reached candidate persistence")
 			}
-			repository.root.Enabled = true
 		})
 	}
 }

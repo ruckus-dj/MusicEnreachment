@@ -28,8 +28,6 @@ import {
   projectScopedContributorTags,
 } from "./metadata/scopedContributors";
 
-export type TagScope = "artist" | "release" | "track";
-
 export function TagsComparison({
   release,
   track,

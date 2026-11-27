@@ -14,14 +14,8 @@ func TestPublicationAudioStreamsExposeVerifiedStreamMetadata(t *testing.T) {
 	if len(streams) != 2 || streams[0] != (publicationAudioStream{Index: 2, Title: "Main", Language: "eng"}) || streams[1] != (publicationAudioStream{Index: 5, Title: "Commentary", Language: "fra"}) {
 		t.Fatalf("audio streams = %#v", streams)
 	}
-	if _, ok := uniquePublicationAudioIndex(raw); ok {
-		t.Fatal("multiple streams were treated as unique")
-	}
 	one, err := publicationAudioStreams(json.RawMessage(`{"streams":[{"index":2,"codec_type":"audio"}]}`))
-	if err != nil || len(one) != 1 {
+	if err != nil || len(one) != 1 || one[0].Index != 2 {
 		t.Fatalf("single stream parse = %#v, %v", one, err)
-	}
-	if index, ok := uniquePublicationAudioIndex(json.RawMessage(`{"streams":[{"index":2,"codec_type":"audio"}]}`)); !ok || index != 2 {
-		t.Fatalf("unique audio stream = %d, %v", index, ok)
 	}
 }

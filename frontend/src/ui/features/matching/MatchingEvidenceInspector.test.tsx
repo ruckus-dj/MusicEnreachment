@@ -1,14 +1,15 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
+import {
+  MatchingEvidenceInspector,
+  type MatchingEvidenceInspectorProps,
+} from "./MatchingEvidenceInspector";
 import type {
-  MatchingReviewCandidate,
-  MatchingReviewLayoutPosition,
-} from "../../api/generated/client.schemas";
-import { I18nProvider } from "../../app/i18n/host";
-import { createMemoryStorage } from "../../test/memoryStorage";
-import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
+  MatchingWorkspaceCandidate,
+  MatchingWorkspacePosition,
+} from "./types";
 
-const position: MatchingReviewLayoutPosition = {
+const position: MatchingWorkspacePosition = {
   track_id: "track-1",
   medium: 0,
   position: 0,
@@ -17,7 +18,7 @@ const position: MatchingReviewLayoutPosition = {
   title: "First",
 };
 
-const candidate: MatchingReviewCandidate = {
+const candidate: MatchingWorkspaceCandidate = {
   file_member_id: "member-1",
   release_id: "release-1",
   release_confidence: 0.55,
@@ -98,17 +99,16 @@ const rawTags = {
 };
 
 function renderInspector(
-  overrides: Partial<Parameters<typeof MatchingEvidenceInspector>[0]> = {},
+  overrides: Partial<MatchingEvidenceInspectorProps> = {},
 ) {
   return render(
-    <I18nProvider>
-      <MatchingEvidenceInspector
-        candidate={candidate}
-        position={position}
-        rawTags={rawTags}
-        {...overrides}
-      />
-    </I18nProvider>,
+    <MatchingEvidenceInspector
+      locale="en"
+      candidate={candidate}
+      position={position}
+      rawTags={rawTags}
+      {...overrides}
+    />,
   );
 }
 
@@ -117,16 +117,6 @@ function evidenceRegion() {
     name: "Current evaluation evidence",
   });
 }
-
-beforeEach(() => {
-  const storage = createMemoryStorage();
-  storage.setItem("melotrove-language", "en");
-  vi.stubGlobal("localStorage", storage);
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 it("shows one short percentage for the selected track", () => {
   renderInspector();

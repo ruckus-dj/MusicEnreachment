@@ -110,7 +110,6 @@ type SourceFingerprintResponse struct {
 type SourceLocationRootStateResponse struct {
 	Status        string  `json:"status" enum:"unknown,available,unavailable"`
 	SafeError     *string `json:"safe_error,omitempty"`
-	Enabled       bool    `json:"enabled"`
 	Stale         bool    `json:"stale"`
 	InventoryPath *string `json:"inventory_path,omitempty"`
 }
@@ -192,7 +191,7 @@ func sourceLocationDetailResponse(detail service.SourceLocationDetail) (SourceLo
 		Steps:                     make([]SourceAnalysisStepResponse, 0, len(detail.Steps)),
 		MatchingEligible:          detail.MatchingEligible,
 		Root: SourceLocationRootStateResponse{
-			Status: detail.Root.Status, SafeError: detail.Root.SafeError, Enabled: detail.Root.Enabled,
+			Status: detail.Root.Status, SafeError: detail.Root.SafeError,
 			Stale: detail.Root.Stale, InventoryPath: detail.Root.InventoryPath,
 		},
 	}

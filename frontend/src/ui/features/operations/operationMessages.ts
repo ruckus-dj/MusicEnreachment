@@ -1,5 +1,4 @@
 import { createNamespace } from "../../i18n/createNamespace";
-import type { Locale } from "../../i18n/types";
 import operationKindLabels from "./operationKindLabels.json";
 import { operationsScreenCopy } from "./operationsScreenCopy";
 
@@ -75,30 +74,6 @@ export const operationMessages = createNamespace({
     unknownTarget: "Unknown target",
     noCurrentOperations: "No current operations.",
     writeAccessFailure: "EACCES: no write access to the temporary directory",
-    otherTrackActions: "Other actions",
-    editLocalTitle: "Edit local title",
-    refreshProviderCache: "Refresh provider cache",
-    providerCacheRefreshed:
-      "Provider cache refreshed separately. The publication and metadata snapshot are unchanged.",
-    republishExplicit: "Republish explicitly",
-    chooseSource:
-      "Choose a source before explicitly republishing. No alternative source is selected automatically.",
-    republishTitle: "Explicitly republish from the selected source?",
-    republishDescription:
-      "This explicitly replaces the current publication using the selected source, even when metadata is unchanged. It is separate from retry.",
-    republished:
-      "The current publication snapshot was replaced using the selected source.",
-    downgradeRequired: "The downgrade was not confirmed.",
-    confirmDowngrade: "I confirm the quality downgrade",
-    editTagsOnly: "Edit local tags only",
-    trackTitle: "Position title",
-    sourceAndFormat: "{title} · {path} · {codec}",
-    renamePreserves:
-      "The source, provider cache, and current publication remain unchanged.",
-    publicationPreserves:
-      "The current publication's tags, embedded artwork, and lyrics remain unchanged.",
-    cancelAction: "Cancel",
-    confirmAction: "Confirm",
   },
   ru: {
     ...operationsScreenCopy.ru,
@@ -172,42 +147,7 @@ export const operationMessages = createNamespace({
     unknownTarget: "Неизвестный объект",
     noCurrentOperations: "Нет текущих операций.",
     writeAccessFailure: "EACCES: нет записи во временном каталоге",
-    otherTrackActions: "Другие действия",
-    editLocalTitle: "Изменить локальное название",
-    refreshProviderCache: "Обновить кэш провайдера",
-    providerCacheRefreshed:
-      "Кэш провайдера обновлён отдельно. Публикация и снимок метаданных не изменились.",
-    republishExplicit: "Перепубликовать явно",
-    chooseSource:
-      "Для явной перепубликации выберите исходник. Альтернативный вариант автоматически не выбирается.",
-    republishTitle: "Явно перепубликовать из выбранного исходника?",
-    republishDescription:
-      "Это действие явно заменяет текущую публикацию из выбранного исходника, даже если метаданные не изменились. Оно отличается от повтора.",
-    republished:
-      "Снимок текущей публикации заменён с использованием выбранного исходника.",
-    downgradeRequired: "Понижение качества не подтверждено.",
-    confirmDowngrade: "Подтверждаю понижение качества",
-    editTagsOnly: "Изменить только локальные теги",
-    trackTitle: "Название позиции",
-    sourceAndFormat: "{title} · {path} · {codec}",
-    renamePreserves:
-      "Исходник, кэш провайдера и текущая публикация останутся прежними.",
-    publicationPreserves:
-      "Теги, встроенная обложка и текст песни текущей публикации останутся без изменений.",
-    cancelAction: "Отмена",
-    confirmAction: "Подтвердить",
   },
 });
 
 export type OperationMessage = keyof typeof operationMessages.en;
-
-export function operationMessage(
-  locale: Locale,
-  key: OperationMessage,
-  values: Record<string, string | number> = {},
-) {
-  return operationMessages[locale][key].replace(
-    /\{([^}]+)\}/g,
-    (_, name: string) => String(values[name] ?? `{${name}}`),
-  );
-}

@@ -163,14 +163,6 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 	if blocked.Code != http.StatusConflict {
 		t.Fatalf("deletion during an active scan status=%d: %s", blocked.Code, blocked.Body.String())
 	}
-	disabled := sourceRequest(t, handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"enabled":false}`)
-	if disabled.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("enabled field status=%d, want %d: %s", disabled.Code, http.StatusUnprocessableEntity, disabled.Body.String())
-	}
-	unchanged, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil || !unchanged.Enabled {
-		t.Fatalf("rejected enabled field changed the root: root=%+v err=%v", unchanged, err)
-	}
 	newSourcePath := t.TempDir()
 	pathEditBody := fmt.Sprintf(`{"configured_path":%q}`, newSourcePath)
 	pathEdit := sourceRequest(t, handler, http.MethodPatch, "/sources/"+root.ID.String(), pathEditBody)
@@ -299,7 +291,7 @@ func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a refused mutation removed the root: %v", err)
 	}
-	if stored.DisplayName != root.DisplayName || stored.ConfiguredPath != root.ConfiguredPath || !stored.Enabled {
+	if stored.DisplayName != root.DisplayName || stored.ConfiguredPath != root.ConfiguredPath {
 		t.Fatalf("a refused mutation changed the stored root: %+v", stored)
 	}
 	if count, err := inventory.CountSourceLocations(ctx, root.ID); err != nil || count != 1 {

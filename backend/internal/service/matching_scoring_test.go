@@ -186,12 +186,12 @@ func TestGoTextCanonicalizationGoldenCases(t *testing.T) {
 		{"!!!", "???", 0},
 		{"a b", "a", 0.7666666666666667},
 	} {
-		got, err := matchingTextSimilarity(test.left, test.right)
+		factor, err := matchingTextFactor(MatchingRecordingTitle, MatchingTextPair{Source: []string{test.left}, Candidate: []string{test.right}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if math.Abs(got-test.want) > 1e-12 {
-			t.Errorf("Go text similarity(%q, %q) = %.15f, want %.15f", test.left, test.right, got, test.want)
+		if factor.State != MatchingFactorAvailable || math.Abs(factor.Value-test.want) > 1e-12 {
+			t.Errorf("Go text similarity(%q, %q) = (%q, %.15f), want available %.15f", test.left, test.right, factor.State, factor.Value, test.want)
 		}
 	}
 }

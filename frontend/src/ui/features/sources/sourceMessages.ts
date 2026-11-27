@@ -13,16 +13,13 @@ const en = {
   connectedSources: "Connected sources",
   noneRegistered: "No sources are registered.",
   sourceCaption:
-    "Registered server sources: name, path, availability, enabled state, last scan, and inventory",
+    "Registered server sources: name, path, availability, last scan, and inventory",
   nameColumn: "Name",
   pathColumn: "Path",
   availability: "Availability",
-  enabled: "Enabled",
   lastScan: "Last scan",
   inventory: "Inventory",
   actions: "Actions",
-  enabledYes: "Enabled",
-  enabledNo: "Disabled",
   openSource: "Open {name}",
   unavailableInventory:
     "An unavailable source or changed path does not remove the previous inventory; it remains from the last successful scan.",
@@ -48,7 +45,6 @@ const en = {
   analysisImpact: "Analysis impact",
   analysisDoesNotChange: "Analysis does not change the source file",
   sourceAvailability: "Source availability",
-  disabledAnalysis: "Source is disabled: analysis is unavailable.",
   staleInventory: "Inventory is stale. Scan the current source path first.",
   unavailableResult:
     "Source is unavailable. The saved result is still available.",
@@ -127,8 +123,6 @@ const en = {
   scanningTitle: "Scanning",
   manualScanOnly:
     "Scanning starts only when requested. The number of files is unknown in advance, so server stages are shown without percentages or byte counters.",
-  disabledScan:
-    "Source is disabled: new scans are not allowed until it is enabled.",
   checkingScan: "Checking for an active scan of this source…",
   queuedScan: "Scan queued.",
   traversing: "Scanning directory: listing files and reading their metadata.",
@@ -145,7 +139,7 @@ const en = {
   sourceMissing:
     "Source not found; it may have been deleted in another window.",
   scanRejected:
-    "The server rejected the scan: the source may be disabled or unavailable, or setup may be incomplete.",
+    "The server rejected the scan: the source may be unavailable, or setup may be incomplete.",
   serverError: "The server returned an error ({status}).",
   scanFailed: "The scan did not complete. Try again.",
   listUnavailable: "Could not load the sources.",
@@ -156,7 +150,7 @@ const en = {
     "The source is busy or changed while saving. Check its state and try again.",
   deleteUnavailable: "Could not delete the source.",
   sourceConflict:
-    "The source is used by an active scan. Path changes, disabling, and deletion were rejected; retry after the scan completes.",
+    "The source is used by an active scan. Path changes and deletion were rejected; retry after the scan completes.",
   deleteConfirmationStale:
     "Deletion confirmation no longer matches the current source. Refresh the page and retry.",
   sourcePathRejected:
@@ -204,16 +198,13 @@ const ru: Record<keyof typeof en, string> = {
   connectedSources: "Подключённые каталоги",
   noneRegistered: "Ни один каталог не зарегистрирован.",
   sourceCaption:
-    "Зарегистрированные серверные каталоги: имя, путь, доступность, включение, последнее сканирование и инвентарь",
+    "Зарегистрированные серверные каталоги: имя, путь, доступность, последнее сканирование и инвентарь",
   nameColumn: "Имя",
   pathColumn: "Путь",
   availability: "Доступность",
-  enabled: "Включён",
   lastScan: "Последнее сканирование",
   inventory: "Инвентарь",
   actions: "Действия",
-  enabledYes: "Включён",
-  enabledNo: "Выключен",
   openSource: "Открыть {name}",
   unavailableInventory:
     "Недоступность каталога или смена пути не удаляют прежний инвентарь: он остаётся от последнего успешного сканирования.",
@@ -239,7 +230,6 @@ const ru: Record<keyof typeof en, string> = {
   analysisImpact: "Воздействие анализа",
   analysisDoesNotChange: "Анализ не изменяет исходный файл",
   sourceAvailability: "Доступность каталога",
-  disabledAnalysis: "Каталог выключен: анализ недоступен.",
   staleInventory:
     "Инвентарь устарел: сначала сканируйте текущий путь каталога.",
   unavailableResult:
@@ -333,8 +323,6 @@ const ru: Record<keyof typeof en, string> = {
   scanningTitle: "Сканирование",
   manualScanOnly:
     "Сканирование запускается только вручную. Число файлов заранее неизвестно, поэтому показываются этапы сервера, без процентов и счётчиков байтов.",
-  disabledScan:
-    "Каталог выключен: новые сканирования запрещены, пока каталог не включён.",
   checkingScan: "Проверяем активное сканирование этого каталога…",
   queuedScan: "Сканирование поставлено в очередь.",
   traversing: "Обход каталога: перечисление файлов и чтение их метаданных.",
@@ -350,7 +338,7 @@ const ru: Record<keyof typeof en, string> = {
     "Сканирование уже выполняется: сервер отклонил повторный запуск. Дождитесь завершения текущего сканирования и повторите.",
   sourceMissing: "Каталог не найден: возможно, его удалили в другом окне.",
   scanRejected:
-    "Сервер отклонил сканирование: каталог выключен, недоступен или настройка ещё не завершена.",
+    "Сервер отклонил сканирование: каталог недоступен или настройка ещё не завершена.",
   serverError: "Сервер вернул ошибку {status}.",
   scanFailed: "Сканирование не завершилось. Повторите попытку.",
   listUnavailable: "Не удалось загрузить каталоги.",
@@ -361,7 +349,7 @@ const ru: Record<keyof typeof en, string> = {
     "Источник занят или изменился во время сохранения. Проверьте его состояние и повторите попытку.",
   deleteUnavailable: "Не удалось удалить каталог.",
   sourceConflict:
-    "Каталог участвует в активном сканировании. Изменение пути, отключение и удаление отклонены сервером: повторите после завершения сканирования.",
+    "Каталог участвует в активном сканировании. Изменение пути и удаление отклонены сервером: повторите после завершения сканирования.",
   deleteConfirmationStale:
     "Подтверждение удаления не совпало с текущим каталогом: обновите страницу и повторите.",
   sourcePathRejected:
@@ -393,11 +381,4 @@ export function sourceMessage(
     /\{([^}]+)\}/g,
     (_, name: string) => String(values[name] ?? `{${name}}`),
   );
-}
-
-export function numberFormat(
-  locale: Locale,
-  options?: Intl.NumberFormatOptions,
-) {
-  return new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", options);
 }

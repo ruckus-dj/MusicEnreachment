@@ -46,7 +46,7 @@ func newSourceAnalysisStartIntegration(t *testing.T, completeSetup bool) sourceA
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
-	root := &persistence.SourceRoot{ConfiguredPath: "/srv/analysis-start", DisplayName: "Music", Enabled: true}
+	root := &persistence.SourceRoot{ConfiguredPath: "/srv/analysis-start", DisplayName: "Music", ProcessingMode: "in_place"}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatalf("create the analysis root: %v", err)
 	}

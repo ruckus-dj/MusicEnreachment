@@ -22,7 +22,6 @@ it("compares only the chosen location and distinguishes missing CURRENT evidence
       root_id: `root-${locationId}`,
       probe_status: "succeeded",
       relative_path: `${locationId}.flac`,
-      root_enabled: true,
       root_status: "available",
       size_bytes: 1234,
     }),

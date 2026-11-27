@@ -89,11 +89,7 @@ func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, i
 		return prepared, err
 	}
 	if fence != nil {
-		activeRevision := fence.ActiveGroupRevision
-		if activeRevision == "" {
-			activeRevision = fence.GroupRevision
-		}
-		if len(groups) != 1 || groups[0].Revision != activeRevision {
+		if len(groups) != 1 || groups[0].Revision != fence.ActiveGroupRevision {
 			return prepared, ErrMatchingEvaluationDeferred
 		}
 		// Scoring uses the visible members, but the sealed result continues

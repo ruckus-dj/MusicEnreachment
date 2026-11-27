@@ -44,7 +44,7 @@ func newFirstAdmissionFixture(t *testing.T, ctx context.Context, db *bun.DB) *fi
 	const relative = "track.flac"
 	now := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
 	rootID, locationID, workID, variantID, scanID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, rootPath, rootPath); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode,status) VALUES (?,?, 'Source',1,?,'in_place','available')`, rootID, rootPath, rootPath); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'scan_source','succeeded','succeeded','{}'::jsonb,now())`, scanID); err != nil {

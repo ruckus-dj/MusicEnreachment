@@ -337,12 +337,6 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 		if value.State == librarymetadata.StateAbsent {
 			continue
 		}
-		// Artist sort tags are derived from artist credits. Stored legacy
-		// independent sort lists remain decodable but must not override the
-		// credit-derived values.
-		if name == "artist_sort_names" || name == "album_artist_sort_names" {
-			continue
-		}
 		keys, supported := normalizedTagKeys(scope, name)
 		if !supported {
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "no approved normalized TagLib mapping"}
@@ -433,7 +427,7 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 
 func isArtistCreditProjectionField(name string) bool {
 	switch name {
-	case "artist_credit", "artists", "artist_mbid", "album_artist_mbid", "artist_sort_names", "album_artist_sort_names":
+	case "artist_credit", "artists", "artist_mbid", "album_artist_mbid":
 		return true
 	default:
 		return false

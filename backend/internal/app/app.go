@@ -318,7 +318,6 @@ func Run(ctx context.Context, config Config) error {
 	moveWorker.SetPendingDispatcher(sourceAnalysis)
 	installWorker.SetMoveWorker(moveWorker)
 	sourceRoots := service.NewSourceRoots(sourceInventory, registry)
-	sourceRoots.SetPendingDispatcher(sourceAnalysis)
 	scanWorker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, sourceRoots, registry, platform,

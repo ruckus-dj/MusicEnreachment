@@ -16,13 +16,10 @@ import (
 
 type SourceEnumerationScope = persistence.SourceEnumerationScope
 
-// EnumerateSourceTree enumerates approved files and records unreadable scopes.
-// Cancellation, namespace changes and visitor failures abort rather than yielding
-// a partial result that could be mistaken for an authoritative inventory.
-func EnumerateSourceTree(ctx context.Context, rootPath string, visit SourceWalkVisitor) ([]SourceEnumerationScope, error) {
-	return enumerateSourceTree(ctx, sourcefs.NewOpener(), rootPath, visit)
-}
-
+// enumerateSourceTree enumerates approved files and records unreadable scopes.
+// Cancellation, namespace changes and visitor failures abort rather than
+// yielding a partial result that could be mistaken for an authoritative
+// inventory.
 func enumerateSourceTree(ctx context.Context, opener sourcefs.Opener, rootPath string, visit SourceWalkVisitor) ([]SourceEnumerationScope, error) {
 	if !filepath.IsAbs(rootPath) {
 		return nil, fmt.Errorf("enumerate source tree: root %q is not an absolute path", rootPath)

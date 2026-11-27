@@ -23,9 +23,9 @@ func TestBuildFirstPublicationPreviewChecksSharedNamespaceLayouts(t *testing.T) 
 	}
 	selectedTools := []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", Version: "ffmpeg 7.0.0 + ffprobe 7.0.0"}}
 
-	defaultPreview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{
+	defaultPreview, err := buildFirstPublicationPreviewSelected(snapshot, settings.RuntimeSettings{
 		PublicationFormat: "mka", PublicationPathTemplate: publication.DefaultTemplate,
-	}, selectedTools, releaseID, positionID)
+	}, selectedTools, releaseID, positionID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,9 +33,9 @@ func TestBuildFirstPublicationPreviewChecksSharedNamespaceLayouts(t *testing.T) 
 		t.Fatalf("supported default namespace was rejected: %#v", defaultPreview.Blockers)
 	}
 
-	customPreview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{
+	customPreview, err := buildFirstPublicationPreviewSelected(snapshot, settings.RuntimeSettings{
 		PublicationFormat: "mka", PublicationPathTemplate: "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}",
-	}, selectedTools, releaseID, positionID)
+	}, selectedTools, releaseID, positionID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,9 +65,9 @@ func TestFirstPublicationDefaultPathUsesUnbracketedEightCharacterMBIDParts(t *te
 			Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
 		}},
 	}
-	preview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{
+	preview, err := buildFirstPublicationPreviewSelected(snapshot, settings.RuntimeSettings{
 		PublicationFormat: "source", PublicationPathTemplate: publication.DefaultTemplate,
-	}, []persistence.SourceAnalysisToolSelection{{Executable: "ffmpeg"}, {Executable: "ffprobe"}}, releaseID, positionID)
+	}, []persistence.SourceAnalysisToolSelection{{Executable: "ffmpeg"}, {Executable: "ffprobe"}}, releaseID, positionID, nil)
 	if err != nil || len(preview.Blockers) != 0 {
 		t.Fatalf("default preview blockers = %v, error = %v", preview.Blockers, err)
 	}

@@ -230,7 +230,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		t.Fatal(err)
 	}
 	rootID, locationID, workID, variantID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, sourceRoot, sourceRoot); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode,status) VALUES (?,?, 'Source',1,?,'in_place','available')`, rootID, sourceRoot, sourceRoot); err != nil {
 		t.Fatal(err)
 	}
 	scanOperationID := uuid.New()

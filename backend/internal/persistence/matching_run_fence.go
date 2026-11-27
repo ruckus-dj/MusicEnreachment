@@ -22,9 +22,9 @@ type MatchingRunFenceSnapshot struct {
 	GroupID       uuid.UUID
 	GroupRevision string
 	// ActiveGroupRevision is the frozen active-ready revision captured at
-	// admission. GroupRevision remains the raw incoming_group revision used by
-	// seals and historical layout evidence. It is tagged for the sealed-authority
-	// document so a legacy payload without the field keeps its original digest.
+	// automatic admission. GroupRevision remains the raw incoming_group revision
+	// used by seals and layout evidence. Raw-only fallback evidence does not carry
+	// an active revision.
 	ActiveGroupRevision string `json:"active_group_revision,omitempty"`
 	Capture             json.RawMessage
 	CaptureDigest       string
@@ -119,17 +119,16 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 	if err != nil || !equalDigest(digest[:], targets[0].Digest) || hex.EncodeToString(digest[:]) != plan.TargetCaptureDigest {
 		return result, false, fmt.Errorf("read matching run fence: target capture digest changed")
 	}
-	activeGroupRevision := targets[0].Revision
 	var frozen struct {
 		SchemaVersion       int    `json:"schema_version"`
 		ActiveGroupRevision string `json:"active_group_revision"`
 	}
-	if json.Unmarshal(canonicalCapture, &frozen) == nil && frozen.SchemaVersion == 2 && frozen.ActiveGroupRevision != "" {
-		activeGroupRevision = frozen.ActiveGroupRevision
+	if err := json.Unmarshal(canonicalCapture, &frozen); err != nil || frozen.SchemaVersion != 2 || frozen.ActiveGroupRevision == "" {
+		return result, false, fmt.Errorf("read matching run fence: automatic target has no valid active group revision")
 	}
 	result = MatchingRunFenceSnapshot{
 		Version: 2, GroupID: targets[0].GroupID, GroupRevision: targets[0].Revision,
-		ActiveGroupRevision: activeGroupRevision,
+		ActiveGroupRevision: frozen.ActiveGroupRevision,
 		Capture:             canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:]), LayoutTarget: intent.LayoutTarget,
 	}
 	return result, true, nil

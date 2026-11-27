@@ -107,7 +107,6 @@ func sourceAnalysisActionError(err error) error {
 	case errors.Is(err, service.ErrSourceAnalysisToolUnavailable):
 		return huma.Error503ServiceUnavailable("the required managed source-analysis tool is unavailable")
 	case errors.Is(err, service.ErrSourceAnalysisStale),
-		errors.Is(err, service.ErrSourceAnalysisDisabled),
 		errors.Is(err, service.ErrSourceAnalysisBusy),
 		errors.Is(err, service.ErrSourceAnalysisMoveActive),
 		errors.Is(err, service.ErrSourceAnalysisToolChanged):

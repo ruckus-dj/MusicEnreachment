@@ -4,17 +4,15 @@
 // The first supported transform repairs text whose original Windows-1251 bytes
 // were decoded as ISO-8859-1 ("Latin-1"), for example
 // "Punk-O-Ìàíèÿ 2" -> "Punk-O-Мания 2". Detection is purely structural: it
-// considers only the supplied saved value and, for AnalyzeGroup, other supplied
-// saved values. It never inspects provider candidates, paths, or audio
-// evidence.
+// considers only the supplied saved value. It never inspects provider
+// candidates, paths, or audio evidence.
 //
 // Detection is intentionally narrow. It does not repair UTF-8 mojibake, other
 // legacy encodings, or values containing characters outside ASCII and
-// U+00A0..U+00FF. A candidate is never applied automatically, even when group
-// corroborated.
+// U+00A0..U+00FF. Ambiguous candidates are never applied automatically.
 //
 // Raw tags are never modified. Apply clones the map and changes only the
-// explicitly keyed values; Undo reverses an applied overlay.
+// explicitly keyed values.
 package tagencoding
 
 import (
@@ -29,7 +27,7 @@ import (
 )
 
 const (
-	// ReportVersion is the wire version of Report and GroupReport.
+	// ReportVersion is the wire version of Report.
 	ReportVersion = 1
 	// OverlayVersion is the wire version of Overlay.
 	OverlayVersion = 1
@@ -66,20 +64,15 @@ const (
 	DecisionAutomatic          Decision = "automatic"
 	DecisionCandidate          Decision = "candidate"
 	DecisionConfirmedCandidate Decision = "confirmed_candidate"
-	DecisionUndo               Decision = "undo"
 )
 
 // Evidence is deterministic, value-local detection evidence. Signature is the
-// longest original run that decodes to Cyrillic. GroupMatches counts distinct
-// strong automatic signatures elsewhere in the analyzed group that contain both
-// the candidate's original and repaired form.
+// longest original run that decodes to Cyrillic.
 type Evidence struct {
-	HighBytes      int    `json:"high_bytes"`
-	CyrillicRunes  int    `json:"cyrillic_runes"`
-	LongestRun     int    `json:"longest_run"`
-	Signature      string `json:"signature,omitempty"`
-	GroupMatches   int    `json:"group_matches,omitempty"`
-	CaptureAnchors int    `json:"capture_anchors,omitempty"` // Retained for older reports.
+	HighBytes     int    `json:"high_bytes"`
+	CyrillicRunes int    `json:"cyrillic_runes"`
+	LongestRun    int    `json:"longest_run"`
+	Signature     string `json:"signature,omitempty"`
 }
 
 // Provenance describes the fixed transform and detector version behind an
@@ -118,8 +111,7 @@ type Overlay struct {
 }
 
 // Candidate is an ambiguous repair that is not part of the automatic overlay.
-// Candidates remain pending until explicitly confirmed through Report.Confirm
-// or Report.ConfirmCorroborated.
+// Candidates are reported separately for explicit operator review.
 type Candidate struct {
 	Key         string     `json:"key"`
 	Index       int        `json:"index"`
@@ -134,13 +126,6 @@ type Report struct {
 	Automatic    Overlay     `json:"automatic"`
 	Candidates   []Candidate `json:"candidates"`
 	UserRevision string      `json:"user_revision,omitempty"`
-}
-
-// GroupReport contains one Report per supplied saved tag map. Candidates are
-// annotated with group corroboration but are never applied automatically.
-type GroupReport struct {
-	Version int      `json:"version"`
-	Files   []Report `json:"files"`
 }
 
 // Detect inspects one saved tag value. It recognizes only text composed of
@@ -323,93 +308,6 @@ func Analyze(tags map[string][]string) Report {
 	return report
 }
 
-// AnalyzeGroup analyzes each saved tag map and annotates candidates that are
-// contained in a unique recognized strong signature from any file in the
-// group. Corroborated candidates still require an explicit confirmation call.
-func AnalyzeGroup(files ...map[string][]string) GroupReport {
-	group := GroupReport{Version: ReportVersion, Files: make([]Report, len(files))}
-	for index, tags := range files {
-		group.Files[index] = Analyze(tags)
-	}
-
-	type signature struct {
-		original    string
-		replacement string
-	}
-	strong := make(map[signature]struct{})
-	for _, report := range group.Files {
-		for _, entry := range report.Automatic.Entries {
-			strong[signature{original: entry.Original, replacement: entry.Replacement}] = struct{}{}
-		}
-	}
-
-	for fileIndex := range group.Files {
-		for candidateIndex := range group.Files[fileIndex].Candidates {
-			candidate := &group.Files[fileIndex].Candidates[candidateIndex]
-			matches := 0
-			for strongSignature := range strong {
-				if candidate.Original == "" || candidate.Replacement == "" {
-					continue
-				}
-				if strings.Contains(strongSignature.original, candidate.Original) &&
-					strings.Contains(strongSignature.replacement, candidate.Replacement) {
-					matches++
-				}
-			}
-			candidate.Provenance.Evidence.GroupMatches = matches
-		}
-	}
-	return group
-}
-
-// Confirm returns an overlay containing every automatic repair plus the
-// explicitly selected candidate indexes. The candidate order is the report's
-// deterministic Candidates order.
-func (report Report) Confirm(candidates ...int) (Overlay, error) {
-	if report.Version != ReportVersion {
-		return Overlay{}, fmt.Errorf("unsupported tag report version %d", report.Version)
-	}
-	overlay := Overlay{
-		Version: OverlayVersion,
-		Entries: append([]Entry(nil), report.Automatic.Entries...),
-	}
-	seen := make(map[int]struct{}, len(candidates))
-	for _, index := range candidates {
-		if index < 0 || index >= len(report.Candidates) {
-			return Overlay{}, fmt.Errorf("tag candidate index %d is out of range", index)
-		}
-		if _, exists := seen[index]; exists {
-			return Overlay{}, fmt.Errorf("tag candidate index %d is duplicated", index)
-		}
-		seen[index] = struct{}{}
-		candidate := report.Candidates[index]
-		provenance := candidate.Provenance
-		provenance.Decision = DecisionConfirmedCandidate
-		overlay.Entries = append(overlay.Entries, Entry{
-			Key:         candidate.Key,
-			Index:       candidate.Index,
-			Original:    candidate.Original,
-			Replacement: candidate.Replacement,
-			Provenance:  provenance,
-		})
-	}
-	sortEntries(overlay.Entries)
-	return overlay, nil
-}
-
-// ConfirmCorroborated explicitly confirms every candidate that has at least
-// one matching strong signature elsewhere in its analysis group. It is a
-// no-op for an ungrouped Report, whose candidates have no group matches.
-func (report Report) ConfirmCorroborated() (Overlay, error) {
-	indexes := make([]int, 0)
-	for index, candidate := range report.Candidates {
-		if candidate.Provenance.Evidence.GroupMatches > 0 {
-			indexes = append(indexes, index)
-		}
-	}
-	return report.Confirm(indexes...)
-}
-
 // Apply returns a cloned tag map with the overlay's sparse replacements. Every
 // entry must match its recorded Original exactly; a conflict returns an error
 // and leaves the input untouched.
@@ -441,27 +339,6 @@ func (overlay Overlay) Apply(tags map[string][]string) (map[string][]string, err
 		values[entry.Index] = entry.Replacement
 	}
 	return result, nil
-}
-
-// Undo reverses an applied overlay. It validates that the current values match
-// the overlay's replacements before restoring the recorded originals.
-func (overlay Overlay) Undo(tags map[string][]string) (map[string][]string, error) {
-	return overlay.Reverse().Apply(tags)
-}
-
-// Reverse returns the inverse overlay. The inverse keeps the same stable
-// key/index locations and detector evidence, but marks each entry as an undo.
-func (overlay Overlay) Reverse() Overlay {
-	reversed := Overlay{
-		Version: overlay.Version,
-		Entries: make([]Entry, len(overlay.Entries)),
-	}
-	for index, entry := range overlay.Entries {
-		entry.Original, entry.Replacement = entry.Replacement, entry.Original
-		entry.Provenance.Decision = DecisionUndo
-		reversed.Entries[index] = entry
-	}
-	return reversed
 }
 
 type entryKey struct {

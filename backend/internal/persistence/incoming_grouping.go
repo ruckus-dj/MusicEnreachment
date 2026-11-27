@@ -52,7 +52,6 @@ type IncomingGroupingCapture struct {
 	MediaVariantID    *uuid.UUID
 	CaptureAnalysisID *uuid.UUID
 	RootID            uuid.UUID
-	RootEnabled       bool
 	RootStatus        string
 	RootStale         bool
 	LocationID        uuid.UUID
@@ -267,7 +266,7 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 			work_identity.media_variant_id AS media_variant_id,
 			EXISTS (SELECT 1 FROM track_source link WHERE link.media_variant_id=work_identity.media_variant_id) AS linked,
 			COALESCE(work.id, location.id) AS work_id, metadata.success_metadata_result_id AS capture_analysis_id,
-			root.id AS root_id, root.enabled AS root_enabled, root.status AS root_status,
+			root.id AS root_id, root.status AS root_status,
 			(root.inventory_path IS NOT NULL AND root.inventory_path<>root.configured_path) AS root_stale,
 			location.id AS location_id, root.configured_path, root.inventory_path,
 			location.relative_path, location.size_bytes, location.mtime,

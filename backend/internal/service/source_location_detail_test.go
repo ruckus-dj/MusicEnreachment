@@ -38,7 +38,7 @@ func TestSourceLocationDetailKeepsCanonicalAndSelectedProbeIdentityAndActiveVers
 	rootID, locationID := uuid.New(), uuid.New()
 	detail, err := service.NewSourceLocationDetails(sourceLocationDetailRepositoryFixture{
 		snapshot: &persistence.SourceLocationDetailSnapshot{
-			Root: &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", Enabled: true, Status: "available"},
+			Root: &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", Status: "available"},
 			Location: &persistence.SourceLocation{
 				ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", MediaVariantID: &canonicalID,
 			},

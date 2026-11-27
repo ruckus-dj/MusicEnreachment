@@ -68,7 +68,6 @@ type incomingTagEncodingEvidenceBody struct {
 	CyrillicRunes int    `json:"cyrillic_runes"`
 	LongestRun    int    `json:"longest_run"`
 	Signature     string `json:"signature,omitempty"`
-	GroupMatches  int    `json:"group_matches,omitempty"`
 }
 
 type incomingTagEncodingGetInput struct {
@@ -206,7 +205,6 @@ func incomingTagEncodingProvenance(provenance tagencoding.Provenance) incomingTa
 			CyrillicRunes: provenance.Evidence.CyrillicRunes,
 			LongestRun:    provenance.Evidence.LongestRun,
 			Signature:     provenance.Evidence.Signature,
-			GroupMatches:  provenance.Evidence.GroupMatches,
 		},
 	}
 }

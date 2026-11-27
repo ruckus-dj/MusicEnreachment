@@ -25,7 +25,7 @@ type sourceAnalysisPendingCacheRepository interface {
 	ReusePendingSourceAnalysisCache(context.Context, uuid.UUID, uuid.UUID, persistence.SourceStepName, uuid.UUID, string) (bool, error)
 }
 
-// AdmitPending admits the current pending steps of one enabled source root. An
+// AdmitPending admits the current pending steps of one source root. An
 // empty or already-active root is a no-op; database admission remains the
 // authoritative concurrency fence.
 func (s *SourceAnalysisOperations) AdmitPending(ctx context.Context, rootID uuid.UUID) (*persistence.Operation, error) {
@@ -48,7 +48,7 @@ func (s *SourceAnalysisOperations) AdmitPending(ctx context.Context, rootID uuid
 		return nil, err
 	}
 	root := works[0].Root
-	if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+	if root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
 		return nil, nil
 	}
 	// Snapshot source identities once; siblings created after this point are left
@@ -261,26 +261,6 @@ func retainedRecoveryOwner(intent retainedSourceAnalysisIntent) uuid.UUID {
 		return uuid.Nil
 	}
 	return *intent.Step.LastOperationID
-}
-
-func retainedRecoveryGroup(intents []retainedSourceAnalysisIntent, owner uuid.UUID) []retainedSourceAnalysisIntent {
-	if owner == uuid.Nil {
-		return nil
-	}
-	group := make([]retainedSourceAnalysisIntent, 0, len(intents))
-	seen := make(map[string]struct{})
-	for _, intent := range intents {
-		if retainedRecoveryOwner(intent) != owner {
-			continue
-		}
-		key := intent.Pending.Work.ID.String() + ":" + intent.Step.Step
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		group = append(group, intent)
-	}
-	return group
 }
 
 func (s *SourceAnalysisOperations) retainedToolAvailable(ctx context.Context, snapshot persistence.SourceAnalysisOperationSnapshot, step persistence.SourceStepName) (bool, error) {
@@ -496,7 +476,7 @@ func pendingSteps(works []persistence.SourceAnalysisPendingWork) map[persistence
 }
 
 func pendingSourceFileCurrent(ctx context.Context, pending persistence.SourceAnalysisPendingWork) bool {
-	if pending.Root.InventoryPath == nil || !pending.Root.Enabled || pending.Root.Stale() ||
+	if pending.Root.InventoryPath == nil || pending.Root.Stale() ||
 		pending.Work.ConfiguredPath != pending.Root.ConfiguredPath || pending.Work.InventoryPath != *pending.Root.InventoryPath ||
 		pending.Work.RelativePath != pending.Location.RelativePath {
 		return false

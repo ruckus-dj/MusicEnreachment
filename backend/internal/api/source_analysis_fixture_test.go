@@ -210,8 +210,7 @@ func (fixture sourceAnalysisAPIFixture) seedAnalysisRoot(t *testing.T, locations
 	t.Helper()
 	configured := normalizedSourcePath(t, t.TempDir())
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: configured, Enabled: true,
-		Status: persistence.SourceRootStatusAvailable, InventoryPath: &configured,
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: configured, Status: persistence.SourceRootStatusAvailable, InventoryPath: &configured,
 	}
 	fixture.repository.roots = append(fixture.repository.roots, root)
 	fixture.repository.locations[root.ID] = locations

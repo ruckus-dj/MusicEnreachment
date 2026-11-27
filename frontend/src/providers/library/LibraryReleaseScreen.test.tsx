@@ -190,7 +190,6 @@ function release(
                 root_id: "test-root",
                 relative_path: "01 - Position One.flac",
                 root_status: "available",
-                root_enabled: true,
                 probe_status: "audio",
                 mtime: validatedAt,
                 size_bytes: 4096,
@@ -805,12 +804,12 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
     name: "01 - Position One.flac",
   });
   const sourceDetails = sourceLink.parentElement;
-  expect(sourceDetails).toHaveTextContent("root Available (enabled)");
+  expect(sourceDetails).toHaveTextContent("root Available");
   expect(sourceDetails).toHaveTextContent("probe Audio");
 
   fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
 
-  expect(sourceDetails).toHaveTextContent("корень Доступен (включён)");
+  expect(sourceDetails).toHaveTextContent("корень Доступен");
   expect(sourceDetails).toHaveTextContent("проверка Аудио");
   expect(
     await screen.findByRole("textbox", { name: "Сохранённый текст песни" }),

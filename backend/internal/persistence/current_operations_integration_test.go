@@ -123,7 +123,7 @@ func TestListCurrentOperationsStablePagesSortingAndTargetSearchPostgreSQL(t *tes
 	}
 
 	rootID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name) VALUES(?,?,?)`,
+	if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name,processing_mode) VALUES(?,?,?,'in_place')`,
 		rootID, "/needle-root", "Needle Source Root").Exec(ctx); err != nil {
 		t.Fatalf("insert source root: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestListCurrentOperationsStablePagesSortingAndTargetSearchPostgreSQL(t *tes
 	insertScanRoot := func(path, displayName string, createdAt time.Time) uuid.UUID {
 		t.Helper()
 		namedRootID := uuid.New()
-		if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name) VALUES(?,?,?)`,
+		if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name,processing_mode) VALUES(?,?,?,'in_place')`,
 			namedRootID, path, displayName).Exec(ctx); err != nil {
 			t.Fatalf("insert source root %q: %v", displayName, err)
 		}

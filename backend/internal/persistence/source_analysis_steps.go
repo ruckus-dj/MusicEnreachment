@@ -144,7 +144,7 @@ func (repository *SourceInventoryRepository) StoreSourceAnalysisWork(ctx context
 		if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, work.LocationID, work.SourceRootID).Scan(ctx, location); err != nil {
 			return fmt.Errorf("store source analysis work: lock location: %w", err)
 		}
-		if root.Stale() || !root.Enabled || root.ConfiguredPath != work.ConfiguredPath || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath || location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
+		if root.Stale() || root.ConfiguredPath != work.ConfiguredPath || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath || location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return fmt.Errorf("store source analysis work: %w", ErrSourceAnalysisStale)
 		}
 		if _, err := tx.NewInsert().Model(work).Exec(ctx); err != nil {
@@ -863,7 +863,7 @@ func lockSourceAnalysisStep(ctx context.Context, tx bun.Tx, workID, operationID 
 		return nil, ErrSourceAnalysisStale
 	}
 	if locked.Work.InvalidatedAt != nil || locked.Work.CurrentLocationID == nil || *locked.Work.CurrentLocationID != locked.Work.LocationID || *locked.Work.CurrentLocationID != locked.Location.ID ||
-		!locked.Root.Enabled || locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
+		locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
 		return nil, ErrSourceAnalysisStale
 	}
 	// Operation and step are fenced only after the root/work identity. This

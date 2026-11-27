@@ -44,13 +44,13 @@ func TestAnalysisConsumerPoolAddsAndDrainsChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.SetLimit(context.Background(), maxRiverQueueWorkers+9); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), maxRiverQueueWorkers+9, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
 	if len(capacities) != 2 || capacities[0] != maxRiverQueueWorkers || capacities[1] != 5 {
 		t.Fatalf("unexpected consumer capacities: %v", capacities)
 	}
-	if err := pool.SetLimit(context.Background(), 4); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), 4, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(time.Second)
@@ -82,13 +82,13 @@ func TestAnalysisConsumerPoolReplacementRetiresEntireSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.SetLimit(context.Background(), 2*maxRiverQueueWorkers+2); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), 2*maxRiverQueueWorkers+2, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
 	if len(consumers) != 3 {
 		t.Fatalf("expected three consumers, got %d", len(consumers))
 	}
-	if err := pool.SetLimit(context.Background(), maxRiverQueueWorkers+2); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), maxRiverQueueWorkers+2, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,10 +132,10 @@ func TestAnalysisConsumerPoolRetriesFailedDrainAtShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.SetLimit(context.Background(), maxRiverQueueWorkers+1); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), maxRiverQueueWorkers+1, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.SetLimit(context.Background(), 1); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), 1, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(time.Second)
@@ -181,7 +181,7 @@ func TestAnalysisConsumerPoolRetainsPartialGrowthOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.SetLimit(context.Background(), maxRiverQueueWorkers+2); err == nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), maxRiverQueueWorkers+2, maxRiverQueueWorkers*maxRiverQueueWorkers); err == nil {
 		t.Fatal("expected consumer startup failure")
 	}
 	consumers[0].mu.Lock()
@@ -190,7 +190,7 @@ func TestAnalysisConsumerPoolRetainsPartialGrowthOnFailure(t *testing.T) {
 	if len(consumers) != 1 || stopped != 0 {
 		t.Fatalf("partially created consumer ownership was lost: %+v", consumers)
 	}
-	if err := pool.SetLimit(context.Background(), 1); err != nil {
+	if err := pool.SetDemandForGeneration(context.Background(), pool.Generation(), 1, maxRiverQueueWorkers*maxRiverQueueWorkers); err != nil {
 		t.Fatalf("failed growth changed the active pool: %v", err)
 	}
 	deadline := time.After(time.Second)

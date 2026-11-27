@@ -1354,7 +1354,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		Unprobed         int `bun:"unprobed"`
 	}
 	if err := tx.NewRaw(`SELECT
-		count(*) FILTER (WHERE root.id IS NULL OR NOT root.enabled OR root.status<>'available' OR root.inventory_path IS DISTINCT FROM work.inventory_path OR root.configured_path IS DISTINCT FROM work.configured_path) AS unavailable_roots,
+		count(*) FILTER (WHERE root.id IS NULL OR root.status<>'available' OR root.inventory_path IS DISTINCT FROM work.inventory_path OR root.configured_path IS DISTINCT FROM work.configured_path) AS unavailable_roots,
 			count(*) FILTER (WHERE work.invalidated_at IS NOT NULL OR location.id IS NULL OR work.current_location_id IS DISTINCT FROM location.id OR location.media_variant_id IS DISTINCT FROM identity.media_variant_id OR location.relative_path IS DISTINCT FROM work.relative_path OR location.size_bytes<>work.size_bytes OR location.mtime<>work.mtime OR location.probe_status<>'audio') AS stale_locations,
 		count(*) FILTER (WHERE probe.work_id IS NULL OR probe.state<>'succeeded' OR probe.success_probe_variant_id IS NULL OR probeResult.id IS NULL) AS unprobed
 		FROM track_source selected
@@ -1390,7 +1390,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		JOIN source_root r ON r.id=w.source_root_id
 		JOIN source_analysis_step p ON p.work_id=w.id AND p.step='probe' AND p.state='succeeded' AND p.success_probe_variant_id IS NOT NULL
 		JOIN media_variant v ON v.id=p.success_probe_variant_id
-		WHERE ts.track_id=? AND ts.compatible AND r.enabled AND r.status='available' AND r.inventory_path=w.inventory_path
+		WHERE ts.track_id=? AND ts.compatible AND r.status='available' AND r.inventory_path=w.inventory_path
 		AND r.configured_path=w.configured_path AND l.probe_status='audio' AND v.size_bytes=w.size_bytes
 		AND v.analysis_policy_version IS NOT NULL AND v.ffprobe_version IS NOT NULL AND v.inspected_at IS NOT NULL
 		AND v.applied_operation_id IS NOT NULL AND v.audio_stream_count IS NOT NULL
@@ -1509,14 +1509,6 @@ func exactStoredMetadataDuration(raw json.RawMessage) (*float64, error) {
 		return nil, nil
 	}
 	return &seconds, nil
-}
-
-func uniquePublicationAudioIndex(raw json.RawMessage) (int, bool) {
-	streams, err := publicationAudioStreams(raw)
-	if err != nil || len(streams) != 1 {
-		return 0, false
-	}
-	return streams[0].Index, true
 }
 
 type publicationAudioStream struct {

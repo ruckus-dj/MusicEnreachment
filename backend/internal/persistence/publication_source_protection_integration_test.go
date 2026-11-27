@@ -18,8 +18,8 @@ func pubSourceProtectionHoldWithFixture(t *testing.T, f publicationExecutionFixt
 	repo := NewSourceInventoryRepository(f.db)
 	rootID, locationID, workID, variantID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	mtime := time.Now().UTC().Truncate(time.Microsecond)
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path)
-		VALUES (?,'/source','Source',1,'/inventory')`, rootID); err != nil {
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,processing_mode)
+		VALUES (?,'/source','Source',1,'/inventory','in_place')`, rootID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes) VALUES (?,0)`, variantID); err != nil {

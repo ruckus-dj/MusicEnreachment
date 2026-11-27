@@ -147,10 +147,6 @@ export const matchingMessages = createNamespace({
     fingerprintNotProof: "Not treated as proven matching evidence",
     illustrativeComparison:
       "These comparisons use sample values. Normalization is shown for illustration; matching policy is not calculated.",
-    actionSkip: "Skip",
-    actionUnchanged: "No change",
-    actionReplace: "Replace",
-    actionCreate: "Create",
   },
   ru: {
     assignSelected: "Добавить выбранный файл",
@@ -297,10 +293,6 @@ export const matchingMessages = createNamespace({
       "Не считается подтверждённым доказательством совпадения",
     illustrativeComparison:
       "Сравниваются примерные значения. Нормализация показана для примера; политика сопоставления не рассчитывается.",
-    actionSkip: "Пропустить",
-    actionUnchanged: "Без изменений",
-    actionReplace: "Заменить",
-    actionCreate: "Создать",
   },
 });
 
@@ -315,15 +307,4 @@ export function matchingMessage(
     /\{([^}]+)\}/g,
     (_, name: string) => String(values[name] ?? `{${name}}`),
   );
-}
-
-export function matchingAction(locale: Locale, action: string) {
-  const keys: Record<string, MatchingMessage> = {
-    Пропустить: "actionSkip",
-    "Без изменений": "actionUnchanged",
-    Заменить: "actionReplace",
-    Создать: "actionCreate",
-  };
-  const key = keys[action];
-  return key ? matchingMessage(locale, key) : action;
 }

@@ -79,14 +79,6 @@ func NewInstallOperations(repository InstallationOperationEnqueuer, catalog Cata
 	return &InstallOperations{repository: repository, catalog: catalog, platform: platform, river: riverClient, toolsRoot: rootReader}
 }
 
-func (s *InstallOperations) Start(ctx context.Context, packageKind tools.PackageKind, releaseIdentity string, confirmedConflicts []string) (*persistence.Operation, error) {
-	preflight, err := s.Preflight(ctx, packageKind, releaseIdentity)
-	if err != nil {
-		return nil, err
-	}
-	return s.StartFromPreflight(ctx, preflight, confirmedConflicts)
-}
-
 func (s *InstallOperations) Preflight(ctx context.Context, packageKind tools.PackageKind, releaseIdentity string) (InstallPreflight, error) {
 	if !s.platform.Supported() {
 		return InstallPreflight{}, fmt.Errorf("unsupported instance platform")

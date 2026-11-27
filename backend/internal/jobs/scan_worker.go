@@ -22,7 +22,6 @@ import (
 const (
 	scanSafeInvalidInput = "The source scan input is invalid. Start a new scan."
 	scanSafeRootGone     = "The source root no longer exists."
-	scanSafeDisabled     = "The source root is disabled. Enable it before scanning it again."
 	scanSafePath         = service.SourceScanDirectoryUnavailableReason
 	scanSafeUnsupported  = "Windows UNC source roots are not supported yet. Configure a local drive path."
 	scanSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the scan."
@@ -153,9 +152,6 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	}
 	if errors.Is(sourcefs.ValidateRootPathSupport(root.ConfiguredPath), service.ErrUnsupportedSourceRoot) {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeUnsupported)
-	}
-	if !root.Enabled {
-		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeDisabled)
 	}
 	scan := service.NewSourceScan(worker.repository)
 	request := service.SourceScanRequest{

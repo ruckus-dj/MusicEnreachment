@@ -61,7 +61,7 @@ func (repository *SourceInventoryRepository) ReusePendingSourceAnalysisCache(
 			}
 			return fmt.Errorf("reuse pending source analysis cache: lock work: %w", err)
 		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || root.ConfiguredPath != work.ConfiguredPath ||
+		if root.Stale() || root.InventoryPath == nil || root.ConfiguredPath != work.ConfiguredPath ||
 			*root.InventoryPath != work.InventoryPath || location.RelativePath != work.RelativePath ||
 			location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return nil

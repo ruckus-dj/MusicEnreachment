@@ -768,7 +768,7 @@ func validateMatchingLocalRecheckSourceBinding(ctx context.Context, tx bun.Tx, p
 }
 
 func matchingLocalRecheckCaptureIdentityOf(capture IncomingGroupingCapture) (matchingLocalRecheckCaptureIdentity, bool) {
-	if !capture.Ready || !capture.RootEnabled || capture.RootStale || capture.CaptureAnalysisID == nil ||
+	if !capture.Ready || capture.RootStale || capture.CaptureAnalysisID == nil ||
 		*capture.CaptureAnalysisID == uuid.Nil || capture.VariantID == uuid.Nil || capture.WorkID == uuid.Nil || capture.RootID == uuid.Nil ||
 		capture.LocationID == uuid.Nil || capture.MediaVariantID == nil || *capture.MediaVariantID == uuid.Nil {
 		return matchingLocalRecheckCaptureIdentity{}, false

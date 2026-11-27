@@ -157,7 +157,7 @@ func TestDetect(t *testing.T) {
 	}
 }
 
-func TestAnalyzeApplyUndoPreservesRawTagsAndOrder(t *testing.T) {
+func TestAnalyzeAndApplyPreserveRawTagsAndOrder(t *testing.T) {
 	raw := map[string][]string{
 		"ARTIST": {"Punk-O-Ìàíèÿ 2", "Café", "Punk-O-Ìàíèÿ 2"},
 		"ALBUM":  {"Мания"},
@@ -176,11 +176,7 @@ func TestAnalyzeApplyUndoPreservesRawTagsAndOrder(t *testing.T) {
 		t.Fatal("Analyze modified the raw tag map")
 	}
 
-	overlay, err := report.Confirm()
-	if err != nil {
-		t.Fatalf("Confirm: %v", err)
-	}
-	repaired, err := overlay.Apply(raw)
+	repaired, err := report.Automatic.Apply(raw)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -195,17 +191,9 @@ func TestAnalyzeApplyUndoPreservesRawTagsAndOrder(t *testing.T) {
 	if !reflect.DeepEqual(repaired, want) {
 		t.Fatalf("repaired tags = %#v, want %#v", repaired, want)
 	}
-
-	restored, err := overlay.Undo(repaired)
-	if err != nil {
-		t.Fatalf("Undo: %v", err)
-	}
-	if !reflect.DeepEqual(restored, raw) {
-		t.Fatalf("restored tags = %#v, want raw %#v", restored, raw)
-	}
 }
 
-func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
+func TestAnalyzeKeepsCandidatesOutsideTheAutomaticOverlay(t *testing.T) {
 	raw := map[string][]string{"TITLE": {"Ìè Ìè Ìè"}}
 	report := tagencoding.Analyze(raw)
 	if len(report.Automatic.Entries) != 0 {
@@ -219,11 +207,7 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 		t.Fatalf("candidate evidence = %+v, want distributed runs", evidence)
 	}
 
-	pending, err := report.Confirm()
-	if err != nil {
-		t.Fatalf("Confirm pending: %v", err)
-	}
-	unconfirmed, err := pending.Apply(raw)
+	unconfirmed, err := report.Automatic.Apply(raw)
 	if err != nil {
 		t.Fatalf("Apply pending: %v", err)
 	}
@@ -231,17 +215,8 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 		t.Fatalf("pending overlay changed ambiguous value: %#v", unconfirmed)
 	}
 
-	confirmed, err := report.Confirm(0)
-	if err != nil {
-		t.Fatalf("Confirm candidate: %v", err)
-	}
-	repaired, err := confirmed.Apply(raw)
-	if err != nil {
-		t.Fatalf("Apply confirmed: %v", err)
-	}
-	want := map[string][]string{"TITLE": {"Ми Ми Ми"}}
-	if !reflect.DeepEqual(repaired, want) {
-		t.Fatalf("confirmed tags = %#v, want %#v", repaired, want)
+	if got := report.Candidates[0].Replacement; got != "Ми Ми Ми" {
+		t.Fatalf("candidate replacement = %q, want %q", got, "Ми Ми Ми")
 	}
 
 	report = tagencoding.Analyze(map[string][]string{
@@ -255,66 +230,18 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 	if len(report.Candidates) != 2 ||
 		report.Candidates[0].Original != "Ìè Ìè Ìè" ||
 		report.Candidates[1].Original != "Ìàíèÿ × 2" {
-		t.Fatalf("capture anchors must not promote sub-run candidates: %+v", report.Candidates)
+		t.Fatalf("sub-run candidates must not be promoted: %+v", report.Candidates)
 	}
 	for _, candidate := range report.Candidates {
 		if candidate.Provenance.DetectorVersion != 3 {
 			t.Fatalf("candidate detector version = %d, want 3", candidate.Provenance.DetectorVersion)
 		}
-		if candidate.Provenance.Evidence.CaptureAnchors != 0 {
-			t.Fatalf("candidate gained capture anchors below a three-letter run: %+v", candidate)
-		}
-	}
-}
-
-func TestGroupCorroborationStillRequiresConfirmation(t *testing.T) {
-	group := tagencoding.AnalyzeGroup(
-		map[string][]string{"TITLE": {"à× Ìèð"}},
-		map[string][]string{"TITLE": {"× Ìèð"}},
-	)
-	if len(group.Files[1].Candidates) != 1 {
-		t.Fatalf("candidates = %d, want 1", len(group.Files[1].Candidates))
-	}
-	candidate := group.Files[1].Candidates[0]
-	if candidate.Provenance.Evidence.GroupMatches == 0 {
-		t.Fatal("candidate was not corroborated by the strong signature")
-	}
-	if candidate.Provenance.DetectorVersion != 3 {
-		t.Fatalf("candidate detector version = %d, want 3", candidate.Provenance.DetectorVersion)
-	}
-
-	pending, err := group.Files[1].Confirm()
-	if err != nil {
-		t.Fatalf("Confirm pending: %v", err)
-	}
-	unconfirmed, err := pending.Apply(map[string][]string{"TITLE": {"× Ìèð"}})
-	if err != nil {
-		t.Fatalf("Apply pending: %v", err)
-	}
-	if got := unconfirmed["TITLE"][0]; got != "× Ìèð" {
-		t.Fatalf("pending group value = %q, want unchanged", got)
-	}
-
-	confirmed, err := group.Files[1].ConfirmCorroborated()
-	if err != nil {
-		t.Fatalf("ConfirmCorroborated: %v", err)
-	}
-	repaired, err := confirmed.Apply(map[string][]string{"TITLE": {"× Ìèð"}})
-	if err != nil {
-		t.Fatalf("Apply corroborated: %v", err)
-	}
-	if got := repaired["TITLE"][0]; got != "Ч Мир" {
-		t.Fatalf("confirmed group value = %q, want %q", got, "Ч Мир")
 	}
 }
 
 func TestApplyRejectsStaleOverlay(t *testing.T) {
 	report := tagencoding.Analyze(map[string][]string{"TITLE": {"Punk-O-Ìàíèÿ 2"}})
-	overlay, err := report.Confirm()
-	if err != nil {
-		t.Fatalf("Confirm: %v", err)
-	}
-	_, err = overlay.Apply(map[string][]string{"TITLE": {"Punk-O-Ìàíèÿ 3"}})
+	_, err := report.Automatic.Apply(map[string][]string{"TITLE": {"Punk-O-Ìàíèÿ 3"}})
 	if err == nil {
 		t.Fatal("Apply accepted a stale overlay")
 	}

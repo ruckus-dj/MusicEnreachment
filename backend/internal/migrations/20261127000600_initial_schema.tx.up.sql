@@ -2141,7 +2141,6 @@ CREATE TABLE public.incoming_matching_reconcile_event (
     source_operation_id uuid,
     source_attempt integer,
     reason text NOT NULL,
-    source_input_snapshot jsonb CONSTRAINT incoming_matching_reconcile_even_source_input_snapshot_not_null NOT NULL,
     state text DEFAULT 'pending'::text NOT NULL,
     registered_job_id bigint,
     delivery_epoch bigint DEFAULT 0 NOT NULL,
@@ -2154,10 +2153,9 @@ CREATE TABLE public.incoming_matching_reconcile_event (
     CONSTRAINT incoming_matching_reconcile_event_check CHECK ((((state = 'pending'::text) AND (registered_job_id IS NULL) AND (dispatched_at IS NULL)) OR ((state = ANY (ARRAY['dispatched'::text, 'done'::text])) AND (registered_job_id IS NOT NULL) AND (dispatched_at IS NOT NULL)))),
     CONSTRAINT incoming_matching_reconcile_event_check1 CHECK (((state = 'done'::text) = (completed_at IS NOT NULL))),
     CONSTRAINT incoming_matching_reconcile_event_delivery_epoch_check CHECK ((delivery_epoch >= 0)),
-    CONSTRAINT incoming_matching_reconcile_event_origin_check CHECK ((((reason = ANY (ARRAY['analysis_success'::text, 'scan_success'::text])) AND (source_operation_id IS NOT NULL) AND (source_attempt IS NOT NULL) AND (source_attempt > 0)) OR ((reason = ANY (ARRAY['startup'::text, 'current'::text])) AND (source_operation_id IS NULL) AND (source_attempt IS NULL) AND (source_input_snapshot = '{}'::jsonb)))),
+    CONSTRAINT incoming_matching_reconcile_event_origin_check CHECK ((((reason = ANY (ARRAY['analysis_success'::text, 'scan_success'::text])) AND (source_operation_id IS NOT NULL) AND (source_attempt IS NOT NULL) AND (source_attempt > 0)) OR ((reason = ANY (ARRAY['startup'::text, 'current'::text])) AND (source_operation_id IS NULL) AND (source_attempt IS NULL)))),
     CONSTRAINT incoming_matching_reconcile_event_reason_check CHECK ((reason = ANY (ARRAY['analysis_success'::text, 'scan_success'::text, 'startup'::text, 'current'::text]))),
     CONSTRAINT incoming_matching_reconcile_event_source_attempt_check CHECK ((source_attempt > 0)),
-    CONSTRAINT incoming_matching_reconcile_event_source_input_snapshot_check CHECK ((jsonb_typeof(source_input_snapshot) = 'object'::text)),
     CONSTRAINT incoming_matching_reconcile_event_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatched'::text, 'done'::text])))
 );
 
@@ -3679,7 +3677,6 @@ CREATE TABLE public.source_root (
     id uuid NOT NULL,
     configured_path text NOT NULL,
     display_name text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
     scan_generation bigint DEFAULT 0 NOT NULL,
     inventory_path text,
     last_successful_scan_at timestamp with time zone,
@@ -3688,7 +3685,7 @@ CREATE TABLE public.source_root (
     safe_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    processing_mode text DEFAULT 'in_place'::text NOT NULL,
+    processing_mode text NOT NULL,
     CONSTRAINT source_root_display_name_not_empty CHECK ((display_name <> ''::text)),
     CONSTRAINT source_root_inventory_path_matches_generation CHECK (((inventory_path IS NULL) OR (scan_generation > 0))),
     CONSTRAINT source_root_processing_mode_check CHECK ((processing_mode = ANY (ARRAY['in_place'::text, 'staged'::text]))),

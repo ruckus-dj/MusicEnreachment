@@ -17,7 +17,7 @@ import (
 )
 
 // A fresh installation starts from a single baseline migration.
-var baselineMigrationNames = []string{"20261127000500"}
+var baselineMigrationNames = []string{"20261127000600"}
 
 func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()

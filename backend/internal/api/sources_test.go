@@ -58,7 +58,6 @@ type sourceAPIRepository struct {
 	locations  map[uuid.UUID][]persistence.SourceLocation
 	candidates map[uuid.UUID][]persistence.SourceScanCandidate
 	busy       bool
-	disabled   bool
 	lastLimit  int
 }
 
@@ -91,13 +90,12 @@ func (repository *sourceAPIRepository) ListSourceRoots(context.Context) ([]persi
 	return roots, nil
 }
 
-func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error) {
+func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, patch persistence.SourceRootPatch) error {
 	if repository.busy {
-		return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
+		return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
 	}
 	for _, stored := range repository.roots {
 		if stored.ID == patch.ID {
-			result := persistence.SourceRootUpdateResult{EnabledBefore: stored.Enabled}
 			if patch.DisplayName != nil {
 				stored.DisplayName = *patch.DisplayName
 			}
@@ -107,13 +105,10 @@ func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, patch
 			if patch.ProcessingMode != nil {
 				stored.ProcessingMode = *patch.ProcessingMode
 			}
-			if patch.Enabled != nil {
-				stored.Enabled = *patch.Enabled
-			}
-			return result, nil
+			return nil
 		}
 	}
-	return persistence.SourceRootUpdateResult{}, fmt.Errorf("update source root: root does not exist")
+	return fmt.Errorf("update source root: root does not exist")
 }
 
 func (repository *sourceAPIRepository) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {
@@ -162,9 +157,6 @@ func (repository *sourceAPIRepository) GetInstallation(context.Context, uuid.UUI
 }
 
 func (repository *sourceAPIRepository) CreateSourceScanOperationAndEnqueue(ctx context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
-	if repository.disabled {
-		return fmt.Errorf("create scan operation: %w", persistence.ErrSourceRootDisabled)
-	}
 	if repository.busy {
 		return fmt.Errorf("create scan operation: %w", persistence.ErrSourceRootActiveScan)
 	}
@@ -336,7 +328,7 @@ func TestCreateSourceRootValidatesOperatorInput(t *testing.T) {
 
 	created := fixture.createRoot(t, "  Music  ", source)
 	if created.DisplayName != "Music" || created.ConfiguredPath != normalizedSourcePath(t, source) || created.ProcessingMode != "in_place" ||
-		!created.Enabled || created.InventoryPath != nil || created.Stale || created.LocationCount != 0 {
+		created.InventoryPath != nil || created.Stale || created.LocationCount != 0 {
 		t.Fatalf("created root = %+v", created)
 	}
 	if created.Status != "unknown" || created.SafeError != nil || created.LastSuccessfulScanAt != nil || created.ScanGeneration != 0 {
@@ -393,8 +385,7 @@ func TestSourceRootReadReportsAvailabilityAndStaleInventory(t *testing.T) {
 	currentPath := normalizedSourcePath(t, t.TempDir())
 	lastSuccess := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Enabled: true,
-		Status: persistence.SourceRootStatusUnavailable, SafeError: sourceStringPointer("the source directory is not readable"),
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Status: persistence.SourceRootStatusUnavailable, SafeError: sourceStringPointer("the source directory is not readable"),
 		InventoryPath: &previousPath, ScanGeneration: 7, LastSuccessfulScanAt: &lastSuccess,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{
@@ -444,17 +435,17 @@ func TestUpdateSourceRootAppliesEditsAndMapsConflicts(t *testing.T) {
 		t.Fatalf("update status=%d: %s", response.Code, response.Body.String())
 	}
 	updated := decodeSourceRoot(t, response)
-	if updated.DisplayName != "Renamed" || !updated.Enabled || updated.ConfiguredPath != root.ConfiguredPath || updated.ProcessingMode != "in_place" {
+	if updated.DisplayName != "Renamed" || updated.ConfiguredPath != root.ConfiguredPath || updated.ProcessingMode != "in_place" {
 		t.Fatalf("updated root = %+v", updated)
 	}
 
 	disabled := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"enabled":false}`)
 	if disabled.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("enabled field status=%d, want %d: %s", disabled.Code, http.StatusUnprocessableEntity, disabled.Body.String())
+		t.Fatalf("disable source status=%d, want 422: %s", disabled.Code, disabled.Body.String())
 	}
 	unchanged := decodeSourceRoot(t, sourceRequest(t, fixture.handler, http.MethodGet, "/sources/"+root.ID.String(), ""))
-	if !unchanged.Enabled || unchanged.DisplayName != "Renamed" {
-		t.Fatalf("root changed after rejected enabled field = %+v", unchanged)
+	if unchanged.DisplayName != "Renamed" {
+		t.Fatalf("root changed unexpectedly = %+v", unchanged)
 	}
 
 	modeChange := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"processing_mode":"staged"}`)
@@ -549,7 +540,7 @@ func TestDiagnosticPlatformBlocksRootMutationsAndScan(t *testing.T) {
 	source := t.TempDir()
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, source),
-		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Status: persistence.SourceRootStatusAvailable,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{
 		{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "a.flac", ProbeStatus: persistence.SourceProbeStatusAudio},
@@ -586,7 +577,7 @@ func TestDiagnosticPlatformBlocksRootMutationsAndScan(t *testing.T) {
 		t.Fatalf("a refused mutation changed the stored roots: %+v", fixture.repository.roots)
 	}
 	stored := fixture.repository.roots[0]
-	if stored.DisplayName != "Music" || stored.ConfiguredPath != root.ConfiguredPath || !stored.Enabled {
+	if stored.DisplayName != "Music" || stored.ConfiguredPath != root.ConfiguredPath {
 		t.Fatalf("a refused mutation changed the stored root: %+v", stored)
 	}
 	if len(fixture.repository.locations[root.ID]) != 1 {
@@ -601,7 +592,7 @@ func TestListSourceLocationsPaginatesThePublishedInventory(t *testing.T) {
 	fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, t.TempDir()),
-		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Status: persistence.SourceRootStatusAvailable,
 	}
 	mtime := time.Date(2026, time.September, 2, 8, 30, 0, 0, time.UTC)
 	expected := make([]string, 0, 5)
@@ -663,7 +654,7 @@ func TestListSourceLocationsValidatesItsInputs(t *testing.T) {
 	fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, t.TempDir()),
-		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Status: persistence.SourceRootStatusAvailable,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{
 		{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "a.flac", ProbeStatus: persistence.SourceProbeStatusNoAudio},
@@ -729,17 +720,12 @@ func TestStartSourceScanRefusalsAndQueuedSnapshot(t *testing.T) {
 		reason error
 		want   int
 	}{
-		{"disabled root", persistence.ErrSourceRootDisabled, http.StatusConflict},
 		{"root with an active scan", persistence.ErrSourceRootActiveScan, http.StatusConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 			root := fixture.createRoot(t, "Music", t.TempDir())
-			if errors.Is(test.reason, persistence.ErrSourceRootDisabled) {
-				fixture.repository.disabled = true
-			} else {
-				fixture.repository.busy = true
-			}
+			fixture.repository.busy = true
 			response := sourceRequest(t, fixture.handler, http.MethodPost, "/sources/"+root.ID.String()+"/scan", "")
 			if response.Code != test.want {
 				t.Fatalf("status=%d, want %d: %s", response.Code, test.want, response.Body.String())
@@ -781,8 +767,7 @@ func TestFailedScanKeepsPublishedInventoryVisible(t *testing.T) {
 	currentPath := normalizedSourcePath(t, t.TempDir())
 	lastSuccess := time.Date(2026, time.September, 3, 9, 0, 0, 0, time.UTC)
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Enabled: true,
-		Status: persistence.SourceRootStatusAvailable, InventoryPath: &previousPath,
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Status: persistence.SourceRootStatusAvailable, InventoryPath: &previousPath,
 		ScanGeneration: 3, LastSuccessfulScanAt: &lastSuccess,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{

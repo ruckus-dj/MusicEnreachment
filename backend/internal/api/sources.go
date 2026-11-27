@@ -27,7 +27,6 @@ type SourceRootResponse struct {
 	DisplayName          string     `json:"display_name"`
 	ConfiguredPath       string     `json:"configured_path"`
 	ProcessingMode       string     `json:"processing_mode" enum:"in_place,staged"`
-	Enabled              bool       `json:"enabled"`
 	Status               string     `json:"status" enum:"unknown,available,unavailable"`
 	SafeError            *string    `json:"safe_error,omitempty"`
 	InventoryPath        *string    `json:"inventory_path,omitempty"`
@@ -299,8 +298,6 @@ func registerSources(api huma.API, dependencies Dependencies) {
 			switch {
 			case service.IsSourceRootNotFound(err):
 				return nil, huma.Error404NotFound("source root not found")
-			case errors.Is(err, service.ErrSourceScanDisabled):
-				return nil, huma.Error409Conflict("source root is disabled")
 			case errors.Is(err, service.ErrSourceRootBusy):
 				return nil, huma.Error409Conflict("source root has an active scan")
 			case errors.Is(err, service.ErrSourceScanNotReady):
@@ -321,7 +318,7 @@ func sourceRootResponse(root service.SourceRoot) SourceRootResponse {
 	return SourceRootResponse{
 		ID: root.ID, DisplayName: root.DisplayName, ConfiguredPath: root.ConfiguredPath,
 		ProcessingMode: root.ProcessingMode,
-		Enabled:        root.Enabled, Status: root.Status, SafeError: root.SafeError,
+		Status:         root.Status, SafeError: root.SafeError,
 		InventoryPath: root.InventoryPath, Stale: root.Stale, ScanGeneration: root.ScanGeneration,
 		LastSuccessfulScanAt: root.LastSuccessfulScanAt, LocationCount: root.LocationCount,
 		CreatedAt: root.CreatedAt, UpdatedAt: root.UpdatedAt,

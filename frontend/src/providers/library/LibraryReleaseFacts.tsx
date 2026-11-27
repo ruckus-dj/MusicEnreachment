@@ -124,8 +124,6 @@ export function positionSourceItems(
       ? {
           unspecified: "Не указано",
           root: "корень",
-          enabled: "включён",
-          disabled: "выключен",
           probe: "проверка",
           modified: "изменение",
           size: "размер",
@@ -134,8 +132,6 @@ export function positionSourceItems(
       : {
           unspecified: "Not specified",
           root: "root",
-          enabled: "enabled",
-          disabled: "disabled",
           probe: "probe",
           modified: "modified",
           size: "size",
@@ -154,7 +150,7 @@ export function positionSourceItems(
         path: location.relative_path,
         href: sourceDetailHref(location.root_id),
         details: [
-          `${copy.root} ${rootStatusLabel(location.root_status, locale)} (${location.root_enabled ? copy.enabled : copy.disabled})`,
+          `${copy.root} ${rootStatusLabel(location.root_status, locale)}`,
           `${copy.probe} ${probeStatusLabel(location.probe_status, locale)}`,
           `${copy.modified} ${location.mtime || copy.unspecified}`,
           `${copy.size} ${location.size_bytes} ${copy.bytes}`,

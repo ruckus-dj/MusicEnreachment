@@ -505,7 +505,6 @@ export interface IncomingGroupsBody {
 
 export interface IncomingTagEncodingEvidenceBody {
   cyrillic_runes: number;
-  group_matches?: number;
   high_bytes: number;
   longest_run: number;
   signature?: string;
@@ -1306,7 +1305,6 @@ export interface LibrarySourceLocationResponse {
   mtime?: string;
   probe_status: string;
   relative_path: string;
-  root_enabled: boolean;
   root_id: string;
   root_status: string;
   size_bytes: number;
@@ -2312,7 +2310,6 @@ export const SourceLocationRootStateResponseStatus = {
 } as const;
 
 export interface SourceLocationRootStateResponse {
-  enabled: boolean;
   inventory_path?: string;
   safe_error?: string;
   stale: boolean;
@@ -2419,7 +2416,6 @@ export interface SourceRootResponse {
   configured_path: string;
   created_at: string;
   display_name: string;
-  enabled: boolean;
   id: string;
   inventory_path?: string;
   last_successful_scan_at?: string;

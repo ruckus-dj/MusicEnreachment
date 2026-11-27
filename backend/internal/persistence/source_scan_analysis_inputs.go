@@ -77,8 +77,8 @@ func (repository *SourceInventoryRepository) AcquireSourceScanToolHold(
 		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR SHARE`, rootID).Scan(ctx, &root); err != nil {
 			return fmt.Errorf("lock scan source root row: %w", err)
 		}
-		if !root.Enabled || root.ConfiguredPath != configuredPath {
-			return fmt.Errorf("scan source root is no longer enabled at the pinned path")
+		if root.ConfiguredPath != configuredPath {
+			return fmt.Errorf("scan source root changed its pinned path")
 		}
 		if err := lockCompatibleInstallations(ctx, tx, []uuid.UUID{selection.InstallationID}); err != nil {
 			return fmt.Errorf("lock pinned installation: %w", err)

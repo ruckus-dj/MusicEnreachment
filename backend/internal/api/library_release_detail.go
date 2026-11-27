@@ -119,7 +119,6 @@ type LibrarySourceLocationResponse struct {
 	Mtime        *time.Time `json:"mtime,omitempty"`
 	ProbeStatus  string     `json:"probe_status"`
 	RootStatus   string     `json:"root_status"`
-	RootEnabled  bool       `json:"root_enabled"`
 }
 
 func registerLibraryReleaseDetail(api huma.API, dependencies Dependencies) {
@@ -238,7 +237,7 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 				locations = append(locations, LibrarySourceLocationResponse{
 					RootID: location.RootID, LocationID: location.LocationID, RelativePath: location.RelativePath,
 					SizeBytes: location.SizeBytes, Mtime: mtime, ProbeStatus: location.ProbeStatus,
-					RootStatus: location.RootStatus, RootEnabled: location.RootEnabled,
+					RootStatus: location.RootStatus,
 				})
 			}
 			item.Sources = append(item.Sources, LibraryTrackSourceResponse{

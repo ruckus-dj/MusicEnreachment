@@ -78,7 +78,7 @@ func (sourceAnalysisStartRiverFixture) InsertTx(context.Context, *sql.Tx, river.
 func TestRetryStepUsesInheritedSHASelectionAndExactFailedStep(t *testing.T) {
 	rootID, locationID, workID := uuid.New(), uuid.New(), uuid.New()
 	mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
-	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
 	repository := &sourceAnalysisStartRepositoryFixture{detail: &persistence.SourceLocationDetailSnapshot{
@@ -104,7 +104,7 @@ func TestRetryStepUsesInheritedSHASelectionAndExactFailedStep(t *testing.T) {
 func TestRetryStepRejectsSucceededAndMismatchedWork(t *testing.T) {
 	rootID, locationID, workID := uuid.New(), uuid.New(), uuid.New()
 	mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
-	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	repository := &sourceAnalysisStartRepositoryFixture{detail: &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Work: work,
@@ -137,7 +137,7 @@ func TestToolStepsUseOnlyTheirSelectedManagedExecutableTransiently(t *testing.T)
 			rootID, locationID, workID, installationID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 			mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
 			stepName := persistence.SourceStepName(test.step)
-			root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+			root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 			location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 			work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
 			evidence := map[string]string{test.executable: test.banner}
@@ -200,7 +200,7 @@ func TestFingerprintRetryAndRerunDoNotDependOnProbeOrMatchingEligibility(t *test
 		t.Run(test.name, func(t *testing.T) {
 			rootID, locationID, workID, installationID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 			mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
-			root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+			root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 			location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, ProbeStatus: persistence.SourceProbeStatusNoAudio}
 			work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "fpcalc", State: "ready", RelativePath: "fpcalc/1.6.1", PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "1.6.1", VerifiedAt: new(time.Now()), ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)}
@@ -253,7 +253,7 @@ func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 		ToolsReadRequired: false, RerunTarget: false, InputSnapshot: raw,
 	}
 	mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
-	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
 	currentTool := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: currentToolID, RelativePath: "fpcalc/current", Executable: "fpcalc", Version: "1.6.1", VersionBanner: "fpcalc version 1.6.1"}
@@ -307,7 +307,7 @@ func TestRetryOperationBatchRetriesOnlyStepsFailedByTheOriginalOperation(t *test
 		ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "failed", Stage: "failed",
 		SourceAnalysisMode: persistence.SourceAnalysisModeBatch, InputSnapshot: raw,
 	}
-	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+	root := &persistence.SourceRoot{ID: rootID, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
 	otherOperationID := uuid.New()

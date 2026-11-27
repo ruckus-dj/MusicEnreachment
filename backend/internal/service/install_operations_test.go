@@ -65,7 +65,11 @@ func TestInstallStartStoresIdentitiesAndQueuesOperationOnlyArgs(t *testing.T) {
 		}},
 	}}
 	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedRiverClient{}, toolsDirectoryFixture(t.TempDir()))
-	operation, err := installs.Start(context.Background(), tools.PackageFPCalc, "v1.6.1", nil)
+	plan, err := installs.Preflight(t.Context(), tools.PackageFPCalc, "v1.6.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := installs.StartFromPreflight(t.Context(), plan, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +103,7 @@ func TestInstallStartRequiresCompleteLogicalPackage(t *testing.T) {
 	enqueuer := new(installEnqueuerFixture)
 	catalog := installCatalogFixture{release: tools.Release{Identity: "9.0.2", Artifacts: []tools.Artifact{{Name: "ffmpeg.zip"}}}}
 	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}, unusedRiverClient{}, toolsDirectoryFixture(t.TempDir()))
-	if _, err := installs.Start(context.Background(), tools.PackageFFmpeg, "9.0.2", nil); err == nil {
+	if _, err := installs.Preflight(t.Context(), tools.PackageFFmpeg, "9.0.2"); err == nil {
 		t.Fatal("incomplete macOS FFmpeg package was accepted")
 	}
 	if enqueuer.operation != nil || enqueuer.installation != nil {

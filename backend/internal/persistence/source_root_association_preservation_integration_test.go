@@ -33,13 +33,13 @@ func TestDeleteSourceRootPreservesCurrentPublicationAndDetachesSourcesPostgreSQL
 	}
 	rootID := uuid.New()
 	rootPath := filepath.Clean(t.TempDir())
-	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "root to delete", Enabled: true, Status: SourceRootStatusAvailable}
+	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "root to delete", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 	if err := NewSourceInventoryRepository(f.db).CreateSourceRoot(ctx, root); err != nil {
 		t.Fatalf("create source root: %v", err)
 	}
 	alternateRootID := uuid.New()
 	alternateRootPath := filepath.Clean(t.TempDir())
-	alternateRoot := &SourceRoot{ID: alternateRootID, ConfiguredPath: alternateRootPath, DisplayName: "alternative location", Enabled: true, Status: SourceRootStatusAvailable}
+	alternateRoot := &SourceRoot{ID: alternateRootID, ConfiguredPath: alternateRootPath, DisplayName: "alternative location", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 	if err := NewSourceInventoryRepository(f.db).CreateSourceRoot(ctx, alternateRoot); err != nil {
 		t.Fatalf("create alternative source root: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestDeleteSourceRootRollsBackAssociationsWhenGroupingInvalidationFailsPostg
 	}
 	rootID, variantID := uuid.New(), uuid.New()
 	rootPath := filepath.Clean(t.TempDir())
-	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "rollback", Enabled: true, Status: SourceRootStatusAvailable}
+	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "rollback", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 	if err := NewSourceInventoryRepository(f.db).CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestDeleteSourceRootWrongConfirmationLeavesLibraryAssociationsPostgreSQL(t 
 	}
 	rootID, variantID := uuid.New(), uuid.New()
 	rootPath := filepath.Clean(t.TempDir())
-	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "confirmation", Enabled: true, Status: SourceRootStatusAvailable}
+	root := &SourceRoot{ID: rootID, ConfiguredPath: rootPath, DisplayName: "confirmation", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 	if err := NewSourceInventoryRepository(f.db).CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestDeleteSourceRootKeepsAssociationWithSurvivingRootLocationPostgreSQL(t *
 	rootIDs := []uuid.UUID{uuid.New(), uuid.New()}
 	paths := []string{filepath.Clean(t.TempDir()), filepath.Clean(t.TempDir())}
 	for i, rootID := range rootIDs {
-		root := &SourceRoot{ID: rootID, ConfiguredPath: paths[i], DisplayName: "shared variant", Enabled: true, Status: SourceRootStatusAvailable}
+		root := &SourceRoot{ID: rootID, ConfiguredPath: paths[i], DisplayName: "shared variant", ProcessingMode: "in_place", Status: SourceRootStatusAvailable}
 		if err := NewSourceInventoryRepository(f.db).CreateSourceRoot(ctx, root); err != nil {
 			t.Fatalf("create source root %d: %v", i, err)
 		}

@@ -75,11 +75,38 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 	if err != nil || stored == nil || string(stored.Payload) != `[]` || stored.FetchedAt == nil || stored.Revision == nil || *stored.Revision != "r-empty" {
 		t.Fatalf("cached empty response = %+v, %v", stored, err)
 	}
+	legacyGraph, err := repository.BeginRefresh(ctx, source.ID, "release/1", "cfg-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeReject, err := repository.GetCachedResponse(ctx, source.ID, legacyGraph.CacheKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: legacyGraph, FetchedAt: time.Now().UTC(), Revision: "rejected", Payload: json.RawMessage(`{}`),
+		Graph: persistence.ProviderGraph{Releases: []persistence.ProviderRelease{{ID: uuid.New(), ProviderKey: "legacy-release", Title: "Legacy"}}},
+	}); err == nil {
+		t.Fatal("nonempty graph without source entities was accepted")
+	}
+	afterReject, err := repository.GetCachedResponse(ctx, source.ID, legacyGraph.CacheKey)
+	if err != nil || beforeReject == nil || afterReject == nil ||
+		afterReject.Generation != beforeReject.Generation || afterReject.FetchOrder != beforeReject.FetchOrder ||
+		len(afterReject.Payload) != 0 || afterReject.Revision != nil || afterReject.FetchedAt != nil {
+		t.Fatalf("rejected graph changed prior cache state: before=%+v after=%+v err=%v", beforeReject, afterReject, err)
+	}
+	var rejectedEntities, rejectedReleases int
+	if err := db.NewRaw(`SELECT count(*) FROM provider_source_entity WHERE provider_source_id=? AND provider_key='legacy-release'`, source.ID).Scan(ctx, &rejectedEntities); err != nil || rejectedEntities != 0 {
+		t.Fatalf("rejected graph retained source entity: count=%d err=%v", rejectedEntities, err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM provider_release WHERE provider_id=? AND provider_key='legacy-release'`, providerA.ID).Scan(ctx, &rejectedReleases); err != nil || rejectedReleases != 0 {
+		t.Fatalf("rejected graph retained provider release: count=%d err=%v", rejectedReleases, err)
+	}
 
-	artist := persistence.ProviderArtist{ID: uuid.New(), ProviderKey: "artist-1", Name: "Same Artist", Metadata: json.RawMessage(`{"country":"GB"}`), RawSource: json.RawMessage(`{"artist-extra":true}`)}
-	release := persistence.ProviderRelease{ID: uuid.New(), ProviderKey: "release-1", Title: "Release", Metadata: json.RawMessage(`{"year":2024}`), RawSource: json.RawMessage(`{"release-extra":true}`)}
-	recording := persistence.ProviderRecording{ID: uuid.New(), ProviderKey: "recording-1", Title: "Track", Metadata: json.RawMessage(`{"duration":123}`), RawSource: json.RawMessage(`{"recording-extra":true}`)}
-	recording2 := persistence.ProviderRecording{ID: uuid.New(), ProviderKey: "recording-2", Title: "Track 2", Metadata: json.RawMessage(`{"duration":456}`), RawSource: json.RawMessage(`{"recording-extra":2}`)}
+	artist := persistence.ProviderArtist{ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:artist:artist-1")), ProviderKey: "artist-1", Name: "Same Artist", Metadata: json.RawMessage(`{"country":"GB"}`), RawSource: json.RawMessage(`{"artist-extra":true}`)}
+	release := persistence.ProviderRelease{ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:release:release-1")), ProviderKey: "release-1", Title: "Release", Metadata: json.RawMessage(`{"year":2024}`), RawSource: json.RawMessage(`{"release-extra":true}`)}
+	recording := persistence.ProviderRecording{ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:recording-1")), ProviderKey: "recording-1", Title: "Track", Metadata: json.RawMessage(`{"duration":123}`), RawSource: json.RawMessage(`{"recording-extra":true}`)}
+	recording2 := persistence.ProviderRecording{ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:recording-2")), ProviderKey: "recording-2", Title: "Track 2", Metadata: json.RawMessage(`{"duration":456}`), RawSource: json.RawMessage(`{"recording-extra":2}`)}
 	track := persistence.ProviderReleaseTrack{ID: uuid.New(), ReleaseID: release.ID, RecordingID: recording.ID, Medium: 0, Position: 0, DisplayedNumber: "A-1"}
 	track2 := persistence.ProviderReleaseTrack{ID: uuid.New(), ReleaseID: release.ID, RecordingID: recording2.ID, Medium: 0, Position: 1, DisplayedNumber: "A-2"}
 	graph := persistence.ProviderGraph{Complete: true,
@@ -88,6 +115,12 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 			{ReleaseID: release.ID, Position: 0, ArtistID: artist.ID, NameJoinPhrase: " & "},
 			{ReleaseID: release.ID, Position: 1, ArtistID: artist.ID},
 		}, Tracks: []persistence.ProviderReleaseTrack{track, track2},
+		Entities: []persistence.ProviderSourceEntity{
+			{Kind: "artist", ProviderKey: artist.ProviderKey, Name: artist.Name, Fields: json.RawMessage(`{"name":"Same Artist"}`), RawSource: artist.RawSource, Authority: 3, Complete: true},
+			{Kind: "release", ProviderKey: release.ProviderKey, Name: release.Title, Fields: json.RawMessage(`{"title":"Release"}`), RawSource: release.RawSource, Authority: 3, Complete: true},
+			{Kind: "recording", ProviderKey: recording.ProviderKey, Name: recording.Title, Fields: json.RawMessage(`{"title":"Track"}`), RawSource: recording.RawSource, Authority: 3, Complete: true},
+			{Kind: "recording", ProviderKey: recording2.ProviderKey, Name: recording2.Title, Fields: json.RawMessage(`{"title":"Track 2"}`), RawSource: recording2.RawSource, Authority: 3, Complete: true},
+		},
 	}
 	next, err := repository.BeginRefresh(ctx, source.ID, "release/1", "cfg-1")
 	if err != nil {
@@ -98,11 +131,11 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 		t.Fatalf("apply complete graph: %v", err)
 	}
 	var credits int
-	if err := db.NewRaw(`SELECT count(*) FROM provider_release_artist_credit WHERE provider_id=? AND release_id=? AND present`, providerA.ID, release.ID).Scan(ctx, &credits); err != nil || credits != 2 {
+	if err := db.NewRaw(`SELECT count(*) FROM provider_source_release_artist_credit WHERE provider_source_id=? AND release_id=?`, source.ID, release.ID).Scan(ctx, &credits); err != nil || credits != 2 {
 		t.Fatalf("repeated credits = %d, %v; want 2", credits, err)
 	}
 	var trackID uuid.UUID
-	if err := db.NewRaw(`SELECT id FROM provider_release_track WHERE provider_id=? AND release_id=? AND present AND medium=0 AND position=0 AND displayed_number='A-1'`, providerA.ID, release.ID).Scan(ctx, &trackID); err != nil || trackID != track.ID {
+	if err := db.NewRaw(`SELECT track_id FROM provider_source_release_track WHERE provider_source_id=? AND release_id=? AND medium=0 AND position=0 AND displayed_number='A-1'`, source.ID, release.ID).Scan(ctx, &trackID); err != nil || trackID != track.ID {
 		t.Fatalf("pregap track = %s, %v", trackID, err)
 	}
 	stableIDRefresh, err := repository.BeginRefresh(ctx, source.ID, "release/1", "cfg-1")
@@ -172,8 +205,8 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 		}
 	}
 
-	// Complete graph reconciliation defers position uniqueness while tracks swap,
-	// retains absent track IDs, and permits reintroducing an inactive position.
+	// Complete source reconciliation replaces the release collection, so tracks
+	// may swap order, disappear, and return under the same identity.
 	applyCompleteTracks := func(name string, tracks []persistence.ProviderReleaseTrack) {
 		t.Helper()
 		ticket, beginErr := repository.BeginRefresh(ctx, source.ID, "release/1", "cfg-1")
@@ -188,6 +221,9 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 				{ReleaseID: release.ID, Position: 1, ArtistID: artist.ID},
 			},
 			Tracks: tracks,
+			Entities: []persistence.ProviderSourceEntity{
+				{Kind: "release", ProviderKey: release.ProviderKey, Name: release.Title, Fields: json.RawMessage(`{"title":"Release"}`), RawSource: release.RawSource, Authority: 3, Complete: true},
+			},
 		}
 		if applyErr := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`), Graph: trackGraph}); applyErr != nil {
 			t.Fatalf("%s: %v", name, applyErr)
@@ -197,10 +233,16 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 	applyCompleteTracks("swap tracks", []persistence.ProviderReleaseTrack{track, track2})
 	assertTrackPosition := func(id uuid.UUID, position int, present bool) {
 		t.Helper()
-		var actualPosition *int
-		var actualPresent bool
-		if err := db.NewRaw(`SELECT position, present FROM provider_release_track WHERE provider_id=? AND id=?`, providerA.ID, id).Scan(ctx, &actualPosition, &actualPresent); err != nil || actualPresent != present || (present && (actualPosition == nil || *actualPosition != position)) {
-			t.Fatalf("track %s position/presence = %v/%v, err=%v; want %d/%v", id, actualPosition, actualPresent, err, position, present)
+		var actualPosition int
+		err := db.NewRaw(`SELECT position FROM provider_source_release_track WHERE provider_source_id=? AND track_id=?`, source.ID, id).Scan(ctx, &actualPosition)
+		if !present {
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("track %s presence = %v; want absent", id, err)
+			}
+			return
+		}
+		if err != nil || actualPosition != position {
+			t.Fatalf("track %s position = %d, err=%v; want %d", id, actualPosition, err, position)
 		}
 	}
 	assertTrackPosition(track.ID, 1, true)
@@ -224,10 +266,10 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 		t.Fatal(err)
 	}
 	var presentTracks, presentCredits int
-	if err := db.NewRaw(`SELECT count(*) FROM provider_release_track WHERE provider_id=? AND release_id=? AND present`, providerA.ID, release.ID).Scan(ctx, &presentTracks); err != nil {
+	if err := db.NewRaw(`SELECT count(*) FROM provider_source_release_track WHERE provider_source_id=? AND release_id=?`, source.ID, release.ID).Scan(ctx, &presentTracks); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.NewRaw(`SELECT count(*) FROM provider_release_artist_credit WHERE provider_id=? AND release_id=? AND present`, providerA.ID, release.ID).Scan(ctx, &presentCredits); err != nil {
+	if err := db.NewRaw(`SELECT count(*) FROM provider_source_release_artist_credit WHERE provider_source_id=? AND release_id=?`, source.ID, release.ID).Scan(ctx, &presentCredits); err != nil {
 		t.Fatal(err)
 	}
 	if presentTracks != 2 || presentCredits != 2 {

@@ -235,7 +235,7 @@ func seedFallbackSQLRun(t *testing.T, withSearch bool) fallbackSQLRun {
 		t.Fatalf("seed MusicBrainz provider source: %v", err)
 	}
 	eventID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO incoming_matching_reconcile_event(id,reason,source_input_snapshot) VALUES (?,'startup','{}'::jsonb)`, eventID).Exec(ctx); err != nil {
+	if _, err := db.NewRaw(`INSERT INTO incoming_matching_reconcile_event(id,reason) VALUES (?,'startup')`, eventID).Exec(ctx); err != nil {
 		t.Fatalf("seed pending reconciliation event: %v", err)
 	}
 	client := openScanEnqueueRiver(t, db)

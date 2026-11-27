@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -16,8 +15,8 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-// ErrSourceRootBusy reports a path change, a disable or a deletion refused
-// because a scan of the root is queued or running.
+// ErrSourceRootBusy reports a path change or a deletion refused because a scan
+// of the root is queued or running.
 var ErrSourceRootBusy = errors.New("source root has an active scan")
 
 // ErrSourceRootConfirmation reports a deletion whose confirmed configured path
@@ -40,7 +39,7 @@ type SourceRootRepository interface {
 	CreateSourceRoot(context.Context, *persistence.SourceRoot) error
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
 	ListSourceRoots(context.Context) ([]persistence.SourceRoot, error)
-	UpdateSourceRoot(context.Context, persistence.SourceRootPatch) (persistence.SourceRootUpdateResult, error)
+	UpdateSourceRoot(context.Context, persistence.SourceRootPatch) error
 	DeleteSourceRoot(context.Context, uuid.UUID, string, int64) error
 	CountSourceLocations(context.Context, uuid.UUID) (int64, error)
 }
@@ -55,10 +54,6 @@ type ManagedPathsReader interface {
 	GetOutputDirectory(context.Context) (string, bool, error)
 }
 
-type sourceRootPendingAdmitter interface {
-	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
-}
-
 // SourceRoot is the operator-facing state of one registered source root. The
 // stale flag and the location count are derived here, so no caller compares
 // inventory_path with configured_path itself or counts rows.
@@ -67,7 +62,6 @@ type SourceRoot struct {
 	DisplayName          string
 	ConfiguredPath       string
 	ProcessingMode       string
-	Enabled              bool
 	Status               string
 	SafeError            *string
 	InventoryPath        *string
@@ -85,7 +79,6 @@ type SourceRootEdit struct {
 	DisplayName    *string
 	ConfiguredPath *string
 	ProcessingMode *string
-	Enabled        *bool
 }
 
 const (
@@ -99,7 +92,6 @@ const (
 type SourceRoots struct {
 	repository   SourceRootRepository
 	managedPaths ManagedPathsReader
-	pending      sourceRootPendingAdmitter
 	cleaner      sourceArtifactRootCleaner
 }
 
@@ -111,14 +103,9 @@ func NewSourceRoots(repository SourceRootRepository, managedPaths ManagedPathsRe
 	return &SourceRoots{repository: repository, managedPaths: managedPaths, cleaner: sourcefs.NewCleaner()}
 }
 
-// SetPendingDispatcher wires best-effort pending analysis admission after an
-// enabled root is committed.
-func (s *SourceRoots) SetPendingDispatcher(dispatcher sourceRootPendingAdmitter) {
-	s.pending = dispatcher
-}
-
-// Create registers a new enabled root. The display name must not be empty and
-// the path must pass ValidateSourcePath. Nothing is written to the directory.
+// Create registers a new root. The display name must not be empty, the
+// processing mode is required, and the path must pass ValidateSourcePath.
+// Nothing is written to the directory.
 func (s *SourceRoots) Create(ctx context.Context, displayName, configuredPath, processingMode string) (SourceRoot, error) {
 	name, err := sourceRootDisplayName(displayName)
 	if err != nil {
@@ -131,7 +118,7 @@ func (s *SourceRoots) Create(ctx context.Context, displayName, configuredPath, p
 	if err != nil {
 		return SourceRoot{}, fmt.Errorf("source root path: %w", err)
 	}
-	root := &persistence.SourceRoot{DisplayName: name, ConfiguredPath: path, ProcessingMode: processingMode, Enabled: true}
+	root := &persistence.SourceRoot{DisplayName: name, ConfiguredPath: path, ProcessingMode: processingMode}
 	if err := s.repository.CreateSourceRoot(ctx, root); err != nil {
 		return SourceRoot{}, fmt.Errorf("create source root: %w", err)
 	}
@@ -162,12 +149,12 @@ func (s *SourceRoots) List(ctx context.Context) ([]SourceRoot, error) {
 	return views, nil
 }
 
-// Edit changes the display name, processing mode, configured path or enabled
-// flag. A mode change affects future work only and does not block on queued work.
-// A path is re-validated before it is stored, and a changed path keeps the previous
+// Edit changes the display name, processing mode or configured path. A mode
+// change affects future work only and does not block on queued work. A path is
+// re-validated before it is stored, and a changed path keeps the previous
 // inventory, which the returned view reports as stale until a successful scan of
-// the new path replaces it. A path or enabled change is refused with
-// ErrSourceRootBusy while a scan of the root is active; a name change is not.
+// the new path replaces it. A path change is refused with ErrSourceRootBusy
+// while a scan of the root is active; a name change is not.
 func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdit) (SourceRoot, error) {
 	current, err := s.repository.GetSourceRoot(ctx, id)
 	if err != nil {
@@ -193,10 +180,6 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 			patch.ConfiguredPath = &path
 		}
 	}
-	if edit.Enabled != nil {
-		enabled := *edit.Enabled
-		patch.Enabled = &enabled
-	}
 	if edit.ProcessingMode != nil {
 		if err := validateSourceProcessingMode(*edit.ProcessingMode); err != nil {
 			return SourceRoot{}, err
@@ -204,17 +187,11 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 		mode := *edit.ProcessingMode
 		patch.ProcessingMode = &mode
 	}
-	result, err := s.repository.UpdateSourceRoot(ctx, patch)
-	if err != nil {
+	if err := s.repository.UpdateSourceRoot(ctx, patch); err != nil {
 		if errors.Is(err, persistence.ErrSourceRootActiveScan) {
 			return SourceRoot{}, fmt.Errorf("edit source root: %w", ErrSourceRootBusy)
 		}
 		return SourceRoot{}, fmt.Errorf("edit source root: %w", err)
-	}
-	if patch.Enabled != nil && *patch.Enabled && !result.EnabledBefore && s.pending != nil {
-		if _, err := s.pending.AdmitPending(context.WithoutCancel(ctx), id); err != nil {
-			slog.WarnContext(ctx, "pending source analysis admission failed after source root enabled", "root", id, "cause", err)
-		}
 	}
 	return s.Get(ctx, id)
 }
@@ -381,7 +358,7 @@ func (s *SourceRoots) view(ctx context.Context, root *persistence.SourceRoot) (S
 	}
 	return SourceRoot{
 		ID: root.ID, DisplayName: root.DisplayName, ConfiguredPath: root.ConfiguredPath, ProcessingMode: root.ProcessingMode,
-		Enabled: root.Enabled, Status: root.Status, SafeError: root.SafeError,
+		Status: root.Status, SafeError: root.SafeError,
 		InventoryPath: root.InventoryPath, Stale: root.Stale(),
 		ScanGeneration: root.ScanGeneration, LastSuccessfulScanAt: root.LastSuccessfulScanAt,
 		LocationCount: count, CreatedAt: root.CreatedAt, UpdatedAt: root.UpdatedAt,

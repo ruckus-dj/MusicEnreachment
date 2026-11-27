@@ -28,7 +28,7 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	settingStore := persistence.NewSettingsRepository(database)
 	toolsRoot := t.TempDir()
 	setRuntimeRoots(t, ctx, settingStore, toolsRoot)
-	root := &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: t.TempDir(), DisplayName: "Music", Enabled: true}
+	root := &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: t.TempDir(), DisplayName: "Music", ProcessingMode: "in_place"}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) 
 	registry := settings.New(settingsRepository, nil)
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
 	writeScanDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot)
-	root := &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: t.TempDir(), DisplayName: "Music", Enabled: true}
+	root := &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: t.TempDir(), DisplayName: "Music", ProcessingMode: "in_place"}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}

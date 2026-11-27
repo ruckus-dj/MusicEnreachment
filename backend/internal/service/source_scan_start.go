@@ -27,10 +27,6 @@ const (
 	SourceScanSnapshotVersion = persistence.SourceScanSnapshotVersion
 )
 
-// ErrSourceScanDisabled reports a scan start refused because the operator
-// disabled the root.
-var ErrSourceScanDisabled = errors.New("source root is disabled")
-
 // ErrSourceScanNotReady reports a scan start refused because the first-run
 // Setup is unfinished or the instance platform is not usable. The scan reads
 // its source through the managed tools Setup verifies, so it may not run
@@ -93,9 +89,9 @@ func NewSourceScanOperations(repository SourceScanStartRepository, paths SourceS
 }
 
 // Start queues one scan of a root and returns its operation. The path is
-// re-validated here, and the platform, the Setup completion, the enabled flag
-// and the absence of another queued or running scan of the root are all checked
-// before the operation exists: a refusal creates neither an operation nor a
+// re-validated here, and the platform, the Setup completion and the absence of
+// another queued or running scan of the root are all checked before the
+// operation exists: a refusal creates neither an operation nor a
 // River job. The duplicate start is decided by the database under the root
 // lock, so two concurrent starts of one root cannot both succeed.
 //
@@ -179,8 +175,6 @@ func (s *SourceScanOperations) ready(ctx context.Context) error {
 // wrapped database failure it is.
 func sourceScanStartRefusal(err error) error {
 	switch {
-	case errors.Is(err, persistence.ErrSourceRootDisabled):
-		return fmt.Errorf("scan source root: %w", ErrSourceScanDisabled)
 	case errors.Is(err, persistence.ErrSourceRootActiveScan):
 		return fmt.Errorf("scan source root: %w", ErrSourceRootBusy)
 	default:

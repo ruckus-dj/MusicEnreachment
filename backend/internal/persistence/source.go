@@ -13,8 +13,7 @@ type SourceRoot struct {
 	ID                     uuid.UUID  `bun:"id,pk,type:uuid"`
 	ConfiguredPath         string     `bun:"configured_path"`
 	DisplayName            string     `bun:"display_name"`
-	ProcessingMode         string     `bun:"processing_mode,scanonly"`
-	Enabled                bool       `bun:"enabled,notnull"`
+	ProcessingMode         string     `bun:"processing_mode"`
 	ScanGeneration         int64      `bun:"scan_generation"`
 	InventoryPath          *string    `bun:"inventory_path,nullzero"`
 	LastSuccessfulScanAt   *time.Time `bun:"last_successful_scan_at,nullzero"`

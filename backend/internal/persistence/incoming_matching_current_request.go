@@ -73,7 +73,7 @@ func requestAllAutomaticIncomingMatchingReconciliationWith(ctx context.Context, 
 
 func wakeCurrentIncomingMatchingReconciliationWith(ctx context.Context, tx bun.IDB) error {
 	if _, err := tx.NewRaw(`INSERT INTO incoming_matching_reconcile_event
-		(id, reason, source_input_snapshot) VALUES (?, 'current', '{}'::jsonb)
+		(id, reason) VALUES (?, 'current')
 		ON CONFLICT (reason) WHERE reason='current' AND state='pending' DO NOTHING`, uuid.New()).Exec(ctx); err != nil {
 		return fmt.Errorf("wake current incoming matching reconciliation: %w", err)
 	}
@@ -248,14 +248,4 @@ func (repository *SourceInventoryRepository) AcknowledgeRemovedActiveCurrentGrou
 		return false, err
 	}
 	return acknowledged, nil
-}
-
-// IsCurrentMatchingReconciliationEvent distinguishes current-state wakeups from
-// immutable source-event reconciliations without putting payload in River args.
-func (repository *SourceInventoryRepository) IsCurrentMatchingReconciliationEvent(ctx context.Context, eventID uuid.UUID) (bool, error) {
-	var current bool
-	if err := repository.db.NewRaw(`SELECT reason='current' FROM incoming_matching_reconcile_event WHERE id=?`, eventID).Scan(ctx, &current); err != nil {
-		return false, fmt.Errorf("read matching reconciliation event reason: %w", err)
-	}
-	return current, nil
 }

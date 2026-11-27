@@ -89,7 +89,7 @@ func TestSourceLocationDetailReportsIdentityAvailabilityAndActiveOperation(t *te
 		detail.ProbeStatus != persistence.SourceProbeStatusAudio {
 		t.Fatalf("detail identity = %+v", detail)
 	}
-	if detail.Root.Status != persistence.SourceRootStatusAvailable || !detail.Root.Enabled || detail.Root.Stale ||
+	if detail.Root.Status != persistence.SourceRootStatusAvailable || detail.Root.Stale ||
 		detail.Root.SafeError != nil || detail.Root.InventoryPath == nil {
 		t.Fatalf("detail root availability = %+v", detail.Root)
 	}

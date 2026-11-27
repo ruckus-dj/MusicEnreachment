@@ -122,22 +122,6 @@ func (repository *SourceInventoryRepository) FinishSourceScanDelivery(ctx contex
 	})
 }
 
-func (repository *SourceInventoryRepository) DeleteSourceScanCandidatesForDelivery(ctx context.Context, operationID uuid.UUID, attempt int, jobID int64) error {
-	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		operation, err := scanDeliveryForUpdate(ctx, tx, operationID, attempt, jobID)
-		if err != nil {
-			return err
-		}
-		if operation.State != "running" {
-			return fmt.Errorf("delete fenced source scan candidates: %w", ErrSourceAnalysisStale)
-		}
-		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", operationID).Exec(ctx); err != nil {
-			return fmt.Errorf("delete fenced source scan candidates: %w", err)
-		}
-		return nil
-	})
-}
-
 // DeleteSourceScanCandidatesForRootDelivery validates the root captured by a
 // traversal before clearing its previous candidates. This is deliberately
 // separate from the legacy delivery fence used by the existing scan pipeline.

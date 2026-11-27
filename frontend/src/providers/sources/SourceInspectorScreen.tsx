@@ -56,9 +56,7 @@ export function SourceInspectorScreen({
     }),
   ) as SourceInspectorViewProps["steps"];
   const rootAvailable =
-    detail?.root.enabled === true &&
-    !detail.root.stale &&
-    detail.root.status === "available";
+    detail?.root.status === "available" && !detail.root.stale;
   const active = pending || !!detail?.active_analysis_operation_id;
   const retryAvailable = Object.fromEntries(
     sourceInspectorStepNames.map((name) => [
@@ -91,7 +89,6 @@ export function SourceInspectorScreen({
     sizeBytes: detail.size_bytes,
     modifiedAt: detail.mtime,
     availability: detail.root.status,
-    enabled: detail.root.enabled,
     stale: detail.root.stale,
     safeError: detail.root.safe_error,
   };

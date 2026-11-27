@@ -60,23 +60,8 @@ func (pool *AnalysisConsumerPool) Wake() {
 // Wakeups returns a coalescing wake channel for the app-owned controller.
 func (pool *AnalysisConsumerPool) Wakeups() <-chan struct{} { return pool.wake }
 
-// SetLimit reconciles capacity synchronously for compatibility with callers
-// that already hold a freshly-read limit. Shrink drains happen asynchronously.
-func (pool *AnalysisConsumerPool) SetLimit(ctx context.Context, limit int) error {
-	return pool.SetDemand(ctx, limit, maxRiverQueueWorkers*maxRiverQueueWorkers)
-}
-
-// SetDemand caps extra worker capacity by currently available queue demand.
-func (pool *AnalysisConsumerPool) SetDemand(ctx context.Context, limit, demand int) error {
-	if limit < 1 || demand < 0 {
-		return fmt.Errorf("source file concurrency and demand must be non-negative")
-	}
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-	return pool.reconcileLocked(ctx, limit, demand, 0, false)
-}
-
-// SetDemandForGeneration refuses a read made obsolete by a newer commit wake.
+// SetDemandForGeneration caps extra worker capacity by currently available
+// queue demand and refuses a read made obsolete by a newer commit wake.
 func (pool *AnalysisConsumerPool) SetDemandForGeneration(ctx context.Context, generation uint64, limit, demand int) error {
 	if limit < 1 || demand < 0 {
 		return fmt.Errorf("source file concurrency and demand must be non-negative")
@@ -86,14 +71,14 @@ func (pool *AnalysisConsumerPool) SetDemandForGeneration(ctx context.Context, ge
 	if generation != pool.generation.Load() {
 		return nil
 	}
-	return pool.reconcileLocked(ctx, limit, demand, generation, true)
+	return pool.reconcileLocked(ctx, limit, demand, generation)
 }
 
 func (pool *AnalysisConsumerPool) Generation() uint64 {
 	return pool.generation.Load()
 }
 
-func (pool *AnalysisConsumerPool) reconcileLocked(ctx context.Context, limit, demand int, generation uint64, guarded bool) error {
+func (pool *AnalysisConsumerPool) reconcileLocked(ctx context.Context, limit, demand int, generation uint64) error {
 	for group := range pool.retiring {
 		pool.startRetirementLocked(group)
 	}
@@ -143,7 +128,7 @@ func (pool *AnalysisConsumerPool) reconcileLocked(ctx context.Context, limit, de
 				pool.startRetirementLocked(group)
 			}
 		}
-		if guarded && generation != pool.generation.Load() {
+		if generation != pool.generation.Load() {
 			return nil
 		}
 		client, err := pool.factory(ctx, capacities[i])
@@ -151,7 +136,7 @@ func (pool *AnalysisConsumerPool) reconcileLocked(ctx context.Context, limit, de
 			return fmt.Errorf("add source analysis consumer: %w", err)
 		}
 		group := &analysisConsumerGroup{capacity: capacities[i], client: client}
-		if guarded && generation != pool.generation.Load() {
+		if generation != pool.generation.Load() {
 			pool.retiring[group] = struct{}{}
 			pool.startRetirementLocked(group)
 			return nil

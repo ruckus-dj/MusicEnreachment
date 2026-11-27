@@ -63,17 +63,6 @@ func matchingComparisonValues(values []string) ([]string, error) {
 	return comparison, nil
 }
 
-func matchingTextSimilarity(left, right string) (float64, error) {
-	if !utf8.ValidString(left) || !utf8.ValidString(right) {
-		return 0, fmt.Errorf("matching text is not valid UTF-8")
-	}
-	leftNormalized := canonicalMatchingText(left)
-	rightNormalized := canonicalMatchingText(right)
-	leftTransliterated := canonicalMatchingText(anyascii.Transliterate(left))
-	rightTransliterated := canonicalMatchingText(anyascii.Transliterate(right))
-	return matchingTextSimilarityProcessed(leftNormalized, rightNormalized, leftTransliterated, rightTransliterated)
-}
-
 func matchingTextSimilarityProcessed(left, right, transliteratedLeft, transliteratedRight string) (float64, error) {
 	normalized, err := softTokenSimilarity(left, right)
 	if err != nil {

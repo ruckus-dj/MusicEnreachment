@@ -160,7 +160,7 @@
       {
         "name": "dialog-large",
         "value": "0 24px 64px rgb(0 0 0 / 0.24)",
-        "purpose": "ActionModal и крупные модальные формы."
+        "purpose": "Крупные модальные формы."
       },
       {
         "name": "tooltip",

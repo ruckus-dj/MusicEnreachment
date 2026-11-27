@@ -300,7 +300,7 @@ func incomingFilesFromCaptures(captures []persistence.IncomingGroupingCapture) (
 			RelativePath:      capture.RelativePath, SizeBytes: capture.SizeBytes, Mtime: normalizedIncomingMtime(capture.Mtime),
 		}
 		locations[capture.VariantID] = append(locations[capture.VariantID], location)
-		if capture.RootEnabled && !capture.RootStale {
+		if !capture.RootStale {
 			folder := incomingAnalysisFolder{root: capture.RootID, dir: path.Dir(capture.RelativePath)}
 			currentFolders[capture.VariantID] = append(currentFolders[capture.VariantID], folder)
 			if (!capture.Ready || capture.CaptureAnalysisID == nil) && !capture.NonAudioAnalysisSettled {

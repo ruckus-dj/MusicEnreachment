@@ -69,7 +69,7 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 		query string
 		args  []any
 	}{
-		{`INSERT INTO source_root(id,configured_path,display_name) VALUES(?,?,?)`, []any{rootID, rootPath, "cleanup worker integration"}},
+		{`INSERT INTO source_root(id,configured_path,display_name,processing_mode) VALUES(?,?,?,'staged')`, []any{rootID, rootPath, "cleanup worker integration"}},
 		{`INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status) VALUES(?,?,'music/song.flac',5,now(),1,'audio')`, []any{locationID, rootID}},
 		{`INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id) VALUES(?,?,?,?,?,'music/song.flac',5,now(),true,?)`, []any{workID, locationID, rootID, rootPath, rootPath, uuid.New()}},
 		{`INSERT INTO operation(id,kind,state,stage,input_snapshot,attempt,river_job_id,created_at,updated_at,finished_at) VALUES(?,'analyze_source','succeeded','complete','{}',1,?,now(),now(),now())`, []any{creatorID, creatorJobID}},

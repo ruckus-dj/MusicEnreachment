@@ -335,7 +335,7 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 			AND l.media_variant_id=identity.media_variant_id AND l.source_root_id=r.id
 			AND w.location_id=l.id AND w.relative_path=l.relative_path
 			AND w.size_bytes=l.size_bytes AND date_trunc('microseconds',w.mtime)=date_trunc('microseconds',l.mtime)
-			AND r.enabled AND r.status=? AND r.inventory_path=r.configured_path
+			AND r.status=? AND r.inventory_path=r.configured_path
 			AND w.configured_path=r.configured_path AND w.inventory_path=r.inventory_path
 		)`, candidate.WorkID, candidate.SourceLocationID, candidate.SourceRootID, candidate.MediaVariantID, SourceRootStatusAvailable).Scan(ctx, &consistent); err != nil {
 			return false, fmt.Errorf("validate publication source cleanup inputs: verify current source facts: %w", err)

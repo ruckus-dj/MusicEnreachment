@@ -167,7 +167,7 @@ func TestMoveWorkerRejectsChangedCanonicalVersionBeforeSwitch(t *testing.T) {
 	}
 }
 
-func TestMoveWorkerAcceptsLegacySnapshotUsingStoredInstallationVersion(t *testing.T) {
+func TestMoveWorkerRejectsVersionlessSnapshotBeforeMutation(t *testing.T) {
 	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
 	for i := range snapshot.Files {
@@ -184,8 +184,16 @@ func TestMoveWorkerAcceptsLegacySnapshotUsingStoredInstallationVersion(t *testin
 	if err := worker.Work(context.Background(), operation); err != nil {
 		t.Fatal(err)
 	}
-	if repository.root != newRoot || operation.State != "succeeded" {
-		t.Fatalf("legacy move did not use stored canonical version: root=%s state=%s", repository.root, operation.State)
+	if repository.root != oldRoot || operation.State != "failed" {
+		t.Fatalf("versionless move was not rejected before mutation: root=%s state=%s", repository.root, operation.State)
+	}
+	if _, err := os.Lstat(filepath.Join(newRoot, ".staging")); !os.IsNotExist(err) {
+		t.Fatalf("rejected versionless move created staging: %v", err)
+	}
+	for _, file := range snapshot.Files {
+		if _, err := os.Lstat(file.TargetPath); !os.IsNotExist(err) {
+			t.Errorf("rejected versionless move left target %s: %v", file.TargetPath, err)
+		}
 	}
 }
 
@@ -530,6 +538,139 @@ func TestMoveWorkerResumesPendingRollbackBeforeFilesystemChanges(t *testing.T) {
 		if digest, err := tools.SHA256File(file.SourcePath); err != nil || digest != file.SHA256 {
 			t.Errorf("old source changed during rollback recovery: %s hash=%s err=%v", file.Executable, digest, err)
 		}
+	}
+}
+
+func TestMoveWorkerVersionlessSwitchedSnapshotRollsBackBeforeForward(t *testing.T) {
+	t.Parallel()
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
+	staging := seedMovePublication(t, newRoot, operation.ID, snapshot, true)
+	for index := range snapshot.Files {
+		file := &snapshot.Files[index]
+		if err := os.Link(filepath.Join(staging, "payload", file.RelativePath, file.Executable), file.TargetPath); err != nil {
+			t.Fatal(err)
+		}
+		file.Version = ""
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.InputSnapshot = raw
+	operation.State, operation.Stage = "queued", "switched"
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: newRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository),
+		moveWorkerSettings{root: newRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if repository.root != oldRoot || operation.State != "failed" {
+		t.Fatalf("versionless switched rollback root=%s operation=%s", repository.root, operation.State)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("versionless switched rollback retained staging: %v", err)
+	}
+	for _, file := range snapshot.Files {
+		if digest, err := tools.SHA256File(file.SourcePath); err != nil || digest != file.SHA256 {
+			t.Errorf("old source changed during versionless switched rollback: %s hash=%s err=%v", file.Executable, digest, err)
+		}
+		if _, err := os.Lstat(file.TargetPath); !os.IsNotExist(err) {
+			t.Errorf("new-root target survived versionless switched rollback: %s error=%v", file.TargetPath, err)
+		}
+	}
+}
+
+func TestMoveWorkerVersionlessInterruptedMoveRestoresStagedBackup(t *testing.T) {
+	t.Parallel()
+	t.Run("committing targets", func(t *testing.T) {
+		testMoveWorkerVersionlessInterruptedMoveRestoresStagedBackup(t, "commit_targets", false)
+	})
+	t.Run("switched", func(t *testing.T) {
+		testMoveWorkerVersionlessInterruptedMoveRestoresStagedBackup(t, "switched", true)
+	})
+}
+
+func testMoveWorkerVersionlessInterruptedMoveRestoresStagedBackup(t *testing.T, stage string, switched bool) {
+	t.Helper()
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
+	staging := seedMovePublication(t, newRoot, operation.ID, snapshot, true)
+	conflict := &snapshot.Files[0]
+	backup := filepath.Join(staging, "target-backups", "0")
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(conflict.TargetPath, backup); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range snapshot.Files {
+		if err := os.Link(filepath.Join(staging, "payload", file.RelativePath, file.Executable), file.TargetPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both files belong to the same installation. A valid first entry must not
+	// hide the invalid second entry when executable probes are deduplicated.
+	snapshot.Files[1].Version = ""
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.InputSnapshot = raw
+	operation.State, operation.Stage = "running", stage
+	activeRoot := oldRoot
+	if switched {
+		activeRoot = newRoot
+	}
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: activeRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository),
+		moveWorkerSettings{root: activeRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if repository.root != oldRoot || operation.State != "failed" {
+		t.Fatalf("versionless staged rollback root=%s operation=%s", repository.root, operation.State)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("versionless staged rollback retained staging: %v", err)
+	}
+	if content, err := os.ReadFile(conflict.TargetPath); err != nil || string(content) != "old unknown target" {
+		t.Fatalf("staged target backup was not restored: %q, %v", content, err)
+	}
+	if _, err := os.Lstat(snapshot.Files[1].TargetPath); !os.IsNotExist(err) {
+		t.Fatalf("published target survived versionless staged rollback: %v", err)
+	}
+}
+
+func TestMoveWorkerVersionlessInterruptedMoveWithoutJournalPreservesStaging(t *testing.T) {
+	t.Parallel()
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
+	staging, err := tools.EnsureOperationStaging(newRoot, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(staging, "target-backups", "0")
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(snapshot.Files[0].TargetPath, backup); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Files[1].Version = ""
+	operation.InputSnapshot, err = json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.State, operation.Stage = "running", "commit_targets"
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository),
+		moveWorkerSettings{root: oldRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(t.Context(), operation); err == nil {
+		t.Fatal("interrupted move without a rollback journal did not report an error")
+	}
+	if repository.root != oldRoot || operation.State != "running" || operation.Stage != "commit_targets" {
+		t.Fatalf("interrupted move lost its recovery state: root=%s state=%s stage=%s", repository.root, operation.State, operation.Stage)
+	}
+	if content, err := os.ReadFile(backup); err != nil || string(content) != "old unknown target" {
+		t.Fatalf("interrupted move lost its unproven backup: %q, %v", content, err)
 	}
 }
 

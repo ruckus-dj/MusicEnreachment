@@ -122,7 +122,6 @@ export function sourceInspectorDemoProvider({
                 : root.available
                   ? "available"
                   : "unavailable",
-            enabled: true,
             stale,
           }
         : undefined,

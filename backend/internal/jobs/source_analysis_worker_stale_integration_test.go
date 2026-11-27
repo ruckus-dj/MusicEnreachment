@@ -30,8 +30,8 @@ func TestSourceAnalysisWorkerRecoversCurrentStaleDeliveryPostgreSQL(t *testing.T
 	if len(before) != 2 {
 		t.Fatalf("admitted steps = %d, want two", len(before))
 	}
-	if _, err := fixture.database.ExecContext(ctx, "UPDATE source_root SET enabled = false WHERE id = ?", fixture.root.ID); err != nil {
-		t.Fatalf("disable the root: %v", err)
+	if _, err := fixture.database.ExecContext(ctx, "UPDATE source_root SET configured_path = configured_path || '-moved' WHERE id = ?", fixture.root.ID); err != nil {
+		t.Fatalf("make the root stale: %v", err)
 	}
 	if _, err := fixture.database.ExecContext(ctx, "UPDATE river_job SET state='available', scheduled_at=now() WHERE id=?", *operation.RiverJobID); err != nil {
 		t.Fatalf("make the admitted delivery available: %v", err)
@@ -62,7 +62,7 @@ func TestSourceAnalysisWorkerRecoversCurrentStaleDeliveryPostgreSQL(t *testing.T
 		}
 	}
 	if probeLog, err := os.ReadFile(fixture.probeLog); err == nil && len(probeLog) != 0 {
-		t.Fatalf("probe ran despite disabled root: %s", probeLog)
+		t.Fatalf("probe ran despite a stale source root: %s", probeLog)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read probe log: %v", err)
 	}

@@ -81,10 +81,7 @@ export function useSourceScanPanel(
     onStart: () => void start(root.id),
     onRetry: () => void retry(root.id),
     onRecheck: discoveryFailure ? () => void discover() : undefined,
-    startDisabled: !root.enabled || admissionDisabled,
-    disabledNote: root.enabled
-      ? undefined
-      : sourceMessage(locale, "disabledScan"),
+    startDisabled: admissionDisabled,
     streamNotice:
       following && streamError(root.id)
         ? sourceMessage(locale, "scanStreamError")

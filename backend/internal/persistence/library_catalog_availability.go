@@ -44,7 +44,7 @@ func (repository *LibraryRepository) ReadLibraryAudioCandidates(ctx context.Cont
 			FROM release_track rt
 			JOIN track_source ts ON ts.track_id=rt.track_id
 			JOIN source_location sl ON sl.media_variant_id=ts.media_variant_id AND sl.probe_status='audio'
-			JOIN source_root sr ON sr.id=sl.source_root_id AND sr.enabled AND sr.status='available'
+			JOIN source_root sr ON sr.id=sl.source_root_id AND sr.status='available'
 				AND sr.inventory_path=sr.configured_path
 			JOIN local_release r ON r.id=rt.release_id
 			WHERE (?::uuid IS NULL OR r.id=?)

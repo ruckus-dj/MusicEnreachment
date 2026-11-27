@@ -241,7 +241,7 @@ func artifactOwnedByFence(artifact *SourceAnalysisArtifact, fence SourceAnalysis
 }
 
 func sourceAnalysisArtifactOwnerCurrent(work *SourceAnalysisWork, root *SourceRoot, location *SourceLocation) bool {
-	return work.InvalidatedAt == nil && root.Enabled && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
+	return work.InvalidatedAt == nil && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
 		work.SourceRootID == root.ID && work.ConfiguredPath == root.ConfiguredPath && work.InventoryPath == *root.InventoryPath && work.CurrentLocationID != nil && *work.CurrentLocationID == work.LocationID && *work.CurrentLocationID == location.ID &&
 		location.SourceRootID == root.ID && location.RelativePath == work.RelativePath && location.SizeBytes == work.SizeBytes &&
 		sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime))

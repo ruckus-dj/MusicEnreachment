@@ -189,11 +189,6 @@ export type ContextPublicationPreviewProps = {
   children?: ReactNode;
 };
 
-export type ContextPublicationPreviewBinderProps = Omit<
-  ContextPublicationPreviewProps,
-  "children"
->;
-
 export function ContextPublicationPreview({
   destination = fixturePublicationDestination,
   plan,

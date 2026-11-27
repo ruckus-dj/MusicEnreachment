@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { IncomingWorkspaceView } from "../../../ui/features/incoming/IncomingWorkspaceView";
 import { I18nProvider, useI18n } from "../demoPreferences";
 import {
   createIncomingState,
@@ -12,7 +13,16 @@ import {
   createLocalProviderState,
   localProviderReleases,
 } from "../local-catalog/localProviderModel";
-import { MatchingScreen } from "./MatchingScreen";
+import {
+  type MatchingScreenProps,
+  useMatchingScreenDemoProvider,
+} from "./useMatchingScreenDemoProvider";
+
+function MatchingRoute(props: MatchingScreenProps) {
+  return (
+    <IncomingWorkspaceView matching={useMatchingScreenDemoProvider(props)} />
+  );
+}
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
@@ -45,7 +55,7 @@ function MatchingHarness({
       >
         Change inventory
       </button>
-      <MatchingScreen
+      <MatchingRoute
         state={state}
         onState={setState}
         artists={artists}
@@ -71,7 +81,7 @@ function LinkSaveHarness({
   const [state, setState] = useState(createIncomingState);
   const [releases, setReleases] = useState(initialReleases);
   return (
-    <MatchingScreen
+    <MatchingRoute
       state={state}
       onState={setState}
       releases={releases}

@@ -111,7 +111,7 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 				return fmt.Errorf("admit source analysis: %w", ErrToolsRootMoveActive)
 			}
 		}
-		if !root.Enabled || root.ConfiguredPath != configuredRoot || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+		if root.ConfiguredPath != configuredRoot || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
 			return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisStale)
 		}
 		type selectedStep struct {

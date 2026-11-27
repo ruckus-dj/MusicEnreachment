@@ -18,12 +18,11 @@ type SourceAnalysisPendingWork struct {
 	Steps    []SourceAnalysisStep
 }
 
-// ListPendingSourceAnalysisRoots returns enabled, current roots with pending
-// work and no active normalized analysis. Failed work is deliberately excluded.
+// ListPendingSourceAnalysisRoots returns current roots with pending work and no
+// active normalized analysis. Failed work is deliberately excluded.
 func (repository *SourceInventoryRepository) ListPendingSourceAnalysisRoots(ctx context.Context) ([]SourceRoot, error) {
 	var roots []SourceRoot
 	err := repository.db.NewSelect().Model(&roots).
-		Where("source_root.enabled = TRUE").
 		Where("source_root.inventory_path = source_root.configured_path").
 		Where("NOT EXISTS (SELECT 1 FROM operation o WHERE o.target_source_root_id=source_root.id AND o.kind='analyze_source' AND o.state IN ('queued','running'))").
 		Where(`EXISTS (SELECT 1 FROM source_analysis_work w JOIN source_analysis_step s ON s.work_id=w.id
@@ -58,7 +57,7 @@ func (repository *SourceInventoryRepository) readPendingSourceAnalysisWork(ctx c
 		if err := tx.NewSelect().Model(root).Where("id=?", rootID).Scan(ctx); err != nil {
 			return fmt.Errorf("read pending source analysis root: %w", err)
 		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+		if root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
 			return nil
 		}
 		works := make([]SourceAnalysisWork, 0)
@@ -191,7 +190,7 @@ func (repository *SourceInventoryRepository) FailPendingSourceAnalysisStep(ctx c
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? FOR UPDATE`, workID, rootID).Scan(ctx, work); err != nil {
 			return fmt.Errorf("fail pending source analysis step: lock work: %w", err)
 		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath || root.ConfiguredPath != work.ConfiguredPath || work.CurrentLocationID == nil || *work.CurrentLocationID != work.LocationID || *work.CurrentLocationID != location.ID || location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
+		if root.Stale() || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath || root.ConfiguredPath != work.ConfiguredPath || work.CurrentLocationID == nil || *work.CurrentLocationID != work.LocationID || *work.CurrentLocationID != location.ID || location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return nil
 		}
 		result, err := tx.NewRaw(`UPDATE source_analysis_step SET state='failed',safe_error=?,skip_reason=NULL,updated_at=now()

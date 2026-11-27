@@ -425,7 +425,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	// Candidate reads use actual source-location/variant associations and only
 	// current publications in the current configured output namespace.
 	rootID, variantID, unlocatedVariantID := uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name,enabled,scan_generation,inventory_path,status) VALUES (?, '/candidate-root','candidate',true,1,'/candidate-root','available')`, rootID).Exec(ctx); err != nil {
+	if _, err := db.NewRaw(`INSERT INTO source_root(id,configured_path,display_name,processing_mode,scan_generation,inventory_path,status) VALUES (?, '/candidate-root','candidate','in_place',1,'/candidate-root','available')`, rootID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []uuid.UUID{variantID, unlocatedVariantID} {

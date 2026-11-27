@@ -22,7 +22,6 @@ const messages = {
     sourceAvailable: "Available",
     sourceUnavailable: "Unavailable",
     sourceUnchecked: "Not checked",
-    disabledAnalysis: "Source is disabled: analysis is unavailable.",
     staleInventory: "Inventory is stale. Scan the current source path first.",
     unavailableResult:
       "Source is unavailable. The saved result is still available.",
@@ -125,7 +124,6 @@ const messages = {
     sourceAvailable: "Доступен",
     sourceUnavailable: "Недоступен",
     sourceUnchecked: "Не проверен",
-    disabledAnalysis: "Каталог выключен: анализ недоступен.",
     staleInventory:
       "Инвентарь устарел: сначала сканируйте текущий путь каталога.",
     unavailableResult:

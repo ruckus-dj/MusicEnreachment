@@ -40,7 +40,7 @@ func ensureReadySourceWorkVariant(ctx context.Context, tx bun.IDB, work SourceAn
 		WHERE work.id=? AND work.current_location_id=? AND work.current_location_id=work.location_id
 		AND work.invalidated_at IS NULL AND work.source_root_id=? AND location.source_root_id=?
 		AND work.relative_path=? AND location.relative_path=? AND work.size_bytes=? AND location.size_bytes=?
-		AND work.mtime=? AND location.mtime=? AND root.enabled AND root.inventory_path IS NOT NULL
+		AND work.mtime=? AND location.mtime=? AND root.inventory_path IS NOT NULL
 		AND root.inventory_path=root.configured_path AND work.configured_path=root.configured_path
 		AND work.inventory_path=root.inventory_path`, work.ID, location.ID, work.SourceRootID, location.SourceRootID,
 		work.RelativePath, location.RelativePath, work.SizeBytes, location.SizeBytes,
@@ -97,7 +97,7 @@ func ensureReadySourceWorkVariant(ctx context.Context, tx bun.IDB, work SourceAn
 		AND work.size_bytes=location.size_bytes AND work.mtime=location.mtime
 		AND work.source_root_id=? AND work.relative_path=? AND work.size_bytes=? AND work.mtime=?
 		AND work.configured_path=? AND work.inventory_path=?
-		AND root.enabled AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
+		AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
 		AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path`,
 		anchorID, location.ID, location.SourceRootID, location.RelativePath, location.SizeBytes,
 		sourceAnalysisMtime(location.Mtime), work.ID, work.SourceRootID, work.RelativePath,

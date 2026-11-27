@@ -242,7 +242,7 @@ func (repository *SetupManagerRepository) CreateAcoustIDLookupOperationAndEnqueu
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='fingerprint' FOR UPDATE`, workID).Scan(ctx, step); err != nil {
 			return fmt.Errorf("admit AcoustID lookup: select successful fingerprint step: %w", err)
 		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath ||
+		if root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath ||
 			work.CurrentLocationID == nil || *work.CurrentLocationID != location.ID || work.LocationID != location.ID || work.SourceRootID != root.ID ||
 			work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
 			location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) ||

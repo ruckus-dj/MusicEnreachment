@@ -153,8 +153,6 @@ export function useMeloTroveHomeSources() {
   return sources;
 }
 
-export const bindMeloTroveHome = bindMeloTroveScreen;
-
 export function bindMeloTroveHomeModel(sources: ShellHomeSourceRead) {
   return bindMeloTroveScreen(MeloTroveHomeBinder, { sources });
 }

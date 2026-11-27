@@ -25,8 +25,8 @@ func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 	installationID := uuid.New()
 	rootPath := "/srv/tools-reader-exclusion-" + rootID.String()
 	if _, err := database.ExecContext(ctx, `
-		INSERT INTO source_root (id, configured_path, display_name)
-		VALUES (?, ?, 'Tools reader exclusion')`, rootID, rootPath); err != nil {
+		INSERT INTO source_root (id, configured_path, display_name, processing_mode)
+		VALUES (?, ?, 'Tools reader exclusion', 'in_place')`, rootID, rootPath); err != nil {
 		t.Fatalf("insert source root: %v", err)
 	}
 	if _, err := database.ExecContext(ctx, `
@@ -46,8 +46,8 @@ func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 	}
 	// Reader exclusion uses durable operation selectors rather than snapshot tool
 	// arrays, and readers on separate roots may coexist.
-	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name)
-		VALUES (?, ?, 'Second tools reader')`, otherRootID, "/srv/tools-reader-exclusion-"+otherRootID.String()); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name, processing_mode)
+		VALUES (?, ?, 'Second tools reader', 'in_place')`, otherRootID, "/srv/tools-reader-exclusion-"+otherRootID.String()); err != nil {
 		t.Fatalf("insert second source root: %v", err)
 	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO operation

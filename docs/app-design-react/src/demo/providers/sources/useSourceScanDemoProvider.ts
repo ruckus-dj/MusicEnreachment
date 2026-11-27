@@ -77,9 +77,9 @@ export function useSourceScanDemoProvider({
 
   function start(root: SourceRoot) {
     if (active.current.has(root.id)) return;
-    // The last availability check is informational: an enabled root may still
-    // start a scan. An unavailable fixture root deterministically fails instead
-    // of replacing its retained inventory with invented results.
+    // The last availability check is informational: an available root may
+    // still start a scan. An unavailable fixture root deterministically fails
+    // instead of replacing its retained inventory with invented results.
     const fail =
       root.available === false ||
       (root.id === "root-backup" && !attemptedRoots.current.has(root.id));

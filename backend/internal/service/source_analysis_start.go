@@ -26,7 +26,6 @@ const (
 
 var (
 	ErrSourceAnalysisNotReady    = errors.New("source analysis requires a completed setup on a supported instance platform")
-	ErrSourceAnalysisDisabled    = errors.New("source root is disabled")
 	ErrSourceAnalysisBusy        = errors.New("the source root has an active scan or analysis")
 	ErrSourceAnalysisToolChanged = errors.New("the selected managed analysis tool changed; retry the request")
 	ErrSourceAnalysisMoveActive  = errors.New("a managed tools root move is active")
@@ -411,7 +410,7 @@ func (s *SourceAnalysisOperations) ready(ctx context.Context) error {
 }
 
 func validateCurrentAnalysisWork(detail *persistence.SourceLocationDetailSnapshot, expectedSize int64, expectedMtime time.Time) (*persistence.SourceAnalysisWork, error) {
-	if detail == nil || detail.Root == nil || detail.Location == nil || detail.Work == nil || !detail.Root.Enabled || detail.Root.Stale() || detail.Root.InventoryPath == nil {
+	if detail == nil || detail.Root == nil || detail.Location == nil || detail.Work == nil || detail.Root.Stale() || detail.Root.InventoryPath == nil {
 		return nil, ErrSourceAnalysisStale
 	}
 	work, root, location := detail.Work, detail.Root, detail.Location
@@ -451,8 +450,6 @@ func sourceAnalysisStartRefusal(err error) error {
 		return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisToolUnavailable)
 	case errors.Is(err, persistence.ErrSourceAnalysisStale):
 		return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisStale)
-	case errors.Is(err, persistence.ErrSourceRootDisabled):
-		return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisDisabled)
 	case errors.Is(err, persistence.ErrSourceRootActiveScan), errors.Is(err, persistence.ErrSourceRootActiveAnalysis):
 		return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisBusy)
 	case errors.Is(err, persistence.ErrToolsRootMoveActive):

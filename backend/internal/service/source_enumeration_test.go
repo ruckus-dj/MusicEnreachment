@@ -106,7 +106,7 @@ func TestEnumerateSourceTreeSkipsOnlyConfirmedAppleDoubleSidecars(t *testing.T) 
 		}
 	}
 	var got []string
-	scopes, err := EnumerateSourceTree(context.Background(), root, func(entry SourceWalkEntry) error {
+	scopes, err := enumerateSourceTree(context.Background(), sourcefs.NewOpener(), root, func(entry SourceWalkEntry) error {
 		got = append(got, entry.RelativePath)
 		return nil
 	})
@@ -121,7 +121,7 @@ func TestEnumerateSourceTreeSkipsOnlyConfirmedAppleDoubleSidecars(t *testing.T) 
 
 func TestEnumerateSourceTreeCollectsRootScope(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	scopes, err := EnumerateSourceTree(context.Background(), missing, func(SourceWalkEntry) error {
+	scopes, err := enumerateSourceTree(context.Background(), sourcefs.NewOpener(), missing, func(SourceWalkEntry) error {
 		t.Fatal("visitor called for a root that could not be opened")
 		return nil
 	})
@@ -167,11 +167,11 @@ func TestEnumerateSourceTreeAbortsOnVisitorErrorAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := errors.New("visitor failed")
-	if _, err := EnumerateSourceTree(context.Background(), root, func(SourceWalkEntry) error { return want }); !errors.Is(err, want) {
+	if _, err := enumerateSourceTree(context.Background(), sourcefs.NewOpener(), root, func(SourceWalkEntry) error { return want }); !errors.Is(err, want) {
 		t.Fatalf("visitor error = %v, want %v", err, want)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	_, err = EnumerateSourceTree(ctx, root, func(SourceWalkEntry) error {
+	_, err = enumerateSourceTree(ctx, sourcefs.NewOpener(), root, func(SourceWalkEntry) error {
 		cancel()
 		return nil
 	})

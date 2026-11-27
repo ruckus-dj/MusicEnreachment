@@ -54,7 +54,6 @@ export function SourceScanPanel({
 	onRetry,
 	onRecheck,
 	startDisabled,
-	disabledNote,
 	streamNotice,
 }: {
 	locale: "en" | "ru";
@@ -63,7 +62,6 @@ export function SourceScanPanel({
 	onRetry: () => void;
 	onRecheck?: () => void;
 	startDisabled?: boolean;
-	disabledNote?: string;
 	streamNotice?: string;
 }) {
 	const copy = messages[locale];
@@ -116,9 +114,6 @@ export function SourceScanPanel({
 					)}
 				</div>
 			</section>
-			{disabledNote && (
-				<p className="m-0 text-xs text-[var(--muted)]">{disabledNote}</p>
-			)}
 			{streamNotice && <p role="status">{streamNotice}</p>}
 		</div>
 	);

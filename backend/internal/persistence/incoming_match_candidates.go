@@ -926,7 +926,7 @@ func lockAndValidateMatchProviderTx(ctx context.Context, tx bun.Tx, evaluation I
 				// CurrentCaptures joins only a work item whose root, location, and
 				// inventory facts still agree. Recheck the operator-visible root
 				// state as well: a disabled or stale root is not a current source.
-				if !capture.Ready || !capture.RootEnabled || capture.RootStale ||
+				if !capture.Ready || capture.RootStale ||
 					capture.LocationID == uuid.Nil || capture.RootID == uuid.Nil ||
 					capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath ||
 					capture.RelativePath == "" || capture.SizeBytes < 0 ||

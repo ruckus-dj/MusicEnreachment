@@ -3,7 +3,6 @@ package persistence
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -32,19 +31,18 @@ func (IncomingMatchingReconcileJobArgs) Kind() string { return IncomingMatchingR
 
 type IncomingMatchingReconcileEvent struct {
 	bun.BaseModel          `bun:"table:incoming_matching_reconcile_event"`
-	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
-	SourceOperationID      *uuid.UUID      `bun:"source_operation_id,type:uuid,nullzero"`
-	OriginalAttempt        *int            `bun:"source_attempt,nullzero"`
-	Reason                 string          `bun:"reason"`
-	SourceInputSnapshot    json.RawMessage `bun:"source_input_snapshot,type:jsonb"`
-	State                  string          `bun:"state"`
-	RegisteredJobID        *int64          `bun:"registered_job_id,nullzero"`
-	DeliveryEpoch          int64           `bun:"delivery_epoch"`
-	HighestDeliveryAttempt int             `bun:"highest_delivery_attempt"`
-	DeliveryClaimed        bool            `bun:"delivery_claimed"`
-	CreatedAt              time.Time       `bun:"created_at"`
-	DispatchedAt           *time.Time      `bun:"dispatched_at,nullzero"`
-	CompletedAt            *time.Time      `bun:"completed_at,nullzero"`
+	ID                     uuid.UUID  `bun:"id,pk,type:uuid"`
+	SourceOperationID      *uuid.UUID `bun:"source_operation_id,type:uuid,nullzero"`
+	OriginalAttempt        *int       `bun:"source_attempt,nullzero"`
+	Reason                 string     `bun:"reason"`
+	State                  string     `bun:"state"`
+	RegisteredJobID        *int64     `bun:"registered_job_id,nullzero"`
+	DeliveryEpoch          int64      `bun:"delivery_epoch"`
+	HighestDeliveryAttempt int        `bun:"highest_delivery_attempt"`
+	DeliveryClaimed        bool       `bun:"delivery_claimed"`
+	CreatedAt              time.Time  `bun:"created_at"`
+	DispatchedAt           *time.Time `bun:"dispatched_at,nullzero"`
+	CompletedAt            *time.Time `bun:"completed_at,nullzero"`
 }
 
 // EnsureStartupIncomingMatchingReconciliation admits one open startup sweep.
@@ -54,8 +52,7 @@ func (repository *SourceInventoryRepository) EnsureStartupIncomingMatchingReconc
 	var event IncomingMatchingReconcileEvent
 	if err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewRaw(`INSERT INTO incoming_matching_reconcile_event
-			(id,source_operation_id,source_attempt,reason,source_input_snapshot)
-			VALUES (?,NULL,NULL,'startup','{}'::jsonb)
+			(id,reason) VALUES (?,'startup')
 			ON CONFLICT (reason) WHERE reason='startup' AND state IN ('pending','dispatched') DO NOTHING`, uuid.New()).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("ensure startup matching reconciliation: insert event: %w", err)
@@ -70,7 +67,7 @@ func (repository *SourceInventoryRepository) EnsureStartupIncomingMatchingReconc
 	return &event, nil
 }
 
-// GetIncomingMatchingReconciliationEvent returns the immutable event payload.
+// GetIncomingMatchingReconciliationEvent returns the event and its delivery state.
 func (repository *SourceInventoryRepository) GetIncomingMatchingReconciliationEvent(ctx context.Context, eventID uuid.UUID) (*IncomingMatchingReconcileEvent, error) {
 	if eventID == uuid.Nil {
 		return nil, fmt.Errorf("get incoming matching reconciliation event: event identity is required")
@@ -228,14 +225,10 @@ func insertIncomingMatchingReconcileEvent(ctx context.Context, tx bun.IDB, opera
 	if operation == nil || operation.ID == uuid.Nil || operation.Attempt < 1 || (reason != "analysis_success" && reason != "scan_success") {
 		return fmt.Errorf("insert matching reconciliation event: valid source identity and reason are required")
 	}
-	snapshot := operation.InputSnapshot
-	if len(snapshot) == 0 || !json.Valid(snapshot) {
-		snapshot = json.RawMessage(`{}`)
-	}
 	if _, err := tx.NewRaw(`INSERT INTO incoming_matching_reconcile_event
-		(id,source_operation_id,source_attempt,reason,source_input_snapshot)
-		VALUES (?,?,?,?,?) ON CONFLICT (source_operation_id,source_attempt,reason) WHERE reason IN ('analysis_success','scan_success') DO NOTHING`,
-		uuid.New(), operation.ID, operation.Attempt, reason, snapshot).Exec(ctx); err != nil {
+		(id,source_operation_id,source_attempt,reason)
+		VALUES (?,?,?,?) ON CONFLICT (source_operation_id,source_attempt,reason) WHERE reason IN ('analysis_success','scan_success') DO NOTHING`,
+		uuid.New(), operation.ID, operation.Attempt, reason).Exec(ctx); err != nil {
 		return fmt.Errorf("insert matching reconciliation event: %w", err)
 	}
 	return nil

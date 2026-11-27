@@ -19,15 +19,7 @@ type incomingMatchingReconcileWorkerRepository interface {
 }
 
 type incomingMatchingReconcileConsumer interface {
-	Reconcile(context.Context, service.IncomingMatchingReconcileDelivery) error
-}
-
-type currentIncomingMatchingReconcileConsumer interface {
 	ReconcileCurrent(context.Context, service.IncomingMatchingReconcileDelivery) error
-}
-
-type incomingMatchingReconcileReasonReader interface {
-	IsCurrentMatchingReconciliationEvent(context.Context, uuid.UUID) (bool, error)
 }
 
 type IncomingMatchingReconcileWorker struct {
@@ -58,28 +50,11 @@ func (worker *IncomingMatchingReconcileWorker) Work(ctx context.Context, job *ri
 		return fmt.Errorf("incoming matching reconciliation claim outcome is invalid")
 	}
 	delivery := service.IncomingMatchingReconcileDelivery{EventID: job.Args.EventID, RiverJobID: job.ID, RiverAttempt: job.Attempt, Epoch: epoch}
-	var reconcileErr error
-	currentDelivery := false
-	if reader, ok := worker.repository.(incomingMatchingReconcileReasonReader); ok {
-		current, err := reader.IsCurrentMatchingReconciliationEvent(ctx, delivery.EventID)
-		if err != nil {
-			return errors.Join(fmt.Errorf("read incoming matching reconciliation reason: %w", err), worker.release(ctx, delivery))
-		}
-		currentDelivery = current
-	}
-	// Production consumers reconcile the live current projection for every
-	// durable wake, including source-event wakes. Source events may describe an
-	// older inventory snapshot; they must not admit a run with generation zero
-	// when a newer current-generation obligation exists. Legacy isolated
-	// consumers still receive immutable source-event deliveries through Reconcile.
-	if consumer, ok := worker.consumer.(currentIncomingMatchingReconcileConsumer); ok {
-		reconcileErr = consumer.ReconcileCurrent(ctx, delivery)
-	} else if currentDelivery {
-		return errors.Join(fmt.Errorf("current incoming matching reconciliation consumer is unavailable"), worker.release(ctx, delivery))
-	} else {
-		reconcileErr = worker.consumer.Reconcile(ctx, delivery)
-	}
-	if err := reconcileErr; err != nil {
+	// Every durable wake, including source-event wakes, reconciles the live
+	// current projection. Source events may describe an older inventory snapshot;
+	// they must not admit a run with generation zero when a newer
+	// current-generation obligation exists.
+	if err := worker.consumer.ReconcileCurrent(ctx, delivery); err != nil {
 		if errors.Is(err, service.ErrIncomingMatchingReconciliationDeferred) {
 			released, releaseErr := worker.repository.ReleaseIncomingMatchingReconciliationClaim(context.WithoutCancel(ctx), delivery.EventID, delivery.RiverJobID, delivery.RiverAttempt, delivery.Epoch)
 			if releaseErr != nil {

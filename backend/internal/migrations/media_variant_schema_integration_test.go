@@ -384,7 +384,7 @@ func terminalAnalysisSnapshot(rootID uuid.UUID) json.RawMessage {
 func newVariantRoot(t *testing.T, ctx context.Context, database *bun.DB, path string) uuid.UUID {
 	t.Helper()
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), ConfiguredPath: path, DisplayName: path, Enabled: true, Status: "unknown",
+		ID: uuid.New(), ConfiguredPath: path, DisplayName: path, ProcessingMode: "in_place", Status: "unknown",
 	}
 	if _, err := database.NewInsert().Model(root).Exec(ctx); err != nil {
 		t.Fatalf("insert source root %s: %v", path, err)

@@ -206,26 +206,6 @@ func prepareSealedReviewOnly(ctx context.Context, seal persistence.MatchingFallb
 	return PreparedFrozenFallbackEvaluation{FrozenInventory: inventory}, nil
 }
 
-func evaluateFrozenFallbackInventory(ctx context.Context, target persistence.MatchingRunFenceSnapshot, captured []persistence.MatchingAcquisitionCapturedMember, result MatchingFallbackApplicabilityResult) (MatchingGroupEvaluationDecisionResult, MatchingFrozenGroupInventory, error) {
-	var frozen fallbackCapture
-	if decodeFallbackStrict(target.Capture, &frozen) != nil {
-		return MatchingGroupEvaluationDecisionResult{}, MatchingFrozenGroupInventory{}, fmt.Errorf("frozen fallback evaluation: target capture is invalid")
-	}
-	inventory, err := frozenReviewInventory(frozen, captured)
-	if err != nil {
-		return MatchingGroupEvaluationDecisionResult{}, MatchingFrozenGroupInventory{}, err
-	}
-	inputs := make([]MatchingInput, 0, len(result.AllCandidates))
-	for _, candidate := range result.AllCandidates {
-		inputs = append(inputs, candidate.MatchingInput)
-	}
-	decision, err := EvaluateMatchingGroupFromInputs(ctx, MatchingGroupEvaluationInput{Members: inventory.MemberFences, Inputs: inputs, Files: inventory.Files, ReleaseLayouts: result.ReleaseLayouts})
-	if err != nil {
-		return MatchingGroupEvaluationDecisionResult{}, MatchingFrozenGroupInventory{}, err
-	}
-	return decision, inventory, nil
-}
-
 func frozenReviewInventory(frozen fallbackCapture, captured []persistence.MatchingAcquisitionCapturedMember) (MatchingFrozenGroupInventory, error) {
 	capturedByID := make(map[uuid.UUID]persistence.MatchingAcquisitionCapturedMember, len(captured))
 	for _, member := range captured {

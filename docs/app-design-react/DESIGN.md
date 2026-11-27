@@ -355,8 +355,7 @@ DirectoryPicker — 640 px; overlay затемняет фон на 45 %, у Dire
 - **Поповер** (`0 12px 32px rgb(0 0 0 / 0.14)`): меню выбора и списки.
 - **Диалог** (`0 16px 48px rgb(0 0 0 / 0.2)`): стандартные диалоги и
   DirectoryPicker.
-- **Крупный диалог** (`0 24px 64px rgb(0 0 0 / 0.24)`): ActionModal и крупные
-  модальные формы.
+- **Крупный диалог** (`0 24px 64px rgb(0 0 0 / 0.24)`): крупные модальные формы.
 - **Подсказка** (`0 8px 24px rgb(0 0 0 / 0.18)`): tooltip.
 
 ### Named Rules
@@ -493,7 +492,7 @@ DirectoryPicker — 640 px; overlay затемняет фон на 45 %, у Dire
 - **Modal:** React Aria `ModalOverlay` / `Modal` / `Dialog`; overlay —
   `rgb(0 0 0 / 0.45)`, диалог — радиус 16 px, граница 1 px `line`, фон `surface`,
   поля 24 px, канонический максимум 560 px. Тень — `0 16px 48px rgb(0 0 0 / 0.2)`,
-  у ActionModal — `0 24px 64px rgb(0 0 0 / 0.24)`.
+  у крупных диалогов — `0 24px 64px rgb(0 0 0 / 0.24)`.
 - **Content:** заголовок 18/600 (крупный диалог — 20/600), тело 14/1.5 `muted`,
   действия справа с зазором 8 px.
 - **DirectoryPicker:** модальный композит из `Breadcrumbs`, `TextField` и списка
@@ -516,8 +515,8 @@ DirectoryPicker — 640 px; overlay затемняет фон на 45 %, у Dire
   `Toolbar` не перехватывал стрелки у вложенного поля; `AppActionToolbar` →
   React Aria `Toolbar` для ряда только с действиями.
 - `AppBreadcrumbs` → `Breadcrumbs` / `Breadcrumb` / `Link`.
-- `ActionModal` → `ModalOverlay` / `Modal` / `Dialog`; `DirectoryPickerView`
-  добавляет к той же схеме `Breadcrumbs` и `TextField`.
+- `DirectoryPickerView` → `ModalOverlay` / `Modal` / `Dialog` с `Breadcrumbs`
+  и `TextField`.
 - `DirectoryPathFieldView` → read-only mono-поле 36 px и кнопка «Выбрать»,
   открывающая `DirectoryPickerView`.
 - `LibraryArtistCards` → `GridList` / `GridListItem` с множественным выбором.

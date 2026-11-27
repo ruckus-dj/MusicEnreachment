@@ -48,8 +48,8 @@ func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, s
 	if err := tx.NewSelect().Model(&root).Where("id=?", source.RootID).For("UPDATE").Scan(ctx); err != nil {
 		return fmt.Errorf("admit publication: lock source root: %w", err)
 	}
-	if !root.Enabled || root.Status != SourceRootStatusAvailable || root.ConfiguredPath != frozen.ConfiguredRootPath || root.InventoryPath == nil || *root.InventoryPath != frozen.InventoryRootPath {
-		return fmt.Errorf("admit publication: source root is disabled or changed")
+	if root.Status != SourceRootStatusAvailable || root.ConfiguredPath != frozen.ConfiguredRootPath || root.InventoryPath == nil || *root.InventoryPath != frozen.InventoryRootPath {
+		return fmt.Errorf("admit publication: source root changed")
 	}
 	var location SourceLocation
 	if err := tx.NewSelect().Model(&location).Where("id=? AND source_root_id=?", source.LocationID, source.RootID).For("UPDATE").Scan(ctx); err != nil {

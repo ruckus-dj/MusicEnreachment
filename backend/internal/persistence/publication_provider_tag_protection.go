@@ -48,7 +48,7 @@ func BuildPublicationProviderTagProtection(context *PublicationProviderTagContex
 			// would suppress accepted provider genres and fallback indefinitely.
 			// Legacy independent artist sort lists are not active authority;
 			// artist-credit protection still covers the derived sort keys.
-			if field == "genre" || field == "artist_sort_names" || field == "album_artist_sort_names" {
+			if field == "genre" {
 				continue
 			}
 			if value.State == librarymetadata.StateAbsent {

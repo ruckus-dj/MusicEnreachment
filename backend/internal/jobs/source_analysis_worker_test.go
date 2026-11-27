@@ -290,7 +290,7 @@ func newWorkerGroup(t *testing.T, repo *workerInputRepository, runner service.So
 	repo.work = &persistence.SourceAnalysisWork{ID: workID, LocationID: locationID, SourceRootID: rootID,
 		ConfiguredPath: rootPath, InventoryPath: rootPath, RelativePath: filepath.Base(path), SizeBytes: info.Size(), Mtime: info.ModTime()}
 	repo.location = &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: filepath.Base(path), SizeBytes: info.Size(), Mtime: info.ModTime()}
-	repo.root = &persistence.SourceRoot{ID: rootID, ConfiguredPath: rootPath, InventoryPath: &rootPath, Enabled: true}
+	repo.root = &persistence.SourceRoot{ID: rootID, ConfiguredPath: rootPath, InventoryPath: &rootPath}
 	input := &recordingWorkerInputPreparer{preparer: service.NewSourceAnalysisInputPreparer(repo, nil, nil, nil, nil)}
 	worker := &SourceAnalysisWorker{repository: repo, inputPreparer: input, preparer: runner,
 		toolsDirectory: workerToolsDirectory{}, platform: settings.PlatformState{Platform: settings.Platform{GOOS: "darwin", GOARCH: "arm64"}}}

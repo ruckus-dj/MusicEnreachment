@@ -126,7 +126,7 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 		Mtime: time.Date(2026, 10, 9, 11, 0, 0, 0, time.UTC), Tags: []byte(`{"ALBUM":["A"]}`),
 		MetadataWinner: &metadataWinner, MetadataObservedAt: timePointer(time.Date(2026, 10, 9, 11, 0, 0, 0, time.UTC)),
 		MetadataProvenance: []byte(`{"reader":"test"}`), Fingerprint: stringPointer("fp-current"),
-		FingerprintWinner: uuidPointer(uuid.New()), RootEnabled: true, Ready: false,
+		FingerprintWinner: uuidPointer(uuid.New()), Ready: false,
 	}
 	groupID := uuid.New()
 	fence := incomingMemberLocations(variantID, []IncomingLocation{{
@@ -176,7 +176,7 @@ func TestUnreadyManualMemberRetainsCorrectionAndReturnsWhenReady(t *testing.T) {
 	}
 
 	pending := persistence.IncomingGroupingCapture{
-		RootID: rootID, RootEnabled: true, LocationID: uuid.New(), VariantID: uuid.New(),
+		RootID: rootID, LocationID: uuid.New(), VariantID: uuid.New(),
 		RelativePath: "album/booklet.pdf",
 	}
 	nested := pending

@@ -30,8 +30,6 @@ type SourceLocationRootState struct {
 	// SafeError is the operator-facing reason of an unavailable root, nil when
 	// the root is available or never checked.
 	SafeError *string
-	// Enabled is the operator switch of the root.
-	Enabled bool
 	// Stale is true when the last inventory describes a configured path other
 	// than the current one.
 	Stale bool
@@ -173,7 +171,7 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 	detail := SourceLocationDetail{
 		RootID: root.ID,
 		Root: SourceLocationRootState{
-			Status: root.Status, SafeError: root.SafeError, Enabled: root.Enabled,
+			Status: root.Status, SafeError: root.SafeError,
 			Stale: root.Stale(), InventoryPath: root.InventoryPath,
 		},
 		LocationID: location.ID, RelativePath: location.RelativePath, SizeBytes: location.SizeBytes,

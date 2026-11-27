@@ -61,7 +61,7 @@ func waitForSourceRootLockWaiter(ctx context.Context, database *bun.DB, blockerP
 
 func createInventoryRoot(t *testing.T, ctx context.Context, inventory *persistence.SourceInventoryRepository, path string) *persistence.SourceRoot {
 	t.Helper()
-	root := &persistence.SourceRoot{ConfiguredPath: path, DisplayName: "Inventory", Enabled: true}
+	root := &persistence.SourceRoot{ConfiguredPath: path, DisplayName: "Inventory", ProcessingMode: "in_place"}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatalf("create source root %s: %v", path, err)
 	}
@@ -247,18 +247,6 @@ func runSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing.
 
 	if err := persistOperationState(t, ctx, database, active.ID, "succeeded"); err != nil {
 		t.Fatalf("finish the active scan: %v", err)
-	}
-	if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
-		Set("enabled = false").Where("id = ?", root.ID).Exec(ctx); err != nil {
-		t.Fatalf("disable the source root: %v", err)
-	}
-	disabledRefusal := scanEnqueueOperation(root, uuid.New())
-	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, disabledRefusal, client,
-		service.ScanSourceJobArgs{OperationID: disabledRefusal.ID}, nil); !errors.Is(err, persistence.ErrSourceRootDisabled) {
-		t.Fatalf("enqueue on a disabled root = %v, want ErrSourceRootDisabled", err)
-	}
-	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ?", disabledRefusal.ID); count != 0 {
-		t.Fatalf("refused disabled-root operation %s count = %d, want 0", disabledRefusal.ID, count)
 	}
 	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE id = ? AND kind = ?", activeJobID, service.SourceScanJobKind); count != 1 {
 		t.Fatalf("active River job %d count after refusals = %d, want exactly one", activeJobID, count)
