@@ -33,15 +33,15 @@ func TestDetect(t *testing.T) {
 			wantReplace: "Группа",
 		},
 		{
-			name:        "short value is only a candidate",
+			name:        "short Cyrillic word is automatic",
 			value:       "Ìèð",
-			wantStatus:  tagencoding.StatusCandidate,
+			wantStatus:  tagencoding.StatusAutomatic,
 			wantReplace: "Мир",
 		},
 		{
-			name:        "four-letter word is still borderline",
+			name:        "four-letter word is automatic",
 			value:       "Ìàìà",
-			wantStatus:  tagencoding.StatusCandidate,
+			wantStatus:  tagencoding.StatusAutomatic,
 			wantReplace: "Мама",
 		},
 		{
@@ -55,6 +55,12 @@ func TestDetect(t *testing.T) {
 			value:       "Café del Mar",
 			wantStatus:  tagencoding.StatusUnchanged,
 			wantReplace: "Café del Mar",
+		},
+		{
+			name:        "legitimate lowercase Latin accent is preserved",
+			value:       "café",
+			wantStatus:  tagencoding.StatusUnchanged,
+			wantReplace: "café",
 		},
 		{
 			name:        "separated Latin accents",
@@ -75,22 +81,28 @@ func TestDetect(t *testing.T) {
 			wantReplace: "Sigur Rós",
 		},
 		{
-			name:        "a reversible run without credible word evidence is not automatic",
+			name:        "a reversible Cyrillic run is automatic",
 			value:       "ÑÑÑÑÑ",
-			wantStatus:  tagencoding.StatusCandidate,
+			wantStatus:  tagencoding.StatusAutomatic,
 			wantReplace: "ССССС",
 		},
 		{
-			name:        "do not automatically change an accented name next to garbled text",
+			name:        "mixed ASCII letters no longer veto an automatic repair",
 			value:       "Punk-O-Ìàíèÿ 2 / Beyoncé",
-			wantStatus:  tagencoding.StatusCandidate,
+			wantStatus:  tagencoding.StatusAutomatic,
 			wantReplace: "Punk-O-Мания 2 / Beyoncй",
 		},
 		{
-			name:        "evidence must be in the same word",
+			name:        "mixed Latin letters no longer veto a strong Cyrillic run",
 			value:       "Café ×÷×÷×",
-			wantStatus:  tagencoding.StatusCandidate,
+			wantStatus:  tagencoding.StatusAutomatic,
 			wantReplace: "Cafй ЧчЧчЧ",
+		},
+		{
+			name:        "ASCII suffix does not block a three-letter Cyrillic run",
+			value:       "ÝîòLinX",
+			wantStatus:  tagencoding.StatusAutomatic,
+			wantReplace: "ЭотLinX",
 		},
 		{
 			name:        "isolated Latin-1 symbol requires confirmation",
@@ -137,6 +149,9 @@ func TestDetect(t *testing.T) {
 			}
 			if detection.Replacement != test.wantReplace {
 				t.Fatalf("replacement = %q, want %q", detection.Replacement, test.wantReplace)
+			}
+			if test.wantStatus != tagencoding.StatusUnchanged && detection.Provenance.DetectorVersion != 3 {
+				t.Fatalf("detector version = %d, want 3", detection.Provenance.DetectorVersion)
 			}
 		})
 	}
@@ -191,13 +206,17 @@ func TestAnalyzeApplyUndoPreservesRawTagsAndOrder(t *testing.T) {
 }
 
 func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
-	raw := map[string][]string{"TITLE": {"Ìèð"}}
+	raw := map[string][]string{"TITLE": {"Ìè Ìè Ìè"}}
 	report := tagencoding.Analyze(raw)
 	if len(report.Automatic.Entries) != 0 {
 		t.Fatalf("automatic entries = %d, want 0", len(report.Automatic.Entries))
 	}
 	if len(report.Candidates) != 1 {
 		t.Fatalf("candidates = %d, want 1", len(report.Candidates))
+	}
+	evidence := report.Candidates[0].Provenance.Evidence
+	if evidence.LongestRun != 2 || evidence.CyrillicRunes != 6 {
+		t.Fatalf("candidate evidence = %+v, want distributed runs", evidence)
 	}
 
 	pending, err := report.Confirm()
@@ -220,7 +239,7 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply confirmed: %v", err)
 	}
-	want := map[string][]string{"TITLE": {"Мир"}}
+	want := map[string][]string{"TITLE": {"Ми Ми Ми"}}
 	if !reflect.DeepEqual(repaired, want) {
 		t.Fatalf("confirmed tags = %#v, want %#v", repaired, want)
 	}
@@ -228,18 +247,30 @@ func TestCandidateRequiresExplicitConfirmation(t *testing.T) {
 	report = tagencoding.Analyze(map[string][]string{
 		"ALBUM":  {"Punk-O-Ìàíèÿ 2"},
 		"ARTIST": {"Ãðóïïà"},
-		"TITLE":  {"Ìèð", "Ìàíèÿ × 2"},
+		"TITLE":  {"Ìè Ìè Ìè", "Ìàíèÿ × 2"},
 	})
-	if len(report.Automatic.Entries) != 3 || report.Automatic.Entries[2].Replacement != "Мир" ||
-		len(report.Candidates) != 1 || report.Candidates[0].Original != "Ìàíèÿ × 2" {
-		t.Fatalf("capture evidence must resolve the short word but not the ambiguous symbol: %+v", report)
+	if len(report.Automatic.Entries) != 2 {
+		t.Fatalf("automatic entries = %d, want 2", len(report.Automatic.Entries))
+	}
+	if len(report.Candidates) != 2 ||
+		report.Candidates[0].Original != "Ìè Ìè Ìè" ||
+		report.Candidates[1].Original != "Ìàíèÿ × 2" {
+		t.Fatalf("capture anchors must not promote sub-run candidates: %+v", report.Candidates)
+	}
+	for _, candidate := range report.Candidates {
+		if candidate.Provenance.DetectorVersion != 3 {
+			t.Fatalf("candidate detector version = %d, want 3", candidate.Provenance.DetectorVersion)
+		}
+		if candidate.Provenance.Evidence.CaptureAnchors != 0 {
+			t.Fatalf("candidate gained capture anchors below a three-letter run: %+v", candidate)
+		}
 	}
 }
 
 func TestGroupCorroborationStillRequiresConfirmation(t *testing.T) {
 	group := tagencoding.AnalyzeGroup(
-		map[string][]string{"TITLE": {"Punk-O-Ìàíèÿ 2"}},
-		map[string][]string{"TITLE": {"íèÿ"}},
+		map[string][]string{"TITLE": {"à× Ìèð"}},
+		map[string][]string{"TITLE": {"× Ìèð"}},
 	)
 	if len(group.Files[1].Candidates) != 1 {
 		t.Fatalf("candidates = %d, want 1", len(group.Files[1].Candidates))
@@ -248,16 +279,19 @@ func TestGroupCorroborationStillRequiresConfirmation(t *testing.T) {
 	if candidate.Provenance.Evidence.GroupMatches == 0 {
 		t.Fatal("candidate was not corroborated by the strong signature")
 	}
+	if candidate.Provenance.DetectorVersion != 3 {
+		t.Fatalf("candidate detector version = %d, want 3", candidate.Provenance.DetectorVersion)
+	}
 
 	pending, err := group.Files[1].Confirm()
 	if err != nil {
 		t.Fatalf("Confirm pending: %v", err)
 	}
-	unconfirmed, err := pending.Apply(map[string][]string{"TITLE": {"íèÿ"}})
+	unconfirmed, err := pending.Apply(map[string][]string{"TITLE": {"× Ìèð"}})
 	if err != nil {
 		t.Fatalf("Apply pending: %v", err)
 	}
-	if got := unconfirmed["TITLE"][0]; got != "íèÿ" {
+	if got := unconfirmed["TITLE"][0]; got != "× Ìèð" {
 		t.Fatalf("pending group value = %q, want unchanged", got)
 	}
 
@@ -265,12 +299,12 @@ func TestGroupCorroborationStillRequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfirmCorroborated: %v", err)
 	}
-	repaired, err := confirmed.Apply(map[string][]string{"TITLE": {"íèÿ"}})
+	repaired, err := confirmed.Apply(map[string][]string{"TITLE": {"× Ìèð"}})
 	if err != nil {
 		t.Fatalf("Apply corroborated: %v", err)
 	}
-	if got := repaired["TITLE"][0]; got != "ния" {
-		t.Fatalf("confirmed group value = %q, want %q", got, "ния")
+	if got := repaired["TITLE"][0]; got != "Ч Мир" {
+		t.Fatalf("confirmed group value = %q, want %q", got, "Ч Мир")
 	}
 }
 

@@ -34,22 +34,16 @@ const (
 	// OverlayVersion is the wire version of Overlay.
 	OverlayVersion = 1
 	// DetectorVersion identifies the detection rules that produced a value.
-	DetectorVersion = 2
+	DetectorVersion = 3
 	// TransformLatin1Windows1251 identifies a repair of Windows-1251 bytes
 	// that were decoded as ISO-8859-1.
 	TransformLatin1Windows1251 = "latin1_windows_1251"
 )
 
 const (
-	// strongRun is the shortest contiguous run of Windows-1251 Cyrillic
-	// letters that is safely automatic. A run this long in Latin-1 text is
-	// not present in ordinary Western names and words, while shorter runs
-	// remain candidates because they can be short words.
-	strongRun = 5
-	// candidateRun is the shortest run that is reported for explicit
-	// confirmation. It is deliberately below strongRun because short values
-	// need evidence before they may be applied.
-	candidateRun = 3
+	automaticRun = 3
+	// Several shorter runs can suggest a repair but still require confirmation.
+	candidateCyrillicRunes = 5
 )
 
 // Status is the detector's disposition for one saved value.
@@ -61,8 +55,7 @@ const (
 	// StatusCandidate means the value is plausibly repairable but must not be
 	// applied without explicit confirmation.
 	StatusCandidate Status = "candidate"
-	// StatusAutomatic means the value has a strong, unique signature and may
-	// be placed in an automatic overlay.
+	// StatusAutomatic means the value meets the rule for an automatic overlay.
 	StatusAutomatic Status = "automatic"
 )
 
@@ -86,7 +79,7 @@ type Evidence struct {
 	LongestRun     int    `json:"longest_run"`
 	Signature      string `json:"signature,omitempty"`
 	GroupMatches   int    `json:"group_matches,omitempty"`
-	CaptureAnchors int    `json:"capture_anchors,omitempty"`
+	CaptureAnchors int    `json:"capture_anchors,omitempty"` // Retained for older reports.
 }
 
 // Provenance describes the fixed transform and detector version behind an
@@ -151,11 +144,9 @@ type GroupReport struct {
 }
 
 // Detect inspects one saved tag value. It recognizes only text composed of
-// ASCII and Latin-1 high bytes whose reverse Windows-1251 decoding has a
-// sufficiently long contiguous Cyrillic run. Valid Unicode and ordinary Latin-1
-// accents are returned unchanged. A repair that would also change an isolated
-// Latin-1 symbol or a non-Cyrillic glyph is ambiguous collateral damage, so
-// such a value is reported as a candidate instead of being applied automatically.
+// ASCII and Latin-1 high bytes. A reversible repair with three consecutive
+// Cyrillic letters can be automatic, even next to ASCII letters. A change to
+// an unrelated symbol or a non-Cyrillic glyph still requires confirmation.
 func Detect(value string) Detection {
 	unchanged := Detection{Status: StatusUnchanged, Original: value, Replacement: value}
 	if value == "" || !utf8.ValidString(value) {
@@ -187,8 +178,6 @@ func Detect(value string) Detection {
 	longestRun := 0
 	run := 0
 	cyrillicRunes := 0
-	strongWord := false
-	var runHasVowel, runHasConsonant bool
 	for _, original := range value {
 		decoded := original
 		if original >= 0xA0 {
@@ -200,14 +189,7 @@ func Detect(value string) Detection {
 		repaired.WriteRune(decoded)
 		if unicode.Is(unicode.Cyrillic, decoded) {
 			cyrillicRunes++
-			switch {
-			case strings.ContainsRune("аеёиоуыэюя", unicode.ToLower(decoded)):
-				runHasVowel = true
-			case strings.ContainsRune("бвгджзйклмнпрстфхцчшщ", unicode.ToLower(decoded)):
-				runHasConsonant = true
-			}
 			run++
-			strongWord = strongWord || run >= strongRun && runHasVowel && runHasConsonant
 			currentRun.WriteRune(original)
 			if run > longestRun {
 				longestRun = run
@@ -215,7 +197,6 @@ func Detect(value string) Detection {
 			}
 		} else {
 			run = 0
-			runHasVowel, runHasConsonant = false, false
 			currentRun.Reset()
 		}
 	}
@@ -242,10 +223,9 @@ func Detect(value string) Detection {
 	var status Status
 	var decision Decision
 	switch {
-	case strongWord && !hasMixedLatinWord(value) && !hasAmbiguousCollateral(value):
+	case longestRun >= automaticRun && !hasAmbiguousCollateral(value):
 		status, decision = StatusAutomatic, DecisionAutomatic
-	case longestRun >= candidateRun && highBytes >= candidateRun,
-		longestRun >= 2 && cyrillicRunes >= strongRun:
+	case longestRun >= automaticRun, longestRun >= 2 && cyrillicRunes >= candidateCyrillicRunes:
 		status, decision = StatusCandidate, DecisionCandidate
 	default:
 		return unchanged
@@ -262,25 +242,6 @@ func Detect(value string) Detection {
 			Evidence:        evidence,
 		},
 	}
-}
-
-// Mixed ASCII/accented words can be legitimate Western names in an otherwise
-// corrupt value. Leave the whole value for explicit review instead of changing
-// those names as a side effect of fixing the Cyrillic run.
-func hasMixedLatinWord(value string) bool {
-	var ascii, high bool
-	for _, r := range value {
-		if !unicode.IsLetter(r) {
-			ascii, high = false, false
-			continue
-		}
-		ascii = ascii || r < utf8.RuneSelf
-		high = high || r >= utf8.RuneSelf
-		if ascii && high {
-			return true
-		}
-	}
-	return false
 }
 
 // hasAmbiguousCollateral reports whether the repair would change a character
@@ -357,47 +318,9 @@ func Analyze(tags map[string][]string) Report {
 			}
 		}
 	}
-	// A short value without mixed Latin words can be resolved when two
-	// different values from the same capture already prove the byte encoding.
-	anchors := make(map[string]struct{})
-	for _, entry := range report.Automatic.Entries {
-		anchors[entry.Original] = struct{}{}
-	}
-	if len(anchors) >= 2 {
-		pending := report.Candidates[:0]
-		for _, candidate := range report.Candidates {
-			if !captureSupportsShortCyrillic(candidate) {
-				pending = append(pending, candidate)
-				continue
-			}
-			provenance := candidate.Provenance
-			provenance.Decision = DecisionAutomatic
-			provenance.Evidence.CaptureAnchors = len(anchors)
-			report.Automatic.Entries = append(report.Automatic.Entries, Entry{
-				Key: candidate.Key, Index: candidate.Index,
-				Original: candidate.Original, Replacement: candidate.Replacement,
-				Provenance: provenance,
-			})
-		}
-		report.Candidates = pending
-	}
 	sortEntries(report.Automatic.Entries)
 	sortCandidates(report.Candidates)
 	return report
-}
-
-func captureSupportsShortCyrillic(candidate Candidate) bool {
-	if hasMixedLatinWord(candidate.Original) || hasAmbiguousCollateral(candidate.Original) {
-		return false
-	}
-	hasCyrillicVowel := false
-	for _, r := range candidate.Replacement {
-		if unicode.IsLetter(r) && !unicode.Is(unicode.Cyrillic, r) {
-			return false
-		}
-		hasCyrillicVowel = hasCyrillicVowel || strings.ContainsRune("аеёиоуыэюя", unicode.ToLower(r))
-	}
-	return hasCyrillicVowel
 }
 
 // AnalyzeGroup analyzes each saved tag map and annotates candidates that are

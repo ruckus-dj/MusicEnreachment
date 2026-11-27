@@ -39,7 +39,8 @@ func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
 	result, err := repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{
 		WorkID: work.ID, OperationID: fixture.operation.ID, OperationAttempt: fixture.operation.Attempt,
 		JobID: *fixture.operation.RiverJobID, StepAttempt: metadataAttempt,
-		ObservedTags: json.RawMessage("{\"ARTIST\":[\"Punk-O-\u00cc\u00e0\u00ed\u00e8\u00ff 2\"]}"), Provenance: json.RawMessage(`{"reader":"promotion"}`), ObservedAt: stamp,
+		ObservedTags: json.RawMessage(`{"ARTIST":["ÝîòLinX"]}`),
+		Provenance:   json.RawMessage(`{"reader":"promotion"}`), ObservedAt: stamp,
 	})
 	if err != nil {
 		t.Fatalf("apply digestless metadata: %v", err)
@@ -83,6 +84,10 @@ func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
 	if err != nil || len(preview.Members) != 1 || !preview.Members[0].Stored ||
 		len(preview.Members[0].Report.Automatic.Entries) != 1 {
 		t.Fatalf("expected saved automatic repair: %+v, %v", preview, err)
+	}
+	repair := preview.Members[0].Report.Automatic.Entries[0]
+	if repair.Key != "ARTIST" || repair.Original != "ÝîòLinX" || repair.Replacement != "ЭотLinX" {
+		t.Fatalf("expected automatic repair of mixed-script artist, got %+v", repair)
 	}
 	undo := persistence.IncomingTagEncodingConfirmation{
 		Generation: preview.Generation, GroupRevision: preview.GroupRevision,
