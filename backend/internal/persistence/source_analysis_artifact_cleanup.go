@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 )
 
 const SourceAnalysisArtifactCleanupOperationKind = "cleanup_source_analysis_artifacts"
@@ -378,10 +379,10 @@ func (repository *SetupManagerRepository) listSourceAnalysisArtifactCleanupCandi
 	candidates := make([]SourceAnalysisArtifactCleanupCandidate, 0)
 	err := repository.db.NewRaw(`SELECT artifact.id AS artifact_id,work.relative_path AS source_relative_path,artifact.state AS state
 		FROM source_analysis_artifact artifact
-		JOIN source_analysis_work work ON work.id=artifact.work_id
+		JOIN source_analysis_work work ON work.id=artifact.work_id`+stagedArtifactPathJoins+`
 		WHERE artifact.state IN ('cleanup_eligible','cleanup_failed')
 		AND (NOT ? OR artifact.state='cleanup_eligible')
-		AND artifact.relative_output_path = 'analysis/staging/' || work.source_root_id::text || '/' || work.id::text || '/' || artifact.id::text
+		AND `+stagedArtifactPathPredicate+`
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_work_artifact_binding binding WHERE binding.artifact_id=artifact.id)
 		AND NOT EXISTS (
 			SELECT 1 FROM operation_source_work_hold hold JOIN operation creator ON creator.id=hold.operation_id
@@ -394,7 +395,7 @@ func (repository *SetupManagerRepository) listSourceAnalysisArtifactCleanupCandi
 			AND reservation.state IN ('queued','running')
 			AND reservation.input_snapshot->'artifact_ids' @> jsonb_build_array(artifact.id::text)
 		)
-		ORDER BY artifact.id LIMIT ?`, automatic, limit).Scan(ctx, &candidates)
+		ORDER BY artifact.id LIMIT ?`, sourcefs.StagedArtifactExtensionPattern, automatic, sourcefs.MaxStagedArtifactExtensionBytes, limit).Scan(ctx, &candidates)
 	if err != nil {
 		return nil, fmt.Errorf("list cleanup candidates: %w", err)
 	}
@@ -418,7 +419,8 @@ func claimCleanupArtifact(ctx context.Context, session *OutputAdmissionSession, 
 			return fmt.Errorf("read cleanup artifact identity %s: %w", artifactID, err)
 		}
 		work := new(SourceAnalysisWork)
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM source_analysis_work WHERE id=$1 FOR UPDATE`, workID).Scan(&work.ID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT id,source_root_id,relative_path FROM source_analysis_work WHERE id=$1 FOR UPDATE`, workID).Scan(
+			&work.ID, &work.SourceRootID, &work.RelativePath); err != nil {
 			return fmt.Errorf("lock cleanup artifact work %s: %w", workID, err)
 		}
 		var lockedCreator uuid.UUID
@@ -457,11 +459,7 @@ func claimCleanupArtifact(ctx context.Context, session *OutputAdmissionSession, 
 			(SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')`).Scan(&artifact.CleanupWorkDirectory); err != nil {
 			return fmt.Errorf("read staged work directory for cleanup: %w", err)
 		}
-		var sourceRootID uuid.UUID
-		if err := tx.QueryRowContext(ctx, `SELECT source_root_id FROM source_analysis_work WHERE id=$1`, workID).Scan(&sourceRootID); err != nil {
-			return fmt.Errorf("read staged artifact source root: %w", err)
-		}
-		if artifact.RelativeOutputPath != sourceAnalysisArtifactPath(sourceRootID, workID, artifactID) {
+		if !sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, work.SourceRootID, workID, artifactID, work.RelativePath) {
 			return errors.New("staged source analysis artifact has a noncanonical path")
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO source_analysis_artifact_cleanup_item

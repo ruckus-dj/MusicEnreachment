@@ -6,12 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -188,19 +190,20 @@ func (repository *workerInputRepository) GetSourceRoot(context.Context, uuid.UUI
 }
 
 type stagedArtifactRepository struct {
-	workID      uuid.UUID
-	rootID      uuid.UUID
-	size        int64
-	mtime       time.Time
-	acquired    *persistence.SourceAnalysisArtifact
-	readyCalls  int
-	forgetCalls int
+	workID             uuid.UUID
+	rootID             uuid.UUID
+	size               int64
+	mtime              time.Time
+	sourceRelativePath string
+	acquired           *persistence.SourceAnalysisArtifact
+	readyCalls         int
+	forgetCalls        int
 }
 
 func (repository *stagedArtifactRepository) Acquire(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisArtifact, error) {
 	artifact := &persistence.SourceAnalysisArtifact{
 		ID: id, WorkID: repository.workID,
-		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", repository.rootID.String(), repository.workID.String(), id.String())),
+		RelativeOutputPath: sourcefs.StagedArtifactPath(repository.rootID, repository.workID, id, repository.sourceRelativePath),
 		SourceSizeBytes:    repository.size, SourceMtime: repository.mtime,
 		OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID,
 		State: persistence.SourceAnalysisArtifactAcquiring,
@@ -400,22 +403,36 @@ func TestSourceAnalysisWorkerWithInputPreparerOmitsSHAWhenNotSelected(t *testing
 
 func TestSourceAnalysisWorkerRetiresUsedStagedArtifact(t *testing.T) {
 	repo := &workerInputRepository{}
-	worker, snapshot, operation, executions, _ := newWorkerGroup(t, repo, workerGroupPreparingFunc(func(context.Context, service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
-		return preparedSHA()
+	var readerPaths []string
+	worker, snapshot, operation, executions, _ := newWorkerGroup(t, repo, workerGroupPreparingFunc(func(_ context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		if request.Targets&service.SourceAnalysisTargetSHA256 != 0 {
+			return preparedSHA()
+		}
+		if request.Targets&service.SourceAnalysisTargetProbe != 0 {
+			return preparedProbe()
+		}
+		readerPaths = append(readerPaths, request.ServerPath)
+		return preparedFingerprint()
 	}))
-	executions = executions[:1]
 	repo.mode = "staged"
 	workDirectory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifacts := &stagedArtifactRepository{workID: repo.work.ID, rootID: repo.work.SourceRootID, size: repo.work.SizeBytes, mtime: repo.work.Mtime}
+	artifacts := &stagedArtifactRepository{workID: repo.work.ID, rootID: repo.work.SourceRootID, size: repo.work.SizeBytes, mtime: repo.work.Mtime, sourceRelativePath: repo.work.RelativePath}
 	worker.inputPreparer = service.NewSourceAnalysisInputPreparer(repo, artifacts, workerStagedSettings{path: workDirectory}, nil, nil)
 	retiring := &retiringWorkerRepository{workerInputRepository: repo, artifacts: artifacts, directory: workDirectory}
 	worker.repository = retiring
 
 	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions); err != nil {
 		t.Fatalf("run staged work group: %v", err)
+	}
+	suffix := filepath.Ext(repo.work.RelativePath)
+	if len(readerPaths) != 1 || !strings.HasSuffix(readerPaths[0], suffix) {
+		t.Fatalf("staged fingerprint server paths = %v, want one ending in %q", readerPaths, suffix)
+	}
+	if want := filepath.Join(workDirectory, filepath.FromSlash(artifacts.acquired.RelativeOutputPath)); readerPaths[0] != want {
+		t.Fatalf("staged reader server path = %q, want canonical %q", readerPaths[0], want)
 	}
 	wantFence := persistence.SourceAnalysisArtifactFence{WorkID: repo.work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: 9}
 	if retiring.calls != 1 || retiring.fence != wantFence {

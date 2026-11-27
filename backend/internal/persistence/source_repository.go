@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/uptrace/bun"
 )
 
@@ -393,9 +394,15 @@ func (repository *SourceInventoryRepository) DeleteSourceRootWithCleanup(ctx con
 		if err := retireMatchingLocalRechecksForRemovedRoot(ctx, tx, id); err != nil {
 			return fmt.Errorf("delete source root: %w", err)
 		}
-		var works []uuid.UUID
-		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? ORDER BY id FOR UPDATE`, id).Scan(ctx, &works); err != nil {
+		var lockedWorks []SourceAnalysisWork
+		if err := tx.NewRaw(`SELECT id,relative_path FROM source_analysis_work WHERE source_root_id=? ORDER BY id FOR UPDATE`, id).Scan(ctx, &lockedWorks); err != nil {
 			return fmt.Errorf("delete source root: lock root analysis work: %w", err)
+		}
+		works := make([]uuid.UUID, 0, len(lockedWorks))
+		relativePaths := make(map[uuid.UUID]string, len(lockedWorks))
+		for _, work := range lockedWorks {
+			works = append(works, work.ID)
+			relativePaths[work.ID] = work.RelativePath
 		}
 		var failedOperationIDs []uuid.UUID
 		if err := tx.NewRaw(`SELECT op.id FROM operation op
@@ -414,7 +421,7 @@ func (repository *SourceInventoryRepository) DeleteSourceRootWithCleanup(ctx con
 			return fmt.Errorf("delete source root: lock staged artifacts: %w", err)
 		}
 		for _, artifact := range artifacts {
-			if artifact.RelativeOutputPath != sourceAnalysisArtifactPath(id, artifact.WorkID, artifact.ID) {
+			if !sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, id, artifact.WorkID, artifact.ID, relativePaths[artifact.WorkID]) {
 				return fmt.Errorf("delete source root: staged artifact %s path does not match ownership", artifact.ID)
 			}
 		}

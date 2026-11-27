@@ -267,6 +267,14 @@ it("registers without scanning, opens its route, and scans only on explicit star
   expect(
     screen.getByRole("heading", { name: "Acoustic fingerprint" }),
   ).toHaveFocus();
+  const fingerprintRow = screen
+    .getByRole("heading", { name: "Acoustic fingerprint" })
+    .closest("li");
+  if (!fingerprintRow) throw new Error("Missing fingerprint row");
+  expect(within(fingerprintRow).getByText("State: Ready")).toBeInTheDocument();
+  expect(
+    within(fingerprintRow).queryByText(/fpcalc version/i),
+  ).not.toBeInTheDocument();
   expect(
     lastProcessing()?.files[0].steps.find((step) => step.id === "fingerprint")
       ?.status,

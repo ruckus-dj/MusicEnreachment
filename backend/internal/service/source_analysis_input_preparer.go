@@ -194,8 +194,8 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if err != nil {
 		return nil, fmt.Errorf("prepare source analysis input: acquire staged artifact: %w", err)
 	}
-	expectedRelativePath := filepath.ToSlash(filepath.Join("analysis", "staging", root.ID.String(), work.ID.String(), artifactID.String()))
-	if artifact == nil || artifact.ID != artifactID || artifact.WorkID != work.ID || artifact.RelativeOutputPath != expectedRelativePath ||
+	if artifact == nil || artifact.ID != artifactID || artifact.WorkID != work.ID ||
+		artifact.RelativeOutputPath != sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath) ||
 		artifact.SourceSizeBytes != work.SizeBytes || !sameSourceMtime(artifact.SourceMtime, work.Mtime) ||
 		artifact.OwnerOperationID != fence.OperationID || artifact.OwnerOperationAttempt != fence.OperationAttempt || artifact.OwnerJobID != fence.JobID ||
 		artifact.State != persistence.SourceAnalysisArtifactAcquiring {
@@ -230,7 +230,7 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 		ownedDirs = append(ownedDirs, next)
 		currentDir = next
 	}
-	outputFile, err := currentDir.CreateExclusive(ctx, artifactID.String())
+	outputFile, err := currentDir.CreateExclusive(ctx, filepath.Base(filepath.FromSlash(artifact.RelativeOutputPath)))
 	if err != nil {
 		_ = closeDirs()
 		createErr := fmt.Errorf("create staged output file exclusively: %w", err)
@@ -355,6 +355,7 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 		return failCreated(fmt.Errorf("mark staged source artifact ready: %w", err))
 	}
 	if readyArtifact == nil || readyArtifact.ID != artifactID || readyArtifact.WorkID != work.ID || readyArtifact.State != persistence.SourceAnalysisArtifactReady ||
+		readyArtifact.RelativeOutputPath != artifact.RelativeOutputPath ||
 		readyArtifact.OwnerOperationID != fence.OperationID || readyArtifact.OwnerOperationAttempt != fence.OperationAttempt || readyArtifact.OwnerJobID != fence.JobID {
 		return failCreated(fmt.Errorf("mark staged source artifact ready returned an invalid owner"))
 	}
@@ -438,6 +439,12 @@ func (preparer *SourceAnalysisInputPreparer) prepareRetained(
 	if artifact.State != persistence.SourceAnalysisArtifactReady {
 		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact is not ready")
 	}
+	legacyPath := sourcefs.StagedArtifactPath(root.ID, work.ID, artifact.ID, "")
+	if artifact.RelativeOutputPath == legacyPath && legacyPath != sourcefs.StagedArtifactPath(root.ID, work.ID, artifact.ID, work.RelativePath) {
+		// Acquire replaces this binding only if its previous owners are idle,
+		// leaving the old path registered for cleanup.
+		return nil, false, nil
+	}
 	bound, err := repository.BindRetained(ctx, artifact.ID, fence)
 	if err != nil {
 		return nil, false, fmt.Errorf("prepare source analysis input: bind retained artifact: %w", err)
@@ -445,8 +452,8 @@ func (preparer *SourceAnalysisInputPreparer) prepareRetained(
 	if bound == nil || bound.ID != artifact.ID || bound.WorkID != work.ID || bound.State != persistence.SourceAnalysisArtifactReady {
 		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact binding returned an invalid owner")
 	}
-	expectedPath := filepath.ToSlash(filepath.Join("analysis", "staging", root.ID.String(), work.ID.String(), artifact.ID.String()))
-	if bound.RelativeOutputPath != expectedPath || bound.SourceSizeBytes != work.SizeBytes || !sameSourceMtime(bound.SourceMtime, work.Mtime) {
+	if !sourcefs.MatchesStagedArtifactPath(bound.RelativeOutputPath, root.ID, work.ID, artifact.ID, work.RelativePath) ||
+		bound.SourceSizeBytes != work.SizeBytes || !sameSourceMtime(bound.SourceMtime, work.Mtime) {
 		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact identity does not match current work")
 	}
 

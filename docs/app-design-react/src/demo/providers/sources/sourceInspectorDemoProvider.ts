@@ -139,6 +139,7 @@ export function sourceInspectorDemoProvider({
       : undefined,
     fingerprintRerunAvailable: false,
     onRerunFingerprint: () => {},
+    fingerprintReady: steps.fingerprint?.state === "succeeded",
     loading: false,
     busy: false,
     pending,

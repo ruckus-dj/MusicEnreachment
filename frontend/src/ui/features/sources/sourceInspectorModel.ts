@@ -41,12 +41,6 @@ export interface SourceInspectorSHA256Success {
   readonly provenance?: string;
 }
 
-export interface SourceInspectorFingerprintSuccess {
-  readonly value: string;
-  readonly version: string;
-  readonly provenance?: string;
-}
-
 export interface SourceInspectorMetadataSuccess {
   // Tag values are nullable in the API projection: a present key with a null
   // value means the tag exists but its values are unknown. Keep the key and
@@ -138,7 +132,7 @@ export interface SourceInspectorViewProps {
   >;
   readonly sha256?: SourceInspectorSHA256Success;
   readonly probe?: SourceInspectorProbe;
-  readonly fingerprint?: SourceInspectorFingerprintSuccess;
+  readonly fingerprintReady: boolean;
   readonly metadata?: SourceInspectorMetadataSuccess;
   readonly artifact?: SourceInspectorArtifact;
   readonly retryAvailable: Readonly<
@@ -147,9 +141,6 @@ export interface SourceInspectorViewProps {
   readonly onRetryStep: (step: SourceInspectorStepName) => void;
   readonly fingerprintRerunAvailable: boolean;
   readonly onRerunFingerprint: () => void;
-  // The active fpcalc version is optional: an absent value means the active
-  // version is unknown and must never be compared as if it were a real version.
-  readonly activeFingerprintVersion?: string;
   // Absent matching evidence renders as unknown instead of claiming either
   // availability or a reason that the provider did not supply.
   readonly matching?: SourceInspectorMatching;

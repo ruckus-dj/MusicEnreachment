@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/uptrace/bun"
 )
@@ -38,8 +39,8 @@ func (repository *SourceInventoryRepository) RetireSourceAnalysisWorkArtifact(
 		}
 		// A work can become invalidated during analysis; it still owns its
 		// registered temporary input. Do not require a current source location.
-		var rootID uuid.UUID
-		if err := tx.NewRaw(`SELECT source_root_id FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &rootID); err != nil {
+		var work SourceAnalysisWork
+		if err := tx.NewRaw(`SELECT source_root_id,relative_path FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &work); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -65,7 +66,7 @@ func (repository *SourceInventoryRepository) RetireSourceAnalysisWorkArtifact(
 			}
 			return fmt.Errorf("lock staged artifact for retirement: %w", err)
 		}
-		if artifact.RelativeOutputPath != sourceAnalysisArtifactPath(rootID, workID, artifact.ID) {
+		if !sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, work.SourceRootID, workID, artifact.ID, work.RelativePath) {
 			return errors.New("staged source analysis artifact has a noncanonical path")
 		}
 		var workDirectory string

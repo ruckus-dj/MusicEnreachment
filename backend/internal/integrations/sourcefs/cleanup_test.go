@@ -70,6 +70,10 @@ func TestCleanerValidatesCanonicalPathBeforeFilesystemAccess(t *testing.T) {
 		`analysis\staging\00000000-0000-0000-0000-000000000001\00000000-0000-0000-0000-000000000002\00000000-0000-0000-0000-000000000003`,
 		"analysis/staging/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002/00000000-0000-0000-0000-000000000003/00000000-0000-0000-0000-000000000004",
 		"analysis/staging/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002/00000000-0000-0000-0000-000000000003/",
+		cleanupArtifactPath + ".mp3/other",
+		cleanupArtifactPath + ".mp3:stream",
+		cleanupArtifactPath + ".mp3 ",
+		cleanupArtifactPath + "..mp3",
 	} {
 		if _, err := NewCleaner().RemoveRegistered(cancelled, cleanupTempDir(t), path); !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("RemoveRegistered(%q) error = %v, want ErrInvalidPath", path, err)
@@ -150,7 +154,8 @@ func cleanupExpectedInfo(t *testing.T, path string) os.FileInfo {
 
 func TestCleanerRemovesMatchingRegisteredArtifact(t *testing.T) {
 	root := cleanupTempDir(t)
-	artifact := filepath.Join(root, filepath.FromSlash(cleanupArtifactPath))
+	relative := cleanupArtifactPath + ".FLAC"
+	artifact := filepath.Join(root, filepath.FromSlash(relative))
 	if err := os.MkdirAll(filepath.Dir(artifact), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -159,14 +164,14 @@ func TestCleanerRemovesMatchingRegisteredArtifact(t *testing.T) {
 	}
 	expected := cleanupExpectedInfo(t, artifact)
 
-	outcome, err := NewCleaner().RemoveRegisteredMatching(context.Background(), root, cleanupArtifactPath, expected)
+	outcome, err := NewCleaner().RemoveRegisteredMatching(context.Background(), root, relative, expected)
 	if err != nil || outcome != CleanupDeleted {
 		t.Fatalf("RemoveRegisteredMatching() = (%v, %v), want (%v, nil)", outcome, err, CleanupDeleted)
 	}
 	if _, err := os.Stat(artifact); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("artifact stat error = %v, want not-exist", err)
 	}
-	outcome, err = NewCleaner().RemoveRegisteredMatching(context.Background(), root, cleanupArtifactPath, expected)
+	outcome, err = NewCleaner().RemoveRegisteredMatching(context.Background(), root, relative, expected)
 	if err != nil || outcome != CleanupMissing {
 		t.Fatalf("second RemoveRegisteredMatching() = (%v, %v), want (%v, nil)", outcome, err, CleanupMissing)
 	}

@@ -49,6 +49,9 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	for index := range allArtifactIDs {
 		allArtifactIDs[index] = uuid.New()
 		paths[index] = filepath.Join("analysis", "staging", rootID.String(), workID.String(), allArtifactIDs[index].String())
+		if index%2 == 1 {
+			paths[index] += ".flac"
+		}
 		fullPath := filepath.Join(outputRoot, paths[index])
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatalf("create staged artifact directory: %v", err)
@@ -81,6 +84,10 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 		}
 	}
 
+	candidates, err := repository.ListAutomaticSourceAnalysisArtifactCleanupCandidates(ctx, len(allArtifactIDs))
+	if err != nil || len(candidates) != len(allArtifactIDs) {
+		t.Fatalf("list cleanup candidates = %v, %v; want both current and legacy paths", candidates, err)
+	}
 	cleanup := service.NewSourceAnalysisArtifactCleanup(repository, riverClient)
 	operation, err := cleanup.Admit(ctx, artifactIDs)
 	if err != nil {

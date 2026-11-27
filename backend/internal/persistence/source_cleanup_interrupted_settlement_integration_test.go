@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 )
 
 // A process can unlink the owned output and die before committing the durable
@@ -23,7 +24,7 @@ func TestInterruptedCleanupAfterUnlinkRequiresExplicitSettlement(t *testing.T) {
 		JOIN source_analysis_artifact artifact ON artifact.work_id=work.id WHERE artifact.id=?`, artifactID).Scan(ctx, &rootID, &workID); err != nil {
 		t.Fatal(err)
 	}
-	relative := filepath.FromSlash(sourceAnalysisArtifactPath(rootID, workID, artifactID))
+	relative := filepath.FromSlash(sourcefs.StagedArtifactPath(rootID, workID, artifactID, ""))
 	full := filepath.Join(output, relative)
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)

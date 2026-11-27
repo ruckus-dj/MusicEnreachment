@@ -4,11 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/uptrace/bun"
 )
 
@@ -96,12 +95,12 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 		artifact = new(SourceAnalysisArtifact)
 		readErr := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? FOR UPDATE`, artifactID).Scan(ctx, artifact)
 		if readErr == nil {
-			if artifact.WorkID != work.ID || artifact.RelativeOutputPath != sourceAnalysisArtifactPath(root.ID, work.ID, artifactID) ||
+			if artifact.WorkID != work.ID || !sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, root.ID, work.ID, artifactID, work.RelativePath) ||
 				artifact.SourceSizeBytes != work.SizeBytes || !sourceAnalysisMtime(artifact.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime)) ||
 				!artifactOwnedByFence(artifact, fence) || (artifact.State != SourceAnalysisArtifactAcquiring && artifact.State != SourceAnalysisArtifactReady) {
 				return fmt.Errorf("acquire source analysis artifact: artifact identity is already owned or incompatible")
 			}
-			return bindAcquiredArtifact(ctx, tx, artifact, operation, fence)
+			return bindAcquiredArtifact(ctx, tx, work, artifact, operation, fence)
 		}
 		if readErr != sql.ErrNoRows {
 			return fmt.Errorf("acquire source analysis artifact: read existing artifact: %w", readErr)
@@ -109,7 +108,7 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 
 		artifact = &SourceAnalysisArtifact{
 			ID: artifactID, WorkID: work.ID,
-			RelativeOutputPath: sourceAnalysisArtifactPath(root.ID, work.ID, artifactID),
+			RelativeOutputPath: sourcefs.StagedArtifactPath(root.ID, work.ID, artifactID, work.RelativePath),
 			SourceSizeBytes:    work.SizeBytes, SourceMtime: work.Mtime,
 			OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt,
 			OwnerJobID: fence.JobID, State: SourceAnalysisArtifactAcquiring,
@@ -118,7 +117,7 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 		if _, err := tx.NewInsert().Model(artifact).Exec(ctx); err != nil {
 			return fmt.Errorf("acquire source analysis artifact: insert ownership record: %w", err)
 		}
-		return bindAcquiredArtifact(ctx, tx, artifact, operation, fence)
+		return bindAcquiredArtifact(ctx, tx, work, artifact, operation, fence)
 	})
 	if err != nil {
 		return nil, err
@@ -155,7 +154,8 @@ func (repository *SourceAnalysisArtifactRepository) MarkReady(ctx context.Contex
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? FOR UPDATE`, artifactID).Scan(ctx, artifact); err != nil {
 			return fmt.Errorf("mark source analysis artifact ready: read artifact: %w", err)
 		}
-		if artifact.WorkID != work.ID || !artifactOwnedByFence(artifact, fence) || artifact.RelativeOutputPath != sourceAnalysisArtifactPath(root.ID, work.ID, artifactID) ||
+		if artifact.WorkID != work.ID || !artifactOwnedByFence(artifact, fence) ||
+			!sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, root.ID, work.ID, artifactID, work.RelativePath) ||
 			artifact.SourceSizeBytes != work.SizeBytes || !sourceAnalysisMtime(artifact.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return fmt.Errorf("mark source analysis artifact ready: artifact ownership or source identity mismatch")
 		}
@@ -221,9 +221,20 @@ func validSourceAnalysisArtifactFence(fence SourceAnalysisArtifactFence) bool {
 	return fence.WorkID != uuid.Nil && fence.OperationID != uuid.Nil && fence.OperationAttempt > 0 && fence.JobID > 0
 }
 
-func sourceAnalysisArtifactPath(rootID, workID, artifactID uuid.UUID) string {
-	return path.Join("analysis", "staging", strings.ToLower(rootID.String()), strings.ToLower(workID.String()), strings.ToLower(artifactID.String()))
-}
+// These joins keep list queries bounded while checking the same exact
+// ownership paths as MatchesStagedArtifactPath. Both queries alias the rows
+// as artifact and work.
+const stagedArtifactPathJoins = `
+	CROSS JOIN LATERAL (
+		SELECT 'analysis/staging/' || work.source_root_id::text || '/' || work.id::text || '/' || artifact.id::text AS stem,
+			substring(work.relative_path COLLATE "C" FROM ?) AS suffix
+	) AS staged_path`
+
+const stagedArtifactPathPredicate = `
+	(artifact.relative_output_path = staged_path.stem OR (
+		octet_length(staged_path.suffix) <= ? AND
+		artifact.relative_output_path = staged_path.stem || staged_path.suffix
+	))`
 
 func artifactOwnedByFence(artifact *SourceAnalysisArtifact, fence SourceAnalysisArtifactFence) bool {
 	return artifact.OwnerOperationID == fence.OperationID && artifact.OwnerOperationAttempt == fence.OperationAttempt && artifact.OwnerJobID == fence.JobID

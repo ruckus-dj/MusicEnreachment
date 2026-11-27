@@ -127,11 +127,7 @@ export function SourceInspectorScreen({
           result: technicalResult(detail.result),
           provenance: getStep("probe")?.reuse_origin,
         },
-        fingerprint: fingerprint && {
-          value: fingerprint.value,
-          version: fingerprint.version,
-          provenance: getStep("fingerprint")?.reuse_origin,
-        },
+        fingerprintReady: !!fingerprint,
         metadata: metadata && {
           tags: metadata.tags,
           provenance: metadata.provenance,
@@ -141,7 +137,6 @@ export function SourceInspectorScreen({
         onRetryStep: (name) => void inspector.action("retry", name),
         fingerprintRerunAvailable,
         onRerunFingerprint: () => void inspector.action("rerun"),
-        activeFingerprintVersion,
         matching: detail && {
           eligible: detail.matching_eligible,
           reason: !detail.matching_eligible

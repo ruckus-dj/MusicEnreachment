@@ -5,7 +5,6 @@ import {
   sourceInspectorMessage,
 } from "./sourceInspectorMessages";
 import {
-  type SourceInspectorFingerprintSuccess,
   type SourceInspectorLocale,
   type SourceInspectorMetadataSuccess,
   type SourceInspectorProbe,
@@ -62,7 +61,7 @@ export interface SourceAnalysisStepsProps {
   >;
   readonly sha256?: SourceInspectorSHA256Success;
   readonly probe?: SourceInspectorProbe;
-  readonly fingerprint?: SourceInspectorFingerprintSuccess;
+  readonly fingerprintReady: boolean;
   readonly metadata?: SourceInspectorMetadataSuccess;
   readonly retryAvailable: Readonly<
     Partial<Record<SourceInspectorStepName, boolean>>
@@ -70,7 +69,6 @@ export interface SourceAnalysisStepsProps {
   readonly onRetry: (step: SourceInspectorStepName) => void;
   readonly fingerprintRerunAvailable: boolean;
   readonly onRerunFingerprint: () => void;
-  readonly activeFingerprintVersion?: string;
   // Absent matching evidence renders as unknown rather than as unavailable.
   readonly matching?: { readonly eligible: boolean; readonly reason?: string };
 }
@@ -80,13 +78,12 @@ export function SourceAnalysisSteps({
   steps,
   sha256,
   probe,
-  fingerprint,
+  fingerprintReady,
   metadata,
   retryAvailable,
   onRetry,
   fingerprintRerunAvailable,
   onRerunFingerprint,
-  activeFingerprintVersion,
   matching,
 }: SourceAnalysisStepsProps) {
   const t = (
@@ -119,18 +116,23 @@ export function SourceAnalysisSteps({
           const label = stepLabel(name);
           const step = steps[name] ?? { state: "not_requested" as const };
           const busy = sourceInspectorStepBusy(step.state);
-          const hasSuccess =
+          const successful =
             (name === "sha256" && !!sha256) ||
             (name === "probe" && !!probe) ||
-            (name === "fingerprint" && !!fingerprint);
-          const successful = hasSuccess || (name === "metadata" && !!metadata);
+            (name === "metadata" && !!metadata);
+          const stateMessage =
+            name === "fingerprint" && step.state === "succeeded"
+              ? fingerprintReady
+                ? "fingerprintReady"
+                : "fingerprintNotReady"
+              : stateMessages[step.state];
           return (
             <li key={name} className={stepPanel} aria-label={label}>
               <h3 tabIndex={-1} className={heading}>
                 {label}
               </h3>
               <p className="m-0">
-                {t("state")}: {t(stateMessages[step.state])}
+                {t("state")}: {t(stateMessage)}
               </p>
               {step.safeError && (
                 <p role="alert" className={alert}>
@@ -155,26 +157,11 @@ export function SourceAnalysisSteps({
                   />
                 </>
               )}
-              {name === "fingerprint" && fingerprint && (
-                <>
-                  <p className="m-0 wrap-anywhere">
-                    {t("fingerprintValue")}{" "}
-                    <code className={code}>{fingerprint.value}</code>
-                  </p>
-                  <p className="m-0">
-                    {t("resultVersion")} {fingerprint.version}
-                    {activeFingerprintVersion !== undefined &&
-                      activeFingerprintVersion !== fingerprint.version &&
-                      ` · ${t("activeVersion")} ${activeFingerprintVersion}`}
-                  </p>
-                  {activeFingerprintVersion === undefined && (
-                    <p className={note}>{t("activeVersionUnavailable")}</p>
-                  )}
-                  {fingerprint.provenance && (
-                    <p className={note}>{fingerprint.provenance}</p>
-                  )}
-                </>
-              )}
+              {name === "fingerprint" &&
+                fingerprintReady &&
+                step.state !== "succeeded" && (
+                  <p className={note}>{t("savedFingerprintAvailable")}</p>
+                )}
               {name === "metadata" && metadata && (
                 <>
                   <p className="m-0">
@@ -220,9 +207,11 @@ export function SourceAnalysisSteps({
                   {t("rerunFingerprint")}
                 </AppButton>
               )}
-              {!successful && step.state === "succeeded" && (
-                <p className={note}>{t("noSuccessfulStep")}</p>
-              )}
+              {name !== "fingerprint" &&
+                !successful &&
+                step.state === "succeeded" && (
+                  <p className={note}>{t("noSuccessfulStep")}</p>
+                )}
             </li>
           );
         })}

@@ -31,7 +31,7 @@ func TestSourceAnalysisInputPreparerCopiesOneBorrowedSourceAndClosesWithoutDelet
 	if err := input.Validate(context.Background()); err != nil {
 		t.Fatalf("Validate staged input: %v", err)
 	}
-	if !strings.HasSuffix(input.ServerPath, filepath.Join(fixture.artifactID.String())) {
+	if filepath.Base(input.ServerPath) != fixture.artifactID.String()+".bin" {
 		t.Fatalf("unexpected transient server path %q", input.ServerPath)
 	}
 	if err := input.File.Borrow(context.Background(), func(file *os.File) error {
@@ -58,7 +58,7 @@ func TestSourceAnalysisInputPreparerReusesReadyArtifactWithoutBorrowingSource(t 
 	fixture := newInputPreparerFixture(t, nil)
 	artifact := &persistence.SourceAnalysisArtifact{
 		ID: fixture.artifactID, WorkID: fixture.work.ID,
-		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		RelativeOutputPath: fixture.artifactPath(fixture.artifactID),
 		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
 		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
 	}
@@ -96,7 +96,7 @@ func TestSourceAnalysisInputPreparerInvalidatesMissingBindingAndAcquiresFreshArt
 	fixture := newInputPreparerFixture(t, nil)
 	old := &persistence.SourceAnalysisArtifact{
 		ID: fixture.artifactID, WorkID: fixture.work.ID,
-		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		RelativeOutputPath: fixture.artifactPath(fixture.artifactID),
 		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
 		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
 	}
@@ -128,12 +128,12 @@ func TestSourceAnalysisInputPreparerReplacesStaleAcquiringBindingAfterCrash(t *t
 	staleID := uuid.New()
 	stale := &persistence.SourceAnalysisArtifact{
 		ID: staleID, WorkID: fixture.work.ID,
-		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())),
+		RelativeOutputPath: fixture.artifactPath(staleID),
 		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
 		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactAcquiring,
 	}
 	fixture.artifacts.binding = stale
-	stalePath := filepath.Join(fixture.workPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())
+	stalePath := filepath.Join(fixture.workPath, filepath.FromSlash(fixture.artifactPath(staleID)))
 	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSourceAnalysisInputPreparerDoesNotReuseReadyArtifactAfterSourceChanges(
 	fixture := newInputPreparerFixture(t, nil)
 	artifact := &persistence.SourceAnalysisArtifact{
 		ID: fixture.artifactID, WorkID: fixture.work.ID,
-		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		RelativeOutputPath: fixture.artifactPath(fixture.artifactID),
 		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
 		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
 	}
@@ -483,7 +483,7 @@ func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T
 	if _, err := os.Stat(fixture.finalPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("configured namespace unexpectedly contains artifact: %v", err)
 	}
-	backupArtifactPath := filepath.Join(backupPath, fixture.work.ID.String(), fixture.artifactID.String())
+	backupArtifactPath := filepath.Join(backupPath, fixture.work.ID.String(), filepath.Base(fixture.finalPath()))
 	got, err := os.ReadFile(backupArtifactPath)
 	if err != nil {
 		t.Fatalf("read artifact through pinned ancestor backup: %v", err)
@@ -626,7 +626,11 @@ func newInputPreparerFixture(t *testing.T, wrap func(sourcefs.OutputFile) source
 }
 
 func (fixture *inputPreparerFixture) finalPath() string {
-	return filepath.Join(fixture.workPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())
+	return filepath.Join(fixture.workPath, filepath.FromSlash(fixture.artifactPath(fixture.artifactID)))
+}
+
+func (fixture *inputPreparerFixture) artifactPath(id uuid.UUID) string {
+	return sourcefs.StagedArtifactPath(fixture.work.SourceRootID, fixture.work.ID, id, fixture.work.RelativePath)
 }
 
 type inputPreparerRepository struct {
@@ -663,7 +667,7 @@ func (repository *inputArtifactRepository) Acquire(_ context.Context, id uuid.UU
 	if id != repository.artifactID || fence != repository.fence {
 		return nil, errors.New("unexpected acquire")
 	}
-	return &persistence.SourceAnalysisArtifact{ID: id, WorkID: repository.workID, RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", repository.rootID.String(), repository.workID.String(), id.String())),
+	return &persistence.SourceAnalysisArtifact{ID: id, WorkID: repository.workID, RelativeOutputPath: sourcefs.StagedArtifactPath(repository.rootID, repository.workID, id, "audio.bin"),
 		SourceSizeBytes: repository.size, SourceMtime: repository.mtime, OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID,
 		State: persistence.SourceAnalysisArtifactAcquiring}, nil
 }
@@ -700,7 +704,8 @@ func (repository *inputArtifactRepository) MarkReady(_ context.Context, id uuid.
 		return nil, errors.New("stale delivery fence")
 	}
 	return &persistence.SourceAnalysisArtifact{ID: id, WorkID: repository.workID, State: persistence.SourceAnalysisArtifactReady,
-		OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID}, nil
+		RelativeOutputPath: sourcefs.StagedArtifactPath(repository.rootID, repository.workID, id, "audio.bin"),
+		OwnerOperationID:   fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID}, nil
 }
 
 type syncFailingOutputFile struct {

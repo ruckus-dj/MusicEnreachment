@@ -6,11 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -21,6 +23,22 @@ func TestCleanupDeliveryDatabaseGroupWithPostgreSQL(t *testing.T) {
 	t.Run("DeliverySessionSerializesSameOperation", func(t *testing.T) { runCleanupDeliverySessionSerializesSameOperation(t, database) })
 	t.Run("StartupRecoveryFailsPersistedRunningAndQueuedOrphans", func(t *testing.T) { runCleanupStartupRecoveryFailsPersistedRunningAndQueuedOrphans(t, database) })
 	t.Run("RecoveryWaitsForActiveDeliveryClaim", func(t *testing.T) { runCleanupRecoveryWaitsForActiveDeliveryClaim(t, database) })
+	t.Run("StagedExtensionSQLMatchesGo", func(t *testing.T) {
+		root, work, artifact := uuid.New(), uuid.New(), uuid.New()
+		stem := sourcefs.StagedArtifactPath(root, work, artifact, "")
+		for _, relative := range []string{"album.v1/song.mix.MP3", "album/song.аудио", "album/song.a\u0085b", "album/song.a\x7fb", "album/song.ogg ", "album.v1/song"} {
+			var suffix string
+			err := database.NewRaw(`SELECT COALESCE(substring(?::text COLLATE "C" FROM ?), '')`,
+				relative, sourcefs.StagedArtifactExtensionPattern).Scan(t.Context(), &suffix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.TrimPrefix(sourcefs.StagedArtifactPath(root, work, artifact, relative), stem)
+			if suffix != want {
+				t.Errorf("PostgreSQL suffix for %q = %q; Go gave %q", relative, suffix, want)
+			}
+		}
+	})
 }
 
 func runOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testing.T, database *bun.DB) {

@@ -22,6 +22,11 @@ const (
 
 var registeredArtifactPath = regexp.MustCompile(`^analysis/staging/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+func validRegisteredArtifactPath(relativePath string) bool {
+	suffix := stagedArtifactSuffix(relativePath)
+	return registeredArtifactPath.MatchString(relativePath[:len(relativePath)-len(suffix)])
+}
+
 // Cleaner removes only canonical registered staged artifacts from an existing
 // managed output root. It never creates directories or prunes parents.
 type Cleaner struct{}
@@ -33,7 +38,7 @@ func NewCleaner() Cleaner { return Cleaner{} }
 // Missing artifact or intermediate staging components are reported as
 // CleanupMissing; an unavailable output root remains an error.
 func (Cleaner) RemoveRegistered(ctx context.Context, outputRoot, canonicalRelativePath string) (CleanupOutcome, error) {
-	if !registeredArtifactPath.MatchString(canonicalRelativePath) {
+	if !validRegisteredArtifactPath(canonicalRelativePath) {
 		return 0, ErrInvalidPath
 	}
 	if err := ctx.Err(); err != nil {
@@ -48,7 +53,7 @@ func (Cleaner) RemoveRegistered(ctx context.Context, outputRoot, canonicalRelati
 // handle before closing its readers; a nil expected skips the identity check
 // and behaves like RemoveRegistered.
 func (Cleaner) RemoveRegisteredMatching(ctx context.Context, outputRoot, canonicalRelativePath string, expected os.FileInfo) (CleanupOutcome, error) {
-	if !registeredArtifactPath.MatchString(canonicalRelativePath) {
+	if !validRegisteredArtifactPath(canonicalRelativePath) {
 		return 0, ErrInvalidPath
 	}
 	if err := ctx.Err(); err != nil {

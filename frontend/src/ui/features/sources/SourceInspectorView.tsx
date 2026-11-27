@@ -72,14 +72,13 @@ export function SourceInspectorView(props: SourceInspectorViewProps) {
     steps,
     sha256,
     probe,
-    fingerprint,
+    fingerprintReady,
     metadata,
     artifact,
     retryAvailable,
     onRetryStep,
     fingerprintRerunAvailable,
     onRerunFingerprint,
-    activeFingerprintVersion,
     matching,
     loading,
     busy,
@@ -225,13 +224,12 @@ export function SourceInspectorView(props: SourceInspectorViewProps) {
             steps={steps}
             sha256={sha256}
             probe={probe}
-            fingerprint={fingerprint}
+            fingerprintReady={fingerprintReady}
             metadata={metadata}
             retryAvailable={retryAvailable}
             onRetry={onRetryStep}
             fingerprintRerunAvailable={fingerprintRerunAvailable}
             onRerunFingerprint={onRerunFingerprint}
-            activeFingerprintVersion={activeFingerprintVersion}
             matching={matching}
           />
         </>

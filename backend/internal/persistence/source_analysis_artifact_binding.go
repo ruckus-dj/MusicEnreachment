@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
@@ -55,15 +56,15 @@ func (repository *SourceAnalysisArtifactRepository) ListRetained(ctx context.Con
 		JOIN source_analysis_artifact AS artifact ON artifact.id=binding.artifact_id AND artifact.work_id=binding.work_id
 		JOIN source_analysis_work AS work ON work.id=binding.work_id
 		JOIN source_root AS root ON root.id=work.source_root_id
-		JOIN source_location AS location ON location.id=work.current_location_id AND location.source_root_id=work.source_root_id
+		JOIN source_location AS location ON location.id=work.current_location_id AND location.source_root_id=work.source_root_id`+stagedArtifactPathJoins+`
 		WHERE work.id=? AND work.current_location_id=work.location_id AND work.invalidated_at IS NULL
 		  AND root.enabled AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
 		  AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path
 		  AND location.relative_path=work.relative_path AND location.size_bytes=work.size_bytes AND location.mtime=work.mtime
 		  AND artifact.state='ready'
-		  AND artifact.relative_output_path='analysis/staging/' || lower(root.id::text) || '/' || lower(work.id::text) || '/' || lower(artifact.id::text)
+		  AND `+stagedArtifactPathPredicate+`
 		  AND artifact.source_size_bytes=work.size_bytes AND artifact.source_mtime=work.mtime
-		ORDER BY artifact.created_at, artifact.id`, workID).Scan(ctx, &artifacts)
+		ORDER BY artifact.created_at, artifact.id`, sourcefs.StagedArtifactExtensionPattern, workID, sourcefs.MaxStagedArtifactExtensionBytes).Scan(ctx, &artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("list retained source analysis artifacts: %w", err)
 	}
@@ -96,7 +97,8 @@ func (repository *SourceAnalysisArtifactRepository) BindRetained(ctx context.Con
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? FOR UPDATE`, artifactID).Scan(ctx, artifact); err != nil {
 			return fmt.Errorf("bind retained source analysis artifact: read artifact: %w", err)
 		}
-		if artifact.WorkID != work.ID || artifact.State != SourceAnalysisArtifactReady || artifact.RelativeOutputPath != sourceAnalysisArtifactPath(root.ID, work.ID, artifactID) ||
+		if artifact.WorkID != work.ID || artifact.State != SourceAnalysisArtifactReady ||
+			!sourcefs.MatchesStagedArtifactPath(artifact.RelativeOutputPath, root.ID, work.ID, artifactID, work.RelativePath) ||
 			artifact.SourceSizeBytes != work.SizeBytes || !sourceAnalysisMtime(artifact.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return fmt.Errorf("bind retained source analysis artifact: artifact is not a ready canonical match")
 		}
@@ -179,7 +181,7 @@ func (repository *SourceAnalysisArtifactRepository) InvalidateBinding(ctx contex
 	})
 }
 
-func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, artifact *SourceAnalysisArtifact, operation *Operation, fence SourceAnalysisArtifactFence) error {
+func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, work *SourceAnalysisWork, artifact *SourceAnalysisArtifact, operation *Operation, fence SourceAnalysisArtifactFence) error {
 	steps, err := requestedStepsForOperation(ctx, tx, operation, fence.WorkID)
 	if err != nil {
 		return err
@@ -194,7 +196,11 @@ func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, artifact *SourceAnalys
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? AND work_id=? FOR UPDATE`, previousArtifactID, fence.WorkID).Scan(ctx, previous); err != nil {
 			return fmt.Errorf("lock prior acquired artifact: %w", err)
 		}
-		if previous.State != SourceAnalysisArtifactAcquiring {
+		legacyPath := sourcefs.StagedArtifactPath(work.SourceRootID, work.ID, previous.ID, "")
+		legacyReady := previous.State == SourceAnalysisArtifactReady && previous.RelativeOutputPath == legacyPath &&
+			legacyPath != sourcefs.StagedArtifactPath(work.SourceRootID, work.ID, previous.ID, work.RelativePath) &&
+			previous.SourceSizeBytes == work.SizeBytes && sourceAnalysisMtime(previous.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime))
+		if previous.State != SourceAnalysisArtifactAcquiring && !legacyReady {
 			return fmt.Errorf("acquire source analysis artifact: another artifact is bound to work")
 		}
 		liveCreator, err := liveArtifactDelivery(ctx, tx, previous.OwnerOperationID, previous.OwnerOperationAttempt, previous.OwnerJobID)
@@ -219,6 +225,11 @@ func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, artifact *SourceAnalys
 		}
 		if _, err := tx.NewRaw(`DELETE FROM source_analysis_work_artifact_binding WHERE work_id=? AND artifact_id=?`, fence.WorkID, previousArtifactID).Exec(ctx); err != nil {
 			return fmt.Errorf("delete stale acquired artifact binding: %w", err)
+		}
+		if legacyReady {
+			if _, err := tx.NewRaw(`UPDATE source_analysis_artifact SET state='cleanup_eligible',updated_at=now() WHERE id=?`, previousArtifactID).Exec(ctx); err != nil {
+				return fmt.Errorf("retire extensionless staged artifact: %w", err)
+			}
 		}
 	}
 	_, err = tx.NewRaw(`INSERT INTO source_analysis_work_artifact_binding

@@ -81,7 +81,7 @@ func prepareArtifactRetirement(t *testing.T, database *bun.DB) artifactRetiremen
 		t.Fatalf("mark staged artifact ready: %v", err)
 	}
 	wantPath := "analysis/staging/" + strings.ToLower(fixture.root.ID.String()) + "/" +
-		strings.ToLower(fixture.work.ID.String()) + "/" + strings.ToLower(artifactID.String())
+		strings.ToLower(fixture.work.ID.String()) + "/" + strings.ToLower(artifactID.String()) + ".flac"
 	if ready.State != persistence.SourceAnalysisArtifactReady || ready.RelativeOutputPath != wantPath {
 		t.Fatalf("ready artifact = state %q path %q, want ready %q", ready.State, ready.RelativeOutputPath, wantPath)
 	}
@@ -128,7 +128,7 @@ func runRetirementRemovesCurrentBorrowerCopy(t *testing.T, database *bun.DB) {
 		t.Fatalf("removal work directory = %q, want %q", removedDirectory, fixture.workDirectory)
 	}
 	wantPath := "analysis/staging/" + strings.ToLower(fixture.root.ID.String()) + "/" +
-		strings.ToLower(fixture.work.ID.String()) + "/" + strings.ToLower(fixture.artifactID.String())
+		strings.ToLower(fixture.work.ID.String()) + "/" + strings.ToLower(fixture.artifactID.String()) + ".flac"
 	if removedArtifact.ID != fixture.artifactID || removedArtifact.RelativeOutputPath != wantPath ||
 		removedArtifact.State != persistence.SourceAnalysisArtifactReady {
 		t.Fatalf("removed artifact = %+v, want ready canonical artifact %s at %q", removedArtifact, fixture.artifactID, wantPath)
