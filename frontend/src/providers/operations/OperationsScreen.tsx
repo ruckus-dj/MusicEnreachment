@@ -76,6 +76,7 @@ const GENERIC_RETRY_KINDS = new Set([
   "provider_artist_release_browse",
   "provider_acoustid_lookup",
   "scan_source",
+  "analyze_source",
 ]);
 
 type Copy = (typeof messages)[Locale];

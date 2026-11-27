@@ -16,6 +16,9 @@ type LibraryPublicationSelectionPreviewInput struct {
 	Body struct {
 		Mode      string                                       `json:"mode,omitempty"`
 		Positions []LibraryPublicationSelectionPreviewPosition `json:"positions" minItems:"1" maxItems:"100"`
+		// PrepareCovers explicitly permits absent automatic first-publication
+		// cover preparation once per eligible release before planning.
+		PrepareCovers bool `json:"prepare_covers,omitempty"`
 	}
 }
 
@@ -76,7 +79,7 @@ func registerLibraryPublicationSelectionPreview(api huma.API, dependencies Depen
 		if mode != "ordinary" && mode != "forced" {
 			return nil, huma.Error400BadRequest("mode must be ordinary or forced")
 		}
-		request := service.LibraryPublicationSelectionPreviewRequest{Mode: mode}
+		request := service.LibraryPublicationSelectionPreviewRequest{Mode: mode, PrepareCovers: input.Body.PrepareCovers}
 		request.Positions = make([]service.LibraryPublicationSelectionPosition, 0, len(input.Body.Positions))
 		seen := make(map[service.LibraryPublicationSelectionPosition]struct{}, len(input.Body.Positions))
 		for _, position := range input.Body.Positions {
@@ -94,6 +97,12 @@ func registerLibraryPublicationSelectionPreview(api huma.API, dependencies Depen
 		if err != nil {
 			if errors.Is(err, service.ErrLibraryPublicationSelectionPreviewInvalid) {
 				return nil, huma.Error400BadRequest("positions must contain distinct, nonzero release and position identities")
+			}
+			if errors.Is(err, service.ErrPublicationArtwork) {
+				return nil, huma.Error503ServiceUnavailable("publication artwork is still being prepared; retry shortly")
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, huma.Error503ServiceUnavailable("library publication selection preview was interrupted; retry shortly")
 			}
 			return nil, huma.Error500InternalServerError("library publication selection preview failed")
 		}

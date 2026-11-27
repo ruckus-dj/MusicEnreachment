@@ -138,6 +138,7 @@ func prepareWithWorkers(ctx context.Context, databaseURL string, database *sql.D
 			MatchingLocalRecheckQueue:   {MaxWorkers: 1},
 			"matching":                  {MaxWorkers: 1},
 			"publication":               {MaxWorkers: 1},
+			service.LibraryArtworkQueue: {MaxWorkers: 1},
 			service.SourceAnalysisQueue: {MaxWorkers: analysisWorkers},
 		},
 		PeriodicJobs: periodicJobs,

@@ -18,6 +18,11 @@ type libraryReleaseCoverImageInput struct {
 	Generation string `path:"generation"`
 }
 
+type libraryReleaseCoverThumbnailInput struct {
+	ReleaseID  string `path:"release_id"`
+	Generation string `path:"generation"`
+}
+
 type libraryReleaseCoverSaveBody struct {
 	ExpectedRevision int64  `json:"expected_revision"`
 	Image            []byte `json:"image"`
@@ -36,6 +41,12 @@ type libraryReleaseCoverOutput struct {
 type libraryReleaseCoverImageOutput struct {
 	ContentType string `header:"Content-Type"`
 	Body        []byte
+}
+
+type libraryReleaseCoverThumbnailOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	ContentType  string `header:"Content-Type"`
+	Body         []byte
 }
 
 func registerLibraryReleaseCover(api huma.API, covers *service.ReleaseCovers) {
@@ -97,6 +108,32 @@ func registerLibraryReleaseCover(api huma.API, covers *service.ReleaseCovers) {
 			return nil, libraryReleaseCoverError(err)
 		}
 		return &libraryReleaseCoverImageOutput{ContentType: image.MIME, Body: image.Data}, nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "get-library-release-cover-thumbnail", Method: http.MethodGet,
+		Path: "/library/releases/{release_id}/cover/thumbnails/{generation}", Summary: "Read a bounded thumbnail of the selected release cover", Tags: []string{"Library"},
+		Responses: map[string]*huma.Response{"200": {Description: "Selected release cover thumbnail", Content: map[string]*huma.MediaType{"image/png": {}}}},
+	}, func(ctx context.Context, input *libraryReleaseCoverThumbnailInput) (*libraryReleaseCoverThumbnailOutput, error) {
+		if covers == nil {
+			return nil, huma.Error503ServiceUnavailable("library release cover service is unavailable")
+		}
+		releaseID, err := uuid.Parse(input.ReleaseID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid release ID")
+		}
+		generation, err := uuid.Parse(input.Generation)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid cover generation")
+		}
+		thumbnail, err := covers.Thumbnail(ctx, releaseID, generation)
+		if err != nil {
+			return nil, libraryReleaseCoverError(err)
+		}
+		return &libraryReleaseCoverThumbnailOutput{
+			CacheControl: "private, max-age=300",
+			ContentType:  thumbnail.MIME,
+			Body:         thumbnail.Data,
+		}, nil
 	})
 }
 

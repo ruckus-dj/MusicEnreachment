@@ -48,6 +48,7 @@ func TestLibraryPublicationSelectionPreviewHTTP(t *testing.T) {
 	}
 	handler := HandlerWithDependencies(Dependencies{Setup: setup, LibraryPublications: fake})
 	body, err := json.Marshal(map[string]any{
+		"prepare_covers": true,
 		"positions": []map[string]any{
 			{"release_id": first.ReleaseID, "position_id": first.PositionID},
 			{"release_id": second.ReleaseID, "position_id": second.PositionID},
@@ -60,7 +61,7 @@ func TestLibraryPublicationSelectionPreviewHTTP(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("preview status = %d: %s", response.Code, response.Body)
 	}
-	if fake.calls != 1 || fake.request.Mode != "ordinary" || len(fake.request.Positions) != 2 ||
+	if fake.calls != 1 || fake.request.Mode != "ordinary" || !fake.request.PrepareCovers || len(fake.request.Positions) != 2 ||
 		fake.request.Positions[0] != first || fake.request.Positions[1] != second {
 		t.Fatalf("preview request = %+v, calls = %d", fake.request, fake.calls)
 	}
@@ -118,6 +119,11 @@ func TestLibraryPublicationSelectionPreviewHTTP(t *testing.T) {
 	response = libraryPublicationRequest(t, handler, http.MethodPost, "/library/publication/preview", string(body))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid service request status = %d: %s", response.Code, response.Body)
+	}
+	fake.err = service.ErrPublicationArtwork
+	response = libraryPublicationRequest(t, handler, http.MethodPost, "/library/publication/preview", string(body))
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), service.ErrPublicationArtwork.Error()) {
+		t.Fatalf("pending artwork status/body = %d: %s", response.Code, response.Body)
 	}
 	fake.err = errors.New("postgres connection detail")
 	response = libraryPublicationRequest(t, handler, http.MethodPost, "/library/publication/preview", string(body))

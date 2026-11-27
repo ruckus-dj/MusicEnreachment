@@ -57,6 +57,7 @@ func (service *LibraryPublications) AdmitAutomaticAlbum(ctx context.Context, req
 	if err != nil {
 		return err
 	}
+	var coverPositionID uuid.UUID
 	for _, position := range request.Scope {
 		snapshot, err := repository.ReadLibraryFirstPublicationContext(ctx, request.ReleaseID, position.PositionID)
 		if errors.Is(err, persistence.ErrPublicationPositionNotFound) {
@@ -72,6 +73,23 @@ func (service *LibraryPublications) AdmitAutomaticAlbum(ctx context.Context, req
 			if _, err := firstPublicationAutomaticChoice(snapshot, publication.AudioPublicationFormat(runtime.PublicationFormat), &request, position.PositionID); err != nil {
 				return nil
 			}
+			// The release-level artwork authority is shared, so any eligible
+			// position can prepare it. An active attempt on the first position
+			// must not hide a later eligible one.
+			if coverPositionID == uuid.Nil && firstPublicationCoverPreparationEligible(snapshot) {
+				coverPositionID = position.PositionID
+			}
+		}
+	}
+	// Artwork preparation runs once per valid automatic release before any
+	// per-position admission. A pending answer blocks the whole batch and is
+	// snoozed by the worker; it is never converted into a coverless publication.
+	if coverPositionID != uuid.Nil {
+		if _, err := service.prepareFirstCover(ctx, request.ReleaseID, coverPositionID); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
 		}
 	}
 	for _, position := range request.Scope {

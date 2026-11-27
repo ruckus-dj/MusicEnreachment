@@ -47,9 +47,14 @@ type Dependencies struct {
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
 	LibraryMetadata        *service.LibraryMetadataService
 	LibraryReleaseCovers   *service.ReleaseCovers
-	LibraryPublications    LibraryPublicationService
-	LibraryDeletion        LibraryDeletionAPI
-	LocalProviderCatalog   *service.LocalProviderCatalog
+	// LibraryReleaseCoverCandidates lists and selects Cover Art Archive
+	// alternatives before they enter the existing pending cover workflow.
+	LibraryReleaseCoverCandidates *service.ReleaseCoverCandidates
+	ProviderArtwork               *service.ProviderArtwork
+	LibraryArtistPhotos           *service.LibraryArtistPhotos
+	LibraryPublications           LibraryPublicationService
+	LibraryDeletion               LibraryDeletionAPI
+	LocalProviderCatalog          *service.LocalProviderCatalog
 }
 
 // LibraryDeletionAPI keeps explicit deletion confirmation and retry behind a

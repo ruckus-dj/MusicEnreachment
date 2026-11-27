@@ -38,6 +38,12 @@ func (worker *PublicationAutoAlbumWorker) Work(ctx context.Context, job *river.J
 	if errors.Is(err, service.ErrPublicationArtistDiscography) && errors.Is(err, musicbrainz.ErrTemporarilyUnavailable) {
 		return river.JobSnooze(15 * time.Minute)
 	}
+	// First-publication artwork is pending or temporarily unavailable. Snooze
+	// before the attempt-exhaustion branch so a durable album request is never
+	// completed as if the missing cover were a definitive absence.
+	if errors.Is(err, service.ErrPublicationArtwork) {
+		return river.JobSnooze(15 * time.Minute)
+	}
 	if errors.Is(err, persistence.ErrMatchingTargetNeedsRefresh) {
 		return river.JobSnooze(time.Minute)
 	}

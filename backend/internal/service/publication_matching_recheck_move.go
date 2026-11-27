@@ -21,6 +21,15 @@ import (
 // output write: persistence supplies the transaction snapshot, and the shared
 // first-publication preview builders plan from it. The predecessor leaf is the
 // only exempted collision.
+//
+// Artwork scope: this is a CURRENT identity transfer admitted directly through
+// admitPublicationTx, not an ordinary first publication. The exact destination
+// MusicBrainz binding and the moved source association become authoritative only
+// inside the same transaction, so gallery originals cannot be prepared before
+// admission without remote work inside admission SQL. The move therefore reports
+// the explicit current_transfer scope (see LibraryPublicationArtworkState) and
+// preserves the predecessor's published identity instead of silently claiming
+// that first-publication artwork was prepared.
 func (service *LibraryPublications) PrepareMatchingRecheckMovedPublication(ctx context.Context, snapshot persistence.MatchingRecheckMoveSnapshot) (persistence.PublicationAdmission, error) {
 	contextSnapshot := snapshot.Context
 	if service == nil || contextSnapshot == nil || contextSnapshot.Library == nil ||

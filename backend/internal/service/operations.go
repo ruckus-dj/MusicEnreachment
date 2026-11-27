@@ -638,8 +638,9 @@ func (s *Operations) retryAnalysis(ctx context.Context, existing *persistence.Op
 	if err != nil {
 		return nil, fmt.Errorf("retry operation: %w", err)
 	}
-	if snapshot.Mode != persistence.SourceAnalysisModeSingleStep {
-		return nil, fmt.Errorf("retry operation: source analysis batch operations cannot be retried")
+	if snapshot.Mode != persistence.SourceAnalysisModeSingleStep &&
+		(snapshot.Mode != persistence.SourceAnalysisModeBatch || len(snapshot.WorkIDs) != 1) {
+		return nil, fmt.Errorf("retry operation: source analysis batch operations with multiple works cannot be retried")
 	}
 	if s.analysisRetry == nil {
 		return nil, fmt.Errorf("retry operation: source analysis retry is unavailable")

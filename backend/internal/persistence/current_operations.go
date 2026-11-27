@@ -84,6 +84,9 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 		ReadOnly:  true,
 	}, func(ctx context.Context, tx bun.Tx) error {
 		filtered := func(withTargets bool) *bun.SelectQuery {
+			// A retry can use a new operation ID. Keep the old failure in
+			// history, but do not list it as current once newer work owns
+			// the steps and no retryable failure still belongs to the old ID.
 			base := tx.NewSelect().TableExpr("operation AS op").
 				Where("op.state IN (?)", bun.List(states)).
 				// These matching runs have handed off their result to Incoming.
@@ -113,7 +116,20 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 					JOIN publication_reconciliation_request request
 						ON request.output_epoch=event.output_epoch AND request.position_id=event.position_id
 					WHERE event.operation_id=op.id AND request.reconciled_generation>=event.observed_generation
-				))`, PublicationReconciliationBusyAttemptReason)
+				))`, PublicationReconciliationBusyAttemptReason).
+				Where(`NOT (
+					op.kind='analyze_source' AND op.state='failed' AND COALESCE((
+						SELECT bool_or(step.last_operation_id<>op.id)
+							AND NOT bool_or(step.last_operation_id=op.id AND step.state IN ('failed','pending'))
+						FROM jsonb_array_elements_text(
+							CASE WHEN jsonb_typeof(op.input_snapshot->'work_ids')='array'
+								THEN op.input_snapshot->'work_ids' ELSE '[]'::jsonb END
+						) AS original_work(id)
+						JOIN source_analysis_step step
+							ON step.work_id=CASE WHEN pg_input_is_valid(original_work.id, 'uuid')
+								THEN original_work.id::uuid END
+					), false)
+				)`)
 			if len(kinds) != 0 {
 				base.Where("op.kind IN (?)", bun.List(kinds))
 			}

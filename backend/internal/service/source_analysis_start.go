@@ -58,8 +58,9 @@ type SourceAnalysisRerunRequest struct {
 }
 
 // SourceAnalysisStartRepository is the durable boundary for normalized
-// single-step admissions. Admission must revalidate state under its transaction;
-// service reads here are for useful early refusals, not the concurrency guard.
+// single-step and batch admissions. Admission must revalidate state under its
+// transaction; service reads here are for useful early refusals, not the
+// concurrency guard.
 type SourceAnalysisStartRepository interface {
 	ReadSourceLocationDetail(context.Context, uuid.UUID, uuid.UUID) (*persistence.SourceLocationDetailSnapshot, error)
 	GetNormalizedSourceAnalysisWork(context.Context, uuid.UUID) (*persistence.SourceAnalysisWork, *persistence.SourceLocation, error)
@@ -144,9 +145,12 @@ func (s *SourceAnalysisOperations) RerunFingerprint(ctx context.Context, request
 	return s.enqueueSingleStep(ctx, detail, work, persistence.SourceStepFingerprint, true, toolsPinned)
 }
 
-// RetryOperation creates a fresh single-step retry from the failed operation's
-// own normalized snapshot. It never infers a batch target or consults current
-// tool settings, and a rerun retry is converted back to an ordinary retry.
+// RetryOperation creates a fresh retry from the failed operation's own
+// normalized snapshot. A single-step failure keeps its exact target, and an
+// automatic single-work batch retries only the steps this operation left
+// failed, preserving successful siblings. Legacy multi-work batches are
+// refused instead of partially retried. It never infers a target outside the
+// original selection.
 func (s *SourceAnalysisOperations) RetryOperation(ctx context.Context, originalID uuid.UUID) (*persistence.Operation, error) {
 	original, err := s.repository.GetOperation(ctx, originalID)
 	if err != nil {
@@ -159,40 +163,124 @@ func (s *SourceAnalysisOperations) RetryOperation(ctx context.Context, originalI
 	if err != nil {
 		return nil, fmt.Errorf("retry source analysis operation: %w", err)
 	}
-	if snapshot.Mode != persistence.SourceAnalysisModeSingleStep || snapshot.TargetWorkID == nil {
-		return nil, fmt.Errorf("retry source analysis operation: only failed single-step operations can be retried: %w", ErrSourceAnalysisStale)
+	switch snapshot.Mode {
+	case persistence.SourceAnalysisModeSingleStep:
+		return s.retrySingleStepOperation(ctx, original.ID, snapshot)
+	case persistence.SourceAnalysisModeBatch:
+		return s.retryBatchOperation(ctx, original, snapshot)
+	default:
+		return nil, fmt.Errorf("retry source analysis operation: unsupported mode %q: %w", snapshot.Mode, ErrSourceAnalysisStale)
 	}
-	work, location, err := s.repository.GetNormalizedSourceAnalysisWork(ctx, *snapshot.TargetWorkID)
+}
+
+func (s *SourceAnalysisOperations) retrySingleStepOperation(ctx context.Context, originalID uuid.UUID, snapshot persistence.SourceAnalysisOperationSnapshot) (*persistence.Operation, error) {
+	if snapshot.TargetWorkID == nil || snapshot.TargetStep == nil {
+		return nil, fmt.Errorf("retry source analysis operation: single-step target is required: %w", ErrSourceAnalysisStale)
+	}
+	detail, work, err := s.currentRetryWork(ctx, *snapshot.TargetWorkID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("retry source analysis operation: normalized work is stale: %w", ErrSourceAnalysisStale)
-		}
-		return nil, fmt.Errorf("retry source analysis operation: read normalized work: %w", err)
-	}
-	if work == nil || work.InvalidatedAt != nil || location == nil || work.ID != *snapshot.TargetWorkID || location.ID != work.LocationID || location.SourceRootID != work.SourceRootID ||
-		location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !analysisMtime(location.Mtime).Equal(analysisMtime(work.Mtime)) {
-		return nil, fmt.Errorf("retry source analysis operation: normalized work identity is stale: %w", ErrSourceAnalysisStale)
-	}
-	detail, err := s.repository.ReadSourceLocationDetail(ctx, work.SourceRootID, work.LocationID)
-	if err != nil {
-		if errors.Is(err, ErrSourceLocationNotFound) {
-			return nil, fmt.Errorf("retry source analysis operation: current location is stale: %w", ErrSourceAnalysisStale)
-		}
-		return nil, fmt.Errorf("retry source analysis operation: read current location: %w", err)
-	}
-	currentWork, err := validateCurrentAnalysisWork(detail, work.SizeBytes, work.Mtime)
-	if err != nil || currentWork.ID != work.ID || currentWork.SourceRootID != work.SourceRootID || currentWork.LocationID != work.LocationID {
-		return nil, fmt.Errorf("retry source analysis operation: normalized work is no longer current: %w", ErrSourceAnalysisStale)
+		return nil, fmt.Errorf("retry source analysis operation: %w", err)
 	}
 	step := persistence.SourceStepName(*snapshot.TargetStep)
 	tools, err := s.selectedTools(ctx, step)
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueSingleStep(ctx, detail, currentWork, step, false, tools)
+	return s.enqueueSingleStepOperation(ctx, detail, work, step, false, tools, &originalID)
+}
+
+// retryBatchOperation re-admits exactly the failed steps selected by the
+// original automatic batch as one atomic batch operation. A failed step is
+// retried only when its last operation is the original one, so a newer retry
+// or an earlier failure is never attributed to this operation.
+func (s *SourceAnalysisOperations) retryBatchOperation(ctx context.Context, original *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot) (*persistence.Operation, error) {
+	if len(snapshot.WorkIDs) != 1 || snapshot.TargetWorkID != nil || snapshot.TargetStep != nil {
+		return nil, fmt.Errorf("retry source analysis operation: only single-work automatic batch operations can be retried: %w", ErrSourceAnalysisStale)
+	}
+	detail, work, err := s.currentRetryWork(ctx, snapshot.WorkIDs[0])
+	if err != nil {
+		return nil, fmt.Errorf("retry source analysis operation: %w", err)
+	}
+	failed := make([]persistence.SourceAnalysisStepSelection, 0, len(snapshot.SelectedSteps))
+	for _, selection := range snapshot.SelectedSteps {
+		if selection.WorkID != work.ID {
+			continue
+		}
+		step, ok := findAnalysisStep(detail.Steps, selection.Step)
+		if !ok || step.State != "failed" || step.LastOperationID == nil || *step.LastOperationID != original.ID {
+			continue
+		}
+		failed = append(failed, selection)
+	}
+	if len(failed) == 0 {
+		return nil, fmt.Errorf("retry source analysis operation: no failed selected steps remain: %w", ErrSourceAnalysisStale)
+	}
+	tools := make([]persistence.SourceAnalysisToolSelection, 0, 2)
+	for _, selection := range failed {
+		if selection.Step != persistence.SourceStepProbe && selection.Step != persistence.SourceStepFingerprint {
+			continue
+		}
+		pinned, err := s.selectedTools(ctx, selection.Step)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, pinned...)
+	}
+	rerun, shaEnabled, cacheOnly := false, work.SHA256Enabled, false
+	originalID := original.ID
+	retrySnapshot := persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion, Mode: persistence.SourceAnalysisModeBatch,
+		WorkIDs: []uuid.UUID{work.ID}, RerunTarget: &rerun, RetryFailedOperationID: &originalID,
+		SHA256Enabled: &shaEnabled, CacheOnlyReuse: &cacheOnly,
+		ToolsReadRequired: len(tools) != 0, Tools: tools, SelectedSteps: failed,
+	}
+	raw, err := json.Marshal(retrySnapshot)
+	if err != nil {
+		return nil, fmt.Errorf("encode source analysis retry snapshot: %w", err)
+	}
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued", Stage: SourceAnalysisStageQueued,
+		InputSnapshot: raw, Attempt: 1, SourceAnalysisMode: retrySnapshot.Mode,
+		TargetSourceRootID: &detail.Root.ID,
+		ToolsReadRequired:  retrySnapshot.ToolsReadRequired, SourceAnalysisTools: tools,
+	}
+	return s.admit(ctx, operation)
+}
+
+// currentRetryWork revalidates the immutable normalized work identity and
+// returns its current inspector projection. Admission remains the concurrency
+// guard; these reads only produce useful early refusals.
+func (s *SourceAnalysisOperations) currentRetryWork(ctx context.Context, targetWorkID uuid.UUID) (*persistence.SourceLocationDetailSnapshot, *persistence.SourceAnalysisWork, error) {
+	work, location, err := s.repository.GetNormalizedSourceAnalysisWork(ctx, targetWorkID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, fmt.Errorf("normalized work is stale: %w", ErrSourceAnalysisStale)
+		}
+		return nil, nil, fmt.Errorf("read normalized work: %w", err)
+	}
+	if work == nil || work.InvalidatedAt != nil || location == nil || work.ID != targetWorkID || location.ID != work.LocationID || location.SourceRootID != work.SourceRootID ||
+		location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !analysisMtime(location.Mtime).Equal(analysisMtime(work.Mtime)) {
+		return nil, nil, fmt.Errorf("normalized work identity is stale: %w", ErrSourceAnalysisStale)
+	}
+	detail, err := s.repository.ReadSourceLocationDetail(ctx, work.SourceRootID, work.LocationID)
+	if err != nil {
+		if errors.Is(err, ErrSourceLocationNotFound) {
+			return nil, nil, fmt.Errorf("current location is stale: %w", ErrSourceAnalysisStale)
+		}
+		return nil, nil, fmt.Errorf("read current location: %w", err)
+	}
+	currentWork, err := validateCurrentAnalysisWork(detail, work.SizeBytes, work.Mtime)
+	if err != nil || currentWork.ID != work.ID || currentWork.SourceRootID != work.SourceRootID || currentWork.LocationID != work.LocationID {
+		return nil, nil, fmt.Errorf("normalized work is no longer current: %w", ErrSourceAnalysisStale)
+	}
+	return detail, currentWork, nil
 }
 
 func (s *SourceAnalysisOperations) enqueueSingleStep(ctx context.Context, detail *persistence.SourceLocationDetailSnapshot, work *persistence.SourceAnalysisWork, step persistence.SourceStepName, rerun bool, pinnedTools []persistence.SourceAnalysisToolSelection) (*persistence.Operation, error) {
+	return s.enqueueSingleStepOperation(ctx, detail, work, step, rerun, pinnedTools, nil)
+}
+
+func (s *SourceAnalysisOperations) enqueueSingleStepOperation(ctx context.Context, detail *persistence.SourceLocationDetailSnapshot, work *persistence.SourceAnalysisWork, step persistence.SourceStepName, rerun bool, pinnedTools []persistence.SourceAnalysisToolSelection, retryFailedOperationID *uuid.UUID) (*persistence.Operation, error) {
 	shaEnabled := work.SHA256Enabled
 	cacheOnly := false
 	stepValue := string(step)
@@ -200,7 +288,8 @@ func (s *SourceAnalysisOperations) enqueueSingleStep(ctx context.Context, detail
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
 		Mode:          persistence.SourceAnalysisModeSingleStep, WorkIDs: []uuid.UUID{work.ID},
 		TargetWorkID: &work.ID, TargetStep: &stepValue, RerunTarget: &rerun,
-		SHA256Enabled: &shaEnabled, CacheOnlyReuse: &cacheOnly,
+		RetryFailedOperationID: retryFailedOperationID,
+		SHA256Enabled:          &shaEnabled, CacheOnlyReuse: &cacheOnly,
 		ToolsReadRequired: len(pinnedTools) != 0, Tools: pinnedTools,
 	}
 	raw, err := json.Marshal(snapshot)

@@ -9,6 +9,8 @@ export const firstPublicationPreviewMessages = {
     previewFailed:
       "Could not load the preview. Check your connection and try again.",
     confirmFailed: "Could not confirm the preview.",
+    artworkPreparing:
+      "Cover artwork is still being prepared. Request the preview again in a moment.",
     admissionPending: "Sending publication confirmation…",
     refreshFailed: "Could not read the publication operation.",
     receiptAdmissionUncertain:
@@ -184,6 +186,8 @@ export const firstPublicationPreviewMessages = {
     previewFailed:
       "Не удалось загрузить предпросмотр. Проверьте соединение и повторите попытку.",
     confirmFailed: "Не удалось подтвердить предпросмотр.",
+    artworkPreparing:
+      "Обложка ещё подготавливается. Запросите предпросмотр снова через мгновение.",
     admissionPending: "Отправка подтверждения публикации…",
     refreshFailed: "Не удалось получить состояние операции публикации.",
     receiptAdmissionUncertain:

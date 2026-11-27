@@ -522,6 +522,15 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err != nil || album == nil || len(album.Scope) != 1 || len(album.Scope[0].WorkIDs) != 1 {
 		t.Fatalf("complete edition did not yield the exact automatic album handoff: value=%+v err=%v", album, err)
 	}
+	if _, err := database.NewRaw(`UPDATE incoming_grouping_state SET needs_refresh=true WHERE singleton=true`).Exec(ctx); err != nil {
+		t.Fatalf("mark incoming grouping dirty: %v", err)
+	}
+	if dirty, err := repository.ReadPublicationAutoAlbum(ctx, apply.OperationID); !errors.Is(err, persistence.ErrMatchingTargetNeedsRefresh) || dirty != nil {
+		t.Fatalf("dirty grouping album read=%+v err=%v; want deferred request", dirty, err)
+	}
+	if _, err := database.NewRaw(`UPDATE incoming_grouping_state SET needs_refresh=false WHERE singleton=true`).Exec(ctx); err != nil {
+		t.Fatalf("restore incoming grouping: %v", err)
+	}
 	if err := fetch.EnsureArtistDiscography(ctx, artistID); err != nil {
 		t.Fatalf("persist the complete artist catalog: %v", err)
 	}

@@ -35,6 +35,17 @@ type ReleaseCover struct {
 	Warning            *string
 }
 
+// SelectedReleaseCover is the effective selected image only. Pending manual
+// bytes and unrelated release detail are never loaded for thumbnail reads.
+type SelectedReleaseCover struct {
+	ReleaseID  uuid.UUID
+	Generation *uuid.UUID
+	Data       []byte
+	MIME       *string
+	SHA256     []byte
+	Size       *int64
+}
+
 // ReadReleaseCover returns an absent-but-uninitialized record without creating
 // product state. The automatic/empty baseline is created only on a CAS write.
 func (repository *LibraryRepository) ReadReleaseCover(ctx context.Context, releaseID uuid.UUID) (ReleaseCover, error) {
@@ -50,6 +61,32 @@ func (repository *LibraryRepository) ReadReleaseCover(ctx context.Context, relea
 	}
 	if err := result.validate(); err != nil {
 		return ReleaseCover{}, fmt.Errorf("read release cover authority: %w", err)
+	}
+	return result, nil
+}
+
+// ReadSelectedReleaseCover reads a matching selected image for a visible
+// library release in one query. The generation belongs to the join so a stale
+// generation yields no image columns instead of loading the selected bytes. It
+// never loads release detail or pending manual bytes.
+func (repository *LibraryRepository) ReadSelectedReleaseCover(ctx context.Context, releaseID, generation uuid.UUID) (SelectedReleaseCover, error) {
+	if releaseID == uuid.Nil || generation == uuid.Nil {
+		return SelectedReleaseCover{}, errors.New("release cover identity and generation are required")
+	}
+	var result SelectedReleaseCover
+	err := repository.db.NewRaw(`SELECT local_release.id,cover.selected_generation,cover.selected_bytes,cover.selected_mime,cover.selected_sha256,cover.selected_size
+		FROM local_release
+		LEFT JOIN release_publication_cover cover ON cover.release_id=local_release.id AND cover.selected_generation=?
+		WHERE local_release.id=?`, generation, releaseID).
+		Scan(ctx, &result.ReleaseID, &result.Generation, &result.Data, &result.MIME, &result.SHA256, &result.Size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SelectedReleaseCover{}, fmt.Errorf("read selected library release cover: %w", ErrLibraryReleaseNotFound)
+	}
+	if err != nil {
+		return SelectedReleaseCover{}, fmt.Errorf("read selected library release cover: %w", err)
+	}
+	if err := validateReleaseCoverTuple(result.Generation, result.Data, result.MIME, result.SHA256, result.Size); err != nil {
+		return SelectedReleaseCover{}, fmt.Errorf("read selected library release cover: %w", err)
 	}
 	return result, nil
 }
@@ -81,18 +118,8 @@ func (cover ReleaseCover) validate() error {
 		size       *int64
 	}{{cover.SelectedGeneration, cover.SelectedBytes, cover.SelectedMIME, cover.SelectedSHA256, cover.SelectedSize},
 		{cover.PendingGeneration, cover.PendingBytes, cover.PendingMIME, cover.PendingSHA256, cover.PendingSize}} {
-		if image.generation == nil && len(image.data) == 0 && image.mime == nil && len(image.digest) == 0 && image.size == nil {
-			continue
-		}
-		if image.generation == nil || *image.generation == uuid.Nil || len(image.data) == 0 || image.mime == nil || len(image.digest) != sha256.Size || image.size == nil || *image.size != int64(len(image.data)) {
-			return errors.New("release cover authority has an incomplete image tuple")
-		}
-		if err := validateReleaseCoverImage(*image.generation, image.data, *image.mime); err != nil {
-			return fmt.Errorf("release cover authority image is invalid: %w", err)
-		}
-		digest := sha256.Sum256(image.data)
-		if !bytes.Equal(digest[:], image.digest) {
-			return errors.New("release cover authority image digest does not match its bytes")
+		if err := validateReleaseCoverTuple(image.generation, image.data, image.mime, image.digest, image.size); err != nil {
+			return err
 		}
 	}
 	if cover.PendingGeneration != nil && cover.Mode != "manual" {
@@ -114,6 +141,32 @@ func (repository *LibraryRepository) SetPendingReleaseCover(ctx context.Context,
 		digest := sha256.Sum256(data)
 		size := int64(len(data))
 		_, err := tx.ExecContext(ctx, `UPDATE release_publication_cover SET revision=revision+1,mode='manual',pending_generation=?,pending_bytes=?,pending_mime=?,pending_sha256=?,pending_size=?,acquisition_owner=NULL,updated_at=now() WHERE release_id=?`, generation, data, mime, digest[:], size, releaseID)
+		return err
+	})
+}
+
+// SetPendingReleaseCoverFromMusicBrainz records a manual choice only while the
+// release is still linked to the exact MusicBrainz release MBID used to list
+// the selected image. The binding check shares the revision CAS transaction, so
+// a relink cannot race the pending write.
+func (repository *LibraryRepository) SetPendingReleaseCoverFromMusicBrainz(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, releaseMBID string, generation uuid.UUID, data []byte, mime string) (ReleaseCover, error) {
+	if releaseMBID == "" {
+		return ReleaseCover{}, errors.New("MusicBrainz release identity is required")
+	}
+	if err := validateNewReleaseCoverImage(generation, data, mime); err != nil {
+		return ReleaseCover{}, err
+	}
+	return repository.mutateReleaseCover(ctx, releaseID, expectedRevision, func(tx bun.Tx, current ReleaseCover) error {
+		mbid, linked, err := readReleaseMusicBrainzReleaseID(ctx, tx, releaseID, true)
+		if err != nil {
+			return err
+		}
+		if !linked || mbid != releaseMBID {
+			return ErrReleaseCoverConflict
+		}
+		digest := sha256.Sum256(data)
+		size := int64(len(data))
+		_, err = tx.ExecContext(ctx, `UPDATE release_publication_cover SET revision=revision+1,mode='manual',pending_generation=?,pending_bytes=?,pending_mime=?,pending_sha256=?,pending_size=?,acquisition_owner=NULL,updated_at=now() WHERE release_id=?`, generation, data, mime, digest[:], size, releaseID)
 		return err
 	})
 }
@@ -233,6 +286,24 @@ func requireOneReleaseCoverRow(result sql.Result, err error) error {
 	}
 	if count != 1 {
 		return ErrReleaseCoverConflict
+	}
+	return nil
+}
+
+func validateReleaseCoverTuple(generation *uuid.UUID, data []byte, mime *string, digest []byte, size *int64) error {
+	empty := generation == nil && len(data) == 0 && mime == nil && len(digest) == 0 && size == nil
+	if empty {
+		return nil
+	}
+	if generation == nil || *generation == uuid.Nil || len(data) == 0 || mime == nil || len(digest) != sha256.Size || size == nil || *size != int64(len(data)) {
+		return errors.New("release cover authority has an incomplete image tuple")
+	}
+	if err := validateReleaseCoverImage(*generation, data, *mime); err != nil {
+		return fmt.Errorf("release cover authority image is invalid: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	if !bytes.Equal(sum[:], digest) {
+		return errors.New("release cover authority image digest does not match its bytes")
 	}
 	return nil
 }

@@ -38,6 +38,7 @@ export function LibraryEditionArtwork({
           src={visibleImage}
           alt={imageAlt ?? ""}
           loading="lazy"
+          referrerPolicy="no-referrer"
           onError={() => setFailedImage(visibleImage)}
           className="absolute inset-0 size-full bg-[var(--raised)] object-cover"
         />

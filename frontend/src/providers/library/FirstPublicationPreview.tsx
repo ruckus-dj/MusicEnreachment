@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   getLibraryFirstPublicationPreview,
+  prepareLibraryReleaseCover,
   startLibraryFirstPublication,
 } from "../../api/generated/client";
 import type {
@@ -435,6 +436,28 @@ export function FirstPublicationPreview({
       setSourceCandidates([]);
       setPreviewChoiceKey("");
       try {
+        if (
+          requestWorkflow === "first" ||
+          requestWorkflow === "matching_receipt"
+        ) {
+          // Artwork is optional. Ask the server to prepare the automatic
+          // default before the read-only, digest-bearing preview. A 503 means
+          // the provider is still preparing, so avoid a preview that would
+          // misreport the not-yet-cached cover as absent.
+          try {
+            const preparation = await prepareLibraryReleaseCover(releaseId, {
+              position_id: positionId,
+            });
+            if (!isCurrentRequest(request, requestIdentity, true)) return;
+            if (preparation.status === 503) {
+              setError(copy.artworkPreparing);
+              return;
+            }
+          } catch {
+            // An artwork request failure must not prevent audio planning.
+          }
+          if (!isCurrentRequest(request, requestIdentity, true)) return;
+        }
         const response = await getLibraryFirstPublicationPreview(
           releaseId,
           positionId,

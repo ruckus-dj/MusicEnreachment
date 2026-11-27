@@ -76,6 +76,28 @@ func TestDownloadFrontRedirectAllowAndReject(t *testing.T) {
 	}
 }
 
+func TestDownloadNotFoundAfterRedirectIsTemporary(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/cdn/") {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, server.URL+"/cdn"+r.URL.Path, http.StatusFound)
+	}))
+	defer server.Close()
+	client, err := newClientWithEndpoint(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.DownloadFront(context.Background(), testMBID, io.Discard); err == nil || result.Found {
+		t.Fatalf("front: result=%+v err=%v", result, err)
+	}
+	if result, err := client.DownloadImage(context.Background(), testMBID, testImageID, io.Discard); err == nil || result.Found {
+		t.Fatalf("image: result=%+v err=%v", result, err)
+	}
+}
+
 func TestDownloadFrontRejectsProtocolDowngrade(t *testing.T) {
 	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("downgrade target was requested") }))
 	defer plain.Close()

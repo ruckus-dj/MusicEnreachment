@@ -241,8 +241,10 @@ func Run(ctx context.Context, config Config) error {
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	libraryRepository := persistence.NewLibraryRepository(db)
+	libraryArtworkScheduler := service.NewLibraryArtworkScheduler(libraryRepository)
 	localProviderCatalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), persistence.NewGenreCatalogRepository(db))
 	libraryCatalog := service.NewLibraryCatalog(libraryRepository)
+	libraryArtistPhotos := service.NewLibraryArtistPhotos(libraryRepository, registry, providerFactory, newLibraryArtistPhotoResolver())
 	libraryReleaseOptions := service.NewLibraryReleaseOptions(libraryRepository)
 	libraryRecordingSearch := service.NewLibraryRecordingSearch(providerFetch, setupManagerRepository, libraryRepository)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
@@ -253,10 +255,13 @@ func Run(ctx context.Context, config Config) error {
 		registry, setupManagerRepository, setupManagerRepository, riverSlot,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
 	)
+	coverArtClient := coverart.NewClient(nil)
+	providerArtwork := service.NewProviderArtwork(libraryRepository, coverArtClient)
+	libraryReleaseCoverCandidates := service.NewReleaseCoverCandidates(libraryRepository, providerArtwork, libraryReleaseCovers)
 	publicationLyricsResolver := service.NewDefaultPublicationLyricsResolver(registry)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
-	}).WithPublicationCoordinator(publicationCoordinator).WithLyricsResolver(publicationLyricsResolver).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
+	}).WithPublicationCoordinator(publicationCoordinator).WithLyricsResolver(publicationLyricsResolver).WithPublicationArtwork(providerArtwork)
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)
@@ -334,6 +339,11 @@ func Run(ctx context.Context, config Config) error {
 	))
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 	artifactCleanupWorker := jobs.NewSourceAnalysisArtifactCleanupWorker(setupManagerRepository, operationService)
+	libraryArtistArtworkWorker := jobs.NewLibraryArtistArtworkWorker(
+		libraryRepository, providerFetch, libraryArtistPhotos, libraryArtworkScheduler,
+	)
+	libraryEditionArtworkWorker := jobs.NewLibraryEditionArtworkWorker(libraryRepository, providerArtwork)
+	libraryArtworkDispatchWorker := jobs.NewLibraryArtworkDispatchWorker(libraryArtworkScheduler)
 
 	registerWorkers := func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
@@ -365,17 +375,21 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, incomingMatchingReconcileWorker)
 		river.AddWorker(workers, incomingMatchingReconcileDispatchWorker)
 		river.AddWorker(workers, sourceAnalysisPendingDispatchWorker)
+		river.AddWorker(workers, libraryArtistArtworkWorker)
+		river.AddWorker(workers, libraryEditionArtworkWorker)
+		river.AddWorker(workers, libraryArtworkDispatchWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob(), jobs.NewArtistMatchingReviewRefreshPeriodicJob(), jobs.NewMatchingLocalRecheckPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob(), jobs.NewArtistMatchingReviewRefreshPeriodicJob(), jobs.NewMatchingLocalRecheckPeriodicJob(), jobs.NewLibraryArtworkDispatchPeriodicJob())
 	if err != nil {
 		return err
 	}
 	defer riverListenerPool.Close()
 	riverSlot.RiverInserter = riverClient
+	libraryArtworkScheduler.SetInserter(riverClient)
 	if err := genreCatalog.DispatchDueRefresh(ctx); err != nil {
 		return fmt.Errorf("recover genre catalog refresh: %w", err)
 	}
@@ -543,22 +557,25 @@ func Run(ctx context.Context, config Config) error {
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
 		SourceArtifactCleanup: artifactCleanup, SourceCleanupRetries: sourceCleanupRetries,
 		IncomingGroups: incomingGroups, IncomingTagEncoding: incomingTagEncoding, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
-		MatchingLocal:          matchingLocal,
-		ManualReleaseSelection: manualReleaseSelection,
-		ManualPickerSearch:     manualPickerSearch,
-		LibraryReleaseDetails:  libraryReleaseDetails,
-		LibraryTagComparisons:  service.NewLibraryTagComparisons(libraryRepository),
-		LibraryCatalog:         libraryCatalog,
-		LibraryReleaseOptions:  libraryReleaseOptions,
-		LibraryRecordingSearch: libraryRecordingSearch,
-		LibraryProviderRefresh: libraryProviderRefresh,
-		GenreCatalog:           genreCatalog,
-		LibraryPrimaryArtists:  libraryPrimaryArtists,
-		LibraryMetadata:        libraryMetadata,
-		LibraryReleaseCovers:   libraryReleaseCovers,
-		LibraryPublications:    libraryPublications,
-		LibraryDeletion:        libraryDeletionAPI,
-		LocalProviderCatalog:   localProviderCatalog,
+		MatchingLocal:                 matchingLocal,
+		ManualReleaseSelection:        manualReleaseSelection,
+		ManualPickerSearch:            manualPickerSearch,
+		LibraryReleaseDetails:         libraryReleaseDetails,
+		LibraryTagComparisons:         service.NewLibraryTagComparisons(libraryRepository),
+		LibraryCatalog:                libraryCatalog,
+		LibraryReleaseOptions:         libraryReleaseOptions,
+		LibraryRecordingSearch:        libraryRecordingSearch,
+		LibraryProviderRefresh:        libraryProviderRefresh,
+		GenreCatalog:                  genreCatalog,
+		LibraryPrimaryArtists:         libraryPrimaryArtists,
+		LibraryMetadata:               libraryMetadata,
+		LibraryReleaseCovers:          libraryReleaseCovers,
+		LibraryReleaseCoverCandidates: libraryReleaseCoverCandidates,
+		ProviderArtwork:               providerArtwork,
+		LibraryArtistPhotos:           libraryArtistPhotos,
+		LibraryPublications:           libraryPublications,
+		LibraryDeletion:               libraryDeletionAPI,
+		LocalProviderCatalog:          localProviderCatalog,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

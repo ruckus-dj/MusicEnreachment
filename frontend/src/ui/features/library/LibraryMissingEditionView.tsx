@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { AppButton } from "../../components/AppButton";
+import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 
 /**
  * A single selectable edition. `label` is formatted by the host (artists,
@@ -12,6 +13,11 @@ export interface LibraryEditionOption {
   label: string;
   /** Declared provider total. `null` means the total is unknown. */
   trackCount: number | null;
+  /**
+   * Cached provider front thumbnail for this exact edition. Absent values and
+   * failed loads keep the title-initial placeholder.
+   */
+  imageSrc?: string | null;
 }
 
 /**
@@ -125,7 +131,8 @@ const copy = {
 const styles = {
   root: "grid min-w-0 gap-3 text-sm",
   field: "grid min-w-0 gap-1.5",
-  label: "text-sm font-medium text-[var(--ink)]",
+  label:
+    "min-w-0 text-sm font-medium text-[var(--ink)] [overflow-wrap:anywhere]",
   select:
     "h-9 w-full min-w-0 rounded-lg border border-[var(--control)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] hover:border-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-0 pointer-coarse:h-10",
   muted: "m-0 text-xs text-[var(--muted)] [overflow-wrap:anywhere]",
@@ -172,6 +179,17 @@ function TrackRow({ track }: { track: LibraryEditionTrack }) {
       </span>
       {secondary && <span className={styles.trackSecondary}>{secondary}</span>}
     </li>
+  );
+}
+
+function EditionArtwork({
+  edition,
+}: {
+  edition: LibraryEditionOption | null | undefined;
+}) {
+  if (!edition?.imageSrc) return null;
+  return (
+    <LibraryEditionArtwork title={edition.label} imageSrc={edition.imageSrc} />
   );
 }
 
@@ -226,12 +244,18 @@ export function LibraryMissingEditionView({
         ) : editions.length === 0 ? (
           <p className={styles.muted}>{text.emptyEditionPage}</p>
         ) : soleEdition ? (
-          <p className={styles.label}>{selectedEdition?.label}</p>
+          <div className="flex min-w-0 items-center gap-3">
+            <EditionArtwork edition={selectedEdition} />
+            <p className={styles.label}>{selectedEdition?.label}</p>
+          </div>
         ) : (
           <div className={styles.field}>
-            <label className={styles.label} htmlFor={selectId}>
-              {text.editions}
-            </label>
+            <div className="flex min-w-0 items-center gap-3">
+              <EditionArtwork edition={selectedEdition} />
+              <label className={styles.label} htmlFor={selectId}>
+                {text.editions}
+              </label>
+            </div>
             <select
               className={styles.select}
               id={selectId}

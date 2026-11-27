@@ -19,6 +19,7 @@ import { ProductionLibraryCatalogBinder } from "./LibraryScreen";
 
 const artistId = "123e4567-e89b-42d3-a456-426614174000";
 const secondArtistId = "223e4567-e89b-42d3-a456-426614174001";
+const thirdArtistId = "323e4567-e89b-42d3-a456-426614174002";
 const summary = {
   artist_count: 1,
   release_count: 1,
@@ -59,8 +60,71 @@ function LocaleControls() {
   );
 }
 
+class TestIntersectionObserver {
+  static instances: TestIntersectionObserver[] = [];
+  private readonly elements = new Set<Element>();
+
+  constructor(private readonly callback: IntersectionObserverCallback) {
+    TestIntersectionObserver.instances.push(this);
+  }
+
+  get elementCount() {
+    return this.elements.size;
+  }
+
+  observe(element: Element) {
+    this.elements.add(element);
+  }
+
+  unobserve(element: Element) {
+    this.elements.delete(element);
+  }
+
+  disconnect() {
+    this.elements.clear();
+  }
+
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+
+  triggerMatching(predicate: (element: Element) => boolean) {
+    const targets = [...this.elements].filter(predicate);
+    if (!targets.length) return;
+    this.callback(
+      targets.map((target) => ({
+        target,
+        isIntersecting: true,
+        intersectionRatio: 1,
+        boundingClientRect: target.getBoundingClientRect(),
+        intersectionRect: target.getBoundingClientRect(),
+        rootBounds: null,
+        time: 0,
+      })),
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
+function artistItem(id: string, name: string, musicbrainz = false) {
+  return {
+    id,
+    name,
+    disambiguation: null,
+    genres: [],
+    provider_links: musicbrainz
+      ? [{ method: "direct", provider_code: "musicbrainz", provider_key: id }]
+      : [],
+    release_count: 1,
+    position_count: 2,
+    available_position_count: 1,
+    published_position_count: 1,
+  };
+}
+
 afterEach(() => {
   cleanup();
+  TestIntersectionObserver.instances = [];
   vi.unstubAllGlobals();
   window.location.hash = "";
 });
@@ -202,6 +266,97 @@ it("renders server summary, artist cards and preserves search and pagination in 
     expect(window.location.hash).not.toContain("offset=");
   });
   await waitFor(() => expect(artistRequests).toBe(4));
+});
+
+it("binds artist photos lazily and renders real Wikimedia attribution", async () => {
+  window.location.hash = "#/library?view=artists";
+  const requested: string[] = [];
+  const imageURL = "https://upload.wikimedia.org/artist-1-thumb.jpg";
+  const sourceURL = "https://commons.wikimedia.org/wiki/File:Artist_1.jpg";
+  const licenseURL = "https://creativecommons.org/licenses/by-sa/4.0/";
+  vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+  server.use(
+    http.get("*/api/library/artists", () =>
+      HttpResponse.json({
+        items: [
+          artistItem(artistId, "A Artist", true),
+          artistItem(secondArtistId, "B Artist", true),
+          artistItem(thirdArtistId, "C Artist"),
+        ],
+        total: 3,
+        limit: 50,
+        offset: 0,
+        summary: { ...summary, artist_count: 3 },
+      }),
+    ),
+    http.get("*/api/library/artists/:artistId/photo", ({ params }) => {
+      const id = String(params.artistId);
+      requested.push(id);
+      if (id === artistId) {
+        return HttpResponse.json({
+          photo: {
+            image_url: imageURL,
+            source_url: sourceURL,
+            author: "Jane Doe",
+            license: "CC BY-SA 4.0",
+            license_url: licenseURL,
+          },
+        });
+      }
+      return HttpResponse.json({});
+    }),
+    http.post("*/api/library/selection/resolve", () =>
+      HttpResponse.json({ positions: [] }),
+    ),
+  );
+
+  renderScreen(<LibraryCatalogRoute />, "en");
+  await screen.findByRole("link", { name: /A Artist/ });
+  await waitFor(() =>
+    expect(TestIntersectionObserver.instances.at(-1)?.elementCount).toBe(2),
+  );
+  expect(document.querySelectorAll("[data-library-artist-id]")).toHaveLength(3);
+  const observer = TestIntersectionObserver.instances.at(-1);
+  if (!observer) throw new Error("missing intersection observer");
+
+  act(() =>
+    observer.triggerMatching(
+      (element) => element.getAttribute("data-library-artist-id") === artistId,
+    ),
+  );
+  await waitFor(() =>
+    expect(document.querySelector(`img[src="${imageURL}"]`)).not.toBeNull(),
+  );
+  expect(requested).toEqual([artistId]);
+  expect(screen.getByText(/Cropped thumbnail/)).toBeVisible();
+  expect(screen.getByText(/Jane Doe/)).toBeVisible();
+  expect(screen.getByRole("link", { name: "CC BY-SA 4.0" })).toHaveAttribute(
+    "href",
+    licenseURL,
+  );
+  expect(
+    screen.getByRole("link", { name: "Wikimedia Commons" }),
+  ).toHaveAttribute("href", sourceURL);
+
+  // The second eligible card is still lazy; an empty payload keeps its monogram.
+  act(() =>
+    observer.triggerMatching(
+      (element) =>
+        element.getAttribute("data-library-artist-id") === secondArtistId,
+    ),
+  );
+  await waitFor(() => expect(requested).toContain(secondArtistId));
+  expect(document.querySelectorAll("img")).toHaveLength(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  // The third card has no MusicBrainz link, so it was never observed or fetched.
+  act(() =>
+    observer.triggerMatching(
+      (element) =>
+        element.getAttribute("data-library-artist-id") === thirdArtistId,
+    ),
+  );
+  expect(requested).not.toContain(thirdArtistId);
 });
 
 it("re-adopts the accepted URL when an immediate Back precedes the filter's queued hash change", async () => {
@@ -504,6 +659,107 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
   expect(row).not.toHaveTextContent("0 / 0");
 });
 
+it("uses selected covers before archive thumbnails without reading release details", async () => {
+  window.location.hash = "#/library?view=albums";
+  let releaseDetailRequests = 0;
+  const release = {
+    id: "release-id",
+    title: "Album with cover",
+    artists: [],
+    edition: {
+      release_date: null,
+      original_release_date: null,
+      country: null,
+      labels: [],
+      catalog_numbers: [],
+    },
+    provider_links: [{ provider_code: "musicbrainz", provider_key: artistId }],
+    counts: {
+      position_count: 1,
+      published_position_count: 0,
+      available_position_count: 1,
+      provider_position_count: 1,
+    },
+  };
+  server.use(
+    http.post("*/api/library/selection/resolve", () =>
+      HttpResponse.json({ positions: [] }),
+    ),
+    http.get("*/api/library/releases/:releaseId", () => {
+      releaseDetailRequests += 1;
+      return new HttpResponse(null, { status: 500 });
+    }),
+    http.get("*/api/library/releases", () =>
+      HttpResponse.json({
+        items: [
+          {
+            kind: "library_release",
+            library_release: {
+              ...release,
+              cover: {
+                mode: "selected",
+                release_id: release.id,
+                revision: 1,
+                selected_generation: "generation-1",
+              },
+            },
+          },
+          {
+            kind: "library_release",
+            library_release: {
+              ...release,
+              id: "another-release-id",
+              title: "Album with archive cover",
+            },
+          },
+          {
+            kind: "missing_release_group",
+            missing_release_group: {
+              provider_code: "musicbrainz",
+              provider_key: secondArtistId,
+              title: "Archive release group",
+              artists: [],
+            },
+          },
+        ],
+        total: 3,
+        limit: 50,
+        offset: 0,
+        summary,
+      }),
+    ),
+  );
+
+  const { container } = renderScreen(<LibraryCatalogRoute />, "en");
+
+  const row = await screen.findByRole("row", { name: /Album with cover/ });
+  const image = row.querySelector("img");
+  expect(image).toHaveAttribute(
+    "src",
+    "/api/library/releases/release-id/cover/thumbnails/generation-1",
+  );
+  expect(image).toHaveAttribute("alt", "");
+  expect(image).toHaveAttribute("loading", "lazy");
+  expect(
+    screen
+      .getByRole("row", { name: /Album with archive cover/ })
+      .querySelector("img"),
+  ).toHaveAttribute(
+    "src",
+    `/api/library/provider-artwork/releases/${artistId}/front`,
+  );
+  expect(
+    screen
+      .getByRole("row", { name: /Archive release group/ })
+      .querySelector("img"),
+  ).toHaveAttribute(
+    "src",
+    `https://coverartarchive.org/release-group/${secondArtistId}/front-250`,
+  );
+  expect(container.querySelectorAll("img")).toHaveLength(6);
+  expect(releaseDetailRequests).toBe(0);
+});
+
 it.each([
   { total: 1, needsChoice: false },
   { total: 51, needsChoice: true },
@@ -513,7 +769,7 @@ it.each([
 }) => {
   window.location.hash = "#/library?view=albums";
   const groupID = "group-mbid";
-  const releaseID = "edition-mbid";
+  const releaseID = "423e4567-e89b-42d3-a456-426614174003";
   let editionRequests = 0;
   let trackRequests = 0;
   let mutationRequests = 0;
@@ -622,6 +878,11 @@ it.each([
 
   expect(await within(details).findByText(/Known track/)).toBeInTheDocument();
   expect(editionRequests).toBe(1);
+  expect(
+    details.querySelector(
+      `img[src="/api/library/provider-artwork/releases/${releaseID}/front"]`,
+    ),
+  ).not.toBeNull();
   if (!needsChoice) {
     expect(within(details).queryByRole("combobox")).not.toBeInTheDocument();
   }

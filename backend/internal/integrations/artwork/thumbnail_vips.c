@@ -9,7 +9,7 @@
 #define O_BINARY 0
 #endif
 
-int artwork_vips_thumbnail(const char *input_path, const char *output_path, char *error, size_t error_size) {
+int artwork_vips_thumbnail(const char *input_path, const char *output_path, int max_dimension, char *error, size_t error_size) {
 	int output_fd = -1;
 	int close_result;
 	VipsTarget *target = NULL;
@@ -34,8 +34,8 @@ int artwork_vips_thumbnail(const char *input_path, const char *output_path, char
 		goto done;
 	}
 
-	if (vips_thumbnail(input_path, &thumbnail, 2048,
-		"height", 2048,
+	if (vips_thumbnail(input_path, &thumbnail, max_dimension,
+		"height", max_dimension,
 		"size", VIPS_SIZE_DOWN,
 		"no_rotate", TRUE,
 		"fail_on", VIPS_FAIL_ON_ERROR,

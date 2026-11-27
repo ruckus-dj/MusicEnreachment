@@ -51,6 +51,7 @@ func TestLibraryReleaseCoverHTTPNotFoundAndStaleRevision(t *testing.T) {
 		httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover", nil),
 		httptest.NewRequest(http.MethodPatch, "/library/releases/"+releaseID.String()+"/cover", bytes.NewReader(body)),
 		httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover/images/"+uuid.NewString(), nil),
+		httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover/thumbnails/"+uuid.NewString(), nil),
 	} {
 		if request.Method == http.MethodPatch {
 			request.Header.Set("Content-Type", "application/json")
@@ -65,6 +66,23 @@ func TestLibraryReleaseCoverHTTPNotFoundAndStaleRevision(t *testing.T) {
 
 func (fixture *libraryReleaseCoverRepositoryFixture) ReadReleaseCover(context.Context, uuid.UUID) (persistence.ReleaseCover, error) {
 	return fixture.cover, nil
+}
+
+func (fixture *libraryReleaseCoverRepositoryFixture) ReadSelectedReleaseCover(_ context.Context, _ uuid.UUID, generation uuid.UUID) (persistence.SelectedReleaseCover, error) {
+	if fixture.readErr != nil {
+		return persistence.SelectedReleaseCover{}, fixture.readErr
+	}
+	if fixture.cover.SelectedGeneration == nil || *fixture.cover.SelectedGeneration != generation {
+		return persistence.SelectedReleaseCover{ReleaseID: fixture.cover.ReleaseID}, nil
+	}
+	return persistence.SelectedReleaseCover{
+		ReleaseID:  fixture.cover.ReleaseID,
+		Generation: fixture.cover.SelectedGeneration,
+		Data:       fixture.cover.SelectedBytes,
+		MIME:       fixture.cover.SelectedMIME,
+		SHA256:     fixture.cover.SelectedSHA256,
+		Size:       fixture.cover.SelectedSize,
+	}, nil
 }
 
 func (fixture *libraryReleaseCoverRepositoryFixture) SetPendingReleaseCover(_ context.Context, releaseID uuid.UUID, expected int64, generation uuid.UUID, data []byte, mime string) (persistence.ReleaseCover, error) {
@@ -142,6 +160,55 @@ func TestLibraryReleaseCoverHTTPReadsAndSavesPendingImage(t *testing.T) {
 	handler.ServeHTTP(stale, httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover/images/"+uuid.NewString(), nil))
 	if stale.Code != http.StatusNotFound {
 		t.Fatalf("stale generation status = %d, body %s", stale.Code, stale.Body.String())
+	}
+}
+
+func TestLibraryReleaseCoverHTTPThumbnailServesSelectedGenerationWithPrivateCache(t *testing.T) {
+	releaseID, generation := uuid.New(), uuid.New()
+	source := image.NewNRGBA(image.Rect(0, 0, 640, 320))
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, source); err != nil {
+		t.Fatal(err)
+	}
+	mime := "image/png"
+	repository := &libraryReleaseCoverRepositoryFixture{
+		releaseID: releaseID,
+		cover: persistence.ReleaseCover{
+			ReleaseID:          releaseID,
+			Revision:           2,
+			Mode:               "manual",
+			SelectedGeneration: &generation,
+			SelectedBytes:      encoded.Bytes(),
+			SelectedMIME:       &mime,
+		},
+	}
+	handler := HandlerWithDependencies(Dependencies{LibraryReleaseCovers: service.NewReleaseCovers(repository)})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover/thumbnails/"+generation.String(), nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("thumbnail status = %d, body %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("thumbnail Content-Type = %q, want image/png", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "private, max-age=300" {
+		t.Fatalf("thumbnail Cache-Control = %q", got)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(response.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "png" || config.Width > 160 || config.Height > 160 {
+		t.Fatalf("thumbnail = %s %dx%d, want png within 160 px", format, config.Width, config.Height)
+	}
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/library/releases/"+releaseID.String()+"/cover/thumbnails/"+uuid.NewString(), nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("stale thumbnail status = %d, body %s", missing.Code, missing.Body.String())
+	}
+	if got := missing.Header().Get("Cache-Control"); got != "" {
+		t.Fatalf("stale thumbnail Cache-Control = %q, want empty", got)
 	}
 }
 

@@ -176,6 +176,8 @@ func firstPublicationAdmissionError(err error) error {
 		return huma.Error409Conflict("first publication is temporarily unavailable")
 	case errors.Is(err, service.ErrPublicationArtistDiscography):
 		return huma.Error503ServiceUnavailable("first publication requires the primary artist's complete discography; verify the primary artist and MusicBrainz, then retry")
+	case errors.Is(err, service.ErrPublicationArtwork):
+		return huma.Error503ServiceUnavailable("first publication artwork is still being prepared; retry shortly")
 	default:
 		return huma.Error500InternalServerError("first publication admission failed")
 	}

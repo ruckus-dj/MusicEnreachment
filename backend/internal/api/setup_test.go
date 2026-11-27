@@ -819,6 +819,7 @@ func TestOpenAPIGeneratorRegistrationContainsProductionOperations(t *testing.T) 
 		"preflight-tools-root-move", "start-tools-root-move",
 		"list-operations", "get-operation", "retry-operation", "dismiss-operation",
 		"update-log-level", "update-lrclib-setting", "update-musicbrainz-settings",
+		"get-library-artist-photo",
 	} {
 		if !strings.Contains(spec, `"operationId":"`+operationID+`"`) {
 			t.Errorf("OpenAPI contract omits operation ID %q", operationID)

@@ -63,6 +63,62 @@ func TestThumbnailResizesNativeImagesWithoutUpscaling(t *testing.T) {
 	}
 }
 
+func TestThumbnailSizedHonorsRequestedBoundWithoutUpscaling(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		width        int
+		height       int
+		maxDimension int
+		wantWidth    int
+		wantHeight   int
+	}{
+		{name: "downscales large source", width: 640, height: 320, maxDimension: 160, wantWidth: 160, wantHeight: 80},
+		{name: "keeps small source", width: 100, height: 80, maxDimension: 200, wantWidth: 100, wantHeight: 80},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := encodePNG(image.NewNRGBA(image.Rect(0, 0, test.width, test.height)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			directory := t.TempDir()
+			input, output := filepath.Join(directory, "input.png"), filepath.Join(directory, "output.png")
+			if err := os.WriteFile(input, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := ThumbnailSized(context.Background(), input, output, test.maxDimension); err != nil {
+				t.Fatal(err)
+			}
+			format, width, height, err := Inspect(mustReadFile(t, output))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if format != "png" || width != test.wantWidth || height != test.wantHeight {
+				t.Fatalf("thumbnail = %s %dx%d, want png %dx%d", format, width, height, test.wantWidth, test.wantHeight)
+			}
+		})
+	}
+}
+
+func TestThumbnailSizedRejectsUnsupportedBounds(t *testing.T) {
+	for _, maxDimension := range []int{0, -1, MaxThumbnailDimension + 1} {
+		data, err := encodePNG(image.NewNRGBA(image.Rect(0, 0, 1, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		directory := t.TempDir()
+		input, output := filepath.Join(directory, "input.png"), filepath.Join(directory, "output.png")
+		if err := os.WriteFile(input, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ThumbnailSized(context.Background(), input, output, maxDimension); err == nil {
+			t.Fatalf("ThumbnailSized(maxDimension=%d) succeeded, want error", maxDimension)
+		}
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("output exists after rejected bound %d: %v", maxDimension, err)
+		}
+	}
+}
+
 func TestThumbnailRejectsMalformedAndOversizedHeaders(t *testing.T) {
 	valid, err := encodePNG(image.NewNRGBA(image.Rect(0, 0, 1, 1)))
 	if err != nil {

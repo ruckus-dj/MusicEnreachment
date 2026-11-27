@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -141,6 +142,106 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 	}
 	guard := persistence.PublicationReconciliationDeliveryGuard{OperationID: uuid.New(), PositionID: positionID, OutputEpoch: epoch, ClaimToken: uuid.New(), RiverJobID: 1, RiverAttempt: 1, ApplicationAttempt: 1, DeliveryEpoch: 1}
 	return repository, runtime, releaseID, positionID, guard
+}
+
+func TestAutomaticAlbumAdmissionPreparesCoverBeforePositionLoop(t *testing.T) {
+	repository, runtime, releaseID, positionID, guard := automaticAdmissionFixture(t)
+	repository.snapshot.EffectiveCover = persistence.EffectiveReleaseCoverSummary{Revision: 1, Mode: "automatic", State: "absent"}
+	repository.authoritative.EffectiveCover = repository.snapshot.EffectiveCover
+	repository.snapshot.Sources[0].Selected = true
+	repository.snapshot.Sources[1].Selected = false
+	for index := range repository.snapshot.SourceAssociations {
+		repository.snapshot.SourceAssociations[index].DecisionMethod = "automatic"
+		repository.snapshot.SourceAssociations[index].Selected = index == 0
+	}
+	request := persistence.PublicationAutoAlbumRequest{
+		OutputEpoch: guard.OutputEpoch, ReleaseID: releaseID,
+		Scope: []persistence.PublicationAutoAlbumPosition{{PositionID: positionID, WorkIDs: []uuid.UUID{repository.snapshot.Sources[0].Input.WorkID}}},
+	}
+	acquisition := &coverAcquisitionFixture{}
+	service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}).WithCoverAcquisition(acquisition)
+	// The fixture intentionally lacks the album admission repository method, so
+	// the per-position loop fails after cover preparation. The failure must not
+	// be the optional cover error.
+	err := service.AdmitAutomaticAlbum(context.Background(), request)
+	if acquisition.calls < 1 || len(acquisition.releases) != acquisition.calls || acquisition.releases[0] != releaseID {
+		t.Fatalf("cover acquisition calls/releases = %d/%v", acquisition.calls, acquisition.releases)
+	}
+	if err == nil || errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		t.Fatalf("automatic album result = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	acquisition = &coverAcquisitionFixture{}
+	service.WithCoverAcquisition(acquisition)
+	if err := service.AdmitAutomaticAlbum(ctx, request); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled automatic album error = %v", err)
+	}
+	if acquisition.calls != 0 {
+		t.Fatalf("canceled cover acquisition calls = %d, want no provider work", acquisition.calls)
+	}
+}
+
+type albumCoverPreparationRepository struct {
+	firstPreviewRepository
+	snapshots map[uuid.UUID]*persistence.LibraryFirstPublicationContext
+}
+
+func (repository *albumCoverPreparationRepository) ReadLibraryFirstPublicationContext(_ context.Context, _, positionID uuid.UUID) (*persistence.LibraryFirstPublicationContext, error) {
+	return repository.snapshots[positionID], nil
+}
+
+func (repository *albumCoverPreparationRepository) AdmitFirstPublicationFromPreview(context.Context, persistence.FirstPublicationAdmission, persistence.RiverInserter) (uuid.UUID, error) {
+	return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+}
+
+func TestAutomaticAlbumPreparesCoverFromNextEligiblePosition(t *testing.T) {
+	releaseID, epochID := uuid.New(), uuid.New()
+	activePosition, eligiblePosition := uuid.New(), uuid.New()
+	makeSnapshot := func(positionID uuid.UUID, active bool) *persistence.LibraryFirstPublicationContext {
+		workID := uuid.New()
+		lossless := true
+		channels := 2
+		source := persistence.FirstPublicationSource{
+			Selection:     persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New(), WorkID: workID},
+			AssociationID: uuid.New(), Selected: true,
+			Input: persistence.PublicationAudioInput{WorkID: workID},
+			Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels,
+				Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+			ChannelLayout: "stereo", AudioStreamCount: 1,
+		}
+		snapshot := &persistence.LibraryFirstPublicationContext{
+			Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epochID},
+			EffectiveCover: persistence.EffectiveReleaseCoverSummary{Revision: 1, Mode: "automatic", State: "absent"},
+			Sources:        []persistence.FirstPublicationSource{source},
+			SourceAssociations: []persistence.PublicationSourceAssociation{{
+				ID: source.AssociationID, MediaVariantID: source.Selection.MediaVariantID, Selected: true,
+				Compatible: true, DecisionMethod: "automatic",
+			}},
+		}
+		if active {
+			snapshot.Library.ActiveAttempt = &persistence.LibraryPublicationOperation{}
+		}
+		return snapshot
+	}
+	active, eligible := makeSnapshot(activePosition, true), makeSnapshot(eligiblePosition, false)
+	repository := &albumCoverPreparationRepository{snapshots: map[uuid.UUID]*persistence.LibraryFirstPublicationContext{
+		activePosition: active, eligiblePosition: eligible,
+	}}
+	request := persistence.PublicationAutoAlbumRequest{
+		OutputEpoch: epochID, ReleaseID: releaseID,
+		Scope: []persistence.PublicationAutoAlbumPosition{
+			{PositionID: activePosition, WorkIDs: []uuid.UUID{active.Sources[0].Input.WorkID}},
+			{PositionID: eligiblePosition, WorkIDs: []uuid.UUID{eligible.Sources[0].Input.WorkID}},
+		},
+	}
+	acquisition := &coverAcquisitionFixture{}
+	service := newLibraryPublications(repository, firstPreviewSettings{format: "mka"}, libraryPublicationsTestRiver{}, tools.Platform{}).WithCoverAcquisition(acquisition)
+	_ = service.AdmitAutomaticAlbum(context.Background(), request)
+	if acquisition.calls != 1 || len(acquisition.releases) != 1 || acquisition.releases[0] != releaseID {
+		t.Fatalf("cover acquisition calls/releases = %d/%v", acquisition.calls, acquisition.releases)
+	}
 }
 
 func TestManualFirstAdmissionRemainsOnPublicConfirmationPath(t *testing.T) {

@@ -254,10 +254,9 @@ provenance:
   version that produced it, and the time of the analysis; an unknown technical
   value is shown as unknown, never as zero. A file without an audio stream stays
   in the inventory with its own status. A failed probe becomes a problem of that
-  file with a safe reason, does not stop the other steps, and is rechecked on the
-  next scan; a file whose successful probe is still current is not probed again.
-  A transition from `probe_error` to `audio` at unchanged size and mtime still
-  starts the first automatic analysis.
+  file with a safe reason and does not stop the other steps. Rescanning an
+  unchanged file does not repeat the probe. **Retry** in Operations repeats the
+  failed analysis steps without rerunning successful ones.
 - **Chromaprint (`fpcalc`)** — the managed `fpcalc` runs without an explicit
   length argument and uses its built-in default of the first 120 seconds. The
   application adds no other limit and does not claim the fingerprint covers the

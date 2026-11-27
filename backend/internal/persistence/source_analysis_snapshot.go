@@ -23,6 +23,7 @@ type SourceAnalysisOperationSnapshot struct {
 	TargetWorkID            *uuid.UUID                    `json:"target_work_id,omitempty"`
 	TargetStep              *string                       `json:"target_step,omitempty"`
 	RerunTarget             *bool                         `json:"rerun_target"`
+	RetryFailedOperationID  *uuid.UUID                    `json:"retry_failed_operation_id,omitempty"`
 	SHA256Enabled           *bool                         `json:"-"`
 	ToolsReadRequired       bool                          `json:"-"`
 	CacheOnlyReuse          *bool                         `json:"-"`
@@ -135,6 +136,9 @@ func DecodeSourceAnalysisOperationSnapshot(raw json.RawMessage) (SourceAnalysisO
 	}
 	if snapshot.Mode == SourceAnalysisModeBatch && *snapshot.RerunTarget {
 		return SourceAnalysisOperationSnapshot{}, fmt.Errorf("decode source analysis operation snapshot: batch operations cannot request a targeted rerun")
+	}
+	if snapshot.RetryFailedOperationID != nil && *snapshot.RetryFailedOperationID == uuid.Nil {
+		return SourceAnalysisOperationSnapshot{}, fmt.Errorf("decode source analysis operation snapshot: retry_failed_operation_id must be non-empty")
 	}
 	return snapshot, nil
 }

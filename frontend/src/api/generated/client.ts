@@ -53,6 +53,7 @@ import type {
   LibraryArtistDetails,
   LibraryArtistMetadataBody,
   LibraryArtistPage,
+  LibraryArtistPhotoResponse,
   LibraryArtistReferencesPage,
   LibraryArtistSummary,
   LibraryDeletionConfirmationInputBody,
@@ -73,6 +74,9 @@ import type {
   LibraryRecordingSearchBody,
   LibraryRecordingSearchResultOutputBody,
   LibraryReleaseCoverApplyInputBody,
+  LibraryReleaseCoverCandidateSelectBody,
+  LibraryReleaseCoverCandidatesOutputBody,
+  LibraryReleaseCoverPrepareInputBody,
   LibraryReleaseCoverSaveBody,
   LibraryReleaseDetailResponse,
   LibraryReleaseGroupEditionTracksResponse,
@@ -3246,6 +3250,274 @@ export const usePatchLibraryArtistMetadata = <TError = ErrorModel,
       return useMutation(getPatchLibraryArtistMetadataMutationOptions(options), queryClient);
     }
 
+export type getLibraryArtistPhotoResponse200 = {
+  data: LibraryArtistPhotoResponse
+  status: 200
+}
+
+export type getLibraryArtistPhotoResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryArtistPhotoResponseSuccess = (getLibraryArtistPhotoResponse200) & {
+  headers: Headers;
+};
+export type getLibraryArtistPhotoResponseError = (getLibraryArtistPhotoResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryArtistPhotoResponse = (getLibraryArtistPhotoResponseSuccess | getLibraryArtistPhotoResponseError)
+
+export const getGetLibraryArtistPhotoUrl = (artistId: string,) => {
+
+
+
+
+  return `/api/library/artists/${artistId}/photo`
+}
+
+/**
+ * @summary Read an optional artist photo
+ */
+export const getLibraryArtistPhoto = async (artistId: string, options?: RequestInit): Promise<getLibraryArtistPhotoResponse> => {
+
+  const res = await fetch(getGetLibraryArtistPhotoUrl(artistId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryArtistPhotoResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryArtistPhotoResponse
+}
+
+
+
+
+
+export const getGetLibraryArtistPhotoQueryKey = (artistId: string,) => {
+    return [
+    `/api/library/artists/${artistId}/photo`
+    ] as const;
+    }
+
+
+export const getGetLibraryArtistPhotoQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError = ErrorModel>(artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryArtistPhotoQueryKey(artistId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryArtistPhoto>>> = ({ signal }) => getLibraryArtistPhoto(artistId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: artistId !== null && artistId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryArtistPhotoQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryArtistPhoto>>>
+export type GetLibraryArtistPhotoQueryError = ErrorModel
+
+
+export function useGetLibraryArtistPhoto<TData = Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError = ErrorModel>(
+ artistId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistPhoto>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistPhoto>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistPhoto<TData = Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistPhoto>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistPhoto>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistPhoto<TData = Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read an optional artist photo
+ */
+
+export function useGetLibraryArtistPhoto<TData = Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhoto>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryArtistPhotoQueryOptions(artistId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getLibraryArtistPhotoImageResponse200ImageGif = {
+  data: Blob
+  status: 200
+}
+
+export type getLibraryArtistPhotoImageResponse200ImageJpeg = {
+  data: Blob
+  status: 200
+}
+
+export type getLibraryArtistPhotoImageResponse200ImagePng = {
+  data: Blob
+  status: 200
+}
+
+export type getLibraryArtistPhotoImageResponse200ImageWebp = {
+  data: Blob
+  status: 200
+}
+
+export type getLibraryArtistPhotoImageResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryArtistPhotoImageResponseSuccess = (getLibraryArtistPhotoImageResponse200ImageGif | getLibraryArtistPhotoImageResponse200ImageJpeg | getLibraryArtistPhotoImageResponse200ImagePng | getLibraryArtistPhotoImageResponse200ImageWebp) & {
+  headers: Headers;
+};
+export type getLibraryArtistPhotoImageResponseError = (getLibraryArtistPhotoImageResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryArtistPhotoImageResponse = (getLibraryArtistPhotoImageResponseSuccess | getLibraryArtistPhotoImageResponseError)
+
+export const getGetLibraryArtistPhotoImageUrl = (artistId: string,) => {
+
+
+
+
+  return `/api/library/artists/${artistId}/photo/image`
+}
+
+/**
+ * @summary Read a saved artist photo thumbnail
+ */
+export const getLibraryArtistPhotoImage = async (artistId: string, options?: RequestInit): Promise<getLibraryArtistPhotoImageResponse> => {
+
+  const res = await fetch(getGetLibraryArtistPhotoImageUrl(artistId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
+  const data: getLibraryArtistPhotoImageResponse['data'] = body as getLibraryArtistPhotoImageResponse['data']
+  return { data, status: res.status, headers: res.headers } as getLibraryArtistPhotoImageResponse
+}
+
+
+
+
+
+export const getGetLibraryArtistPhotoImageQueryKey = (artistId: string,) => {
+    return [
+    `/api/library/artists/${artistId}/photo/image`
+    ] as const;
+    }
+
+
+export const getGetLibraryArtistPhotoImageQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError = ErrorModel>(artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryArtistPhotoImageQueryKey(artistId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>> = ({ signal }) => getLibraryArtistPhotoImage(artistId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: artistId !== null && artistId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryArtistPhotoImageQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>>
+export type GetLibraryArtistPhotoImageQueryError = ErrorModel
+
+
+export function useGetLibraryArtistPhotoImage<TData = Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError = ErrorModel>(
+ artistId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistPhotoImage<TData = Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistPhotoImage<TData = Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a saved artist photo thumbnail
+ */
+
+export function useGetLibraryArtistPhotoImage<TData = Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistPhotoImage>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryArtistPhotoImageQueryOptions(artistId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export type listLibraryCoverCandidatesResponse200 = {
   data: LibraryReleaseOptionsPageLibraryCoverCandidateOption
   status: 200
@@ -3757,6 +4029,266 @@ export function useListLibraryPositions<TData = Awaited<ReturnType<typeof listLi
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListLibraryPositionsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getProviderReleaseFrontArtworkResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type getProviderReleaseFrontArtworkResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getProviderReleaseFrontArtworkResponseSuccess = (getProviderReleaseFrontArtworkResponse200) & {
+  headers: Headers;
+};
+export type getProviderReleaseFrontArtworkResponseError = (getProviderReleaseFrontArtworkResponseDefault) & {
+  headers: Headers;
+};
+
+export type getProviderReleaseFrontArtworkResponse = (getProviderReleaseFrontArtworkResponseSuccess | getProviderReleaseFrontArtworkResponseError)
+
+export const getGetProviderReleaseFrontArtworkUrl = (releaseMbid: string,) => {
+
+
+
+
+  return `/api/library/provider-artwork/releases/${releaseMbid}/front`
+}
+
+/**
+ * @summary Read the cached front thumbnail for an exact MusicBrainz edition
+ */
+export const getProviderReleaseFrontArtwork = async (releaseMbid: string, options?: RequestInit): Promise<getProviderReleaseFrontArtworkResponse> => {
+
+  const res = await fetch(getGetProviderReleaseFrontArtworkUrl(releaseMbid),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
+  const data: getProviderReleaseFrontArtworkResponse['data'] = body as getProviderReleaseFrontArtworkResponse['data']
+  return { data, status: res.status, headers: res.headers } as getProviderReleaseFrontArtworkResponse
+}
+
+
+
+
+
+export const getGetProviderReleaseFrontArtworkQueryKey = (releaseMbid: string,) => {
+    return [
+    `/api/library/provider-artwork/releases/${releaseMbid}/front`
+    ] as const;
+    }
+
+
+export const getGetProviderReleaseFrontArtworkQueryOptions = <TData = Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError = ErrorModel>(releaseMbid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProviderReleaseFrontArtworkQueryKey(releaseMbid);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>> = ({ signal }) => getProviderReleaseFrontArtwork(releaseMbid, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseMbid !== null && releaseMbid !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProviderReleaseFrontArtworkQueryResult = NonNullable<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>>
+export type GetProviderReleaseFrontArtworkQueryError = ErrorModel
+
+
+export function useGetProviderReleaseFrontArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError = ErrorModel>(
+ releaseMbid: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>,
+          TError,
+          Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProviderReleaseFrontArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError = ErrorModel>(
+ releaseMbid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>,
+          TError,
+          Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProviderReleaseFrontArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError = ErrorModel>(
+ releaseMbid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read the cached front thumbnail for an exact MusicBrainz edition
+ */
+
+export function useGetProviderReleaseFrontArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError = ErrorModel>(
+ releaseMbid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseFrontArtwork>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProviderReleaseFrontArtworkQueryOptions(releaseMbid,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getProviderReleaseImageArtworkResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type getProviderReleaseImageArtworkResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getProviderReleaseImageArtworkResponseSuccess = (getProviderReleaseImageArtworkResponse200) & {
+  headers: Headers;
+};
+export type getProviderReleaseImageArtworkResponseError = (getProviderReleaseImageArtworkResponseDefault) & {
+  headers: Headers;
+};
+
+export type getProviderReleaseImageArtworkResponse = (getProviderReleaseImageArtworkResponseSuccess | getProviderReleaseImageArtworkResponseError)
+
+export const getGetProviderReleaseImageArtworkUrl = (releaseMbid: string,
+    imageId: string,) => {
+
+
+
+
+  return `/api/library/provider-artwork/releases/${releaseMbid}/images/${imageId}`
+}
+
+/**
+ * @summary Read a cached Cover Art Archive gallery thumbnail
+ */
+export const getProviderReleaseImageArtwork = async (releaseMbid: string,
+    imageId: string, options?: RequestInit): Promise<getProviderReleaseImageArtworkResponse> => {
+
+  const res = await fetch(getGetProviderReleaseImageArtworkUrl(releaseMbid,imageId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
+  const data: getProviderReleaseImageArtworkResponse['data'] = body as getProviderReleaseImageArtworkResponse['data']
+  return { data, status: res.status, headers: res.headers } as getProviderReleaseImageArtworkResponse
+}
+
+
+
+
+
+export const getGetProviderReleaseImageArtworkQueryKey = (releaseMbid: string,
+    imageId: string,) => {
+    return [
+    `/api/library/provider-artwork/releases/${releaseMbid}/images/${imageId}`
+    ] as const;
+    }
+
+
+export const getGetProviderReleaseImageArtworkQueryOptions = <TData = Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError = ErrorModel>(releaseMbid: string,
+    imageId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProviderReleaseImageArtworkQueryKey(releaseMbid,imageId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>> = ({ signal }) => getProviderReleaseImageArtwork(releaseMbid,imageId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseMbid !== null && releaseMbid !== undefined && imageId !== null && imageId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProviderReleaseImageArtworkQueryResult = NonNullable<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>>
+export type GetProviderReleaseImageArtworkQueryError = ErrorModel
+
+
+export function useGetProviderReleaseImageArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError = ErrorModel>(
+ releaseMbid: string,
+    imageId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>,
+          TError,
+          Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProviderReleaseImageArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError = ErrorModel>(
+ releaseMbid: string,
+    imageId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>,
+          TError,
+          Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProviderReleaseImageArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError = ErrorModel>(
+ releaseMbid: string,
+    imageId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a cached Cover Art Archive gallery thumbnail
+ */
+
+export function useGetProviderReleaseImageArtwork<TData = Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError = ErrorModel>(
+ releaseMbid: string,
+    imageId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProviderReleaseImageArtwork>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProviderReleaseImageArtworkQueryOptions(releaseMbid,imageId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -5395,6 +5927,250 @@ export const useApplyLibraryReleaseCover = <TError = ErrorModel,
       return useMutation(getApplyLibraryReleaseCoverMutationOptions(options), queryClient);
     }
 
+export type getLibraryReleaseCoverCandidatesResponse200 = {
+  data: LibraryReleaseCoverCandidatesOutputBody
+  status: 200
+}
+
+export type getLibraryReleaseCoverCandidatesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryReleaseCoverCandidatesResponseSuccess = (getLibraryReleaseCoverCandidatesResponse200) & {
+  headers: Headers;
+};
+export type getLibraryReleaseCoverCandidatesResponseError = (getLibraryReleaseCoverCandidatesResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryReleaseCoverCandidatesResponse = (getLibraryReleaseCoverCandidatesResponseSuccess | getLibraryReleaseCoverCandidatesResponseError)
+
+export const getGetLibraryReleaseCoverCandidatesUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/cover/candidates`
+}
+
+/**
+ * @summary List alternative release covers
+ */
+export const getLibraryReleaseCoverCandidates = async (releaseId: string, options?: RequestInit): Promise<getLibraryReleaseCoverCandidatesResponse> => {
+
+  const res = await fetch(getGetLibraryReleaseCoverCandidatesUrl(releaseId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryReleaseCoverCandidatesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryReleaseCoverCandidatesResponse
+}
+
+
+
+
+
+export const getGetLibraryReleaseCoverCandidatesQueryKey = (releaseId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/cover/candidates`
+    ] as const;
+    }
+
+
+export const getGetLibraryReleaseCoverCandidatesQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError = ErrorModel>(releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryReleaseCoverCandidatesQueryKey(releaseId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>> = ({ signal }) => getLibraryReleaseCoverCandidates(releaseId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryReleaseCoverCandidatesQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>>
+export type GetLibraryReleaseCoverCandidatesQueryError = ErrorModel
+
+
+export function useGetLibraryReleaseCoverCandidates<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError = ErrorModel>(
+ releaseId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseCoverCandidates<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseCoverCandidates<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List alternative release covers
+ */
+
+export function useGetLibraryReleaseCoverCandidates<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverCandidates>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryReleaseCoverCandidatesQueryOptions(releaseId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type selectLibraryReleaseCoverCandidateResponse200 = {
+  data: ReleaseCoverSummary
+  status: 200
+}
+
+export type selectLibraryReleaseCoverCandidateResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type selectLibraryReleaseCoverCandidateResponseSuccess = (selectLibraryReleaseCoverCandidateResponse200) & {
+  headers: Headers;
+};
+export type selectLibraryReleaseCoverCandidateResponseError = (selectLibraryReleaseCoverCandidateResponseDefault) & {
+  headers: Headers;
+};
+
+export type selectLibraryReleaseCoverCandidateResponse = (selectLibraryReleaseCoverCandidateResponseSuccess | selectLibraryReleaseCoverCandidateResponseError)
+
+export const getSelectLibraryReleaseCoverCandidateUrl = (releaseId: string,
+    imageId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/cover/candidates/${imageId}/select`
+}
+
+/**
+ * @summary Select an alternative release cover
+ */
+export const selectLibraryReleaseCoverCandidate = async (releaseId: string,
+    imageId: string,
+    libraryReleaseCoverCandidateSelectBody: NonReadonly<LibraryReleaseCoverCandidateSelectBody>, options?: RequestInit): Promise<selectLibraryReleaseCoverCandidateResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSelectLibraryReleaseCoverCandidateUrl(releaseId,imageId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryReleaseCoverCandidateSelectBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: selectLibraryReleaseCoverCandidateResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as selectLibraryReleaseCoverCandidateResponse
+}
+
+
+
+
+
+export const getSelectLibraryReleaseCoverCandidateMutationKey = () => ['selectLibraryReleaseCoverCandidate'] as const;
+
+export const getSelectLibraryReleaseCoverCandidateMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>, TError,SelectLibraryReleaseCoverCandidateMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>, TError,SelectLibraryReleaseCoverCandidateMutationVariables, TContext> => {
+
+const mutationKey = getSelectLibraryReleaseCoverCandidateMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>, SelectLibraryReleaseCoverCandidateMutationVariables> = (props) => {
+          const {releaseId,imageId,data} = props ?? {};
+
+          return  selectLibraryReleaseCoverCandidate(releaseId,imageId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SelectLibraryReleaseCoverCandidateMutationResult = NonNullable<Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>>
+    export type SelectLibraryReleaseCoverCandidateMutationBody = NonReadonly<LibraryReleaseCoverCandidateSelectBody>
+    export type SelectLibraryReleaseCoverCandidateMutationError = ErrorModel
+    export type SelectLibraryReleaseCoverCandidateMutationVariables = {releaseId: string;imageId: string;data: NonReadonly<LibraryReleaseCoverCandidateSelectBody>}
+
+    /**
+ * @summary Select an alternative release cover
+ */
+export const useSelectLibraryReleaseCoverCandidate = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>, TError,SelectLibraryReleaseCoverCandidateMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof selectLibraryReleaseCoverCandidate>>,
+        TError,
+        SelectLibraryReleaseCoverCandidateMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSelectLibraryReleaseCoverCandidateMutationOptions(options), queryClient);
+    }
+
 export type getLibraryReleaseCoverImageResponse200ImageJpeg = {
   data: Blob
   status: 200
@@ -5534,6 +6310,121 @@ export function useGetLibraryReleaseCoverImage<TData = Awaited<ReturnType<typeof
 
 
 
+export type prepareLibraryReleaseCoverResponse204 = {
+  data: void
+  status: 204
+}
+
+export type prepareLibraryReleaseCoverResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type prepareLibraryReleaseCoverResponseSuccess = (prepareLibraryReleaseCoverResponse204) & {
+  headers: Headers;
+};
+export type prepareLibraryReleaseCoverResponseError = (prepareLibraryReleaseCoverResponseDefault) & {
+  headers: Headers;
+};
+
+export type prepareLibraryReleaseCoverResponse = (prepareLibraryReleaseCoverResponseSuccess | prepareLibraryReleaseCoverResponseError)
+
+export const getPrepareLibraryReleaseCoverUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/cover/prepare`
+}
+
+/**
+ * @summary Prepare automatic cover authority for an eligible first publication
+ */
+export const prepareLibraryReleaseCover = async (releaseId: string,
+    libraryReleaseCoverPrepareInputBody: NonReadonly<LibraryReleaseCoverPrepareInputBody>, options?: RequestInit): Promise<prepareLibraryReleaseCoverResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPrepareLibraryReleaseCoverUrl(releaseId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryReleaseCoverPrepareInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: prepareLibraryReleaseCoverResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as prepareLibraryReleaseCoverResponse
+}
+
+
+
+
+
+export const getPrepareLibraryReleaseCoverMutationKey = () => ['prepareLibraryReleaseCover'] as const;
+
+export const getPrepareLibraryReleaseCoverMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLibraryReleaseCover>>, TError,PrepareLibraryReleaseCoverMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareLibraryReleaseCover>>, TError,PrepareLibraryReleaseCoverMutationVariables, TContext> => {
+
+const mutationKey = getPrepareLibraryReleaseCoverMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareLibraryReleaseCover>>, PrepareLibraryReleaseCoverMutationVariables> = (props) => {
+          const {releaseId,data} = props ?? {};
+
+          return  prepareLibraryReleaseCover(releaseId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareLibraryReleaseCoverMutationResult = NonNullable<Awaited<ReturnType<typeof prepareLibraryReleaseCover>>>
+    export type PrepareLibraryReleaseCoverMutationBody = NonReadonly<LibraryReleaseCoverPrepareInputBody>
+    export type PrepareLibraryReleaseCoverMutationError = ErrorModel
+    export type PrepareLibraryReleaseCoverMutationVariables = {releaseId: string;data: NonReadonly<LibraryReleaseCoverPrepareInputBody>}
+
+    /**
+ * @summary Prepare automatic cover authority for an eligible first publication
+ */
+export const usePrepareLibraryReleaseCover = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLibraryReleaseCover>>, TError,PrepareLibraryReleaseCoverMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof prepareLibraryReleaseCover>>,
+        TError,
+        PrepareLibraryReleaseCoverMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPrepareLibraryReleaseCoverMutationOptions(options), queryClient);
+    }
+
 export type retryLibraryReleaseCoverResponse202 = {
   data: ReleaseCoverBatch
   status: 202
@@ -5648,6 +6539,140 @@ export const useRetryLibraryReleaseCover = <TError = ErrorModel,
       > => {
       return useMutation(getRetryLibraryReleaseCoverMutationOptions(options), queryClient);
     }
+
+export type getLibraryReleaseCoverThumbnailResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type getLibraryReleaseCoverThumbnailResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryReleaseCoverThumbnailResponseSuccess = (getLibraryReleaseCoverThumbnailResponse200) & {
+  headers: Headers;
+};
+export type getLibraryReleaseCoverThumbnailResponseError = (getLibraryReleaseCoverThumbnailResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryReleaseCoverThumbnailResponse = (getLibraryReleaseCoverThumbnailResponseSuccess | getLibraryReleaseCoverThumbnailResponseError)
+
+export const getGetLibraryReleaseCoverThumbnailUrl = (releaseId: string,
+    generation: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/cover/thumbnails/${generation}`
+}
+
+/**
+ * @summary Read a bounded thumbnail of the selected release cover
+ */
+export const getLibraryReleaseCoverThumbnail = async (releaseId: string,
+    generation: string, options?: RequestInit): Promise<getLibraryReleaseCoverThumbnailResponse> => {
+
+  const res = await fetch(getGetLibraryReleaseCoverThumbnailUrl(releaseId,generation),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
+  const data: getLibraryReleaseCoverThumbnailResponse['data'] = body as getLibraryReleaseCoverThumbnailResponse['data']
+  return { data, status: res.status, headers: res.headers } as getLibraryReleaseCoverThumbnailResponse
+}
+
+
+
+
+
+export const getGetLibraryReleaseCoverThumbnailQueryKey = (releaseId: string,
+    generation: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/cover/thumbnails/${generation}`
+    ] as const;
+    }
+
+
+export const getGetLibraryReleaseCoverThumbnailQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError = ErrorModel>(releaseId: string,
+    generation: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryReleaseCoverThumbnailQueryKey(releaseId,generation);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>> = ({ signal }) => getLibraryReleaseCoverThumbnail(releaseId,generation, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined && generation !== null && generation !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryReleaseCoverThumbnailQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>>
+export type GetLibraryReleaseCoverThumbnailQueryError = ErrorModel
+
+
+export function useGetLibraryReleaseCoverThumbnail<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError = ErrorModel>(
+ releaseId: string,
+    generation: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseCoverThumbnail<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError = ErrorModel>(
+ releaseId: string,
+    generation: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseCoverThumbnail<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError = ErrorModel>(
+ releaseId: string,
+    generation: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a bounded thumbnail of the selected release cover
+ */
+
+export function useGetLibraryReleaseCoverThumbnail<TData = Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError = ErrorModel>(
+ releaseId: string,
+    generation: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseCoverThumbnail>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryReleaseCoverThumbnailQueryOptions(releaseId,generation,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type previewLibraryReleaseDeletionResponse200 = {
   data: LibraryDeletionPreviewResponse

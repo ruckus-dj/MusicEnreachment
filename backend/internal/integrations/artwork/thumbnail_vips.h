@@ -3,6 +3,6 @@
 
 #include <stddef.h>
 
-int artwork_vips_thumbnail(const char *input_path, const char *output_path, char *error, size_t error_size);
+int artwork_vips_thumbnail(const char *input_path, const char *output_path, int max_dimension, char *error, size_t error_size);
 
 #endif

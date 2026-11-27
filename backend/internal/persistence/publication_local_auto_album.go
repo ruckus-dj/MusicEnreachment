@@ -425,12 +425,13 @@ func publicationLocalGrantCurrent(ctx context.Context, db bun.IDB, request Publi
 	if layout.LocalApplyOperationID != request.ApplyOperationID || layout.LocalReleaseID != request.ReleaseID {
 		return false, nil
 	}
-	query := `SELECT op.input_snapshot::text,grouping.needs_refresh FROM operation op
+	query := `SELECT op.input_snapshot::text,grouping.needs_refresh,
+			generation.reconciled_generation=generation.requested_generation FROM operation op
 		JOIN incoming_group current_group ON current_group.id=? AND current_group.revision=? AND NOT current_group.manual
 		JOIN incoming_grouping_state grouping ON grouping.singleton
 		JOIN incoming_matching_generation generation ON generation.group_id=current_group.id
 			AND generation.current_run_id=? AND generation.high_water=?
-			AND generation.requested_generation=? AND generation.reconciled_generation=generation.requested_generation
+			AND generation.requested_generation>=?
 		JOIN publication_namespace_state namespace ON namespace.singleton AND namespace.output_epoch=?
 		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=current_group.id
 		WHERE op.id=? AND op.kind='matching_evaluation_v1' AND op.state='succeeded' AND op.stage='local_fallback_applied'
@@ -443,17 +444,14 @@ func publicationLocalGrantCurrent(ctx context.Context, db bun.IDB, request Publi
 		query += ` FOR SHARE OF generation`
 	}
 	var snapshot string
-	var needsRefresh bool
+	var needsRefresh, reconciled bool
 	err := db.NewRaw(query, layout.GroupID, layout.GroupRevision, layout.OutageRunID, layout.HighWater,
-		layout.ObservedRequestGeneration, request.OutputEpoch, request.ApplyOperationID, layout.AuthorityRevision).Scan(ctx, &snapshot, &needsRefresh)
+		layout.ObservedRequestGeneration, request.OutputEpoch, request.ApplyOperationID, layout.AuthorityRevision).Scan(ctx, &snapshot, &needsRefresh, &reconciled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("read current Local automatic album authority: %w", err)
-	}
-	if needsRefresh {
-		return false, ErrMatchingTargetNeedsRefresh
 	}
 	var stored automaticLocalFallbackOperationSnapshot
 	if json.Unmarshal([]byte(snapshot), &stored) != nil ||
@@ -462,6 +460,12 @@ func publicationLocalGrantCurrent(ctx context.Context, db bun.IDB, request Publi
 		stored.ProviderReleaseID != layout.ProviderReleaseID || stored.DecisionDigest != layout.DecisionDigest ||
 		stored.PolicyVersion != layout.PolicyVersion {
 		return false, nil
+	}
+	// Reconciliation is requested globally. Wait for it to settle; the original
+	// outage and unchanged group/run fences, not the latest wake number, identify
+	// this grant. Admission also recaptures the exact layout and source bindings.
+	if needsRefresh || !reconciled {
+		return false, ErrMatchingTargetNeedsRefresh
 	}
 	outageRunID, err := currentMatchingMusicBrainzOutageFallback(ctx, db, layout.GroupID, layout.ObservedRequestGeneration)
 	return outageRunID == layout.OutageRunID, err

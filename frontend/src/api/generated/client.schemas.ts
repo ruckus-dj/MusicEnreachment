@@ -715,6 +715,20 @@ export interface LibraryArtistPage {
   total: number;
 }
 
+export interface LibraryArtistPhoto {
+  author: string;
+  image_url: string;
+  license: string;
+  license_url?: string;
+  source_url: string;
+}
+
+export interface LibraryArtistPhotoResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  photo?: LibraryArtistPhoto;
+}
+
 export interface LibraryArtistReference {
   /** @nullable */
   disambiguation: string | null;
@@ -1140,6 +1154,7 @@ export interface LibraryPublicationSelectionPreviewInputBody {
      * @nullable
      */
   positions: LibraryPublicationSelectionPreviewPosition[] | null;
+  prepare_covers?: boolean;
 }
 
 export interface LibraryPublicationSelectionPreviewReferenceResponse {
@@ -1262,6 +1277,36 @@ export interface LibraryReleaseCoverApplyInputBody {
   /** @minimum 1 */
   expected_revision: number;
   expected_selected_generation?: string;
+}
+
+export interface LibraryReleaseCoverCandidateSelectBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 1 */
+  expected_revision: number;
+}
+
+export interface ReleaseCoverCandidate {
+  back: boolean;
+  comment: string;
+  front: boolean;
+  id: string;
+  thumbnail_url: string;
+  /** @nullable */
+  types: string[] | null;
+}
+
+export interface LibraryReleaseCoverCandidatesOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: ReleaseCoverCandidate[] | null;
+}
+
+export interface LibraryReleaseCoverPrepareInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  position_id: string;
 }
 
 export interface LibraryReleaseCoverSaveBody {

@@ -181,10 +181,11 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 			}
 			return operationOutput(retried), nil
 		}
-		if _, err := operations.Retry(ctx, input.ID); err != nil {
+		retried, err := operations.Retry(ctx, input.ID)
+		if err != nil {
 			return nil, huma.Error409Conflict("operation could not be retried")
 		}
-		snapshot, err := operations.Snapshot(ctx, input.ID)
+		snapshot, err := operations.Snapshot(ctx, retried.ID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to read retried operation")
 		}

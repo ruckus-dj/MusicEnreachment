@@ -1,5 +1,8 @@
 import { createContext, type ReactNode, useContext, useState } from "react";
-import { useGetLibraryRelease } from "../../api/generated/client";
+import {
+  getGetLibraryReleaseCoverThumbnailUrl,
+  useGetLibraryRelease,
+} from "../../api/generated/client";
 import type {
   LibraryArtistCreditResponse,
   LibraryReleaseDetailResponse,
@@ -22,8 +25,9 @@ import {
   libraryPositionHref,
   libraryReleaseHref,
 } from "../../ui/features/library/libraryDetailRoute";
-import { libraryArtistRouteHref } from "./libraryRoute";
+import { isUuid, libraryArtistRouteHref } from "./libraryRoute";
 import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
+import { exactMusicBrainzReleaseArtworkURL } from "./providerArtwork";
 import type { LibrarySelectionScope } from "./useLibrarySelection";
 
 type SelectionControl = (
@@ -74,6 +78,14 @@ function editionNote(release: LibraryReleaseSummary) {
   );
 }
 
+function releaseGroupArtwork(group: MissingReleaseGroupSummary | undefined) {
+  if (group?.provider_code !== "musicbrainz") return null;
+  const mbid = group.provider_key.trim().toLowerCase();
+  return isUuid(mbid)
+    ? `https://coverartarchive.org/release-group/${mbid}/front-250`
+    : null;
+}
+
 function albumEntry(
   item: LibraryReleaseItem,
   selectionControl: SelectionControl,
@@ -88,6 +100,7 @@ function albumEntry(
         (link) => link.provider_code === "musicbrainz",
       ),
     );
+  const coverGeneration = release?.cover?.selected_generation;
   return {
     row: {
       id: release ? `local:${release.id}` : `provider:${group?.provider_key}`,
@@ -106,6 +119,12 @@ function albumEntry(
       providerPositionCount: release?.counts.provider_position_count ?? null,
       publishedCount: release?.counts.published_position_count ?? null,
       provider: musicbrainz ? "musicbrainz" : "local",
+      coverSrc:
+        release && coverGeneration
+          ? getGetLibraryReleaseCoverThumbnailUrl(release.id, coverGeneration)
+          : release
+            ? exactMusicBrainzReleaseArtworkURL(release.provider_links)
+            : releaseGroupArtwork(group),
       selection: release
         ? selectionControl({ kind: "release", id: release.id })
         : null,

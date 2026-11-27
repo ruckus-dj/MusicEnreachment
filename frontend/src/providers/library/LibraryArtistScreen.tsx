@@ -46,6 +46,7 @@ import {
   parseLibraryArtistRoute,
 } from "./libraryRoute";
 import { useMissingReleaseGroupEditions } from "./MissingReleaseGroupRow";
+import { exactMusicBrainzReleaseArtworkURL } from "./providerArtwork";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
@@ -387,7 +388,8 @@ function useLibraryArtistModel(
         title,
         imageSrc: generation
           ? getGetLibraryReleaseCoverImageUrl(release.id, generation)
-          : undefined,
+          : (exactMusicBrainzReleaseArtworkURL(release.provider_links) ??
+            undefined),
       },
       providerText: provider
         ? `${provider.provider_code} · ${provider.provider_key}`

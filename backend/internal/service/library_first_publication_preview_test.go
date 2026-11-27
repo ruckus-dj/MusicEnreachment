@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 	"time"
@@ -488,6 +490,93 @@ func TestPreviewFirstUsesEligibleUnselectedAssociationAutomatically(t *testing.T
 	}
 	if snapshot.Sources[0].Selected {
 		t.Fatal("explicit preview mutated the persisted association decision")
+	}
+}
+
+func TestFirstPublicationPreviewDigestMatchesAdmissionBuilderForCoverStates(t *testing.T) {
+	releaseID, positionID := uuid.New(), uuid.New()
+	caseSensitive := true
+	runtime := settings.RuntimeSettings{
+		PublicationFormat: "mka", PublicationPathTemplate: "Track",
+		OutputDirectory: t.TempDir(), OutputCaseSensitive: &caseSensitive,
+	}
+	makeInput := func(state string, data []byte) persistence.PublicationAttemptCoverInput {
+		input := persistence.PublicationAttemptCoverInput{ReleaseID: releaseID, Revision: 1, Mode: "automatic", State: state}
+		if state == "value" {
+			mime := "image/png"
+			digest := sha256.Sum256(data)
+			size := int64(len(data))
+			generation := uuid.New()
+			input.Generation, input.Bytes, input.MIME, input.SHA256, input.Size = &generation, data, &mime, digest[:], &size
+		}
+		return input
+	}
+	for _, state := range []string{"absent", "value"} {
+		t.Run(state, func(t *testing.T) {
+			input := makeInput(state, releaseCoverPNG(t))
+			snapshot := &persistence.LibraryFirstPublicationContext{
+				Library:             &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: uuid.New()},
+				EffectiveCover:      persistence.EffectiveReleaseCoverSummary{Revision: input.Revision, Mode: input.Mode, State: input.State, Generation: input.Generation},
+				EffectiveCoverInput: input,
+				TemplateTokens:      map[string]string{"TRACK_NAME": "Track"},
+			}
+			service := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "mka", template: "Track", caseSensitive: true}, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+			preview, err := service.previewFirstCaptured(context.Background(), snapshot, runtime, nil, releaseID, positionID, nil, firstPublicationPreviewModeOrdinary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			admission, err := buildFirstPublicationPreviewSelected(snapshot, runtime, nil, releaseID, positionID, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.CoverPlan == nil {
+				t.Fatal("first publication preview omitted informational cover facts")
+			}
+			if preview.ContextDigest != admission.ContextDigest {
+				t.Fatalf("preview digest %s does not match admission builder %s", preview.ContextDigest, admission.ContextDigest)
+			}
+			if state == "value" {
+				// The informational FIRST cover derivative must not enter the
+				// preview digest. A different selected image with the same
+				// effective authority summary must keep the same digest.
+				changed := *snapshot
+				changed.EffectiveCoverInput = makeInput(state, releaseCoverPNGFilled(t, color.Black))
+				changedPreview, err := service.previewFirstCaptured(context.Background(), &changed, runtime, nil, releaseID, positionID, nil, firstPublicationPreviewModeOrdinary)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if changedPreview.CoverPlan == nil || changedPreview.CoverPlan.Derivative == nil || preview.CoverPlan.Derivative == nil ||
+					changedPreview.CoverPlan.Derivative.SHA256 == preview.CoverPlan.Derivative.SHA256 {
+					t.Fatal("changed cover derivative was not planned")
+				}
+				if changedPreview.ContextDigest != preview.ContextDigest {
+					t.Fatal("FIRST cover derivative changed the preview digest")
+				}
+			}
+		})
+	}
+}
+
+func TestPreviewFirstShowsCoverFactsWithoutAcquiringThem(t *testing.T) {
+	releaseID, positionID := uuid.New(), uuid.New()
+	snapshot := &persistence.LibraryFirstPublicationContext{
+		Library:             &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: uuid.New()},
+		EffectiveCoverInput: persistence.PublicationAttemptCoverInput{ReleaseID: releaseID, Revision: 1, Mode: "automatic", State: "absent"},
+		TemplateTokens:      map[string]string{},
+	}
+	acquisition := &coverAcquisitionFixture{}
+	service := newLibraryPublications(
+		firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "mka", template: "Track"}, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"},
+	).WithCoverAcquisition(acquisition)
+	preview, err := service.PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.CoverPlan == nil || preview.CoverPlan.Derivation != "absent" || preview.CoverPlan.ReleaseID != releaseID.String() {
+		t.Fatalf("first publication cover plan = %#v", preview.CoverPlan)
+	}
+	if acquisition.calls != 0 {
+		t.Fatalf("read-only preview performed %d cover acquisitions", acquisition.calls)
 	}
 }
 

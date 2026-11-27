@@ -21,6 +21,10 @@ import (
 
 const MaxPublishedDimension = 2048
 
+// MaxThumbnailDimension is the largest caller-selected thumbnail bound. Callers
+// may request a smaller bound for list tiles, but never a larger publication.
+const MaxThumbnailDimension = MaxPublishedDimension
+
 var (
 	vipsOnce    sync.Once
 	vipsInitErr error
@@ -31,9 +35,20 @@ var (
 // Go copies the input with bounded streaming I/O and inspects headers only;
 // libvips processes pixels using its demand-driven pipeline. Native codec buffers
 // still contribute to process RAM.
-func Thumbnail(ctx context.Context, inputPath, outputPath string) (err error) {
+func Thumbnail(ctx context.Context, inputPath, outputPath string) error {
+	return ThumbnailSized(ctx, inputPath, outputPath, MaxPublishedDimension)
+}
+
+// ThumbnailSized writes a lossless PNG thumbnail bounded to maxDimension on
+// both axes without upscaling. It shares Thumbnail's private staging and
+// verification pipeline so callers can produce smaller tiles without decoding
+// pixels in Go.
+func ThumbnailSized(ctx context.Context, inputPath, outputPath string, maxDimension int) (err error) {
 	if ctx == nil {
 		return errors.New("thumbnail context is required")
+	}
+	if maxDimension < 1 || maxDimension > MaxThumbnailDimension {
+		return fmt.Errorf("thumbnail dimension %d is outside the supported range", maxDimension)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -132,7 +147,7 @@ func Thumbnail(ctx context.Context, inputPath, outputPath string) (err error) {
 	defer C.free(unsafe.Pointer(cInput))
 	defer C.free(unsafe.Pointer(cOutput))
 	message := make([]C.char, 2048)
-	if C.artwork_vips_thumbnail(cInput, cOutput, &message[0], C.size_t(len(message))) != 0 {
+	if C.artwork_vips_thumbnail(cInput, cOutput, C.int(maxDimension), &message[0], C.size_t(len(message))) != 0 {
 		return fmt.Errorf("create thumbnail: %s", C.GoString(&message[0]))
 	}
 	if err := ctx.Err(); err != nil {
@@ -145,7 +160,7 @@ func Thumbnail(ctx context.Context, inputPath, outputPath string) (err error) {
 	if format != "png" {
 		return fmt.Errorf("generated thumbnail is not PNG")
 	}
-	if width > MaxPublishedDimension || height > MaxPublishedDimension || width > originalWidth || height > originalHeight {
+	if width > maxDimension || height > maxDimension || width > originalWidth || height > originalHeight {
 		return fmt.Errorf("generated thumbnail dimensions %dx%d exceed source or publication bounds", width, height)
 	}
 	if err := ctx.Err(); err != nil {

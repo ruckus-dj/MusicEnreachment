@@ -32,6 +32,7 @@ import {
   ProductionLibraryAlbumRowsDataProvider,
   ProductionLibraryAlbumRowsProvider,
 } from "./LibraryAlbumRows";
+import { ProductionLibraryArtistCards } from "./LibraryArtistPhotos";
 import { LibrarySelectionDock } from "./LibrarySelectionDock";
 import { LibrarySelectionPreview } from "./LibrarySelectionPreview";
 import { libraryPositionRowsModel } from "./LibraryTrackArtistRows";
@@ -167,6 +168,9 @@ export function libraryArtistCardsModel({
     positionCount: artist.position_count,
     availableCount: artist.available_position_count,
     publishedCount: artist.published_position_count,
+    photoEligible: artist.provider_links.some(
+      (link) => link.provider_code === "musicbrainz",
+    ),
     partialProviderScope: true,
     selection: selectionControl({ kind: "artist", id: artist.id }),
   }));
@@ -494,13 +498,16 @@ function useLibraryCatalogModel(): {
               : undefined,
           };
 
-  const artistResults =
+  const artistResults: LibraryCatalogArtistResults =
     view === "artists" && artistsBody
-      ? libraryArtistCardsModel({
-          items: artistsBody.items,
-          route,
-          selectionControl: selection.selectionControl,
-        })
+      ? {
+          ...libraryArtistCardsModel({
+            items: artistsBody.items,
+            route,
+            selectionControl: selection.selectionControl,
+          }),
+          View: ProductionLibraryArtistCards,
+        }
       : { artists: [] };
 
   const trackResults =

@@ -123,6 +123,30 @@ func (service *LibraryPublications) admitFirstWithReceipt(ctx context.Context, r
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("read first publication context: %w", err)
 	}
+	if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != expectedEpoch {
+		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	initialReleaseMBID, initialReleaseLinked := firstPublicationArtworkReleaseIdentity(snapshot)
+	// Artwork is prepared before the snapshot used for planning and admission.
+	// The primary service reports definitive absence as success; pending or
+	// temporarily unavailable providers block instead of silently publishing
+	// without a cover. CURRENT rewrites never reach this path.
+	if snapshot.Library.Current == nil && snapshot.Library.ActiveAttempt == nil {
+		if err := service.preparePublicationArtwork(ctx, releaseID); err != nil {
+			return uuid.Nil, err
+		}
+		snapshot, err = repository.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("read prepared first publication context: %w", err)
+		}
+		if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != expectedEpoch {
+			return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+		}
+		refreshedMBID, refreshedLinked := firstPublicationArtworkReleaseIdentity(snapshot)
+		if refreshedLinked != initialReleaseLinked || refreshedMBID != initialReleaseMBID {
+			return uuid.Nil, fmt.Errorf("%w: exact MusicBrainz release changed during artwork preparation", ErrPublicationArtwork)
+		}
+	}
 	runtimeSettings, err := planningSettings.ReadPublicationPlanningSettings(ctx)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("read publication planning settings: %w", err)
@@ -130,6 +154,10 @@ func (service *LibraryPublications) admitFirstWithReceipt(ctx context.Context, r
 	if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != expectedEpoch {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
+	// Artwork binds provider state to the exact MusicBrainz release that existed
+	// when preparation ran. Admission must reject a relink to a different
+	// edition rather than publish a cover chosen for the old one.
+	preparedReleaseMBID, preparedReleaseLinked := firstPublicationArtworkReleaseIdentity(snapshot)
 	var receiptVariantID uuid.UUID
 	if hasReceipt {
 		if snapshot.Library.Current != nil {
@@ -260,6 +288,9 @@ func (service *LibraryPublications) admitFirstWithReceipt(ctx context.Context, r
 				}
 				authoritative.Context = scopedContext
 				transactionReceiptVariantID = scopedVariantID
+			}
+			if actualMBID, actualLinked := firstPublicationArtworkReleaseIdentity(authoritative.Context); actualLinked != preparedReleaseLinked || actualMBID != preparedReleaseMBID {
+				return nil, fmt.Errorf("%w: exact MusicBrainz release changed after artwork preparation", ErrPublicationArtwork)
 			}
 			if service.artistDiscography != nil {
 				freshArtist, err := firstPublicationDiscographyArtist(authoritative.Context)

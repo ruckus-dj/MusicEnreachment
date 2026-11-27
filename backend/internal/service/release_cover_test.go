@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"image"
 	"image/color"
@@ -12,18 +13,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type releaseCoverRepositoryFixture struct {
-	cover          persistence.ReleaseCover
-	setCalls       int
-	selectedBefore []byte
-	readErr        error
+	cover             persistence.ReleaseCover
+	setCalls          int
+	selectedReadCalls int
+	detailReadCalls   int
+	selectedBefore    []byte
+	readErr           error
+	musicBrainzMBID   string
 }
 
 func (fixture *releaseCoverRepositoryFixture) ReadReleaseDetail(context.Context, uuid.UUID) (*persistence.LibraryReleaseDetail, error) {
+	fixture.detailReadCalls++
 	if fixture.readErr != nil {
 		return nil, fixture.readErr
 	}
@@ -32,6 +38,24 @@ func (fixture *releaseCoverRepositoryFixture) ReadReleaseDetail(context.Context,
 
 func (fixture *releaseCoverRepositoryFixture) ReadReleaseCover(context.Context, uuid.UUID) (persistence.ReleaseCover, error) {
 	return fixture.cover, nil
+}
+
+func (fixture *releaseCoverRepositoryFixture) ReadSelectedReleaseCover(_ context.Context, _ uuid.UUID, generation uuid.UUID) (persistence.SelectedReleaseCover, error) {
+	fixture.selectedReadCalls++
+	if fixture.readErr != nil {
+		return persistence.SelectedReleaseCover{}, fixture.readErr
+	}
+	if fixture.cover.SelectedGeneration == nil || *fixture.cover.SelectedGeneration != generation {
+		return persistence.SelectedReleaseCover{ReleaseID: fixture.cover.ReleaseID}, nil
+	}
+	return persistence.SelectedReleaseCover{
+		ReleaseID:  fixture.cover.ReleaseID,
+		Generation: fixture.cover.SelectedGeneration,
+		Data:       fixture.cover.SelectedBytes,
+		MIME:       fixture.cover.SelectedMIME,
+		SHA256:     fixture.cover.SelectedSHA256,
+		Size:       fixture.cover.SelectedSize,
+	}, nil
 }
 
 func (fixture *releaseCoverRepositoryFixture) SetPendingReleaseCover(_ context.Context, releaseID uuid.UUID, expected int64, generation uuid.UUID, data []byte, mime string) (persistence.ReleaseCover, error) {
@@ -51,6 +75,13 @@ func (fixture *releaseCoverRepositoryFixture) SetPendingReleaseCover(_ context.C
 	return fixture.cover, nil
 }
 
+func (fixture *releaseCoverRepositoryFixture) SetPendingReleaseCoverFromMusicBrainz(ctx context.Context, releaseID uuid.UUID, expected int64, releaseMBID string, generation uuid.UUID, data []byte, mime string) (persistence.ReleaseCover, error) {
+	if fixture.musicBrainzMBID == "" || fixture.musicBrainzMBID != releaseMBID {
+		return persistence.ReleaseCover{}, persistence.ErrReleaseCoverConflict
+	}
+	return fixture.SetPendingReleaseCover(ctx, releaseID, expected, generation, data, mime)
+}
+
 func releaseCoverPNG(t *testing.T) []byte {
 	t.Helper()
 	return releaseCoverPNGFilled(t, color.White)
@@ -58,8 +89,17 @@ func releaseCoverPNG(t *testing.T) []byte {
 
 func releaseCoverPNGFilled(t *testing.T, fill color.Color) []byte {
 	t.Helper()
-	imageData := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	imageData.Set(0, 0, fill)
+	return releaseCoverPNGAtSize(t, 1, 1, fill)
+}
+
+func releaseCoverPNGAtSize(t *testing.T, width, height int, fill color.Color) []byte {
+	t.Helper()
+	imageData := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := range height {
+		for x := range width {
+			imageData.Set(x, y, fill)
+		}
+	}
 	var data bytes.Buffer
 	if err := png.Encode(&data, imageData); err != nil {
 		t.Fatal(err)
@@ -137,6 +177,106 @@ func TestReleaseCoverImageOnlyServesCurrentGenerations(t *testing.T) {
 	}
 	if _, err := service.Image(context.Background(), releaseID, uuid.New()); !IsLibraryReleaseCoverNotFound(err) {
 		t.Fatalf("expected unavailable generation, got %v", err)
+	}
+}
+
+func TestReleaseCoverThumbnailUsesSelectedOnlyLookupAndBoundsOutput(t *testing.T) {
+	releaseID, generation := uuid.New(), uuid.New()
+	source := releaseCoverPNGAtSize(t, 640, 320, color.White)
+	mime := "image/png"
+	digest := sha256.Sum256(source)
+	size := int64(len(source))
+	fixture := &releaseCoverRepositoryFixture{cover: persistence.ReleaseCover{
+		ReleaseID:          releaseID,
+		Revision:           2,
+		Mode:               "manual",
+		SelectedGeneration: &generation,
+		SelectedBytes:      source,
+		SelectedMIME:       &mime,
+		SelectedSHA256:     digest[:],
+		SelectedSize:       &size,
+	}}
+	result, err := NewReleaseCovers(fixture).Thumbnail(context.Background(), releaseID, generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.MIME != "image/png" || bytes.Equal(result.Data, source) {
+		t.Fatalf("thumbnail MIME = %q, unchanged = %t", result.MIME, bytes.Equal(result.Data, source))
+	}
+	format, width, height, err := artwork.Inspect(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "png" || width > releaseCoverThumbnailDimension || height > releaseCoverThumbnailDimension {
+		t.Fatalf("thumbnail = %s %dx%d, want png within %d px", format, width, height, releaseCoverThumbnailDimension)
+	}
+	if width != 160 || height != 80 {
+		t.Fatalf("thumbnail dimensions = %dx%d, want 160x80", width, height)
+	}
+	if fixture.selectedReadCalls != 1 || fixture.detailReadCalls != 0 {
+		t.Fatalf("lookups = selected:%d detail:%d, want selected only", fixture.selectedReadCalls, fixture.detailReadCalls)
+	}
+}
+
+func TestReleaseCoverThumbnailRejectsPendingMissingAndAbsentReleases(t *testing.T) {
+	releaseID, selectedID, pendingID := uuid.New(), uuid.New(), uuid.New()
+	selectedMIME, pendingMIME := "image/png", "image/png"
+	fixture := &releaseCoverRepositoryFixture{cover: persistence.ReleaseCover{
+		ReleaseID:          releaseID,
+		Revision:           2,
+		Mode:               "manual",
+		SelectedGeneration: &selectedID,
+		SelectedBytes:      releaseCoverPNG(t),
+		SelectedMIME:       &selectedMIME,
+		PendingGeneration:  &pendingID,
+		PendingBytes:       releaseCoverPNG(t),
+		PendingMIME:        &pendingMIME,
+	}}
+	service := NewReleaseCovers(fixture)
+	if _, err := service.Thumbnail(context.Background(), releaseID, pendingID); !IsLibraryReleaseCoverNotFound(err) {
+		t.Fatalf("pending thumbnail error = %v, want not found", err)
+	}
+	if _, err := service.Thumbnail(context.Background(), releaseID, uuid.New()); !IsLibraryReleaseCoverNotFound(err) {
+		t.Fatalf("stale thumbnail error = %v, want not found", err)
+	}
+	fixture.readErr = persistence.ErrLibraryReleaseNotFound
+	if _, err := service.Thumbnail(context.Background(), releaseID, selectedID); !IsLibraryReleaseCoverNotFound(err) {
+		t.Fatalf("missing release thumbnail error = %v, want not found", err)
+	}
+}
+
+func TestReleaseCoverThumbnailWaitsForSlotBeforeRepositoryReadAndTimesOut(t *testing.T) {
+	releaseID, generation := uuid.New(), uuid.New()
+	source := releaseCoverPNGAtSize(t, 640, 320, color.White)
+	mime := "image/png"
+	digest := sha256.Sum256(source)
+	size := int64(len(source))
+	fixture := &releaseCoverRepositoryFixture{cover: persistence.ReleaseCover{
+		ReleaseID:          releaseID,
+		Revision:           2,
+		Mode:               "manual",
+		SelectedGeneration: &generation,
+		SelectedBytes:      source,
+		SelectedMIME:       &mime,
+		SelectedSHA256:     digest[:],
+		SelectedSize:       &size,
+	}}
+	covers := NewReleaseCovers(fixture)
+	covers.thumbnailTimeout = 20 * time.Millisecond
+	covers.thumbnailSlots <- struct{}{}
+	_, err := covers.Thumbnail(context.Background(), releaseID, generation)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued thumbnail error = %v, want deadline exceeded", err)
+	}
+	if fixture.selectedReadCalls != 0 {
+		t.Fatalf("queued thumbnail read repository %d times before acquiring a slot", fixture.selectedReadCalls)
+	}
+	<-covers.thumbnailSlots
+	if _, err := covers.Thumbnail(context.Background(), releaseID, generation); err != nil {
+		t.Fatalf("thumbnail after waiting for a slot: %v", err)
+	}
+	if fixture.selectedReadCalls != 1 {
+		t.Fatalf("selected reads = %d, want 1", fixture.selectedReadCalls)
 	}
 }
 

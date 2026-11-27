@@ -20,9 +20,10 @@ const analysisSafeProbe = "managed ffprobe is unavailable"
 // through the real River dispatcher and real PostgreSQL: a delivery probes,
 // applies and succeeds with its work and tool holds released; a duplicate delivery runs no
 // second probe; a pinned installation that is gone fails the analysis with the
-// previous variant untouched and both holds released; an explicit retry of the
-// failed probe step succeeds; an apply whose terminal update fails leaves the
-// previous variant linked; and a deleted installation refuses a later retry.
+// previous variant untouched and both holds released; a failed automatic batch
+// retries only its failed probe step and preserves the successful digest; an
+// apply whose terminal update fails leaves the previous variant linked; and a
+// deleted installation refuses a later retry.
 func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
@@ -74,28 +75,23 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	fixture.restoreFFProbe(t)
 
-	// Batch operations are not retried as a whole after one step failed; the
-	// failed step remains independently retryable.
-	jobsBeforeRetry := fixture.countJobs(t, ctx, failed.ID)
-	if _, err := fixture.operations.Retry(ctx, failed.ID); err == nil || err.Error() != "retry operation: source analysis batch operations cannot be retried" {
-		t.Fatalf("retry of a failed file batch = %v, want exact-step retry requirement", err)
-	}
-	assertOperationStage(t, ctx, fixture.setup, failed.ID, "failed", service.SourceAnalysisStageApplying)
-	requireAnalysisHolds(t, ctx, fixture, failed.ID, nil, nil)
-	if jobs := fixture.countJobs(t, ctx, failed.ID); jobs != jobsBeforeRetry {
-		t.Fatalf("River jobs for the refused retry = %d, want the unchanged %d", jobs, jobsBeforeRetry)
-	}
-
-	// Retry the original failed probe through the step API after restoring ffprobe.
+	// A failed automatic single-work batch retries only the step that this
+	// operation left failed. The successful SHA-256 identity keeps its result.
 	analysis := service.NewSourceAnalysisOperations(
 		persistence.NewSourceAnalysisStartStore(fixture.database), fixture.registry, fixture.registry, fixture.platform, fixture.client,
 	)
-	retried, err := analysis.RetryStep(ctx, service.SourceAnalysisStepRequest{
-		RootID: fixture.root.ID, LocationID: fixture.track.ID, Step: persistence.SourceStepProbe,
-		ExpectedSizeBytes: fixture.track.SizeBytes, ExpectedMtime: fixture.track.Mtime,
-	})
+	retried, err := analysis.RetryOperation(ctx, failed.ID)
 	if err != nil {
-		t.Fatalf("retry the transient tool failure: %v", err)
+		t.Fatalf("retry the failed automatic batch: %v", err)
+	}
+	var retriedSnapshot persistence.SourceAnalysisOperationSnapshot
+	if err := json.Unmarshal(retried.InputSnapshot, &retriedSnapshot); err != nil {
+		t.Fatalf("decode retried analysis snapshot: %v", err)
+	}
+	if len(retriedSnapshot.SelectedSteps) != 1 || retriedSnapshot.SelectedSteps[0].WorkID != fixture.work.ID ||
+		retriedSnapshot.SelectedSteps[0].Step != persistence.SourceStepProbe ||
+		retriedSnapshot.RetryFailedOperationID == nil || *retriedSnapshot.RetryFailedOperationID != failed.ID {
+		t.Fatalf("retried selected steps = %+v, want only the failed probe", retriedSnapshot.SelectedSteps)
 	}
 	awaitRiverCompletion(t, ctx, fixture.events, *retried.RiverJobID)
 	assertOperationStage(t, ctx, fixture.setup, retried.ID, "succeeded", service.SourceAnalysisStageApplying)

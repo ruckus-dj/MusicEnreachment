@@ -274,6 +274,7 @@ func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snapshot.SHA256Enabled != nil || snapshot.TargetStep == nil || *snapshot.TargetStep != step ||
+		snapshot.RetryFailedOperationID == nil || *snapshot.RetryFailedOperationID != original.ID ||
 		snapshot.RerunTarget == nil || *snapshot.RerunTarget || len(snapshot.Tools) != 0 ||
 		snapshot.CacheOnlyReuse != nil || snapshot.CacheOnlyFPCalcVersion != "" ||
 		len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != workID ||
@@ -282,6 +283,71 @@ func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 		len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0] != currentTool ||
 		original.TargetSourceRootID != nil || original.TargetSourceLocationID != nil || original.TargetWorkID != nil || original.TargetStep != nil {
 		t.Fatalf("retry operation/snapshot did not use current transient tool context: operation=%+v snapshot=%+v", operation, snapshot)
+	}
+}
+
+func TestRetryOperationBatchRetriesOnlyStepsFailedByTheOriginalOperation(t *testing.T) {
+	rootID, locationID, workID, installationID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mtime := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
+	rerun := false
+	raw, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion, Mode: persistence.SourceAnalysisModeBatch,
+		WorkIDs: []uuid.UUID{workID}, RerunTarget: &rerun,
+		SelectedSteps: []persistence.SourceAnalysisStepSelection{
+			{WorkID: workID, Step: persistence.SourceStepSHA256},
+			{WorkID: workID, Step: persistence.SourceStepProbe},
+			{WorkID: workID, Step: persistence.SourceStepFingerprint},
+			{WorkID: workID, Step: persistence.SourceStepMetadata},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := &persistence.Operation{
+		ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "failed", Stage: "failed",
+		SourceAnalysisMode: persistence.SourceAnalysisModeBatch, InputSnapshot: raw,
+	}
+	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
+	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
+	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
+	otherOperationID := uuid.New()
+	repository := &sourceAnalysisStartRepositoryFixture{
+		operations:     map[uuid.UUID]*persistence.Operation{original.ID: original},
+		normalizedWork: work, normalizedLocation: location,
+		detail: &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Work: work, Steps: []persistence.SourceAnalysisStep{
+			{WorkID: workID, Step: "sha256", State: "succeeded", LastOperationID: &original.ID},
+			{WorkID: workID, Step: "probe", State: "failed", LastOperationID: &original.ID, SafeError: new("The technical analysis could not be completed.")},
+			{WorkID: workID, Step: "fingerprint", State: "failed", LastOperationID: &otherOperationID},
+			{WorkID: workID, Step: "metadata", State: "succeeded", LastOperationID: &original.ID},
+		}},
+		installation: &persistence.ToolInstallation{
+			ID: installationID, PackageKind: "ffmpeg", State: "ready", RelativePath: "ffmpeg/8.0",
+			PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "ffmpeg 8.0 + ffprobe 8.0", VerifiedAt: new(time.Now()),
+			ExecutableVerificationOutput: []byte(`{"ffmpeg":"ffmpeg version 8.0 Copyright","ffprobe":"ffprobe version 8.0 Copyright"}`),
+		},
+	}
+	runtime := sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{ActiveFFmpegInstallation: installationID.String(), ActiveFPCalcInstallation: uuid.NewString()})
+	analysis := NewSourceAnalysisOperations(repository, sourceAnalysisStartSetupFixture(true), runtime, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
+	operation, err := analysis.RetryOperation(context.Background(), original.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot persistence.SourceAnalysisOperationSnapshot
+	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Mode != persistence.SourceAnalysisModeBatch || snapshot.RetryFailedOperationID == nil || *snapshot.RetryFailedOperationID != original.ID ||
+		snapshot.RerunTarget == nil || *snapshot.RerunTarget || len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != workID ||
+		len(snapshot.SelectedSteps) != 1 || snapshot.SelectedSteps[0].WorkID != workID || snapshot.SelectedSteps[0].Step != persistence.SourceStepProbe {
+		t.Fatalf("retry batch snapshot = %+v, want only the probe failed by the original operation", snapshot)
+	}
+	if len(snapshot.Tools) != 0 || len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0].Executable != "ffprobe" ||
+		operation.SourceAnalysisMode != persistence.SourceAnalysisModeBatch || operation.TargetWorkID != nil || operation.TargetStep != nil ||
+		operation.TargetSourceLocationID != nil || operation.TargetSourceRootID == nil || *operation.TargetSourceRootID != rootID {
+		t.Fatalf("retry batch operation = %+v, want a single-work batch with only a transient probe tool", operation)
+	}
+	if len(repository.created) != 1 || original.TargetSourceRootID != nil || original.TargetWorkID != nil || original.TargetStep != nil {
+		t.Fatalf("admitted=%d original=%+v", len(repository.created), original)
 	}
 }
 

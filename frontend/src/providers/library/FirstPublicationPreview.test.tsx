@@ -17,6 +17,7 @@ import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 
 const api = vi.hoisted(() => ({
   getLibraryFirstPublicationPreview: vi.fn(),
+  prepareLibraryReleaseCover: vi.fn(),
   startLibraryFirstPublication: vi.fn(),
 }));
 
@@ -152,11 +153,63 @@ beforeEach(() => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "ru");
   vi.stubGlobal("localStorage", storage);
+  api.prepareLibraryReleaseCover.mockResolvedValue({ status: 204 });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+it("waits for optional default cover preparation before reading the frozen preview", async () => {
+  let failArtwork!: (reason: Error) => void;
+  api.prepareLibraryReleaseCover.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        failArtwork = reject;
+      }),
+  );
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: preview,
+  });
+  render(component(0));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  expect(api.prepareLibraryReleaseCover).toHaveBeenCalledWith("release-1", {
+    position_id: "position-1",
+  });
+  expect(api.getLibraryFirstPublicationPreview).not.toHaveBeenCalled();
+  await act(async () => failArtwork(new Error("cover provider unavailable")));
+  expect(
+    await screen.findByRole("button", { name: "Опубликовать" }),
+  ).toBeEnabled();
+});
+
+it("reports artwork still being prepared and retries the preview", async () => {
+  api.prepareLibraryReleaseCover.mockResolvedValueOnce({ status: 503 });
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: preview,
+  });
+  render(component(0));
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Обложка ещё подготавливается.",
+  );
+  expect(api.getLibraryFirstPublicationPreview).not.toHaveBeenCalled();
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Опубликовать" }),
+  ).toBeVisible();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
 });
 
 it("keeps a pending admission fenced across a metadata refresh and delivers its admitted operation", async () => {
@@ -392,20 +445,21 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
   expect(aggregate).toHaveTextContent('["Track","First"]');
   expect(aggregate).toHaveTextContent("отсутствует");
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(3);
-  expect(api.getLibraryFirstPublicationPreview).toHaveBeenNthCalledWith(
-    1,
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
     "release-1",
     "first",
     { mode: "ordinary" },
     { cache: "no-store" },
   );
-  expect(api.getLibraryFirstPublicationPreview).toHaveBeenNthCalledWith(
-    2,
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
     "release-1",
     "current",
     { workflow: "retained_same_path", mode: "forced" },
     { cache: "no-store" },
   );
+  expect(api.prepareLibraryReleaseCover).not.toHaveBeenCalledWith("release-1", {
+    position_id: "current",
+  });
 
   fireEvent.click(screen.getByRole("radio", { name: "Обычная" }));
   expect(confirm).toBeDisabled();

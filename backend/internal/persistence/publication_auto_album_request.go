@@ -167,19 +167,27 @@ func (repository *SetupManagerRepository) ReadPublicationAutoAlbum(ctx context.C
 	return readPublicationAutoAlbum(ctx, repository.db, applyID)
 }
 
+// publicationAutoAlbumRead keeps the transient grouping freshness flag separate
+// from the durable request. Every other selected column is the exact request
+// identity a caller compares against.
+type publicationAutoAlbumRead struct {
+	PublicationAutoAlbumRequest `bun:",extend"`
+	NeedsRefresh                bool `bun:"needs_refresh"`
+}
+
 func readPublicationAutoAlbum(ctx context.Context, db bun.IDB, applyID uuid.UUID) (*PublicationAutoAlbumRequest, error) {
 	if local, err := readPublicationLocalAutoAlbum(ctx, db, applyID); err != nil || local != nil {
 		return local, err
 	}
-	var request PublicationAutoAlbumRequest
-	query := `SELECT album.apply_operation_id,album.output_epoch,album.release_id,album.scope
+	var row publicationAutoAlbumRead
+	query := `SELECT album.apply_operation_id,album.output_epoch,album.release_id,album.scope,grouping.needs_refresh
 		FROM publication_automatic_album album
 		JOIN publication_namespace_state state ON state.singleton AND state.output_epoch=album.output_epoch
 		JOIN matching_apply_receipt receipt ON receipt.apply_operation_id=album.apply_operation_id AND receipt.outcome='applied'
 		JOIN matching_apply_request apply ON apply.apply_operation_id=receipt.apply_operation_id
 		JOIN matching_run_target target ON target.run_id=apply.parent_run_id AND target.group_id=receipt.group_id
 		JOIN incoming_group current_group ON current_group.id=target.group_id AND current_group.revision=target.captured_group_revision
-		JOIN incoming_grouping_state grouping ON grouping.singleton AND NOT grouping.needs_refresh
+		JOIN incoming_grouping_state grouping ON grouping.singleton
 		JOIN incoming_match_evaluation evaluation ON evaluation.group_id=target.group_id AND evaluation.evaluation_revision=apply.evaluation_revision
 		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id AND generation.current_run_id=target.run_id AND generation.high_water=target.target_generation
 		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=target.group_id
@@ -189,11 +197,22 @@ func readPublicationAutoAlbum(ctx context.Context, db bun.IDB, applyID uuid.UUID
 	if _, locking := db.(bun.Tx); locking {
 		query += ` FOR SHARE OF album, current_group, grouping, generation, evaluation`
 	}
-	err := db.NewRaw(query, applyID).Scan(ctx, &request)
+	err := db.NewRaw(query, applyID).Scan(ctx, &row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return &request, err
+	if err != nil {
+		return nil, err
+	}
+	// A dirty grouping projection is a temporary deferral: every durable fence
+	// above still matched, so the request must survive until reconciliation and
+	// the worker can snooze instead of completing it. A request that fails any
+	// other fence above is no longer eligible and remains nil so the worker can
+	// complete it.
+	if row.NeedsRefresh {
+		return nil, ErrMatchingTargetNeedsRefresh
+	}
+	return &row.PublicationAutoAlbumRequest, nil
 }
 
 func validatePublicationAutoAlbum(ctx context.Context, tx bun.Tx, admission PublicationAdmission, expected *PublicationAutoAlbumRequest) error {

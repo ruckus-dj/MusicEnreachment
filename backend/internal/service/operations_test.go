@@ -186,12 +186,45 @@ func TestNormalizedSingleStepAnalysisRetryDelegatesAndNotifiesNewID(t *testing.T
 	}
 }
 
-func TestAnalysisRetryRefusesBatchAndMalformedSnapshotsWithoutEnqueue(t *testing.T) {
+func TestNormalizedSingleWorkBatchAnalysisRetryDelegatesAndNotifiesNewID(t *testing.T) {
+	ctx := context.Background()
+	workID := uuid.New()
+	rerun := false
+	raw, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion, Mode: persistence.SourceAnalysisModeBatch,
+		WorkIDs: []uuid.UUID{workID}, RerunTarget: &rerun,
+		SelectedSteps: []persistence.SourceAnalysisStepSelection{{WorkID: workID, Step: persistence.SourceStepProbe}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := &persistence.Operation{
+		ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "failed", Stage: "failed",
+		InputSnapshot: raw, SourceAnalysisMode: persistence.SourceAnalysisModeBatch,
+	}
+	retried := &persistence.Operation{ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued"}
+	retryer := &fakeSourceAnalysisRetryer{result: retried}
+	repository := &riverMemoryOperations{memoryOperations: &memoryOperations{values: map[uuid.UUID]*persistence.Operation{existing.ID: existing}}}
+	operations := NewOperationsWithRiver(repository, nil, retryer)
+
+	got, err := operations.Retry(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("retry batch analysis: %v", err)
+	}
+	if got != retried || retryer.called != 1 || retryer.target != existing.ID {
+		t.Fatalf("retry delegation = (%p, calls %d, target %s), want (%p, 1, %s)", got, retryer.called, retryer.target, retried, existing.ID)
+	}
+	if repository.genericRetries != 0 {
+		t.Fatalf("generic retry count = %d, want 0", repository.genericRetries)
+	}
+}
+
+func TestAnalysisRetryRefusesMalformedSnapshotsWithoutEnqueue(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		operation *persistence.Operation
 	}{
-		{name: "batch", operation: analysisRetryOperation(persistence.SourceAnalysisModeBatch)},
+		{name: "batch without selected steps", operation: analysisRetryOperation(persistence.SourceAnalysisModeBatch)},
 		{name: "legacy snapshot", operation: &persistence.Operation{ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "failed", InputSnapshot: []byte(`{"target":"old"}`)}},
 	} {
 		for _, withRiver := range []bool{false, true} {

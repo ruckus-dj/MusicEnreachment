@@ -84,6 +84,13 @@ func TestLibraryFirstPublicationAdmissionHTTP(t *testing.T) {
 	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), persistence.ErrPublicationAdmissionConflict.Error()) {
 		t.Fatalf("stale admission status=%d: %s", response.Code, response.Body)
 	}
+
+	fake.admitErr = service.ErrPublicationArtwork
+	response = libraryPublicationRequest(t, handler, http.MethodPost, path,
+		`{"preview_digest":"`+digest+`","expected_epoch":"`+epoch.String()+`"}`)
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), service.ErrPublicationArtwork.Error()) {
+		t.Fatalf("pending artwork status=%d: %s", response.Code, response.Body)
+	}
 }
 
 func TestMatchingReceiptPublicationHTTPUsesOnlyExactOrdinaryWorkflow(t *testing.T) {

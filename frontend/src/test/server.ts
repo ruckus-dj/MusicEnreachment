@@ -8,6 +8,10 @@ import type { SourceArtifactCleanupCandidatesBody } from "../api/generated/clien
 // after every test. Suites that need other behavior call server.use(...), which
 // takes priority for that test only.
 export const defaultHandlers = [
+  http.post(
+    "/api/library/releases/:releaseId/cover/prepare",
+    () => new HttpResponse(null, { status: 204 }),
+  ),
   // SourcesScreen mounts SourceArtifactCleanupPanel, which reads candidates on
   // first render; the empty baseline keeps unrelated tests off the error path.
   http.get("/api/source-analysis/artifacts/cleanup", () =>

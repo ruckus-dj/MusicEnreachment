@@ -222,14 +222,20 @@ func (service *LibraryPublications) previewFirstCapturedWithReceipt(ctx context.
 			return FirstPublicationPreview{}, err
 		}
 	}
-	if contextSnapshot.Library.Current != nil {
-		coverPlan, err := planFirstPublicationCover(ctx, os.TempDir(), contextSnapshot.EffectiveCoverInput)
+	if coverInput, ok := firstPublicationPreviewCoverInput(contextSnapshot, releaseID); ok {
+		coverPlan, err := planFirstPublicationCover(ctx, os.TempDir(), coverInput)
 		if err != nil {
 			return FirstPublicationPreview{}, fmt.Errorf("plan first publication cover: %w", err)
 		}
 		preview.CoverPlan = &coverPlan
-		if err := foldFirstPublicationCoverPlanDigest(&preview, coverPlan); err != nil {
-			return FirstPublicationPreview{}, err
+		// CURRENT comparison binds the exact derivative because it is part of
+		// the rewrite witness. FIRST cover facts stay informational: the
+		// effective cover revision, mode, and generation already participate in
+		// the context digest, and transaction admission revalidates the bytes.
+		if contextSnapshot.Library.Current != nil {
+			if err := foldFirstPublicationCoverPlanDigest(&preview, coverPlan); err != nil {
+				return FirstPublicationPreview{}, err
+			}
 		}
 	}
 	current := contextSnapshot.Library.Current
@@ -665,6 +671,21 @@ func digestString(digest []byte) string {
 		return ""
 	}
 	return hex.EncodeToString(digest)
+}
+
+// firstPublicationPreviewCoverInput reports whether the coherent snapshot
+// carries a usable effective cover receipt for this release. First
+// publications plan from the same receipt as CURRENT comparisons so an explicit
+// prepare step is visible in the preview without any late provider lookup.
+func firstPublicationPreviewCoverInput(snapshot *persistence.LibraryFirstPublicationContext, releaseID uuid.UUID) (persistence.PublicationAttemptCoverInput, bool) {
+	if snapshot == nil {
+		return persistence.PublicationAttemptCoverInput{}, false
+	}
+	input := snapshot.EffectiveCoverInput
+	if input.ReleaseID != releaseID || input.Revision < 1 || (input.Mode != "automatic" && input.Mode != "manual") {
+		return persistence.PublicationAttemptCoverInput{}, false
+	}
+	return input, true
 }
 
 func foldFirstPublicationCoverPlanDigest(preview *FirstPublicationPreview, plan FirstPublicationCoverPlan) error {

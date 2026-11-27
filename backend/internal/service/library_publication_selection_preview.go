@@ -25,6 +25,10 @@ const (
 	libraryPublicationSelectionPreviewWorkers           = 2
 	libraryPublicationSelectionPreviewGlobalConcurrency = 4
 	libraryPublicationSelectionPreviewTimeout           = 30 * time.Second
+	// Cover preparation is an explicit side effect of a bulk preview. Its own
+	// bounded budget keeps slow artwork work from consuming the audio planning
+	// deadline; a partial progress survives and the caller can retry.
+	libraryPublicationSelectionCoverPreparationTimeout = 20 * time.Second
 )
 
 // ErrLibraryPublicationSelectionPreviewInvalid marks a malformed selection
@@ -73,6 +77,10 @@ type LibraryPublicationSelectionPosition struct {
 type LibraryPublicationSelectionPreviewRequest struct {
 	Mode      string
 	Positions []LibraryPublicationSelectionPosition
+	// PrepareCovers explicitly allows a POST preview to prepare absent
+	// automatic first-publication cover authority once per release before
+	// per-position planning. Read-only callers leave it false.
+	PrepareCovers bool
 }
 
 type LibraryPublicationSelectionPreview struct {
@@ -144,6 +152,23 @@ func (service *LibraryPublications) PreviewPublicationSelection(ctx context.Cont
 	// an error here still produces a safe per-position disposition.
 	selectedTools, _ := service.selectedFFmpegPairForSettings(planningContext, runtimeSettings)
 
+	// Preparation is explicit and only applies to ordinary selections. It runs
+	// before any per-position planning snapshot so those snapshots see the cover
+	// authority the preparation just froze. A pending provider answer is reported
+	// to the caller instead of being converted into "no cover"; the retry can
+	// resume from any originals already cached.
+	if request.PrepareCovers && mode == firstPublicationPreviewModeOrdinary && (service.artwork != nil || service.coverAcquisition != nil) {
+		coverContext, cancelCover := context.WithTimeout(ctx, libraryPublicationSelectionCoverPreparationTimeout)
+		err := service.prepareSelectionCovers(coverContext, request.Positions, repository)
+		cancelCover()
+		if err != nil {
+			if ctx.Err() != nil {
+				return LibraryPublicationSelectionPreview{}, ctx.Err()
+			}
+			return LibraryPublicationSelectionPreview{}, err
+		}
+	}
+
 	items := make([]LibraryPublicationSelectionPreviewItem, len(request.Positions))
 	indices := make(chan int)
 	var workers sync.WaitGroup
@@ -179,6 +204,38 @@ dispatch:
 	}
 	markSelectionPreviewPathClashes(items)
 	return LibraryPublicationSelectionPreview{Mode: mode, Items: items}, nil
+}
+
+// prepareSelectionCovers resolves the first eligible never-published position
+// of each release and performs at most one artwork preparation per release.
+// Pending or unavailable provider answers are returned so the caller can show a
+// retryable warning; they are never treated as definitive cover absence. Only
+// request cancellation aborts silently.
+func (service *LibraryPublications) prepareSelectionCovers(ctx context.Context, positions []LibraryPublicationSelectionPosition, repository firstPublicationContextReader) error {
+	prepared := make(map[uuid.UUID]struct{}, len(positions))
+	for _, position := range positions {
+		if _, done := prepared[position.ReleaseID]; done {
+			continue
+		}
+		snapshot, err := repository.ReadLibraryFirstPublicationContext(ctx, position.ReleaseID, position.PositionID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+		if !firstPublicationCoverPreparationEligible(snapshot) {
+			continue
+		}
+		prepared[position.ReleaseID] = struct{}{}
+		if _, err := service.prepareFirstCover(ctx, position.ReleaseID, position.PositionID); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (service *LibraryPublications) planSelectionPreviewPosition(requestContext, ctx context.Context, position LibraryPublicationSelectionPosition, mode string, repository firstPublicationContextReader, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection) LibraryPublicationSelectionPreviewItem {

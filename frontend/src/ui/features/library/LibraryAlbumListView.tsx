@@ -12,6 +12,7 @@ import {
   LibraryAlbumPositionsView,
   type LibraryAlbumPositionsViewProps,
 } from "./LibraryAlbumPositionsView";
+import { LibraryEditionArtwork } from "./LibraryEditionArtwork";
 import {
   LibraryMissingEditionView,
   type LibraryMissingEditionViewProps,
@@ -67,6 +68,11 @@ export interface LibraryAlbumRow {
   /** Local coverage may have a different denominator than cached audio totals. */
   publicationCoverage?: { total: number; complete: boolean };
   provider: "musicbrainz" | "local";
+  /**
+   * Cover thumbnail URL supplied by the host. The shared artwork tile
+   * shows the title initial when this is absent or the image fails to load.
+   */
+  coverSrc?: string | null;
   /** Per-row selection; `null`/absent rows have no checkbox. */
   selection?: LibraryAlbumSelectionControl | null;
 }
@@ -218,6 +224,15 @@ type Text = (typeof copy)[keyof typeof copy];
 
 function albumTitle(album: LibraryAlbumRow, text: Text) {
   return album.title || text.untitled;
+}
+
+function AlbumArtwork({ album, text }: { album: LibraryAlbumRow; text: Text }) {
+  return (
+    <LibraryEditionArtwork
+      title={albumTitle(album, text)}
+      imageSrc={album.coverSrc ?? undefined}
+    />
+  );
 }
 
 function CreditNames({
@@ -509,6 +524,7 @@ export function LibraryAlbumListView({
           <article className={cardClass} key={album.id}>
             <div className="flex min-w-0 items-start gap-2">
               {checkbox(album)}
+              <AlbumArtwork album={album} text={text} />
               <div className="min-w-0">{heading(album)}</div>
             </div>
             <dl className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-1">
@@ -586,7 +602,14 @@ export function LibraryAlbumListView({
                   className={album.missing ? "bg-[var(--raised)]" : undefined}
                 >
                   <Cell className={selectColumn}>{checkbox(album)}</Cell>
-                  <Cell>{heading(album)}</Cell>
+                  <Cell>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <AlbumArtwork album={album} text={text} />
+                      <div className="grid min-w-0 gap-0.5">
+                        {heading(album)}
+                      </div>
+                    </div>
+                  </Cell>
                   {fields(album, text).map((field, index) => (
                     <Cell key={headings[index + 2]}>{field}</Cell>
                   ))}

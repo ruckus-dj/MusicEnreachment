@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
@@ -26,9 +29,25 @@ func IsLibraryReleaseCoverInvalid(err error) bool  { return errors.Is(err, ErrRe
 
 type releaseCoverRepository interface {
 	ReadReleaseCover(context.Context, uuid.UUID) (persistence.ReleaseCover, error)
+	ReadSelectedReleaseCover(context.Context, uuid.UUID, uuid.UUID) (persistence.SelectedReleaseCover, error)
 	SetPendingReleaseCover(context.Context, uuid.UUID, int64, uuid.UUID, []byte, string) (persistence.ReleaseCover, error)
 	ReadReleaseDetail(context.Context, uuid.UUID) (*persistence.LibraryReleaseDetail, error)
 }
+
+// releaseCoverBoundRepository fences a pending write on the release's exact
+// MusicBrainz provider binding inside the same transaction as the revision CAS.
+type releaseCoverBoundRepository interface {
+	SetPendingReleaseCoverFromMusicBrainz(context.Context, uuid.UUID, int64, string, uuid.UUID, []byte, string) (persistence.ReleaseCover, error)
+}
+
+const (
+	// releaseCoverThumbnailDimension bounds album-tile output while leaving
+	// enough pixels for high-density displays.
+	releaseCoverThumbnailDimension = 160
+	// releaseCoverThumbnailTimeout bounds the whole thumbnail request, including
+	// waiting for the single generation slot.
+	releaseCoverThumbnailTimeout = 10 * time.Second
+)
 
 type ReleaseCoverSummary struct {
 	ReleaseID          uuid.UUID  `json:"release_id"`
@@ -58,6 +77,13 @@ type ReleaseCovers struct {
 	admission     releaseCoverAdmissionRepository
 	river         persistence.RiverInserter
 	platform      tools.Platform
+
+	// thumbnailSlots bounds concurrent selected-cover thumbnail generation so
+	// list tiles cannot compete with publication artwork work for libvips.
+	thumbnailSlots chan struct{}
+	// thumbnailTimeout bounds the whole thumbnail request, including slot wait.
+	// It is a field so tests can shorten it.
+	thumbnailTimeout time.Duration
 }
 
 type releaseCoverSettings interface {
@@ -74,7 +100,11 @@ type releaseCoverAdmissionRepository interface {
 }
 
 func NewReleaseCovers(repository releaseCoverRepository) *ReleaseCovers {
-	return &ReleaseCovers{repository: repository}
+	return &ReleaseCovers{
+		repository:       repository,
+		thumbnailSlots:   make(chan struct{}, 1),
+		thumbnailTimeout: releaseCoverThumbnailTimeout,
+	}
 }
 
 func (service *ReleaseCovers) WithPublicationCoordinator(coordinator *publication.Coordinator) *ReleaseCovers {
@@ -96,6 +126,20 @@ func (service *ReleaseCovers) Read(ctx context.Context, releaseID uuid.UUID) (Re
 }
 
 func (service *ReleaseCovers) Save(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, data []byte, mime string) (ReleaseCoverSummary, error) {
+	return service.save(ctx, releaseID, expectedRevision, data, mime, nil)
+}
+
+// SaveFromMusicBrainz records pending artwork from a listed MusicBrainz image.
+// The pending write succeeds only while the release is still linked to the same
+// exact MusicBrainz release MBID; a relink conflicts with the revision CAS.
+func (service *ReleaseCovers) SaveFromMusicBrainz(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, releaseMBID string, data []byte, mime string) (ReleaseCoverSummary, error) {
+	if releaseMBID == "" || strings.TrimSpace(releaseMBID) != releaseMBID {
+		return ReleaseCoverSummary{}, fmt.Errorf("save library release cover: %w", ErrReleaseCoverInvalid)
+	}
+	return service.save(ctx, releaseID, expectedRevision, data, mime, &releaseMBID)
+}
+
+func (service *ReleaseCovers) save(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, data []byte, mime string, expectedMBID *string) (ReleaseCoverSummary, error) {
 	if service == nil || service.repository == nil {
 		return ReleaseCoverSummary{}, errors.New("library release cover service is unavailable")
 	}
@@ -117,7 +161,14 @@ func (service *ReleaseCovers) Save(ctx context.Context, releaseID uuid.UUID, exp
 		if err != nil {
 			return ReleaseCoverSummary{}, fmt.Errorf("create release cover generation: %w", err)
 		}
-		cover, err := service.repository.SetPendingReleaseCover(ctx, releaseID, expectedRevision, generation, data, mime)
+		var cover persistence.ReleaseCover
+		if expectedMBID == nil {
+			cover, err = service.repository.SetPendingReleaseCover(ctx, releaseID, expectedRevision, generation, data, mime)
+		} else if bound, ok := service.repository.(releaseCoverBoundRepository); ok {
+			cover, err = bound.SetPendingReleaseCoverFromMusicBrainz(ctx, releaseID, expectedRevision, *expectedMBID, generation, data, mime)
+		} else {
+			return ReleaseCoverSummary{}, errors.New("library release cover repository does not support bound saves")
+		}
 		if errors.Is(err, persistence.ErrReleaseCoverConflict) {
 			return ReleaseCoverSummary{}, fmt.Errorf("save library release cover: %w", ErrReleaseCoverConflict)
 		}
@@ -152,6 +203,75 @@ func (service *ReleaseCovers) Image(ctx context.Context, releaseID, generation u
 		return releaseCoverPreview(ctx, *cover.PendingMIME, cover.PendingBytes)
 	}
 	return ReleaseCoverImage{}, ErrReleaseCoverNotFound
+}
+
+// Thumbnail serves a bounded PNG of the current selected generation only. One
+// request slot is acquired before the lookup so queued tiles do not load cover
+// bytes or stage artwork while another thumbnail owns libvips. The selected
+// lookup also avoids release detail and pending manual bytes.
+func (service *ReleaseCovers) Thumbnail(ctx context.Context, releaseID, generation uuid.UUID) (ReleaseCoverImage, error) {
+	if service == nil || service.repository == nil || service.thumbnailSlots == nil {
+		return ReleaseCoverImage{}, errors.New("library release cover service is unavailable")
+	}
+	if releaseID == uuid.Nil || generation == uuid.Nil {
+		return ReleaseCoverImage{}, fmt.Errorf("read library release cover thumbnail: %w", ErrReleaseCoverInvalid)
+	}
+	timeout := service.thumbnailTimeout
+	if timeout <= 0 {
+		timeout = releaseCoverThumbnailTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	select {
+	case service.thumbnailSlots <- struct{}{}:
+		defer func() { <-service.thumbnailSlots }()
+	case <-ctx.Done():
+		return ReleaseCoverImage{}, fmt.Errorf("read library release cover thumbnail: %w", ctx.Err())
+	}
+	cover, err := service.repository.ReadSelectedReleaseCover(ctx, releaseID, generation)
+	if err != nil {
+		return ReleaseCoverImage{}, mapReleaseCoverReadError("read", err)
+	}
+	if cover.Generation == nil || *cover.Generation != generation {
+		return ReleaseCoverImage{}, ErrReleaseCoverNotFound
+	}
+	thumbnail, err := releaseCoverThumbnail(ctx, cover.Data)
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("read library release cover thumbnail: %w", err)
+	}
+	return thumbnail, nil
+}
+
+func releaseCoverThumbnail(ctx context.Context, data []byte) (ReleaseCoverImage, error) {
+	if len(data) == 0 {
+		return ReleaseCoverImage{}, ErrReleaseCoverInvalid
+	}
+	tempDir, err := os.MkdirTemp("", "melotrove-cover-thumbnail-*")
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("create private release cover thumbnail directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	input, err := os.CreateTemp(tempDir, "cover-source-*")
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("create private release cover thumbnail source: %w", err)
+	}
+	inputPath := input.Name()
+	if _, err := input.Write(data); err != nil {
+		_ = input.Close()
+		return ReleaseCoverImage{}, fmt.Errorf("write private release cover thumbnail source: %w", err)
+	}
+	if err := input.Close(); err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("close private release cover thumbnail source: %w", err)
+	}
+	outputPath := filepath.Join(tempDir, "thumbnail.png")
+	if err := artwork.ThumbnailSized(ctx, inputPath, outputPath, releaseCoverThumbnailDimension); err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("create bounded release cover thumbnail: %w", err)
+	}
+	thumbnail, err := os.ReadFile(outputPath)
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("read private release cover thumbnail: %w", err)
+	}
+	return ReleaseCoverImage{MIME: "image/png", Data: thumbnail}, nil
 }
 
 func releaseCoverPreview(ctx context.Context, mime string, data []byte) (ReleaseCoverImage, error) {

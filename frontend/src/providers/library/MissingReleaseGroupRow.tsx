@@ -17,6 +17,8 @@ import type {
   LibraryEditionTracksStatus,
   LibraryMissingEditionViewProps,
 } from "../../ui/features/library/LibraryMissingEditionView";
+import { isUuid } from "./libraryRoute";
+import { providerReleaseFrontArtworkURL } from "./providerArtwork";
 
 const EDITION_PAGE_SIZE = 50;
 
@@ -185,6 +187,9 @@ export function useMissingReleaseGroupEditions(
     key: edition.provider_key,
     label: editionLabel(edition, catalogueMessage(locale, "unnamedEdition")),
     trackCount: edition.track_count,
+    imageSrc: isUuid(edition.provider_key)
+      ? providerReleaseFrontArtworkURL(edition.provider_key)
+      : null,
   }));
   const tracks: LibraryEditionTracks | null =
     selectedEditionID && trackList

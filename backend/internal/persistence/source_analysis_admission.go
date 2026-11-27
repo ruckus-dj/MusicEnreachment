@@ -204,9 +204,18 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 					}
 				}
 				if len(rows) != requestedCount {
+					if snapshot.RetryFailedOperationID != nil {
+						return fmt.Errorf("admit source analysis: every selected retry step must still be failed by the original operation")
+					}
 					return fmt.Errorf("admit source analysis: every selected step must still be pending")
 				}
 				for _, row := range rows {
+					if snapshot.RetryFailedOperationID != nil {
+						if row.State != "failed" || row.LastOperationID == nil || *row.LastOperationID != *snapshot.RetryFailedOperationID {
+							return fmt.Errorf("admit source analysis: every selected retry step must still be failed by the original operation")
+						}
+						continue
+					}
 					if row.State != "pending" {
 						return fmt.Errorf("admit source analysis: every selected step must still be pending")
 					}
@@ -224,6 +233,10 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 						}
 					} else if row.State != "failed" && (row.State != "pending" || len(row.InputSnapshot) == 0 || string(row.InputSnapshot) == "null") {
 						return fmt.Errorf("admit source analysis: single-step retry requires the exact failed step")
+					}
+					if !*snapshot.RerunTarget && snapshot.RetryFailedOperationID != nil &&
+						(row.State != "failed" || row.LastOperationID == nil || *row.LastOperationID != *snapshot.RetryFailedOperationID) {
+						return fmt.Errorf("admit source analysis: single-step retry must still be failed by the original operation")
 					}
 				}
 				projected, err := ProjectSourceAnalysisStepSnapshot(snapshot, work.ID, SourceStepName(row.Step))
@@ -290,8 +303,13 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 			if err := tx.NewRaw(`SELECT work_id,step,state,last_operation_id,input_snapshot FROM source_analysis_step WHERE work_id=? AND step=? FOR UPDATE`, selected[index].WorkID, selected[index].Step).Scan(ctx, &current); err != nil {
 				return fmt.Errorf("admit source analysis: lock selected step: %w", err)
 			}
-			if current.State != selected[index].State || !bytes.Equal(current.InputSnapshot, selected[index].InputSnapshot) {
+			if current.State != selected[index].State || !bytes.Equal(current.InputSnapshot, selected[index].InputSnapshot) ||
+				!sameOptionalUUID(current.LastOperationID, selected[index].LastOperationID) {
 				return fmt.Errorf("admit source analysis: selected step changed during admission")
+			}
+			if snapshot.RetryFailedOperationID != nil &&
+				(current.LastOperationID == nil || *current.LastOperationID != *snapshot.RetryFailedOperationID) {
+				return fmt.Errorf("admit source analysis: selected retry step changed during admission")
 			}
 			current.ProposedInput = selected[index].ProposedInput
 			selected[index] = current

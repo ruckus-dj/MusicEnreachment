@@ -110,6 +110,55 @@ func TestReleaseCoverAuthorityCASAndManualPendingIsolationPostgreSQL(t *testing.
 	}
 }
 
+func TestReadSelectedReleaseCoverSkipsPendingAndMissingReleasePostgreSQL(t *testing.T) {
+	db := testpostgres.OpenMigratedWithRiver(t)
+	ctx := context.Background()
+	repository := NewLibraryRepository(db)
+	releaseID := seedReleaseCoverRelease(t, db, ctx)
+
+	absent, err := repository.ReadSelectedReleaseCover(ctx, releaseID, uuid.New())
+	if err != nil || absent.ReleaseID != releaseID || absent.Generation != nil || len(absent.Data) != 0 {
+		t.Fatalf("absent selected cover = %#v, %v", absent, err)
+	}
+
+	pendingGeneration := uuid.New()
+	selectedBytes := releaseCoverPNG(t)
+	pending, err := repository.SetPendingReleaseCover(ctx, releaseID, 1, pendingGeneration, selectedBytes, "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unapplied, err := repository.ReadSelectedReleaseCover(ctx, releaseID, pendingGeneration)
+	if err != nil || unapplied.Generation != nil || len(unapplied.Data) != 0 {
+		t.Fatalf("pending bytes leaked into selected cover read: %#v, %v", unapplied, err)
+	}
+
+	applied, err := repository.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, pendingGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := repository.ReadSelectedReleaseCover(ctx, releaseID, pendingGeneration)
+	if err != nil || selected.Generation == nil || *selected.Generation != pendingGeneration ||
+		!bytes.Equal(selected.Data, selectedBytes) || selected.MIME == nil || *selected.MIME != "image/png" ||
+		selected.Size == nil || *selected.Size != int64(len(selectedBytes)) {
+		t.Fatalf("selected cover = %#v, %v", selected, err)
+	}
+	stale, err := repository.ReadSelectedReleaseCover(ctx, releaseID, uuid.New())
+	if err != nil || stale.Generation != nil || len(stale.Data) != 0 {
+		t.Fatalf("stale generation loaded selected bytes: %#v, %v", stale, err)
+	}
+	if _, err := repository.SetPendingReleaseCover(ctx, releaseID, applied.Revision, uuid.New(), releaseCoverPNG(t), "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	afterNewPending, err := repository.ReadSelectedReleaseCover(ctx, releaseID, pendingGeneration)
+	if err != nil || afterNewPending.Generation == nil || *afterNewPending.Generation != pendingGeneration || !bytes.Equal(afterNewPending.Data, selectedBytes) {
+		t.Fatalf("new pending choice changed selected cover read: %#v, %v", afterNewPending, err)
+	}
+
+	if _, err := repository.ReadSelectedReleaseCover(ctx, uuid.New(), uuid.New()); !errors.Is(err, ErrLibraryReleaseNotFound) {
+		t.Fatalf("missing release error = %v, want not found", err)
+	}
+}
+
 func releaseCoverPNG(t *testing.T) []byte {
 	t.Helper()
 	var encoded bytes.Buffer

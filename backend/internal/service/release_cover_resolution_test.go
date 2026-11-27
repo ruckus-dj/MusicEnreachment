@@ -33,13 +33,20 @@ type coverProviderStub struct {
 	err    error
 	calls  int
 	mbid   string
+	run    func(context.Context, io.Writer) (coverart.Result, error)
 }
 
-func (s *coverProviderStub) DownloadFront(_ context.Context, mbid string, writer io.Writer) (coverart.Result, error) {
+func (s *coverProviderStub) DownloadFront(ctx context.Context, mbid string, writer io.Writer) (coverart.Result, error) {
 	s.calls++
 	s.mbid = mbid
-	_, _ = writer.Write(s.data)
-	return s.result, s.err
+	if s.run != nil {
+		return s.run(ctx, writer)
+	}
+	_, writeErr := writer.Write(s.data)
+	if s.err != nil {
+		return s.result, s.err
+	}
+	return s.result, writeErr
 }
 
 func encodedCover(t *testing.T, format string, width, height int, c color.Color) []byte {
@@ -94,20 +101,20 @@ func encodedCoverForTest(format string, w, h int) []byte {
 
 func TestReleaseCoverResolverProviderFirstAndNoMBID(t *testing.T) {
 	local := coverCandidate("png", 100, 100, uuid.New(), uuid.New(), 1)
-	mbid := "release-mbid"
+	mbid := uuid.NewString()
 	providerBytes := encodedCoverForTest("png", 2, 2)
 	provider := &coverProviderStub{result: coverart.Result{Found: true, MIME: "image/png"}, data: providerBytes}
 	got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{local}}}, provider).Resolve(context.Background(), uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != "provider" || !bytes.Equal(got.Data, providerBytes) || provider.mbid != mbid {
-		t.Fatalf("provider was not preferred: %#v", got)
+	if got.Source != "provider" || !bytes.Equal(got.Data, providerBytes) || provider.mbid != mbid || got.ProviderMBID != mbid {
+		t.Fatalf("provider was not preferred: %#v mbid=%q", got, provider.mbid)
 	}
 	provider.result = coverart.Result{Found: false}
 	provider.data = nil
 	fallback, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{local}}}, provider).Resolve(context.Background(), uuid.New())
-	if err != nil || fallback.Source != "local" || fallback.CandidateID != local.ID {
+	if err != nil || fallback.Source != "local" || fallback.CandidateID != local.ID || fallback.ProviderMBID != "" {
 		t.Fatalf("missing provider image did not use saved local image: %+v %v", fallback, err)
 	}
 	provider.calls = 0
@@ -117,6 +124,65 @@ func TestReleaseCoverResolverProviderFirstAndNoMBID(t *testing.T) {
 	}
 	if provider.calls != 0 {
 		t.Fatal("provider called without MBID")
+	}
+}
+
+func TestReleaseCoverResolverFallsBackToSavedArtwork(t *testing.T) {
+	validLocal := coverCandidate("png", 50, 50, uuid.New(), uuid.New(), 1)
+	oversized := oversizedAcquisitionCoverPNG(t)
+	for _, test := range []struct {
+		name   string
+		mbid   string
+		result coverart.Result
+		data   []byte
+		err    error
+	}{
+		{name: "provider partial with error", mbid: uuid.NewString(), data: encodedCoverForTest("png", 2, 2)[:20], err: errors.New("network failed")},
+		{name: "provider truncated", mbid: uuid.NewString(), result: coverart.Result{Found: true, MIME: "image/png"}, data: encodedCoverForTest("png", 100, 100)[:40]},
+		{name: "provider oversized", mbid: uuid.NewString(), result: coverart.Result{Found: true, MIME: "image/png"}, data: oversized},
+		{name: "provider MIME mismatch", mbid: uuid.NewString(), result: coverart.Result{Found: true, MIME: "image/jpeg"}, data: encodedCoverForTest("png", 2, 2)},
+		{name: "provider size mismatch", mbid: uuid.NewString(), result: coverart.Result{Found: true, MIME: "image/png", Size: 1 << 20}, data: encodedCoverForTest("png", 2, 2)},
+		{name: "invalid MBID never calls provider", mbid: "not-a-mbid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &coverProviderStub{result: test.result, data: test.data, err: test.err}
+			mbid := test.mbid
+			got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{validLocal}}}, provider).Resolve(context.Background(), uuid.New())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Source != "local" || got.CandidateID != validLocal.ID {
+				t.Fatalf("saved artwork was not used after unusable front: %+v", got)
+			}
+			if test.mbid != "not-a-mbid" && provider.calls != 1 {
+				t.Fatalf("provider calls = %d", provider.calls)
+			}
+			if test.mbid == "not-a-mbid" && provider.calls != 0 {
+				t.Fatalf("invalid MBID made a provider request: %d", provider.calls)
+			}
+		})
+	}
+}
+
+func TestReleaseCoverResolverOptionalProviderCanBeAbsent(t *testing.T) {
+	local := coverCandidate("png", 20, 20, uuid.New(), uuid.New(), 1)
+	mbid := uuid.NewString()
+	got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{local}}}, nil).Resolve(context.Background(), uuid.New())
+	if err != nil || got.Source != "local" || got.CandidateID != local.ID {
+		t.Fatalf("nil provider did not fall back locally: %+v %v", got, err)
+	}
+}
+
+func TestReleaseCoverResolverBoundsProviderOriginal(t *testing.T) {
+	local := coverCandidate("png", 10, 10, uuid.New(), uuid.New(), 1)
+	providerBytes := encodedCoverForTest("png", 100, 100)
+	provider := &coverProviderStub{result: coverart.Result{Found: true, MIME: "image/png", Size: int64(len(providerBytes))}, data: providerBytes}
+	mbid := uuid.NewString()
+	resolver := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{local}}}, provider)
+	resolver.maxBytes = int64(len(providerBytes) - 1)
+	got, err := resolver.Resolve(context.Background(), uuid.New())
+	if err != nil || got.Source != "local" {
+		t.Fatalf("oversized provider original was not bounded: %+v %v", got, err)
 	}
 }
 
@@ -134,6 +200,20 @@ func TestReleaseCoverResolverChoosesPixelCountAndUUIDStable(t *testing.T) {
 		}
 		if !bytes.Equal(got.Data, win.Data) {
 			t.Fatal("selected bytes changed")
+		}
+	}
+}
+
+func TestReleaseCoverResolverSkipsInvalidSavedCandidate(t *testing.T) {
+	valid := coverCandidate("png", 2, 2, uuid.New(), uuid.New(), 1)
+	invalidMIME := coverCandidate("png", 100, 100, uuid.New(), uuid.New(), 1)
+	invalidMIME.MIME = "image/jpeg"
+	truncated := coverCandidate("png", 200, 200, uuid.New(), uuid.New(), 1)
+	truncated.Data = truncated.Data[:len(truncated.Data)/2]
+	for _, candidates := range [][]persistence.ReleaseCoverCandidate{{invalidMIME, valid}, {truncated, valid}} {
+		got, err := resolveLocalReleaseCover(context.Background(), candidates)
+		if err != nil || got.CandidateID != valid.ID {
+			t.Fatalf("valid saved candidate was hidden by an invalid one: %+v %v", got, err)
 		}
 	}
 }
@@ -168,8 +248,28 @@ func TestReleaseCoverResolverRanksAndPreservesSavedTIFF(t *testing.T) {
 
 func TestReleaseCoverResolverRejectsSavedCoverDiagnostics(t *testing.T) {
 	got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{CoverErrors: []string{"cover dimensions exceed the maximum"}}}, nil).Resolve(context.Background(), uuid.New())
-	if err == nil || got.Source != "" {
+	if !errors.Is(err, errReleaseCoverUnavailable) || got.Source != "" {
 		t.Fatalf("diagnostic did not block silent absence: result=%#v err=%v", got, err)
+	}
+	if _, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{
+		CoverErrors: []string{"cover dimensions exceed the maximum"},
+		Candidates:  []persistence.ReleaseCoverCandidate{coverCandidate("png", 2, 2, uuid.New(), uuid.New(), 1)},
+	}}, nil).Resolve(context.Background(), uuid.New()); err != nil {
+		t.Fatalf("diagnostic hid a valid saved candidate: %v", err)
+	}
+}
+
+func TestReleaseCoverResolverProviderFailureWithoutSavedArtworkIsUnavailable(t *testing.T) {
+	mbid := uuid.NewString()
+	provider := &coverProviderStub{data: encodedCoverForTest("png", 2, 2)[:5], err: errors.New("network failed")}
+	_, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid}}, provider).Resolve(context.Background(), uuid.New())
+	if !errors.Is(err, errReleaseCoverUnavailable) || !bytes.Contains([]byte(err.Error()), []byte("network failed")) {
+		t.Fatalf("expected optional provider failure, got %v", err)
+	}
+	provider = &coverProviderStub{result: coverart.Result{Found: false}}
+	got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid}}, provider).Resolve(context.Background(), uuid.New())
+	if err != nil || got.Source != "" {
+		t.Fatalf("provider absence should be an empty result: %+v %v", got, err)
 	}
 }
 
@@ -178,12 +278,13 @@ func imagepkgConfig(data []byte) (image.Config, string, error) {
 }
 
 func TestReleaseCoverResolverDiscardsPartialProviderError(t *testing.T) {
-	mbid := "mbid"
+	mbid := uuid.NewString()
 	partial := encodedCoverForTest("png", 2, 2)
+	local := coverCandidate("png", 1, 1, uuid.New(), uuid.New(), 1)
 	provider := &coverProviderStub{data: partial, err: errors.New("network failed")}
-	_, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{coverCandidate("png", 1, 1, uuid.New(), uuid.New(), 1)}}}, provider).Resolve(context.Background(), uuid.New())
-	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("network failed")) {
-		t.Fatalf("expected provider error, got %v", err)
+	got, err := NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{local}}}, provider).Resolve(context.Background(), uuid.New())
+	if err != nil || got.Source != "local" || got.CandidateID != local.ID {
+		t.Fatalf("partial provider bytes were not discarded for saved artwork: %+v %v", got, err)
 	}
 }
 
@@ -197,5 +298,15 @@ func TestReleaseCoverResolverEmptyAndCanceled(t *testing.T) {
 	_, err = NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{Candidates: []persistence.ReleaseCoverCandidate{coverCandidate("png", 2, 2, uuid.New(), uuid.New(), 1)}}}, nil).Resolve(ctx, uuid.New())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation, got %v", err)
+	}
+	mbid := uuid.NewString()
+	ctx, cancel = context.WithCancel(context.Background())
+	provider := &coverProviderStub{run: func(context.Context, io.Writer) (coverart.Result, error) {
+		cancel()
+		return coverart.Result{}, context.Canceled
+	}}
+	_, err = NewReleaseCoverResolver(coverCandidatesStub{snapshot: &persistence.ReleaseCoverCandidates{MusicBrainzMBID: &mbid, Candidates: []persistence.ReleaseCoverCandidate{coverCandidate("png", 2, 2, uuid.New(), uuid.New(), 1)}}}, provider).Resolve(ctx, uuid.New())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("provider cancellation did not cancel despite saved artwork: %v", err)
 	}
 }
