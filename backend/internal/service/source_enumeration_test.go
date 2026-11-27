@@ -89,6 +89,36 @@ func (opener sourceEnumerationTestOpener) OpenRoot(context.Context, string) (sou
 	return opener.root, nil
 }
 
+func TestEnumerateSourceTreeSkipsOnlyConfirmedAppleDoubleSidecars(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appleDouble := []byte{0, 5, 0x16, 7, 0, 2, 0, 0}
+	for name, data := range map[string][]byte{
+		"._sidecar.flac": appleDouble,
+		"._track.flac":   []byte("fLaC"),
+		"._short.mp3":    {0},
+		"track.flac":     appleDouble,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	scopes, err := EnumerateSourceTree(context.Background(), root, func(entry SourceWalkEntry) error {
+		got = append(got, entry.RelativePath)
+		return nil
+	})
+	if err != nil || len(scopes) != 0 {
+		t.Fatalf("enumeration: scopes = %v, error = %v", scopes, err)
+	}
+	slices.Sort(got)
+	if want := []string{"._short.mp3", "._track.flac", "track.flac"}; !slices.Equal(got, want) {
+		t.Fatalf("enumerated %v, want %v", got, want)
+	}
+}
+
 func TestEnumerateSourceTreeCollectsRootScope(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	scopes, err := EnumerateSourceTree(context.Background(), missing, func(SourceWalkEntry) error {

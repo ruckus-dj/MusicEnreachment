@@ -304,17 +304,22 @@ func frozenInventoryMatchesAcceptedProjections(inventory []MatchingRelease, rece
 			return false
 		}
 		seen[release.ProviderKey] = true
-		for index := range release.Tracks {
-			release.Tracks[index].Medium++
-			release.Tracks[index].Position++
-		}
 		accepted = append(accepted, release)
 	}
 	if len(accepted) != len(inventory) {
 		return false
 	}
+	if len(accepted) == 0 {
+		return true
+	}
+	accepted = FrozenMatchingReviewReleases(accepted)
 	sort.Slice(accepted, func(i, j int) bool { return accepted[i].ProviderKey < accepted[j].ProviderKey })
 	actual := append([]MatchingRelease(nil), inventory...)
+	for i := range actual {
+		if len(actual[i].Tracks) == 0 {
+			actual[i].Tracks = nil
+		}
+	}
 	sort.Slice(actual, func(i, j int) bool { return actual[i].ProviderKey < actual[j].ProviderKey })
 	left, leftErr := json.Marshal(accepted)
 	right, rightErr := json.Marshal(actual)

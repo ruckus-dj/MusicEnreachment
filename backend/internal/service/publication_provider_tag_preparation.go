@@ -151,6 +151,10 @@ func publicationEncodedAudioSHA256(ctx context.Context, commands PublicationComm
 	return value, nil
 }
 
+// errPublicationDecodedAudioQuiescence identifies a strict decode that could not
+// establish native command quiescence. A source fallback must never retry past it.
+var errPublicationDecodedAudioQuiescence = errors.New("decoded audio proof did not establish command quiescence")
+
 // publicationDecodedAudioSHA256 proves that a lossless candidate decodes to the
 // same selected PCM stream as its private source.
 func publicationDecodedAudioSHA256(ctx context.Context, commands PublicationCommandRunner, ffmpegPath, inputPath string, container publication.AudioContainer, streamIndex int) (string, error) {
@@ -165,7 +169,7 @@ func publicationDecodedAudioSHA256(ctx context.Context, commands PublicationComm
 	args = append(args, "-xerror", "-i", inputPath, "-map", fmt.Sprintf("0:%d", streamIndex), "-vn", "-sn", "-dn", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-")
 	result, err := commands.Run(ctx, ffmpegPath, args...)
 	if !result.QuiescenceEstablished {
-		return "", errors.Join(err, errors.New("decoded audio proof did not establish command quiescence"))
+		return "", errors.Join(err, errPublicationDecodedAudioQuiescence)
 	}
 	if err != nil {
 		return "", fmt.Errorf("decode audio for lossless proof: %w", err)

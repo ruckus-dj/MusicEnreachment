@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -138,6 +139,8 @@ func enumerateSourceTree(ctx context.Context, opener sourcefs.Opener, rootPath s
 					continue
 				}
 				info, statErr := file.Stat(ctx)
+				sidecar := statErr == nil && info.Mode().IsRegular() && strings.HasPrefix(item.Name, "._") &&
+					isAppleDoubleSourceFile(ctx, file)
 				closeErr := file.Close()
 				if ctx.Err() != nil {
 					return fmt.Errorf("enumerate source tree: %w", ctx.Err())
@@ -149,7 +152,7 @@ func enumerateSourceTree(ctx context.Context, opener sourcefs.Opener, rootPath s
 				if closeErr != nil {
 					return fmt.Errorf("close source file %q: %w", child, closeErr)
 				}
-				if !info.Mode().IsRegular() {
+				if !info.Mode().IsRegular() || sidecar {
 					continue
 				}
 				if err := visit(SourceWalkEntry{RelativePath: child, SizeBytes: info.Size(), Mtime: info.ModTime()}); err != nil {
@@ -177,6 +180,15 @@ func enumerateSourceTree(ctx context.Context, opener sourcefs.Opener, rootPath s
 		scopes[i].RelativePath = filepath.ToSlash(scopes[i].RelativePath)
 	}
 	return scopes, nil
+}
+
+func isAppleDoubleSourceFile(ctx context.Context, file sourcefs.RegularFile) bool {
+	var signature [4]byte
+	err := file.Borrow(ctx, func(input *os.File) error {
+		_, err := io.ReadFull(input, signature[:])
+		return err
+	})
+	return err == nil && signature == [4]byte{0x00, 0x05, 0x16, 0x07}
 }
 
 // validEnumerationScope prevents a caller from broadening a reconciliation scope

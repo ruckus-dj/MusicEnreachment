@@ -86,8 +86,34 @@ func (repo *SetupManagerRepository) ListCurrentOperations(
 		filtered := func(withTargets bool) *bun.SelectQuery {
 			base := tx.NewSelect().TableExpr("operation AS op").
 				Where("op.state IN (?)", bun.List(states)).
+				// These matching runs have handed off their result to Incoming.
+				// A human decision is not a pending background delivery.
+				Where("NOT (op.kind='matching_evaluation_v1' AND op.state='running' AND op.stage='manual_review')").
 				Where(`NOT EXISTS (SELECT 1 FROM matching_run retired
-					WHERE retired.operation_id=op.id AND retired.quiesced_at IS NOT NULL)`)
+					WHERE retired.operation_id=op.id AND retired.quiesced_at IS NOT NULL)`).
+				// Fenced v2 single-target runs can be superseded by a newer
+				// successful generation with a different operation ID.
+				Where(`NOT (op.kind='matching_evaluation_v1' AND op.state='failed' AND EXISTS (
+					SELECT 1 FROM matching_run_target old_target
+					JOIN matching_run old_run ON old_run.id=old_target.run_id
+					JOIN incoming_matching_generation generation ON generation.group_id=old_target.group_id
+					JOIN matching_run_target new_target ON new_target.run_id=generation.current_run_id
+						AND new_target.group_id=old_target.group_id
+					JOIN matching_run new_run ON new_run.id=new_target.run_id
+					JOIN operation new_op ON new_op.id=new_run.operation_id
+					WHERE old_run.operation_id=op.id
+						AND old_run.fence_version=2
+						AND new_run.state IN ('succeeded','waiting_policy')
+						AND new_op.state='succeeded' AND new_op.stage<>'stale'
+						AND new_target.target_generation>old_target.target_generation
+				))`).
+				Where(`NOT (op.kind='publication_reconcile_v1' AND op.state='failed' AND op.stage='waiting'
+					AND op.safe_error=? AND EXISTS (
+					SELECT 1 FROM publication_reconciliation_event event
+					JOIN publication_reconciliation_request request
+						ON request.output_epoch=event.output_epoch AND request.position_id=event.position_id
+					WHERE event.operation_id=op.id AND request.reconciled_generation>=event.observed_generation
+				))`, PublicationReconciliationBusyAttemptReason)
 			if len(kinds) != 0 {
 				base.Where("op.kind IN (?)", bun.List(kinds))
 			}

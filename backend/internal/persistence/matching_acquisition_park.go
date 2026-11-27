@@ -343,9 +343,13 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, claim.ExecutionEpoch).Exec(ctx); err != nil {
 			return fmt.Errorf("park matching acquisition: park matching run: %w", err)
 		}
-		operation.Stage, operation.UpdatedAt = "manual_review", now
-		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
-			return fmt.Errorf("park matching acquisition: mark parent for manual review: %w", err)
+		// The park is a durable handoff: no background step remains for this
+		// operation. It completes successfully while the run stays in
+		// waiting_policy so the handoff and its review evidence remain current.
+		operation.State, operation.Stage, operation.SafeError = "succeeded", "manual_review", nil
+		operation.FinishedAt, operation.UpdatedAt = &now, now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("park matching acquisition: complete parent for manual review: %w", err)
 		}
 		changed = true
 		return nil

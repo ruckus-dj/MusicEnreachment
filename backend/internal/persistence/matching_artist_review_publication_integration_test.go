@@ -173,6 +173,186 @@ func prepareAutomaticArtistReviewDelivery(t *testing.T, payload json.RawMessage)
 	return prepareAutomaticArtistDelivery(t, payload, false)
 }
 
+// TestAutomaticArtistManualReviewParkCompletesOperation proves that the
+// acquisition park is a durable handoff: the operation ends successfully with
+// its review evidence, while the matching run keeps waiting for policy. It also
+// checks the startup ownership proof and the current-operations projection do
+// not treat the finished operation as pending background work.
+func TestAutomaticArtistManualReviewParkCompletesOperation(t *testing.T) {
+	t.Parallel()
+	accepted := json.RawMessage(`{"count":0,"offset":0,"created":"2025-01-01T00:00:00Z","artists":[]}`)
+	run := prepareAutomaticArtistReviewDelivery(t, accepted)
+	runID := run.admission.OriginalRunID
+
+	changed, acquired, err := run.acquisition.Advance(run.ctx, runID, 1, run.jobID, run.claim)
+	if err != nil || !changed || !acquired {
+		t.Fatalf("park empty artist search: changed=%t acquired=%t err=%v", changed, acquired, err)
+	}
+
+	operation, err := run.repository.GetOperation(run.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != "succeeded" || operation.Stage != "manual_review" ||
+		operation.FinishedAt == nil || operation.SafeError != nil {
+		t.Fatalf("parked operation state/stage/finished/safe_error=%s/%s/%v/%v; want succeeded/manual_review with finish time and no error",
+			operation.State, operation.Stage, operation.FinishedAt, operation.SafeError)
+	}
+
+	var matchingRun struct {
+		State    string     `bun:"state"`
+		Current  *int64     `bun:"current_river_job_id"`
+		Active   *int64     `bun:"active_river_job_id"`
+		Attempt  *int       `bun:"active_river_attempt"`
+		Epoch    *int64     `bun:"active_execution_epoch"`
+		Quiesced *time.Time `bun:"quiesced_at"`
+	}
+	if err := run.db.NewRaw(`SELECT state,current_river_job_id,active_river_job_id,
+			active_river_attempt,active_execution_epoch,quiesced_at
+		FROM matching_run WHERE id=?`, runID).Scan(run.ctx, &matchingRun.State, &matchingRun.Current,
+		&matchingRun.Active, &matchingRun.Attempt, &matchingRun.Epoch, &matchingRun.Quiesced); err != nil {
+		t.Fatal(err)
+	}
+	if matchingRun.State != "waiting_policy" || matchingRun.Quiesced != nil || matchingRun.Active != nil || matchingRun.Attempt != nil || matchingRun.Epoch != nil ||
+		matchingRun.Current == nil || *matchingRun.Current != run.jobID {
+		t.Fatalf("parked run = %+v; want waiting_policy retaining the consumed delivery job %d and no active execution", matchingRun, run.jobID)
+	}
+
+	snapshot, exists, err := run.repository.GetMatchingAcquisition(run.ctx, runID)
+	if err != nil || !exists || snapshot.Phase != "waiting_policy" {
+		t.Fatalf("parked acquisition phase=%q exists=%t err=%v; want waiting_policy", snapshot.Phase, exists, err)
+	}
+	var disposition struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(snapshot.Output, &disposition); err != nil ||
+		disposition.State != "waiting_policy" || disposition.Reason != "artist_search_no_results" {
+		t.Fatalf("parked acquisition output=%s err=%v; want waiting_policy/artist_search_no_results", snapshot.Output, err)
+	}
+
+	// The review is the durable handoff evidence. It stays readable after the
+	// operation completes and carries the accepted empty-search receipt.
+	var evidence []byte
+	if err := run.db.NewRaw(`SELECT evaluation_evidence FROM incoming_match_evaluation
+		WHERE group_id=? AND target_run_id=?`, run.source.group.ID, runID).Scan(run.ctx, &evidence); err != nil {
+		t.Fatalf("read persisted artist review evidence: %v", err)
+	}
+	var reviewEvidence struct {
+		Proposal json.RawMessage `json:"review_proposal"`
+		Accepted struct {
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		} `json:"accepted_artist_search"`
+	}
+	if err := json.Unmarshal(evidence, &reviewEvidence); err != nil || len(reviewEvidence.Proposal) == 0 ||
+		reviewEvidence.Accepted.RequestID == uuid.Nil || reviewEvidence.Accepted.CacheKey == "" {
+		t.Fatalf("persisted artist review evidence is incomplete: %s err=%v", evidence, err)
+	}
+	review, err := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(run.db)).Get(run.ctx, run.source.group.ID)
+	if err != nil || !review.Evaluated || !review.ProposalAvailable {
+		t.Fatalf("read completed artist review: evaluated=%t proposal=%t err=%v", review.Evaluated, review.ProposalAvailable, err)
+	}
+
+	// The handoff has no live background work, so the startup ownership proof
+	// must still recognize the durable review wait even though the operation is
+	// terminal, and the current-operations projection must not list it.
+	owned, err := run.repository.IsMatchingRuntimeScannerOwnedOperation(run.ctx, runID)
+	if err != nil || !owned {
+		t.Fatalf("parked review ownership=%t err=%v; want the durable review wait to be recognized", owned, err)
+	}
+	rows, _, err := run.repository.ListCurrentOperations(run.ctx, persistence.CurrentOperationsFilter{Kind: "matching", Status: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == runID {
+			t.Fatalf("completed manual-review handoff is still listed as a current operation: %+v", row.Operation)
+		}
+	}
+	// The cache-only review refresh only rebuilds sealed automatic evaluations.
+	// A manual-review handoff keeps its run waiting for policy, so it must not be
+	// re-evaluated or replaced by that detector.
+	refreshCandidates, err := run.repository.ListArtistMatchingReviewRefreshCandidates(run.ctx, uuid.Nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range refreshCandidates {
+		if candidate.RunID == runID {
+			t.Fatalf("manual-review handoff was exposed to the cache-only review refresh: %+v", candidate)
+		}
+	}
+	var consumed bool
+	if err := run.db.NewRaw(`SELECT consumed_at IS NOT NULL FROM matching_delivery
+		WHERE run_id=? AND river_job_id=?`, runID, run.jobID).Scan(run.ctx, &consumed); err != nil || !consumed {
+		t.Fatalf("parked review delivery consumed=%t err=%v; want the claimed handoff consumed", consumed, err)
+	}
+}
+
+func TestStartupCompletesLegacyManualReviewHandoff(t *testing.T) {
+	t.Parallel()
+	accepted := json.RawMessage(`{"count":0,"offset":0,"created":"2025-01-01T00:00:00Z","artists":[]}`)
+	run := prepareAutomaticArtistReviewDelivery(t, accepted)
+	runID := run.admission.OriginalRunID
+	if changed, acquired, err := run.acquisition.Advance(run.ctx, runID, 1, run.jobID, run.claim); err != nil || !changed || !acquired {
+		t.Fatalf("park empty artist search: changed=%t acquired=%t err=%v", changed, acquired, err)
+	}
+	// Reproduce a row persisted before the lifecycle change: the durable review
+	// handoff exists, but the operation is still running with no finish time.
+	if _, err := run.db.NewRaw(`UPDATE operation SET state='running', finished_at=NULL WHERE id=?`, runID).Exec(run.ctx); err != nil {
+		t.Fatalf("restore legacy running/manual_review operation: %v", err)
+	}
+	active, err := run.repository.ListOperations(run.ctx, "queued", "running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for index := range active {
+		if active[index].ID == runID {
+			found = active[index].Stage == "manual_review"
+			break
+		}
+	}
+	if !found {
+		t.Fatal("legacy running/manual_review operation is not part of startup recovery")
+	}
+	owned, err := run.repository.IsMatchingRuntimeScannerOwnedOperation(run.ctx, runID)
+	if err != nil || !owned {
+		t.Fatalf("legacy review ownership=%t err=%v; startup would fail the still-current handoff", owned, err)
+	}
+	client := openScanEnqueueRiver(t, run.db)
+	// The fixture settles the provider before running the original parent
+	// delivery, leaving its duplicate wake registered but not consumed.
+	if err := run.repository.RecoverMatchingRuntime(run.ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	op, err := run.repository.GetOperation(run.ctx, runID)
+	if err != nil || op == nil || op.State != "running" {
+		t.Fatalf("startup completed a run with an unconsumed wake: op=%+v err=%v", op, err)
+	}
+	result, err := run.db.NewRaw(`UPDATE matching_delivery SET consumed_at=now()
+		WHERE run_id=? AND consumed_at IS NULL`, runID).Exec(run.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		t.Fatalf("settle fixture duplicate wake: changed=%d err=%v", changed, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := run.repository.RecoverMatchingRuntime(run.ctx, client); err != nil {
+			t.Fatal(err)
+		}
+		op, err := run.repository.GetOperation(run.ctx, runID)
+		if err != nil || op == nil || op.State != "succeeded" || op.Stage != "manual_review" || op.FinishedAt == nil {
+			t.Fatalf("startup pass %d left an active operation: op=%+v err=%v", i+1, op, err)
+		}
+	}
+	owned, err = run.repository.IsMatchingRuntimeScannerOwnedOperation(run.ctx, runID)
+	if err != nil || !owned {
+		t.Fatalf("completed legacy review lost its ownership proof: owned=%t err=%v", owned, err)
+	}
+}
+
 func prepareAutomaticArtistOutageDelivery(t *testing.T) *automaticArtistReviewDelivery {
 	t.Helper()
 	return prepareAutomaticArtistDelivery(t, nil, true)

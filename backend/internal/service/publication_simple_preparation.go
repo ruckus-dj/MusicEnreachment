@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -706,7 +707,7 @@ func proveALACCandidate(ctx context.Context, commands PublicationCommandRunner, 
 	if err := compareALACShapes(sourceFacts, candidateFacts); err != nil {
 		return err
 	}
-	source, err := publicationDecodedAudioSHA256(ctx, commands, ffmpegPath, sourcePath, facts.Container, facts.StreamIndex)
+	source, err := publicationSourceDecodedAudioSHA256(ctx, commands, ffmpegPath, sourcePath, facts.Container, facts.StreamIndex)
 	if err != nil {
 		return err
 	}
@@ -721,6 +722,166 @@ func proveALACCandidate(ctx context.Context, commands PublicationCommandRunner, 
 		return errors.New("ALAC candidate does not preserve decoded source audio")
 	}
 	return nil
+}
+
+// publicationSourceDecodedAudioSHA256 applies the strict decoded-audio proof to
+// the private source. Some FLAC sources carry a trailing ID3v1 tag that is not
+// audio and that FFmpeg's -xerror decode rejects. Only after an exact strict
+// decode failure does it retry on a separate view of the same private bytes with
+// a recognized trailing tag omitted. The private source is never modified.
+//
+// The candidate is built from the untrimmed private source, and the retrieved
+// view digest is compared with that candidate's strict digest. Omitting any
+// bytes that contribute to encoded audio therefore changes the source digest and
+// fails the proof; the view can only omit audio that FFmpeg itself does not put
+// into the candidate. A failure to establish native command quiescence is never
+// retried or masked.
+func publicationSourceDecodedAudioSHA256(ctx context.Context, commands PublicationCommandRunner, ffmpegPath, sourcePath string, container publication.AudioContainer, streamIndex int) (string, error) {
+	digest, err := publicationDecodedAudioSHA256(ctx, commands, ffmpegPath, sourcePath, container, streamIndex)
+	if err == nil || container != publication.AudioContainerFLAC || ctx.Err() != nil || errors.Is(err, errPublicationDecodedAudioQuiescence) {
+		return digest, err
+	}
+	view, cleanup, viewErr := publicationFlacDecodeView(sourcePath)
+	if viewErr != nil {
+		return "", errors.Join(err, viewErr)
+	}
+	removeView := true
+	defer func() {
+		if removeView {
+			cleanup()
+		}
+	}()
+	if view == sourcePath {
+		return "", err
+	}
+	digest, viewErr = publicationDecodedAudioSHA256(ctx, commands, ffmpegPath, view, container, streamIndex)
+	if viewErr != nil {
+		// A process whose quiescence is unknown may still read the view. Keep it
+		// for the owner's bounded recovery cleanup, as with the temporary
+		// directory that contains it.
+		if errors.Is(viewErr, errPublicationDecodedAudioQuiescence) {
+			removeView = false
+		}
+		return "", errors.Join(err, viewErr)
+	}
+	return digest, nil
+}
+
+const publicationID3v1TagSize = 128
+
+// publicationFlacDecodeView returns a path strict FLAC decoding can use when the
+// private source ends with an exact ID3v1 tag. It writes a sibling view only when
+// the final 128 bytes begin with "TAG"; otherwise it returns sourcePath. The
+// caller must invoke cleanup. The source is opened read-only and never changed.
+func publicationFlacDecodeView(sourcePath string) (string, func(), error) {
+	noCleanup := func() {}
+	if !filepath.IsAbs(sourcePath) {
+		return "", noCleanup, errors.New("FLAC decode view requires an absolute private source path")
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return "", noCleanup, fmt.Errorf("open private FLAC source for decode view: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+	info, err := source.Stat()
+	if err != nil {
+		return "", noCleanup, fmt.Errorf("inspect private FLAC source for decode view: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", noCleanup, errors.New("private FLAC source decode view is not a regular file")
+	}
+	size := info.Size()
+	if size <= publicationID3v1TagSize {
+		return sourcePath, noCleanup, nil
+	}
+	var trailer [publicationID3v1TagSize]byte
+	if _, err := source.ReadAt(trailer[:], size-publicationID3v1TagSize); err != nil {
+		return "", noCleanup, fmt.Errorf("read private FLAC source trailer: %w", err)
+	}
+	if string(trailer[:3]) != "TAG" {
+		return sourcePath, noCleanup, nil
+	}
+	// Only a structurally valid FLAC stream with a declared sample count may be
+	// shortened. Any parse failure leaves the source untouched so the original
+	// strict decode error remains the outcome.
+	if _, err := publicationFlacStreamTotalSamples(source, size); err != nil {
+		return sourcePath, noCleanup, nil
+	}
+	view, err := os.CreateTemp(filepath.Dir(sourcePath), "flac-decode-view-*.flac")
+	if err != nil {
+		return "", noCleanup, fmt.Errorf("create private FLAC decode view: %w", err)
+	}
+	viewPath := view.Name()
+	cleanup := func() { _ = os.Remove(viewPath) }
+	_, copyErr := io.CopyN(view, source, size-publicationID3v1TagSize)
+	closeErr := view.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		cleanup()
+		return "", noCleanup, fmt.Errorf("write private FLAC decode view: %w", err)
+	}
+	return viewPath, cleanup, nil
+}
+
+// publicationFlacStreamTotalSamples reads the mandatory STREAMINFO block and
+// returns its declared total sample count. An optional ID3v2 prefix is skipped.
+// The check is deliberately small: it establishes that a FLAC stream exists and
+// declares audio before any trailing tag is treated as non-audio.
+func publicationFlacStreamTotalSamples(source *os.File, size int64) (uint64, error) {
+	const streamInfoBodySize = 34
+	if size < 8 {
+		return 0, errors.New("FLAC stream is too short for STREAMINFO")
+	}
+	prefix := make([]byte, 10)
+	if _, err := source.ReadAt(prefix, 0); err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read FLAC stream prefix: %w", err)
+	}
+	var offset int64
+	switch {
+	case string(prefix[:4]) == "fLaC":
+		offset = 4
+	case string(prefix[:3]) == "ID3":
+		id3Size := int64(prefix[6]&0x7f)<<21 | int64(prefix[7]&0x7f)<<14 | int64(prefix[8]&0x7f)<<7 | int64(prefix[9]&0x7f)
+		offset = 10 + id3Size
+		if offset+4 > size {
+			return 0, errors.New("FLAC stream ID3v2 prefix exceeds the file")
+		}
+		magic := make([]byte, 4)
+		if _, err := source.ReadAt(magic, offset); err != nil {
+			return 0, fmt.Errorf("read FLAC marker after ID3v2 prefix: %w", err)
+		}
+		if string(magic) != "fLaC" {
+			return 0, errors.New("FLAC stream marker is missing after the ID3v2 prefix")
+		}
+		offset += 4
+	default:
+		return 0, errors.New("FLAC stream marker is missing")
+	}
+	if offset+4+streamInfoBodySize > size {
+		return 0, errors.New("FLAC STREAMINFO block exceeds the file")
+	}
+	header := make([]byte, 4)
+	if _, err := source.ReadAt(header, offset); err != nil {
+		return 0, fmt.Errorf("read FLAC metadata block header: %w", err)
+	}
+	if header[0]&0x7f != 0 {
+		return 0, errors.New("first FLAC metadata block is not STREAMINFO")
+	}
+	if length := int64(header[1])<<16 | int64(header[2])<<8 | int64(header[3]); length != streamInfoBodySize {
+		return 0, errors.New("FLAC STREAMINFO block has an unexpected length")
+	}
+	body := make([]byte, streamInfoBodySize)
+	if _, err := source.ReadAt(body, offset+4); err != nil {
+		return 0, fmt.Errorf("read FLAC STREAMINFO block: %w", err)
+	}
+	packed := binary.BigEndian.Uint64(body[10:18])
+	sampleRate := (packed >> 44) & 0xFFFFF
+	channels := ((packed >> 41) & 0x7) + 1
+	bitsPerSample := ((packed >> 36) & 0x1F) + 1
+	totalSamples := packed & 0xFFFFFFFFF
+	if sampleRate == 0 || channels == 0 || bitsPerSample == 0 || totalSamples == 0 {
+		return 0, errors.New("FLAC STREAMINFO declares no audio samples")
+	}
+	return totalSamples, nil
 }
 
 func publicationALACStream(analysis SourceTechnicalAnalysis, index int) (SourceTechnicalAudioStream, bool) {
