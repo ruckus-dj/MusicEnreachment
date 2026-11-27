@@ -1,4 +1,5 @@
 # Local IDE, agent, and generated state
+.DS_Store
 .codegraph/
 .omo/
 .playwright/
@@ -26,7 +27,7 @@ frontend/dist/
 build/
 backend/internal/static/dist/*
 !backend/internal/static/dist/.gitkeep
-frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
 frontend/test-results/
 
 # Local configuration and credentials
