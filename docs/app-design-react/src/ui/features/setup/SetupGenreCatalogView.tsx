@@ -10,6 +10,7 @@ export interface SetupGenreCatalogViewProps {
   state: SetupGenreCatalogState;
   count?: number;
   disabled?: boolean;
+  requiresVerification?: boolean;
   onLoad: () => void;
 }
 
@@ -19,6 +20,7 @@ const messages = {
     description:
       "A complete catalog for the selected MusicBrainz endpoint is required before continuing.",
     idle: "Not loaded. Load the complete catalog to continue.",
+    requiresVerification: "Check the MusicBrainz connection before loading.",
     loading: "Loading the complete catalog…",
     ready: (count: number) =>
       `Ready · ${count.toLocaleString("en")} genres available.`,
@@ -33,6 +35,8 @@ const messages = {
     description:
       "Для продолжения нужен полный каталог выбранного адреса MusicBrainz.",
     idle: "Не загружен. Загрузите полный каталог, чтобы продолжить.",
+    requiresVerification:
+      "Перед загрузкой проверьте подключение к MusicBrainz.",
     loading: "Загрузка полного каталога…",
     ready: (count: number) =>
       `Готово · доступно жанров: ${count.toLocaleString("ru")}.`,
@@ -54,6 +58,7 @@ export function SetupGenreCatalogView({
   state,
   count,
   disabled,
+  requiresVerification,
   onLoad,
 }: SetupGenreCatalogViewProps) {
   const copy = messages[locale];
@@ -63,7 +68,9 @@ export function SetupGenreCatalogView({
       ? typeof count === "number"
         ? copy.ready(count)
         : copy.readyWithoutCount
-      : copy[state];
+      : state === "idle" && requiresVerification
+        ? copy.requiresVerification
+        : copy[state];
   const statusClassName =
     state === "failed"
       ? failedClassName
@@ -86,7 +93,7 @@ export function SetupGenreCatalogView({
         </div>
         {state !== "ready" && (
           <AppButton
-            isDisabled={disabled || state === "loading"}
+            isDisabled={disabled || requiresVerification || state === "loading"}
             onPress={onLoad}
           >
             {state === "loading"

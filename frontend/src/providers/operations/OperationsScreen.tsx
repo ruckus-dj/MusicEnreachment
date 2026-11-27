@@ -53,6 +53,7 @@ import {
   operationStageLabel,
   operationStateLabel,
   operationTargetLabel,
+  toolInstallProgressBar,
 } from "./operationPresentation";
 
 const PAGE_SIZE = 50;
@@ -170,15 +171,10 @@ function measuredProgressLabel(
     }).format(percent / 100);
   }
   if (operation.kind === "install") {
-    if (operation.bytes_completed <= 0) return undefined;
-    const completed = operation.bytes_completed.toLocaleString(locale);
-    const total = operation.bytes_total;
-    if (total == null || total <= 0) {
-      return locale === "ru" ? `${completed} байт` : `${completed} bytes`;
-    }
-    return locale === "ru"
-      ? `${completed} / ${total.toLocaleString(locale)} байт`
-      : `${completed} / ${total.toLocaleString(locale)} bytes`;
+    // Share the wizard formatter: only the download stage reports a truthful
+    // total, and later install/extract stages stay without a stale percentage.
+    const progress = toolInstallProgressBar(operation, locale);
+    return progress?.kind === "determinate" ? progress.text : undefined;
   }
   return undefined;
 }
@@ -243,7 +239,12 @@ function operationRow(
 ): OperationsListRow {
   const targetLabel =
     operation.target_label || operationTargetLabel(operation, locale);
-  const stage = operationStageLabel(operation.stage, locale);
+  const stageLabel = operationStageLabel(operation.stage, locale);
+  const stage =
+    operation.kind === "install" &&
+    stageLabel === operationStateLabel(operation.state, locale)
+      ? ""
+      : stageLabel;
   const failed = operation.state === "failed";
   const actions: OperationsListAction[] = [];
 

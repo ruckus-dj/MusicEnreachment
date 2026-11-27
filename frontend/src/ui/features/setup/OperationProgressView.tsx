@@ -27,14 +27,37 @@ const messages = {
   },
 } as const;
 
+/**
+ * Progress bar for a running tool operation. A determinate bar is used only
+ * while the snapshot reports a truthful total; every other running stage uses
+ * an indeterminate bar so the UI never implies measured progress.
+ */
+export type OperationProgressBar =
+  | {
+      kind: "determinate";
+      /** Accessible name, already localized. */
+      label: string;
+      /** Completed amount, in the same unit as max. */
+      value: number;
+      /** Known total for the active stage. */
+      max: number;
+      /** Visible percentage, already localized. */
+      text: string;
+    }
+  | {
+      kind: "indeterminate";
+      /** Accessible name, already localized. */
+      label: string;
+    };
+
 /** Controller-formatted operation line; the view owns the separator layout. */
 export type OperationProgressStatus = {
-  /** Kind, target and state; already localized. */
+  /** Target or settled outcome; already localized. */
   text: string;
   /** Current stage label, omitted when the snapshot has no stage. */
   stage?: string;
-  /** Byte progress, omitted when the snapshot does not report it. */
-  progress?: string;
+  /** Stage progress, omitted outside a running operation. */
+  progress?: OperationProgressBar;
   /** Non-blocking snapshot diagnostic; never the terminal failure. */
   warning?: string;
 };
@@ -73,7 +96,12 @@ function statusText(
   copy: (typeof messages)[OperationProgressLocale],
 ) {
   if (!status) return `${copy.download}${copy.loadingStatus}`;
-  return [status.text, status.stage, status.progress, status.warning]
+  return [
+    status.text,
+    status.stage,
+    status.progress?.kind === "determinate" ? status.progress.text : undefined,
+    status.warning,
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -97,6 +125,15 @@ export function OperationProgressView({
   return (
     <div className={cardClass}>
       <p role="status">{statusText(status, copy)}</p>
+      {status?.progress && (
+        <progress
+          className="mt-1 block w-full"
+          aria-label={status.progress.label}
+          {...(status.progress.kind === "determinate"
+            ? { max: status.progress.max, value: status.progress.value }
+            : {})}
+        />
+      )}
       <SetupFeedbackView error={failure} />
       {statusRead && (
         <AppButton isDisabled={statusRead.pending} onPress={statusRead.onRetry}>

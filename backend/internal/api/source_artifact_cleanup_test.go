@@ -26,10 +26,12 @@ type apiSettingsStore map[string]string
 func (store apiSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
 	values := maps.Clone(map[string]string(store))
 	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	verified := values[settings.AcoustIDApplicationKeyVerifiedKey] == "true"
 	_, hasGitHub := values[settings.GitHubTokenKey]
 	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.AcoustIDApplicationKeyVerifiedKey)
 	delete(values, settings.GitHubTokenKey)
-	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, AcoustIDApplicationKeyVerified: verified, HasGitHubToken: hasGitHub}, nil
 }
 
 func (store apiSettingsStore) Get(_ context.Context, key string) (string, bool, error) {

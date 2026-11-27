@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -26,6 +27,8 @@ var (
 	ErrGitHubTokenRejected              = errors.New("GitHub rejected the token")
 	ErrGitHubTokenValidationUnavailable = errors.New("GitHub token validation is unavailable")
 	ErrGitHubTokenRateLimited           = errors.New("GitHub token validation was rate limited")
+	ErrAcoustIDKeyRejected              = errors.New("AcoustID rejected the application key")
+	ErrAcoustIDKeyValidationUnavailable = errors.New("AcoustID application key validation is unavailable")
 )
 
 type SetupState struct {
@@ -37,7 +40,29 @@ type SetupState struct {
 	GenreCatalog        GenreCatalogSetupState
 }
 
+// AcoustIDKeyVerifier proves that AcoustID accepts an application key before it
+// replaces the saved credential.
+type AcoustIDKeyVerifier interface {
+	VerifyApplicationKey(context.Context, string) error
+}
+
 func (s *SetupService) SetAcoustIDApplicationKey(ctx context.Context, key string) error {
+	if key == "" || len(key) > 4096 || strings.TrimSpace(key) == "" {
+		return fmt.Errorf("AcoustID application key is invalid")
+	}
+	if s.acoustIDVerifier == nil {
+		return ErrAcoustIDKeyValidationUnavailable
+	}
+	if err := s.acoustIDVerifier.VerifyApplicationKey(ctx, key); err != nil {
+		switch {
+		case errors.Is(err, acoustid.ErrApplicationKeyRejected):
+			return ErrAcoustIDKeyRejected
+		case errors.Is(err, acoustid.ErrInvalidInput):
+			return fmt.Errorf("AcoustID application key is invalid")
+		default:
+			return ErrAcoustIDKeyValidationUnavailable
+		}
+	}
 	if err := s.registry.SetAcoustIDApplicationKey(ctx, key); err != nil {
 		return fmt.Errorf("save AcoustID application key: %w", err)
 	}
@@ -100,6 +125,7 @@ type SetupService struct {
 	installations      InstallationLookup
 	outputReset        *OutputReset
 	githubTokenChecker GitHubTokenChecker
+	acoustIDVerifier   AcoustIDKeyVerifier
 	genreCatalog       setupGenreCatalog
 }
 
@@ -119,6 +145,11 @@ type GitHubTokenChecker interface {
 
 func (s *SetupService) WithGitHubTokenChecker(checker GitHubTokenChecker) *SetupService {
 	s.githubTokenChecker = checker
+	return s
+}
+
+func (s *SetupService) WithAcoustIDVerifier(verifier AcoustIDKeyVerifier) *SetupService {
+	s.acoustIDVerifier = verifier
 	return s
 }
 

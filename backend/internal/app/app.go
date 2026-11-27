@@ -200,7 +200,7 @@ func Run(ctx context.Context, config Config) error {
 	genreCatalogRepository := persistence.NewGenreCatalogRepository(db, setupManagerRepository)
 	genreCatalog := service.NewGenreCatalogService(genreCatalogRepository, registry, providerFactory).WithRefreshQueue(genreCatalogRepository, jobs.NewGenreCatalogQueueEnqueuer(riverSlot)).WithSetupCompletion(registry)
 	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).
-		WithOutputReset(outputReset).WithGenreCatalog(genreCatalog)
+		WithOutputReset(outputReset).WithGenreCatalog(genreCatalog).WithAcoustIDVerifier(acoustIDClient)
 	if err := outputReset.RecoverOutputReset(ctx); err != nil {
 		return fmt.Errorf("recover output reset: %w", err)
 	}

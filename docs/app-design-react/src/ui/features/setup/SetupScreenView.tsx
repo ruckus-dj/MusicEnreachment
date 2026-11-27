@@ -87,6 +87,7 @@ export type SetupScreenMetadataStepView = {
 
 export type SetupAcoustIDProviderProps = {
   hasKey: boolean;
+  verified?: boolean;
   onChanged: () => unknown;
   onBusyChange?: (busy: boolean) => void;
   disabled?: boolean;

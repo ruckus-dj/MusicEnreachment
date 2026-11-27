@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { navigateHash } from "../../../ui/app/hashLocation";
 import { meloTrovePaths } from "../../../ui/app/MeloTroveRoute";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
@@ -26,6 +26,7 @@ import {
   isAbsoluteDemoServerPath,
 } from "../settings/ToolLifecycleDemo";
 import { useGitHubTokenDemo } from "../tools/useGitHubTokenDemo";
+import type { SetupDraftSnapshot } from "./setupDraft";
 import {
   type SetupToolKind,
   setupToolExecutables,
@@ -37,12 +38,16 @@ import {
 } from "./useSetupGenreCatalogDemoProvider";
 import type { SetupToolDownloadActivity } from "./useSetupToolDownloadsDemoProvider";
 
+/** Demo scheduling: the in-memory connection check must remain visibly busy. */
+export const demoMusicBrainzCheckDelayMs = 400;
+
 type NoticeKey =
   | "toolsDirectoryRequired"
   | "missingPath"
   | "missingTools"
   | "missingPublication"
   | "missingGenres"
+  | "musicBrainzUnavailable"
   | "summaryChecked"
   | "staleMove"
   | "invalidProvider";
@@ -57,11 +62,13 @@ type SetupAcoustIDNotice = "saved" | "deleted";
 function useSetupAcoustIDDraftProvider({
   active,
   hasKey,
+  verified,
   onChanged,
 }: {
   active: boolean;
   hasKey: boolean;
-  onChanged: (hasKey: boolean) => void;
+  verified: boolean;
+  onChanged: (change: { hasKey: boolean; verified: boolean }) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<SetupAcoustIDNotice>();
@@ -70,28 +77,49 @@ function useSetupAcoustIDDraftProvider({
     setDraft("");
     setNotice(undefined);
   }, [active]);
-  const changeKey = (present: boolean) => {
-    onChanged(present);
+  const changeKey = (next: { hasKey: boolean; verified: boolean }) => {
+    onChanged(next);
     setDraft("");
-    setNotice(present ? "saved" : "deleted");
+    setNotice(next.hasKey ? "saved" : "deleted");
   };
   return {
     hasKey,
+    verified,
     draft,
     notice,
     onDraftChange: setDraft,
     onSave: () => {
-      if (draft) changeKey(true);
+      if (!draft) return;
+      // The prototype has no network: the save action stands in for a
+      // successful AcoustID API check of the write-only draft.
+      changeKey({ hasKey: true, verified: true });
     },
-    onDelete: () => changeKey(false),
+    onDelete: () => changeKey({ hasKey: false, verified: false }),
   };
 }
 
 export type SetupScreenProps = SettingsScreenProps & {
+  /** Step requested by the browser URL, when it names one. */
   step?: number;
-  onStepChange?: (step: number) => void;
+  /** Tab-local step hint used when the URL does not name a step. */
+  fallbackStep?: number;
+  /** Route integration: clamp the requested step and canonicalize the URL. */
+  stepSync?: boolean;
+  onStepChange?: (step: number, options?: { replace?: boolean }) => void;
   /** Current tool activity supplied by the prototype data host, if available. */
   toolActivity?: Partial<SetupToolDownloadActivity>;
+  initialDraft?: Pick<
+    SetupDraftSnapshot,
+    "toolsDirectory" | "lrclib" | "publicationAutoCompleteAlbums"
+  >;
+  onDraftChange?: (draft: {
+    toolsDirectory?: string;
+    lrclib?: boolean;
+    publicationAutoCompleteAlbums?: boolean;
+  }) => void;
+  /** Endpoint whose genre catalog was already loaded in this tab. */
+  initialGenreCatalogEndpoint?: string;
+  onGenreCatalogReady?: (endpoint: string) => void;
 };
 
 /**
@@ -102,27 +130,66 @@ export function useSetupScreenDemoProvider({
   settings,
   onSettings,
   step: savedStep,
+  fallbackStep,
+  stepSync = false,
   onStepChange,
   toolActivity,
+  initialDraft,
+  onDraftChange,
+  initialGenreCatalogEndpoint,
+  onGenreCatalogReady,
 }: SetupScreenProps): SetupScreenViewProps {
   const { locale } = useI18n();
   const copy = settingsMessages[locale];
   const setupCopy = setupMessages[locale];
-  const [localStep, setLocalStep] = useState(0);
-  const [toolsDirectory, setToolsDirectory] = useState(settings.toolsPath);
-  const step = savedStep ?? localStep;
+  const [localStep, setLocalStep] = useState(savedStep ?? fallbackStep ?? 0);
+  const [seenRouteStep, setSeenRouteStep] = useState(savedStep);
+  if (savedStep !== seenRouteStep) {
+    setSeenRouteStep(savedStep);
+    if (savedStep !== undefined) setLocalStep(savedStep);
+  }
+  const [toolsDirectory, setToolsDirectory] = useState(
+    initialDraft?.toolsDirectory ?? settings.toolsPath,
+  );
   const [notice, setNotice] = useState<NoticeKey | "">("");
-  const [lrclibDraft, setLrclibDraft] = useState(
-    settings.lrclibEnabled ?? true,
+  const lrclibDefault = initialDraft?.lrclib ?? settings.lrclibEnabled ?? true;
+  const [lrclibDraft, setLrclibDraft] = useState(lrclibDefault);
+  const autoCompleteAlbumsDefault =
+    initialDraft?.publicationAutoCompleteAlbums ??
+    settings.publicationAutoCompleteAlbums ??
+    false;
+  const [autoCompleteAlbumsDraft, setAutoCompleteAlbumsDraft] = useState(
+    autoCompleteAlbumsDefault,
   );
   const [musicBrainzChanged, setMusicBrainzChanged] = useState(false);
+  const [musicBrainzInvalid, setMusicBrainzInvalid] = useState(false);
+  const [musicBrainzVerificationPending, setMusicBrainzVerificationPending] =
+    useState(false);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const urlEdited = useRef(false);
+  const latestSettings = useRef(settings);
+  latestSettings.current = settings;
   const [installPlan, setInstallPlan] = useState<DemoInstallPreflight | null>(
     null,
   );
   const [installPlanChanged, setInstallPlanChanged] = useState(false);
   const installTriggerFocus = useSetupTriggerFocus();
   const update = (values: Partial<DemoSettings>) =>
-    onSettings({ ...settings, ...values });
+    onSettings(
+      values.hasAcoustIDApplicationKey === undefined
+        ? { ...settings, ...values }
+        : {
+            ...settings,
+            ...values,
+            // A direct key replacement keeps the tick only when the caller
+            // also records the mocked API check.
+            acoustIDVerified:
+              values.acoustIDVerified === true &&
+              values.hasAcoustIDApplicationKey === true,
+          },
+    );
   const toolSelection = settings.selectedRelease ?? {};
   const installations = settings.installations ?? [];
   const unmanagedToolFiles =
@@ -166,7 +233,7 @@ export function useSetupScreenDemoProvider({
     delay: settings.musicBrainzDelay,
   });
   const providerVerified =
-    settings.musicBrainzVerified &&
+    settings.musicBrainzVerified === true &&
     settings.musicBrainzVerifiedFingerprint === providerFingerprint;
   const publicationReady = Boolean(
     outputPath &&
@@ -175,24 +242,128 @@ export function useSetupScreenDemoProvider({
       providerReady &&
       providerVerified,
   );
+  const publicationAutoCompleteAlbumsDirty =
+    autoCompleteAlbumsDraft !==
+    (settings.publicationAutoCompleteAlbums ?? false);
+  useEffect(
+    () => () => {
+      if (checkTimer.current !== undefined) {
+        clearTimeout(checkTimer.current);
+        checkTimer.current = undefined;
+      }
+    },
+    [],
+  );
+  /**
+   * The demo check performs no network work. It only settles a tab-local
+   * proof for the exact mode, endpoint and request settings that were on
+   * screen when it started.
+   */
+  const checkProvider = (mode: "" | "public" | "self-hosted", url: string) => {
+    if (platformMismatch || checkTimer.current !== undefined) return;
+    if (mode === "") return;
+    if (!isValidMusicBrainzConfiguration({ mode, url })) {
+      setMusicBrainzInvalid(true);
+      setMusicBrainzChanged(true);
+      return;
+    }
+    setMusicBrainzInvalid(false);
+    setMusicBrainzChanged(true);
+    setMusicBrainzVerificationPending(true);
+    const fingerprint = musicBrainzConfigurationFingerprint({
+      mode,
+      url,
+      throttle: latestSettings.current.musicBrainzThrottle,
+      delay: latestSettings.current.musicBrainzDelay,
+    });
+    checkTimer.current = setTimeout(() => {
+      checkTimer.current = undefined;
+      setMusicBrainzVerificationPending(false);
+      const current = latestSettings.current;
+      const currentFingerprint = musicBrainzConfigurationFingerprint({
+        mode: current.musicBrainzMode ?? "",
+        url: current.musicBrainzURL ?? "",
+        throttle: current.musicBrainzThrottle,
+        delay: current.musicBrainzDelay,
+      });
+      if (currentFingerprint !== fingerprint) return;
+      setMusicBrainzChanged(false);
+      onSettings({
+        ...current,
+        musicBrainzVerified: true,
+        musicBrainzVerifiedFingerprint: fingerprint,
+      });
+    }, demoMusicBrainzCheckDelayMs);
+  };
   const genreCatalogEndpoint = setupGenreCatalogEndpoint(
     musicBrainzMode,
     musicBrainzURL,
   );
   const genreCatalog = useSetupGenreCatalogDemoProvider({
     endpoint: genreCatalogEndpoint,
+    // A persisted catalog is proof only while the same configuration is also
+    // known to have passed the separate connection check.
+    initialReadyEndpoint: providerVerified
+      ? initialGenreCatalogEndpoint
+      : undefined,
   });
-  const genreCatalogReady = genreCatalog.state === "ready";
+  const genreCatalogReady = providerVerified && genreCatalog.state === "ready";
+
+  useEffect(() => {
+    if (!genreCatalogReady || !genreCatalogEndpoint) return;
+    onGenreCatalogReady?.(genreCatalogEndpoint);
+  }, [genreCatalogEndpoint, genreCatalogReady, onGenreCatalogReady]);
 
   const nextTool = (["ffmpeg", "fpcalc"] as const).find(
     (kind) => !verifiedInstallation(kind),
   );
 
+  const routed = stepSync;
+  const requestedStep = localStep;
+  // A URL names a destination, not proof. Keep the wizard at the first step
+  // that the tab-locally restored evidence actually reaches.
+  const pathCommitted =
+    settings.pathChecked && toolsDirectory.trim() === settings.toolsPath.trim();
+  const readyStep =
+    platformMismatch || !pathCommitted
+      ? 0
+      : !toolsReady
+        ? 1
+        : !(publicationReady && genreCatalogReady) ||
+            publicationAutoCompleteAlbumsDirty
+          ? 2
+          : 3;
+  const step = routed ? Math.min(requestedStep, readyStep) : requestedStep;
+
+  useEffect(() => {
+    if (!routed) return;
+    if (savedStep !== undefined && step === savedStep) return;
+    onStepChange?.(step, { replace: true });
+  }, [onStepChange, routed, savedStep, step]);
+
   const setStep = (nextStep: number) => {
-    if (nextStep === 2) setLrclibDraft(settings.lrclibEnabled ?? true);
+    if (nextStep === 2) {
+      const lrclib = settings.lrclibEnabled ?? true;
+      setLrclibDraft(lrclib);
+      onDraftChange?.({ lrclib });
+    }
     setNotice("");
     setLocalStep(nextStep);
     onStepChange?.(nextStep);
+  };
+  const changeToolsDirectory = (value: string) => {
+    setToolsDirectory(value);
+    onDraftChange?.({ toolsDirectory: value });
+  };
+  const changeLrclibDraft = (enabled: boolean) => {
+    setLrclibDraft(enabled);
+    onDraftChange?.({ lrclib: enabled });
+  };
+  // The checkbox only records a tab-local draft; Continue commits it so
+  // automatic matching cannot start from an unconfirmed click.
+  const changeAutoCompleteAlbumsDraft = (enabled: boolean) => {
+    setAutoCompleteAlbumsDraft(enabled);
+    onDraftChange?.({ publicationAutoCompleteAlbums: enabled });
   };
   const chooseOutputPath = (path: string) => {
     const candidate = path.trim();
@@ -265,7 +436,7 @@ export function useSetupScreenDemoProvider({
         setNotice(candidate ? "missingPath" : "toolsDirectoryRequired");
         return;
       }
-      setToolsDirectory(candidate);
+      changeToolsDirectory(candidate);
       if (candidate !== settings.toolsPath || !settings.pathChecked) {
         update({
           toolsPath: candidate,
@@ -289,17 +460,21 @@ export function useSetupScreenDemoProvider({
         setNotice("missingPublication");
         return;
       }
+      if (!providerVerified) {
+        setNotice("musicBrainzUnavailable");
+        return;
+      }
       if (!genreCatalogReady) {
         setNotice("missingGenres");
         return;
       }
-      // Commit the validated output and provider state together; edits invalidate the check.
+      // Continue only commits the step. Connection and catalog proof were
+      // earned by their own checks and are not re-created here.
       update({
         outputChecked: true,
         genresLoaded: true,
         lrclibEnabled: lrclibDraft,
-        musicBrainzVerified: true,
-        musicBrainzVerifiedFingerprint: providerFingerprint,
+        publicationAutoCompleteAlbums: autoCompleteAlbumsDraft,
       });
       setStep(3);
       return;
@@ -330,7 +505,11 @@ export function useSetupScreenDemoProvider({
         ? toolsReady
         : step === 2
           ? Boolean(
-              outputPath && musicBrainzMode && format && genreCatalogReady,
+              outputPath &&
+                musicBrainzMode &&
+                format &&
+                providerVerified &&
+                genreCatalogReady,
             )
           : settings.pathChecked &&
             toolsReady &&
@@ -343,15 +522,23 @@ export function useSetupScreenDemoProvider({
         : "Prototype selections checked."
       : notice === "toolsDirectoryRequired"
         ? setupCopy.toolsDirectoryRequired
-        : notice
-          ? copy[notice]
-          : "";
+        : notice === "musicBrainzUnavailable"
+          ? setupCopy.musicBrainzUnavailable
+          : notice
+            ? copy[notice]
+            : "";
 
   const acoustID = useSetupAcoustIDDraftProvider({
     active: step === 2 && !platformMismatch,
     hasKey: settings.hasAcoustIDApplicationKey ?? false,
-    onChanged: (hasAcoustIDApplicationKey) =>
-      update({ hasAcoustIDApplicationKey }),
+    verified:
+      settings.hasAcoustIDApplicationKey === true &&
+      settings.acoustIDVerified === true,
+    onChanged: ({ hasKey, verified }) =>
+      update({
+        hasAcoustIDApplicationKey: hasKey,
+        acoustIDVerified: verified,
+      }),
   });
   const githubToken = useGitHubTokenDemo(
     {
@@ -401,7 +588,7 @@ export function useSetupScreenDemoProvider({
         {
           kind: "tools",
           value: toolsDirectory,
-          onSelect: setToolsDirectory,
+          onSelect: changeToolsDirectory,
         },
       ],
       locale,
@@ -500,11 +687,13 @@ export function useSetupScreenDemoProvider({
       options: {
         locale,
         format,
+        autoCompleteAlbums: autoCompleteAlbumsDraft,
         removeSources: settings.sourceCleanupEnabled ?? false,
         onFormat: (value) =>
           update({
             publicationFormat: value === "source" ? "original" : value,
           }),
+        onAutoCompleteAlbums: changeAutoCompleteAlbumsDraft,
         onRemoveSources: (sourceCleanupEnabled) =>
           update({ sourceCleanupEnabled }),
       },
@@ -513,19 +702,39 @@ export function useSetupScreenDemoProvider({
           locale,
           mode: musicBrainzMode,
           baseURL: musicBrainzURL,
-          verification:
-            providerVerified || genreCatalogReady
-              ? "verified"
-              : musicBrainzChanged
-                ? "changed"
-                : "untested",
-          disabled: platformMismatch,
-          lrclib: { enabled: lrclibDraft, onChange: setLrclibDraft },
+          verification: providerVerified
+            ? "verified"
+            : musicBrainzChanged
+              ? "changed"
+              : "untested",
+          verificationError: musicBrainzInvalid
+            ? copy.invalidProvider
+            : undefined,
+          verificationPending: musicBrainzVerificationPending,
+          disabled: platformMismatch || musicBrainzVerificationPending,
+          lrclib: { enabled: lrclibDraft, onChange: changeLrclibDraft },
+          onVerify: () => {
+            urlEdited.current = false;
+            checkProvider(musicBrainzMode, musicBrainzURL);
+          },
+          onBaseURLBlur: () => {
+            if (!urlEdited.current || musicBrainzMode !== "self-hosted") return;
+            urlEdited.current = false;
+            if (!musicBrainzURL.trim()) return;
+            checkProvider("self-hosted", musicBrainzURL);
+          },
           onModeChange: (mode) => {
+            urlEdited.current = false;
+            setMusicBrainzInvalid(false);
             setMusicBrainzChanged(true);
             update({ musicBrainzMode: mode, musicBrainzVerified: false });
+            // The public service proves itself as soon as it is chosen; a
+            // self-hosted address waits until the user finishes editing it.
+            if (mode === "public") checkProvider("public", "");
           },
           onBaseURLChange: (musicBrainzURL) => {
+            urlEdited.current = true;
+            setMusicBrainzInvalid(false);
             setMusicBrainzChanged(true);
             update({ musicBrainzURL, musicBrainzVerified: false });
           },
@@ -536,9 +745,13 @@ export function useSetupScreenDemoProvider({
         locale,
         state: genreCatalog.state,
         count: genreCatalog.count,
-        disabled: !providerReady || platformMismatch,
+        disabled:
+          musicBrainzMode === "" || platformMismatch || !providerVerified,
+        requiresVerification: !providerVerified,
+        // Loading the catalog never doubles as a connection check: it only
+        // reads the fixture for the already verified configuration.
         onLoad: () => {
-          setMusicBrainzChanged(false);
+          if (!providerVerified) return;
           genreCatalog.load();
         },
       },
@@ -576,6 +789,7 @@ export function useSetupScreenDemoProvider({
                   ? setupCopy.m4aExplanation
                   : "",
           removeSources: settings.sourceCleanupEnabled ?? false,
+          autoCompleteAlbums: settings.publicationAutoCompleteAlbums ?? false,
         },
         tools: {
           ffmpeg: ffmpeg
@@ -588,10 +802,9 @@ export function useSetupScreenDemoProvider({
         metadata: {
           lrclibEnabled: settings.lrclibEnabled ?? true,
           hasAcoustIdKey: settings.hasAcoustIDApplicationKey ?? false,
-          musicbrainz:
-            providerVerified || genreCatalogReady
-              ? `${setupCopy.connectionChecked}${musicBrainzMode === "self-hosted" ? musicBrainzURL : setupCopy.publicService}`
-              : setupCopy.connectionNotChecked,
+          musicbrainz: providerVerified
+            ? `${setupCopy.connectionChecked}${musicBrainzMode === "self-hosted" ? musicBrainzURL : setupCopy.publicService}`
+            : setupCopy.connectionNotChecked,
           genres: genreCatalogReady
             ? setupCopy.genreCatalogLoaded
             : setupCopy.genreCatalogMissing,
@@ -610,6 +823,11 @@ export function useSetupScreenDemoProvider({
       label: setupCopy.updateCheck,
       disabled: platformMismatch,
       onPress: () => {
+        if (!providerVerified) {
+          setStep(2);
+          setNotice("musicBrainzUnavailable");
+          return;
+        }
         if (!genreCatalogReady) {
           setStep(2);
           setNotice("missingGenres");

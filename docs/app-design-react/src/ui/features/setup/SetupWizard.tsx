@@ -2,6 +2,9 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { AppButton } from "../../components/AppButton";
 import { AppIcon } from "../../components/AppIcon";
 import { SetupFeedbackView } from "./SetupFeedbackView";
+import { setupSteps } from "./setupStepRoute";
+
+export { setupSteps } from "./setupStepRoute";
 
 const pageClassName = "mx-auto grid w-full max-w-[1040px] gap-6";
 const headerClassName = "grid gap-1.5 border-b border-[var(--line)] pb-5";
@@ -21,12 +24,6 @@ const footerClassName =
   "flex justify-between gap-2 border-t border-[var(--line)] pt-4";
 
 type Locale = "en" | "ru";
-export const setupSteps = [
-  "directories",
-  "tools",
-  "publication",
-  "summary",
-] as const;
 const messages = {
   en: {
     title: "First run",

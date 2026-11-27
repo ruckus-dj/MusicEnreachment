@@ -69,7 +69,8 @@ export function MeloTroveUI({ provider }: { provider: MeloTroveProvider }) {
       : route.kind === "library-catalog" ||
           route.kind === "own-catalog" ||
           route.kind === "operations" ||
-          route.kind === "settings"
+          route.kind === "settings" ||
+          route.kind === "setup"
         ? route.pathname
         : hash;
   useShellPageEffects({

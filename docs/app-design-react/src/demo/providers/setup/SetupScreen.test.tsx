@@ -31,15 +31,47 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+it("associates an invalid self-hosted endpoint with the MusicBrainz URL field", async () => {
+  render(
+    <I18nProvider>
+      <SetupScreen
+        settings={{
+          ...initialDemoSettings,
+          musicBrainzMode: "self-hosted",
+          musicBrainzURL: "not-a-url",
+        }}
+        onSettings={vi.fn()}
+        step={2}
+      />
+    </I18nProvider>,
+  );
+  const group = screen.getByRole("group", { name: "MusicBrainz" });
+  const field = within(group).getByRole("textbox", {
+    name: "MusicBrainz base URL",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+  expect(field).toHaveAttribute("aria-invalid", "true");
+  expect(field).toHaveAccessibleDescription(/valid HTTP\(S\) URL/);
+  expect(
+    within(group).queryByRole("checkbox", { name: "LRCLIB enabled" }),
+  ).not.toBeInTheDocument();
+});
+
 it("renders an admitted tool download again when the host supplies its snapshot", () => {
   const operation = {
     id: "fixture-install",
     source: {
       locale: "en" as const,
       status: {
-        text: "Tool download — FFmpeg, version 8.0: Running",
+        text: "FFmpeg 8.0",
         stage: "Downloading files",
-        progress: "25 / 100 bytes",
+        progress: {
+          kind: "determinate" as const,
+          label: "FFmpeg 8.0 — Downloading files",
+          value: 25,
+          max: 100,
+          text: "25%",
+        },
       },
     },
   };
@@ -55,9 +87,14 @@ it("renders an admitted tool download again when the host supplies its snapshot"
     </I18nProvider>
   );
   const progress = () =>
-    screen.getByText(/Running · Downloading files · 25 \/ 100 bytes/);
+    screen.getByText(/FFmpeg 8\.0 · Downloading files · 25%/);
   const before = render(element);
   expect(progress()).toHaveAttribute("role", "status");
+  expect(
+    screen.getByRole("progressbar", {
+      name: "FFmpeg 8.0 — Downloading files",
+    }),
+  ).toHaveAttribute("value", "25");
   before.unmount();
   render(element);
   expect(progress()).toHaveAttribute("role", "status");
@@ -91,14 +128,26 @@ it("queues a clean download and marks the exact release ready only when it settl
     fireEvent.click(action());
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(action()).toBeDisabled();
-    expect(screen.getByText(/version 8\.0: Queued/)).toBeVisible();
+    expect(screen.getByText(/FFmpeg 8\.0 · Waiting/)).toBeVisible();
     act(() => vi.advanceTimersByTime(400));
     expect(
-      screen.getByText(/version 8\.0: Running · Downloading files/),
+      screen.getByText(/FFmpeg 8\.0 · Downloading files · 42%/),
     ).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", {
+        name: "FFmpeg 8.0 — Downloading files",
+      }),
+    ).toHaveAttribute("value", "42");
     expect(screen.queryByText(/bytes/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(800));
-    expect(screen.getByText(/version 8\.0: Completed/)).toBeVisible();
+    expect(screen.getByText(/FFmpeg 8\.0 · Unpacking files/)).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", {
+        name: "FFmpeg 8.0 — Unpacking files",
+      }),
+    ).not.toHaveAttribute("value");
+    act(() => vi.advanceTimersByTime(800));
+    expect(screen.getByText("FFmpeg 8.0 — installed.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Install FFmpeg" })).toBeNull();
   } finally {
     vi.useRealTimers();

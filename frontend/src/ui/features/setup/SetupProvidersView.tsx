@@ -1,17 +1,15 @@
 import { type ReactNode, useId } from "react";
 import { AppButton } from "../../components/AppButton";
+import { AppIcon } from "../../components/AppIcon";
 import {
   SetupMusicBrainzFields,
   type SetupMusicBrainzLocale,
   type SetupMusicBrainzMode,
+  type SetupMusicBrainzVerification,
 } from "./SetupMusicBrainzFields";
 
 type Copy = {
   lrclibEnabled: string;
-  musicBrainzChanged: string;
-  musicBrainzCheckedAt: string;
-  musicBrainzVerified: string;
-  musicBrainzNotChecked: string;
   acoustidOptional: string;
   acoustidDescription: string;
   registerAcoustid: string;
@@ -21,6 +19,7 @@ type Copy = {
   acoustidApplicationKey: string;
   keySavedHidden: string;
   keyNotSet: string;
+  keyVerified: string;
   saveKey: string;
   deleteKey: string;
   saved: string;
@@ -30,10 +29,6 @@ type Copy = {
 const copy: Record<SetupMusicBrainzLocale, Copy> = {
   en: {
     lrclibEnabled: "LRCLIB enabled",
-    musicBrainzChanged: "Configuration changed. Check MusicBrainz again.",
-    musicBrainzCheckedAt: "Checked: ",
-    musicBrainzVerified: "Connection verified.",
-    musicBrainzNotChecked: "Connection has not been checked yet.",
     acoustidOptional: "AcoustID (optional)",
     acoustidDescription:
       "An application key enables audio-fingerprint search. The fingerprint, not the audio file, is sent. Use an application key, not a user API key (that is used to submit fingerprints).",
@@ -45,6 +40,7 @@ const copy: Record<SetupMusicBrainzLocale, Copy> = {
     acoustidApplicationKey: "AcoustID application key",
     keySavedHidden: "Key saved (value hidden).",
     keyNotSet: "Key is not set.",
+    keyVerified: "AcoustID key verified.",
     saveKey: "Save key",
     deleteKey: "Delete key",
     saved: "AcoustID application key saved.",
@@ -52,10 +48,6 @@ const copy: Record<SetupMusicBrainzLocale, Copy> = {
   },
   ru: {
     lrclibEnabled: "LRCLIB включён",
-    musicBrainzChanged: "Конфигурация изменена. Проверьте MusicBrainz снова.",
-    musicBrainzCheckedAt: "Проверено: ",
-    musicBrainzVerified: "Соединение проверено.",
-    musicBrainzNotChecked: "Соединение ещё не проверено.",
     acoustidOptional: "AcoustID (необязательно)",
     acoustidDescription:
       "Ключ приложения включает поиск по аудиоотпечатку: отправляется отпечаток, а не аудиофайл. Нужен ключ приложения, а не пользовательский API key (он используется для отправки отпечатков).",
@@ -67,6 +59,7 @@ const copy: Record<SetupMusicBrainzLocale, Copy> = {
     acoustidApplicationKey: "Ключ приложения AcoustID",
     keySavedHidden: "Ключ сохранён (значение скрыто).",
     keyNotSet: "Ключ не задан.",
+    keyVerified: "Ключ AcoustID проверен.",
     saveKey: "Сохранить ключ",
     deleteKey: "Удалить ключ",
     saved: "Ключ приложения AcoustID сохранён.",
@@ -74,13 +67,7 @@ const copy: Record<SetupMusicBrainzLocale, Copy> = {
   },
 };
 
-export type SetupProvidersVerification = "untested" | "changed" | "verified";
-
-const statusClassName: Record<SetupProvidersVerification, string> = {
-  untested: "m-0 text-sm text-[var(--muted)]",
-  changed: "m-0 text-sm text-[var(--warning)]",
-  verified: "m-0 text-sm text-[var(--success)]",
-};
+export type SetupProvidersVerification = SetupMusicBrainzVerification;
 
 export interface SetupProvidersViewProps {
   locale: SetupMusicBrainzLocale;
@@ -88,8 +75,9 @@ export interface SetupProvidersViewProps {
   /** Raw draft text; the parent owns persistence and verification. */
   baseURL: string;
   verification: SetupProvidersVerification;
-  /** RFC3339 instant shown only for a verified configuration. */
-  verifiedAt?: string | null;
+  /** Failure text from the last check; presence overrides `verification`. */
+  verificationError?: string;
+  verificationPending?: boolean;
   lrclib?: {
     enabled: boolean;
     onChange: (enabled: boolean) => void;
@@ -97,6 +85,10 @@ export interface SetupProvidersViewProps {
   /** Optional provider-specific form; the parent owns its execution. */
   acoustID?: ReactNode;
   disabled?: boolean;
+  /** Runs an explicit MusicBrainz connection check. */
+  onVerify?: () => void;
+  /** Requests a check after the URL field loses focus. */
+  onBaseURLBlur?: () => void;
   onModeChange: (mode: "public" | "self-hosted") => void;
   onBaseURLChange: (value: string) => void;
 }
@@ -106,27 +98,17 @@ export function SetupProvidersView({
   mode,
   baseURL,
   verification,
-  verifiedAt,
+  verificationError,
+  verificationPending,
   lrclib,
   acoustID,
   disabled,
+  onVerify,
+  onBaseURLBlur,
   onModeChange,
   onBaseURLChange,
 }: SetupProvidersViewProps) {
   const text = copy[locale];
-  let status: ReactNode = text.musicBrainzNotChecked;
-  if (verification === "changed") {
-    status = text.musicBrainzChanged;
-  } else if (verification === "verified") {
-    status = verifiedAt ? (
-      <>
-        {text.musicBrainzCheckedAt}
-        <time dateTime={verifiedAt}>{verifiedAt}</time>
-      </>
-    ) : (
-      text.musicBrainzVerified
-    );
-  }
   return (
     <section className="grid gap-2 border-t border-[var(--line)] pt-3">
       <fieldset
@@ -137,6 +119,12 @@ export function SetupProvidersView({
           locale={locale}
           mode={mode}
           baseURL={baseURL}
+          verification={verification}
+          verificationError={verificationError}
+          verificationPending={verificationPending}
+          disabled={disabled}
+          onVerify={onVerify}
+          onBaseURLBlur={onBaseURLBlur}
           onModeChange={onModeChange}
           onBaseURLChange={onBaseURLChange}
         />
@@ -152,18 +140,22 @@ export function SetupProvidersView({
             <span>{text.lrclibEnabled}</span>
           </label>
         )}
-        <p className={statusClassName[verification]}>{status}</p>
         {acoustID}
       </fieldset>
     </section>
   );
 }
 
+/** Fixed mask for a stored key; the actual value is never returned to the view. */
+const maskedKeyPlaceholder = "••••••••••••";
+
 export interface SetupAcoustIDViewProps {
   locale: SetupMusicBrainzLocale;
   /** Write-only draft; a saved key is never read back into this value. */
   draft: string;
   hasKey: boolean;
+  /** Presenter-verified saved key; shows a checkmark while the draft is empty. */
+  verified?: boolean;
   busy?: boolean;
   disabled?: boolean;
   error?: string;
@@ -177,6 +169,7 @@ export function SetupAcoustIDView({
   locale,
   draft,
   hasKey,
+  verified,
   busy,
   disabled,
   error,
@@ -188,11 +181,17 @@ export function SetupAcoustIDView({
   const text = copy[locale];
   const inputId = useId();
   const statusId = `${inputId}-status`;
+  const errorId = `${inputId}-error`;
   const blocked = Boolean(busy || disabled);
+  const failed = Boolean(error);
+  const showVerified = Boolean(
+    hasKey && verified && draft.length === 0 && !busy,
+  );
   return (
     <section
       className="grid min-w-0 gap-2"
       aria-labelledby={`${inputId}-heading`}
+      aria-busy={busy || undefined}
     >
       <h3
         id={`${inputId}-heading`}
@@ -225,43 +224,89 @@ export function SetupAcoustIDView({
         </a>
       </p>
       <p className="m-0 text-sm text-[var(--muted)]">{text.acoustidFreeUse}</p>
-      <div className="flex max-w-[32rem] flex-col gap-1">
+      <div className="flex max-w-[32rem] min-w-0 flex-col gap-1">
         <label
           htmlFor={inputId}
           className="text-sm font-medium text-[var(--ink)]"
         >
           {text.acoustidApplicationKey}
         </label>
-        <input
-          autoComplete="new-password"
-          disabled={blocked}
-          id={inputId}
-          onChange={(event) => onDraftChange(event.currentTarget.value)}
-          type="password"
-          value={draft}
-          aria-describedby={statusId}
-          className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:cursor-not-allowed disabled:text-[var(--muted)] pointer-coarse:min-h-10"
-        />
-      </div>
-      <p
-        id={statusId}
-        role="status"
-        className="m-0 text-sm text-[var(--muted)]"
-      >
-        {hasKey ? text.keySavedHidden : text.keyNotSet}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <AppButton isDisabled={blocked || draft.length === 0} onPress={onSave}>
-          {text.saveKey}
-        </AppButton>
-        {hasKey && (
-          <AppButton isDisabled={blocked} onPress={onDelete}>
-            {text.deleteKey}
+        <div
+          className={`flex min-h-9 min-w-0 items-stretch overflow-hidden rounded-[var(--control-radius)] border focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--focus)] pointer-coarse:min-h-10 ${
+            failed
+              ? "border-[var(--error)] bg-[var(--error-soft)]"
+              : "border-[var(--control)] bg-[var(--surface)]"
+          }`}
+        >
+          <input
+            autoComplete="new-password"
+            disabled={blocked}
+            id={inputId}
+            onChange={(event) => onDraftChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+                return;
+              }
+              event.preventDefault();
+              if (!blocked && draft.trim()) onSave();
+            }}
+            placeholder={
+              hasKey && draft.length === 0 ? maskedKeyPlaceholder : undefined
+            }
+            type="password"
+            value={draft}
+            aria-invalid={failed || undefined}
+            aria-describedby={failed ? `${statusId} ${errorId}` : statusId}
+            className="min-h-9 w-full min-w-0 flex-1 bg-transparent px-2 py-1 text-sm text-[var(--ink)] focus-visible:outline-none disabled:cursor-not-allowed disabled:text-[var(--muted)] pointer-coarse:min-h-10"
+          />
+          {busy ? (
+            <span className="flex w-9 shrink-0 items-center justify-center text-[var(--muted)]">
+              <AppIcon name="refresh" className="motion-safe:animate-spin" />
+            </span>
+          ) : (
+            showVerified && (
+              <span
+                role="img"
+                aria-label={text.keyVerified}
+                className="flex w-9 shrink-0 items-center justify-center text-[var(--success)]"
+              >
+                <AppIcon name="check" />
+              </span>
+            )
+          )}
+          <AppButton
+            isDisabled={blocked || !draft.trim()}
+            onPress={onSave}
+            className="shrink-0 rounded-none border-0 border-l border-[var(--control)] focus-visible:outline-offset-[-3px]"
+          >
+            {text.saveKey}
           </AppButton>
-        )}
+          {hasKey && (
+            <AppButton
+              variant="icon"
+              isDisabled={blocked}
+              onPress={onDelete}
+              className="h-auto min-h-0 w-9 min-w-9 shrink-0 rounded-none border-0 border-l border-[var(--control)] hover:bg-[color-mix(in_srgb,var(--error)_12%,transparent)] hover:text-[var(--error)] pointer-coarse:min-h-10"
+            >
+              <AppIcon name="trash" />
+              <span className="sr-only">{text.deleteKey}</span>
+            </AppButton>
+          )}
+        </div>
+        <p id={statusId} role="status" className="sr-only">
+          {hasKey
+            ? verified
+              ? text.keyVerified
+              : text.keySavedHidden
+            : text.keyNotSet}
+        </p>
       </div>
       {error && (
-        <p role="alert" className="m-0 text-sm text-[var(--error)]">
+        <p
+          id={errorId}
+          role="alert"
+          className="m-0 wrap-anywhere text-sm text-[var(--error)]"
+        >
           {error}
         </p>
       )}

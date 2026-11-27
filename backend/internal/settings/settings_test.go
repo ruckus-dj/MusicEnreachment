@@ -76,10 +76,12 @@ type memoryStore struct {
 func (m *memoryStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
 	values := maps.Clone(m.data)
 	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	verified := values[settings.AcoustIDApplicationKeyVerifiedKey] == "true"
 	_, hasGitHub := values[settings.GitHubTokenKey]
 	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.AcoustIDApplicationKeyVerifiedKey)
 	delete(values, settings.GitHubTokenKey)
-	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, AcoustIDApplicationKeyVerified: verified, HasGitHubToken: hasGitHub}, nil
 }
 
 type recordingStore struct {

@@ -119,6 +119,7 @@ function useSetupSummaryModel(
           messages,
         ),
         removeSources: state.settings.publication_remove_sources,
+        autoCompleteAlbums: state.settings.publication_auto_complete_albums,
       },
       tools: {
         ffmpeg: toolStatus(ffmpegID, installations, loading, messages),

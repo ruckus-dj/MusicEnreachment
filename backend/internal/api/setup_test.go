@@ -33,10 +33,12 @@ type apiSettingsStore map[string]string
 func (store apiSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
 	values := maps.Clone(map[string]string(store))
 	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	verified := values[settings.AcoustIDApplicationKeyVerifiedKey] == "true"
 	_, hasGitHub := values[settings.GitHubTokenKey]
 	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.AcoustIDApplicationKeyVerifiedKey)
 	delete(values, settings.GitHubTokenKey)
-	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, AcoustIDApplicationKeyVerified: verified, HasGitHubToken: hasGitHub}, nil
 }
 
 type failingSettingsStore struct {
@@ -86,11 +88,17 @@ func (store apiSettingsStore) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
-func (store apiSettingsStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string) error {
+func (store apiSettingsStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string, verified bool) error {
 	if value == nil {
 		delete(store, settings.AcoustIDApplicationKey)
+		delete(store, settings.AcoustIDApplicationKeyVerifiedKey)
 	} else {
 		store[settings.AcoustIDApplicationKey] = *value
+		if verified {
+			store[settings.AcoustIDApplicationKeyVerifiedKey] = "true"
+		} else {
+			delete(store, settings.AcoustIDApplicationKeyVerifiedKey)
+		}
 	}
 	return nil
 }

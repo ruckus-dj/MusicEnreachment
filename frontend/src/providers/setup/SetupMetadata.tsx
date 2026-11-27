@@ -33,13 +33,29 @@ import { SetupAcoustIDBinder } from "./AcoustIDKeyForm";
 export interface SetupMetadataAction {
   continue: () => Promise<boolean>;
   isBusy: () => boolean;
-  /** Verifies the configured provider when needed and returns its identity. */
-  ensureProvider: () => Promise<string>;
+  /** Reads proof for this exact draft without saving or checking it. */
+  verifiedIdentity: () => string | undefined;
+}
+
+export interface SetupMetadataDraft {
+  mode: UpdateMusicBrainzBodyMode;
+  baseURL: string;
+  lrclib: boolean;
+}
+
+export interface SetupMusicBrainzFailure {
+  mode: UpdateMusicBrainzBodyMode;
+  baseURL: string;
+  feedback: SetupFeedback;
 }
 
 type Props = {
   state: SetupStateBody;
   refresh: () => Promise<SetupStateBody>;
+  initialDraft?: SetupMetadataDraft;
+  onDraftChange?: (draft: SetupMetadataDraft) => void;
+  verificationFailure: SetupMusicBrainzFailure | null;
+  onVerificationFailure: (failure: SetupMusicBrainzFailure | null) => void;
   onBusyChange?: (busy: boolean) => void;
   onConfigurationDirtyChange?: (dirty: boolean) => void;
   actionRef?: RefObject<SetupMetadataAction | null>;
@@ -49,6 +65,10 @@ type Props = {
 export function SetupMetadataBinder({
   state,
   refresh,
+  initialDraft,
+  onDraftChange,
+  verificationFailure,
+  onVerificationFailure,
   onBusyChange,
   onConfigurationDirtyChange,
   actionRef,
@@ -57,25 +77,38 @@ export function SetupMetadataBinder({
 }: Props) {
   const { locale } = useI18n();
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>(
-    state.settings.musicbrainz_mode === "self-hosted"
-      ? "self-hosted"
-      : "public",
+    initialDraft?.mode ??
+      (state.settings.musicbrainz_mode === "self-hosted"
+        ? "self-hosted"
+        : "public"),
   );
-  const [baseURL, setBaseURL] = useState(state.settings.musicbrainz_base_url);
-  const [lrclib, setLrclib] = useState(state.settings.lrclib_enabled);
+  const [baseURL, setBaseURL] = useState(
+    initialDraft?.baseURL ?? state.settings.musicbrainz_base_url,
+  );
+  const [lrclib, setLrclib] = useState(
+    initialDraft?.lrclib ?? state.settings.lrclib_enabled,
+  );
   const [pending, setPending] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
   const [keyPending, setKeyPending] = useState(false);
   const [error, setError] = useState<SetupFeedback | null>(null);
   const submitting = useRef(false);
+  const urlEdited = useRef(false);
   const alert = useRef<HTMLParagraphElement>(null);
   const changed =
     mode !== state.settings.musicbrainz_mode ||
     (mode === "self-hosted" ? baseURL : "") !==
       state.settings.musicbrainz_base_url;
+  const verificationError =
+    verificationFailure?.mode === mode &&
+    verificationFailure.baseURL === (mode === "public" ? "" : baseURL)
+      ? verificationFailure.feedback
+      : null;
+  const providerBlocked = changed || verificationError !== null;
   useSetupAlertFocus(alert, error);
   useEffect(() => {
-    onConfigurationDirtyChange?.(changed);
-  }, [changed, onConfigurationDirtyChange]);
+    onConfigurationDirtyChange?.(providerBlocked);
+  }, [providerBlocked, onConfigurationDirtyChange]);
   useEffect(
     () => () => onConfigurationDirtyChange?.(false),
     [onConfigurationDirtyChange],
@@ -93,47 +126,72 @@ export function SetupMetadataBinder({
       setPending(false);
     }
   }
-  async function verifyConfiguredProvider() {
-    const fresh = await refresh();
-    const url = mode === "public" ? "" : baseURL;
-    if (
-      fresh.settings.musicbrainz_mode !== mode ||
-      fresh.settings.musicbrainz_base_url !== url ||
-      !fresh.settings.musicbrainz_verified_at ||
-      !fresh.musicbrainz_configuration_identity
-    ) {
-      const saved = await saveSetupMusicbrainz({ mode, base_url: url });
-      if (saved.status !== 200) throw setupHttpError(saved);
-      const identity = saved.data.configuration_identity;
-      if (!identity) throw setupMessage("musicBrainzIdentityMissing");
-      const checked = await checkSetupMusicbrainz({
-        configuration_identity: identity,
+  async function checkProvider(
+    nextMode: UpdateMusicBrainzBodyMode,
+    nextURL: string,
+  ) {
+    if (disabled || submitting.current || keyPending) return;
+    let configurationSaved = false;
+    const url = nextMode === "public" ? "" : nextURL;
+    setVerificationPending(true);
+    try {
+      await withSubmission(async () => {
+        const fresh = await refresh();
+        let identity = fresh.musicbrainz_configuration_identity;
+        if (
+          fresh.settings.musicbrainz_mode !== nextMode ||
+          fresh.settings.musicbrainz_base_url !== url ||
+          !identity
+        ) {
+          const saved = await saveSetupMusicbrainz({
+            mode: nextMode,
+            base_url: url,
+          });
+          if (saved.status !== 200) throw setupHttpError(saved);
+          identity = saved.data.configuration_identity;
+          configurationSaved = true;
+        }
+        if (!identity) throw setupMessage("musicBrainzIdentityMissing");
+        const checked = await checkSetupMusicbrainz({
+          configuration_identity: identity,
+        });
+        if (checked.status !== 200) throw setupHttpError(checked);
+        if (!checked.data.success) throw setupMessage("musicBrainzUnavailable");
+        const verified = await refresh();
+        if (
+          verified.settings.musicbrainz_mode !== nextMode ||
+          verified.settings.musicbrainz_base_url !== url ||
+          !verified.settings.musicbrainz_verified_at ||
+          verified.musicbrainz_configuration_identity !== identity
+        ) {
+          throw setupMessage("saveAndCheckMusicBrainz");
+        }
       });
-      if (checked.status !== 200) throw setupHttpError(checked);
-      if (!checked.data.success) {
-        if (checked.data.error) throw new Error(checked.data.error);
-        throw setupMessage("musicBrainzUnavailable");
+      onVerificationFailure(null);
+    } catch (reason) {
+      onVerificationFailure({
+        mode: nextMode,
+        baseURL: url,
+        feedback: setupFeedback(reason, "musicBrainzUnavailable"),
+      });
+      if (configurationSaved) {
+        // The saved endpoint changed even though verification did not pass.
+        // Discard any earlier proof in the view, without masking the error.
+        await refresh().catch(() => {});
       }
-      const verified = await refresh();
-      if (
-        verified.settings.musicbrainz_mode !== mode ||
-        verified.settings.musicbrainz_base_url !== url ||
-        !verified.settings.musicbrainz_verified_at ||
-        verified.musicbrainz_configuration_identity !== identity
-      ) {
-        throw setupMessage("saveAndCheckMusicBrainz");
-      }
-      return identity;
+    } finally {
+      setVerificationPending(false);
     }
-    const identity = fresh.musicbrainz_configuration_identity;
-    if (!identity) throw setupMessage("musicBrainzIdentityMissing");
-    return identity;
   }
-  async function ensureProvider() {
-    if (disabled) throw setupMessage("requestInProgress");
-    // A retry after a catalog failure reuses the already verified provider:
-    // saving or checking it again would only replace the identity unnecessarily.
-    return withSubmission(verifyConfiguredProvider);
+  function verifiedIdentity() {
+    if (
+      providerBlocked ||
+      disabled ||
+      submitting.current ||
+      !state.settings.musicbrainz_verified_at
+    )
+      return undefined;
+    return state.musicbrainz_configuration_identity || undefined;
   }
   async function continueStep() {
     if (submitting.current || keyPending) return false;
@@ -149,14 +207,29 @@ export function SetupMetadataBinder({
     }
   }
   useImperativeHandle(actionRef, () => ({
-    isBusy: () => submitting.current || keyPending,
+    isBusy: () => submitting.current || verificationPending || keyPending,
     continue: continueStep,
-    ensureProvider,
+    verifiedIdentity,
   }));
   useEffect(() => {
-    onBusyChange?.(pending || keyPending);
+    onBusyChange?.(pending || verificationPending || keyPending);
     return () => onBusyChange?.(false);
-  }, [pending, keyPending, onBusyChange]);
+  }, [pending, verificationPending, keyPending, onBusyChange]);
+  function changeMode(next: UpdateMusicBrainzBodyMode) {
+    urlEdited.current = false;
+    setMode(next);
+    onDraftChange?.({ mode: next, baseURL, lrclib });
+    if (next === "public") void checkProvider(next, "");
+  }
+  function changeBaseURL(next: string) {
+    urlEdited.current = true;
+    setBaseURL(next);
+    onDraftChange?.({ mode, baseURL: next, lrclib });
+  }
+  function changeLrclib(next: boolean) {
+    setLrclib(next);
+    onDraftChange?.({ mode, baseURL, lrclib: next });
+  }
   const model: SetupScreenMetadataStepView = {
     providers: {
       locale,
@@ -167,11 +240,24 @@ export function SetupMetadataBinder({
         : state.settings.musicbrainz_verified_at
           ? "verified"
           : "untested",
-      verifiedAt: state.settings.musicbrainz_verified_at,
-      lrclib: { enabled: lrclib, onChange: setLrclib },
-      disabled: disabled || pending || keyPending,
-      onModeChange: setMode,
-      onBaseURLChange: setBaseURL,
+      verificationError:
+        verificationError && !verificationPending
+          ? setupFeedbackText(verificationError, locale)
+          : undefined,
+      lrclib: { enabled: lrclib, onChange: changeLrclib },
+      disabled: disabled || pending || verificationPending || keyPending,
+      verificationPending,
+      onVerify: () => {
+        urlEdited.current = false;
+        void checkProvider(mode, baseURL);
+      },
+      onBaseURLBlur: () => {
+        if (!urlEdited.current || !baseURL.trim()) return;
+        urlEdited.current = false;
+        void checkProvider(mode, baseURL);
+      },
+      onModeChange: changeMode,
+      onBaseURLChange: changeBaseURL,
     },
     acoustID:
       state.platform.supported && !state.platform.diagnostic
@@ -179,6 +265,7 @@ export function SetupMetadataBinder({
             Component: SetupAcoustIDBinder,
             props: {
               hasKey: state.settings.has_acoustid_application_key,
+              verified: state.settings.acoustid_application_key_verified,
               onChanged: refresh,
               onBusyChange: setKeyPending,
               disabled: disabled || pending,

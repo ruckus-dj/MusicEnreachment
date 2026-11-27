@@ -317,3 +317,93 @@ func TestCollectNestedIDsIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyApplicationKeyUsesTrackProbeAndAcceptsEmptyResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			t.Errorf("request method/query = %s %q", r.Method, r.URL.RawQuery)
+		}
+		if strings.Contains(r.URL.String(), applicationKey) {
+			t.Error("application key appeared in URL")
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		form, err := url.ParseQuery(string(body))
+		if err != nil {
+			t.Errorf("parse body: %v", err)
+		}
+		if form.Get("client") != applicationKey || form.Get("trackid") != "00000000-0000-4000-8000-000000000000" {
+			t.Errorf("unexpected probe form: %#v", form)
+		}
+		if form.Get("fingerprint") != "" || form.Get("duration") != "" || form.Get("meta") != "" {
+			t.Errorf("probe sent data beyond client/trackid: %#v", form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok","results":[]}`)
+	}))
+	defer server.Close()
+	waiter := &testWaiter{}
+	if err := NewClientWithEndpoint(server.Client(), waiter, server.URL).VerifyApplicationKey(context.Background(), applicationKey); err != nil {
+		t.Fatalf("VerifyApplicationKey() error = %v", err)
+	}
+	if waiter.calls != 1 {
+		t.Errorf("limiter calls = %d", waiter.calls)
+	}
+}
+
+func TestVerifyApplicationKeyDistinguishesRejectionFromUpstreamFailure(t *testing.T) {
+	const upstreamText = "recognizable upstream diagnostic"
+	for _, test := range []struct {
+		name        string
+		status      int
+		body        string
+		contentType string
+		want        error
+	}{
+		{name: "rejected", status: http.StatusBadRequest, contentType: "application/json", body: `{"status":"error","error":{"code":4,"message":"` + upstreamText + `"}}`, want: ErrApplicationKeyRejected},
+		{name: "error code four with 200 is unavailable", status: http.StatusOK, contentType: "application/json", body: `{"status":"error","error":{"code":4,"message":"` + upstreamText + `"}}`, want: ErrResponse},
+		{name: "user code missing key is not proven", status: http.StatusOK, contentType: "application/json", body: `{"status":"error","error":{"code":21,"message":"` + upstreamText + `"}}`, want: ErrResponse},
+		{name: "bad request not code four", status: http.StatusBadRequest, contentType: "application/json", body: `{"status":"error","error":{"code":5,"message":"` + upstreamText + `"}}`, want: ErrResponse},
+		{name: "rate limited", status: http.StatusTooManyRequests, contentType: "application/json", body: upstreamText, want: ErrResponse},
+		{name: "server failure", status: http.StatusInternalServerError, contentType: "text/plain", body: upstreamText, want: ErrResponse},
+		{name: "malformed", status: http.StatusOK, contentType: "application/json", body: `{"status":"ok"`, want: ErrResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", test.contentType)
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			err := NewClientWithEndpoint(server.Client(), nil, server.URL).VerifyApplicationKey(context.Background(), applicationKey)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("VerifyApplicationKey() error = %v, want %v", err, test.want)
+			}
+			if strings.Contains(err.Error(), applicationKey) || strings.Contains(err.Error(), upstreamText) {
+				t.Fatalf("verification error leaked credential or upstream text: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyApplicationKeyDoesNotFollowRedirects(t *testing.T) {
+	var redirected bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/target" {
+			redirected = true
+		}
+		w.Header().Set("Location", "/target")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = io.WriteString(w, `{"status":"ok","results":[]}`)
+	}))
+	defer server.Close()
+	if err := NewClientWithEndpoint(server.Client(), nil, server.URL).VerifyApplicationKey(context.Background(), applicationKey); !errors.Is(err, ErrResponse) {
+		t.Fatalf("redirect error = %v, want ErrResponse", err)
+	}
+	if redirected {
+		t.Fatal("credential-bearing verification request followed a redirect")
+	}
+}

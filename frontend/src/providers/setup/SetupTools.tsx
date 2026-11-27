@@ -26,13 +26,7 @@ import {
 } from "../../ui/features/setup/setupMessages";
 import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
 import { useSetupTriggerFocus } from "../../ui/features/setup/useSetupTriggerFocus";
-import {
-  operationKindLabel,
-  operationProgressLabel,
-  operationStageLabel,
-  operationStateLabel,
-  operationTargetLabel,
-} from "../operations/operationPresentation";
+import { toolInstallCompletedText } from "../operations/operationPresentation";
 import { useGitHubTokenFormModel } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -63,11 +57,15 @@ export function SetupToolsBinder({
   onBlockedChange,
   hasGitHubToken = false,
   onGitHubTokenChanged,
+  initialSelected,
+  onSelectedChange,
   children,
 }: {
   onBlockedChange?: (blocked: boolean) => void;
   hasGitHubToken?: boolean;
   onGitHubTokenChanged?: () => void | Promise<void>;
+  initialSelected?: Partial<Record<Kind, string>>;
+  onSelectedChange?: (selected: Partial<Record<Kind, string>>) => void;
   children: ReactNode;
 }) {
   const { locale } = useI18n();
@@ -89,7 +87,9 @@ export function SetupToolsBinder({
   const [catalog, setCatalog] = useState<Partial<Record<Kind, CatalogBody>>>(
     {},
   );
-  const [selected, setSelected] = useState<Partial<Record<Kind, string>>>({});
+  const [selected, setSelected] = useState<Partial<Record<Kind, string>>>(
+    () => ({ ...initialSelected }),
+  );
   const [preflight, setPreflight] = useState<{
     kind: Kind;
     release: string;
@@ -191,6 +191,16 @@ export function SetupToolsBinder({
     void load();
   }, [load]);
 
+  const selectedFor = (kind: Kind) => {
+    const identity = selected[kind];
+    if (!identity) return undefined;
+    const releases = catalog[kind]?.releases;
+    if (!releases?.length) return identity;
+    return releases.some((release) => release.identity === identity)
+      ? identity
+      : undefined;
+  };
+
   async function start(plan: InstallPreflightBody, kind: Kind) {
     if (readyByKind(kind).length) {
       throw setupMessage("readyVersionExists");
@@ -218,7 +228,7 @@ export function SetupToolsBinder({
       if (readyByKind(kind).length) {
         throw setupMessage("readyVersionExists");
       }
-      const identity = selected[kind];
+      const identity = selectedFor(kind);
       if (!identity) throw setupMessage("chooseVersion");
       const plan = await preflightManagedToolInstall(
         kind,
@@ -265,18 +275,19 @@ export function SetupToolsBinder({
       state: "install",
       notice: catalog[kind]?.notice,
       releases: catalog[kind]?.releases ?? [],
-      selected: selected[kind] || null,
+      selected: selectedFor(kind) ?? null,
       pending,
       onSelect: (identity) => {
-        setSelected((previous) => ({
-          ...previous,
-          [kind]: identity ?? "",
-        }));
+        const next = { ...selected };
+        if (identity) next[kind] = identity;
+        else delete next[kind];
+        setSelected(next);
+        onSelectedChange?.(next);
         setPreflight(undefined);
         setConfirmError(null);
       },
       action: {
-        disabled: pending || !selected[kind],
+        disabled: pending || !selectedFor(kind),
         onPress: ({ target }) => {
           installTriggerFocus.capture(target);
           void install(kind);
@@ -328,13 +339,10 @@ export function SetupToolsBinder({
                   },
                 }
               : undefined,
-          completed: completed.map((item) => {
-            const stage = operationStageLabel(item.stage, locale);
-            return {
-              key: item.id,
-              text: `${operationKindLabel(item.kind, locale)} — ${operationTargetLabel(item, locale)}: ${operationStateLabel(item.state, locale)}.${stage ? ` ${stage}.` : ""} ${operationProgressLabel(item, locale)}.`,
-            };
-          }),
+          completed: completed.map((item) => ({
+            key: item.id,
+            text: toolInstallCompletedText(item, locale),
+          })),
           operations: ids.map((id) => ({
             id,
             source: { Component: SetupOperationProgressBinder, props: { id } },

@@ -29,7 +29,8 @@ const english = {
   serverStateUpdated: "Server state refreshed.",
   requestInProgress: "Request in progress…",
   metadataTitle: "Metadata providers",
-  musicBrainzUnavailable: "MusicBrainz is unavailable.",
+  musicBrainzUnavailable:
+    "Could not verify the connection to the MusicBrainz API. Check the address or try again.",
   saveAndCheckMusicBrainz:
     "Save and check MusicBrainz after changing its configuration.",
   musicBrainzIdentityMissing:
@@ -147,7 +148,8 @@ const russian: SetupMessages = {
   serverStateUpdated: "Состояние сервера обновлено.",
   requestInProgress: "Выполняется запрос…",
   metadataTitle: "Провайдеры метаданных",
-  musicBrainzUnavailable: "MusicBrainz недоступен.",
+  musicBrainzUnavailable:
+    "Не удалось проверить подключение к API MusicBrainz. Проверьте адрес или повторите попытку.",
   saveAndCheckMusicBrainz:
     "Сохраните и проверьте MusicBrainz после изменения конфигурации.",
   musicBrainzIdentityMissing:

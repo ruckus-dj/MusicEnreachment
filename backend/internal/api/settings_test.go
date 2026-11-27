@@ -9,9 +9,16 @@ import (
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+type acoustIDVerifierFunc func(context.Context, string) error
+
+func (f acoustIDVerifierFunc) VerifyApplicationKey(ctx context.Context, key string) error {
+	return f(ctx, key)
+}
 
 type failingSHA256Store struct {
 	apiSettingsStore
@@ -68,7 +75,8 @@ func TestSettingsSHA256DefaultAndRoundTrip(t *testing.T) {
 func TestAcoustIDApplicationKeyWriteOnlyLifecycle(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)
-	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithAcoustIDVerifier(acoustIDVerifierFunc(func(context.Context, string) error { return nil }))
 	handler := api.HandlerWithSetup(setup)
 	secret := " arbitrary:key value "
 
@@ -97,6 +105,14 @@ func TestAcoustIDApplicationKeyWriteOnlyLifecycle(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/settings", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"has_acoustid_application_key":true`) || strings.Contains(response.Body.String(), secret) {
 		t.Fatalf("GET settings status=%d body=%s, want presence only", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"acoustid_application_key_verified":true`) {
+		t.Fatalf("GET settings status=%d body=%s, want verified checkmark", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"acoustid_application_key_verified":true`) {
+		t.Fatalf("GET setup status=%d body=%s, want public verified checkmark", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()
@@ -162,6 +178,98 @@ func TestAcoustIDApplicationKeyValidationNeverEchoesRequestValues(t *testing.T) 
 				t.Fatalf("response leaked request value: %s", response.Body.String())
 			}
 		})
+	}
+}
+
+func TestAcoustIDApplicationKeyRejectedDoesNotReplaceSavedKey(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	legacy := "legacy-application-key"
+	if err := store.SetOrDeleteAcoustIDCredential(context.Background(), &legacy, false); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		candidate    = "recognizable-candidate-key"
+		upstreamText = "recognizable-upstream-diagnostic"
+	)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithAcoustIDVerifier(acoustIDVerifierFunc(func(context.Context, string) error {
+			return fmt.Errorf("%w: %s", acoustid.ErrApplicationKeyRejected, upstreamText)
+		}))
+	handler := api.HandlerWithSetup(setup)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":"`+candidate+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("rejected key status=%d body=%s, want %d", response.Code, response.Body.String(), http.StatusUnprocessableEntity)
+	}
+	if strings.Contains(response.Body.String(), candidate) || strings.Contains(response.Body.String(), upstreamText) {
+		t.Fatalf("rejection response leaked credential or upstream text: %s", response.Body.String())
+	}
+	if store[settings.AcoustIDApplicationKey] != legacy {
+		t.Fatalf("saved key=%q, want preserved legacy key", store[settings.AcoustIDApplicationKey])
+	}
+	if _, exists := store[settings.AcoustIDApplicationKeyVerifiedKey]; exists {
+		t.Fatal("rejected key acquired a verification checkmark")
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"has_acoustid_application_key":true`) ||
+		strings.Contains(response.Body.String(), `"acoustid_application_key_verified"`) {
+		t.Fatalf("legacy key settings status=%d body=%s, want presence without checkmark", response.Code, response.Body.String())
+	}
+}
+
+func TestAcoustIDApplicationKeyUpstreamFailureDoesNotReplaceSavedKey(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	legacy := "legacy-application-key"
+	if err := store.SetOrDeleteAcoustIDCredential(context.Background(), &legacy, false); err != nil {
+		t.Fatal(err)
+	}
+	const upstreamText = "recognizable-upstream-diagnostic"
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithAcoustIDVerifier(acoustIDVerifierFunc(func(context.Context, string) error {
+			return fmt.Errorf("%w: %s", acoustid.ErrResponse, upstreamText)
+		}))
+	handler := api.HandlerWithSetup(setup)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":"candidate-application-key"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("upstream failure status=%d body=%s, want %d", response.Code, response.Body.String(), http.StatusBadGateway)
+	}
+	if strings.Contains(response.Body.String(), upstreamText) {
+		t.Fatalf("upstream failure response leaked upstream text: %s", response.Body.String())
+	}
+	if store[settings.AcoustIDApplicationKey] != legacy {
+		t.Fatalf("saved key=%q, want preserved legacy key", store[settings.AcoustIDApplicationKey])
+	}
+}
+
+func TestAcoustIDApplicationKeyWhitespaceOnlyIsRejectedBeforeVerification(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	var verifierCalls int
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithAcoustIDVerifier(acoustIDVerifierFunc(func(context.Context, string) error {
+			verifierCalls++
+			return nil
+		}))
+	handler := api.HandlerWithSetup(setup)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":"   "}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || verifierCalls != 0 {
+		t.Fatalf("whitespace-only key status=%d verifier calls=%d, want 422 and no verification", response.Code, verifierCalls)
+	}
+	if _, exists := store[settings.AcoustIDApplicationKey]; exists {
+		t.Fatal("whitespace-only key was saved")
 	}
 }
 

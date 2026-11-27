@@ -1,13 +1,19 @@
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { navigateHash, useMeloTroveHashLocation } from "../ui/app/hashLocation";
+import {
+  navigateHash,
+  pushHashState,
+  replaceHashState,
+  useMeloTroveHashLocation,
+} from "../ui/app/hashLocation";
 import {
   bindMeloTroveHomeModel,
   bindMeloTroveReleaseModel,
@@ -37,6 +43,10 @@ import {
 } from "../ui/features/library/libraryDetailRoute";
 import { libraryReleaseMessage } from "../ui/features/library/libraryReleaseMessages";
 import { matchingMessage } from "../ui/features/matching/matchingWorkspaceMessages";
+import {
+  setupStepHref,
+  setupStepIndex,
+} from "../ui/features/setup/setupStepRoute";
 import {
   parseSourcesRoute,
   type SourcesRoute,
@@ -173,6 +183,15 @@ import {
   initialDemoSettings,
 } from "./providers/settings/SettingsScreen";
 import { DemoMeloTroveSetupBinder } from "./providers/setup/SetupScreen";
+import {
+  getSetupDraftStorage,
+  mergeSetupDraft,
+  readSetupDraft,
+  restoreSetupSettings,
+  type SetupDraftSnapshot,
+  setupSettingsDraft,
+  writeSetupDraft,
+} from "./providers/setup/setupDraft";
 import { useSetupToolDownloadsDemoProvider } from "./providers/setup/useSetupToolDownloadsDemoProvider";
 import {
   DemoMeloTroveSourcesBinder,
@@ -243,6 +262,24 @@ function useDemoMeloTroveState(
   const incomingCount = incoming.groups.filter(
     (group) => !group.processed,
   ).length;
+  const [initialSetupDraft] = useState<SetupDraftSnapshot | null>(() =>
+    readSetupDraft(getSetupDraftStorage()),
+  );
+  const [initialSetupSettings] = useState(() =>
+    restoreSetupSettings(initialDemoSettings, initialSetupDraft),
+  );
+  const setupDraftRef = useRef<SetupDraftSnapshot | null>(initialSetupDraft);
+  const [storedSetupStep, setStoredSetupStep] = useState(
+    () => initialSetupDraft?.step ?? 0,
+  );
+  const persistSetupDraft = useCallback(
+    (patch: Partial<Omit<SetupDraftSnapshot, "version">>) => {
+      const next = mergeSetupDraft(setupDraftRef.current, patch);
+      setupDraftRef.current = next;
+      writeSetupDraft(getSetupDraftStorage(), next);
+    },
+    [],
+  );
   // Host-owned so admitted downloads and moves settle across route changes.
   const {
     settings,
@@ -255,7 +292,7 @@ function useDemoMeloTroveState(
     startMove: startToolMove,
     retryMove: retryToolMove,
     dismissMove: dismissToolMove,
-  } = useSetupToolDownloadsDemoProvider(initialDemoSettings);
+  } = useSetupToolDownloadsDemoProvider(initialSetupSettings);
   const publicationDestination: PublicationDestination = {
     outputDirectory:
       settings.currentOutput ?? fixturePublicationDestination.outputDirectory,
@@ -264,7 +301,35 @@ function useDemoMeloTroveState(
   const loadGenres = async () => {
     setSettings((current) => ({ ...current, genresLoaded: true }));
   };
-  const [setupStep, setSetupStep] = useState(0);
+  const routeSetupStep =
+    route.kind === "setup" ? setupStepIndex(route.hash) : undefined;
+  const setSetupStep = useCallback(
+    (next: number, options?: { replace?: boolean }) => {
+      setStoredSetupStep(next);
+      persistSetupDraft({ step: next });
+      const href = setupStepHref(next);
+      if (options?.replace) replaceHashState(href);
+      else pushHashState(href);
+    },
+    [persistSetupDraft],
+  );
+  const recordSetupGenreCatalog = useCallback(
+    (endpoint: string) => {
+      persistSetupDraft({ genreCatalogEndpoint: endpoint });
+    },
+    [persistSetupDraft],
+  );
+  useEffect(() => {
+    if (route.kind !== "setup" || routeSetupStep === undefined) return;
+    setStoredSetupStep(routeSetupStep);
+    persistSetupDraft({ step: routeSetupStep });
+  }, [route.kind, routeSetupStep, persistSetupDraft]);
+  useEffect(() => {
+    // A running download can settle after leaving Setup; keep the narrow
+    // Setup evidence current, but do not create a draft outside Setup.
+    if (route.kind !== "setup" && setupDraftRef.current === null) return;
+    persistSetupDraft({ settings: setupSettingsDraft(settings) });
+  }, [persistSetupDraft, route.kind, settings]);
   const [files, setFiles] = useState(() => structuredClone(originalFiles));
   const [sourceRoots, setSourceRoots] = useState(() =>
     structuredClone(initialSourceRoots),
@@ -1380,9 +1445,20 @@ function useDemoMeloTroveState(
     bindMeloTroveScreen(DemoMeloTroveSetupBinder, {
       settings,
       onSettings: setSettings,
-      step: setupStep,
+      step: routeSetupStep,
+      fallbackStep: storedSetupStep,
+      stepSync: true,
       onStepChange: setSetupStep,
       toolActivity: toolDownloads,
+      initialDraft: {
+        toolsDirectory: setupDraftRef.current?.toolsDirectory,
+        lrclib: setupDraftRef.current?.lrclib,
+        publicationAutoCompleteAlbums:
+          setupDraftRef.current?.publicationAutoCompleteAlbums,
+      },
+      onDraftChange: persistSetupDraft,
+      initialGenreCatalogEndpoint: setupDraftRef.current?.genreCatalogEndpoint,
+      onGenreCatalogReady: recordSetupGenreCatalog,
     });
   const sourcesScreen = (sourceRoute: SourcesRoute) => {
     return bindMeloTroveScreen(DemoMeloTroveSourcesBinder, {

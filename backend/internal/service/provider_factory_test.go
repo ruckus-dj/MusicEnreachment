@@ -45,11 +45,17 @@ type revisionedProviderFactoryStore struct {
 	revision string
 }
 
-func (s *revisionedProviderFactoryStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string) error {
+func (s *revisionedProviderFactoryStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string, verified bool) error {
 	if value == nil {
 		delete(s.values, settings.AcoustIDApplicationKey)
+		delete(s.values, settings.AcoustIDApplicationKeyVerifiedKey)
 	} else {
 		s.values[settings.AcoustIDApplicationKey] = *value
+		if verified {
+			s.values[settings.AcoustIDApplicationKeyVerifiedKey] = "true"
+		} else {
+			delete(s.values, settings.AcoustIDApplicationKeyVerifiedKey)
+		}
 	}
 	return nil
 }

@@ -37,10 +37,12 @@ func (m *mockSettingsStore) GetRuntimeSettingsValues(context.Context) (settings.
 	defer m.mu.Unlock()
 	values := maps.Clone(m.data)
 	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	verified := values[settings.AcoustIDApplicationKeyVerifiedKey] == "true"
 	_, hasGitHub := values[settings.GitHubTokenKey]
 	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.AcoustIDApplicationKeyVerifiedKey)
 	delete(values, settings.GitHubTokenKey)
-	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, AcoustIDApplicationKeyVerified: verified, HasGitHubToken: hasGitHub}, nil
 }
 
 func (m *mockSettingsStore) Get(_ context.Context, key string) (string, bool, error) {

@@ -2103,6 +2103,7 @@ export interface RetrySourceAnalysisStepBody {
 }
 
 export interface RuntimeSettingsResponse {
+  acoustid_application_key_verified?: boolean;
   active_ffmpeg_installation_id?: string;
   active_fpcalc_installation_id?: string;
   has_acoustid_application_key: boolean;

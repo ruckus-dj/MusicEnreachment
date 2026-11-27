@@ -17,6 +17,7 @@ import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { SetupManager } from "./SetupManager";
+import { setupDraftKey, setupDraftVersion } from "./setupDraft";
 
 const settings: SetupStateBody["settings"] = {
   tools_directory: "",
@@ -136,7 +137,12 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
 });
+function setSetupHash(step: string) {
+  window.history.replaceState(null, "", `/#/setup?step=${step}`);
+}
 function renderSetup(value: SetupStateBody, onCompleted = vi.fn()) {
   localStorage.setItem("melotrove-language", "ru");
   return render(
@@ -150,6 +156,16 @@ async function click(name: string) {
 }
 function heading(name: string) {
   return screen.getByRole("heading", { level: 2, name });
+}
+
+function seedAutoCompleteAlbumsDraft(value: boolean, saved: boolean) {
+  window.sessionStorage.setItem(
+    setupDraftKey,
+    JSON.stringify({
+      version: setupDraftVersion,
+      publication: { autoCompleteAlbums: { value, saved } },
+    }),
+  );
 }
 
 function LocaleSwitch() {
@@ -232,6 +248,67 @@ describe("SetupManager", () => {
 
     await waitFor(() => expect(operations).toHaveBeenCalled());
     expect(selector).toBe("install");
+  });
+
+  it("shows install progress by stage without leaking byte counts into the result", async () => {
+    const current = state(paths);
+    const queued: OperationResponse = {
+      id: "ffmpeg-install",
+      kind: "install",
+      state: "queued",
+      stage: "resolve",
+      target_identity: "ffmpeg:btbn:9.0:linux:amd64",
+      bytes_completed: 0,
+      created_at: "2026-11-23T12:00:00Z",
+      updated_at: "2026-11-23T12:00:00Z",
+    };
+    let snapshot = queued;
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.get("/api/operations", () =>
+        HttpResponse.json({ operations: [queued] }),
+      ),
+      http.get("/api/operations/ffmpeg-install", () =>
+        HttpResponse.json(snapshot),
+      ),
+    );
+    localStorage.setItem("melotrove.setup.step", "tools");
+    renderSetup(current);
+
+    await screen.findByText(/FFmpeg.*(?:ожидание|в очереди)/i);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+
+    function update(next: Partial<OperationResponse>, timestamp: string) {
+      snapshot = { ...snapshot, ...next, updated_at: timestamp };
+      TestEventSource.instances
+        .at(-1)
+        ?.dispatchEvent(new Event("operation-changed"));
+    }
+    update(
+      { state: "running", stage: "download", bytes_completed: 80_000_000 },
+      "2026-11-23T12:00:01Z",
+    );
+    const indeterminate = await screen.findByRole("progressbar");
+    expect(indeterminate).toHaveAccessibleName();
+    expect(indeterminate).not.toHaveAttribute("aria-valuenow");
+    expect(indeterminate).not.toHaveAttribute("value");
+
+    update({ bytes_total: 320_000_000 }, "2026-11-23T12:00:02Z");
+    expect(await screen.findByText(/25\s*%/)).toBeVisible();
+    expect(screen.queryByText(/байт/i)).not.toBeInTheDocument();
+
+    update({ stage: "verify" }, "2026-11-23T12:00:03Z");
+    await screen.findByText(/проверка/i);
+    const verifying = screen.getByRole("progressbar");
+    expect(verifying).not.toHaveAttribute("aria-valuenow");
+    expect(verifying).not.toHaveAttribute("value");
+    expect(screen.queryByText(/25\s*%/)).not.toBeInTheDocument();
+
+    update({ state: "succeeded", stage: "succeeded" }, "2026-11-23T12:00:04Z");
+    const result = /FFmpeg 9\.0\s*[—·-]\s*установлен\.?$/i;
+    await waitFor(() => expect(screen.getAllByText(result)).toHaveLength(1));
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText(/байт|завершена/i)).not.toBeInTheDocument();
   });
 
   it("confirms only the exact Setup tool conflicts and keeps a failed start in the dialog", async () => {
@@ -378,9 +455,21 @@ describe("SetupManager", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Исходный формат" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "LRCLIB включён" }));
     expect(screen.getByRole("button", { name: "Продолжить" })).toBeDisabled();
-    await click("Загрузить каталог");
+    const load = screen.getByRole("button", { name: "Загрузить каталог" });
+    expect(load).toBeDisabled();
+    fireEvent.click(load);
+    expect(savedProvider).not.toHaveBeenCalled();
+    expect(checkedProvider).not.toHaveBeenCalled();
+    expect(catalogBodies).not.toHaveBeenCalled();
+    await click("Проверить");
     await waitFor(() => expect(checkedProvider).toHaveBeenCalledTimes(1));
     expect(savedProvider).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Загрузить каталог" }),
+      ).toBeEnabled(),
+    );
+    await click("Загрузить каталог");
     await waitFor(() => expect(catalogBodies).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Повторить" })).toBeVisible(),
@@ -417,6 +506,127 @@ describe("SetupManager", () => {
       acceptLrclib();
     }
     await waitFor(() => expect(heading("Итог")).toBeVisible());
+  });
+
+  it("clears the failed MusicBrainz check after a corrected URL loads genres", async () => {
+    const homepage = "https://musicbrainz.example.org";
+    const apiURL = `${homepage}/ws/2`;
+    const connectivityError =
+      "MusicBrainz connectivity check failed. Retry the check.";
+    const localizedError =
+      /не удалось проверить подключение к API MusicBrainz/i;
+    const verifiedAt = "2026-11-27T10:37:41.039981848Z";
+    let current = state({
+      ...installed,
+      musicbrainz_mode: "self-hosted",
+      musicbrainz_base_url: homepage,
+    });
+    const operation = catalogOperation("catalog-after-retry", "succeeded");
+    const checks = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.put("/api/setup/musicbrainz", async ({ request }) => {
+        const { base_url } = (await request.json()) as { base_url: string };
+        current = state(
+          { ...current.settings, musicbrainz_base_url: base_url },
+          false,
+          { musicbrainz_configuration_identity: base_url },
+        );
+        return HttpResponse.json({ configuration_identity: base_url });
+      }),
+      http.post("/api/setup/musicbrainz/check", () => {
+        checks();
+        if (current.settings.musicbrainz_base_url !== apiURL)
+          return HttpResponse.json({
+            success: false,
+            error: connectivityError,
+          });
+        current.settings.musicbrainz_verified_at = verifiedAt;
+        return HttpResponse.json({ success: true });
+      }),
+      http.post("/api/setup/genre-catalog/refresh", () => {
+        current.genre_catalog = { ready: true, status: "ready", count: 120 };
+        return HttpResponse.json(operation, { status: 202 });
+      }),
+      http.get("/api/operations/catalog-after-retry", () =>
+        HttpResponse.json(operation),
+      ),
+    );
+    renderSetup(current);
+    const field = screen.getByRole("textbox", {
+      name: "Базовый URL MusicBrainz",
+    });
+    expect(
+      screen.getByRole("button", { name: "Загрузить каталог" }),
+    ).toBeDisabled();
+    await click("Проверить");
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(field).toHaveAccessibleDescription(localizedError);
+    expect(screen.queryByText(connectivityError)).not.toBeInTheDocument();
+    fireEvent.change(field, { target: { value: apiURL } });
+    expect(field).not.toHaveAttribute("aria-invalid", "true");
+    expect(
+      screen.getByRole("button", { name: "Загрузить каталог" }),
+    ).toBeDisabled();
+    fireEvent.blur(field);
+    await waitFor(() => expect(checks).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Загрузить каталог" }),
+      ).toBeEnabled(),
+    );
+    await click("Загрузить каталог");
+    expect(await screen.findByText(/доступно жанров: 120/i)).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(field).not.toHaveAttribute("aria-invalid", "true");
+    expect(field).not.toHaveAccessibleDescription(localizedError);
+    expect(screen.queryByText(verifiedAt)).not.toBeInTheDocument();
+    expect(checks).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks the public MusicBrainz service as soon as it is selected", async () => {
+    let current = state({
+      ...installed,
+      musicbrainz_mode: "self-hosted",
+      musicbrainz_base_url: "https://musicbrainz.example.org/ws/2",
+    });
+    const saved = vi.fn();
+    const checked = vi.fn();
+    const loadedCatalog = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.put("/api/setup/musicbrainz", async ({ request }) => {
+        saved(await request.json());
+        current = state({ ...installed, musicbrainz_mode: "public" }, false, {
+          musicbrainz_configuration_identity: "public-identity",
+        });
+        return HttpResponse.json({
+          configuration_identity: "public-identity",
+        });
+      }),
+      http.post("/api/setup/musicbrainz/check", async ({ request }) => {
+        checked(await request.json());
+        current.settings.musicbrainz_verified_at = "2026-11-20T12:00:00Z";
+        return HttpResponse.json({ success: true });
+      }),
+      http.post("/api/setup/genre-catalog/refresh", () => {
+        loadedCatalog();
+        return HttpResponse.json({}, { status: 500 });
+      }),
+    );
+    renderSetup(current);
+    const load = screen.getByRole("button", { name: "Загрузить каталог" });
+    expect(load).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Публичный сервис" }));
+    await waitFor(() => expect(load).toBeEnabled());
+    expect(saved).toHaveBeenCalledExactlyOnceWith({
+      mode: "public",
+      base_url: "",
+    });
+    expect(checked).toHaveBeenCalledExactlyOnceWith({
+      configuration_identity: "public-identity",
+    });
+    expect(loadedCatalog).not.toHaveBeenCalled();
   });
 
   it("completes setup with the identity rendered by the summary", async () => {
@@ -503,5 +713,484 @@ describe("SetupManager", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "больше не соответствует",
     );
+  });
+
+  it("prefers a valid step hash over the stored navigation hint", async () => {
+    const ready = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    localStorage.setItem("melotrove.setup.step", "tools");
+    setSetupHash("summary");
+
+    renderSetup(ready);
+
+    expect(heading("Итог")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=summary"),
+    );
+  });
+
+  it("clamps a direct high step hash to the earliest incomplete step", async () => {
+    localStorage.setItem("melotrove.setup.step", "summary");
+    setSetupHash("summary");
+
+    renderSetup(state());
+
+    expect(heading("Каталоги")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=directories"),
+    );
+  });
+
+  it("does not open tools before the tools are active", async () => {
+    const current = state(paths);
+    server.use(http.get("/api/setup", () => HttpResponse.json(current)));
+    setSetupHash("summary");
+
+    renderSetup(current);
+
+    expect(heading("Инструменты")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=tools"),
+    );
+  });
+
+  it("replaces an unknown step hash with the canonical first step", async () => {
+    localStorage.setItem("melotrove.setup.step", "summary");
+    setSetupHash("unknown");
+
+    renderSetup(state());
+
+    expect(heading("Каталоги")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=directories"),
+    );
+  });
+
+  it("keeps unsaved publication values and the step hash across a remount", async () => {
+    const current = state(
+      {
+        ...installed,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      false,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    server.use(http.get("/api/setup", () => HttpResponse.json(current)));
+    setSetupHash("publication");
+
+    const first = renderSetup(current);
+    fireEvent.click(screen.getByRole("radio", { name: "Свой сервер" }));
+    const url = screen.getByRole("textbox", {
+      name: "Базовый URL MusicBrainz",
+    });
+    const draftURL = "https://musicbrainz.example.org/ws/2";
+    fireEvent.change(url, { target: { value: draftURL } });
+    fireEvent.click(screen.getByRole("radio", { name: "M4A" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "LRCLIB включён" }));
+    expect(url).toHaveValue(draftURL);
+    expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
+    first.unmount();
+
+    renderSetup(current);
+
+    expect(
+      await screen.findByRole("textbox", { name: "Базовый URL MusicBrainz" }),
+    ).toHaveValue(draftURL);
+    expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "LRCLIB включён" }),
+    ).not.toBeChecked();
+    expect(window.location.hash).toBe("#/setup?step=publication");
+  });
+
+  it("masks an existing AcoustID key and shows verification only after an accepted save", async () => {
+    let current = state({ ...installed, has_acoustid_application_key: true });
+    const keyURL = "/api/settings/acoustid/application-key";
+    const rejected = "rejected-test-key";
+    const accepted = "accepted-test-key";
+    const checked = vi.fn();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.put(keyURL, async ({ request }) => {
+        const { key } = (await request.json()) as { key: string };
+        checked(key);
+        if (key === rejected) {
+          return HttpResponse.json(
+            { detail: "invalid API key" },
+            { status: 422 },
+          );
+        }
+        current = state({
+          ...installed,
+          has_acoustid_application_key: true,
+          acoustid_application_key_verified: true,
+        });
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.delete(keyURL, () => {
+        current = state(installed);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    setSetupHash("publication");
+    const field = () => screen.getByLabelText("Ключ приложения AcoustID");
+    const verified = { name: "Ключ AcoustID проверен." };
+    const first = renderSetup(current);
+    expect(field()).toHaveValue("");
+    expect(field().getAttribute("placeholder")).toMatch(/^•+$/);
+    expect(screen.queryByRole("img", verified)).not.toBeInTheDocument();
+
+    fireEvent.change(field(), { target: { value: rejected } });
+    await click("Сохранить ключ");
+    await waitFor(() =>
+      expect(field()).toHaveAttribute("aria-invalid", "true"),
+    );
+    expect(field()).toHaveAccessibleDescription(/AcoustID отклонил/);
+    expect(field()).toHaveValue(rejected);
+    expect(screen.queryByText("invalid API key")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Удалить ключ" })).toBeEnabled();
+
+    fireEvent.change(field(), { target: { value: accepted } });
+    await click("Сохранить ключ");
+    expect(await screen.findByRole("img", verified)).toBeInTheDocument();
+    expect(checked.mock.calls).toEqual([[rejected], [accepted]]);
+    expect(field()).toHaveValue("");
+    expect(field()).not.toHaveAttribute("aria-invalid");
+    first.unmount();
+
+    renderSetup(current);
+    expect(field()).toHaveValue("");
+    expect(screen.getByRole("img", verified)).toBeInTheDocument();
+    await click("Удалить ключ");
+    await waitFor(() => expect(field()).not.toHaveAttribute("placeholder"));
+    expect(screen.queryByRole("img", verified)).not.toBeInTheDocument();
+  });
+
+  it("never persists entered secrets across a remount", async () => {
+    const current = state(
+      {
+        ...installed,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      false,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    server.use(http.get("/api/setup", () => HttpResponse.json(current)));
+    setSetupHash("publication");
+    const secret = "acoustid-secret-value-93f2";
+    const password = "musicbrainz-url-password-93f2";
+    const endpoint = "https://musicbrainz.example.org/ws/2";
+
+    const first = renderSetup(current);
+    fireEvent.change(screen.getByLabelText("Ключ приложения AcoustID"), {
+      target: { value: secret },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Свой сервер" }));
+    const url = screen.getByRole("textbox", {
+      name: "Базовый URL MusicBrainz",
+    });
+    for (const value of [
+      `https://listener:${password}@musicbrainz.example.org/ws/2`,
+      `${endpoint}?token=${password}`,
+      `${endpoint}#${password}`,
+    ]) {
+      fireEvent.change(url, { target: { value } });
+      for (const storage of [window.sessionStorage, window.localStorage]) {
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          const stored = key === null ? "" : storage.getItem(key);
+          expect(stored).not.toContain(secret);
+          expect(stored).not.toContain(password);
+        }
+      }
+    }
+    first.unmount();
+
+    renderSetup(current);
+    expect(screen.getByLabelText("Ключ приложения AcoustID")).toHaveValue("");
+    expect(window.location.hash).toBe("#/setup?step=publication");
+  });
+
+  it("keeps unsaved publication changes in view when a Summary link is opened", async () => {
+    const ready = state(
+      {
+        ...installed,
+        publication_format: "source",
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    setSetupHash("publication");
+    const first = renderSetup(ready);
+    fireEvent.click(screen.getByRole("radio", { name: "M4A" }));
+    first.unmount();
+
+    setSetupHash("summary");
+    renderSetup(ready);
+    expect(heading("Публикация")).toBeVisible();
+    expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=publication"),
+    );
+  });
+
+  it("saves an explicit false auto-complete choice restored from the draft", async () => {
+    const current = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        publication_auto_complete_albums: true,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      false,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    const saved = vi.fn((body: Partial<SetupStateBody["settings"]>) => {
+      current.settings = { ...current.settings, ...body };
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.post("/api/setup/paths/check", () => HttpResponse.json(paths)),
+      http.put("/api/setup/runtime", async ({ request }) =>
+        saved((await request.json()) as Partial<SetupStateBody["settings"]>),
+      ),
+      http.put(
+        "/api/setup/lrclib",
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+    );
+    seedAutoCompleteAlbumsDraft(false, true);
+    setSetupHash("publication");
+
+    renderSetup(current);
+    await click("Продолжить");
+
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(saved).toHaveBeenCalledWith(
+      expect.objectContaining({ publication_auto_complete_albums: false }),
+    );
+    const setting = await screen.findByText("Автопубликация", {
+      selector: "dt",
+    });
+    expect(setting.nextElementSibling).toHaveTextContent("Выключена");
+  });
+
+  it("saves auto-complete enabled from the publication checkbox", async () => {
+    const current = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        publication_auto_complete_albums: false,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      false,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    const saved = vi.fn((body: Partial<SetupStateBody["settings"]>) => {
+      current.settings = { ...current.settings, ...body };
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.post("/api/setup/paths/check", () => HttpResponse.json(paths)),
+      http.put("/api/setup/runtime", async ({ request }) =>
+        saved((await request.json()) as Partial<SetupStateBody["settings"]>),
+      ),
+      http.put(
+        "/api/setup/lrclib",
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+    );
+    setSetupHash("publication");
+
+    renderSetup(current);
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Автоматически публиковать полностью сопоставленные альбомы",
+    });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    await click("Продолжить");
+
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(saved).toHaveBeenCalledWith(
+      expect.objectContaining({ publication_auto_complete_albums: true }),
+    );
+  });
+
+  it("keeps the current auto-complete setting when the draft was based on another value", async () => {
+    const current = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        publication_auto_complete_albums: true,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      false,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    const saved = vi.fn((body: Partial<SetupStateBody["settings"]>) => {
+      current.settings = { ...current.settings, ...body };
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.post("/api/setup/paths/check", () => HttpResponse.json(paths)),
+      http.put("/api/setup/runtime", async ({ request }) =>
+        saved((await request.json()) as Partial<SetupStateBody["settings"]>),
+      ),
+      http.put(
+        "/api/setup/lrclib",
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+    );
+    seedAutoCompleteAlbumsDraft(false, false);
+    setSetupHash("publication");
+
+    renderSetup(current);
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Автоматически публиковать полностью сопоставленные альбомы",
+      }),
+    ).toBeChecked();
+    await click("Продолжить");
+
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(saved.mock.calls[0]?.[0]).not.toHaveProperty(
+      "publication_auto_complete_albums",
+    );
+  });
+
+  it("keeps an explicit false auto-complete draft blocking a Summary link across a remount", async () => {
+    const ready = state(
+      {
+        ...installed,
+        output_directory: paths.output_directory,
+        publication_format: "source",
+        publication_auto_complete_albums: true,
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    server.use(http.get("/api/setup", () => HttpResponse.json(ready)));
+    seedAutoCompleteAlbumsDraft(false, true);
+    setSetupHash("summary");
+
+    const first = renderSetup(ready);
+    expect(heading("Публикация")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=publication"),
+    );
+    first.unmount();
+
+    setSetupHash("summary");
+    renderSetup(ready);
+    expect(heading("Публикация")).toBeVisible();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#/setup?step=publication"),
+    );
+  });
+
+  it("restores steps on browser Back and Forward without another setup save", async () => {
+    setSetupHash("publication");
+    renderSetup(state(installed));
+    expect(heading("Публикация")).toBeVisible();
+
+    await click("Назад");
+    await waitFor(() => expect(heading("Инструменты")).toBeVisible());
+    expect(window.location.hash).toBe("#/setup?step=tools");
+
+    window.history.back();
+    await waitFor(() => expect(heading("Публикация")).toBeVisible());
+    expect(window.location.hash).toBe("#/setup?step=publication");
+
+    window.history.forward();
+    await waitFor(() => expect(heading("Инструменты")).toBeVisible());
+    expect(window.location.hash).toBe("#/setup?step=tools");
+  });
+
+  it("does not finish setup if browser Back leaves Summary during its last read", async () => {
+    const ready = state(
+      {
+        ...installed,
+        publication_format: "source",
+        musicbrainz_verified_at: "2026-11-20T12:00:00Z",
+      },
+      true,
+      {
+        genre_catalog: { ready: true, status: "ready", count: 120 },
+        musicbrainz_configuration_identity: "identity-1",
+      },
+    );
+    let releaseRead = () => {};
+    const held = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const reading = vi.fn();
+    const complete = vi.fn(() => new HttpResponse(null, { status: 204 }));
+    server.use(
+      http.get("/api/setup", async () => {
+        reading();
+        await held;
+        return HttpResponse.json(ready);
+      }),
+      http.post("/api/setup/complete", complete),
+    );
+    setSetupHash("publication");
+    window.history.pushState(null, "", "#/setup?step=summary");
+    renderSetup(ready);
+    expect(heading("Итог")).toBeVisible();
+
+    try {
+      await click("Завершить настройку");
+      await waitFor(() => expect(reading).toHaveBeenCalled());
+      window.history.back();
+      await waitFor(() => expect(heading("Публикация")).toBeVisible());
+    } finally {
+      releaseRead();
+    }
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Продолжить" })).toBeEnabled(),
+    );
+    expect(complete).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/setup?step=publication");
   });
 });

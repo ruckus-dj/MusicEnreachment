@@ -29,7 +29,8 @@ const english = {
   serverStateUpdated: "Server state refreshed.",
   requestInProgress: "Request in progress…",
   metadataTitle: "Metadata providers",
-  musicBrainzUnavailable: "MusicBrainz is unavailable.",
+  musicBrainzUnavailable:
+    "Could not verify the connection to the MusicBrainz API. Check the address or try again.",
   saveAndCheckMusicBrainz:
     "Save and check MusicBrainz after changing its configuration.",
   musicBrainzIdentityMissing:
@@ -88,6 +89,10 @@ const english = {
     "Next: add a music source and start a scan. Import does not start automatically.",
   loadingToolsState: "Could not load tool status.",
   saveKeyError: "Could not save the AcoustID key.",
+  acoustidKeyRejected:
+    "AcoustID rejected this application key. Check the key and try again.",
+  acoustidCheckUnavailable:
+    "Could not verify the key with AcoustID. Try again later.",
   toolCatalogRefresh: "Refresh catalog",
   confirmOverwrite: "Overwrite only these files:",
   confirmOverwriteButton: "Confirm overwrite",
@@ -147,7 +152,8 @@ const russian: SetupMessages = {
   serverStateUpdated: "Состояние сервера обновлено.",
   requestInProgress: "Выполняется запрос…",
   metadataTitle: "Провайдеры метаданных",
-  musicBrainzUnavailable: "MusicBrainz недоступен.",
+  musicBrainzUnavailable:
+    "Не удалось проверить подключение к API MusicBrainz. Проверьте адрес или повторите попытку.",
   saveAndCheckMusicBrainz:
     "Сохраните и проверьте MusicBrainz после изменения конфигурации.",
   musicBrainzIdentityMissing:
@@ -206,6 +212,10 @@ const russian: SetupMessages = {
     "Следующий шаг: добавьте источник музыки и запустите сканирование. Импорт не запускается автоматически.",
   loadingToolsState: "Не удалось загрузить состояние инструментов.",
   saveKeyError: "Не удалось сохранить ключ AcoustID.",
+  acoustidKeyRejected:
+    "AcoustID отклонил этот ключ приложения. Проверьте ключ и повторите попытку.",
+  acoustidCheckUnavailable:
+    "Не удалось проверить ключ через API AcoustID. Повторите попытку позже.",
   toolCatalogRefresh: "Обновить каталог",
   confirmOverwrite: "Перезапись только следующих файлов:",
   confirmOverwriteButton: "Подтвердить перезапись",

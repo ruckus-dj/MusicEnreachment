@@ -10647,15 +10647,30 @@ export type setAcoustidApplicationKeyResponse204 = {
   status: 204
 }
 
-export type setAcoustidApplicationKeyResponseDefault = {
+export type setAcoustidApplicationKeyResponse422 = {
   data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 204>
+  status: 422
+}
+
+export type setAcoustidApplicationKeyResponse500 = {
+  data: ErrorModel
+  status: 500
+}
+
+export type setAcoustidApplicationKeyResponse502 = {
+  data: ErrorModel
+  status: 502
+}
+
+export type setAcoustidApplicationKeyResponse503 = {
+  data: ErrorModel
+  status: 503
 }
 
 export type setAcoustidApplicationKeyResponseSuccess = (setAcoustidApplicationKeyResponse204) & {
   headers: Headers;
 };
-export type setAcoustidApplicationKeyResponseError = (setAcoustidApplicationKeyResponseDefault) & {
+export type setAcoustidApplicationKeyResponseError = (setAcoustidApplicationKeyResponse422 | setAcoustidApplicationKeyResponse500 | setAcoustidApplicationKeyResponse502 | setAcoustidApplicationKeyResponse503) & {
   headers: Headers;
 };
 

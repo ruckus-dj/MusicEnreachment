@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -346,11 +348,14 @@ type memoryStore struct {
 
 func (m *memoryStore) GetRuntimeSettingsValues(context.Context) (settings.RuntimeSettingsValues, error) {
 	values := maps.Clone(m.data)
-	_, hasAcoustID := values[settings.AcoustIDApplicationKey]
+	hasAcoustID := values[settings.AcoustIDApplicationKey] != ""
+	_, hasAcoustIDKey := values[settings.AcoustIDApplicationKey]
+	verified := values[settings.AcoustIDApplicationKeyVerifiedKey] == "true"
 	_, hasGitHub := values[settings.GitHubTokenKey]
 	delete(values, settings.AcoustIDApplicationKey)
+	delete(values, settings.AcoustIDApplicationKeyVerifiedKey)
 	delete(values, settings.GitHubTokenKey)
-	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID, HasGitHubToken: hasGitHub}, nil
+	return settings.RuntimeSettingsValues{Values: values, HasAcoustIDApplicationKey: hasAcoustID || hasAcoustIDKey, AcoustIDApplicationKeyVerified: verified, HasGitHubToken: hasGitHub}, nil
 }
 
 func (m *memoryStore) Get(_ context.Context, k string) (string, bool, error) {
@@ -363,6 +368,24 @@ func (m *memoryStore) SetMany(_ context.Context, values map[string]string) error
 		m.data[k] = v
 	}
 	return nil
+}
+func (m *memoryStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string, verified bool) error {
+	if value == nil {
+		delete(m.data, settings.AcoustIDApplicationKey)
+		delete(m.data, settings.AcoustIDApplicationKeyVerifiedKey)
+		return nil
+	}
+	m.data[settings.AcoustIDApplicationKey] = *value
+	if verified {
+		m.data[settings.AcoustIDApplicationKeyVerifiedKey] = "true"
+	} else {
+		delete(m.data, settings.AcoustIDApplicationKeyVerifiedKey)
+	}
+	return nil
+}
+func (m *memoryStore) ReadAcoustIDCredential(_ context.Context) (string, bool, string, error) {
+	key, present := m.data[settings.AcoustIDApplicationKey]
+	return key, present, "memory-acoustid-revision", nil
 }
 func (m *memoryStore) SetIfAbsent(_ context.Context, k, v string) (string, error) {
 	if x, ok := m.data[k]; ok {
@@ -395,4 +418,84 @@ func (m *memoryStore) InitializePlatform(_ context.Context, goos, goarch string)
 		return goos, goarch, true, nil
 	}
 	return persistedOS, persistedArch, true, nil
+}
+
+type acoustIDVerifierFunc func(context.Context, string) error
+
+func (f acoustIDVerifierFunc) VerifyApplicationKey(ctx context.Context, key string) error {
+	return f(ctx, key)
+}
+
+func TestSetAcoustIDApplicationKeyVerifiesBeforeReplacing(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	legacy := "legacy-application-key"
+	if err := store.SetOrDeleteAcoustIDCredential(ctx, &legacy, false); err != nil {
+		t.Fatal(err)
+	}
+	var checkedKeys []string
+	setup := NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithAcoustIDVerifier(acoustIDVerifierFunc(func(_ context.Context, key string) error {
+			checkedKeys = append(checkedKeys, key)
+			switch key {
+			case "rejected-application-key":
+				return fmt.Errorf("%w: raw upstream text", acoustid.ErrApplicationKeyRejected)
+			case "unavailable-application-key":
+				return fmt.Errorf("%w: raw upstream text", acoustid.ErrResponse)
+			}
+			return nil
+		}))
+
+	if err := setup.SetAcoustIDApplicationKey(ctx, "rejected-application-key"); !errors.Is(err, ErrAcoustIDKeyRejected) {
+		t.Fatalf("rejected key error = %v, want ErrAcoustIDKeyRejected", err)
+	}
+	if err := setup.SetAcoustIDApplicationKey(ctx, "unavailable-application-key"); !errors.Is(err, ErrAcoustIDKeyValidationUnavailable) {
+		t.Fatalf("unavailable verification error = %v, want ErrAcoustIDKeyValidationUnavailable", err)
+	}
+	if err := setup.SetAcoustIDApplicationKey(ctx, "   "); err == nil {
+		t.Fatal("whitespace-only key was accepted")
+	}
+	key, present, _, err := registry.ReadAcoustIDCredential(ctx)
+	if err != nil || !present || key != legacy {
+		t.Fatalf("credential after failed verification = (%q,%t), err=%v; want unchanged legacy key", key, present, err)
+	}
+	if verified, err := registry.ReadRuntimeSettings(ctx); err != nil {
+		t.Fatal(err)
+	} else if verified.AcoustIDApplicationKeyVerified {
+		t.Fatal("legacy key gained a verification checkmark")
+	}
+
+	replacement := " replacement-application-key "
+	if err := setup.SetAcoustIDApplicationKey(ctx, replacement); err != nil {
+		t.Fatalf("verified replacement: %v", err)
+	}
+	if len(checkedKeys) != 3 || checkedKeys[len(checkedKeys)-1] != replacement {
+		t.Fatalf("verified keys = %q, want exact replacement last", checkedKeys)
+	}
+	key, present, _, err = registry.ReadAcoustIDCredential(ctx)
+	if err != nil || !present || key != replacement {
+		t.Fatalf("saved credential = (%q,%t), err=%v; want exact supplied replacement", key, present, err)
+	}
+	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSettings.HasAcoustIDApplicationKey || !runtimeSettings.AcoustIDApplicationKeyVerified {
+		t.Fatalf("runtime settings = has:%t verified:%t, want verified replacement",
+			runtimeSettings.HasAcoustIDApplicationKey, runtimeSettings.AcoustIDApplicationKeyVerified)
+	}
+}
+
+func TestSetAcoustIDApplicationKeyWithoutVerifierDoesNotSave(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	setup := NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	if err := setup.SetAcoustIDApplicationKey(ctx, "candidate-application-key"); !errors.Is(err, ErrAcoustIDKeyValidationUnavailable) {
+		t.Fatalf("missing verifier error = %v, want ErrAcoustIDKeyValidationUnavailable", err)
+	}
+	if _, present, _, err := registry.ReadAcoustIDCredential(ctx); err != nil || present {
+		t.Fatalf("credential presence = %t, err=%v; want absent", present, err)
+	}
 }

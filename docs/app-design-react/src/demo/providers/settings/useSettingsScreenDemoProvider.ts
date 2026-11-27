@@ -108,6 +108,8 @@ export interface DemoSettings {
   musicBrainzVerified?: boolean;
   musicBrainzVerifiedFingerprint?: string;
   hasAcoustIDApplicationKey?: boolean;
+  /** Mocked successful API check for the saved AcoustID key. */
+  acoustIDVerified?: boolean;
   hasGitHubToken?: boolean;
   lrclibEnabled?: boolean;
   sha256Enabled?: boolean;
@@ -145,6 +147,7 @@ export const initialDemoSettings: DemoSettings = {
   musicBrainzDelay: "",
   musicBrainzVerified: false,
   hasAcoustIDApplicationKey: false,
+  acoustIDVerified: false,
   lrclibEnabled: true,
   sha256Enabled: true,
   concurrency: "4",
@@ -367,6 +370,26 @@ export function useSettingsScreenDemoProvider({
 }: SettingsScreenProps): SettingsScreenViewProps {
   const { locale } = useI18n();
   const copy = settingsMessages[locale];
+  /**
+   * Unrelated settings saves preserve AcoustID proof. Only a caller that
+   * records an AcoustID change may set the tick, and it survives only while a
+   * key is saved.
+   */
+  const commitSettings = (
+    next: DemoSettings,
+    acoustIDVerified?: boolean,
+  ): void => {
+    onSettings(
+      acoustIDVerified === undefined
+        ? next
+        : {
+            ...next,
+            acoustIDVerified:
+              acoustIDVerified === true &&
+              next.hasAcoustIDApplicationKey === true,
+          },
+    );
+  };
   const toolCatalog = useToolCatalogDemoProvider();
   const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
   const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
@@ -424,8 +447,7 @@ export function useSettingsScreenDemoProvider({
       if (!active) return;
       providerCheckLock.current = false;
       setPendingMusicBrainzCheck(undefined);
-      const { settings, draftState, onSettings } =
-        latestProviderContext.current;
+      const { settings, draftState } = latestProviderContext.current;
       const configuration: MusicBrainzConfiguration = {
         mode: settings.musicBrainzMode ?? "",
         url: settings.musicBrainzURL,
@@ -445,7 +467,7 @@ export function useSettingsScreenDemoProvider({
         setProviderCheckFailed(true);
         return;
       }
-      onSettings({
+      commitSettings({
         ...settings,
         musicBrainzVerified: true,
         musicBrainzVerifiedFingerprint: attempt.fingerprint,
@@ -798,7 +820,7 @@ export function useSettingsScreenDemoProvider({
       publicationTemplate,
       workDirectory,
     };
-    onSettings({
+    commitSettings({
       ...settings,
       concurrency,
       matchingPairThreshold,
@@ -841,7 +863,7 @@ export function useSettingsScreenDemoProvider({
     ]);
     const concurrency = merged.concurrency;
     if (confirmValueConflict("concurrency", approval)) return;
-    onSettings({ ...settings, concurrency, runtimeSaved: true });
+    commitSettings({ ...settings, concurrency, runtimeSaved: true });
     setDraftState((current) => ({
       baseline: { ...current.baseline, concurrency },
       value: { ...current.value, concurrency },
@@ -867,7 +889,7 @@ export function useSettingsScreenDemoProvider({
     ]);
     const matchingPairThreshold = merged.matchingPairThreshold;
     if (confirmValueConflict("matchingThreshold", approval)) return;
-    onSettings({
+    commitSettings({
       ...settings,
       matchingPairThreshold,
       runtimeSaved: true,
@@ -917,7 +939,7 @@ export function useSettingsScreenDemoProvider({
     const publicationTemplate = merged.publicationTemplate;
     if (!validateTemplate(publicationTemplate)) return;
     if (confirmFolderConflict("publicationTemplate", approval)) return;
-    onSettings({ ...settings, publicationTemplate });
+    commitSettings({ ...settings, publicationTemplate });
     setDraftState((current) => ({
       baseline: { ...current.baseline, publicationTemplate },
       value: { ...current.value, publicationTemplate },
@@ -955,7 +977,7 @@ export function useSettingsScreenDemoProvider({
     const workDirectory = merged.workDirectory.trim();
     if (!validateWorkDirectory(workDirectory)) return;
     if (confirmFolderConflict("workDirectory", approval)) return;
-    onSettings({ ...settings, workDirectory });
+    commitSettings({ ...settings, workDirectory });
     setDraftState((current) => ({
       baseline: { ...current.baseline, workDirectory },
       value: { ...current.value, workDirectory },
@@ -1004,7 +1026,7 @@ export function useSettingsScreenDemoProvider({
       }),
     };
     setProviderCheckFailed(false);
-    onSettings({
+    commitSettings({
       ...settings,
       musicBrainzMode,
       musicBrainzURL: savedMusicBrainzURL,
@@ -1123,7 +1145,7 @@ export function useSettingsScreenDemoProvider({
       !providerGroupConflicts
     ) {
       if (musicBrainzMode !== (settings.musicBrainzMode ?? "")) {
-        onSettings({
+        commitSettings({
           ...settings,
           musicBrainzMode,
           musicBrainzVerified: true,
@@ -1139,8 +1161,14 @@ export function useSettingsScreenDemoProvider({
     }
     updateDraft({ musicBrainzMode });
   };
-  const update = (values: Partial<DemoSettings>) =>
-    onSettings({ ...settings, ...values });
+  const update = (values: Partial<DemoSettings>) => {
+    if (values.hasAcoustIDApplicationKey === undefined) {
+      commitSettings({ ...settings, ...values });
+      return;
+    }
+    // The ordinary update path does not run the mocked AcoustID check.
+    commitSettings({ ...settings, ...values }, false);
+  };
   const currentOutput = settings.currentOutput ?? "/srv/music";
   const platformMismatch = settings.platformMismatch ?? false;
   const installations = settings.installations ?? initialDemoInstallations;
@@ -1249,11 +1277,13 @@ export function useSettingsScreenDemoProvider({
   });
   const saveAcoustIDApplicationKey = () => {
     if (!acoustIDApplicationKey) return;
-    update({ hasAcoustIDApplicationKey: true });
+    // The prototype has no network: saving the write-only draft stands in for
+    // a successful AcoustID API check.
+    commitSettings({ ...settings, hasAcoustIDApplicationKey: true }, true);
     setAcoustIDApplicationKey("");
   };
   const deleteAcoustIDApplicationKey = () => {
-    update({ hasAcoustIDApplicationKey: false });
+    commitSettings({ ...settings, hasAcoustIDApplicationKey: false }, false);
     setAcoustIDApplicationKey("");
   };
   const leaveWithDraft = (discard: boolean) => {

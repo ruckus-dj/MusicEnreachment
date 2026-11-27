@@ -229,6 +229,55 @@ it("keeps the GitHub token draft across Settings tabs in memory", () => {
   expect(onSettings).not.toHaveBeenCalled();
 });
 
+it("mocks a successful AcoustID check on save and clears it afterwards", () => {
+  localStorage.setItem("music-design-v2-language", "en");
+  let current = { ...initialDemoSettings };
+  const onSettings = vi.fn((next: typeof initialDemoSettings) => {
+    current = next;
+    view.rerender(element());
+  });
+  const element = () => (
+    <I18nProvider>
+      <SettingsScreen settings={current} onSettings={onSettings} />
+    </I18nProvider>
+  );
+  const view = render(element());
+  fireEvent.click(screen.getByRole("tab", { name: "Providers" }));
+  const key = screen.getByLabelText("AcoustID application key");
+  fireEvent.change(key, { target: { value: "write-only-demo-key" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save AcoustID key" }));
+
+  expect(onSettings).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      hasAcoustIDApplicationKey: true,
+      acoustIDVerified: true,
+    }),
+  );
+  expect(key).toHaveValue("");
+  expect(
+    screen.getByText(
+      "The key is saved. Its value cannot be read from settings.",
+    ),
+  ).toBeInTheDocument();
+
+  const providers = screen.getByRole("region", {
+    name: "Metadata providers",
+  });
+  fireEvent.click(
+    within(providers).getByRole("switch", { name: "LRCLIB is enabled" }),
+  );
+  expect(current.hasAcoustIDApplicationKey).toBe(true);
+  expect(current.acoustIDVerified).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Delete AcoustID key" }));
+  expect(onSettings).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      hasAcoustIDApplicationKey: false,
+      acoustIDVerified: false,
+    }),
+  );
+});
+
 describe.each(["ru", "en"] as const)("SettingsScreen (%s)", (locale) => {
   it("keeps cleanup off by default and autosaves its changed value across tabs", () => {
     localStorage.setItem("music-design-v2-language", locale);

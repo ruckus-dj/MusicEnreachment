@@ -29,12 +29,17 @@ const (
 	// percent-encoded as "%2B" and decoded as a plus sign, so the server would
 	// receive a single unsplit token.
 	requestMeta = "recordings releases releasegroups tracks"
+	// applicationKeyProbeTrackID is a fixed, well-formed MusicBrainz track ID.
+	// AcoustID accepts a track lookup as a probe, so key verification does not
+	// need a captured fingerprint, duration, or user data.
+	applicationKeyProbeTrackID = "00000000-0000-4000-8000-000000000000"
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid AcoustID lookup input")
-	ErrRequest      = errors.New("AcoustID lookup request failed")
-	ErrResponse     = errors.New("invalid AcoustID lookup response")
+	ErrInvalidInput           = errors.New("invalid AcoustID lookup input")
+	ErrRequest                = errors.New("AcoustID lookup request failed")
+	ErrResponse               = errors.New("invalid AcoustID lookup response")
+	ErrApplicationKeyRejected = errors.New("AcoustID application key was rejected")
 )
 
 // Waiter is implemented by the shared application-level request limiter.
@@ -89,26 +94,6 @@ func (c *Client) Lookup(ctx context.Context, applicationKey, fingerprint string,
 	if strings.TrimSpace(applicationKey) == "" {
 		return LookupResult{Available: false}, nil
 	}
-	if !validEndpoint(c.endpoint) {
-		return LookupResult{}, ErrInvalidInput
-	}
-
-	// Bound both the limiter wait and the HTTP request with one deadline so a
-	// blocking limiter cannot hang the lookup. context.WithTimeout keeps the
-	// caller's earlier deadline when it is sooner, so an existing caller timeout
-	// is preserved rather than extended.
-	timeout := c.httpClient.Timeout
-	if timeout <= 0 {
-		timeout = RequestTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	if c.waiter != nil {
-		if err := c.waiter.Wait(ctx); err != nil {
-			return LookupResult{}, ErrRequest
-		}
-	}
 
 	// AcoustID accepts (and prefers) gzip-compressed POST bodies, but request
 	// compression is optional, so the form body is sent uncompressed and no
@@ -120,36 +105,14 @@ func (c *Client) Lookup(ctx context.Context, applicationKey, fingerprint string,
 		"duration":    {strconv.Itoa(durationSeconds)},
 		"meta":        {requestMeta},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(form.Encode()))
+	response, err := c.postForm(ctx, form)
 	if err != nil {
-		return LookupResult{}, ErrInvalidInput
+		return LookupResult{}, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip")
-
-	// Do not forward a credential-bearing request through a redirect.
-	transportClient := *c.httpClient
-	if transportClient.Timeout == 0 {
-		transportClient.Timeout = RequestTimeout
-	}
-	transportClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := transportClient.Do(req)
-	if err != nil {
-		return LookupResult{}, ErrRequest
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
+	if response.statusCode != http.StatusOK || response.mediaType != "application/json" {
 		return LookupResult{}, ErrResponse
 	}
-	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]))
-	if mediaType != "application/json" {
-		return LookupResult{}, ErrResponse
-	}
-	data, err := readResponse(response)
-	if err != nil {
-		return LookupResult{}, ErrResponse
-	}
+	data := response.body
 	result, err := parseResponse(data)
 	if err != nil {
 		return LookupResult{}, ErrResponse
@@ -165,6 +128,132 @@ func (c *Client) Lookup(ctx context.Context, applicationKey, fingerprint string,
 		}
 	}
 	return result, nil
+}
+
+// VerifyApplicationKey performs one fixed lookup probe. A successful response
+// proves that AcoustID accepted the application key; an empty result is still a
+// success. The supplied key travels only in the POST body.
+func (c *Client) VerifyApplicationKey(ctx context.Context, applicationKey string) error {
+	if strings.TrimSpace(applicationKey) == "" {
+		return ErrInvalidInput
+	}
+	response, err := c.postForm(ctx, url.Values{
+		"client":  {applicationKey},
+		"trackid": {applicationKeyProbeTrackID},
+	})
+	if err != nil {
+		return err
+	}
+	if response.mediaType != "application/json" {
+		return ErrResponse
+	}
+	switch response.statusCode {
+	case http.StatusOK:
+		payload, err := parseVerificationResponse(response.body)
+		if err != nil {
+			return ErrResponse
+		}
+		if payload.Status == "ok" {
+			return nil
+		}
+		return ErrResponse
+	case http.StatusBadRequest:
+		payload, err := parseVerificationResponse(response.body)
+		if err != nil {
+			return ErrResponse
+		}
+		if payload.rejectsApplicationKey() {
+			return ErrApplicationKeyRejected
+		}
+		return ErrResponse
+	default:
+		return ErrResponse
+	}
+}
+
+type formResponse struct {
+	statusCode int
+	mediaType  string
+	body       []byte
+}
+
+// postForm sends one bounded form POST without following redirects and returns
+// the status, media type, and response body. Callers map statuses and payloads
+// to safe sentinel errors; upstream text never leaves this method.
+func (c *Client) postForm(ctx context.Context, form url.Values) (formResponse, error) {
+	if !validEndpoint(c.endpoint) {
+		return formResponse{}, ErrInvalidInput
+	}
+
+	// Bound both the limiter wait and the HTTP request with one deadline so a
+	// blocking limiter cannot hang the request. context.WithTimeout keeps the
+	// caller's earlier deadline when it is sooner, so an existing caller timeout
+	// is preserved rather than extended.
+	timeout := c.httpClient.Timeout
+	if timeout <= 0 {
+		timeout = RequestTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if c.waiter != nil {
+		if err := c.waiter.Wait(ctx); err != nil {
+			return formResponse{}, ErrRequest
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return formResponse{}, ErrInvalidInput
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	// Do not forward a credential-bearing request through a redirect.
+	transportClient := *c.httpClient
+	if transportClient.Timeout == 0 {
+		transportClient.Timeout = RequestTimeout
+	}
+	transportClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := transportClient.Do(req)
+	if err != nil {
+		return formResponse{}, ErrRequest
+	}
+	defer func() { _ = response.Body.Close() }()
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]))
+	data, err := readResponse(response)
+	if err != nil {
+		return formResponse{}, ErrResponse
+	}
+	return formResponse{statusCode: response.StatusCode, mediaType: mediaType, body: data}, nil
+}
+
+type verificationResponse struct {
+	Status string `json:"status"`
+	Error  *struct {
+		Code int `json:"code"`
+	} `json:"error"`
+}
+
+func (response verificationResponse) rejectsApplicationKey() bool {
+	return response.Status == "error" && response.Error != nil && response.Error.Code == 4
+}
+
+func parseVerificationResponse(data []byte) (verificationResponse, error) {
+	var payload verificationResponse
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&payload); err != nil {
+		return verificationResponse{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return verificationResponse{}, errors.New("trailing response data")
+	}
+	if payload.Status == "" {
+		return verificationResponse{}, errors.New("missing response status")
+	}
+	return payload, nil
 }
 
 // LookupDuration matches fpcalc/pyacoustid's positive float-to-int conversion.

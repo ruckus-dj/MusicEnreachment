@@ -25,33 +25,34 @@ var ErrSettingsConflict = errors.New("settings conflict")
 var ErrSetupGenreCatalogNotReady = errors.New("genre catalog is not ready for the current MusicBrainz configuration")
 
 const (
-	PlatformGOOSKey                  = "instance.goos"
-	PlatformGOARCHKey                = "instance.goarch"
-	ToolsDirectoryKey                = "tools_directory"
-	OutputDirectoryKey               = "output_directory"
-	WorkDirectoryKey                 = "work_directory"
-	OutputCaseSensitiveKey           = "output_case_sensitive"
-	OutputUnicodeNormalizationKey    = "output_unicode_normalization"
-	PublicationFormatKey             = "publication_format"
-	PublicationPathTemplateKey       = "publication_path_template"
-	PublicationRemoveSourcesKey      = "publication_remove_sources"
-	PublicationAutoCompleteAlbumsKey = "publication_auto_complete_albums"
-	MusicBrainzModeKey               = "musicbrainz_mode"
-	MusicBrainzBaseURLKey            = "musicbrainz_base_url"
-	MusicBrainzConfigIdentityKey     = "musicbrainz_config_identity"
-	MusicBrainzVerifiedAtKey         = "musicbrainz_verified_at"
-	LRCLIBEnabledKey                 = "lrclib_enabled"
-	SHA256EnabledKey                 = "sha256_enabled"
-	MatchingPairThresholdKey         = "matching_pair_threshold"
-	LogLevelKey                      = "log_level"
-	ActiveFFmpegInstallationKey      = "active_ffmpeg_installation_id"
-	ActiveFPCalcInstallationKey      = "active_fpcalc_installation_id"
-	SetupCompletedAtKey              = "setup_completed_at"
-	SourceFileConcurrencyKey         = "source_file_concurrency"
-	AcoustIDApplicationKey           = "acoustid_application_key"
-	GitHubTokenKey                   = "github_token"
-	MusicBrainzSelfHostedThrottleKey = "musicbrainz_self_hosted_throttle"
-	MusicBrainzSelfHostedDelayKey    = "musicbrainz_self_hosted_delay_seconds"
+	PlatformGOOSKey                   = "instance.goos"
+	PlatformGOARCHKey                 = "instance.goarch"
+	ToolsDirectoryKey                 = "tools_directory"
+	OutputDirectoryKey                = "output_directory"
+	WorkDirectoryKey                  = "work_directory"
+	OutputCaseSensitiveKey            = "output_case_sensitive"
+	OutputUnicodeNormalizationKey     = "output_unicode_normalization"
+	PublicationFormatKey              = "publication_format"
+	PublicationPathTemplateKey        = "publication_path_template"
+	PublicationRemoveSourcesKey       = "publication_remove_sources"
+	PublicationAutoCompleteAlbumsKey  = "publication_auto_complete_albums"
+	MusicBrainzModeKey                = "musicbrainz_mode"
+	MusicBrainzBaseURLKey             = "musicbrainz_base_url"
+	MusicBrainzConfigIdentityKey      = "musicbrainz_config_identity"
+	MusicBrainzVerifiedAtKey          = "musicbrainz_verified_at"
+	LRCLIBEnabledKey                  = "lrclib_enabled"
+	SHA256EnabledKey                  = "sha256_enabled"
+	MatchingPairThresholdKey          = "matching_pair_threshold"
+	LogLevelKey                       = "log_level"
+	ActiveFFmpegInstallationKey       = "active_ffmpeg_installation_id"
+	ActiveFPCalcInstallationKey       = "active_fpcalc_installation_id"
+	SetupCompletedAtKey               = "setup_completed_at"
+	SourceFileConcurrencyKey          = "source_file_concurrency"
+	AcoustIDApplicationKey            = "acoustid_application_key"
+	AcoustIDApplicationKeyVerifiedKey = "acoustid_application_key_verified"
+	GitHubTokenKey                    = "github_token"
+	MusicBrainzSelfHostedThrottleKey  = "musicbrainz_self_hosted_throttle"
+	MusicBrainzSelfHostedDelayKey     = "musicbrainz_self_hosted_delay_seconds"
 )
 
 type Store interface {
@@ -103,7 +104,7 @@ type conditionalRuntimeUpdateStore interface {
 }
 
 type acoustIDCredentialStore interface {
-	SetOrDeleteAcoustIDCredential(context.Context, *string) error
+	SetOrDeleteAcoustIDCredential(context.Context, *string, bool) error
 	ReadAcoustIDCredential(context.Context) (string, bool, string, error)
 }
 
@@ -161,6 +162,7 @@ type RuntimeSettings struct {
 	OutputCaseSensitive               *bool
 	OutputUnicodeNormalization        string
 	HasAcoustIDApplicationKey         bool
+	AcoustIDApplicationKeyVerified    bool
 	HasGitHubToken                    bool
 	MusicBrainzSelfHostedThrottle     bool
 	MusicBrainzSelfHostedDelaySeconds float64
@@ -170,9 +172,10 @@ type RuntimeSettings struct {
 // Values contains only non-secret rows; credential rows are represented by
 // presence flags so their text never leaves the persistence layer.
 type RuntimeSettingsValues struct {
-	Values                    map[string]string
-	HasAcoustIDApplicationKey bool
-	HasGitHubToken            bool
+	Values                         map[string]string
+	HasAcoustIDApplicationKey      bool
+	AcoustIDApplicationKeyVerified bool
+	HasGitHubToken                 bool
 }
 
 func (r *Registry) ReadGitHubToken(ctx context.Context) (string, bool, error) {
@@ -300,7 +303,8 @@ func (r *Registry) SetLogLevel(ctx context.Context, value string) error {
 	return nil
 }
 
-// SetAcoustIDApplicationKey saves the exact supplied application key.
+// SetAcoustIDApplicationKey saves the exact supplied application key with its
+// successful upstream verification proof.
 func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) error {
 	if value == "" || len(value) > 4096 {
 		return fmt.Errorf("AcoustID application key is invalid")
@@ -309,7 +313,7 @@ func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) 
 	if !ok {
 		return fmt.Errorf("atomic AcoustID credential storage is unavailable")
 	}
-	return store.SetOrDeleteAcoustIDCredential(ctx, &value)
+	return store.SetOrDeleteAcoustIDCredential(ctx, &value, true)
 }
 
 // DeleteAcoustIDApplicationKey removes the application key entirely. Its
@@ -319,7 +323,7 @@ func (r *Registry) DeleteAcoustIDApplicationKey(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("atomic AcoustID credential storage is unavailable")
 	}
-	return store.SetOrDeleteAcoustIDCredential(ctx, nil)
+	return store.SetOrDeleteAcoustIDCredential(ctx, nil, false)
 }
 
 // ReadAcoustIDCredential returns the secret together with its coherently read
@@ -1146,6 +1150,7 @@ func parseRuntimeSettingsValues(snapshot RuntimeSettingsValues) (RuntimeSettings
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	acoustIDVerified := snapshot.AcoustIDApplicationKeyVerified
 	fileConcurrency, err := parseSnapshotSetting(values, sourceFileConcurrencySetting)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -1183,6 +1188,7 @@ func parseRuntimeSettingsValues(snapshot RuntimeSettingsValues) (RuntimeSettings
 		OutputCaseSensitive:               caseSensitive,
 		OutputUnicodeNormalization:        unicodeNormalization,
 		HasAcoustIDApplicationKey:         snapshot.HasAcoustIDApplicationKey,
+		AcoustIDApplicationKeyVerified:    snapshot.HasAcoustIDApplicationKey && acoustIDVerified,
 		HasGitHubToken:                    snapshot.HasGitHubToken,
 		MusicBrainzSelfHostedThrottle:     selfHostedThrottle,
 		MusicBrainzSelfHostedDelaySeconds: selfHostedDelay,

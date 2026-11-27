@@ -24,11 +24,11 @@ import {
 } from "../../ui/features/setup/setupMessages";
 import { useSetupAlertFocus } from "../../ui/features/setup/useSetupAlertFocus";
 import {
-  operationKindLabel,
-  operationProgressLabel,
   operationStageLabel,
   operationStateLabel,
-  operationTargetLabel,
+  toolInstallCompletedText,
+  toolInstallProgressBar,
+  toolInstallTarget,
 } from "../operations/operationPresentation";
 
 type OperationInputs = {
@@ -156,9 +156,19 @@ function useOperationProgressModel({
     snapshot?.state === "failed" ? snapshot.safe_error : undefined;
   const status: OperationProgressStatus | undefined = snapshot
     ? {
-        text: `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`,
-        stage: operationStageLabel(snapshot.stage, locale) || undefined,
-        progress: operationProgressLabel(snapshot, locale),
+        text:
+          snapshot.state === "succeeded"
+            ? toolInstallCompletedText(snapshot, locale)
+            : toolInstallTarget(snapshot, locale),
+        stage:
+          snapshot.state === "queued"
+            ? operationStageLabel("waiting", locale)
+            : snapshot.state === "failed"
+              ? operationStateLabel("failed", locale)
+              : snapshot.state === "running"
+                ? operationStageLabel(snapshot.stage, locale) || undefined
+                : undefined,
+        progress: toolInstallProgressBar(snapshot, locale),
         warning:
           snapshot.state !== "failed"
             ? snapshot.safe_error || undefined

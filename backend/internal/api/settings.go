@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -319,15 +320,26 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "set-acoustid-application-key", Method: http.MethodPut, Path: "/settings/acoustid/application-key",
 		Summary: "Set the AcoustID application key", Tags: []string{"Settings"},
+		Errors: []int{
+			http.StatusUnprocessableEntity, http.StatusBadGateway,
+			http.StatusInternalServerError, http.StatusServiceUnavailable,
+		},
 	}, func(ctx context.Context, input *UpdateAcoustIDApplicationKeyInput) (*struct{}, error) {
 		if err := requireSupportedPlatform(setup); err != nil {
 			return nil, err
 		}
-		if len(input.Body.Key) == 0 || len(input.Body.Key) > 4096 {
+		if len(input.Body.Key) == 0 || len(input.Body.Key) > 4096 || strings.TrimSpace(input.Body.Key) == "" {
 			return nil, huma.Error422UnprocessableEntity("invalid AcoustID application key request")
 		}
 		if err := setup.SetAcoustIDApplicationKey(ctx, input.Body.Key); err != nil {
-			return nil, huma.Error400BadRequest("AcoustID application key could not be saved")
+			switch {
+			case errors.Is(err, service.ErrAcoustIDKeyRejected):
+				return nil, huma.Error422UnprocessableEntity("AcoustID rejected the application key")
+			case errors.Is(err, service.ErrAcoustIDKeyValidationUnavailable):
+				return nil, huma.Error502BadGateway("AcoustID application key verification is temporarily unavailable")
+			default:
+				return nil, huma.Error500InternalServerError("AcoustID application key could not be saved")
+			}
 		}
 		return nil, nil
 	})

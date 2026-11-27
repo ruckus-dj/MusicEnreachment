@@ -71,8 +71,10 @@ func (r *SettingsRepository) Delete(ctx context.Context, name string) error {
 }
 
 // SetOrDeleteAcoustIDCredential atomically updates the write-only credential,
-// its opaque configuration identity, and the fixed AcoustID source registration.
-func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, value *string) error {
+// its verification proof, its opaque configuration identity, and the fixed
+// AcoustID source registration. An unchanged key that is already fenced keeps
+// its revision while an explicit successful probe can still establish proof.
+func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, value *string, verified bool) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "acoustid-config"); err != nil {
 			return fmt.Errorf("lock AcoustID configuration: %w", err)
@@ -95,6 +97,11 @@ func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, 
 			}
 			if priorRevision != "" {
 				if parsed, parseErr := uuid.Parse(priorRevision); parseErr == nil && parsed != uuid.Nil && parsed.String() == priorRevision {
+					if verified {
+						if err := setAcoustIDVerification(ctx, tx, true); err != nil {
+							return err
+						}
+					}
 					return nil
 				}
 			}
@@ -108,6 +115,9 @@ func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, 
 			Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
 			return fmt.Errorf("set AcoustID application key: %w", err)
 		}
+		if err := setAcoustIDVerification(ctx, tx, value != nil && verified); err != nil {
+			return err
+		}
 		revision := uuid.NewString()
 		if _, err := tx.NewInsert().Model(&AppSetting{Name: "internal_acoustid_config_identity", Value: revision}).
 			On("CONFLICT (setting_name) DO UPDATE").
@@ -119,6 +129,21 @@ func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, 
 		}
 		return nil
 	})
+}
+
+func setAcoustIDVerification(ctx context.Context, tx bun.Tx, verified bool) error {
+	if !verified {
+		if _, err := tx.NewDelete().Model((*AppSetting)(nil)).Where("setting_name = ?", appsettings.AcoustIDApplicationKeyVerifiedKey).Exec(ctx); err != nil {
+			return fmt.Errorf("delete AcoustID application key verification: %w", err)
+		}
+		return nil
+	}
+	if _, err := tx.NewInsert().Model(&AppSetting{Name: appsettings.AcoustIDApplicationKeyVerifiedKey, Value: "true"}).
+		On("CONFLICT (setting_name) DO UPDATE").
+		Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+		return fmt.Errorf("set AcoustID application key verification: %w", err)
+	}
+	return nil
 }
 
 // ReadAcoustIDCredential reads key presence, secret, and revision under the same
@@ -401,6 +426,7 @@ func (r *SettingsRepository) GetRuntimeSettingsValues(ctx context.Context) (apps
 				appsettings.MusicBrainzSelfHostedThrottleKey, appsettings.MusicBrainzSelfHostedDelayKey,
 				appsettings.LRCLIBEnabledKey, appsettings.LogLevelKey, appsettings.ActiveFFmpegInstallationKey, appsettings.ActiveFPCalcInstallationKey,
 				appsettings.SourceFileConcurrencyKey, appsettings.MatchingPairThresholdKey, appsettings.AcoustIDApplicationKey, appsettings.GitHubTokenKey,
+				appsettings.AcoustIDApplicationKeyVerifiedKey,
 			})).Scan(ctx, &rows); err != nil {
 			return fmt.Errorf("read runtime settings snapshot: %w", err)
 		}
@@ -409,6 +435,8 @@ func (r *SettingsRepository) GetRuntimeSettingsValues(ctx context.Context) (apps
 			switch row.Name {
 			case appsettings.AcoustIDApplicationKey:
 				snapshot.HasAcoustIDApplicationKey = true
+			case appsettings.AcoustIDApplicationKeyVerifiedKey:
+				snapshot.AcoustIDApplicationKeyVerified = row.Value == "true"
 			case appsettings.GitHubTokenKey:
 				snapshot.HasGitHubToken = true
 			default:

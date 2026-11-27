@@ -11,6 +11,7 @@ export interface SetupSummaryPublicationValues {
   directory: string;
   format?: "source" | "mka" | "m4a" | "unselected";
   explanation?: string;
+  autoCompleteAlbums?: boolean;
   removeSources?: boolean;
 }
 
@@ -65,6 +66,10 @@ const copyByLocale = {
       unselected: "Not selected",
     },
     whatWillHappen: "What will happen",
+    automaticPublication: "Automatic publication",
+    automaticPublicationEnabled:
+      "Enabled — first publication starts at or above the quality threshold",
+    automaticPublicationDisabled: "Disabled",
     sourceFilesAfterPublication: "Source files after successful publication",
     remove: "Remove",
     keep: "Keep",
@@ -104,6 +109,10 @@ const copyByLocale = {
       unselected: "Не выбран",
     },
     whatWillHappen: "Что будет происходить",
+    automaticPublication: "Автопубликация",
+    automaticPublicationEnabled:
+      "Включена — первая публикация запускается при оценке не ниже порога",
+    automaticPublicationDisabled: "Выключена",
     sourceFilesAfterPublication: "Исходники после успешной публикации",
     remove: "Удалять",
     keep: "Сохранять",
@@ -145,6 +154,13 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <dd className={valueClassName}>{value}</dd>
     </div>
   );
+}
+
+function formatCheckTime(value: string, locale: SetupSummaryLocale) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export function SetupSummaryView({
@@ -207,6 +223,16 @@ export function SetupSummaryView({
               value={publication.removeSources ? copy.remove : copy.keep}
             />
           )}
+          {publication.autoCompleteAlbums !== undefined && (
+            <SummaryRow
+              label={copy.automaticPublication}
+              value={
+                publication.autoCompleteAlbums
+                  ? copy.automaticPublicationEnabled
+                  : copy.automaticPublicationDisabled
+              }
+            />
+          )}
         </dl>
       </section>
       {tools && (
@@ -267,15 +293,15 @@ export function SetupSummaryView({
             />
             <SummaryRow
               label={copy.lastMusicBrainzCheck}
-              value={technical.musicbrainzCheckedAt}
+              value={formatCheckTime(technical.musicbrainzCheckedAt, locale)}
             />
             <SummaryRow
               label={copy.lastFfmpegCheck}
-              value={technical.ffmpegCheckedAt}
+              value={formatCheckTime(technical.ffmpegCheckedAt, locale)}
             />
             <SummaryRow
               label={copy.lastFpcalcCheck}
-              value={technical.fpcalcCheckedAt}
+              value={formatCheckTime(technical.fpcalcCheckedAt, locale)}
             />
           </dl>
         </details>

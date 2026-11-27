@@ -2,6 +2,7 @@ import type { OperationResponse } from "../../api/generated/client.schemas";
 import operationKinds from "../../ui/features/operations/operationKindLabels.json";
 import { sourceCleanupOperationCopy } from "../../ui/features/operations/sourceCleanupOperationCopy";
 import { sourceScanOperationStages } from "../../ui/features/operations/sourceScanOperationStages";
+import type { OperationProgressBar } from "../../ui/features/setup/OperationProgressView";
 import type { Locale } from "../../ui/i18n/locale";
 
 type LocalizedText = Record<Locale, string>;
@@ -166,23 +167,42 @@ export function operationStageLabel(stage: string, locale: Locale) {
     : `Retry: ${label}`;
 }
 
+function installIdentity(operation: OperationResponse) {
+  if (operation.kind !== "install") return undefined;
+  const identity = operation.target_identity?.split(":");
+  if (
+    identity?.length === 5 &&
+    (identity[0] === "ffmpeg" || identity[0] === "fpcalc") &&
+    identity[1] &&
+    identity[2]
+  ) {
+    return {
+      tool: identity[0] === "ffmpeg" ? "FFmpeg" : "fpcalc",
+      release: identity[2],
+    };
+  }
+  return undefined;
+}
+
+/** Compact target used by wizard copy: "FFmpeg 9.0". */
+export function toolInstallTarget(
+  operation: OperationResponse,
+  locale: Locale,
+) {
+  const install = installIdentity(operation);
+  if (install) return `${install.tool} ${install.release}`;
+  return operationTargetLabel(operation, locale);
+}
+
 export function operationTargetLabel(
   operation: OperationResponse,
   locale: Locale,
 ) {
-  if (operation.kind === "install") {
-    const identity = operation.target_identity?.split(":");
-    if (
-      identity?.length === 5 &&
-      (identity[0] === "ffmpeg" || identity[0] === "fpcalc") &&
-      identity[1] &&
-      identity[2]
-    ) {
-      const tool = identity[0] === "ffmpeg" ? "FFmpeg" : "fpcalc";
-      return locale === "ru"
-        ? `${tool}, версия ${identity[2]}`
-        : `${tool}, version ${identity[2]}`;
-    }
+  const install = installIdentity(operation);
+  if (install) {
+    return locale === "ru"
+      ? `${install.tool}, версия ${install.release}`
+      : `${install.tool}, version ${install.release}`;
   }
   return (
     operationTargetLabels[operation.kind]?.[locale] ??
@@ -190,16 +210,48 @@ export function operationTargetLabel(
   );
 }
 
-export function operationProgressLabel(
+/** Concise installed sentence for a settled tool install operation. */
+export function toolInstallCompletedText(
   operation: OperationResponse,
   locale: Locale,
 ) {
-  const completed = operation.bytes_completed.toLocaleString(locale);
-  if (operation.bytes_total == null) {
-    return locale === "ru" ? `${completed} байт` : `${completed} bytes`;
+  const target = toolInstallTarget(operation, locale);
+  return locale === "ru" ? `${target} — установлен.` : `${target} — installed.`;
+}
+
+function normalizedStage(stage: string) {
+  return stage.startsWith("retry:") ? stage.slice("retry:".length) : stage;
+}
+
+/**
+ * Progress for a running tool install. Only the download stage can report a
+ * truthful byte total; extract and verification stages stay indeterminate so a
+ * completed download never leaves a stale 100% bar behind.
+ */
+export function toolInstallProgressBar(
+  operation: OperationResponse,
+  locale: Locale,
+): OperationProgressBar | undefined {
+  if (operation.state !== "running") return undefined;
+  const stage = normalizedStage(operation.stage);
+  const target = toolInstallTarget(operation, locale);
+  const stageLabel = operationStageLabel(operation.stage, locale);
+  const fallback = locale === "ru" ? "Ход выполнения" : "Progress";
+  const label = `${target} — ${stageLabel || fallback}`;
+  const total = operation.bytes_total;
+  if (stage !== "download" || total == null || total <= 0) {
+    return { kind: "indeterminate", label };
   }
-  const total = operation.bytes_total.toLocaleString(locale);
-  return locale === "ru"
-    ? `${completed} / ${total} байт`
-    : `${completed} / ${total} bytes`;
+  const completed = Math.max(0, Math.min(operation.bytes_completed, total));
+  const percent = Math.floor((completed / total) * 100) / 100;
+  return {
+    kind: "determinate",
+    label,
+    value: completed,
+    max: total,
+    text: new Intl.NumberFormat(locale, {
+      style: "percent",
+      maximumFractionDigits: 0,
+    }).format(percent),
+  };
 }

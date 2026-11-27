@@ -246,6 +246,46 @@ it("shows a measured copy percentage only in operation details", async () => {
   expect(screen.getByRole("dialog")).toHaveTextContent(/40\s*%/);
 });
 
+it.each([
+  { state: "running", completed: 0, total: 80, percent: /0\s*%/ },
+  { state: "running", completed: 20, total: 80, percent: /25\s*%/ },
+  { state: "running", completed: 20, total: undefined, percent: null },
+  { state: "failed", completed: 20, total: 80, percent: null },
+])("shows tool download progress only when measured ($state, $completed/$total)", async ({
+  state,
+  completed,
+  total,
+  percent,
+}) => {
+  server.use(
+    http.get("/api/operations/current", () =>
+      HttpResponse.json({
+        operations: [
+          {
+            id: "installing-tool",
+            kind: "install",
+            state,
+            stage: "download",
+            bytes_completed: completed,
+            bytes_total: total,
+            target_label: "FFmpeg 9.0",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:01:00Z",
+          },
+        ],
+        total: 1,
+      }),
+    ),
+  );
+  renderScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+  const details = screen.getByRole("dialog");
+  expect(details).toHaveTextContent("Downloading files");
+  expect(details).not.toHaveTextContent(/bytes/i);
+  if (percent) expect(details).toHaveTextContent(percent);
+  else expect(details).not.toHaveTextContent(/%/);
+});
+
 it("refreshes the active filter after a retry completes across navigation", async () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

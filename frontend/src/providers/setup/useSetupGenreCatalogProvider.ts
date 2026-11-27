@@ -31,22 +31,24 @@ function settledCatalogState(state: SetupStateBody): SetupGenreCatalogState {
 export function useSetupGenreCatalogProvider({
   state,
   enabled,
-  ensureProvider,
+  verifiedIdentity,
   refresh,
   onError,
+  onClearError,
 }: {
   state: SetupStateBody;
   enabled: boolean;
-  ensureProvider: () => Promise<string>;
+  verifiedIdentity: () => string | undefined;
   refresh: () => Promise<SetupStateBody>;
   onError: (reason: unknown) => void;
+  onClearError: () => void;
 }) {
   const [operationId, setOperationId] = useState<string>();
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
   const reading = useRef(false);
-  const handlers = useRef({ ensureProvider, refresh, onError });
-  handlers.current = { ensureProvider, refresh, onError };
+  const handlers = useRef({ verifiedIdentity, refresh, onError, onClearError });
+  handlers.current = { verifiedIdentity, refresh, onError, onClearError };
 
   const catalog = state.genre_catalog;
 
@@ -55,6 +57,7 @@ export function useSetupGenreCatalogProvider({
     reading.current = true;
     try {
       const fresh = await handlers.current.refresh();
+      if (fresh.genre_catalog.ready) handlers.current.onClearError();
       if (fresh.genre_catalog.status !== "loading") setOperationId(undefined);
     } catch (reason) {
       handlers.current.onError(reason);
@@ -84,11 +87,13 @@ export function useSetupGenreCatalogProvider({
       catalog.status === "loading"
     )
       return;
+    const identity = handlers.current.verifiedIdentity();
+    if (!identity) return;
     startingRef.current = true;
     setStarting(true);
+    handlers.current.onClearError();
     void (async () => {
       try {
-        const identity = await handlers.current.ensureProvider();
         const response = await startSetupGenreCatalogRefresh({
           configuration_identity: identity,
         });

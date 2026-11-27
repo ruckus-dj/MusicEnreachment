@@ -11,6 +11,9 @@ const copy = {
     format: "Publication format",
     source: "Source format",
     mka: "MKA remux",
+    autoCompleteAlbums: "Automatically publish complete albums",
+    albumCompletion:
+      "After automatic matching, only positions of a fully matched album that are not published yet are published.",
     removeSources: "Remove source files after successful publication",
     cleanup:
       "When disabled, source files are kept. They are removed only after successful publication, never after a failure.",
@@ -19,6 +22,10 @@ const copy = {
     format: "Формат публикации",
     source: "Исходный формат",
     mka: "Перепаковка в MKA",
+    autoCompleteAlbums:
+      "Автоматически публиковать полностью сопоставленные альбомы",
+    albumCompletion:
+      "После автосопоставления публикуются только ещё не опубликованные позиции полностью сопоставленного альбома.",
     removeSources: "Удалять исходники после успешной публикации",
     cleanup:
       "Если флажок снят, исходники останутся. Они удаляются только после успешной публикации, не при ошибке.",
@@ -30,16 +37,20 @@ export type SetupPublicationFormat = "source" | "mka" | "m4a";
 export function SetupPublicationOptions({
   locale,
   format,
+  autoCompleteAlbums,
   removeSources,
   disabled,
   onFormat,
+  onAutoCompleteAlbums,
   onRemoveSources,
 }: {
   locale: keyof typeof copy;
   format: SetupPublicationFormat | "";
+  autoCompleteAlbums: boolean;
   removeSources: boolean;
   disabled?: boolean;
   onFormat: (format: SetupPublicationFormat) => void;
+  onAutoCompleteAlbums: (value: boolean) => void;
   onRemoveSources: (value: boolean) => void;
 }) {
   const text = copy[locale];
@@ -64,6 +75,13 @@ export function SetupPublicationOptions({
           ))}
         </div>
       </RadioGroup>
+      <AppCheckbox
+        label={text.autoCompleteAlbums}
+        description={text.albumCompletion}
+        isSelected={autoCompleteAlbums}
+        isDisabled={disabled}
+        onChange={onAutoCompleteAlbums}
+      />
       <AppCheckbox
         label={text.removeSources}
         description={text.cleanup}

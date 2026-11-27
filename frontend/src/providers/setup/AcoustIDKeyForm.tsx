@@ -14,6 +14,7 @@ import {
   setupFeedback,
   setupFeedbackText,
   setupHttpError,
+  setupMessage,
 } from "../../ui/features/setup/setupMessages";
 
 export function SetupAcoustIDBinder({
@@ -28,6 +29,7 @@ export function SetupAcoustIDBinder({
 
 function useSetupAcoustIDModel({
   hasKey,
+  verified,
   onChanged,
   onBusyChange,
   disabled,
@@ -39,7 +41,7 @@ function useSetupAcoustIDModel({
   const [notice, setNotice] = useState<"saved" | "deleted">();
 
   async function mutate(action: "save" | "delete") {
-    if (disabled || busy || (action === "save" && !draft)) return;
+    if (disabled || busy || (action === "save" && !draft.trim())) return;
     setBusy(true);
     onBusyChange?.(true);
     setError(null);
@@ -49,10 +51,15 @@ function useSetupAcoustIDModel({
         action === "save"
           ? await setAcoustidApplicationKey({ key: draft })
           : await deleteAcoustidApplicationKey();
+      if (action === "save") {
+        if (response.status === 422) throw setupMessage("acoustidKeyRejected");
+        if (response.status === 502)
+          throw setupMessage("acoustidCheckUnavailable");
+      }
       if (response.status !== 204) throw setupHttpError(response);
       setDraft("");
       await onChanged();
-      setNotice(action === "save" ? "saved" : "deleted");
+      if (action === "delete") setNotice("deleted");
     } catch (reason) {
       setError(setupFeedback(reason, "saveKeyError", draft || undefined));
     } finally {
@@ -65,11 +72,16 @@ function useSetupAcoustIDModel({
     locale,
     draft,
     hasKey,
+    verified,
     busy,
     disabled,
     error: error ? setupFeedbackText(error, locale) : undefined,
     notice,
-    onDraftChange: setDraft,
+    onDraftChange: (value) => {
+      setDraft(value);
+      setError(null);
+      setNotice(undefined);
+    },
     onSave: () => {
       void mutate("save");
     },

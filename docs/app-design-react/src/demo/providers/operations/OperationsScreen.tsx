@@ -35,9 +35,10 @@ import { useI18n } from "../demoPreferences";
 import { originalPositionHref, recoveryFixture } from "../library/catalogData";
 import type { DeletionOperation } from "../library/DeletionRequest";
 import { libraryRootHref } from "../library/libraryRoute";
-import type {
-  SetupToolDownload,
-  SetupToolMove,
+import {
+  demoToolDownloadPercent,
+  type SetupToolDownload,
+  type SetupToolMove,
 } from "../setup/useSetupToolDownloadsDemoProvider";
 import type { SourceRoot } from "../sources/SourcesScreen";
 import type { SourceArtifactCleanupDemoExecution } from "../sources/sourceArtifactCleanupDemoProvider";
@@ -337,9 +338,20 @@ function useDemoOperationsModel({
           operation: operationKinds.kinds.install[locale],
           stage:
             attempt.status === "running"
-              ? locale === "ru"
-                ? "Загрузка файлов"
-                : "Downloading files"
+              ? attempt.stage === "download"
+                ? locale === "ru"
+                  ? "Загрузка файлов"
+                  : "Downloading files"
+                : locale === "ru"
+                  ? "Распаковка файлов"
+                  : "Unpacking files"
+              : undefined,
+          progress:
+            attempt.status === "running" && attempt.stage === "download"
+              ? new Intl.NumberFormat(locale, {
+                  style: "percent",
+                  maximumFractionDigits: 0,
+                }).format(demoToolDownloadPercent / 100)
               : undefined,
           error: settingsMessages[locale].staleInstall,
           actions:

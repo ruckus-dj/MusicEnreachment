@@ -1,6 +1,10 @@
 import { type SetStateAction, useCallback, useEffect, useState } from "react";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
 import type {
+  OperationProgressBar,
+  OperationProgressStatus,
+} from "../../../ui/features/setup/OperationProgressView";
+import type {
   SetupScreenCompletedOperationView,
   SetupScreenToolsStepView,
 } from "../../../ui/features/setup/SetupScreenView";
@@ -30,6 +34,9 @@ export type SetupToolDownloadStatus =
   | "succeeded"
   | "failed";
 
+/** Illustrative demo phases after the download starts. */
+export type SetupToolDownloadStage = "download" | "extract";
+
 /** Screens whose completion semantics differ for the same admitted download. */
 export type SetupToolDownloadOrigin = "setup" | "settings";
 
@@ -50,6 +57,8 @@ export type SetupToolDownload = {
   id: string;
   preflight: DemoInstallPreflight;
   status: SetupToolDownloadStatus;
+  /** Active demo phase: download shows measured progress, extract stays indeterminate. */
+  stage: SetupToolDownloadStage;
   origin: SetupToolDownloadOrigin;
   /** Epoch milliseconds, matching the operations snapshot date format. */
   createdAt: number;
@@ -73,26 +82,73 @@ export type SetupToolMove = {
   createdAt: number;
 };
 
-const statusText = {
-  queued: { en: "Queued", ru: "В очереди" },
-  running: { en: "Running", ru: "Выполняется" },
-  succeeded: { en: "Completed", ru: "Завершена" },
-  failed: { en: "Failed", ru: "Ошибка" },
-};
+/** Illustrative demo fraction for the active download stage. */
+export const demoToolDownloadPercent = 42;
 
 function toolName(kind: ManagedToolPackage): string {
   return kind === "ffmpeg" ? "FFmpeg" : "fpcalc";
 }
 
-function downloadText(
+/** Compact target used by wizard status and completion copy: "FFmpeg 9.0". */
+function compactToolTarget(download: SetupToolDownload): string {
+  return `${toolName(download.preflight.kind)} ${download.preflight.release}`;
+}
+
+function downloadStageLabel(
+  stage: SetupToolDownloadStage,
+  locale: "en" | "ru",
+): string {
+  if (stage === "download")
+    return locale === "ru" ? "Загрузка файлов" : "Downloading files";
+  return locale === "ru" ? "Распаковка файлов" : "Unpacking files";
+}
+
+function downloadProgress(
+  download: SetupToolDownload,
+  locale: "en" | "ru",
+): OperationProgressBar | undefined {
+  if (download.status !== "running") return undefined;
+  const target = compactToolTarget(download);
+  const stage = downloadStageLabel(download.stage, locale);
+  const label = `${target} — ${stage}`;
+  if (download.stage !== "download") return { kind: "indeterminate", label };
+  return {
+    kind: "determinate",
+    label,
+    value: demoToolDownloadPercent,
+    max: 100,
+    text: new Intl.NumberFormat(locale, {
+      style: "percent",
+      maximumFractionDigits: 0,
+    }).format(demoToolDownloadPercent / 100),
+  };
+}
+
+function downloadCompletedText(
   download: SetupToolDownload,
   locale: "en" | "ru",
 ): string {
-  const state = statusText[download.status][locale];
-  const { kind, release } = download.preflight;
   return locale === "ru"
-    ? `Загрузка инструмента — ${toolName(kind)}, версия ${release}: ${state}`
-    : `Tool download — ${toolName(kind)}, version ${release}: ${state}`;
+    ? `${compactToolTarget(download)} — установлен.`
+    : `${compactToolTarget(download)} — installed.`;
+}
+
+function downloadStatus(
+  download: SetupToolDownload,
+  locale: "en" | "ru",
+): OperationProgressStatus {
+  const text = compactToolTarget(download);
+  if (download.status === "queued")
+    return { text, stage: locale === "ru" ? "Ожидание" : "Waiting" };
+  if (download.status === "failed")
+    return { text, stage: locale === "ru" ? "Ошибка" : "Failed" };
+  if (download.status === "succeeded")
+    return { text: downloadCompletedText(download, locale) };
+  return {
+    text,
+    stage: downloadStageLabel(download.stage, locale),
+    progress: downloadProgress(download, locale),
+  };
 }
 
 function isPending(download: SetupToolDownload) {
@@ -252,6 +308,7 @@ export function useSetupToolDownloadsDemoProvider(
             id,
             preflight: frozen,
             status: "queued",
+            stage: "download",
             origin,
             createdAt,
           },
@@ -276,7 +333,9 @@ export function useSetupToolDownloadsDemoProvider(
       return {
         ...current,
         downloads: current.downloads.map((item) =>
-          item === failed ? { ...item, status: "queued" } : item,
+          item === failed
+            ? { ...item, status: "queued", stage: "download" }
+            : item,
         ),
       };
     });
@@ -343,6 +402,7 @@ export function useSetupToolDownloadsDemoProvider(
       kind: "download" as const,
       id: item.id,
       status: item.status,
+      stage: item.stage,
     })),
     ...moves.map((item) => ({
       kind: "move" as const,
@@ -356,6 +416,7 @@ export function useSetupToolDownloadsDemoProvider(
   const activeId = active?.id;
   const activeStatus = active?.status;
   const activeKind = active?.kind;
+  const activeStage = active?.kind === "download" ? active.stage : undefined;
 
   useEffect(() => {
     if (!activeId || !activeStatus || !activeKind) return;
@@ -386,7 +447,21 @@ export function useSetupToolDownloadsDemoProvider(
           const download = current.downloads.find(
             (item) => item.id === activeId,
           );
-          if (download?.status !== activeStatus) return current;
+          if (
+            download?.status !== activeStatus ||
+            download.stage !== activeStage
+          )
+            return current;
+          // Download is measured; the following extract phase is indeterminate,
+          // so the demo never leaves a stale 100% bar behind.
+          if (activeStatus === "running" && activeStage === "download") {
+            return {
+              ...current,
+              downloads: current.downloads.map((item) =>
+                item === download ? { ...item, stage: "extract" } : item,
+              ),
+            };
+          }
           const applied =
             activeStatus === "running"
               ? download.origin === "settings"
@@ -411,7 +486,7 @@ export function useSetupToolDownloadsDemoProvider(
       activeStatus === "queued" ? startDelayMs : settleDelayMs,
     );
     return () => clearTimeout(timer);
-  }, [activeId, activeKind, activeStatus]);
+  }, [activeId, activeKind, activeStage, activeStatus]);
 
   const busyKinds = new Set<ManagedToolPackage>();
   for (const item of downloads) {
@@ -424,15 +499,7 @@ export function useSetupToolDownloadsDemoProvider(
       id: item.id,
       source: {
         locale,
-        status: {
-          text: downloadText(item, locale),
-          stage:
-            item.status === "running"
-              ? locale === "ru"
-                ? "Загрузка файлов"
-                : "Downloading files"
-              : undefined,
-        },
+        status: downloadStatus(item, locale),
         failure:
           item.status === "failed"
             ? settingsMessages[locale].staleInstall
@@ -444,7 +511,7 @@ export function useSetupToolDownloadsDemoProvider(
     .filter((item) => item.status === "succeeded")
     .map((item) => ({
       key: item.id,
-      text: `${downloadText(item, locale)}.`,
+      text: downloadCompletedText(item, locale),
     }));
 
   const activity: SetupToolDownloadActivity = {

@@ -20,6 +20,8 @@ const english = {
   publicService: "Public",
   selfHosted: "Self-hosted",
   musicBrainzBaseURL: "MusicBrainz base URL",
+  musicBrainzBaseURLHelp:
+    "Enter the API address, not the website homepage. Example: https://musicbrainz.example.org/ws/2",
   throttleMusicBrainz: "Throttle requests to self-hosted MusicBrainz",
   throttleHelp: "Saves automatically on an already saved server.",
   requestInterval: "Request interval (seconds)",
@@ -61,6 +63,8 @@ const russian: SettingsProvidersCopy = {
   publicService: "Публичный",
   selfHosted: "Собственный сервер",
   musicBrainzBaseURL: "Базовый URL MusicBrainz",
+  musicBrainzBaseURLHelp:
+    "Укажите адрес API, а не главной страницы сайта. Например: https://musicbrainz.example.org/ws/2",
   throttleMusicBrainz:
     "Ограничивать частоту запросов к собственному MusicBrainz",
   throttleHelp: "Сохраняется автоматически для уже сохранённого сервера.",
@@ -151,6 +155,7 @@ const fieldIds = {
   musicBrainzMode: "settings-musicBrainzMode",
   musicBrainzModeError: "settings-musicBrainzMode-error",
   musicBrainzBaseURL: "settings-musicBrainzURL",
+  musicBrainzBaseURLHelp: "settings-musicBrainzURL-help",
   musicBrainzBaseURLError: "settings-musicBrainzURL-error",
   musicBrainzDelaySeconds: "settings-musicBrainzDelay",
   musicBrainzDelaySecondsError: "settings-musicBrainzDelay-error",
@@ -320,6 +325,7 @@ export function SettingsProvidersSection({
                 }
                 aria-invalid={Boolean(errors?.musicBrainzBaseURL)}
                 aria-describedby={describedBy(
+                  fieldIds.musicBrainzBaseURLHelp,
                   fieldIds.musicBrainzManualSaveHelp,
                   errors?.musicBrainzBaseURL
                     ? fieldIds.musicBrainzBaseURLError
@@ -327,6 +333,12 @@ export function SettingsProvidersSection({
                 )}
                 className={styles.input}
               />
+              <p
+                id={fieldIds.musicBrainzBaseURLHelp}
+                className={`${styles.help} wrap-anywhere`}
+              >
+                {copy.musicBrainzBaseURLHelp}
+              </p>
             </div>
             {errors?.musicBrainzBaseURL && (
               <p

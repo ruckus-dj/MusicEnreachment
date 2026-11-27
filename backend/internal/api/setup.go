@@ -54,6 +54,7 @@ type RuntimeSettingsResponse struct {
 	OutputCaseSensitive               *bool      `json:"output_case_sensitive,omitempty"`
 	OutputUnicodeNormalization        string     `json:"output_unicode_normalization,omitempty"`
 	HasAcoustIDApplicationKey         bool       `json:"has_acoustid_application_key"`
+	AcoustIDApplicationKeyVerified    bool       `json:"acoustid_application_key_verified,omitempty"`
 	HasGitHubToken                    bool       `json:"has_github_token"`
 	MusicBrainzSelfHostedThrottle     bool       `json:"musicbrainz_self_hosted_throttle"`
 	MusicBrainzSelfHostedDelaySeconds float64    `json:"musicbrainz_self_hosted_delay_seconds"`
@@ -406,6 +407,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				OutputCaseSensitive:               state.Runtime.OutputCaseSensitive,
 				OutputUnicodeNormalization:        state.Runtime.OutputUnicodeNormalization,
 				HasAcoustIDApplicationKey:         state.Runtime.HasAcoustIDApplicationKey,
+				AcoustIDApplicationKeyVerified:    state.Runtime.AcoustIDApplicationKeyVerified,
 				HasGitHubToken:                    state.Runtime.HasGitHubToken,
 				MusicBrainzSelfHostedThrottle:     state.Runtime.MusicBrainzSelfHostedThrottle,
 				MusicBrainzSelfHostedDelaySeconds: state.Runtime.MusicBrainzSelfHostedDelaySeconds,

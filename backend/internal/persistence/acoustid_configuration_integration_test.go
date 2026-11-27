@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -23,7 +24,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	repository := persistence.NewSettingsRepository(database)
 
 	first := "opaque-test-key-one"
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &first); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &first, true); err != nil {
 		t.Fatalf("save first key: %v", err)
 	}
 	key, present, firstRevision, err := repository.ReadAcoustIDCredential(ctx)
@@ -38,7 +39,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	}
 
 	// Replacing with identical content is a no-op for the fence identity.
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &first); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &first, true); err != nil {
 		t.Fatalf("save unchanged key: %v", err)
 	}
 	_, _, unchangedRevision, err := repository.ReadAcoustIDCredential(ctx)
@@ -47,7 +48,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	}
 
 	second := "opaque-test-key-two"
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &second); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &second, true); err != nil {
 		t.Fatalf("replace key: %v", err)
 	}
 	key, present, secondRevision, err := repository.ReadAcoustIDCredential(ctx)
@@ -60,7 +61,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	}
 	assertAcoustIDCachePayload(t, ctx, database, sourceID, cacheKey, `{"results": [], "available": true}`, "accepted-response-revision", 1, 7)
 
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, nil); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, nil, false); err != nil {
 		t.Fatalf("delete key: %v", err)
 	}
 	key, present, deletedRevision, err := repository.ReadAcoustIDCredential(ctx)
@@ -74,7 +75,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	assertAcoustIDCachePayload(t, ctx, database, sourceID, cacheKey, `{"results": [], "available": true}`, "accepted-response-revision", 1, 7)
 
 	// Repeated deletion does not advance the revision when no key exists.
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, nil); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, nil, false); err != nil {
 		t.Fatalf("repeat deletion: %v", err)
 	}
 	_, _, repeatedDeleteRevision, err := repository.ReadAcoustIDCredential(ctx)
@@ -89,7 +90,7 @@ func TestAcoustIDSameKeySaveRepairsOnlyExplicitly(t *testing.T) {
 	ctx := context.Background()
 	repository := persistence.NewSettingsRepository(database)
 	key := "opaque-inconsistent-key"
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key, true); err != nil {
 		t.Fatalf("seed credential before introducing inconsistent state: %v", err)
 	}
 	sourceID, providerID := assertAcoustIDRegistration(t, ctx, database)
@@ -111,7 +112,7 @@ func TestAcoustIDSameKeySaveRepairsOnlyExplicitly(t *testing.T) {
 		t.Fatalf("read repaired credential identity count=%d err=%v; reads must not backfill", identityCount, err)
 	}
 
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key, true); err != nil {
 		t.Fatalf("explicitly save same key: %v", err)
 	}
 	observed, present, revision, err = repository.ReadAcoustIDCredential(ctx)
@@ -127,12 +128,77 @@ func TestAcoustIDSameKeySaveRepairsOnlyExplicitly(t *testing.T) {
 	if err := database.NewRaw(`SELECT count(*) FROM provider_response_cache WHERE provider_source_id=?`, sourceID).Scan(ctx, &responseCount); err != nil || responseCount != 1 {
 		t.Fatalf("same-key revision establishment changed cache rows: count=%d err=%v", responseCount, err)
 	}
-	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key); err != nil {
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key, true); err != nil {
 		t.Fatalf("repeat same-key save: %v", err)
 	}
 	_, _, repeatedRevision, err := repository.ReadAcoustIDCredential(ctx)
 	if err != nil || repeatedRevision != revision {
 		t.Fatalf("repeat same-key save revision=%q err=%v; want %q", repeatedRevision, err, revision)
+	}
+}
+
+func TestAcoustIDCredentialVerificationIsAtomicWithRevision(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigratedWithRiver(t)
+	ctx := context.Background()
+	repository := persistence.NewSettingsRepository(database)
+	registry := settings.New(repository, nil)
+
+	key := "opaque-verification-key"
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key, false); err != nil {
+		t.Fatalf("save unverified key: %v", err)
+	}
+	_, _, firstRevision, err := repository.ReadAcoustIDCredential(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSettings.HasAcoustIDApplicationKey || runtimeSettings.AcoustIDApplicationKeyVerified {
+		t.Fatalf("unverified runtime settings = has:%t verified:%t", runtimeSettings.HasAcoustIDApplicationKey, runtimeSettings.AcoustIDApplicationKeyVerified)
+	}
+
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &key, true); err != nil {
+		t.Fatalf("record verification for unchanged key: %v", err)
+	}
+	_, _, verifiedRevision, err := repository.ReadAcoustIDCredential(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifiedRevision != firstRevision {
+		t.Fatalf("verification rotated revision %q -> %q; same key must keep its fence", firstRevision, verifiedRevision)
+	}
+	runtimeSettings, err = registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSettings.AcoustIDApplicationKeyVerified {
+		t.Fatal("verified proof was not exposed in the runtime snapshot")
+	}
+
+	replacement := "opaque-replacement-key"
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, &replacement, false); err != nil {
+		t.Fatalf("replace with unverified key: %v", err)
+	}
+	runtimeSettings, err = registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeSettings.AcoustIDApplicationKeyVerified {
+		t.Fatal("replacement key inherited the previous verification proof")
+	}
+
+	if err := repository.SetOrDeleteAcoustIDCredential(ctx, nil, false); err != nil {
+		t.Fatalf("delete key: %v", err)
+	}
+	runtimeSettings, err = registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeSettings.HasAcoustIDApplicationKey || runtimeSettings.AcoustIDApplicationKeyVerified {
+		t.Fatalf("deleted runtime settings = has:%t verified:%t", runtimeSettings.HasAcoustIDApplicationKey, runtimeSettings.AcoustIDApplicationKeyVerified)
 	}
 }
 

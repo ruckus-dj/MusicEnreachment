@@ -42,15 +42,19 @@ export function setupGenreCatalogEndpoint(
 export function useSetupGenreCatalogDemoProvider({
   endpoint,
   delayMs = demoGenreCatalogLoadDelayMs,
+  initialReadyEndpoint,
 }: {
   endpoint: string;
   /** Test and live-check override; the default keeps the pending state visible. */
   delayMs?: number;
+  /** A tab-locally recorded load for exactly this endpoint. */
+  initialReadyEndpoint?: string;
 }): SetupGenreCatalogDemoProvider {
-  const [attempt, setAttempt] = useState<GenreCatalogAttempt>({
-    endpoint: "",
-    state: "idle",
-  });
+  const [attempt, setAttempt] = useState<GenreCatalogAttempt>(() =>
+    initialReadyEndpoint && initialReadyEndpoint === endpoint
+      ? { endpoint, state: "ready" }
+      : { endpoint: "", state: "idle" },
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
