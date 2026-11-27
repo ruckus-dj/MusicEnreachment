@@ -8,7 +8,7 @@ import {
 } from "./operationsFilters";
 
 /** Upper bound for a requested server offset, matching the portable list. */
-export const MAX_OPERATIONS_PAGE_OFFSET = 1_000_000;
+const MAX_OPERATIONS_PAGE_OFFSET = 1_000_000;
 
 /** Canonical, host-independent operations location. */
 export type OperationsLocation = OperationsListQuery;

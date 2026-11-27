@@ -10,7 +10,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "generate": "orval --config orval.config.ts",
-    "doctor": "react-doctor . --no-supply-chain --no-score --blocking error"
+    "doctor": "react-doctor . --no-supply-chain --no-score --blocking error",
+    "unused": "knip --production --no-exit-code --no-progress"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^30.1.1",
+    "knip": "5.88.1",
     "msw": "^2.15.0",
     "orval": "^8.38.0",
     "react-doctor": "^0.9.14",

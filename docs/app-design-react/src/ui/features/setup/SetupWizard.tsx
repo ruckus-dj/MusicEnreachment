@@ -4,8 +4,6 @@ import { AppIcon } from "../../components/AppIcon";
 import { SetupFeedbackView } from "./SetupFeedbackView";
 import { setupSteps } from "./setupStepRoute";
 
-export { setupSteps } from "./setupStepRoute";
-
 const pageClassName = "mx-auto grid w-full max-w-[1040px] gap-6";
 const headerClassName = "grid gap-1.5 border-b border-[var(--line)] pb-5";
 const titleClassName =

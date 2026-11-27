@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": ["src/app/main.tsx!"],
+  "project": [
+    "src/**/*.{ts,tsx}!",
+    "!src/test/**!",
+    "!src/providers/sources/sourceScanRefreshTestSupport.tsx!"
+  ],
+  "ignoreFiles": [
+    "src/app/vite-env.d.ts",
+    "src/ui/styles/documentPresentation.ts"
+  ],
+  "ignoreIssues": {
+    "src/api/generated/**": ["exports", "types"],
+    "src/ui/styles/documentPresentation.ts": ["exports", "types"]
+  },
+  "include": ["files", "exports", "types"],
+  "includeEntryExports": true
+}

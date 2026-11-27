@@ -16,13 +16,13 @@ func TestNativeCompareComponentsUnicodeAndCleanup(t *testing.T) {
 		{"музыка.flac", "音楽.flac"},
 		{"café.flac", "cafe\u0301.flac"},
 	} {
-		got, err := NativeCompareComponents(context.Background(), root, pair[0], pair[1])
+		got, err := NativeCompareComponentsIn(context.Background(), root, root, pair[0], pair[1])
 		if err != nil {
-			t.Fatalf("NativeCompareComponents(%q, %q): %v", pair[0], pair[1], err)
+			t.Fatalf("NativeCompareComponentsIn(%q, %q): %v", pair[0], pair[1], err)
 		}
 		want := nativeLookupEquivalent(t, pair[0], pair[1])
 		if got != want {
-			t.Errorf("NativeCompareComponents(%q, %q) = %t, native lookup = %t", pair[0], pair[1], got, want)
+			t.Errorf("NativeCompareComponentsIn(%q, %q) = %t, native lookup = %t", pair[0], pair[1], got, want)
 		}
 		if pair[0] == pair[1] && !got {
 			t.Errorf("same component %q was not equivalent", pair[0])
@@ -105,7 +105,7 @@ func nativeLookupEquivalent(t *testing.T, a, b string) bool {
 func TestNativeCompareComponentsInvalidNames(t *testing.T) {
 	root, _ := openNamespaceProbeRoot(t)
 	for _, name := range []string{"", ".", "..", "a/b", `a\b`, "a:b", "a\x00b", string([]byte{0xff})} {
-		if _, err := NativeCompareComponents(context.Background(), root, name, "ok"); !errors.Is(err, ErrInvalidPath) {
+		if _, err := NativeCompareComponentsIn(context.Background(), root, root, name, "ok"); !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("invalid component %q error = %v", name, err)
 		}
 	}
@@ -119,7 +119,7 @@ func TestNativeCompareComponentsCanceledContextCleansScratch(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := NativeCompareComponents(ctx, root, "один", "два"); !errors.Is(err, context.Canceled) {
+	if _, err := NativeCompareComponentsIn(ctx, root, root, "один", "два"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled probe error = %v", err)
 	}
 	if data, err := os.ReadFile(foreign); err != nil || string(data) != "keep" {
@@ -162,7 +162,7 @@ func TestNativeCompareComponentsCancellationAndCreateFailureCleanup(t *testing.T
 				injectedCreateErr: injected,
 			}
 			wrapped := &namespaceProbeOutput{OutputDirectory: root, hooks: hooks}
-			_, err := NativeCompareComponents(ctx, wrapped, "A.flac", "Б.flac")
+			_, err := NativeCompareComponentsIn(ctx, wrapped, wrapped, "A.flac", "Б.flac")
 			switch {
 			case test.wantCanceled && !errors.Is(err, context.Canceled):
 				t.Fatalf("expected cancellation, got %v", err)
@@ -186,7 +186,7 @@ func TestNativeCompareComponentsCleanupPreservesForeignScratchEntry(t *testing.T
 	root, path := openNamespaceProbeRoot(t)
 	hooks := &namespaceProbeHooks{rootPath: path, addForeignAfterFirst: true}
 	wrapped := &namespaceProbeOutput{OutputDirectory: root, hooks: hooks}
-	if _, err := NativeCompareComponents(context.Background(), wrapped, "A.flac", "Б.flac"); err == nil {
+	if _, err := NativeCompareComponentsIn(context.Background(), wrapped, wrapped, "A.flac", "Б.flac"); err == nil {
 		t.Fatal("expected cleanup error for nonempty owned scratch directory")
 	}
 	entries, err := os.ReadDir(path)

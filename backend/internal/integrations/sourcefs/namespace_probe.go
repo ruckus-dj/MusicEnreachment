@@ -12,14 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// NativeCompareComponents reports whether a and b resolve to the same regular
-// file in a private scratch directory created beneath parent. It probes only
-// that scratch namespace; it is not a global filename canonicalizer and does
-// not prove that another directory inherits the same filesystem semantics.
-func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b string) (bool, error) {
-	return nativeCompareComponentsIn(ctx, parent, parent, a, b)
-}
-
 // NativeCompareComponentsIn compares names empirically in a private scratch
 // directory created and cleaned only beneath technicalParent. The application
 // uses a shared physical output root for technical and media data; no separate

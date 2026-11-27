@@ -602,11 +602,3 @@ func (layout *matchingExperimentLayout) evaluateComponent(ctx context.Context, i
 	}
 	return result, nil
 }
-
-// matchingExperimentHungarianAssignment retains the experiment's local name
-// while the exact assignment solver is shared with production selection.
-func matchingExperimentHungarianAssignment(
-	ctx context.Context, rows []*matchingExperimentRow, positionCount int, qualifying bool, skipRow, skipPosition int,
-) ([]int, uint64, bool) {
-	return matchingLayoutHungarianAssignment(ctx, rows, positionCount, qualifying, skipRow, skipPosition)
-}

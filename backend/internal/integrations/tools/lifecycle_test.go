@@ -201,13 +201,11 @@ func TestExtractTarXzExtractsBtbNFormatAndRejectsTraversal(t *testing.T) {
 		})
 	}
 }
-func TestActivationAndDeleteKeepActiveInstallation(t *testing.T) {
-	active := map[string]string{"id": "ffmpeg/8.0"}
-	if err := Activate(active, PackageFFmpeg, "id"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Delete(t.TempDir(), "ffmpeg/8.0", "linux", active, PackageFFmpeg, "id"); err == nil {
-		t.Fatal("active installation deleted")
+func TestDeleteKeepsActiveInstallation(t *testing.T) {
+	active := map[string]string{"id": "ffmpeg/8.0", string(PackageFFmpeg): "id"}
+	err := Delete(t.TempDir(), "ffmpeg/8.0", "linux", active, PackageFFmpeg, "id")
+	if err == nil || !strings.Contains(err.Error(), "cannot delete active installation") {
+		t.Fatalf("active installation delete error = %v, want active-installation protection", err)
 	}
 }
 

@@ -218,7 +218,7 @@ func TestMatchingExperimentFullAssignmentOutranksHigherScoringPartial(t *testing
 		}
 		rows[i] = &matchingExperimentRow{edges: edges, edgeByPosition: byPosition}
 	}
-	choices, score, full := matchingExperimentHungarianAssignment(context.Background(), rows, 4, true, -1, -1)
+	choices, score, full := matchingLayoutHungarianAssignment(context.Background(), rows, 4, true, -1, -1)
 	if !full || score != 4*floor || !slices.Equal(choices, []int{0, 1, 2, 3}) {
 		t.Fatalf("must retain the only full assignment, got %v, %d, %t", choices, score, full)
 	}

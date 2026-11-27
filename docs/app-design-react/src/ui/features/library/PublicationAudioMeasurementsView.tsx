@@ -16,7 +16,7 @@ export interface PublicationAudioMeasurementsViewProps {
 }
 
 /** ReplayGain/R128 display order; a partial snapshot never reorders the list. */
-export const publicationAudioMeasurementFields = [
+const publicationAudioMeasurementFields = [
   "REPLAYGAIN_TRACK_GAIN",
   "REPLAYGAIN_TRACK_PEAK",
   "REPLAYGAIN_ALBUM_GAIN",

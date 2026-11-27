@@ -80,6 +80,18 @@ the repository root. Enable the hook with `pre-commit install`. The pre-commit
 hook intentionally runs the complete `task verify`; it can be split into faster
 stages later if repository growth makes that necessary.
 
+Run `task check:unused` from the repository root for a report-only scan of dead
+Go functions (`deadcode` v0.53.0), Go `unused` findings (`golangci-lint`), and
+unused frontend files, exports, and types (Knip 5.88.1 in production mode). It
+is intentionally not part of `task verify` or CI. Findings are printed without
+failing the command, while tool and configuration errors still fail. The Go
+checks use the same `./cmd/server ./internal/...` package scope and require the
+host's normal backend Go/cgo build configuration, including libvips. `deadcode`
+analyzes only the host `GOOS`/`GOARCH` and build tags, so its results are valid
+only for that configuration; neither Go check reports unused exported Go types.
+Knip excludes tests and test helpers, the standalone design prototype, and
+generated Orval exports from the report.
+
 GitHub Actions CI runs the full backend integration/native suite and production
 frontend/backend builds on Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`) and
 Windows (`amd64`). The full frontend JSDOM suite runs once in Linux amd64

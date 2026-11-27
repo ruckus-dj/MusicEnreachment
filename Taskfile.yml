@@ -213,6 +213,31 @@ tasks:
     cmds:
       - golangci-lint run ./...
 
+  check:unused:
+    desc: Report unused Go functions, Go declarations, and frontend files/exports/types (not part of verify)
+    cmds:
+      - task: check:unused:deadcode
+      - task: check:unused:go-lint
+      - task: check:unused:knip
+
+  check:unused:deadcode:
+    internal: true
+    dir: backend
+    cmds:
+      - go run golang.org/x/tools/cmd/deadcode@v0.53.0 -test=false ./cmd/server ./internal/...
+
+  check:unused:go-lint:
+    internal: true
+    dir: backend
+    cmds:
+      - golangci-lint run --default=none -E unused --tests=false --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 ./cmd/server ./internal/...
+
+  check:unused:knip:
+    internal: true
+    deps: [frontend:install]
+    cmds:
+      - npm --prefix frontend run unused
+
   fixtures:provision:
     desc: Manual online acceptance (not an automated CI gate) - download approved managed FFmpeg binaries over the network and generate a seek-dependent transport fixture
     vars:

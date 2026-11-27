@@ -256,7 +256,7 @@ export type SetupFeedback =
     }
   | { kind: "diagnostic"; text: string; secret?: string };
 
-export class SetupMessageError extends Error {
+class SetupMessageError extends Error {
   constructor(readonly feedback: SetupFeedback) {
     super();
   }

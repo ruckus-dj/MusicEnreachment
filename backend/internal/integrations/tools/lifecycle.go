@@ -699,13 +699,6 @@ func copyExecutable(source, destination string) error {
 	return closeErr
 }
 
-func Activate(installations map[string]string, packageKind PackageKind, id string) error {
-	if _, ok := installations[id]; !ok {
-		return fmt.Errorf("installation %q is not ready", id)
-	}
-	installations[string(packageKind)] = id
-	return nil
-}
 func Delete(root, relative, goos string, active map[string]string, packageKind PackageKind, id string) error {
 	if active[string(packageKind)] == id {
 		return fmt.Errorf("cannot delete active installation")
