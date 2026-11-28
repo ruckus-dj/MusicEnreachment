@@ -44,6 +44,11 @@ export type ReleaseOverviewScreenProps = {
   onSelect?: (ids: string[], value: boolean) => void;
   onUpdateRelease?: (release: OriginalRelease) => void;
   onQueueDeletion?: (operation: DeletionOperation) => void;
+  primaryArtistResolution?: {
+    ready: boolean;
+    backHref: string;
+    trackHref: string;
+  };
   publication?: ReleasePublicationDemoProvider;
   genresLoaded?: boolean;
   onLoadGenres?: () => void | Promise<void>;
@@ -63,6 +68,7 @@ export type ReleaseOverviewScreenProps = {
 
 /** Resolved facts and narrow actors for one release overview projection. */
 export type ReleaseOverviewDemoModelInput = {
+  primaryArtistResolution?: ReleaseOverviewScreenProps["primaryArtistResolution"];
   locale: Locale;
   release: OriginalRelease;
   artists: CatalogArtist[];
@@ -94,6 +100,7 @@ const sourceIds = (track: OriginalTrack) => [
  * position route owns the workspace selection.
  */
 export function buildReleaseOverviewDemoModel({
+  primaryArtistResolution,
   locale,
   release,
   artists,
@@ -273,6 +280,7 @@ export function buildReleaseOverviewDemoModel({
     },
     credentials,
     primaryArtist: primary.control,
+    primaryArtistResolution,
     media,
     fallbackTracks,
     unassignedTracks,
@@ -336,6 +344,7 @@ export function useReleaseOverviewDemoModel({
   editionControls = true,
   coverState,
   onCoverStateChange,
+  primaryArtistResolution,
 }: ReleaseOverviewScreenProps): LibraryReleaseOverviewModel {
   const { locale } = useI18n();
   const [localRelease, setLocalRelease] = useState(givenRelease);
@@ -365,5 +374,6 @@ export function useReleaseOverviewDemoModel({
     local: !onUpdateRelease,
     editionControls,
     coverEditor,
+    primaryArtistResolution,
   });
 }

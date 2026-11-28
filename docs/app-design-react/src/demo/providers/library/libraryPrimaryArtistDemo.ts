@@ -1,5 +1,6 @@
 import type { LibraryPrimaryArtistModel } from "../../../ui/features/library/LibraryPrimaryArtistControl";
-import type { CatalogArtist } from "./catalogData";
+import type { CatalogArtist, OriginalRelease } from "./catalogData";
+import { releaseCreditValues } from "./metadata/scopedArtistCredits";
 
 /** Use only local identities from the exact object's ordered credits. */
 export function demoPrimaryArtist(
@@ -37,4 +38,16 @@ export function demoPrimaryArtist(
         }
       : undefined;
   return { effectiveId, control };
+}
+
+export function demoReleasePrimaryArtistId(
+  release: OriginalRelease,
+  artists: CatalogArtist[],
+) {
+  return demoPrimaryArtist(
+    releaseCreditValues(release, artists),
+    artists,
+    release.primaryArtistId,
+    () => undefined,
+  ).effectiveId;
 }

@@ -212,7 +212,76 @@ it("shows a read-only preview of the selected library position", async () => {
   expect(checkbox).toBeChecked();
 });
 
-it("retains an exact publication preview and provider refresh across edition and position", async () => {
+it("shows the published track status before opening its file workspace", () => {
+  window.history.replaceState(
+    null,
+    "",
+    "#/library/releases/signals/positions/signals-t5",
+  );
+  render(<CatalogDemo />);
+
+  const overview = screen.getByRole("tabpanel", { name: "Обзор" });
+  expect(screen.getAllByText("Опубликовано")[0]).toBeVisible();
+  expect(within(overview).getByText("05 - Static.flac")).toBeVisible();
+  expect(within(overview).getByText("05 - Static.mka")).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Метаданные записи" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
+  expect(screen.getByRole("region", { name: "Публикация" })).toBeVisible();
+});
+
+it("keeps independent position and recording drafts while switching scopes and tabs", () => {
+  window.history.replaceState(null, "", `${northernPositionHref}?tab=metadata`);
+  render(<CatalogDemo />);
+
+  const position = () =>
+    screen.getByRole("region", { name: "Метаданные позиции" });
+  const recording = () =>
+    screen.getByRole("region", { name: "Метаданные записи" });
+  const positionScope = () =>
+    screen.getByRole("radio", { name: /позиция в издании|только этот трек/i });
+  const recordingScope = () =>
+    screen.getByRole("radio", { name: "Запись во всех связанных изданиях" });
+  const titleInput = (editor: HTMLElement) =>
+    editor.querySelector<HTMLInputElement>(
+      'input[data-metadata-keys~="title"]',
+    );
+  const editTitle = (editor: HTMLElement, value: string) => {
+    fireEvent.click(within(editor).getByRole("button", { name: "Изменить" }));
+    fireEvent.change(
+      within(editor).getByRole("combobox", {
+        name: "Название — Состояние переопределения",
+      }),
+      { target: { value: "value" } },
+    );
+    const input = titleInput(editor);
+    if (!input) throw new Error("Missing title field");
+    fireEvent.change(input, { target: { value } });
+  };
+
+  fireEvent.click(positionScope());
+  expect(
+    screen.queryByRole("region", { name: "Жанры записи" }),
+  ).not.toBeInTheDocument();
+  editTitle(position(), "Position-only draft");
+  fireEvent.click(recordingScope());
+  expect(screen.getByRole("region", { name: "Жанры записи" })).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Метаданные позиции" }),
+  ).toBeNull();
+  expect(titleInput(recording())?.value).not.toBe("Position-only draft");
+  editTitle(recording(), "Recording-only draft");
+
+  fireEvent.click(screen.getByRole("tab", { name: "Обзор" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Метаданные" }));
+  expect(titleInput(recording())?.value).toBe("Recording-only draft");
+  fireEvent.click(positionScope());
+  expect(titleInput(position())?.value).toBe("Position-only draft");
+});
+
+it("separates comparison from republishing and keeps provider refresh across routes", async () => {
   window.history.replaceState(null, "", signalsPositionHref);
   let failRefresh: (() => void) | undefined;
   const refresh = vi.fn(
@@ -223,34 +292,37 @@ it("retains an exact publication preview and provider refresh across edition and
       }),
   );
   render(<CatalogDemo providerRefresh={{ signals: refresh }} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
   const publication = within(
     screen.getByRole("region", { name: "Публикация" }),
   );
-  const copy = firstPublicationPreviewMessages.ru;
-  fireEvent.click(publication.getByRole("button", { name: copy.preview }));
-  expect(window.location.hash).toBe(signalsPositionHref);
-  expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
-  expect(publication.queryByRole("button", { name: copy.publish })).toBeNull();
-  expect(
-    publication.queryByRole("button", { name: copy.retainedRepublish }),
-  ).toBeNull();
-  fireEvent.click(publication.getByRole("radio", { name: copy.forced }));
-  fireEvent.click(publication.getByRole("button", { name: copy.preview }));
-  expect(
-    publication.queryByRole("button", { name: copy.retainedRepublish }),
-  ).toBeNull();
-
   fireEvent.click(
-    publication.getByRole("radio", { name: copy.retainedRepublish }),
+    publication.getByRole("button", { name: "Сравнить с текущей" }),
   );
+  const comparison = within(
+    screen.getByRole("dialog", { name: "Сравнение с текущей публикацией" }),
+  );
+  expect(window.location.hash).toBe(`${signalsPositionHref}?tab=publication`);
   expect(
-    publication.getByRole("button", { name: copy.retainedRepublish }),
-  ).toBeDisabled();
-  fireEvent.click(publication.getByRole("button", { name: copy.preview }));
-  expect(
-    publication.getByRole("button", { name: copy.retainedRepublish }),
-  ).toBeEnabled();
+    comparison.queryByRole("button", { name: /^Опубликовать/ }),
+  ).toBeNull();
+  fireEvent.click(comparison.getByRole("button", { name: "Закрыть" }));
   expect(screen.queryByRole("dialog")).toBeNull();
+
+  const prepare = () =>
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" });
+  fireEvent.click(prepare());
+  expect(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Опубликовать повторно",
+    }),
+  ).toBeEnabled();
+  act(() => {
+    window.location.hash = signalsPositionHref;
+  });
+  await screen.findByRole("tab", { name: "Обзор", selected: true });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
 
   fireEvent.click(
     screen.getByRole("button", { name: "Обновить данные MusicBrainz" }),
@@ -273,37 +345,48 @@ it("retains an exact publication preview and provider refresh across edition and
   await act(async () => failRefresh?.());
   expect(await screen.findByText("Provider unavailable")).toBeVisible();
   expect(refresh).toHaveBeenCalledTimes(1);
-  expect(
-    screen.getByRole("button", { name: copy.retainedRepublish }),
-  ).toBeEnabled();
+  fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
+  expect(prepare()).toBeEnabled();
 });
 
 it("omits demo publication shortcuts and keeps the position preview contextual", () => {
   const hash = northernPositionHref;
   window.history.replaceState(null, "", hash);
   render(<CatalogDemo />);
+  fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
   const publication = within(
     screen.getByRole("region", { name: "Публикация" }),
   );
   expect(
     publication.queryByRole("button", { name: "Обновить метаданные" }),
   ).toBeNull();
+  const otherActions = publication.getByText("Другие действия");
+  const details = otherActions.closest("details");
+  if (!details) throw new Error("Missing secondary publication actions");
+  expect(details.open).toBe(false);
+  details.open = true;
   expect(
-    publication.getByRole("button", { name: "Удалить публикацию" }),
+    within(details).getByRole("button", { name: "Удалить публикацию" }),
   ).toBeVisible();
-  expect(
-    publication.queryByRole("button", { name: "Другие действия" }),
-  ).toBeNull();
   const copy = firstPublicationPreviewMessages.ru;
   expect(
     publication.queryByRole("region", { name: copy.tagDifferences }),
   ).not.toBeInTheDocument();
-  fireEvent.click(publication.getByRole("button", { name: copy.preview }));
+  fireEvent.click(
+    publication.getByRole("button", { name: "Сравнить с текущей" }),
+  );
+  const dialog = within(screen.getByRole("dialog"));
+  const disclosure = dialog
+    .getByText("Технические детали и теги")
+    .closest("details");
+  if (!disclosure) throw new Error("Missing comparison details");
+  expect(disclosure.open).toBe(false);
+  disclosure.open = true;
   expect(
-    publication.getByRole("region", { name: copy.tagDifferences }),
+    dialog.getByRole("region", { name: copy.tagDifferences }),
   ).toBeInTheDocument();
-  expect(publication.getByText(copy.comparisonReadOnly)).toBeInTheDocument();
-  expect(window.location.hash).toBe(hash);
+  expect(dialog.queryByRole("button", { name: /^Опубликовать/ })).toBeNull();
+  expect(window.location.hash).toBe(`${hash}?tab=publication`);
 });
 
 it("retains matching search and preparation while creating a Local release", async () => {

@@ -25,6 +25,8 @@ import {
 } from "../ui/app/MeloTroveProvider";
 import { type MeloTroveRoute, meloTrovePaths } from "../ui/app/MeloTroveRoute";
 import type { IncomingCreationModel } from "../ui/features/incoming/IncomingCreationOutlet";
+import { incomingPublicationMessages } from "../ui/features/incoming/incomingPublicationMessages";
+import { incomingPublicationCounts } from "../ui/features/incoming/incomingPublicationModel";
 import { catalogMessage } from "../ui/features/library/catalogMessages";
 import type { LibraryCatalogPageState } from "../ui/features/library/LibraryCatalogPageView";
 import type { LibraryCatalogResults } from "../ui/features/library/LibraryCatalogResults";
@@ -35,6 +37,8 @@ import {
 } from "../ui/features/library/LibrarySelectionPreviewView";
 import {
   type LibraryArtistAddress,
+  type LibraryPositionFrom,
+  type LibraryPositionTab,
   libraryPositionHref,
   libraryReleaseHref,
   parseLibraryArtistAddress,
@@ -81,8 +85,16 @@ import {
 } from "./providers/incoming/incomingGroupsRoute";
 import {
   createIncomingState,
+  incomingMatchingCount,
   runAutomaticMatching,
 } from "./providers/incoming/incomingModel";
+import {
+  createPublicationWalkthroughReleases,
+  demoPrimaryArtistPublication,
+  incomingPublicationEditions,
+  incomingPublicationQueueHref,
+  incomingPublicationReadyHref,
+} from "./providers/incoming/incomingPublicationFixtures";
 import {
   combineLibraryAlbumEntries,
   libraryArtistPositionIds,
@@ -127,6 +139,7 @@ import {
   completeManagedLibraryDeletion,
   managedDeletionObservation,
 } from "./providers/library/libraryDeletionModel";
+import { demoReleasePrimaryArtistId } from "./providers/library/libraryPrimaryArtistDemo";
 import { SelectionDock } from "./providers/library/SelectionDock";
 import {
   type DemoLibraryProviderRefresh,
@@ -259,9 +272,6 @@ function useDemoMeloTroveState(
     createLocalCatalogDemoState,
   );
   const [incoming, setIncoming] = useState(createIncomingState);
-  const incomingCount = incoming.groups.filter(
-    (group) => !group.processed,
-  ).length;
   const [initialSetupDraft] = useState<SetupDraftSnapshot | null>(() =>
     readSetupDraft(getSetupDraftStorage()),
   );
@@ -379,8 +389,8 @@ function useDemoMeloTroveState(
     setSearch,
     reset: resetLibrarySearch,
   } = useLibraryRouteState(route.hash);
-  const [releases, renderReleases] = useState(() =>
-    structuredClone(originalReleases),
+  const [releases, renderReleases] = useState(
+    createPublicationWalkthroughReleases,
   );
   const releasesRef = useRef(releases);
   const setReleases = (
@@ -399,6 +409,10 @@ function useDemoMeloTroveState(
   const [artists, setArtists] = useState<CatalogArtist[]>(() =>
     structuredClone(catalogData.artists),
   );
+  const publicationEditions = incomingPublicationEditions(releases, artists);
+  const incomingCount =
+    incomingMatchingCount(incoming.groups) +
+    incomingPublicationCounts(publicationEditions).total;
   const providers = [
     ...originalProviders,
     ...localProviderReleases(localProvider),
@@ -545,6 +559,13 @@ function useDemoMeloTroveState(
       settings.publicationTemplate &&
         settings.publicationTemplate !== defaultPublicationTemplate,
     ),
+    firstPublicationBlocker: ({ release_id }) => {
+      const release = releases.find(({ id }) => id === release_id);
+      return release?.id === demoPrimaryArtistPublication.releaseId &&
+        !demoReleasePrimaryArtistId(release, artists)
+        ? "release_primary_artist_required"
+        : undefined;
+    },
     inventoryVersion: incoming.inventoryVersion,
   };
   const publicationPending = (jobId: string) => {
@@ -1093,6 +1114,8 @@ function useDemoMeloTroveState(
   const libraryReleaseScreen = (address: {
     releaseId: string;
     positionId?: string;
+    tab?: LibraryPositionTab;
+    from?: LibraryPositionFrom;
   }) => {
     const release = releases.find((item) => item.id === address.releaseId);
     if (!release)
@@ -1105,6 +1128,25 @@ function useDemoMeloTroveState(
     const track = address.positionId
       ? release.tracks.find((item) => item.id === address.positionId)
       : undefined;
+    const fromPublicationQueue = address.from === "publication-queue";
+    const walkthrough = release.id === demoPrimaryArtistPublication.releaseId;
+    const artistReady =
+      !walkthrough || Boolean(demoReleasePrimaryArtistId(release, artists));
+    const isBlockedPosition = (item: OriginalRelease["tracks"][number]) =>
+      !item.published && !artistReady;
+    const primaryArtistResolution =
+      walkthrough &&
+      !address.positionId &&
+      new URLSearchParams(route.hash.split("?", 2)[1]).get("resolve") ===
+        "primary-artist"
+        ? {
+            ready: artistReady,
+            trackHref: demoPrimaryArtistPublication.trackHref,
+            backHref: artistReady
+              ? incomingPublicationReadyHref
+              : incomingPublicationQueueHref,
+          }
+        : undefined;
     const missingPosition =
       address.positionId && !track
         ? {
@@ -1115,6 +1157,7 @@ function useDemoMeloTroveState(
         : undefined;
     const overview: ReleaseOverviewScreenProps = {
       release,
+      primaryArtistResolution,
       artists,
       files,
       onUpdateRelease: (updated) =>
@@ -1148,6 +1191,7 @@ function useDemoMeloTroveState(
       DemoPositionPublicationSource
     >();
     for (const item of release.tracks) {
+      if (isBlockedPosition(item)) continue;
       const last = lastPositionPublication(item.id);
       if (last && publicationPending(last.id)) continue;
       contextualPublications.set(item.id, {
@@ -1201,6 +1245,36 @@ function useDemoMeloTroveState(
         onQueueDeletion: queueDeletion,
         release,
         track,
+        publicationIssue: isBlockedPosition(track)
+          ? {
+              message: incomingPublicationMessages[locale].reasonLabel(
+                demoPrimaryArtistPublication.reason,
+              ),
+              action: {
+                label:
+                  incomingPublicationMessages[locale].nextStepLabel(
+                    "primaryArtist",
+                  ),
+                href: demoPrimaryArtistPublication.resolveHref,
+              },
+              backHref: fromPublicationQueue
+                ? incomingPublicationQueueHref
+                : undefined,
+            }
+          : undefined,
+        queueBackHref: fromPublicationQueue
+          ? artistReady
+            ? incomingPublicationReadyHref
+            : incomingPublicationQueueHref
+          : undefined,
+        tab: address.tab ?? "overview",
+        onTabChange: (tab) =>
+          replaceHashState(
+            libraryPositionHref(release.id, track.id, {
+              tab: tab === "overview" ? undefined : tab,
+              from: address.from,
+            }),
+          ),
         genresLoaded: settings.genresLoaded,
         onLoadGenres: loadGenres,
         onRecordingChange: (updateTrack) => {
@@ -1396,6 +1470,7 @@ function useDemoMeloTroveState(
         releases,
         onReleases: setImportedReleases,
         publication: receiptPublicationPort,
+        publicationEditions,
       },
       creation,
     });

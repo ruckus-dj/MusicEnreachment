@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { Locale } from "../../i18n/types";
 import {
   releaseControlAlertClass,
@@ -29,17 +30,26 @@ export function LibraryPrimaryArtistControl({
   locale,
   positionNumber,
   model,
+  focusOnMount = false,
 }: {
   locale: Locale;
   positionNumber?: string;
   model: LibraryPrimaryArtistModel;
+  focusOnMount?: boolean;
 }) {
+  const selectRef = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    if (!focusOnMount) return;
+    const frame = requestAnimationFrame(() => selectRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focusOnMount]);
   const text = copy[locale];
   const label = positionNumber === undefined ? text.release : text.track;
   return (
     <label className="block">
       {label}
       <select
+        ref={selectRef}
         className={releaseControlSelectClass}
         aria-label={
           positionNumber === undefined ? label : `${label} ${positionNumber}`

@@ -50,17 +50,31 @@ export function LibraryPositionEditorsView({
   lyrics,
 }: LibraryPositionEditorsViewProps) {
   if (!active) return null;
+  const genreEditor = genre ? (
+    <GenreMetadataEditorOutlet source={genre} />
+  ) : null;
+  const primaryArtistEditor = primaryArtist ? (
+    <LibraryPrimaryArtistControl
+      locale={locale}
+      positionNumber={positionNumber}
+      model={primaryArtist}
+    />
+  ) : null;
   return (
     <div className="grid min-w-0 gap-3">
       {credits && <ReleaseCreditListView locale={locale} credits={credits} />}
-      {genre && <GenreMetadataEditorOutlet source={genre} />}
-      {metadata && <TrackMetadataEditorsOutlet source={metadata} />}
-      {primaryArtist && (
-        <LibraryPrimaryArtistControl
+      {metadata ? (
+        <TrackMetadataEditorsOutlet
+          source={metadata}
           locale={locale}
-          positionNumber={positionNumber}
-          model={primaryArtist}
+          recordingSupplement={genreEditor}
+          positionSupplement={primaryArtistEditor}
         />
+      ) : (
+        <>
+          {genreEditor}
+          {primaryArtistEditor}
+        </>
       )}
       {lyrics && <LibraryPositionLyricsView locale={locale} {...lyrics} />}
     </div>

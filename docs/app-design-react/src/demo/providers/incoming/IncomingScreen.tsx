@@ -4,7 +4,7 @@ import {
   type ApplicationIncomingListModel,
   ApplicationRouteOutlet,
 } from "../../../ui/app/ApplicationRouteOutlet";
-import { navigateHash } from "../../../ui/app/hashLocation";
+import { navigateHash, pushHashState } from "../../../ui/app/hashLocation";
 import { focusView } from "../../../ui/components/useViewFocus";
 import type { IncomingGroupViewRow } from "../../../ui/features/incoming/IncomingGroupsOverviewView";
 import { incomingGroupsEmpty } from "../../../ui/features/incoming/IncomingGroupsPanel";
@@ -12,6 +12,7 @@ import {
   type IncomingMessage,
   incomingMessage,
 } from "../../../ui/features/incoming/incomingOverviewMessages";
+import type { IncomingPublicationEdition } from "../../../ui/features/incoming/incomingPublicationModel";
 import { incomingMessages } from "../../../ui/features/incoming/incomingReviewMessages";
 import {
   compareSourceFiles,
@@ -33,9 +34,14 @@ import {
   type IncomingReleases,
   type IncomingState,
   incomingFixtures,
+  incomingMatchingCount,
   usableFile,
 } from "./incomingModel";
 import { incomingOverviewRows } from "./incomingOverview";
+import {
+  createPublicationWalkthroughReleases,
+  incomingPublicationEditions,
+} from "./incomingPublicationFixtures";
 import { canSplitGroup, splitFileIntoNewGroup } from "./incomingSplitModel";
 
 export type IncomingScreenProps = {
@@ -51,7 +57,12 @@ export type IncomingScreenProps = {
   onReleases?: (releases: IncomingReleases) => void;
   /** Shared publication scheduler owned above the Incoming workspace. */
   publication?: import("../matching/matchingReceiptPublicationQueue").MatchingReceiptPublicationQueuePort;
+  publicationEditions?: readonly IncomingPublicationEdition[];
 };
+
+const standalonePublicationEditions = incomingPublicationEditions(
+  createPublicationWalkthroughReleases(),
+);
 
 export function useIncomingScreenDemoProvider({
   files: givenFiles,
@@ -59,6 +70,7 @@ export function useIncomingScreenDemoProvider({
   artists = incomingFixtures.artists,
   state: givenState,
   onState,
+  publicationEditions = standalonePublicationEditions,
 }: IncomingScreenProps): ApplicationIncomingListModel {
   const { locale } = useI18n();
   const msg = (
@@ -88,6 +100,7 @@ export function useIncomingScreenDemoProvider({
     preventScroll: boolean;
   } | null>(null);
   const incomingRoute = parseIncomingGroupsRoute(hash);
+  const routeParams = new URLSearchParams(hash.split("?", 2)[1]);
   const expanded =
     incomingRoute?.view === "list" ? incomingRoute.expandedGroupIds : [];
   useEffect(() => {
@@ -279,6 +292,24 @@ export function useIncomingScreenDemoProvider({
       onPress: updateState,
     },
     notice,
+    matchingCount: incomingMatchingCount(groups),
+    publication: {
+      editions: publicationEditions,
+      initialStatus:
+        routeParams.get("status") === "ready" ? "ready" : undefined,
+    },
+    selectedSection:
+      routeParams.get("tab") === "publication" ? "publication" : "matching",
+    onSectionChange: (section) => {
+      const next = new URLSearchParams(routeParams);
+      if (section === "publication") next.set("tab", "publication");
+      else {
+        next.delete("tab");
+        next.delete("status");
+      }
+      const query = next.toString();
+      pushHashState(query ? `#/incoming-groups?${query}` : "#/incoming-groups");
+    },
     panel: {
       labels,
       rows: viewRows,

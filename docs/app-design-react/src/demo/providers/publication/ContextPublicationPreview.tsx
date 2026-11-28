@@ -1,7 +1,8 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 import type { PublicationPreviewSource } from "../../../ui/features/library/PublicationPreviewDetailsView";
 import {
   ContextPublicationPreviewDataBinder,
+  type ContextPublicationPreviewDialogControl,
   type ContextPublicationPreviewMode,
   type ContextPublicationPreviewModel,
   type ContextPublicationPreviewSource,
@@ -183,6 +184,7 @@ export type ContextPublicationPreviewProps = {
     ContextPublicationPreviewModel,
     "workflowControl" | "planControl"
   >;
+  dialogControl?: ContextPublicationPreviewDialogControl;
   workflow: ContextPublicationPreviewWorkflow;
   previewStale?: boolean;
   hasCustomTemplate?: boolean;
@@ -200,6 +202,7 @@ export function ContextPublicationPreview({
   onClose,
   onQueue,
   controls,
+  dialogControl,
   workflow,
   previewStale = false,
   hasCustomTemplate = false,
@@ -207,6 +210,9 @@ export function ContextPublicationPreview({
 }: ContextPublicationPreviewProps) {
   const { locale } = useI18n();
   const [chosenSourceId, setChosenSourceId] = useState<string | null>();
+  useLayoutEffect(() => {
+    if (dialogControl?.open) setChosenSourceId(undefined);
+  }, [dialogControl?.open]);
   const positionId = plan.positionId;
   if (!positionId || plan.mode !== "local" || plan.groupId) return null;
 
@@ -448,6 +454,7 @@ export function ContextPublicationPreview({
     reason,
     notices,
     details,
+    dialogControl,
     sourceGroupName: `demo-publication-source-${positionId}`,
     onSourceChoice: needsExplicitChoice
       ? (choice) => {
@@ -511,6 +518,7 @@ export function DemoPositionPublication({
 }: DemoPositionPublicationProps) {
   const { locale } = useI18n();
   const [prepared, setPrepared] = useState<PreparedPublication>();
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [workflow, setWorkflow] = useState<"comparison" | "retained_same_path">(
     "comparison",
   );
@@ -523,30 +531,53 @@ export function DemoPositionPublication({
     : "first";
   const compare = effectiveWorkflow === "comparison";
   const confirmable = effectiveWorkflow !== "comparison";
+  const buildPrepared = (
+    nextWorkflow: ContextPublicationPreviewWorkflow,
+    nextMode: ContextPublicationPreviewMode,
+  ): PreparedPublication => {
+    const plan = makeReleasePlan(state, release, files, positionId);
+    const preparedPlan = {
+      ...plan,
+      force:
+        hasCurrent &&
+        nextWorkflow === "retained_same_path" &&
+        nextMode === "forced",
+      retainCurrentPath: hasCurrent && nextWorkflow === "retained_same_path",
+    };
+    const destinationSnapshot = { ...destination };
+    return {
+      plan: preparedPlan,
+      destination: destinationSnapshot,
+      preview: capturePositionPreview(
+        preparedPlan,
+        destinationSnapshot,
+        files,
+        releases,
+        providers,
+        artists,
+        positionId,
+      ),
+    };
+  };
+  const open: ContextPublicationPreviewDialogControl["onOpen"] = (
+    nextWorkflow,
+  ) => {
+    if (nextWorkflow !== "first") setWorkflow(nextWorkflow);
+    setDialogOpen(true);
+    setPrepared(buildPrepared(nextWorkflow, mode));
+  };
+  const dismiss = () => {
+    setDialogOpen(false);
+    setPrepared(undefined);
+  };
+  const dialogControl: ContextPublicationPreviewDialogControl = {
+    open: dialogOpen,
+    onOpen: open,
+    onDismiss: dismiss,
+  };
   const planControl = {
     disabled: false,
-    onPreview: () => {
-      const plan = makeReleasePlan(state, release, files, positionId);
-      const preparedPlan = {
-        ...plan,
-        force: hasCurrent && mode === "forced",
-        retainCurrentPath: hasCurrent && workflow === "retained_same_path",
-      };
-      const destinationSnapshot = { ...destination };
-      setPrepared({
-        plan: preparedPlan,
-        destination: destinationSnapshot,
-        preview: capturePositionPreview(
-          preparedPlan,
-          destinationSnapshot,
-          files,
-          releases,
-          providers,
-          artists,
-          positionId,
-        ),
-      });
-    },
+    onPreview: () => setPrepared(buildPrepared(effectiveWorkflow, mode)),
   };
   const controls = {
     planControl,
@@ -558,11 +589,11 @@ export function DemoPositionPublication({
           mode,
           onChange: (next: typeof workflow) => {
             setWorkflow(next);
-            setPrepared(undefined);
+            setPrepared(buildPrepared(next, mode));
           },
           onModeChange: (next: ContextPublicationPreviewMode) => {
             setMode(next);
-            setPrepared(undefined);
+            setPrepared(buildPrepared(workflow, next));
           },
         }
       : undefined,
@@ -585,6 +616,7 @@ export function DemoPositionPublication({
     const model: ContextPublicationPreviewModel = {
       ...controls,
       locale,
+      dialogControl,
       sourceGroupName: `demo-publication-source-${positionId}`,
       readOnly: compare,
       confirmControl: confirmable
@@ -611,11 +643,12 @@ export function DemoPositionPublication({
       providers={providers}
       artists={artists}
       inventoryVersion={state.inventoryVersion}
-      onClose={() => setPrepared(undefined)}
+      onClose={dismiss}
       onQueue={onQueue}
       workflow={effectiveWorkflow}
       hasCustomTemplate={hasCustomTemplate}
       controls={controls}
+      dialogControl={dialogControl}
     >
       {children}
     </ContextPublicationPreview>

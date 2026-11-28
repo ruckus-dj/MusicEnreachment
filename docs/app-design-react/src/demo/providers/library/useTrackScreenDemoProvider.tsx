@@ -1,5 +1,7 @@
 import { type ReactNode, useState } from "react";
 import type { LibraryReleasePositionModel } from "../../../ui/features/library/LibraryReleaseWorkspaceView";
+import type { LibraryPositionTab } from "../../../ui/features/library/libraryDetailRoute";
+import type { TrackScreenPublicationIssueView } from "../../../ui/features/library/TrackScreenView";
 import {
   formatTrackMessage,
   trackMessage,
@@ -38,6 +40,10 @@ export type TrackScreenProps = {
   track: OriginalTrack;
   onPreview?: () => void;
   publicationPreviewNotice?: string;
+  publicationIssue?: TrackScreenPublicationIssueView;
+  queueBackHref?: string;
+  tab?: LibraryPositionTab;
+  onTabChange?: (tab: LibraryPositionTab) => void;
   contextualPublication?: DemoPositionPublicationSource;
   onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
   onRecordingChange?: (
@@ -82,6 +88,10 @@ export function useTrackScreenDemoProvider(
     track,
     onPreview,
     publicationPreviewNotice,
+    publicationIssue,
+    queueBackHref,
+    tab,
+    onTabChange,
     contextualPublication,
     onMutate,
     onRecordingChange,
@@ -95,9 +105,26 @@ export function useTrackScreenDemoProvider(
   const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
   const recordingId = recordingIdentity(track);
   const localArtists = artists ?? catalogData.artists;
+  const positionCredits = positionCreditValues(track, localArtists);
+  const creditedArtists = positionCredits
+    .map((credit, index) => {
+      const name =
+        credit.creditName || originalArtistName(credit.artistId, localArtists);
+      return index === positionCredits.length - 1
+        ? name
+        : `${name}${credit.joinPhrase ?? ", "}`;
+    })
+    .join("")
+    .trim();
+  const genres =
+    track.recordingMetadata?.genre ??
+    (track.recordingGenreRefs?.length
+      ? track.recordingGenreRefs.map((genre) => genre.name)
+      : track.recordingGenres);
+  const genreNames = (genres ?? []).filter(Boolean).join(", ");
   const primaryArtist = onMutate
     ? demoPrimaryArtist(
-        positionCreditValues(track, localArtists),
+        positionCredits,
         localArtists,
         track.primaryArtistId,
         (id) => onMutate((current) => ({ ...current, primaryArtistId: id })),
@@ -144,7 +171,7 @@ export function useTrackScreenDemoProvider(
           ),
         })
       : trackMessage(locale, "metadataMatches")
-    : trackMessage(locale, "noPublication");
+    : undefined;
   const sourceItems = sourceIds.flatMap((id) => {
     const source = files[id];
     if (!source) return [];
@@ -158,10 +185,27 @@ export function useTrackScreenDemoProvider(
         label: source.name,
         summary: `${source.codec} · ${duration(source.duration)} · ${availability}`,
         selected: track.sourceId === id,
+        tags: source.tags,
       },
     ];
   });
   return {
+    publicationIssue,
+    queueBackHref,
+    tab,
+    onTabChange,
+    metadataFacts: [
+      {
+        id: "artists",
+        label: locale === "ru" ? "Исполнители" : "Artists",
+        value: creditedArtists || "—",
+      },
+      {
+        id: "genres",
+        label: locale === "ru" ? "Жанры" : "Genres",
+        value: genreNames || "—",
+      },
+    ],
     heading: {
       displayNumber: track.displayedNumber?.trim()
         ? track.displayedNumber
@@ -218,6 +262,16 @@ export function useTrackScreenDemoProvider(
     publication: {
       published: Boolean(track.published),
       status: metadataStatus,
+      output: track.published
+        ? {
+            label:
+              track.published.path.split(/[/\\]/).at(-1) ||
+              track.published.path,
+            summary: [track.published.codec, track.published.container]
+              .filter(Boolean)
+              .join(" · "),
+          }
+        : undefined,
       diff: track.published ? (
         <PublicationMetadataChanges locale={locale} groups={changes} compact />
       ) : undefined,
@@ -281,6 +335,7 @@ export function useTrackScreenDemoProvider(
     tags: {
       open: tagComparisonOpen,
       onOpenChange: setTagComparisonOpen,
+      sourceId: inspectedFileId ?? undefined,
       comparison: (
         <TagsComparison
           artists={artists}

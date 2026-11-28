@@ -1,11 +1,14 @@
 import { Radio, RadioGroup } from "react-aria-components";
 import { AppButton } from "../../components/AppButton";
+import type { LibraryTagValues } from "./LibraryTagComparisonTable";
 
 export type LibraryPositionSource = {
   id: string;
   label: string;
   summary?: string;
   selected: boolean;
+  /** Saved source tag snapshot; read-only and shown in the source drawer. */
+  tags?: LibraryTagValues;
   authority?: {
     decision: string;
     compatible: boolean;
@@ -43,7 +46,6 @@ const copy = {
     choose: "Choose for publication",
     chosen: "Selected for publication",
     inspect: "Inspect tags",
-    inspecting: "Inspecting tags",
   },
   ru: {
     section: "Источники аудио позиции",
@@ -67,7 +69,6 @@ const copy = {
     choose: "Выбрать для публикации",
     chosen: "Выбран для публикации",
     inspect: "Посмотреть теги",
-    inspecting: "Сравниваем теги",
   },
 } as const;
 
@@ -85,7 +86,10 @@ export function LibraryPositionSourcesView({
   position: string;
   sources: readonly LibraryPositionSource[];
   choice?: { value: string; onChange: (id: string) => void };
-  inspection?: { value?: string; onChange: (id: string) => void };
+  inspection?: {
+    value?: string;
+    onChange: (id: string, trigger?: HTMLElement | null) => void;
+  };
 }) {
   const text = copy[locale];
   const authority = sources.some((source) => source.authority);
@@ -192,12 +196,17 @@ export function LibraryPositionSourcesView({
                   <td className={cell}>
                     <AppButton
                       type="button"
-                      aria-pressed={inspection.value === row.id}
-                      onPress={() => inspection.onChange(row.id)}
+                      aria-haspopup="dialog"
+                      onPress={(event) =>
+                        inspection.onChange(
+                          row.id,
+                          event.target instanceof HTMLElement
+                            ? event.target
+                            : null,
+                        )
+                      }
                     >
-                      {inspection.value === row.id
-                        ? text.inspecting
-                        : text.inspect}
+                      {text.inspect}
                     </AppButton>
                   </td>
                 )}

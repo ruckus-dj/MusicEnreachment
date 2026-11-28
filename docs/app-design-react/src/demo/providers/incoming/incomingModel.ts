@@ -15,6 +15,7 @@ import {
   publicationMetadataIssues,
   sourceOnlyAudioTagKeys,
 } from "../library/catalogData";
+import { demoReleasePrimaryArtistId } from "../library/libraryPrimaryArtistDemo";
 import { replaceAudioMeasurements } from "../library/metadata/audioMeasurements";
 import { retainUnspecifiedContributorTags } from "../library/metadata/scopedContributors";
 import { sameTagValues } from "../library/tagEquality";
@@ -172,6 +173,10 @@ export const selectedSourceId = (assignment?: Partial<Assignment> | null) =>
     : (assignment?.fileId ?? null);
 export const usableFile = (file?: SourceFile) =>
   Boolean(file?.available && file.locations?.length);
+
+export function incomingMatchingCount(groups: readonly IncomingGroup[]) {
+  return groups.filter((group) => !group.processed).length;
+}
 
 export function createIncomingState(): IncomingState {
   return {
@@ -608,7 +613,11 @@ export function planPositionRow(
   const output = row.file
     ? choosePublicationOutput(row.file, {
         ...destination,
-        artist: originalArtistName(release.artistId, artists),
+        artist: originalArtistName(
+          demoReleasePrimaryArtistId(release, artists ?? originalArtists) ??
+            release.artistId,
+          artists,
+        ),
         year: effectiveReleaseYear(release),
         release: effectiveReleaseTitle(release),
         position: row.targetTrack.position,
@@ -841,7 +850,11 @@ export function applyPlan(
     }
     const output = choosePublicationOutput(row.file, {
       ...destination,
-      artist: originalArtistName(release.artistId, artists),
+      artist: originalArtistName(
+        demoReleasePrimaryArtistId(release, artists ?? originalArtists) ??
+          release.artistId,
+        artists,
+      ),
       year: effectiveReleaseYear(release),
       release: effectiveReleaseTitle(release),
       position: row.targetTrack.position,

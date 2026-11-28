@@ -10,6 +10,7 @@ import {
   publicationMetadataIssues,
   type SourceFiles,
 } from "../library/catalogData";
+import { demoReleasePrimaryArtistId } from "../library/libraryPrimaryArtistDemo";
 import {
   choosePublicationOutput,
   demoIsLosslessCodec,
@@ -33,6 +34,9 @@ export interface DemoPublicationCatalog {
   destination: PublicationDestination;
   /** The standalone demo only implements the fixture's destination projection. */
   hasCustomTemplate?: boolean;
+  firstPublicationBlocker?: (
+    position: DemoPublicationPosition,
+  ) => "release_primary_artist_required" | undefined;
   inventoryVersion: number;
 }
 
@@ -102,18 +106,24 @@ function planPosition(
       disposition: current ? "blocked" : "skipped",
       reason: track.sourceId ? "missing_audio" : "source_selection_required",
     };
-  if (catalog.hasCustomTemplate)
+  const firstBlocker = !current
+    ? catalog.firstPublicationBlocker?.(position)
+    : undefined;
+  if (catalog.hasCustomTemplate || firstBlocker)
     return {
       ...row,
       current,
       source,
       disposition: "blocked",
-      reason: "publication_path_unavailable",
+      reason: firstBlocker ?? "publication_path_unavailable",
     };
 
   const target = choosePublicationOutput(source, {
     ...catalog.destination,
-    artist: originalArtistName(release.artistId, catalog.artists),
+    artist: originalArtistName(
+      demoReleasePrimaryArtistId(release, catalog.artists) ?? release.artistId,
+      catalog.artists,
+    ),
     year: effectiveReleaseYear(release),
     release: effectiveReleaseTitle(release),
     position: track.position,

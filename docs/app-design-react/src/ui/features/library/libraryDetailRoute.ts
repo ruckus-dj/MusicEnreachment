@@ -26,8 +26,14 @@ export interface LibraryReleaseAddress {
   releaseId: string;
 }
 
+/** The position screen's selected tab and optional return context. */
+export type LibraryPositionTab = "overview" | "publication" | "metadata";
+export type LibraryPositionFrom = "publication-queue";
+
 export interface LibraryPositionAddress extends LibraryReleaseAddress {
   positionId: string;
+  tab?: LibraryPositionTab;
+  from?: LibraryPositionFrom;
 }
 
 /** Host-supplied check for a raw, still-encoded path segment. */
@@ -36,6 +42,12 @@ export type LibraryIdValidator = (rawId: string) => boolean;
 const releasePrefix = "/library/releases/";
 const releasePattern = /^\/library\/releases\/([^/]+)$/;
 const positionPattern = /^\/library\/releases\/([^/]+)\/positions\/([^/]+)$/;
+
+const positionTabs = new Set<LibraryPositionTab>([
+  "overview",
+  "publication",
+  "metadata",
+]);
 
 function pathnameOf(route: string) {
   const path = route.startsWith("#") ? route.slice(1) : route;
@@ -140,13 +152,17 @@ export function parseLibraryReleaseAddress(
 
 /**
  * Parses the exact `#/library/releases/<release>/positions/<position>` tuple.
- * The optional validator sees both raw segments before URI decoding.
+ * Optional `tab` and `from` query parameters are part of the canonical position
+ * address so a publication-queue deep link survives a page reload. The
+ * optional validator sees both raw segments before URI decoding.
  */
 export function parseLibraryPositionAddress(
   route: string,
   validateRawId?: LibraryIdValidator,
 ): LibraryPositionAddress | undefined {
-  const match = positionPattern.exec(pathnameOf(route));
+  const path = route.startsWith("#") ? route.slice(1) : route;
+  const [pathname, search = ""] = path.split("?", 2);
+  const match = positionPattern.exec(pathname);
   if (!match) return undefined;
   const [rawReleaseId, rawPositionId] = match.slice(1);
   if (
@@ -156,7 +172,18 @@ export function parseLibraryPositionAddress(
     return undefined;
   const releaseId = decodeId(rawReleaseId);
   const positionId = decodeId(rawPositionId);
-  return releaseId && positionId ? { releaseId, positionId } : undefined;
+  if (!releaseId || !positionId) return undefined;
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab");
+  const from = params.get("from");
+  return {
+    releaseId,
+    positionId,
+    ...(tab && positionTabs.has(tab as LibraryPositionTab)
+      ? { tab: tab as LibraryPositionTab }
+      : {}),
+    ...(from === "publication-queue" ? { from } : {}),
+  };
 }
 
 /** Builds the canonical edition address for a release identifier. */
@@ -164,7 +191,19 @@ export function libraryReleaseHref(releaseId: string) {
   return `#${releasePrefix}${encodeURIComponent(releaseId)}`;
 }
 
-/** Builds the canonical nested address for a release position. */
-export function libraryPositionHref(releaseId: string, positionId: string) {
-  return `${libraryReleaseHref(releaseId)}/positions/${encodeURIComponent(positionId)}`;
+/**
+ * Builds the canonical nested address for a release position. The optional
+ * query keeps the selected tab and the queue return context in the hash.
+ */
+export function libraryPositionHref(
+  releaseId: string,
+  positionId: string,
+  options?: { tab?: LibraryPositionTab; from?: LibraryPositionFrom },
+) {
+  const path = `${libraryReleaseHref(releaseId)}/positions/${encodeURIComponent(positionId)}`;
+  const params = new URLSearchParams();
+  if (options?.tab) params.set("tab", options.tab);
+  if (options?.from) params.set("from", options.from);
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }

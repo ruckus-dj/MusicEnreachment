@@ -1,7 +1,15 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { firstPublicationPreviewMessages } from "../../../ui/features/library/firstPublicationPreviewMessages";
 import { ContextPublicationPreviewOutlet } from "../../../ui/features/publication/ContextPublicationPreview";
+import { contextPublicationPreviewMessages } from "../../../ui/features/publication/contextPublicationPreviewMessages";
 import { publicationMessage } from "../../../ui/features/publication/publicationMessages";
 import { I18nProvider } from "../demoPreferences";
 import {
@@ -56,6 +64,132 @@ const settleFixture = (
     prepared,
   );
 
+it("resets a cancelled first-publication source choice when the dialog reopens", async () => {
+  localStorage.setItem("music-design-v2-language", "en");
+  const releases = structuredClone(originalReleases);
+  const album = releases.find(({ id }) => id === "hours")!;
+  const [track, sibling] = album.tracks;
+  const primary = originalFiles[track.sourceId!];
+  const alternative = originalFiles[sibling.sourceId!];
+  track.sourceIds = [primary.id, alternative.id];
+  const copy = firstPublicationPreviewMessages.en;
+  const dialogCopy = contextPublicationPreviewMessages.en;
+  const state = createIncomingState();
+  render(
+    <I18nProvider>
+      <ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
+        source={{
+          key: track.id,
+          Component: DemoPositionPublication,
+          props: {
+            destination: fixturePublicationDestination,
+            release: album,
+            positionId: track.id,
+            state,
+            files: originalFiles,
+            releases,
+            providers: providerReleases,
+            artists: originalArtists,
+            onQueue: vi.fn(),
+          },
+        }}
+      />
+    </I18nProvider>,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.previewPublication }),
+  );
+  let dialog = await screen.findByRole("dialog", {
+    name: dialogCopy.firstTitle,
+  });
+  expect(
+    within(dialog).getByRole("button", { name: copy.publish }),
+  ).toBeDisabled();
+  fireEvent.click(
+    within(dialog).getByRole("radio", {
+      name: new RegExp(alternative.name.split(".")[0]),
+    }),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: copy.publish }),
+  ).toBeEnabled();
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: dialogCopy.close }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.previewPublication }),
+  );
+  dialog = await screen.findByRole("dialog", { name: dialogCopy.firstTitle });
+  expect(
+    within(dialog).getByRole("button", { name: copy.publish }),
+  ).toBeDisabled();
+  expect(
+    within(dialog).getByRole("radio", { name: copy.noSource }),
+  ).toBeChecked();
+});
+
+it("opens an accessible read-only comparison without a publication action", async () => {
+  localStorage.setItem("music-design-v2-language", "ru");
+  const copy = firstPublicationPreviewMessages.ru;
+  const dialogCopy = contextPublicationPreviewMessages.ru;
+  const signals = originalReleases.find((item) => item.id === "signals")!;
+  const track = signals.tracks.find((item) => item.published)!;
+  const state = createIncomingState();
+  render(
+    <I18nProvider>
+      <ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
+        source={{
+          key: "demo-position-publication",
+          Component: DemoPositionPublication,
+          props: {
+            destination: fixturePublicationDestination,
+            release: signals,
+            positionId: track.id,
+            state,
+            files: originalFiles,
+            releases: originalReleases,
+            providers: providerReleases,
+            artists: originalArtists,
+            onQueue: vi.fn(),
+          },
+        }}
+      />
+    </I18nProvider>,
+  );
+  const trigger = screen.getByRole("button", {
+    name: dialogCopy.compareWithCurrent,
+  });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const dialog = await screen.findByRole("dialog", {
+    name: dialogCopy.comparisonTitle,
+  });
+  expect(dialog).toHaveAttribute("open");
+  expect(within(dialog).getByText(copy.comparisonReadOnly)).toBeVisible();
+  expect(
+    within(dialog).getByRole("region", { name: dialogCopy.summary }),
+  ).toBeVisible();
+  expect(within(dialog).getByText(dialogCopy.potentialChanges)).toBeVisible();
+  expect(within(dialog).getByText(dialogCopy.details)).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: copy.publish }),
+  ).toBeNull();
+  expect(
+    within(dialog).queryByRole("button", {
+      name: dialogCopy.republishConfirm,
+    }),
+  ).toBeNull();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: dialogCopy.compareWithCurrent }),
+    ).toHaveFocus(),
+  );
+});
+
 it("localizes the publication reason before adding artist warnings", () => {
   localStorage.setItem("music-design-v2-language", "en");
   const state = createIncomingState();
@@ -97,7 +231,7 @@ it("localizes the publication reason before adding artist warnings", () => {
   );
 });
 
-it("queues only the chosen linked source for a first publication", () => {
+it("queues only the chosen linked source for a first publication", async () => {
   localStorage.setItem("music-design-v2-language", "en");
   const releases = structuredClone(originalReleases);
   const album = releases.find(({ id }) => id === "hours")!;
@@ -129,11 +263,23 @@ it("queues only the chosen linked source for a first publication", () => {
       />
     </I18nProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
-  const confirm = screen.getByRole("button", { name: copy.publish });
+  const dialogCopy = contextPublicationPreviewMessages.en;
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: dialogCopy.previewPublication,
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: dialogCopy.firstTitle,
+  });
+  expect(
+    within(dialog).getByRole("region", { name: dialogCopy.summary }),
+  ).toBeVisible();
+  expect(within(dialog).getByText(dialogCopy.details)).toBeVisible();
+  const confirm = within(dialog).getByRole("button", { name: copy.publish });
   expect(confirm).toBeDisabled();
   fireEvent.click(
-    screen.getByRole("radio", {
+    within(dialog).getByRole("radio", {
       name: new RegExp(alternative.name.split(".")[0]),
     }),
   );
@@ -154,6 +300,57 @@ it("queues only the chosen linked source for a first publication", () => {
   expect(
     settleFixture(withoutAlternative, fixturePublicationDestination, job),
   ).toBeNull();
+});
+
+it("dismisses a hidden preparation modal and reopens from fresh state", async () => {
+  localStorage.setItem("music-design-v2-language", "ru");
+  const dialogCopy = contextPublicationPreviewMessages.ru;
+  const signals = originalReleases.find((item) => item.id === "signals")!;
+  const track = signals.tracks.find((item) => item.id === "signals-t1")!;
+  const state = createIncomingState();
+  const panel = (hidden: boolean) => (
+    <div hidden={hidden}>
+      <I18nProvider>
+        <ContextPublicationPreviewOutlet<DemoPositionPublicationBinderProps>
+          source={{
+            key: "demo-position-publication",
+            Component: DemoPositionPublication,
+            props: {
+              destination: fixturePublicationDestination,
+              release: signals,
+              positionId: track.id,
+              state,
+              files: originalFiles,
+              releases: originalReleases,
+              providers: providerReleases,
+              artists: originalArtists,
+              onQueue: vi.fn(),
+            },
+          }}
+        />
+      </I18nProvider>
+    </div>
+  );
+  const { rerender } = render(panel(false));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.prepareRepublish }),
+  );
+  await screen.findByRole("dialog", { name: dialogCopy.republishTitle });
+  rerender(panel(true));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  rerender(panel(false));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.prepareRepublish }),
+  );
+  const reopened = await screen.findByRole("dialog", {
+    name: dialogCopy.republishTitle,
+  });
+  expect(
+    within(reopened).getByRole("region", { name: dialogCopy.summary }),
+  ).toBeVisible();
+  expect(within(reopened).getByText(dialogCopy.details)).toBeVisible();
 });
 
 it("matches demo position controls for unchanged, forced and changed retained previews", async () => {
@@ -225,13 +422,41 @@ it("matches demo position controls for unchanged, forced and changed retained pr
       </I18nProvider>
     );
   };
+  const dialogCopy = contextPublicationPreviewMessages.ru;
   const { rerender } = render(view());
-  fireEvent.click(screen.getByRole("radio", { name: copy.retainedRepublish }));
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.prepareRepublish }),
+  );
   expect(await screen.findByText(copy.retainedUnchanged)).toBeInTheDocument();
-  let confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+  let confirm = screen.getByRole("button", {
+    name: dialogCopy.republishConfirm,
+  });
   expect(confirm).toBeDisabled();
   expect(onQueue).not.toHaveBeenCalled();
+
+  // Forced republish intent must not leak into a read-only comparison.
+  fireEvent.click(screen.getByRole("radio", { name: copy.forced }));
+  fireEvent.click(screen.getByRole("button", { name: dialogCopy.close }));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.compareWithCurrent }),
+  );
+  const comparison = within(
+    screen.getByRole("dialog", { name: dialogCopy.comparisonTitle }),
+  );
+  expect(
+    comparison.getByText(publicationMessage("ru", "sourceAndTagsSame")),
+  ).toBeInTheDocument();
+  expect(
+    comparison.queryByRole("button", { name: /^Опубликовать/ }),
+  ).toBeNull();
+  fireEvent.click(comparison.getByRole("button", { name: dialogCopy.close }));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.prepareRepublish }),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: copy.ordinary }));
+  expect(await screen.findByText(copy.retainedUnchanged)).toBeInTheDocument();
+  confirm = screen.getByRole("button", { name: dialogCopy.republishConfirm });
+  expect(confirm).toBeDisabled();
 
   const stale = structuredClone(baseline);
   stale
@@ -243,7 +468,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
     publicationMessage("ru", "stalePreview"),
   );
   expect(
-    screen.getByRole("button", { name: copy.retainedRepublish }),
+    screen.getByRole("button", { name: dialogCopy.republishConfirm }),
   ).toBeDisabled();
   rerender(view());
 
@@ -251,7 +476,9 @@ it("matches demo position controls for unchanged, forced and changed retained pr
   expect(screen.getByRole("alert")).toHaveTextContent(
     publicationMessage("ru", "stalePreview"),
   );
-  confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+  confirm = screen.getByRole("button", {
+    name: dialogCopy.republishConfirm,
+  });
   expect(confirm).toBeDisabled();
   fireEvent.click(confirm);
   expect(onQueue).not.toHaveBeenCalled();
@@ -260,7 +487,7 @@ it("matches demo position controls for unchanged, forced and changed retained pr
     publicationMessage("ru", "pathUndetermined"),
   );
   expect(
-    screen.getByRole("button", { name: copy.retainedRepublish }),
+    screen.getByRole("button", { name: dialogCopy.republishConfirm }),
   ).toBeDisabled();
   rerender(view());
 
@@ -272,17 +499,17 @@ it("matches demo position controls for unchanged, forced and changed retained pr
     state: "missing",
   };
   rerender(view(unavailable));
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
   expect(
-    screen.getByRole("button", { name: copy.retainedRepublish }),
+    screen.getByRole("button", { name: dialogCopy.republishConfirm }),
   ).toBeDisabled();
   expect(onQueue).not.toHaveBeenCalled();
   rerender(view());
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
   expect(
     await screen.findByText(copy.retainedCapabilityReady),
   ).toBeInTheDocument();
-  confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+  confirm = screen.getByRole("button", {
+    name: dialogCopy.republishConfirm,
+  });
   expect(confirm).toBeEnabled();
   const currentBeforeAdmission = structuredClone(baselineTrack.published);
   fireEvent.click(confirm);
@@ -324,13 +551,16 @@ it("matches demo position controls for unchanged, forced and changed retained pr
     comment: ["Edited comment"],
   };
   rerender(view(changed));
+  fireEvent.click(
+    screen.getByRole("button", { name: dialogCopy.prepareRepublish }),
+  );
   fireEvent.click(screen.getByRole("radio", { name: copy.ordinary }));
-  fireEvent.click(screen.getByRole("radio", { name: copy.retainedRepublish }));
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
   expect(
     await screen.findByText(copy.retainedCapabilityReady),
   ).toBeInTheDocument();
-  confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+  confirm = screen.getByRole("button", {
+    name: dialogCopy.republishConfirm,
+  });
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(onQueue).toHaveBeenCalledTimes(1);
@@ -405,13 +635,18 @@ it("warns about an output downgrade and confirms a compatible ready retained pla
       />
     </I18nProvider>,
   );
-  fireEvent.click(screen.getByRole("radio", { name: copy.retainedRepublish }));
-  fireEvent.click(screen.getByRole("button", { name: copy.preview }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: contextPublicationPreviewMessages.ru.prepareRepublish,
+    }),
+  );
   expect(
     await screen.findByText(copy.outputQualityDowngradeWarning),
   ).toBeInTheDocument();
   expect(screen.queryByRole("checkbox")).toBeNull();
-  const confirm = screen.getByRole("button", { name: copy.retainedRepublish });
+  const confirm = screen.getByRole("button", {
+    name: contextPublicationPreviewMessages.ru.republishConfirm,
+  });
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(onQueue).toHaveBeenCalledTimes(1);
