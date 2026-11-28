@@ -368,6 +368,117 @@ describe("application integration", () => {
     expect(groupListRequests).not.toHaveBeenCalled();
   });
 
+  it("opens the live publication queue without prototype copy", async () => {
+    const releaseId = "11111111-1111-4111-8111-111111111111";
+    const positionId = "22222222-2222-4222-8222-222222222222";
+    const track = {
+      id: positionId,
+      title: "Track",
+      position: 1,
+      medium: 1,
+      displayed_number: "1",
+      sources: [
+        { selected: true, locations: [{ relative_path: "track.flac" }] },
+      ],
+    };
+    const release = { id: releaseId, title: "Test edition", artists: [] };
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/library/positions", () =>
+        HttpResponse.json({
+          items: [{ ...track, release, source_variant_count: 1 }],
+          total: 1,
+        }),
+      ),
+      http.get("/api/library/releases/:releaseId", () =>
+        HttpResponse.json({
+          ...release,
+          primary_artist: { effective_artist_id: null },
+          tracks: [track],
+        }),
+      ),
+      http.post("/api/library/publication/preview", () =>
+        HttpResponse.json({
+          items: [
+            {
+              release_id: releaseId,
+              position_id: positionId,
+              disposition: "create",
+            },
+          ],
+        }),
+      ),
+    );
+    window.location.hash = "/incoming-groups?tab=publication&status=ready";
+    render(<Application />);
+
+    const queue = await screen.findByRole("region", {
+      name: "Очередь публикации",
+    });
+    expect(
+      await within(queue).findByRole("tab", {
+        name: "Готовы к публикации: 1",
+        selected: true,
+      }),
+    ).toBeVisible();
+    expect(within(queue).queryByText("Демо")).not.toBeInTheDocument();
+    expect(
+      within(queue).getByRole("link", { name: "Открыть трек" }),
+    ).toHaveAttribute(
+      "href",
+      `#/library/releases/${releaseId}/positions/${positionId}?tab=publication&from=publication-queue`,
+    );
+  });
+
+  it("returns to the URL's default position tab after visiting publication", async () => {
+    const releaseId = "11111111-1111-4111-8111-111111111111";
+    const positionId = "22222222-2222-4222-8222-222222222222";
+    const href = `#/library/releases/${releaseId}/positions/${positionId}`;
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/library/releases/:releaseId", () =>
+        HttpResponse.json({
+          id: releaseId,
+          title: "Test edition",
+          artists: [],
+          primary_artist: {
+            effective_artist_id: null,
+            candidate_artist_ids: [],
+          },
+          tracks: [
+            {
+              id: positionId,
+              title: "Track",
+              position: 1,
+              displayed_number: "1",
+            },
+          ],
+        }),
+      ),
+      http.get(
+        "/api/library/releases/:releaseId/positions/:positionId/:resource",
+        () => HttpResponse.json({ detail: "unavailable" }, { status: 404 }),
+      ),
+    );
+    window.location.hash = href;
+    render(<Application />);
+
+    expect(
+      await screen.findByRole("tabpanel", { name: "Обзор" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Файлы и публикация" }));
+    expect(
+      await screen.findByRole("tabpanel", { name: "Файлы и публикация" }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe(`${href}?tab=publication`);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Обзор" }));
+    expect(
+      await screen.findByRole("tabpanel", { name: "Обзор" }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe(href);
+  });
+
   it("restores a direct incoming group matching link with a back link to the list", async () => {
     const groupId = "11111111-1111-4111-8111-111111111111";
     const memberId = "22222222-2222-4222-8222-222222222222";

@@ -4,7 +4,6 @@ import type {
   SourceInspectorStepStatus,
   SourceInspectorViewProps,
 } from "../../../ui/features/sources/sourceInspectorModel";
-import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import {
   sourceDetailHref,
   sourcesHref,
@@ -15,6 +14,7 @@ import {
   inventoryPathStale,
   retainedInventoryLocations,
 } from "./sourceInventory";
+import { sourceMessage } from "./sourceInventoryMessages";
 import {
   processSourceQueue,
   retrySourceStep,

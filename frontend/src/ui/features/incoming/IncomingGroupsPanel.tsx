@@ -6,6 +6,8 @@ const copy = {
     pageTitle: "Review incoming groups",
     introduction:
       "Open a group of source files to choose a release and assign files to its positions.",
+    introductionWithQueue:
+      "Open a group of source files to choose a release and assign files to its positions, or review the read-only publication queue.",
     title: "Incoming groups",
     empty: "There are no incoming groups yet.",
   },
@@ -13,6 +15,8 @@ const copy = {
     pageTitle: "Разбор входящих групп",
     introduction:
       "Откройте группу исходных файлов, чтобы выбрать издание и назначить файлы его позициям.",
+    introductionWithQueue:
+      "Откройте группу исходных файлов, чтобы выбрать издание и назначить файлы его позициям, или проверьте очередь публикации.",
     title: "Входящие группы",
     empty: "Входящих групп пока нет.",
   },
@@ -23,9 +27,11 @@ type Locale = keyof typeof copy;
 export function IncomingPageHeading({
   locale,
   action,
+  publication = false,
 }: {
   locale: Locale;
-  action: { label: string; onPress: () => void };
+  action?: { label: string; onPress: () => void };
+  publication?: boolean;
 }) {
   return (
     <header className="mb-5 flex min-w-0 flex-wrap items-end justify-between gap-x-6 gap-y-3">
@@ -37,15 +43,19 @@ export function IncomingPageHeading({
           {copy[locale].pageTitle}
         </h1>
         <p className="mt-1.5 mb-0 max-w-[68ch] text-sm leading-5 text-[var(--muted)]">
-          {copy[locale].introduction}
+          {publication
+            ? copy[locale].introductionWithQueue
+            : copy[locale].introduction}
         </p>
       </div>
-      <AppButton
-        className="min-h-9 px-4 text-sm max-[600px]:w-full"
-        onPress={action.onPress}
-      >
-        {action.label}
-      </AppButton>
+      {action ? (
+        <AppButton
+          className="min-h-9 px-4 text-sm max-[600px]:w-full"
+          onPress={action.onPress}
+        >
+          {action.label}
+        </AppButton>
+      ) : null}
     </header>
   );
 }

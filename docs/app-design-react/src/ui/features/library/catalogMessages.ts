@@ -25,12 +25,7 @@ export const catalogMessages = createNamespace({
     noSavedPreview: "There is no saved metadata preview.",
     goToLibrary: "Go to library",
     backToTrack: "Back to track",
-    screenNotMoved: "This screen has not been migrated yet",
-    routeNotMoved:
-      "Route: {route}. This flow has not yet been migrated to the React prototype.",
-    goToReactLibrary: "Go to the React library",
     missingAlbum: "album is missing from the library",
-    documentTitleSuffix: "MeloTrove · React prototype",
   },
   ru: {
     library: "Медиатека",
@@ -55,12 +50,7 @@ export const catalogMessages = createNamespace({
     noSavedPreview: "Нет сохранённого предпросмотра метаданных.",
     goToLibrary: "К медиатеке",
     backToTrack: "Вернуться к треку",
-    screenNotMoved: "Экран ещё не перенесён",
-    routeNotMoved:
-      "Маршрут: {route}. Этот сценарий пока не перенесён в React-макет.",
-    goToReactLibrary: "К медиатеке React",
     missingAlbum: "альбом отсутствует в медиатеке",
-    documentTitleSuffix: "MeloTrove · React-макет",
   },
 });
 

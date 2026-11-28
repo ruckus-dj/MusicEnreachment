@@ -36,7 +36,11 @@ const details: PublicationPreviewDetailsState = {
   },
 };
 
-function Harness() {
+function Harness({
+  state = details,
+}: {
+  state?: PublicationPreviewDetailsState;
+}) {
   const [mounted, setMounted] = useState(true);
   return (
     <section aria-labelledby="publication-title">
@@ -44,7 +48,7 @@ function Harness() {
       {mounted && (
         <ContextPublicationPreviewView
           locale="en"
-          details={details}
+          details={state}
           reason="Selected metadata and audio will be updated"
           sourceGroupName="test-source"
           workflowControl={{
@@ -72,6 +76,32 @@ function Harness() {
 }
 
 describe("ContextPublicationPreviewView dialog", () => {
+  it("counts cover changes reported by the current comparison", () => {
+    render(
+      <Harness
+        state={{
+          ...details,
+          inspection: {
+            ...details.inspection,
+            preview: {
+              ...details.inspection.preview,
+              current_comparison: {
+                audio_status: "matches",
+                cover_status: "differs",
+                lyrics_status: "matches",
+                tag_differences: [],
+              },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("1 tag or asset difference.")).toBeVisible();
+    expect(
+      screen.queryByText("No tag or asset changes."),
+    ).not.toBeInTheDocument();
+  });
+
   it("focuses the Publication region when confirming removes the opener", async () => {
     render(<Harness />);
     const dialog = await screen.findByRole("dialog", { name: "Republish" });

@@ -14,6 +14,11 @@ import type { Locale } from "../../../ui/i18n/types";
 import { useI18n } from "../demoPreferences";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 
+const frozenDemoPreview = {
+  en: "The deletion preview and confirmation are fixed. The request appears in current operations; execution changes prototype data in memory only and deletes no real files.",
+  ru: "Предпросмотр и подтверждение удаления зафиксированы. Запрос появится в текущих операциях; выполнение меняет только данные макета в памяти, реальные файлы не удаляются.",
+} as const;
+
 export interface DeletionOperation {
   kind?: "library" | "publication" | "artist";
   target: string;
@@ -80,7 +85,7 @@ export function buildDeletionPreview({
           ]),
     ],
     outputs,
-    frozen: m("deletionPreviewFrozen"),
+    frozen: frozenDemoPreview[locale],
   };
 }
 

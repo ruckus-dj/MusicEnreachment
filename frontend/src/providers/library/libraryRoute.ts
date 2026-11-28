@@ -6,6 +6,7 @@ import {
   type LibraryPublicationFilter,
   type LibraryReleaseAddress,
   libraryArtistAddressHref,
+  libraryReleaseHref,
   parseLibraryArtistAddress,
   parseLibraryPositionAddress,
   parseLibraryReleaseAddress,
@@ -50,6 +51,30 @@ export function parseLibraryPositionRoute(
   hash: string,
 ): LibraryPositionRoute | undefined {
   return parseLibraryPositionAddress(hash, isUuid);
+}
+
+/** Whether the release overview was opened to resolve its primary artist. */
+export function libraryReleaseResolvePrimaryArtist(hash: string): boolean {
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  const [, search = ""] = path.split("?", 2);
+  return new URLSearchParams(search).get("resolve") === "primary-artist";
+}
+
+export function libraryReleasePrimaryArtistHref(
+  releaseId: string,
+  positionId: string,
+) {
+  const params = new URLSearchParams({
+    resolve: "primary-artist",
+    position: positionId,
+  });
+  return `${libraryReleaseHref(releaseId)}?${params}`;
+}
+
+export function libraryReleasePrimaryArtistPosition(hash: string) {
+  if (!libraryReleaseResolvePrimaryArtist(hash)) return undefined;
+  const positionId = new URLSearchParams(hash.split("?", 2)[1]).get("position");
+  return positionId && isUuid(positionId) ? positionId : undefined;
 }
 
 export function parseLibraryRoute(hash: string): LibraryRoute | undefined {

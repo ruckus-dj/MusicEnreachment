@@ -19,12 +19,20 @@ export type IncomingPublicationReason =
       trackId: string;
       trackTitle: string;
     }
+  | {
+      code: "publicationBlocked" | "audioUnavailable" | "publicationInProgress";
+      trackId: string;
+      trackTitle: string;
+    }
   | { code: "automaticSkip" }
   | { code: "manualReady" };
 
 export type IncomingPublicationTrackAttention =
   | "unsafeOutputFilename"
-  | "sourceNeedsSelection";
+  | "sourceNeedsSelection"
+  | "publicationBlocked"
+  | "audioUnavailable"
+  | "publicationInProgress";
 
 export type IncomingPublicationNextStepKind =
   | "release"
@@ -46,6 +54,7 @@ export type IncomingPublicationTrack = {
   /** Selected source file name; absent when no source is selected. */
   source?: string;
   attention?: IncomingPublicationTrackAttention;
+  nextStep?: IncomingPublicationNextStep;
 };
 
 export type IncomingPublicationEdition = {
@@ -56,6 +65,8 @@ export type IncomingPublicationEdition = {
   artist: string;
   year: string;
   reason: IncomingPublicationReason;
+  /** Optional host-provided description of this outcome. */
+  reasonLabel?: string;
   nextStep: IncomingPublicationNextStep;
   tracks: readonly IncomingPublicationTrack[];
 };
@@ -63,6 +74,9 @@ export type IncomingPublicationEdition = {
 export type IncomingPublicationModel = {
   editions: readonly IncomingPublicationEdition[];
   initialStatus?: "attention" | "ready";
+  description?: string;
+  badge?: string;
+  status?: { kind: "loading" } | { kind: "error"; retry: () => void };
 };
 
 export function incomingPublicationNeedsAttention(

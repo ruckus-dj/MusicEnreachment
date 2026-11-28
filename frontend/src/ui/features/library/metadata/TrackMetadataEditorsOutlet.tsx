@@ -5,7 +5,10 @@ import {
 } from "./TrackMetadataEditorsView";
 
 /** Recording/position editor group presentation data. */
-export type TrackMetadataEditorsModel = TrackMetadataEditorsViewProps;
+export type TrackMetadataEditorsModel = Omit<
+  TrackMetadataEditorsViewProps,
+  "recordingSupplement" | "positionSupplement"
+>;
 
 /**
  * Editor-group data, or a host binder that mounts its controller around the
@@ -34,18 +37,31 @@ export function TrackMetadataEditorsDataBinder({
   );
 }
 
-function BoundTrackMetadataEditorsView() {
+type ViewOptions = Pick<
+  TrackMetadataEditorsViewProps,
+  "locale" | "recordingSupplement" | "positionSupplement"
+>;
+
+function BoundTrackMetadataEditorsView({
+  locale,
+  ...supplements
+}: ViewOptions) {
   const model = useContext(TrackMetadataEditorsModelContext);
   if (!model) throw new Error("missing track metadata editors view model");
-  return <TrackMetadataEditorsView {...model} />;
+  return (
+    <TrackMetadataEditorsView
+      {...model}
+      {...supplements}
+      locale={locale ?? model.locale}
+    />
+  );
 }
 
 export function TrackMetadataEditorsOutlet({
   source,
-}: {
-  source: TrackMetadataEditorsSource;
-}) {
-  const view = <BoundTrackMetadataEditorsView />;
+  ...options
+}: ViewOptions & { source: TrackMetadataEditorsSource }) {
+  const view = <BoundTrackMetadataEditorsView {...options} />;
   if ("bind" in source) return <>{source.bind(view)}</>;
   return (
     <TrackMetadataEditorsDataBinder model={source}>

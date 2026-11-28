@@ -91,6 +91,11 @@ type ReleaseOverviewContent = {
   /** Real-only provider refresh; not bound by the prototype. */
   providerRefresh?: ReactElement;
   primaryArtist?: LibraryPrimaryArtistModel;
+  primaryArtistResolution?: {
+    ready: boolean;
+    backHref: string;
+    trackHref: string;
+  };
 };
 
 export type ReleaseOverviewViewProps = {
@@ -265,6 +270,7 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
     cover,
     providerRefresh,
     primaryArtist,
+    primaryArtistResolution,
   } = props;
   const formatter = new Intl.NumberFormat(locale);
   const selection = heading.selection;
@@ -358,7 +364,55 @@ export function ReleaseOverviewView(props: ReleaseOverviewViewProps) {
         </h2>
         <CreditList locale={locale} credits={credentials} />
         {primaryArtist && (
-          <LibraryPrimaryArtistControl locale={locale} model={primaryArtist} />
+          <div
+            className={
+              primaryArtistResolution
+                ? "mt-2 grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--raised)] p-3"
+                : undefined
+            }
+          >
+            {primaryArtistResolution && (
+              <p className={meta} role="status">
+                {primaryArtistResolution.ready
+                  ? locale === "ru"
+                    ? "Основной исполнитель сохранён. Теперь можно открыть предпросмотр публикации."
+                    : "Primary artist saved. You can now preview publication."
+                  : locale === "ru"
+                    ? "Выберите основного исполнителя для пути публикации. Состав исполнителей релиза не изменится."
+                    : "Choose the primary artist for the publication path. The release credits will not change."}
+              </p>
+            )}
+            <LibraryPrimaryArtistControl
+              locale={locale}
+              model={primaryArtist}
+              focusOnMount={
+                Boolean(primaryArtistResolution) &&
+                metadataEditorVisible !== false
+              }
+            />
+            {primaryArtistResolution && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                {primaryArtistResolution.ready && (
+                  <a
+                    className="inline-flex min-h-9 items-center font-semibold text-[var(--accent-strong)] underline"
+                    href={primaryArtistResolution.trackHref}
+                  >
+                    {locale === "ru"
+                      ? "К публикации трека"
+                      : "Open track publication"}
+                  </a>
+                )}
+                <a
+                  className="inline-flex min-h-9 items-center text-[var(--accent-strong)] underline"
+                  href={primaryArtistResolution.backHref}
+                >
+                  {locale === "ru"
+                    ? "Назад к очереди публикации"
+                    : "Back to publication queue"}
+                </a>
+              </div>
+            )}
+          </div>
         )}
       </section>
       {providerRefresh}

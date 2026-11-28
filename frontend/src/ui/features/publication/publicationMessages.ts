@@ -17,10 +17,6 @@ export const publicationMessages = createNamespace({
     sourceAndTagsSame: "Source and effective tags match the publication",
     selectedMetadataAndAudio: "Selected metadata and audio will be updated",
     newPublicationSelectedSource: "New publication from the selected source",
-    applySuccess: "Demo: {count} positions published.",
-    linkSuccess: "Links for {count} positions saved.",
-    unchangedSuccess:
-      "Unselected positions and unmatched files were not changed.",
     lyrics: "Lyrics",
     artwork: "Artwork",
     recordingArtists: "Recording artists",
@@ -105,8 +101,6 @@ export const publicationMessages = createNamespace({
       "{count} positions will get new source links; the selected source and current publication are preserved.",
     confirmedDowngrade:
       "A separate quality downgrade is confirmed for {count} positions.",
-    unmarkedRemain:
-      "Unmatched files remain incoming. All source files are preserved. Demo: audio files are not written.",
     sourcesPreserved: "Sources will be preserved.",
     unselectedUntouched:
       "Excluded positions and their current publications will not change. Files without assignments are not deleted.",
@@ -118,8 +112,6 @@ export const publicationMessages = createNamespace({
       "Republishing is unavailable: the current publication is outside the configured output directory.",
     currentFormatIncompatible:
       "The configured output format cannot replace the current file at its existing path.",
-    demoApplied: "Demo: {count} positions published.",
-    linksStored: "Links for {count} positions saved.",
     contextualPreview:
       "Contextual operation preview. This is not a separate publication list.",
     includeColumn: "Include",
@@ -139,8 +131,6 @@ export const publicationMessages = createNamespace({
     noSavedPlanTitle: "No saved publication plan",
     publicationApply: "Publish",
     linksApply: "Save source links",
-    unmatchedFiles:
-      "Unmatched files stay incoming. Source files are preserved. This prototype does not write audio files.",
     quality: "Quality",
     issues: "Issues",
     includeTrack: "Include {title}",
@@ -160,9 +150,6 @@ export const publicationMessages = createNamespace({
     sourceAndTagsSame: "Источник и эффективные теги совпадают с публикацией",
     selectedMetadataAndAudio: "Будут обновлены выбранные метаданные и аудио",
     newPublicationSelectedSource: "Новая публикация из выбранного источника",
-    applySuccess: "Демо: опубликовано позиций: {count}.",
-    linkSuccess: "Сохранены связи позиций: {count}.",
-    unchangedSuccess: "Невыбранные позиции и неразмеченные файлы не изменены.",
     lyrics: "Текст песни",
     artwork: "Обложка",
     recordingArtists: "Исполнители композиции",
@@ -247,8 +234,6 @@ export const publicationMessages = createNamespace({
       "{count} позиций получат новые связи с источниками; выбранный источник и текущая публикация сохраняются.",
     confirmedDowngrade:
       "Подтверждено отдельное понижение качества для {count} поз.",
-    unmarkedRemain:
-      "Неразмеченные файлы останутся во входящих. Все исходники сохраняются. Демо: запись аудиофайлов не выполняется.",
     sourcesPreserved: "Исходники сохранятся.",
     unselectedUntouched:
       "Не включённые позиции и их текущие публикации не изменятся. Файлы без назначения не удаляются.",
@@ -259,8 +244,6 @@ export const publicationMessages = createNamespace({
       "Повторная публикация недоступна: текущая публикация находится за пределами настроенной папки вывода.",
     currentFormatIncompatible:
       "Настроенный формат вывода не позволяет заменить текущий файл по прежнему пути.",
-    demoApplied: "Демо: {count} позиций опубликовано.",
-    linksStored: "Связи {count} позиций сохранены.",
     contextualPreview:
       "Контекстный предпросмотр операции. Это не отдельный список публикаций.",
     includeColumn: "Включить",
@@ -280,8 +263,6 @@ export const publicationMessages = createNamespace({
     noSavedPlanTitle: "Нет сохранённого плана публикации",
     publicationApply: "Опубликовать",
     linksApply: "Сохранить связи с источниками",
-    unmatchedFiles:
-      "Неразмеченные файлы останутся во входящих. Исходные файлы сохраняются. Макет не записывает аудиофайлы.",
     quality: "Качество",
     issues: "Проблемы",
     includeTrack: "Включить {title}",

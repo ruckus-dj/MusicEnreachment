@@ -69,8 +69,6 @@ export const libraryRowsMessages = createNamespace({
     changedPublications:
       "Publication data changed after confirmation opened; changed publications will be skipped.",
     noPublicationsToDelete: "There are no current publications to delete.",
-    deletionDemoNotice:
-      "This is an asynchronous operation. The prototype only adds a demo request to the operations list; no real files or demo records are deleted.",
     cancel: "Cancel",
     confirmDeletion: "Confirm deletion",
   },
@@ -141,8 +139,6 @@ export const libraryRowsMessages = createNamespace({
     changedPublications:
       "Данные публикаций изменились после открытия подтверждения; изменённые публикации будут пропущены.",
     noPublicationsToDelete: "Текущих публикаций для удаления нет.",
-    deletionDemoNotice:
-      "Асинхронная операция. Прототип только ставит демонстрационный запрос в список операций: реальные файлы и демонстрационные записи не удаляются.",
     cancel: "Отмена",
     confirmDeletion: "Подтвердить удаление",
   },

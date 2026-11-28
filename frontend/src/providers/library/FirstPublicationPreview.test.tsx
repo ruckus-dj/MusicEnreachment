@@ -177,14 +177,20 @@ it("waits for optional default cover preparation before reading the frozen previ
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
   expect(api.prepareLibraryReleaseCover).toHaveBeenCalledWith("release-1", {
     position_id: "position-1",
   });
   expect(api.getLibraryFirstPublicationPreview).not.toHaveBeenCalled();
   await act(async () => failArtwork(new Error("cover provider unavailable")));
   expect(
-    await screen.findByRole("button", { name: "Опубликовать" }),
+    await within(dialog).findByRole("button", { name: "Опубликовать" }),
   ).toBeEnabled();
+  expect(
+    within(dialog).getByText("Новая публикация из выбранного источника"),
+  ).toBeVisible();
 });
 
 it("reports artwork still being prepared and retries the preview", async () => {
@@ -198,16 +204,27 @@ it("reports artwork still being prepared and retries the preview", async () => {
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Обложка ещё подготавливается.",
-  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  const alerts = await within(dialog).findAllByRole("alert");
+  expect(
+    alerts.some((alert) =>
+      alert.textContent?.includes("Обложка ещё подготавливается."),
+    ),
+  ).toBe(true);
   expect(api.getLibraryFirstPublicationPreview).not.toHaveBeenCalled();
 
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
+  const reopened = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
   expect(
-    await screen.findByRole("button", { name: "Опубликовать" }),
+    await within(reopened).findByRole("button", { name: "Опубликовать" }),
   ).toBeVisible();
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
 });
@@ -232,14 +249,17 @@ it("keeps a pending admission fenced across a metadata refresh and delivers its 
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  const confirm = await screen.findByRole("button", { name: "Опубликовать" });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  const confirm = within(dialog).getByRole("button", { name: "Опубликовать" });
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
   expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
 
   view.rerender(component(1, onAdmitted));
   expect(
-    screen.getByRole("button", { name: "Проверка и запуск…" }),
+    within(dialog).getByRole("button", { name: "Проверка и запуск…" }),
   ).toBeDisabled();
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
 
@@ -247,9 +267,20 @@ it("keeps a pending admission fenced across a metadata refresh and delivers its 
     resolveAdmission({ status: 202, data: { id: "operation-1" } }),
   );
   await waitFor(() => expect(onAdmitted).toHaveBeenCalledWith("operation-1"));
-  expect(
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  // Reopening after admission reveals the frozen state; it never prepares or
+  // submits another publication.
+  fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  const reopened = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  expect(
+    within(reopened).getByRole("button", { name: "Опубликовать" }),
   ).toBeDisabled();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
   expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
 });
 
@@ -515,17 +546,21 @@ it("retains the disabled fence after an uncertain admission when metadata refres
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  const confirm = await screen.findByRole("button", { name: "Опубликовать" });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  const confirm = within(dialog).getByRole("button", { name: "Опубликовать" });
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
-  await screen.findByRole("alert");
-  expect(screen.getByRole("button", { name: "Опубликовать" })).toBeDisabled();
+  expect(await within(dialog).findAllByRole("alert")).not.toHaveLength(0);
+  expect(
+    within(dialog).getByRole("button", { name: "Опубликовать" }),
+  ).toBeDisabled();
 
   view.rerender(component(1));
   expect(
-    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+    within(dialog).getByRole("button", { name: "Опубликовать" }),
   ).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Опубликовать" })).toBeDisabled();
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
   expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
 });
@@ -541,18 +576,23 @@ it("invalidates an unsubmitted preview and reloads its digest when metadata refr
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   );
-  await screen.findByText("План первой публикации");
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  await within(dialog).findByText("План первой публикации");
 
   view.rerender(component(1));
   await waitFor(() =>
     expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(2),
   );
-  expect(screen.getByRole("button", { name: "Опубликовать" })).toBeEnabled();
+  expect(
+    within(dialog).getByRole("button", { name: "Опубликовать" }),
+  ).toBeEnabled();
   api.startLibraryFirstPublication.mockResolvedValue({
     status: 202,
     data: { id: "operation-after-refresh" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Опубликовать" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Опубликовать" }));
   await waitFor(() =>
     expect(api.startLibraryFirstPublication).toHaveBeenCalledWith(
       "release-1",
@@ -562,7 +602,7 @@ it("invalidates an unsubmitted preview and reloads its digest when metadata refr
   );
 });
 
-it("requests the forced comparison without offering confirmation", async () => {
+it("opens a read-only comparison from the current publication action", async () => {
   api.getLibraryFirstPublicationPreview.mockResolvedValue({
     status: 200,
     data: {
@@ -583,16 +623,21 @@ it("requests the forced comparison without offering confirmation", async () => {
   });
 
   render(component(0, vi.fn(), true));
-  fireEvent.click(screen.getByRole("radio", { name: "Принудительный" }));
-
   expect(
-    await screen.findByText("Сравнение с текущей публикацией"),
-  ).toBeInTheDocument();
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" }),
+  ).toBeEnabled();
+  const compare = screen.getByRole("button", { name: "Сравнить с текущей" });
+  compare.focus();
+  fireEvent.click(compare);
+
+  const dialog = await screen.findByRole("dialog", {
+    name: "Сравнение с текущей публикацией",
+  });
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
     "release-1",
     "position-1",
-    { mode: "forced" },
+    { mode: "ordinary" },
     { cache: "no-store" },
   );
   for (const label of [
@@ -600,15 +645,24 @@ it("requests the forced comparison without offering confirmation", async () => {
     "Отображённый путь",
     "Разрешённый путь",
   ]) {
-    expect(screen.getByText(`${label}: не определён`)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(`${label}: не определён`),
+    ).toBeInTheDocument();
   }
-  expect(screen.getByText("Различий тегов нет.")).toBeInTheDocument();
+  expect(within(dialog).getByText("Различий тегов нет.")).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Опубликовать" }),
+    within(dialog).queryByRole("button", { name: "Опубликовать" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("note")).toHaveTextContent(
-    "Сравнение доступно только для чтения",
-  );
+  expect(
+    within(dialog).queryByRole("button", { name: "Опубликовать повторно" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).getByText("Сравнение доступно только для чтения."),
+  ).toBeVisible();
+
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() => expect(compare).toHaveFocus());
 });
 
 it("submits retained republish workflow and frozen CURRENT identity", async () => {
@@ -645,28 +699,12 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
   });
 
   render(component(0, vi.fn(), true));
-  const republishWorkflow = screen.getByRole("radio", {
-    name: "Повторная публикация выбранного источника",
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Повторная публикация",
   });
-  await waitFor(() => expect(republishWorkflow).toBeEnabled());
-  fireEvent.click(republishWorkflow);
-  expect(republishWorkflow).toBeChecked();
-
-  const confirmRepublish = screen.getByRole("button", {
-    name: "Повторная публикация выбранного источника",
-  });
-  await waitFor(() => expect(confirmRepublish).toBeEnabled());
-
-  expect(
-    screen.getByText(
-      "Подтверждение заменит CURRENT аудио более низкого качества.",
-    ),
-  ).toBeInTheDocument();
-  expect(screen.getByText("unmapped_warning_code")).toBeInTheDocument();
-  expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
-
-  fireEvent.click(confirmRepublish);
-
   await waitFor(() =>
     expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
       "release-1",
@@ -675,6 +713,21 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
       { cache: "no-store" },
     ),
   );
+  const confirmRepublish = within(dialog).getByRole("button", {
+    name: "Опубликовать повторно",
+  });
+  await waitFor(() => expect(confirmRepublish).toBeEnabled());
+
+  expect(
+    within(dialog).getByText(
+      "Подтверждение заменит CURRENT аудио более низкого качества.",
+    ),
+  ).toBeInTheDocument();
+  expect(within(dialog).getByText("unmapped_warning_code")).toBeInTheDocument();
+  expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
+
+  fireEvent.click(confirmRepublish);
+
   await waitFor(() =>
     expect(api.startLibraryFirstPublication).toHaveBeenCalledWith(
       "release-1",
@@ -720,19 +773,373 @@ it("does not offer confirmation when retained CURRENT content is unchanged", asy
 
   render(component(0, vi.fn(), true));
   fireEvent.click(
-    screen.getByRole("radio", {
-      name: "Повторная публикация выбранного источника",
-    }),
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" }),
   );
-
-  const confirm = await screen.findByRole("button", {
-    name: "Повторная публикация выбранного источника",
+  const dialog = await screen.findByRole("dialog", {
+    name: "Повторная публикация",
   });
-  expect(confirm).toBeDisabled();
+
+  const confirm = within(dialog).getByRole("button", {
+    name: "Опубликовать повторно",
+  });
+  await waitFor(() => expect(confirm).toBeDisabled());
   expect(
-    screen.getByText(
+    within(dialog).getByText(
       "Выбранный источник не изменит текущую публикацию; действие недоступно.",
     ),
   ).toBeInTheDocument();
+  expect(
+    within(dialog).getByText(
+      "Источник и эффективные теги совпадают с публикацией",
+    ),
+  ).toBeVisible();
   expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
+});
+
+it("keeps forced republish out of a read-only comparison preview", async () => {
+  api.getLibraryFirstPublicationPreview.mockImplementation(
+    async (
+      _releaseId: string,
+      _positionID: string,
+      params: { mode?: string },
+    ) => ({
+      status: 200,
+      data: {
+        ...preview,
+        current_comparison: {
+          audio_status: "matches",
+          current_components: ["Artist", "Release", "01 - Track.flac"],
+          generation: "generation-1",
+          reason: "same path",
+          rendered_components: ["Artist", "Release", "01 - Track.flac"],
+          rendered_matches: true,
+          resolved_components: ["Artist", "Release", "01 - Track.flac"],
+          resolved_matches: true,
+          status: "matches",
+          tag_differences: [],
+        },
+        confirmation_capability: {
+          kind: "retained_same_path",
+          status: "ready",
+          reason_codes: [],
+          current_generation: "generation-1",
+        },
+        mode: params.mode ?? "ordinary",
+        source_candidates: [],
+      },
+    }),
+  );
+
+  render(component(0, vi.fn(), true));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" }),
+  );
+  const republish = await screen.findByRole("dialog", {
+    name: "Повторная публикация",
+  });
+  fireEvent.click(
+    within(republish).getByRole("radio", { name: "Принудительный" }),
+  );
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenLastCalledWith(
+      "release-1",
+      "position-1",
+      { workflow: "retained_same_path", mode: "forced" },
+      { cache: "no-store" },
+    ),
+  );
+  fireEvent.click(within(republish).getByRole("button", { name: "Закрыть" }));
+
+  const compare = screen.getByRole("button", { name: "Сравнить с текущей" });
+  fireEvent.click(compare);
+  const comparison = await screen.findByRole("dialog", {
+    name: "Сравнение с текущей публикацией",
+  });
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenLastCalledWith(
+      "release-1",
+      "position-1",
+      { mode: "ordinary" },
+      { cache: "no-store" },
+    ),
+  );
+  expect(
+    within(comparison).queryByRole("radio", { name: "Принудительный" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(comparison).queryByRole("button", { name: "Опубликовать повторно" }),
+  ).not.toBeInTheDocument();
+});
+
+it("resets an unconfirmed first-publication source choice when the dialog reopens", async () => {
+  const sourceCandidates = [
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-1",
+      media_variant_id: "variant-1",
+      requires_explicit_stream_selection: false,
+      root_id: "root-1",
+      stream_index: 0,
+      title: "Candidate One",
+      unsupported_audio_stream_count: 0,
+    },
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-2",
+      media_variant_id: "variant-2",
+      requires_explicit_stream_selection: false,
+      root_id: "root-2",
+      stream_index: 0,
+      title: "Candidate Two",
+      unsupported_audio_stream_count: 0,
+    },
+  ];
+  api.getLibraryFirstPublicationPreview.mockImplementation(
+    async (
+      _releaseId: string,
+      _positionID: string,
+      params: { media_variant_id?: string },
+    ) => ({
+      status: 200,
+      data: {
+        ...preview,
+        selected_source:
+          sourceCandidates.find(
+            (candidate) =>
+              candidate.media_variant_id === params.media_variant_id,
+          ) ?? sourceCandidates[0],
+        source_candidates: sourceCandidates,
+      },
+    }),
+  );
+
+  render(component(0));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  let dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  expect(
+    within(dialog).getByRole("radio", { name: "Источник не выбран" }),
+  ).toBeChecked();
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Candidate Two/ }));
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenLastCalledWith(
+      "release-1",
+      "position-1",
+      {
+        location_id: "location-2",
+        media_variant_id: "variant-2",
+        stream_index: "0",
+        mode: "ordinary",
+      },
+      { cache: "no-store" },
+    ),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  expect(
+    within(dialog).getByRole("radio", { name: "Источник не выбран" }),
+  ).toBeChecked();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenLastCalledWith(
+    "release-1",
+    "position-1",
+    { mode: "ordinary" },
+    { cache: "no-store" },
+  );
+});
+
+it("keeps source choices mounted and focused while replanning", async () => {
+  const sourceCandidates = [
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-1",
+      media_variant_id: "variant-1",
+      requires_explicit_stream_selection: false,
+      root_id: "root-1",
+      stream_index: 0,
+      title: "Candidate One",
+      unsupported_audio_stream_count: 0,
+    },
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-2",
+      media_variant_id: "variant-2",
+      requires_explicit_stream_selection: false,
+      root_id: "root-2",
+      stream_index: 0,
+      title: "Candidate Two",
+      unsupported_audio_stream_count: 0,
+    },
+  ];
+  let resolveReplan!:
+    | ((response: {
+        status: number;
+        data: LibraryFirstPublicationPreviewResponse;
+      }) => void)
+    | undefined;
+  api.getLibraryFirstPublicationPreview
+    .mockResolvedValueOnce({
+      status: 200,
+      data: {
+        ...preview,
+        selected_source: sourceCandidates[0],
+        source_candidates: sourceCandidates,
+      },
+    })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReplan = resolve;
+        }),
+    );
+
+  render(component(0));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Предпросмотр публикации",
+  });
+  const candidate = within(dialog).getByRole("radio", {
+    name: /Candidate Two/,
+  });
+  candidate.focus();
+  fireEvent.click(candidate);
+
+  // The chosen radio stays mounted and focused while its plan is requested.
+  expect(
+    within(dialog).getByRole("radio", { name: /Candidate Two/ }),
+  ).toBeChecked();
+  expect(
+    within(dialog).getByRole("radio", { name: /Candidate Two/ }),
+  ).toHaveFocus();
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(2),
+  );
+  expect(
+    within(dialog).getByRole("radio", { name: /Candidate Two/ }),
+  ).toBeChecked();
+  expect(
+    within(dialog).getByRole("radio", { name: /Candidate Two/ }),
+  ).toHaveFocus();
+
+  await act(async () => {
+    resolveReplan?.({
+      status: 200,
+      data: {
+        ...preview,
+        selected_source: sourceCandidates[1],
+        source_candidates: sourceCandidates,
+      },
+    });
+  });
+  const replanned = within(dialog).getByRole("radio", {
+    name: /Candidate Two/,
+  });
+  expect(replanned).toBeChecked();
+  expect(replanned).toHaveFocus();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Опубликовать" }),
+    ).toBeEnabled(),
+  );
+});
+
+it("reopens a submitted republish as a read-only comparison", async () => {
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: {
+      ...preview,
+      current_comparison: {
+        audio_status: "matches",
+        current_components: ["Artist", "Release", "01 - Track.flac"],
+        generation: "generation-1",
+        reason: "same path",
+        rendered_components: ["Artist", "Release", "01 - Track.flac"],
+        rendered_matches: true,
+        resolved_components: ["Artist", "Release", "01 - Track.flac"],
+        resolved_matches: true,
+        status: "matches",
+        tag_differences: [],
+      },
+      confirmation_capability: {
+        kind: "retained_same_path",
+        status: "ready",
+        reason_codes: [],
+        current_generation: "generation-1",
+      },
+      mode: "ordinary",
+      source_candidates: [],
+    },
+  });
+  let resolveAdmission!: (response: {
+    status: number;
+    data: { id: string };
+  }) => void;
+  api.startLibraryFirstPublication.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveAdmission = resolve;
+      }),
+  );
+  const onAdmitted = vi.fn();
+
+  render(component(0, onAdmitted, true));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подготовить повторную публикацию" }),
+  );
+  let dialog = await screen.findByRole("dialog", {
+    name: "Повторная публикация",
+  });
+  const confirm = within(dialog).getByRole("button", {
+    name: "Опубликовать повторно",
+  });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
+  expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Сравнить с текущей" }));
+  dialog = await screen.findByRole("dialog", {
+    name: "Сравнение с текущей публикацией",
+  });
+  expect(
+    within(dialog).getByText("Сравнение доступно только для чтения."),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: "Опубликовать повторно" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole("radio", { name: "Принудительный" }),
+  ).not.toBeInTheDocument();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
+
+  await act(async () =>
+    resolveAdmission({ status: 202, data: { id: "fenced-operation" } }),
+  );
+  await waitFor(() =>
+    expect(onAdmitted).toHaveBeenCalledWith("fenced-operation"),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
 });

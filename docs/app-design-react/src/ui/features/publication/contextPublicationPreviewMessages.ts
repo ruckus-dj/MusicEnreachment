@@ -16,6 +16,8 @@ export const contextPublicationPreviewMessages = {
     potentialChanges: "What would change",
     formatLabel: "Format",
     noChanges: "No tag or asset changes.",
+    changesUnavailable: "Tag or asset changes have not been verified.",
+    firstPublicationChanges: "New publication.",
     changesCount: (count: number) =>
       `${count} tag or asset difference${count === 1 ? "" : "s"}.`,
     details: "Technical and tag details",
@@ -40,6 +42,8 @@ export const contextPublicationPreviewMessages = {
     potentialChanges: "Что изменилось бы",
     formatLabel: "Формат",
     noChanges: "Изменений тегов или вложений нет.",
+    changesUnavailable: "Изменения тегов или вложений не проверены.",
+    firstPublicationChanges: "Новая публикация.",
     changesCount: (count: number) => `Различий тегов или вложений: ${count}.`,
     details: "Технические детали и теги",
     close: "Закрыть",

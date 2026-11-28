@@ -31,6 +31,10 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../app/i18n/host";
+import {
+  pushHashState,
+  useHashLocation,
+} from "../../app/navigation/hashLocation";
 import type { ApplicationIncomingListModel } from "../../ui/app/ApplicationRouteOutlet";
 import {
   MeloTroveIncomingBinder,
@@ -87,6 +91,7 @@ import { useLocalMatching } from "./LocalReleaseEditor";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
 import { matchingBoardScoresFromCandidates } from "./MatchingBoard";
+import { useIncomingPublicationQueue } from "./publicationQueue";
 import { savedAutomaticAssignments } from "./savedAutomaticAssignments";
 import { useIncomingGroupsPanel } from "./useIncomingGroupsPanel";
 
@@ -272,6 +277,38 @@ function candidateRows(
   return rows;
 }
 
+function incomingListSection(hash: string): "matching" | "publication" {
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  const [, search = ""] = path.split("?", 2);
+  return new URLSearchParams(search).get("tab") === "publication"
+    ? "publication"
+    : "matching";
+}
+
+function incomingPublicationInitialStatus(hash: string) {
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  const [, search = ""] = path.split("?", 2);
+  return new URLSearchParams(search).get("status") === "ready"
+    ? ("ready" as const)
+    : undefined;
+}
+
+function incomingSectionHref(
+  hash: string,
+  section: "matching" | "publication",
+) {
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  const [pathname = "/incoming-groups", search = ""] = path.split("?", 2);
+  const params = new URLSearchParams(search);
+  if (section === "publication") params.set("tab", "publication");
+  else {
+    params.delete("tab");
+    params.delete("status");
+  }
+  const query = params.toString();
+  return `#${pathname}${query ? `?${query}` : ""}`;
+}
+
 export function IncomingGroupReviewScreen({
   route,
   children,
@@ -296,6 +333,12 @@ function IncomingGroupReviewContent({
   const queryClient = useQueryClient();
   const receipts = useIncomingConfirmReceipts();
   const { locale } = useI18n();
+  const hash = useHashLocation();
+  const listSection = incomingListSection(hash);
+  const publicationInitialStatus = incomingPublicationInitialStatus(hash);
+  const publicationQueue = useIncomingPublicationQueue(
+    route.view === "list" && listSection === "publication",
+  );
   const copy = incomingMessages[locale];
   const linkCopy = matchingLinksCopy[locale];
   const localMatchingCopy = localMatchingMessages[locale];
@@ -1693,6 +1736,15 @@ function IncomingGroupReviewContent({
           errorText(groupsQuery.error, "groupsLoadError"),
         )
       : undefined,
+    matchingCount: groups.length,
+    publication: {
+      editions: publicationQueue.editions,
+      initialStatus: publicationInitialStatus,
+      status: publicationQueue.status,
+    },
+    selectedSection: listSection,
+    onSectionChange: (section) =>
+      pushHashState(incomingSectionHref(window.location.hash, section)),
     panel: groupsPanel,
   };
 

@@ -72,6 +72,7 @@ const copyByLocale = {
       managed_tools_unavailable: "The required audio tools are unavailable.",
       publication_format_unavailable: "No output format could be planned.",
       publication_path_unavailable: "No destination could be planned.",
+      release_primary_artist_required: "Choose the release primary artist.",
       resolved_path_unavailable: "The destination could not be verified.",
       withheld: "No publication plan could be verified for this position.",
     },
@@ -111,6 +112,7 @@ const copyByLocale = {
       publication_format_unavailable:
         "Не удалось определить формат публикации.",
       publication_path_unavailable: "Не удалось определить путь назначения.",
+      release_primary_artist_required: "Выберите основного исполнителя релиза.",
       resolved_path_unavailable: "Не удалось проверить путь назначения.",
       withheld: "Не удалось проверить план публикации для этой позиции.",
     },

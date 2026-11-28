@@ -1,10 +1,6 @@
 export type GitHubTokenLocale = "en" | "ru";
 
 const english = {
-  demoWarning:
-    "Prototype: use a placeholder, not a real token. Nothing is sent to GitHub or stored.",
-  demoSaved: "Simulated token is configured.",
-  demoVerified: "Verification simulated; no GitHub request was made.",
   heading: "GitHub: release request limit (optional)",
   rateLimit:
     "Without a token, GitHub usually allows 60 requests per hour per shared IP address; with a token, usually 5000 per hour per user. Limits can change and may be shared with other applications.",
@@ -48,10 +44,6 @@ const english = {
 } as const;
 
 const russian = {
-  demoWarning:
-    "Макет: введите условное значение, а не настоящий токен. Оно не сохраняется и не отправляется в GitHub.",
-  demoSaved: "Сохранение токена сымитировано.",
-  demoVerified: "Проверка сымитирована, запрос в GitHub не отправлялся.",
   heading: "GitHub: лимит запросов к релизам (необязательно)",
   rateLimit:
     "Без токена GitHub обычно разрешает 60 запросов в час на общий IP-адрес; с токеном — обычно 5000 в час на пользователя. Лимиты могут меняться и быть общими для других приложений.",

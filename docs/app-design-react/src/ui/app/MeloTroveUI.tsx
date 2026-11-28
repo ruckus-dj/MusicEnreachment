@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { catalogMessage } from "../features/library/catalogMessages";
+import type { Locale } from "../i18n/types";
 import {
   ApplicationFrame,
   ShellHomeView,
@@ -39,6 +39,7 @@ export function MeloTroveUI({ provider }: { provider: MeloTroveProvider }) {
     locale,
     themeStore,
     footer,
+    documentTitleSuffix,
     setupLink,
     incomingCount,
     startup,
@@ -75,8 +76,8 @@ export function MeloTroveUI({ provider }: { provider: MeloTroveProvider }) {
         : hash;
   useShellPageEffects({
     focusKey: hasPage ? focusKey : "",
-    titleKey: hasPage && footer.kind === "prototype" ? hash : "",
-    titleSuffix: catalogMessage(locale, "documentTitleSuffix"),
+    titleKey: hasPage && documentTitleSuffix ? hash : "",
+    titleSuffix: documentTitleSuffix ?? "",
     scrollResetKey:
       hasPage && route.kind === "incoming" ? route.pathname : undefined,
   });
@@ -113,7 +114,7 @@ export function MeloTroveUI({ provider }: { provider: MeloTroveProvider }) {
 function renderRoute(
   route: MeloTroveRoute,
   screens: MeloTroveScreens,
-  locale: Parameters<typeof catalogMessage>[0],
+  locale: Locale,
   openIncoming: () => void,
 ) {
   switch (route.kind) {
@@ -146,7 +147,7 @@ function MeloTroveHomeContent({
   locale,
   openIncoming,
 }: {
-  locale: Parameters<typeof catalogMessage>[0];
+  locale: Locale;
   openIncoming: () => void;
 }) {
   const sources = useMeloTroveHomeSources();

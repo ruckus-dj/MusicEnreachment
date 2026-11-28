@@ -18,6 +18,7 @@ export type ContextPublicationPreviewModel = ComponentProps<
 
 /** Workflow modes stay owned by the view module; hosts import them here. */
 export type {
+  ContextPublicationPreviewDialogControl,
   ContextPublicationPreviewMode,
   ContextPublicationPreviewWorkflow,
 } from "./ContextPublicationPreviewView";

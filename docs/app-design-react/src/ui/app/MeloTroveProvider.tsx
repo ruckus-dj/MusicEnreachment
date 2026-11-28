@@ -58,6 +58,8 @@ export interface MeloTroveModel {
   locale: Locale;
   themeStore: ThemePreferenceStore;
   footer: ShellFrameData["footer"];
+  /** Host-owned title suffix; omit it to leave the document title alone. */
+  documentTitleSuffix?: string;
   setupLink?: boolean;
   incomingCount?: number;
   startup: MeloTroveStartup;

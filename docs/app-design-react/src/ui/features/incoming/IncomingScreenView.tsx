@@ -97,7 +97,7 @@ function SpinnerIcon() {
  * Copy-ready incoming list composition.
  *
  * The provider owns the groups model, automatic processing and regrouping
- * workflows. This view owns the section heading and action, the optional demo
+ * workflows. This view owns the section heading and action, the optional
  * processing stages, notice, loading and error regions, the groups panel and
  * the overview table supplied through `panel`. An optional publication queue
  * moves the groups under the default section tab without changing them.
@@ -136,9 +136,10 @@ export function IncomingScreenView({
   );
   const stages = stagesCopy[locale];
   const sections = sectionsCopy[locale];
-  const publicationCounts = publication
-    ? incomingPublicationCounts(publication.editions)
-    : null;
+  const publicationCounts =
+    publication && !publication.status
+      ? incomingPublicationCounts(publication.editions)
+      : null;
   const activeSection = publication ? (selectedSection ?? section) : "matching";
   const panelStatus = panel?.status;
   const stageItems = [
@@ -265,7 +266,7 @@ export function IncomingScreenView({
         action={activeSection === "matching" ? headingAction : undefined}
         publication={Boolean(publication)}
       />
-      {publication && publicationCounts ? (
+      {publication ? (
         <Tabs
           aria-label={sections.label}
           selectedKey={activeSection}
@@ -289,24 +290,26 @@ export function IncomingScreenView({
             </Tab>
             <Tab
               id="publication"
-              aria-label={`${sections.publication}: ${publicationCounts.total}`}
+              aria-label={
+                publicationCounts
+                  ? `${sections.publication}: ${publicationCounts.total}`
+                  : sections.publication
+              }
               className={topTabClass}
             >
               <span>{sections.publication}</span>
-              <span aria-hidden="true" className={topCountClass}>
-                {publicationCounts.total}
-              </span>
+              {publicationCounts ? (
+                <span aria-hidden="true" className={topCountClass}>
+                  {publicationCounts.total}
+                </span>
+              ) : null}
             </Tab>
           </TabList>
           <TabPanel id="matching" className={topTabPanelClass}>
             {matchingContent}
           </TabPanel>
           <TabPanel id="publication" className={topTabPanelClass}>
-            <IncomingPublicationView
-              locale={locale}
-              editions={publication.editions}
-              initialStatus={publication.initialStatus}
-            />
+            <IncomingPublicationView locale={locale} {...publication} />
           </TabPanel>
         </Tabs>
       ) : (

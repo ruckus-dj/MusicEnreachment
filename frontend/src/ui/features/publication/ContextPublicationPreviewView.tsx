@@ -9,6 +9,12 @@ import {
   PublicationPreviewDetailsView,
   type PublicationPreviewSourceChoice,
 } from "../library/PublicationPreviewDetailsView";
+import {
+  type ContextPublicationPreviewDialogControl,
+  ContextPublicationPreviewDialogView,
+} from "./ContextPublicationPreviewDialogView";
+
+export type { ContextPublicationPreviewDialogControl } from "./ContextPublicationPreviewDialogView";
 
 export type ContextPublicationPreviewWorkflow =
   | "first"
@@ -53,23 +59,37 @@ export interface ContextPublicationPreviewViewProps {
   workflowControl?: ContextPublicationPreviewWorkflowControl;
   planControl?: ContextPublicationPreviewPlanControl;
   confirmControl?: ContextPublicationPreviewConfirmControl;
+  /** Opt-in: render launch actions and the preview in a modal. */
+  dialogControl?: ContextPublicationPreviewDialogControl;
 }
 
-export function ContextPublicationPreviewView({
-  locale,
-  error,
-  readOnly,
-  reason,
-  notices,
-  details,
-  sourceGroupName,
-  onSourceChoice,
-  onRefresh,
-  workflowControl,
-  planControl,
-  confirmControl,
-}: ContextPublicationPreviewViewProps) {
+export function ContextPublicationPreviewView(
+  props: ContextPublicationPreviewViewProps,
+) {
+  const {
+    locale,
+    error,
+    readOnly,
+    reason,
+    notices,
+    details,
+    sourceGroupName,
+    onSourceChoice,
+    onRefresh,
+    workflowControl,
+    planControl,
+    confirmControl,
+    dialogControl,
+  } = props;
   const copy = firstPublicationPreviewMessages[locale];
+
+  if (dialogControl)
+    return (
+      <ContextPublicationPreviewDialogView
+        {...props}
+        dialogControl={dialogControl}
+      />
+    );
 
   return (
     <section className="min-w-0 space-y-3" aria-label={copy.section}>

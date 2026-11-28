@@ -56,6 +56,7 @@ import {
   type SourcesRoute,
   sourcesHref,
 } from "../ui/features/sources/sourcesRoute";
+import { demoMeloTroveMessages } from "./demoMeloTroveMessages";
 import {
   browseDemoDirectory,
   demoDirectoryStart,
@@ -260,6 +261,7 @@ function useDemoMeloTroveState(
   providerRefresh: DemoLibraryProviderRefresh | undefined,
 ): MeloTroveModel {
   const { locale } = useI18n();
+  const demoCopy = demoMeloTroveMessages[locale];
   const releaseProviderRefresh = useDemoLibraryProviderRefresh(
     providerRefresh,
     locale,
@@ -1794,7 +1796,8 @@ function useDemoMeloTroveState(
   return {
     locale,
     themeStore: themePreferenceStore,
-    footer: { kind: "prototype" },
+    footer: { kind: "label", label: demoCopy.footer },
+    documentTitleSuffix: demoCopy.documentTitleSuffix,
     setupLink: true,
     incomingCount,
     startup: { kind: "ready" },

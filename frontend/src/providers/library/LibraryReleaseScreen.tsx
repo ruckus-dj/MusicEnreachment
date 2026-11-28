@@ -12,6 +12,7 @@ import {
   getLibraryPositionMetadata,
   getLibraryPublication,
   getLibraryRelease,
+  getSourceLocation,
   patchLibraryPositionMetadata,
   refreshLibraryReleaseMusicbrainz,
   retryPublicationSourceCleanup,
@@ -35,7 +36,15 @@ import type {
   LibraryReleaseWorkspaceSelection,
   LibraryReleaseWorkspaceViewProps,
 } from "../../ui/features/library/LibraryReleaseWorkspaceView";
-import { libraryReleaseHref } from "../../ui/features/library/libraryDetailRoute";
+import type { LibraryTagValues } from "../../ui/features/library/LibraryTagComparisonTable";
+import type {
+  LibraryPositionFrom,
+  LibraryPositionTab,
+} from "../../ui/features/library/libraryDetailRoute";
+import {
+  libraryPositionHref,
+  libraryReleaseHref,
+} from "../../ui/features/library/libraryDetailRoute";
 import {
   type LibraryReleaseMessage,
   type LibraryReleaseText,
@@ -105,6 +114,22 @@ function isTerminalOperation(state: string) {
   return ["succeeded", "failed", "cancelled"].includes(state);
 }
 
+/** The production Incoming list hosts the publication queue. */
+const publicationQueueHref = "#/incoming-groups?tab=publication";
+
+/** Effective genre names from a position metadata read, when explicitly set. */
+function metadataGenreNames(metadata?: LibraryMetadataResponse) {
+  const field = metadata?.envelope.desired.genre;
+  if (field?.state !== "value" || !Array.isArray(field.value)) return "";
+  return field.value
+    .flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const name = (value as { name?: unknown }).name;
+      return typeof name === "string" && name ? [name] : [];
+    })
+    .join(", ");
+}
+
 function LibraryReleaseBinder<Props extends object>({
   children,
   ...model
@@ -119,10 +144,18 @@ function LibraryReleaseBinder<Props extends object>({
 export function LibraryReleaseScreen({
   releaseId,
   positionId,
+  tab,
+  from,
+  resolvePrimaryArtist = false,
+  resolvePrimaryArtistPositionId,
   children,
 }: {
   releaseId: string;
   positionId?: string;
+  tab?: LibraryPositionTab;
+  from?: LibraryPositionFrom;
+  resolvePrimaryArtist?: boolean;
+  resolvePrimaryArtistPositionId?: string;
   children?: ReactNode;
 }) {
   const { locale } = useI18n();
@@ -152,6 +185,109 @@ export function LibraryReleaseScreen({
         : undefined,
     );
   }, [releaseId, positionId]);
+  const [inspectedSourceTags, setInspectedSourceTags] = useState<{
+    key: string;
+    positionId: string;
+    variantId: string;
+    state: "loading" | "saved" | "failed" | "missing";
+    tags?: LibraryTagValues;
+  }>();
+  const inspectedTagPositionId = tagInspection?.open
+    ? tagInspection.positionId
+    : undefined;
+  const inspectedTagSource = inspectedTagPositionId
+    ? release?.tracks
+        ?.find((candidate) => candidate.id === inspectedTagPositionId)
+        ?.sources?.find(
+          (candidate) =>
+            candidate.media_variant_id === tagInspection?.variantId,
+        )
+    : undefined;
+  const inspectedTagLocation = inspectedTagSource?.locations?.[0];
+  const inspectedTagsKey =
+    inspectedTagPositionId && inspectedTagSource && inspectedTagLocation
+      ? [
+          releaseId,
+          inspectedTagPositionId,
+          inspectedTagSource.media_variant_id,
+          inspectedTagLocation.root_id,
+          inspectedTagLocation.location_id,
+        ].join(":")
+      : undefined;
+  const inspectedTagsRead = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!tagInspection?.open) inspectedTagsRead.current = undefined;
+  }, [tagInspection?.open]);
+  useEffect(() => {
+    if (
+      !inspectedTagsKey ||
+      !inspectedTagPositionId ||
+      !inspectedTagSource ||
+      !inspectedTagLocation
+    )
+      return;
+    if (inspectedTagsRead.current === inspectedTagsKey) return;
+    inspectedTagsRead.current = inspectedTagsKey;
+    const variantId = inspectedTagSource.media_variant_id;
+    const rootId = inspectedTagLocation.root_id;
+    const locationId = inspectedTagLocation.location_id;
+    const controller = new AbortController();
+    const settle = (state: "failed" | "missing") =>
+      setInspectedSourceTags({
+        key: inspectedTagsKey,
+        positionId: inspectedTagPositionId,
+        variantId,
+        state,
+      });
+    setInspectedSourceTags({
+      key: inspectedTagsKey,
+      positionId: inspectedTagPositionId,
+      variantId,
+      state: "loading",
+    });
+    void getSourceLocation(rootId, locationId, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        const metadata =
+          response.status === 200
+            ? response.data.steps?.find((step) => step.name === "metadata")
+                ?.metadata
+            : undefined;
+        if (
+          response.status !== 200 ||
+          response.data.root_id !== rootId ||
+          response.data.location_id !== locationId ||
+          (response.data.media_variant_id &&
+            response.data.media_variant_id !== variantId)
+        ) {
+          settle(response.status === 200 ? "missing" : "failed");
+          return;
+        }
+        if (!metadata) {
+          settle("missing");
+          return;
+        }
+        setInspectedSourceTags({
+          key: inspectedTagsKey,
+          positionId: inspectedTagPositionId,
+          variantId,
+          state: "saved",
+          tags: metadata.tags,
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) settle("failed");
+      });
+    return () => controller.abort();
+  }, [
+    inspectedTagLocation,
+    inspectedTagPositionId,
+    inspectedTagSource,
+    inspectedTagsKey,
+  ]);
   const [selectedCover, setSelectedCover] = useState<{
     scope: typeof scope.current;
     releaseID: string;
@@ -1558,6 +1694,29 @@ export function LibraryReleaseScreen({
   const overviewArtistHref = release.primary_artist.effective_artist_id
     ? libraryArtistRouteHref(release.primary_artist.effective_artist_id)
     : undefined;
+  const releasePrimaryArtistResolved = Boolean(
+    release.primary_artist.effective_artist_id,
+  );
+  const primaryArtistResolutionTrack =
+    overviewTracks.find(
+      (track) => track.id === resolvePrimaryArtistPositionId,
+    ) ??
+    overviewTracks.find(
+      (track) => !track.publication && track.sources?.length,
+    ) ??
+    overviewTracks[0];
+  const overviewPrimaryArtistResolution =
+    !positionId && resolvePrimaryArtist && primaryArtistResolutionTrack
+      ? {
+          ready: releasePrimaryArtistResolved,
+          trackHref: libraryPositionHref(
+            releaseId,
+            primaryArtistResolutionTrack.id,
+            { tab: "publication", from: "publication-queue" },
+          ),
+          backHref: publicationQueueHref,
+        }
+      : undefined;
   const overviewHeading: ReleaseOverviewHeading = {
     title: release.title,
     artwork: {
@@ -1634,6 +1793,7 @@ export function LibraryReleaseScreen({
     fallbackTracks: overviewMedia.fallbackTracks,
     unassignedTracks: overviewMedia.unassignedTracks,
     primaryArtist: overviewPrimaryArtist,
+    primaryArtistResolution: overviewPrimaryArtistResolution,
     metadataEditor: {
       bind: (children: ReactNode, visible: boolean) => (
         <ReleaseMetadataEditor
@@ -1789,8 +1949,45 @@ export function LibraryReleaseScreen({
                 `${credit.credit_name || credit.artist_name}${index < credits.length - 1 ? (credit.join_phrase ?? " ") : ""}`,
             )
             .join("");
+          const sourceTags =
+            inspectedSourceTags?.state === "saved" &&
+            inspectedSourceTags.positionId === track.id &&
+            inspectedSourceTags.tags
+              ? {
+                  [inspectedSourceTags.variantId]: inspectedSourceTags.tags,
+                }
+              : undefined;
+          const metadataFacts = [
+            {
+              id: "artists",
+              label: locale === "ru" ? "Исполнители" : "Artists",
+              value: artist || "—",
+            },
+            {
+              id: "genres",
+              label: locale === "ru" ? "Жанры" : "Genres",
+              value: metadataGenreNames(position?.metadata) || "—",
+            },
+          ];
+          const queueBackHref =
+            showWorkspace && from === "publication-queue"
+              ? publicationQueueHref
+              : undefined;
           const publicationView: TrackScreenPublicationView = {
             published: hasCurrentPublication,
+            output: publicationSummary?.relative_path
+              ? {
+                  label:
+                    publicationSummary.relative_path.split(/[/\\]/).at(-1) ||
+                    publicationSummary.relative_path,
+                  summary: [
+                    publicationSummary.codec,
+                    publicationSummary.container,
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
+                }
+              : undefined,
             current: hasCurrentPublication
               ? {
                   details: {
@@ -1933,6 +2130,19 @@ export function LibraryReleaseScreen({
             id: track.id,
             screen: {
               providerRefresh,
+              queueBackHref,
+              tab: showWorkspace ? tab : undefined,
+              onTabChange: showWorkspace
+                ? (nextTab) => {
+                    const href = libraryPositionHref(releaseId, track.id, {
+                      tab: nextTab === "overview" ? undefined : nextTab,
+                      from,
+                    });
+                    if (window.location.hash !== href)
+                      window.location.hash = href.slice(1);
+                  }
+                : undefined,
+              metadataFacts: showWorkspace ? metadataFacts : undefined,
               heading: showWorkspace
                 ? {
                     displayNumber,
@@ -1946,7 +2156,9 @@ export function LibraryReleaseScreen({
               sources: showWorkspace
                 ? {
                     position: displayNumber,
-                    items: positionSourceItems(track, locale),
+                    items: positionSourceItems(track, locale, {
+                      tags: sourceTags,
+                    }),
                     inspection: {
                       value: inspection?.open
                         ? inspectedSource?.media_variant_id
@@ -2096,32 +2308,35 @@ export function LibraryReleaseScreen({
                         open,
                       });
                     },
+                    sourceId: inspection?.open
+                      ? inspection.variantId
+                      : undefined,
+                    comparison: (
+                      <LibraryPositionTagEvidence
+                        key={track.id}
+                        locale={locale}
+                        open={inspection?.open ?? false}
+                        releaseId={releaseId}
+                        positionId={track.id}
+                        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                        source={inspectedSource}
+                        current={
+                          currentTags
+                            ? { state: "saved", tags: currentTags }
+                            : position?.readError
+                              ? { state: "unavailable" }
+                              : !publication
+                                ? { state: "loading" }
+                                : {
+                                    state: hasCurrentPublication
+                                      ? "unavailable"
+                                      : "absent",
+                                  }
+                        }
+                      />
+                    ),
                   }
                 : undefined,
-              evidence: showWorkspace ? (
-                <LibraryPositionTagEvidence
-                  key={track.id}
-                  locale={locale}
-                  open={inspection?.open ?? false}
-                  releaseId={releaseId}
-                  positionId={track.id}
-                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                  source={inspectedSource}
-                  current={
-                    currentTags
-                      ? { state: "saved", tags: currentTags }
-                      : position?.readError
-                        ? { state: "unavailable" }
-                        : !publication
-                          ? { state: "loading" }
-                          : {
-                              state: hasCurrentPublication
-                                ? "unavailable"
-                                : "absent",
-                            }
-                  }
-                />
-              ) : undefined,
             },
             notice:
               !positionId && position?.readError

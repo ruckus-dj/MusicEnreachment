@@ -20,20 +20,23 @@ import { useI18n } from "../../app/i18n/host";
 import { firstPublicationPreviewMessages } from "../../ui/features/library/firstPublicationPreviewMessages";
 import {
   ContextPublicationPreviewDataBinder,
+  type ContextPublicationPreviewDialogControl,
+  type ContextPublicationPreviewMode,
   type ContextPublicationPreviewModel,
+  type ContextPublicationPreviewWorkflow,
 } from "../../ui/features/publication/ContextPublicationPreview";
+import { publicationMessage } from "../../ui/features/publication/publicationMessages";
 
 export type SourceChoice = Pick<
   FirstPublicationPreviewSource,
   "location_id" | "media_variant_id" | "stream_index"
 >;
 
-type PreviewWorkflow =
-  | "first"
-  | "comparison"
-  | "retained_same_path"
-  | "matching_receipt";
-type PublicationMode = "ordinary" | "forced";
+type PreviewWorkflow = ContextPublicationPreviewWorkflow;
+type PublicationMode = ContextPublicationPreviewMode;
+type DialogWorkflow = Parameters<
+  ContextPublicationPreviewDialogControl["onOpen"]
+>[0];
 
 /**
  * Exact confirmation receipt and association that scope a publication.
@@ -266,6 +269,8 @@ export function FirstPublicationPreview({
   const [workflow, setWorkflow] = useState<PreviewWorkflow>(
     comparisonOnly ? "comparison" : "first",
   );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogWorkflow, setDialogWorkflow] = useState<DialogWorkflow>();
   const [sourceCandidates, setSourceCandidates] = useState<
     FirstPublicationPreviewSource[]
   >([]);
@@ -343,6 +348,8 @@ export function FirstPublicationPreview({
     setPreviewChoiceKey("");
     setPreviewWorkflow(undefined);
     setLoading(false);
+    setDialogOpen(false);
+    setDialogWorkflow(undefined);
     setConfirming(false);
     setError("");
     setAdmittedOperationID("");
@@ -394,6 +401,7 @@ export function FirstPublicationPreview({
       requestMode = mode,
       requestWorkflow = workflow,
       requestReceipt: PublicationMatchingReceipt | null = matchingReceipt,
+      preserveCandidates = false,
     ) => {
       const receipt =
         requestWorkflow === "matching_receipt" ? requestReceipt : null;
@@ -433,7 +441,9 @@ export function FirstPublicationPreview({
       setLoading(true);
       setError("");
       setPreview(undefined);
-      setSourceCandidates([]);
+      // Replanning the same position must not unmount the focused source
+      // choice. Fresh opens and position changes still start from no choices.
+      if (!preserveCandidates) setSourceCandidates([]);
       setPreviewChoiceKey("");
       try {
         if (
@@ -619,13 +629,12 @@ export function FirstPublicationPreview({
     const choice = selectedChoice;
     ++requestSequence.current;
     setPreview(undefined);
-    setSourceCandidates([]);
     setPreviewChoiceKey("");
     setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
     if (hadPreviewRequest)
-      void loadPreview(choice, mode, workflow, matchingReceipt);
+      void loadPreview(choice, mode, workflow, matchingReceipt, true);
   }, [
     refreshToken,
     confirming,
@@ -668,7 +677,7 @@ export function FirstPublicationPreview({
     setError("");
     setAdmissionUncertain(false);
     setAdmittedOperationID("");
-    void loadPreview(choice);
+    void loadPreview(choice, mode, workflow, matchingReceipt, true);
   }
   changeChoiceRef.current = changeChoice;
 
@@ -698,7 +707,7 @@ export function FirstPublicationPreview({
     setPreviewChoiceKey("");
     setPreviewWorkflow(undefined);
     setError("");
-    void loadPreview(selectedChoice, nextMode, workflow);
+    void loadPreview(selectedChoice, nextMode, workflow, matchingReceipt, true);
   }
 
   function changeWorkflow(nextWorkflow: PreviewWorkflow) {
@@ -730,12 +739,86 @@ export function FirstPublicationPreview({
     setWorkflow(nextWorkflow);
     setSelectedChoice(nextChoice);
     setPreview(undefined);
+    setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
+    setLoading(false);
+    setError("");
+    void loadPreview(nextChoice, mode, nextWorkflow, nextReceipt, true);
+  }
+
+  function openDialog(
+    nextWorkflow: Parameters<
+      ContextPublicationPreviewDialogControl["onOpen"]
+    >[0],
+  ) {
+    // The requested action is presentation state, separate from the frozen
+    // workflow of an in-flight admission. This lets Compare reopen an already
+    // submitted republish as read-only without disturbing its request identity.
+    setDialogWorkflow(nextWorkflow);
+    // An in-flight or uncertain admission keeps its frozen preview and error.
+    // Reopening only reveals that state; it never starts another request.
+    if (
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    ) {
+      setDialogOpen(true);
+      return;
+    }
+    // A CURRENT comparison is always read-only and ordinary. A forced intent
+    // belongs to retained republish and must not change the comparison plan.
+    const nextMode: PublicationMode =
+      nextWorkflow === "retained_same_path" ? mode : "ordinary";
+    // A dismissed dialog never carries an unconfirmed source choice into the
+    // next preview. The server resolves its default again, and a multi-source
+    // position asks for an explicit choice from the fresh plan.
+    const nextChoice = null;
+    ++requestSequence.current;
+    currentIdentity.current = {
+      releaseId,
+      positionId,
+      choiceKey: choiceKey(nextChoice),
+      mode: nextMode,
+      workflow: nextWorkflow,
+      receiptKey: "",
+      refreshToken,
+    };
+    setMatchingReceipt(null);
+    setMode(nextMode);
+    setWorkflow(nextWorkflow);
+    setSelectedChoice(nextChoice);
+    setPreview(undefined);
     setSourceCandidates([]);
     setPreviewChoiceKey("");
     setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
-    void loadPreview(nextChoice, mode, nextWorkflow, nextReceipt);
+    setDialogOpen(true);
+    void loadPreview(nextChoice, nextMode, nextWorkflow, null);
+  }
+
+  function dismissDialog() {
+    setDialogOpen(false);
+    setDialogWorkflow(undefined);
+    // Never invalidate an admission that is already being submitted. Its
+    // completion closes the dialog and keeps its terminal state visible.
+    if (
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    )
+      return;
+    ++requestSequence.current;
+    setPreview(undefined);
+    setSourceCandidates([]);
+    setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
+    setLoading(false);
+    setError("");
   }
 
   async function confirmPreview() {
@@ -840,6 +923,7 @@ export function FirstPublicationPreview({
       if (!response || !isCurrentRequest(request, requestIdentity)) return;
       if (response.status === 202) {
         admissionLocked.current = true;
+        setDialogOpen(false);
         setAdmittedOperationID(response.data.id);
         setPreview(undefined);
         setSourceCandidates([]);
@@ -1046,20 +1130,71 @@ export function FirstPublicationPreview({
 
   if (aggregateManaged) return null;
 
+  // The dialog summary needs a truthful reason. A CURRENT baseline can prove
+  // that source and effective tags already match only in ordinary mode; a
+  // forced republish always rebuilds even when the preview values are equal.
+  const currentUnchanged = Boolean(
+    preview &&
+      workflow !== "first" &&
+      (preview.confirmation_capability?.status === "unchanged" ||
+        (mode === "ordinary" &&
+          preview.current_comparison?.audio_status === "matches" &&
+          (preview.current_comparison.tag_differences?.length ?? 0) === 0)),
+  );
+  const reason = preview
+    ? workflow === "first"
+      ? publicationMessage(locale, "newPublicationSelectedSource")
+      : currentUnchanged
+        ? publicationMessage(locale, "sourceAndTagsSame")
+        : publicationMessage(locale, "selectedMetadataAndAudio")
+    : undefined;
+
+  const presentedWorkflow =
+    dialogOpen && dialogWorkflow ? dialogWorkflow : workflow;
+  // A frozen admission keeps its own workflow for request identity, but the
+  // Compare action must still present a read-only CURRENT comparison.
+  const presentedDetails =
+    dialogOpen &&
+    presentedWorkflow === "comparison" &&
+    aggregateState.inspection.workflow !== "comparison"
+      ? {
+          ...aggregateState,
+          inspection: {
+            ...aggregateState.inspection,
+            workflow: "comparison" as const,
+          },
+        }
+      : aggregateState;
+  const dialogControl: ContextPublicationPreviewDialogControl = {
+    open: dialogOpen,
+    onOpen: openDialog,
+    onDismiss: dismissDialog,
+  };
   const model: ContextPublicationPreviewModel = {
     locale,
-    details: aggregateState,
+    error,
+    readOnly: presentedWorkflow === "comparison",
+    reason,
+    details: presentedDetails,
+    dialogControl,
     sourceGroupName: `publication-source-${releaseId}-${positionId}`,
-    onSourceChoice: changeChoice,
+    onSourceChoice:
+      workflow === "retained_same_path" ? undefined : changeChoice,
     onRefresh,
     workflowControl: comparisonOnly
       ? {
-          disabled: loading,
+          disabled:
+            loading ||
+            confirming ||
+            Boolean(admittedOperationID) ||
+            admissionUncertain ||
+            confirmationPending.current ||
+            admissionLocked.current,
           mode,
           namePrefix: `${releaseId}-${positionId}`,
           onChange: changeWorkflow,
           onModeChange: changeMode,
-          workflow,
+          workflow: presentedWorkflow,
         }
       : undefined,
     planControl: {
@@ -1070,7 +1205,8 @@ export function FirstPublicationPreview({
         admissionUncertain ||
         confirmationPending.current ||
         admissionLocked.current,
-      onPreview: () => void loadPreview(selectedChoice),
+      onPreview: () =>
+        void loadPreview(selectedChoice, mode, workflow, matchingReceipt, true),
     },
     confirmControl:
       (!comparisonOnly && workflow === "first") ||

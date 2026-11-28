@@ -1,4 +1,4 @@
-import { createNamespace } from "../../i18n/createNamespace";
+import { createNamespace } from "../../../ui/i18n/createNamespace";
 
 export const localCatalogMessages = createNamespace({
   en: {

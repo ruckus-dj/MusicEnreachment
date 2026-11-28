@@ -20,10 +20,6 @@ import {
 import type { SourceRootListRow } from "../../../ui/features/sources/SourceRootList";
 import type { SourceRootChange } from "../../../ui/features/sources/SourceRootSettingsView";
 import type { SourcesPage } from "../../../ui/features/sources/SourcesRouteOutlet";
-import {
-  type SourceMessageKey,
-  sourceMessage,
-} from "../../../ui/features/sources/sourceInventoryMessages";
 import { sourceMessage as sharedSourceMessage } from "../../../ui/features/sources/sourceMessages";
 import {
   sourceDetailHref,
@@ -49,6 +45,10 @@ import {
   retainedInventoryLocations,
   rootLocations,
 } from "./sourceInventory";
+import {
+  type SourceMessageKey,
+  sourceMessage,
+} from "./sourceInventoryMessages";
 import {
   canRemoveSourceRoot,
   removeRootProcessingState,

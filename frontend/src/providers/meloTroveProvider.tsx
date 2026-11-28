@@ -27,7 +27,11 @@ import { incomingGroupCountQueryKey } from "./incoming/incomingGroupsQueryKeys";
 import { ProductionLibraryArtistBinder } from "./library/LibraryArtistScreen";
 import { LibraryReleaseScreen } from "./library/LibraryReleaseScreen";
 import { ProductionLibraryCatalogBinder } from "./library/LibraryScreen";
-import { isUuid } from "./library/libraryRoute";
+import {
+  isUuid,
+  libraryReleasePrimaryArtistPosition,
+  libraryReleaseResolvePrimaryArtist,
+} from "./library/libraryRoute";
 import { ProductionOwnCatalogBinder } from "./local-catalog/OwnCatalogScreen";
 import { ProductionOperationsBinder } from "./operations/OperationsScreen";
 import { ProductionSettingsBinder } from "./settings/SettingsScreen";
@@ -160,8 +164,20 @@ function useProductionMeloTroveModel(route: MeloTroveRoute): MeloTroveModel {
       bindMeloTroveScreen(SourcesScreen, { route: sourcesRoute }),
     incoming: (incomingRoute) =>
       bindMeloTroveScreen(IncomingGroupReviewScreen, { route: incomingRoute }),
-    libraryRelease: (address) =>
-      bindMeloTroveScreen(LibraryReleaseScreen, address),
+    libraryRelease: (address) => {
+      const position =
+        route.kind === "library-release" && "positionId" in route.address
+          ? route.address
+          : undefined;
+      return bindMeloTroveScreen(LibraryReleaseScreen, {
+        ...address,
+        tab: position ? (position.tab ?? "overview") : undefined,
+        resolvePrimaryArtist: libraryReleaseResolvePrimaryArtist(route.hash),
+        resolvePrimaryArtistPositionId: libraryReleasePrimaryArtistPosition(
+          route.hash,
+        ),
+      });
+    },
     libraryArtist: (address) =>
       bindMeloTroveRoute(ProductionLibraryArtistBinder, {
         artistId: address.artistId,

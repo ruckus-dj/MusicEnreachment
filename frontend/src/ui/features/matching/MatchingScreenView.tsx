@@ -827,7 +827,7 @@ function MatchingScreenContent({ model }: { model: MatchingScreenViewModel }) {
             {footer.summary}
           </span>
           <AppButton
-            className="demo-button max-[520px]:w-full"
+            className="max-[520px]:w-full"
             isDisabled={footer.previewDisabled}
             onPress={footer.onPreview}
           >

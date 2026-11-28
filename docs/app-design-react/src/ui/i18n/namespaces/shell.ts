@@ -12,7 +12,6 @@ export const shell = createNamespace({
     settings: "Settings",
     setup: "First run",
     components: "Design system",
-    prototypeFooter: "Prototype",
   },
   ru: {
     skip: "К содержимому",
@@ -25,6 +24,5 @@ export const shell = createNamespace({
     settings: "Настройки",
     setup: "Первый запуск",
     components: "Визуальная система",
-    prototypeFooter: "Прототип",
   },
 });

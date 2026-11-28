@@ -24,7 +24,6 @@ import { formatOperationTimestamp } from "../../../ui/features/operations/operat
 import { sourceCleanupOperationCopy } from "../../../ui/features/operations/sourceCleanupOperationCopy";
 import { sourceScanOperationStages } from "../../../ui/features/operations/sourceScanOperationStages";
 import { settingsMessages } from "../../../ui/features/settings/settingsFormMessages";
-import { sourceMessage } from "../../../ui/features/sources/sourceInventoryMessages";
 import { sourceDetailHref } from "../../../ui/features/sources/sourcesRoute";
 import { matchingRecheckAbandonFixture } from "../../fixtures/matchingRecheckAbandonFixture";
 import {
@@ -42,6 +41,7 @@ import {
 } from "../setup/useSetupToolDownloadsDemoProvider";
 import type { SourceRoot } from "../sources/SourcesScreen";
 import type { SourceArtifactCleanupDemoExecution } from "../sources/sourceArtifactCleanupDemoProvider";
+import { sourceMessage } from "../sources/sourceInventoryMessages";
 import type {
   DemoScanAttempt,
   DemoScanState,

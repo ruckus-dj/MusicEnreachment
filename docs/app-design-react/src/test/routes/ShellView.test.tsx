@@ -220,7 +220,7 @@ it("applies light and dark theme choices from the shell theme control", () => {
         activeSection="settings"
         sectionLinks={sectionLinks}
         incomingCount={2}
-        footer={{ kind: "prototype" }}
+        footer={{ kind: "label", label: "Prototype" }}
         themeStore={store}
       >
         <h1>Settings</h1>

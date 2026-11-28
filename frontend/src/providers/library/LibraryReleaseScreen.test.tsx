@@ -20,6 +20,7 @@ import { I18nProvider, useI18n } from "../../app/i18n/host";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
+import { parseLibraryPositionRoute } from "./libraryRoute";
 
 const coverEditorMockState = vi.hoisted(() => ({
   releaseID: "",
@@ -297,12 +298,23 @@ function installHandlers(published: boolean) {
   );
 }
 
+const publicationTabName = {
+  en: "Files and publication",
+  ru: "Файлы и публикация",
+} as const;
+const metadataTabName = { en: "Metadata", ru: "Метаданные" } as const;
+
 function renderScreen(
   releaseId: string,
   positionId?: string,
   client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   }),
+  options: {
+    tab?: "overview" | "publication" | "metadata";
+    from?: "publication-queue";
+    resolvePrimaryArtist?: boolean;
+  } = {},
 ) {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
@@ -310,13 +322,38 @@ function renderScreen(
   return render(
     <I18nProvider>
       <QueryClientProvider client={client}>
-        <LibraryReleaseScreen releaseId={releaseId} positionId={positionId} />
+        <LibraryReleaseScreen
+          releaseId={releaseId}
+          positionId={positionId}
+          {...options}
+        />
       </QueryClientProvider>
     </I18nProvider>,
   );
 }
 
+async function openPositionTab(
+  name: "publication" | "metadata",
+  locale: "en" | "ru" = "en",
+) {
+  fireEvent.click(
+    await screen.findByRole("tab", {
+      name:
+        name === "publication"
+          ? publicationTabName[locale]
+          : metadataTabName[locale],
+    }),
+  );
+}
+
+function publicationRegion(locale: "en" | "ru" = "en") {
+  return screen.getByRole("region", {
+    name: locale === "ru" ? "Публикация" : "Publication",
+  });
+}
+
 async function openTechnicalDetails(locale: "en" | "ru" = "en") {
+  await openPositionTab("publication", locale);
   const summary = await screen.findByText(
     locale === "ru" ? "Технические сведения" : "Technical details",
     { selector: "summary" },
@@ -325,17 +362,18 @@ async function openTechnicalDetails(locale: "en" | "ru" = "en") {
 }
 
 async function openCurrentDetails(locale: "en" | "ru" = "en") {
-  await openTechnicalDetails(locale);
-  const trigger = await screen.findByRole("button", {
-    name: locale === "ru" ? "Текущая публикация" : "Current publication",
-  });
-  if (trigger.getAttribute("aria-expanded") !== "true")
-    fireEvent.click(trigger);
+  await openPositionTab("publication", locale);
+  const summary = await within(publicationRegion(locale)).findByText(
+    locale === "ru" ? "Теги текущей публикации" : "Current publication tags",
+    { selector: "summary" },
+  );
+  if (!summary.parentElement?.hasAttribute("open")) fireEvent.click(summary);
 }
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
   coverEditorMockState.releaseID = "";
   coverEditorMockState.onSnapshot = undefined;
   coverEditorMockState.staleSnapshot = undefined;
@@ -364,6 +402,7 @@ it("shows publication and source details from release detail without source inve
   expect(
     screen.getByRole("link", { name: "Artist and release" }),
   ).toHaveAttribute("href", `#/library/releases/${releaseID}`);
+  await openPositionTab("publication");
   const summary = await screen.findByRole("region", {
     name: "Current publication",
   });
@@ -375,9 +414,10 @@ it("shows publication and source details from release detail without source inve
     screen.getByText("Technical details").parentElement,
   ).not.toHaveAttribute("open");
   await openCurrentDetails();
-  const path = screen.getByText("Artist/Album/01 - Position One.flac", {
-    selector: "dd",
-  });
+  const path = within(publicationRegion()).getByText(
+    "Artist/Album/01 - Position One.flac",
+    { selector: "dd" },
+  );
   expect(path).toBeVisible();
   const details = path.closest("dl");
   if (!details) throw new Error("Missing current publication details");
@@ -388,10 +428,9 @@ it("shows publication and source details from release detail without source inve
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(validatedAt));
-  expect(screen.getByText(formatted, { selector: "time" })).toHaveAttribute(
-    "dateTime",
-    validatedAt,
-  );
+  expect(
+    within(publicationRegion()).getByText(formatted, { selector: "time" }),
+  ).toHaveAttribute("dateTime", validatedAt);
   expect(summary).not.toHaveTextContent("Источники");
   const sources = screen.getByRole("region", {
     name: "Audio sources for position 1",
@@ -407,11 +446,77 @@ it("shows publication and source details from release detail without source inve
   expect(screen.queryByText(mediaVariantID)).not.toBeInTheDocument();
 });
 
+it("shows the saved source tag snapshot and its publication comparison", async () => {
+  installHandlers(true);
+  server.use(
+    http.get("*/api/sources/:rootId/locations/:locationId", () =>
+      HttpResponse.json({
+        location_id: "test-location",
+        root_id: "test-root",
+        media_variant_id: mediaVariantID,
+        steps: [
+          {
+            attempt: 1,
+            name: "metadata",
+            state: "succeeded",
+            metadata: {
+              provenance: {
+                contract: "test-contract",
+                name: "test-reader",
+                version: "1",
+              },
+              tags: {
+                TITLE: ["Position One"],
+                ARTIST: ["Test Artist"],
+              },
+            },
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/tag-comparison",
+      () =>
+        HttpResponse.json({
+          overrides: {},
+          provider: {
+            name: "MusicBrainz",
+            status: "saved",
+            tags: { TITLE: ["Position One"] },
+          },
+        }),
+    ),
+  );
+
+  renderScreen(releaseID, positionID);
+  await openPositionTab("publication");
+  const trigger = await screen.findByRole("button", { name: "Inspect tags" });
+  fireEvent.click(trigger);
+  const dialog = await screen.findByRole("dialog", { name: "Source tags" });
+  expect(within(dialog).getByText("TITLE")).toBeVisible();
+  expect(within(dialog).getByText("Position One")).toBeVisible();
+  expect(within(dialog).getByText("Test Artist")).toBeVisible();
+
+  fireEvent.click(
+    within(dialog).getByRole("tab", { name: "Compare with publication" }),
+  );
+  expect(
+    await within(dialog).findByRole("columnheader", { name: /MusicBrainz/ }),
+  ).toBeVisible();
+
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Source tags" })).toBeNull(),
+  );
+  expect(trigger).toHaveFocus();
+});
+
 it("shows an explicit unpublished state when release detail has no publication summary", async () => {
   installHandlers(false);
 
   renderScreen(releaseID, positionID);
 
+  await openPositionTab("publication");
   const summary = await screen.findByRole("region", {
     name: "Current publication",
   });
@@ -440,7 +545,7 @@ it("shows and localizes saved loudness measurements for the current publication"
   );
 
   await openCurrentDetails();
-  const measurements = await screen.findByLabelText(
+  const measurements = await within(publicationRegion()).findByLabelText(
     "Current publication audio measurements",
   );
   expect(
@@ -472,7 +577,9 @@ it("shows and localizes saved loudness measurements for the current publication"
     "Album R128",
     "Not calculated",
   ]);
-  const snapshot = screen.getByRole("region", { name: "Tag snapshot" });
+  const snapshot = within(publicationRegion()).getByRole("region", {
+    name: "Tag snapshot",
+  });
   expect(within(snapshot).getByText("TITLE")).toBeInTheDocument();
   expect(within(snapshot).getByText("Position One")).toBeInTheDocument();
   expect(snapshot).not.toHaveTextContent("-7.50 dB");
@@ -643,13 +750,19 @@ it("replaces the release-detail publication summary with refreshed position stat
 
   renderScreen(releaseID, positionID);
 
+  await openPositionTab("publication");
   const summary = await screen.findByRole("region", {
     name: "Current publication",
   });
   await waitFor(() => expect(summary).toHaveTextContent("Published"));
   await openCurrentDetails();
   expect(
-    await screen.findByText("Artist/Album/rewritten.flac", { selector: "dd" }),
+    await within(publicationRegion()).findByText(
+      "Artist/Album/rewritten.flac",
+      {
+        selector: "dd",
+      },
+    ),
   ).toBeVisible();
   expect(summary).not.toHaveTextContent("Not published");
 });
@@ -688,44 +801,66 @@ it("hides stale measurements on a failed position read and recovers with the new
 
   await openCurrentDetails();
   expect(
-    await screen.findByText("Artist/Album/01 - Position One.flac", {
-      selector: "dd",
-    }),
+    await within(publicationRegion()).findByText(
+      "Artist/Album/01 - Position One.flac",
+      {
+        selector: "dd",
+      },
+    ),
   ).toBeVisible();
-  expect(await screen.findByText("-7.50 dB")).toBeVisible();
+  expect(
+    await within(publicationRegion()).findByText("-7.50 dB"),
+  ).toBeVisible();
   fireEvent.click(screen.getByTestId("refresh-publication"));
   const retry = await screen.findByRole("button", { name: "Refresh data" });
   expect(
-    screen.queryByLabelText("Current publication audio measurements"),
+    within(publicationRegion()).queryByLabelText(
+      "Current publication audio measurements",
+    ),
   ).toBeNull();
-  expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
-  expect(screen.queryByRole("region", { name: "Tag snapshot" })).toBeNull();
-  expect(screen.getByText("The tag snapshot is unavailable.")).toBeVisible();
+  expect(within(publicationRegion()).queryByText(/-7\.50 dB/)).toBeNull();
+  expect(
+    within(publicationRegion()).queryByRole("region", { name: "Tag snapshot" }),
+  ).toBeNull();
+  expect(
+    within(publicationRegion()).getByText("The tag snapshot is unavailable."),
+  ).toBeVisible();
   expect(
     screen
       .getByTestId("publication-preview")
       .getAttribute("data-refresh-token"),
   ).not.toContain("generation-2");
   fireEvent.click(retry);
+  await openCurrentDetails();
   expect(
-    await screen.findByText("Artist/Album/rewritten.flac", { selector: "dd" }),
+    await within(publicationRegion()).findByText(
+      "Artist/Album/rewritten.flac",
+      {
+        selector: "dd",
+      },
+    ),
   ).toBeVisible();
   expect(
-    screen.queryByText("Artist/Album/01 - Position One.flac", {
-      selector: "dd",
-    }),
+    within(publicationRegion()).queryByText(
+      "Artist/Album/01 - Position One.flac",
+      {
+        selector: "dd",
+      },
+    ),
   ).toBeNull();
   expect(
     within(
-      await screen.findByLabelText("Current publication audio measurements"),
+      await within(publicationRegion()).findByLabelText(
+        "Current publication audio measurements",
+      ),
     ).getByText("-3 dB"),
   ).toBeVisible();
   expect(
-    within(screen.getByRole("region", { name: "Tag snapshot" })).getByText(
-      "The snapshot contains only audio measurements.",
-    ),
+    within(
+      within(publicationRegion()).getByRole("region", { name: "Tag snapshot" }),
+    ).getByText("The snapshot contains only audio measurements."),
   ).toBeVisible();
-  expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
+  expect(within(publicationRegion()).queryByText(/-7\.50 dB/)).toBeNull();
   await waitFor(() =>
     expect(
       screen
@@ -786,6 +921,7 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
     </I18nProvider>,
   );
 
+  await openPositionTab("metadata");
   const lyrics = await screen.findByRole("textbox", { name: "Saved lyrics" });
   fireEvent.change(lyrics, { target: { value: "unsaved lyrics draft" } });
   fireEvent.click(
@@ -800,6 +936,7 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
     expect(reads.publication).toBeGreaterThan(1);
   });
   const requestCountsBeforeLocaleChange = { ...reads };
+  await openPositionTab("publication");
   const sourceLink = screen.getByRole("link", {
     name: "01 - Position One.flac",
   });
@@ -811,6 +948,7 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
 
   expect(sourceDetails).toHaveTextContent("корень Доступен");
   expect(sourceDetails).toHaveTextContent("проверка Аудио");
+  await openPositionTab("metadata", "ru");
   expect(
     await screen.findByRole("textbox", { name: "Сохранённый текст песни" }),
   ).toHaveValue("unsaved lyrics draft");
@@ -926,6 +1064,7 @@ it("refreshes deletion from authoritative position state without remounting publ
     </I18nProvider>,
   );
   const publicationPreview = await screen.findByTestId("publication-preview");
+  await openPositionTab("publication", "ru");
   const summary = await screen.findByRole("region", {
     name: "Текущая публикация",
   });
@@ -969,7 +1108,7 @@ it("refreshes deletion from authoritative position state without remounting publ
     ).toBeInTheDocument(),
   );
   await openCurrentDetails("ru");
-  expect(within(positionArticle).getByText("-7.50 dB")).toBeVisible();
+  expect(within(publicationRegion("ru")).getByText("-7.50 dB")).toBeVisible();
   fireEvent.click(
     within(positionArticle).getByRole("button", {
       name: "Удалить текущую публикацию",
@@ -986,11 +1125,11 @@ it("refreshes deletion from authoritative position state without remounting publ
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
   await waitFor(() => expect(failedDeletionRead).toBe(true));
   expect(
-    within(positionArticle).queryByRole("region", {
+    within(publicationRegion("ru")).queryByRole("region", {
       name: "Измерения громкости текущей публикации",
     }),
   ).not.toBeInTheDocument();
-  expect(within(positionArticle).queryByText(/-7\.50 dB/)).toBeNull();
+  expect(within(publicationRegion("ru")).queryByText(/-7\.50 dB/)).toBeNull();
   expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
   expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
 });
@@ -1130,6 +1269,134 @@ it("keeps overview positions linked and publication controllers registered witho
   expect(coverEditorControl).toBeVisible();
   expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
   expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
+});
+
+it("opens the position tab and publication queue context from the parsed route", async () => {
+  const routedReleaseID = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+  const routedPositionID = "4f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+  const routed = release(false);
+  routed.id = routedReleaseID;
+  if (routed.tracks?.[0]) routed.tracks[0].id = routedPositionID;
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () =>
+      HttpResponse.json(routed),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/metadata",
+      () => HttpResponse.json(metadata),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication",
+      () => HttpResponse.json(publication(false)),
+    ),
+  );
+  const route = parseLibraryPositionRoute(
+    `#/library/releases/${routedReleaseID}/positions/${routedPositionID}?tab=metadata&from=publication-queue`,
+  );
+  if (!route) throw new Error("position route should parse");
+
+  renderScreen(route.releaseId, route.positionId, undefined, {
+    tab: route.tab,
+    from: route.from,
+  });
+
+  expect(
+    await screen.findByRole("tab", { name: "Metadata", selected: true }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Back to publication queue" }),
+  ).toHaveAttribute("href", "#/incoming-groups?tab=publication");
+
+  fireEvent.click(screen.getByRole("tab", { name: "Files and publication" }));
+  await waitFor(() =>
+    expect(window.location.hash).toBe(
+      `#/library/releases/${routedReleaseID}/positions/${routedPositionID}?tab=publication&from=publication-queue`,
+    ),
+  );
+});
+
+it("resolves the release primary artist from the publication queue deep link", async () => {
+  installHandlers(false);
+  const firstArtist = "11111111-1111-4111-8111-111111111111";
+  const secondArtist = "22222222-2222-4222-8222-222222222222";
+  const requiredRelease = release(false);
+  requiredRelease.artists = [
+    {
+      artist_id: firstArtist,
+      artist_name: "First Artist",
+      credit_name: "First Artist",
+      join_phrase: " & ",
+    },
+    {
+      artist_id: secondArtist,
+      artist_name: "Second Artist",
+      credit_name: "Second Artist",
+      join_phrase: "",
+    },
+  ];
+  requiredRelease.primary_artist = {
+    candidate_artist_ids: [firstArtist, secondArtist],
+    effective_artist_id: "",
+    effective_artist_mbid: "",
+    selected_artist_id: "",
+    status: "required",
+  };
+  let selectedArtist = "";
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () =>
+      HttpResponse.json(
+        selectedArtist
+          ? {
+              ...requiredRelease,
+              primary_artist: {
+                ...requiredRelease.primary_artist,
+                effective_artist_id: selectedArtist,
+                selected_artist_id: selectedArtist,
+                status: "explicit",
+              },
+            }
+          : requiredRelease,
+      ),
+    ),
+    http.put("*/api/library/releases/:releaseId/primary-artist", () => {
+      selectedArtist = firstArtist;
+      return HttpResponse.json({
+        publication_applied: false,
+        revision: 2,
+      });
+    }),
+  );
+
+  renderScreen(releaseID, undefined, undefined, {
+    resolvePrimaryArtist: true,
+  });
+
+  expect(
+    await screen.findByText(
+      "Choose the primary artist for the publication path. The release credits will not change.",
+    ),
+  ).toBeVisible();
+  const select = screen.getByRole("combobox", {
+    name: "Release primary artist",
+  });
+  expect(select).toHaveValue("");
+  expect(
+    screen.getByRole("link", { name: "Back to publication queue" }),
+  ).toHaveAttribute("href", "#/incoming-groups?tab=publication");
+
+  fireEvent.change(select, { target: { value: firstArtist } });
+
+  expect(
+    await screen.findByText(
+      "Primary artist saved. You can now preview publication.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Open track publication" }),
+  ).toHaveAttribute(
+    "href",
+    "#/library/releases/release-1/positions/position-1?tab=publication&from=publication-queue",
+  );
 });
 
 it("shows only the selected cover snapshot in the compact release header", async () => {

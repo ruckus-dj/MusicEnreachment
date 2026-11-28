@@ -32,6 +32,11 @@ it("adds matching and both publication queues into the Incoming count", () => {
     "true",
   );
   fireEvent.click(screen.getByRole("tab", { name: "К публикации: 2" }));
+  const queue = screen.getByRole("region", { name: "Очередь публикации" });
+  expect(within(queue).getByText("Демо", { exact: true })).toBeVisible();
+  expect(
+    within(queue).getByText("Примеры причин на демо-данных.", { exact: false }),
+  ).toBeVisible();
   expect(
     screen.getByRole("tab", { name: "Требуют внимания: 1" }),
   ).toHaveAttribute("aria-selected", "true");

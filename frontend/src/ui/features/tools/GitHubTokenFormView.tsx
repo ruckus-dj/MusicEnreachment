@@ -23,11 +23,14 @@ export type TokenError =
   | { kind: "http"; status: number }
   | { kind: "diagnostic"; text: string };
 
-// The draft is fully controlled: it lives in the controller's memory only and
-// is never stored, so it disappears with the page.
-export type GitHubTokenFormViewProps = {
+export type GitHubTokenSimulatedCopy = {
+  warning: string;
+  saved: string;
+  verified: string;
+};
+
+type GitHubTokenFormViewBaseProps = {
   locale: GitHubTokenLocale;
-  simulated?: boolean;
   hasToken: boolean;
   draft: string;
   busy: boolean;
@@ -38,6 +41,14 @@ export type GitHubTokenFormViewProps = {
   onSave: () => void | Promise<void>;
   onRemove: () => void | Promise<void>;
 };
+
+// The draft is fully controlled: it lives in the controller's memory only and
+// is never stored, so it disappears with the page.
+export type GitHubTokenFormViewProps = GitHubTokenFormViewBaseProps &
+  (
+    | { simulated?: false; simulatedCopy?: never }
+    | { simulated: true; simulatedCopy: GitHubTokenSimulatedCopy }
+  );
 
 const sectionClass =
   "grid gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4";
@@ -75,18 +86,20 @@ function errorText(error: TokenError, copy: ToolMessages) {
   }
 }
 
-export function GitHubTokenFormView({
-  locale,
-  simulated = false,
-  hasToken,
-  draft,
-  busy,
-  saved,
-  error,
-  onDraftChange,
-  onSave,
-  onRemove,
-}: GitHubTokenFormViewProps) {
+export function GitHubTokenFormView(props: GitHubTokenFormViewProps) {
+  const {
+    locale,
+    simulated = false,
+    hasToken,
+    draft,
+    busy,
+    saved,
+    error,
+    onDraftChange,
+    onSave,
+    onRemove,
+  } = props;
+  const simulatedCopy = props.simulated ? props.simulatedCopy : undefined;
   const copy = toolMessages[locale];
   const headingId = useId();
   const inputId = useId();
@@ -101,7 +114,7 @@ export function GitHubTokenFormView({
       </h2>
       {simulated ? (
         <p id={modeId} className={`${paragraphClass} font-medium`}>
-          {copy.demoWarning}
+          {simulatedCopy?.warning}
         </p>
       ) : (
         <>
@@ -184,13 +197,13 @@ export function GitHubTokenFormView({
         <p id={stateId} role="status" className={statusClass}>
           {hasToken
             ? simulated
-              ? copy.demoSaved
+              ? simulatedCopy?.saved
               : copy.tokenSaved
             : copy.tokenMissing}
         </p>
         {saved && (
           <p role="status" className={successClass}>
-            {simulated ? copy.demoVerified : copy.tokenVerified}
+            {simulated ? simulatedCopy?.verified : copy.tokenVerified}
           </p>
         )}
         {busy && (

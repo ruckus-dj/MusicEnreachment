@@ -72,8 +72,6 @@ export const matchingMessages = createNamespace({
     lowConfidence: "Low*",
     evidenceButton: "Evidence",
     noFile: "No file",
-    matchingDisclaimer:
-      "Confidence is not calculated here; displayed levels are sample values.",
     poolTitle: "Available files · {count}",
     allFilesAssigned: "All files are assigned.",
     poolInstructions:
@@ -122,8 +120,6 @@ export const matchingMessages = createNamespace({
     pairConfidence: "Confidence: {value}",
     pairConfidenceNone: "not calculated",
     pairDiagnostics: "Comparison details",
-    illustrativeHighConfidence: "High confidence · sample value",
-    illustrativeLowConfidence: "Insufficient confidence · sample value",
     numericScoreNotCalculated: "Numeric score: not calculated",
     evidenceFeature: "Feature",
     sourceValue: "Source value",
@@ -145,8 +141,6 @@ export const matchingMessages = createNamespace({
     noFingerprintResult: "No result",
     fingerprintEvidence: "AcoustID / Chromaprint",
     fingerprintNotProof: "Not treated as proven matching evidence",
-    illustrativeComparison:
-      "These comparisons use sample values. Normalization is shown for illustration; matching policy is not calculated.",
   },
   ru: {
     assignSelected: "Добавить выбранный файл",
@@ -217,8 +211,6 @@ export const matchingMessages = createNamespace({
     lowConfidence: "Низкая*",
     evidenceButton: "Доказательства",
     noFile: "Нет файла",
-    matchingDisclaimer:
-      "Уверенность здесь не рассчитывается; уровни приведены для примера.",
     poolTitle: "Доступные файлы · {count}",
     allFilesAssigned: "Все файлы назначены.",
     poolInstructions:
@@ -267,8 +259,6 @@ export const matchingMessages = createNamespace({
     pairConfidence: "Уверенность: {value}",
     pairConfidenceNone: "не рассчитана",
     pairDiagnostics: "Подробности сравнения",
-    illustrativeHighConfidence: "Высокая уверенность · пример данных",
-    illustrativeLowConfidence: "Недостаточная уверенность · пример данных",
     numericScoreNotCalculated: "Числовая оценка: не рассчитана",
     evidenceFeature: "Признак",
     sourceValue: "Исходное значение",
@@ -291,8 +281,6 @@ export const matchingMessages = createNamespace({
     fingerprintEvidence: "AcoustID / Chromaprint",
     fingerprintNotProof:
       "Не считается подтверждённым доказательством совпадения",
-    illustrativeComparison:
-      "Сравниваются примерные значения. Нормализация показана для примера; политика сопоставления не рассчитывается.",
   },
 });
 

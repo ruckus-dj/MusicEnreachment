@@ -1,6 +1,7 @@
 import { type ComponentProps, useEffect, useState } from "react";
 import type { GitHubTokenFormView } from "../../../ui/features/tools/GitHubTokenFormView";
 import type { GitHubTokenLocale } from "../../../ui/features/tools/toolMessages";
+import { toolDemoMessages } from "./toolDemoMessages";
 
 export type GitHubTokenDemoProps = {
   locale: GitHubTokenLocale;
@@ -24,6 +25,7 @@ export function useGitHubTokenDemo(
   return {
     locale,
     simulated: true,
+    simulatedCopy: toolDemoMessages[locale],
     hasToken: hasGitHubToken,
     draft,
     saved,

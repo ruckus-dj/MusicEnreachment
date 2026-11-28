@@ -138,15 +138,28 @@ function PublicationSummary({
     destination && /\.([^./\\]+)$/.exec(destination)?.[1].toUpperCase();
   const container =
     preview?.transform?.output_container?.toUpperCase() ?? extension;
-  const tagDifferences =
-    preview?.current_comparison?.tag_differences?.length ?? 0;
-  const assetDifferences = [
-    preview?.asset_changes?.cover,
-    preview?.asset_changes?.lyrics,
-  ].filter(Boolean).length;
-  const changeCount = tagDifferences + assetDifferences;
-  const hasCurrentBaseline =
-    inspection?.workflow !== undefined && inspection.workflow !== "first";
+  const comparison = preview?.current_comparison;
+  const coverDiffers =
+    Boolean(preview?.asset_changes?.cover) ||
+    comparison?.cover_status === "differs";
+  const lyricsDiffers =
+    Boolean(preview?.asset_changes?.lyrics) ||
+    comparison?.lyrics_status === "differs";
+  const changeCount =
+    (comparison?.tag_differences?.length ?? 0) +
+    Number(coverDiffers) +
+    Number(lyricsDiffers);
+  const changes =
+    !details?.loading && changeCount > 0
+      ? copy.changesCount(changeCount)
+      : !details?.loading &&
+          comparison?.tag_differences &&
+          comparison.cover_status === "matches" &&
+          comparison.lyrics_status === "matches"
+        ? copy.noChanges
+        : !details?.loading && preview && inspection?.workflow === "first"
+          ? copy.firstPublicationChanges
+          : copy.changesUnavailable;
 
   return (
     <section className="space-y-2" aria-label={copy.summary}>
@@ -192,12 +205,12 @@ function PublicationSummary({
         <SummaryStep
           label={readOnly ? copy.potentialChanges : copy.changesStep}
         >
-          <p className="m-0">{reason ?? copy.noChanges}</p>
-          {hasCurrentBaseline && (
-            <p className="m-0 mt-1 text-xs text-[var(--muted)]">
-              {changeCount ? copy.changesCount(changeCount) : copy.noChanges}
-            </p>
-          )}
+          {reason ? <p className="m-0">{reason}</p> : null}
+          <p
+            className={reason ? "m-0 mt-1 text-xs text-[var(--muted)]" : "m-0"}
+          >
+            {changes}
+          </p>
         </SummaryStep>
       </div>
     </section>
@@ -293,6 +306,7 @@ function PreviewDialog({
   const disclosureDetails = details
     ? {
         ...details,
+        loading: false,
         inspection: {
           ...details.inspection,
           needsExplicitChoice: false,
@@ -374,6 +388,11 @@ function PreviewDialog({
             {error}
           </p>
         )}
+        {(!details || details.loading) && (
+          <p role="status" className="m-0">
+            {copy.loading}
+          </p>
+        )}
         <PublicationSummary
           details={details}
           locale={locale}
@@ -435,7 +454,7 @@ function PreviewDialog({
             </label>
           </fieldset>
         )}
-        {details ? (
+        {disclosureDetails && (
           <details className="min-w-0 rounded border border-[var(--line)] p-2">
             <summary className="cursor-pointer font-medium">
               {dialogCopy.details}
@@ -443,17 +462,13 @@ function PreviewDialog({
             <div className="mt-3 min-w-0">
               <PublicationPreviewDetailsView
                 locale={locale}
-                state={disclosureDetails ?? details}
+                state={disclosureDetails}
                 sourceGroupName={sourceGroupName}
                 onSourceChoice={onSourceChoice}
                 onRefresh={onRefresh}
               />
             </div>
           </details>
-        ) : (
-          <p role="status" className="m-0">
-            {copy.loading}
-          </p>
         )}
       </div>
       <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-[var(--line)] bg-[var(--surface)] p-3">

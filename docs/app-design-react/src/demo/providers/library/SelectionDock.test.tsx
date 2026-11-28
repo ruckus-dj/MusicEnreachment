@@ -69,6 +69,9 @@ it("opens publication deletion from the overflow menu with its consequences", as
     within(dialog).getByText(/Будут затронуты только перечисленные/),
   ).toBeVisible();
   expect(
+    within(dialog).getByText(/Прототип только ставит демонстрационный запрос/),
+  ).toBeVisible();
+  expect(
     within(dialog).getByRole("button", { name: "Подтвердить удаление" }),
   ).toBeDisabled();
   fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));

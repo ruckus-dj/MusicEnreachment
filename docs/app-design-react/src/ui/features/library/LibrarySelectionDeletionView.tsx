@@ -16,7 +16,7 @@ export function LibrarySelectionDeletionView({
   selected,
   published,
   rows,
-  simulated,
+  notice,
   onConfirm,
 }: {
   locale: Locale;
@@ -31,7 +31,8 @@ export function LibrarySelectionDeletionView({
     title: string;
     path: string;
   }[];
-  simulated?: boolean;
+  /** Host-supplied explanation for a simulated deletion request. */
+  notice?: string;
   onConfirm: () => void;
 }) {
   const m = (
@@ -79,7 +80,7 @@ export function LibrarySelectionDeletionView({
             .join(" · "),
         }))}
       />
-      {simulated && <p>{m("deletionDemoNotice")}</p>}
+      {notice && <p>{notice}</p>}
     </LibraryDeletionDialogView>
   );
 }

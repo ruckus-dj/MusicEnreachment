@@ -9,6 +9,7 @@ import {
   type DeletionOperation,
   publicationSelectionPlan,
 } from "./DeletionRequest";
+import { libraryDeletionDemoNotice } from "./libraryDeletionDemoMessages";
 
 type FrozenPublication = {
   releaseId: string;
@@ -123,7 +124,7 @@ export function SelectionDock({
           title: track.title,
           path,
         }))}
-        simulated
+        notice={libraryDeletionDemoNotice(locale)}
         onConfirm={() => {
           const confirmed = currentPublications.flatMap(({ track, path }) =>
             track.published?.path === path ? [track] : [],

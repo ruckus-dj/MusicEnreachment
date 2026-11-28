@@ -4,6 +4,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import type { LibraryArtistReleaseTrackRow } from "../../ui/features/library/LibraryArtistReleaseTracksView";
 import type { LibraryPositionSource } from "../../ui/features/library/LibraryPositionSourcesView";
+import type { LibraryTagValues } from "../../ui/features/library/LibraryTagComparisonTable";
 import { libraryPositionHref } from "../../ui/features/library/libraryDetailRoute";
 import type { ReleaseCreditView } from "../../ui/features/library/ReleaseCreditListView";
 import type {
@@ -118,6 +119,10 @@ function probeStatusLabel(status: string, locale: "en" | "ru") {
 export function positionSourceItems(
   track: LibraryReleaseTrackResponse,
   locale: "en" | "ru",
+  options?: {
+    /** Saved source snapshots keyed by media variant, read by the host. */
+    tags?: Readonly<Record<string, LibraryTagValues>>;
+  },
 ): readonly LibraryPositionSource[] {
   const copy =
     locale === "ru"
@@ -141,6 +146,7 @@ export function positionSourceItems(
     id: source.media_variant_id,
     label: String(index + 1),
     selected: source.selected,
+    tags: options?.tags?.[source.media_variant_id],
     authority: {
       decision: source.decision_method,
       compatible: source.compatible,

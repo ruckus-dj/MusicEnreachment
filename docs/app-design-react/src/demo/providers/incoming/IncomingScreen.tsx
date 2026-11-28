@@ -64,6 +64,21 @@ const standalonePublicationEditions = incomingPublicationEditions(
   createPublicationWalkthroughReleases(),
 );
 
+const publicationDemoCopy = {
+  en: {
+    badge: "Demo",
+    description:
+      "Sample publication diagnoses. No audio files are published in this demo.",
+    manualReady: "Primary artist selected · ready for manual publication",
+  },
+  ru: {
+    badge: "Демо",
+    description:
+      "Примеры причин на демо-данных. Макет не публикует аудиофайлы.",
+    manualReady: "Основной исполнитель выбран · можно опубликовать вручную",
+  },
+} as const;
+
 export function useIncomingScreenDemoProvider({
   files: givenFiles,
   roots = [],
@@ -294,7 +309,13 @@ export function useIncomingScreenDemoProvider({
     notice,
     matchingCount: incomingMatchingCount(groups),
     publication: {
-      editions: publicationEditions,
+      badge: publicationDemoCopy[locale].badge,
+      description: publicationDemoCopy[locale].description,
+      editions: publicationEditions.map((edition) =>
+        edition.reason.code === "manualReady"
+          ? { ...edition, reasonLabel: publicationDemoCopy[locale].manualReady }
+          : edition,
+      ),
       initialStatus:
         routeParams.get("status") === "ready" ? "ready" : undefined,
     },

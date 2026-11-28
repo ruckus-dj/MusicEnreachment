@@ -95,7 +95,6 @@ export const catalogueMessages = createNamespace({
     noProviderLink: "No link",
     publicationMissing: "Not published",
     noSourceChosen: "No source chosen",
-    publicationPathRead: "Publication: {path} · read {readAt} (demo)",
     noPublicationColumn:
       "No publication; the empty column is not replaced with current metadata.",
     openDetailedReleaseComparison: "Open detailed release comparison",
@@ -114,8 +113,6 @@ export const catalogueMessages = createNamespace({
     published: "published",
     unpublished: "unpublished",
     noCurrentPublications: "There are no current publications in this scope.",
-    deletionRequestNotice:
-      "The request will appear in current operations. Execution changes prototype data in memory only; no real files are deleted.",
     confirm: "Confirm",
     artistDeletionRelatedReleases: "Releases (will be deleted)",
     artistDeletionRecordings:
@@ -144,8 +141,6 @@ export const catalogueMessages = createNamespace({
     deletionPositions: "Positions",
     deletionFiles: "Current publication files",
     deletionRecordings: "Recordings removed from the library",
-    deletionPreviewFrozen:
-      "The deletion preview and confirmation are fixed. The request appears in current operations; execution changes prototype data in memory only and deletes no real files.",
     loadingArtist: "Loading artist…",
     artistLoadFailed: "Could not load artist (HTTP {status}).",
     retry: "Retry",
@@ -258,7 +253,6 @@ export const catalogueMessages = createNamespace({
     noProviderLink: "Нет связи",
     publicationMissing: "Не опубликован",
     noSourceChosen: "Исходник не выбран",
-    publicationPathRead: "Публикация: {path} · чтение {readAt} (демо)",
     noPublicationColumn:
       "Публикация отсутствует; пустая колонка не подменяется текущими метаданными.",
     openDetailedReleaseComparison: "Открыть подробное сравнение альбома",
@@ -277,8 +271,6 @@ export const catalogueMessages = createNamespace({
     published: "опубликована",
     unpublished: "без публикации",
     noCurrentPublications: "Текущих публикаций в этой области нет.",
-    deletionRequestNotice:
-      "Запрос появится в текущих операциях. Выполнение меняет только данные макета в памяти; реальные файлы не удаляются.",
     confirm: "Подтвердить",
     artistDeletionRelatedReleases: "Релизы (будут удалены)",
     artistDeletionRecordings:
@@ -307,8 +299,6 @@ export const catalogueMessages = createNamespace({
     deletionPositions: "Позиции",
     deletionFiles: "Файлы текущих публикаций",
     deletionRecordings: "Композиции, удаляемые из медиатеки",
-    deletionPreviewFrozen:
-      "Предпросмотр и подтверждение удаления зафиксированы. Запрос появится в текущих операциях; выполнение меняет только данные макета в памяти, реальные файлы не удаляются.",
     loadingArtist: "Загрузка артиста…",
     artistLoadFailed: "Не удалось загрузить артиста (HTTP {status}).",
     retry: "Повторить",

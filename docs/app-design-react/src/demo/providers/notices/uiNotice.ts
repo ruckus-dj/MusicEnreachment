@@ -1,11 +1,8 @@
 import { incomingMessage } from "../../../ui/features/incoming/incomingOverviewMessages";
 import { catalogMessage } from "../../../ui/features/library/catalogMessages";
 import { matchingMessage } from "../../../ui/features/matching/matchingWorkspaceMessages";
-import {
-  formatPublicationMessage,
-  publicationMessage,
-} from "../../../ui/features/publication/publicationMessages";
 import type { Locale } from "../../../ui/i18n/types";
+import { publicationNoticeMessage } from "./publicationNoticeMessages";
 
 type NoticeParams = Record<string, string | number>;
 
@@ -52,17 +49,17 @@ export function formatUiNotice(locale: Locale, notice: UiNotice): string {
       return matchingMessage(locale, notice.id, notice.params);
     case "publication":
       return [
-        formatPublicationMessage(locale, "applySuccess", {
+        publicationNoticeMessage(locale, "published", {
           count: notice.params.count,
         }),
         ...(notice.params.linkCount
           ? [
-              formatPublicationMessage(locale, "linkSuccess", {
+              publicationNoticeMessage(locale, "linksSaved", {
                 count: notice.params.linkCount,
               }),
             ]
           : []),
-        publicationMessage(locale, "unchangedSuccess"),
+        publicationNoticeMessage(locale, "unchanged"),
       ].join(" ");
     case "incoming":
       return notice.id === "automaticPublished"

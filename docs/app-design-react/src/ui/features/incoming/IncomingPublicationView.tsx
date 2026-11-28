@@ -1,6 +1,7 @@
 /** biome-ignore-all lint/a11y/noRedundantRoles: Keep table semantics in WebKit when narrow layouts change display to block. */
 import { Fragment, useId, useState } from "react";
 import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { AppButton } from "../../components/AppButton";
 import { StatusBadge } from "../../components/StatusBadge";
 import type { Locale } from "../../i18n/types";
 import { incomingPublicationMessages } from "./incomingPublicationMessages";
@@ -167,7 +168,7 @@ function PublicationTable({
                           : "text-[13px] leading-5 text-[var(--muted)] wrap-anywhere"
                       }
                     >
-                      {copy.reasonLabel(edition.reason)}
+                      {edition.reasonLabel ?? copy.reasonLabel(edition.reason)}
                     </span>
                   </td>
                   <td
@@ -261,7 +262,7 @@ function PublicationTable({
                                   <td
                                     className={`${innerCell} text-[13px] leading-5 text-[var(--muted)]`}
                                   >
-                                    {track.source || copy.noSource}
+                                    {track.source || "—"}
                                   </td>
                                   <td className={innerCell}>
                                     <div className="flex flex-wrap items-center gap-2">
@@ -280,10 +281,14 @@ function PublicationTable({
                                       {track.attention ? (
                                         <a
                                           className="text-xs font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2"
-                                          href={edition.nextStep.href}
+                                          href={
+                                            track.nextStep?.href ??
+                                            edition.nextStep.href
+                                          }
                                         >
                                           {copy.nextStepLabel(
-                                            edition.nextStep.kind,
+                                            track.nextStep?.kind ??
+                                              edition.nextStep.kind,
                                           )}
                                         </a>
                                       ) : null}
@@ -317,6 +322,9 @@ export function IncomingPublicationView({
   locale,
   editions,
   initialStatus,
+  description,
+  badge,
+  status,
 }: IncomingPublicationViewProps) {
   const copy = incomingPublicationMessages[locale];
   const headingId = useId();
@@ -339,50 +347,65 @@ export function IncomingPublicationView({
             {copy.sectionTitle}
           </h2>
           <p className="mt-1 mb-0 max-w-[72ch] text-[13px] leading-5 text-[var(--muted)]">
-            {copy.sectionDescription}
+            {description ?? copy.sectionDescription}
           </p>
         </div>
-        <StatusBadge tone="metadata">{copy.demo}</StatusBadge>
+        {badge ? <StatusBadge tone="metadata">{badge}</StatusBadge> : null}
       </header>
-      <Tabs
-        key={initialStatus}
-        defaultSelectedKey={initialStatus ?? "attention"}
-        aria-label={copy.sectionTabList}
-        className="grid min-w-0 gap-3 p-4"
-      >
-        <TabList aria-label={copy.sectionTabList} className={tabListClass}>
-          <Tab
-            id="attention"
-            aria-label={copy.attentionTab(counts.attention)}
-            className={tabClass}
-          >
-            <span>{copy.attention}</span>
-            <span aria-hidden="true" className={countClass}>
-              {counts.attention}
-            </span>
-          </Tab>
-          <Tab
-            id="ready"
-            aria-label={copy.readyTab(counts.ready)}
-            className={tabClass}
-          >
-            <span>{copy.ready}</span>
-            <span aria-hidden="true" className={countClass}>
-              {counts.ready}
-            </span>
-          </Tab>
-        </TabList>
-        <TabPanel id="attention" className={tabPanelClass}>
-          <PublicationTable
-            locale={locale}
-            editions={attention}
-            kind="attention"
-          />
-        </TabPanel>
-        <TabPanel id="ready" className={tabPanelClass}>
-          <PublicationTable locale={locale} editions={ready} kind="ready" />
-        </TabPanel>
-      </Tabs>
+      {status?.kind === "loading" ? (
+        <p role="status" className="m-0 p-4 text-sm text-[var(--muted)]">
+          {copy.loading}
+        </p>
+      ) : status?.kind === "error" ? (
+        <div className="flex flex-wrap items-center gap-3 p-4">
+          <p role="alert" className="m-0 text-sm text-[var(--error)]">
+            {copy.loadFailed}
+          </p>
+          <AppButton size="sm" onPress={status.retry}>
+            {copy.retry}
+          </AppButton>
+        </div>
+      ) : (
+        <Tabs
+          key={initialStatus}
+          defaultSelectedKey={initialStatus ?? "attention"}
+          aria-label={copy.sectionTabList}
+          className="grid min-w-0 gap-3 p-4"
+        >
+          <TabList aria-label={copy.sectionTabList} className={tabListClass}>
+            <Tab
+              id="attention"
+              aria-label={copy.attentionTab(counts.attention)}
+              className={tabClass}
+            >
+              <span>{copy.attention}</span>
+              <span aria-hidden="true" className={countClass}>
+                {counts.attention}
+              </span>
+            </Tab>
+            <Tab
+              id="ready"
+              aria-label={copy.readyTab(counts.ready)}
+              className={tabClass}
+            >
+              <span>{copy.ready}</span>
+              <span aria-hidden="true" className={countClass}>
+                {counts.ready}
+              </span>
+            </Tab>
+          </TabList>
+          <TabPanel id="attention" className={tabPanelClass}>
+            <PublicationTable
+              locale={locale}
+              editions={attention}
+              kind="attention"
+            />
+          </TabPanel>
+          <TabPanel id="ready" className={tabPanelClass}>
+            <PublicationTable locale={locale} editions={ready} kind="ready" />
+          </TabPanel>
+        </Tabs>
+      )}
     </section>
   );
 }

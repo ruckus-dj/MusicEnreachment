@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import {
   libraryArtistRouteHref,
+  libraryReleasePrimaryArtistHref,
+  libraryReleasePrimaryArtistPosition,
+  libraryReleaseResolvePrimaryArtist,
   libraryRouteHref,
   parseLibraryArtistRoute,
   parseLibraryPositionRoute,
@@ -25,6 +28,42 @@ it("parses exact UUID release and position routes", () => {
       `#/library/releases/${releaseId}/positions/${positionId}?from=catalog`,
     ),
   ).toEqual({ releaseId, positionId });
+  expect(
+    parseLibraryPositionRoute(
+      `#/library/releases/${releaseId}/positions/${positionId}?tab=publication&from=publication-queue`,
+    ),
+  ).toEqual({
+    releaseId,
+    positionId,
+    tab: "publication",
+    from: "publication-queue",
+  });
+});
+
+it("recognizes the release primary-artist resolution marker", () => {
+  expect(
+    libraryReleaseResolvePrimaryArtist(
+      `#/library/releases/${releaseId}?resolve=primary-artist`,
+    ),
+  ).toBe(true);
+  expect(
+    libraryReleaseResolvePrimaryArtist(`#/library/releases/${releaseId}`),
+  ).toBe(false);
+  expect(
+    libraryReleaseResolvePrimaryArtist(
+      `#/library/releases/${releaseId}?resolve=other`,
+    ),
+  ).toBe(false);
+  expect(
+    libraryReleasePrimaryArtistPosition(
+      libraryReleasePrimaryArtistHref(releaseId, positionId),
+    ),
+  ).toBe(positionId);
+  expect(
+    libraryReleasePrimaryArtistPosition(
+      `#/library/releases/${releaseId}?resolve=primary-artist&position=invalid`,
+    ),
+  ).toBeUndefined();
 });
 
 it("does not accept malformed UUIDs or extra path segments", () => {

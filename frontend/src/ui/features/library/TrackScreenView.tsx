@@ -1,4 +1,16 @@
-import type { ComponentProps, ReactNode } from "react";
+import {
+  type ComponentProps,
+  Fragment,
+  type Key,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
+import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { AppButton } from "../../components/AppButton";
+import { StatusBadge } from "../../components/StatusBadge";
 import type { Locale } from "../../i18n/locale";
 import { ScreenStatus } from "../../shell/ScreenFeedbackView";
 import {
@@ -19,12 +31,10 @@ import {
   type LibraryPositionSource,
   LibraryPositionSourcesView,
 } from "./LibraryPositionSourcesView";
-import { LibraryPositionTagsDisclosure } from "./LibraryPositionTagsDisclosure";
+import { LibraryPositionSourceTagsDrawer } from "./LibraryPositionSourceTagsDrawer";
 import { LibraryPositionTechnicalDetailsView } from "./LibraryPositionTechnicalDetailsView";
-import {
-  LibraryPositionPreviewButton,
-  LibraryPositionWorkspace,
-} from "./LibraryPositionWorkspace";
+import { LibraryPositionPreviewButton } from "./LibraryPositionWorkspace";
+import type { LibraryPositionTab } from "./libraryDetailRoute";
 import {
   PublicationCurrentDetailsView,
   PublicationCurrentSummaryView,
@@ -39,12 +49,20 @@ const alertClass = "text-[var(--error)] wrap-anywhere";
 const actionsClass = "my-2 flex flex-wrap items-center gap-[7px]";
 const factsClass =
   "my-[10px] grid grid-cols-[minmax(130px,.75fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] max-[600px]:grid-cols-1 max-[600px]:gap-y-0 [&_dt]:text-xs [&_dt]:text-[var(--muted)] [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] max-[600px]:[&_dd]:mb-[7px]";
+const tabListClass =
+  "inline-flex w-fit min-w-0 flex-wrap items-center gap-1 rounded-lg bg-[var(--raised)] p-1";
+const tabClass =
+  "flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-3 text-sm font-medium text-[var(--muted)] transition-colors data-[selected]:bg-[var(--surface)] data-[selected]:text-[var(--ink)] data-[selected]:shadow-[0_1px_2px_rgb(0_0_0/0.08)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--accent)] data-[focus-visible]:outline-offset-2 pointer-coarse:min-h-10 max-[599px]:min-h-9";
+const tabPanelClass =
+  "min-w-0 focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2 data-[inert]:hidden";
+const disclosureClass =
+  "min-w-0 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 [&:not([open])>div]:hidden";
+const issueClass =
+  "grid min-w-0 gap-2 rounded-lg border border-[color-mix(in_srgb,var(--error)_35%,var(--line))] bg-[var(--error-soft)] p-3 text-[var(--error)]";
 
 const copy = {
   en: {
-    metadataState: "Publication metadata state",
     compareEffectiveMetadata: "Compare effective metadata",
-    publicationFileStatus: "Publication file",
     actualCoverRegion: "Actual cover of the current publication",
     actualCover: "Actual cover",
     unknown: "unknown",
@@ -91,11 +109,31 @@ const copy = {
     providerHint: "Provider title",
     noLink: "No link",
     externalChangeTime: "External file change · observed at",
+    tabList: "Position sections",
+    overview: "Overview",
+    filesPublication: "Files and publication",
+    metadata: "Metadata",
+    publication: "Publication",
+    positionStatus: "Position status",
+    published: "Published",
+    unpublished: "Not published",
+    selectedSource: "Selected source",
+    noSourceSelected: "No source selected",
+    currentOutput: "Current output",
+    outputNotReported: "Not reported",
+    fileCheck: "File check",
+    openFilesPublication: "Open Files and publication",
+    reviewPublicationIssue: "Review in Files and publication",
+    chooseSourceAndPublish: "Choose a source and publish",
+    publicationIssue: "Publication issue",
+    backToPublicationQueue: "Back to publication queue",
+    moreActions: "More actions",
+    currentPublicationTags: "Current publication tags",
+    effectiveFacts: "Effective metadata",
+    noEffectiveFacts: "No effective metadata is available.",
   },
   ru: {
-    metadataState: "Состояние метаданных публикации",
     compareEffectiveMetadata: "Сравнить эффективные метаданные",
-    publicationFileStatus: "Файл публикации",
     actualCoverRegion: "Фактическая обложка текущей публикации",
     actualCover: "Фактическая обложка",
     unknown: "неизвестно",
@@ -142,6 +180,28 @@ const copy = {
     providerHint: "Название у провайдера",
     noLink: "Нет связи",
     externalChangeTime: "Внешнее изменение файла · время наблюдения",
+    tabList: "Разделы позиции",
+    overview: "Обзор",
+    filesPublication: "Файлы и публикация",
+    metadata: "Метаданные",
+    publication: "Публикация",
+    positionStatus: "Состояние позиции",
+    published: "Опубликовано",
+    unpublished: "Не опубликовано",
+    selectedSource: "Выбранный источник",
+    noSourceSelected: "Источник не выбран",
+    currentOutput: "Текущий результат",
+    outputNotReported: "Не сообщено",
+    fileCheck: "Проверка файла",
+    openFilesPublication: "Открыть «Файлы и публикация»",
+    reviewPublicationIssue: "Проверить в «Файлы и публикация»",
+    chooseSourceAndPublish: "Выбрать источник и опубликовать",
+    publicationIssue: "Проблема публикации",
+    backToPublicationQueue: "Назад к очереди публикации",
+    moreActions: "Другие действия",
+    currentPublicationTags: "Теги текущей публикации",
+    effectiveFacts: "Действительные метаданные",
+    noEffectiveFacts: "Действительные метаданные недоступны.",
   },
 } as const;
 
@@ -208,7 +268,38 @@ export type TrackScreenSourcesView = {
   position: string;
   items: readonly LibraryPositionSource[];
   choice?: { value: string; onChange: (id: string) => void };
-  inspection?: { value?: string; onChange: (id: string) => void };
+  inspection?: {
+    value?: string;
+    onChange: (id: string, trigger?: HTMLElement | null) => void;
+  };
+};
+
+/** Selected track screen section. The route codec uses the same identifiers. */
+export type TrackScreenTab = LibraryPositionTab;
+
+export const trackScreenTabs = [
+  "overview",
+  "publication",
+  "metadata",
+] as const satisfies readonly TrackScreenTab[];
+
+/** A publication-queue issue brought into the position screen by a deep link. */
+export type TrackScreenPublicationIssueView = {
+  message: string;
+  /** Optional queue return address; omit when the host cannot build one. */
+  backHref?: string;
+  /** Optional localized label; the view defaults to the publication queue. */
+  backLabel?: string;
+  /** Optional follow-up supplied by the host, rendered before the back link. */
+  action?: { label: string; href: string };
+  title?: string;
+};
+
+/** Simple effective metadata fact, already localized by the host. */
+export type TrackScreenMetadataFact = {
+  id?: string;
+  label: string;
+  value: string;
 };
 
 export type TrackScreenPublicationCurrentView = {
@@ -258,6 +349,8 @@ export type TrackScreenPublicationView = {
   published?: boolean;
   status?: string;
   diff?: ReactNode;
+  /** Actual output identity, separate from filesystem observation. */
+  output?: { label: string; summary?: string };
   outputStatus?: string;
   onPreview?: () => void;
   previewNotice?: string;
@@ -343,9 +436,9 @@ export function TrackProviderRefreshView({
  * Whole position route composition. The route owns every read and action
  * admission; this view renders a typed snapshot, a typed editor stack with
  * named host bridges, and narrow slots for the contextual publication preview,
- * deletion and tag evidence actors. The publication preview slot stays outside
- * the active-only branches so its controller keeps one reconciliation identity
- * across overview and position routes.
+ * deletion, source tags and tag comparison actors. The publication preview slot
+ * stays outside the active-only branches so its controller keeps one
+ * reconciliation identity across overview and position routes.
  */
 export type TrackScreenViewProps<
   ContextProps extends object = Record<never, never>,
@@ -355,6 +448,30 @@ export type TrackScreenViewProps<
   notFound?: TrackScreenNotFoundView;
   heading?: TrackScreenHeadingView;
   providerRefresh?: TrackProviderRefreshModel;
+  /**
+   * Selected position section. `tab` is controlled; `initialTab` seeds the
+   * internal selection for an uncontrolled deep link. Both use route values
+   * from the `tab` query parameter.
+   */
+  tab?: TrackScreenTab;
+  initialTab?: TrackScreenTab;
+  onTabChange?: (tab: TrackScreenTab) => void;
+  /**
+   * Issue supplied by the publication queue deep link. It is shown above the
+   * tabs and the Files and publication details; the view never invents a fix.
+   */
+  publicationIssue?: TrackScreenPublicationIssueView;
+  /**
+   * Return address for a position opened from the publication queue. It stays
+   * visible near the heading after an artist selection, unless the issue banner
+   * already supplies the same back link.
+   */
+  queueBackHref?: string;
+  /**
+   * Already localized effective metadata facts shown before the metadata
+   * editors. The host owns computed title/artist/genre values.
+   */
+  metadataFacts?: readonly TrackScreenMetadataFact[];
   /**
    * Typed position editor composition. The portable stack owns editor order and
    * mounts nothing for an inactive retained position.
@@ -369,9 +486,11 @@ export type TrackScreenViewProps<
   tags?: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
+    /** Exact source whose "Inspect tags" action opened the drawer. */
+    sourceId?: string;
+    /** Comparison actor for that source; shown only for a reported CURRENT. */
     comparison?: ReactNode;
   };
-  evidence?: ReactNode;
 };
 
 function PublicationCurrentView({
@@ -409,7 +528,45 @@ function PublicationCurrentView({
           {text(locale, "lyrics")} {current.lyrics}.
         </p>
       )}
-      <PublicationTagSnapshotView locale={locale} tags={current.tags} />
+      <details className={disclosureClass}>
+        <summary className="cursor-pointer font-semibold">
+          {text(locale, "currentPublicationTags")}
+        </summary>
+        <div className="mt-2">
+          <PublicationTagSnapshotView locale={locale} tags={current.tags} />
+        </div>
+      </details>
+    </>
+  );
+}
+
+function PublicationNotices({
+  locale,
+  publication,
+}: {
+  locale: Locale;
+  publication?: TrackScreenPublicationView;
+}) {
+  return (
+    <>
+      {publication?.notice && <p role="status">{publication.notice}</p>}
+      {publication?.error && (
+        <p role="alert" className={alertClass}>
+          {publication.error}
+        </p>
+      )}
+      {publication?.readError && (
+        <div role="alert" className={alertClass}>
+          {publication.readError.text}{" "}
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={publication.readError.onRefresh}
+          >
+            {text(locale, "refreshData")}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -425,28 +582,32 @@ function PublicationReads({
 }) {
   const activity = publication?.activity;
   return (
-    <>
-      {publication?.status && (
-        <p role="note" aria-label={text(locale, "metadataState")}>
-          <strong>{publication.status}</strong>
-        </p>
-      )}
+    <div className="grid min-w-0 gap-2">
       {publication?.diff && (
         <details>
           <summary>{text(locale, "compareEffectiveMetadata")}</summary>
           {publication.diff}
         </details>
       )}
-      {publication?.outputStatus && (
-        <p>
-          {text(locale, "publicationFileStatus")}: {publication.outputStatus}.
-        </p>
-      )}
       <PublicationCurrentSummaryView
         locale={locale}
         published={publication?.published ?? false}
       />
-      {deletion}
+      <dl className={factsClass}>
+        <dt>{text(locale, "currentOutput")}</dt>
+        <dd>
+          <PublicationOutputValue locale={locale} publication={publication} />
+        </dd>
+        {publication?.outputStatus && (
+          <>
+            <dt>{text(locale, "fileCheck")}</dt>
+            <dd>{publication.outputStatus}</dd>
+          </>
+        )}
+      </dl>
+      {publication?.current && (
+        <PublicationCurrentView locale={locale} current={publication.current} />
+      )}
       {publication?.coverEmbedding && (
         <p>
           {text(locale, "coverEmbeddingOutcome")}{" "}
@@ -536,25 +697,284 @@ function PublicationReads({
           .
         </p>
       )}
-      {publication?.notice && <p role="status">{publication.notice}</p>}
-      {publication?.error && (
-        <p role="alert" className={alertClass}>
-          {publication.error}
-        </p>
+      {deletion && (
+        <details className={disclosureClass}>
+          <summary className="cursor-pointer font-semibold">
+            {text(locale, "moreActions")}
+          </summary>
+          <div className="mt-2">{deletion}</div>
+        </details>
       )}
-      {publication?.readError && (
-        <div role="alert" className={alertClass}>
-          {publication.readError.text}{" "}
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={publication.readError.onRefresh}
-          >
-            {text(locale, "refreshData")}
-          </button>
-        </div>
-      )}
+    </div>
+  );
+}
+
+function PublicationOutputValue({
+  locale,
+  publication,
+}: {
+  locale: Locale;
+  publication?: TrackScreenPublicationView;
+}) {
+  if (publication?.output) {
+    return (
+      <>
+        <strong>{publication.output.label}</strong>
+        {publication.output.summary ? ` · ${publication.output.summary}` : ""}
+      </>
+    );
+  }
+  return (
+    <>
+      {publication?.published
+        ? text(locale, "outputNotReported")
+        : text(locale, "unpublished")}
     </>
+  );
+}
+
+function PositionStatus({
+  locale,
+  publication,
+  issue,
+}: {
+  locale: Locale;
+  publication?: TrackScreenPublicationView;
+  issue?: TrackScreenPublicationIssueView;
+}) {
+  return (
+    <section
+      aria-label={text(locale, "positionStatus")}
+      className="grid min-w-0 gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge
+          tone={
+            publication?.published ? "success" : issue ? "warning" : "neutral"
+          }
+        >
+          {publication?.published
+            ? text(locale, "published")
+            : text(locale, "unpublished")}
+        </StatusBadge>
+        {publication?.status && (
+          <span className="min-w-0 text-sm text-[var(--ink)] wrap-anywhere">
+            {publication.status}
+          </span>
+        )}
+      </div>
+      <PublicationNotices locale={locale} publication={publication} />
+    </section>
+  );
+}
+
+function PublicationIssueBanner({
+  locale,
+  issue,
+}: {
+  locale: Locale;
+  issue: TrackScreenPublicationIssueView;
+}) {
+  return (
+    <section
+      role="alert"
+      aria-label={text(locale, "publicationIssue")}
+      className={issueClass}
+    >
+      <h2 className="m-0 text-sm font-semibold">
+        {issue.title ?? text(locale, "publicationIssue")}
+      </h2>
+      <p className="my-0 wrap-anywhere">{issue.message}</p>
+      {issue.action && (
+        <a className="w-fit font-medium underline" href={issue.action.href}>
+          {issue.action.label}
+        </a>
+      )}
+      {issue.backHref && (
+        <a className="w-fit font-medium underline" href={issue.backHref}>
+          {issue.backLabel ?? text(locale, "backToPublicationQueue")}
+        </a>
+      )}
+    </section>
+  );
+}
+
+function TrackScreenOverview({
+  locale,
+  sources,
+  publication,
+  issue,
+  onOpenPublication,
+}: {
+  locale: Locale;
+  sources?: TrackScreenSourcesView;
+  publication?: TrackScreenPublicationView;
+  issue?: TrackScreenPublicationIssueView;
+  onOpenPublication: () => void;
+}) {
+  const selectedSource = sources?.items.find((source) => source.selected);
+  const actionLabel = issue
+    ? text(locale, "reviewPublicationIssue")
+    : publication?.published
+      ? text(locale, "openFilesPublication")
+      : text(locale, "chooseSourceAndPublish");
+  return (
+    <section
+      aria-label={text(locale, "overview")}
+      className="grid min-w-0 gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3"
+    >
+      <dl className={factsClass}>
+        <dt>{text(locale, "selectedSource")}</dt>
+        <dd>
+          {selectedSource ? (
+            <>
+              <strong>{selectedSource.label}</strong>
+              {selectedSource.summary ? ` · ${selectedSource.summary}` : ""}
+            </>
+          ) : (
+            text(locale, "noSourceSelected")
+          )}
+        </dd>
+        <dt>{text(locale, "currentOutput")}</dt>
+        <dd>
+          <PublicationOutputValue locale={locale} publication={publication} />
+        </dd>
+        {publication?.outputStatus && (
+          <>
+            <dt>{text(locale, "fileCheck")}</dt>
+            <dd>{publication.outputStatus}</dd>
+          </>
+        )}
+      </dl>
+      <div className={actionsClass}>
+        <AppButton type="button" variant="primary" onPress={onOpenPublication}>
+          {actionLabel}
+        </AppButton>
+      </div>
+    </section>
+  );
+}
+
+function PublicationPanel<ContextProps extends object = Record<never, never>>({
+  locale,
+  visible,
+  sources,
+  publication,
+  contextualPublication,
+  actions,
+  deletion,
+  technical,
+}: {
+  locale: Locale;
+  visible: boolean;
+  sources?: TrackScreenSourcesView;
+  publication?: TrackScreenPublicationView;
+  contextualPublication?: ContextPublicationPreviewSource<ContextProps>;
+  actions?: ReactNode;
+  deletion?: ReactNode;
+  technical?: TrackScreenTechnicalView;
+}) {
+  const publicationTitle = useId();
+  return (
+    <div className="grid min-w-0 gap-3">
+      <div className="grid min-w-0 gap-3 [grid-template-columns:minmax(0,1.05fr)_minmax(0,.95fr)] max-[1000px]:grid-cols-1">
+        <div className="min-w-0">
+          {visible && sources ? (
+            <LibraryPositionSourcesView
+              locale={locale}
+              position={sources.position}
+              sources={sources.items}
+              choice={sources.choice}
+              inspection={sources.inspection}
+            />
+          ) : null}
+        </div>
+        <section
+          aria-labelledby={publicationTitle}
+          className="mb-[10px] min-w-0 self-start rounded-lg border border-[var(--line)] bg-[var(--surface)] p-[10px] wrap-anywhere [&_h2]:mb-[9px] [&_h2]:text-sm [&_h3]:mb-2 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2"
+        >
+          <h2 id={publicationTitle}>{text(locale, "publication")}</h2>
+          {visible ? (
+            <>
+              <PublicationReads
+                locale={locale}
+                publication={publication}
+                deletion={deletion}
+              />
+              {publication?.onPreview && (
+                <div className={actionsClass}>
+                  <LibraryPositionPreviewButton
+                    locale={locale}
+                    onPreview={publication.onPreview}
+                  />
+                </div>
+              )}
+              {publication?.previewNotice ? (
+                <ScreenStatus>{publication.previewNotice}</ScreenStatus>
+              ) : null}
+              {actions}
+            </>
+          ) : null}
+          {contextualPublication ? (
+            <ContextPublicationPreviewOutlet source={contextualPublication} />
+          ) : null}
+        </section>
+      </div>
+      {visible && technical ? (
+        <TechnicalDetails locale={locale} technical={technical} />
+      ) : null}
+    </div>
+  );
+}
+
+function MetadataPanel({
+  locale,
+  active,
+  technical,
+  metadataFacts,
+  editors,
+}: {
+  locale: Locale;
+  active: boolean;
+  technical?: TrackScreenTechnicalView;
+  metadataFacts?: readonly TrackScreenMetadataFact[];
+  editors?: TrackScreenViewProps["editors"];
+}) {
+  return (
+    <div className="grid min-w-0 gap-3">
+      <section
+        aria-label={text(locale, "effectiveFacts")}
+        className={disclosureClass}
+      >
+        {metadataFacts?.length ? (
+          <dl className={factsClass}>
+            {metadataFacts.map((fact, index) => (
+              <Fragment key={fact.id ?? `${fact.label}-${index}`}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        ) : technical ? (
+          <LibraryPositionIdentityView
+            locale={locale}
+            position={technical.position}
+            title={technical.title}
+            durationMs={technical.durationMs}
+            recordingTitle={technical.recordingTitle}
+          />
+        ) : (
+          <p className="m-0">{text(locale, "noEffectiveFacts")}</p>
+        )}
+      </section>
+      {active && editors ? (
+        <LibraryPositionEditorsView
+          locale={locale}
+          active={active}
+          {...editors}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -621,6 +1041,12 @@ export function TrackScreenView<
   notFound,
   heading,
   providerRefresh,
+  tab,
+  initialTab,
+  onTabChange,
+  publicationIssue,
+  queueBackHref,
+  metadataFacts,
   editors,
   sources,
   publication,
@@ -629,8 +1055,61 @@ export function TrackScreenView<
   deletion,
   technical,
   tags,
-  evidence,
 }: TrackScreenViewProps<ContextProps>) {
+  const [internalTab, setInternalTab] = useState<TrackScreenTab>(
+    initialTab ?? "overview",
+  );
+  const lastInitialTab = useRef(initialTab);
+  useEffect(() => {
+    if (tab !== undefined || lastInitialTab.current === initialTab) return;
+    lastInitialTab.current = initialTab;
+    setInternalTab(initialTab ?? "overview");
+  }, [initialTab, tab]);
+  const selectedTab = tab ?? internalTab;
+  const [metadataVisited, setMetadataVisited] = useState(
+    selectedTab === "metadata",
+  );
+  useEffect(() => {
+    if (selectedTab === "metadata" && !metadataVisited)
+      setMetadataVisited(true);
+  }, [metadataVisited, selectedTab]);
+  const selectTab = (next: TrackScreenTab) => {
+    if (tab === undefined) setInternalTab(next);
+    onTabChange?.(next);
+  };
+  const tagsOpen = tags?.open ?? false;
+  const tagTrigger = useRef<HTMLElement | null>(null);
+  const activeTab = useRef(selectedTab);
+  useEffect(() => {
+    if (activeTab.current === selectedTab) return;
+    activeTab.current = selectedTab;
+    if (!tagsOpen) return;
+    tagTrigger.current = null;
+    tags?.onOpenChange(false);
+  }, [selectedTab, tags, tagsOpen]);
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (wasActive.current === active) return;
+    wasActive.current = active;
+    if (active || !tagsOpen) return;
+    tagTrigger.current = null;
+    tags?.onOpenChange(false);
+  }, [active, tags, tagsOpen]);
+  const inspection = sources?.inspection
+    ? {
+        value: sources.inspection.value,
+        onChange: (id: string, trigger?: HTMLElement | null) => {
+          tagTrigger.current = trigger ?? null;
+          sources.inspection?.onChange(id, trigger);
+        },
+      }
+    : undefined;
+  const taggedSources = sources ? { ...sources, inspection } : undefined;
+  const tagSourceId = tags?.sourceId ?? inspection?.value;
+  const tagSource = tagSourceId
+    ? taggedSources?.items.find((source) => source.id === tagSourceId)
+    : undefined;
+  const currentTags = publication?.current ?? technical?.current;
   if (notFound) {
     return (
       <section className={libraryPositionPageClassName}>
@@ -652,6 +1131,13 @@ export function TrackScreenView<
       {active && heading && (
         <LibraryPositionHeadingView locale={locale} {...heading} />
       )}
+      {active && queueBackHref && !publicationIssue?.backHref && (
+        <p className="m-0 text-sm">
+          <a className="font-medium underline" href={queueBackHref}>
+            {text(locale, "backToPublicationQueue")}
+          </a>
+        </p>
+      )}
       {active && providerRefresh && (
         <TrackProviderRefreshView {...providerRefresh} />
       )}
@@ -660,72 +1146,88 @@ export function TrackScreenView<
         className="grid min-w-0 gap-3"
         hidden={!active}
       >
-        <LibraryPositionWorkspace
+        <PositionStatus
           locale={locale}
-          editors={
-            editors ? (
-              <LibraryPositionEditorsView
+          publication={publication}
+          issue={publicationIssue}
+        />
+        {publicationIssue && (
+          <PublicationIssueBanner locale={locale} issue={publicationIssue} />
+        )}
+        <Tabs
+          selectedKey={selectedTab}
+          onSelectionChange={(key: Key) => {
+            const next =
+              typeof key === "string" &&
+              trackScreenTabs.includes(key as TrackScreenTab)
+                ? (key as TrackScreenTab)
+                : "overview";
+            selectTab(next);
+          }}
+          aria-label={text(locale, "tabList")}
+          className="grid min-w-0 gap-3"
+        >
+          <TabList
+            aria-label={text(locale, "tabList")}
+            className={tabListClass}
+          >
+            {trackScreenTabs.map((tabKey) => (
+              <Tab key={tabKey} id={tabKey} className={tabClass}>
+                {text(
+                  locale,
+                  tabKey === "publication" ? "filesPublication" : tabKey,
+                )}
+              </Tab>
+            ))}
+          </TabList>
+          <TabPanel id="overview" className={tabPanelClass}>
+            <TrackScreenOverview
+              locale={locale}
+              sources={sources}
+              publication={publication}
+              issue={publicationIssue}
+              onOpenPublication={() => selectTab("publication")}
+            />
+          </TabPanel>
+          <TabPanel id="publication" shouldForceMount className={tabPanelClass}>
+            <div hidden={selectedTab !== "publication"}>
+              <PublicationPanel
+                locale={locale}
+                visible={active && selectedTab === "publication"}
+                sources={taggedSources}
+                publication={publication}
+                contextualPublication={contextualPublication}
+                actions={actions}
+                deletion={deletion}
+                technical={technical}
+              />
+            </div>
+          </TabPanel>
+          <TabPanel
+            id="metadata"
+            shouldForceMount={metadataVisited}
+            className={tabPanelClass}
+          >
+            <div hidden={selectedTab !== "metadata"}>
+              <MetadataPanel
                 locale={locale}
                 active={active}
-                {...editors}
+                technical={technical}
+                metadataFacts={metadataFacts}
+                editors={editors}
               />
-            ) : undefined
-          }
-          sources={
-            active && sources ? (
-              <LibraryPositionSourcesView
-                locale={locale}
-                position={sources.position}
-                sources={sources.items}
-                choice={sources.choice}
-                inspection={sources.inspection}
-              />
-            ) : undefined
-          }
-          publication={
-            active ? (
-              <PublicationReads
-                locale={locale}
-                publication={publication}
-                deletion={deletion}
-              />
-            ) : undefined
-          }
-          actions={
-            <>
-              {publication?.onPreview && (
-                <div className={actionsClass}>
-                  <LibraryPositionPreviewButton
-                    locale={locale}
-                    onPreview={publication.onPreview}
-                  />
-                </div>
-              )}
-              {publication?.previewNotice ? (
-                <ScreenStatus>{publication.previewNotice}</ScreenStatus>
-              ) : null}
-              {contextualPublication ? (
-                <ContextPublicationPreviewOutlet
-                  source={contextualPublication}
-                />
-              ) : null}
-              {actions}
-            </>
-          }
-          technicalDetails={
-            active && technical ? (
-              <TechnicalDetails locale={locale} technical={technical} />
-            ) : undefined
-          }
-        />
-        {active && tags && (
-          <LibraryPositionTagsDisclosure
+            </div>
+          </TabPanel>
+        </Tabs>
+        {active && tagsOpen && tags && (
+          <LibraryPositionSourceTagsDrawer
             locale={locale}
-            open={tags.open}
-            onOpenChange={tags.onOpenChange}
-          >
-            {tags.comparison ?? evidence}
-          </LibraryPositionTagsDisclosure>
+            source={tagSource}
+            currentReported={Boolean(currentTags)}
+            comparison={tags.comparison}
+            onClose={() => tags.onOpenChange(false)}
+            returnFocusRef={tagTrigger}
+          />
         )}
       </article>
     </section>

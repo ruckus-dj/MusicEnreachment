@@ -51,7 +51,12 @@ export interface ProductShellProps {
 	activeSection?: ShellSectionId;
 	sectionLinks: ShellSectionLinks;
 	incomingCount?: number;
-	footer: { kind: "prototype" } | { kind: "version"; version: string };
+	footer:
+		| { kind: "label"; label: string }
+		| {
+				kind: "version";
+				version: string;
+		  };
 	setupHref?: string;
 	themeStore: ThemePreferenceStore;
 	fallbackSection?: "home" | "library";
@@ -143,11 +148,7 @@ export function ProductShell({
 			}
 			navigation={navigation}
 			controls={shellControls(themeStore)}
-			footerText={
-				footer.kind === "prototype"
-					? copy.prototypeFooter
-					: `v${footer.version}`
-			}
+			footerText={footer.kind === "label" ? footer.label : `v${footer.version}`}
 			setupLink={setupHref ? { href: setupHref, label: copy.setup } : undefined}
 		>
 			{children}
