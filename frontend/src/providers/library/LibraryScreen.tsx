@@ -171,7 +171,6 @@ function libraryArtistCardsModel({
     photoEligible: artist.provider_links.some(
       (link) => link.provider_code === "musicbrainz",
     ),
-    partialProviderScope: true,
     selection: selectionControl({ kind: "artist", id: artist.id }),
   }));
   return {

@@ -347,7 +347,6 @@ function useLibraryArtistModel(
       missing: artist.missing_release_groups ?? 0,
       local: artist.release_count - (artist.missing_release_groups ?? 0),
     },
-    includesCachedGroups: !artist.discography_complete,
     discographyComplete: artist.discography_complete,
   };
   const deletion: ArtistDeletionAction = {

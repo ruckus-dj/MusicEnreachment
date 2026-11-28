@@ -34,7 +34,6 @@ export type ArtistHeadingModel = {
     local: number;
   };
   discographyComplete?: boolean;
-  includesCachedGroups?: boolean;
   selection?: {
     total: number;
     selected: number;
@@ -309,7 +308,6 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
         palette={heading.palette}
         count={heading.count}
         discographyComplete={heading.discographyComplete}
-        includesCachedGroups={heading.includesCachedGroups}
         selection={heading.selection}
       />
       <div
@@ -429,9 +427,6 @@ export function ArtistScreenView(props: ArtistScreenViewProps) {
                         {m("musicBrainzId")}: {row.group.providerKey}
                       </span>
                     )}
-                    <span className={catalogueStyles.secondary}>
-                      {m("cacheNotice")}
-                    </span>
                     {row.group.chooser}
                   </article>
                 </div>

@@ -22,7 +22,6 @@ const copyByLocale = {
     selectPage: "Select on this page",
     positionsOnlyHelp: "Selection applies to positions, not artist records.",
     noArtists: "No artists found.",
-    partialProviderScope: "Provider counts cover the known cache only.",
     photoThumbnail: "Cropped thumbnail",
     photoCredit: "Photo",
     photoSource: "Wikimedia Commons",
@@ -38,7 +37,6 @@ const copyByLocale = {
     selectPage: "Выбрать на этой странице",
     positionsOnlyHelp: "Выбор относится к позициям, а не к записям артистов.",
     noArtists: "Артисты не найдены.",
-    partialProviderScope: "Данные провайдера ограничены известным кэшем.",
     photoThumbnail: "Кадрированное превью",
     photoCredit: "Фото",
     photoSource: "Wikimedia Commons",
@@ -99,7 +97,6 @@ export interface LibraryArtistCard {
    * The view does not render this; the production photo actor reads it.
    */
   photoEligible?: boolean;
-  partialProviderScope?: boolean;
   /** Plain per-card selection state and action, derived by the host. */
   selection: ArtistCardSelectionControl;
 }
@@ -297,11 +294,6 @@ function ArtistCardContent({
           </dd>
         </div>
       </dl>
-      {artist.partialProviderScope ? (
-        <p className="m-0 text-xs text-[var(--warning)]">
-          {copy.partialProviderScope}
-        </p>
-      ) : null}
       {photo ? <ArtistPhotoCredit locale={locale} photo={photo} /> : null}
     </>
   );

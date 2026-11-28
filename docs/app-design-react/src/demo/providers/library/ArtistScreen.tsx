@@ -453,7 +453,6 @@ export function ArtistScreen({
       local: artistReleases.length,
     },
     discographyComplete: artist.discographyComplete,
-    includesCachedGroups: !artist.discographyComplete,
     selection: {
       total: ids.length,
       selected: selectedCount,

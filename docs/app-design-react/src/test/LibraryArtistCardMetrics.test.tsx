@@ -33,14 +33,12 @@ const locales = [
     audio: "Audio",
     published: "Published",
     help: "Selection applies to positions, not artist records.",
-    providerWarning: "Provider counts cover the known cache only.",
   },
   {
     locale: "ru",
     audio: "Аудио",
     published: "Опубликовано",
     help: "Выбор относится к позициям, а не к записям артистов.",
-    providerWarning: "Данные провайдера ограничены известным кэшем.",
   },
 ] as const;
 
@@ -51,12 +49,11 @@ it.each(
   audio,
   published,
   help,
-  providerWarning,
 }) => {
   render(
     <LibraryArtistCards
       locale={locale}
-      artists={[artist({ partialProviderScope: true })]}
+      artists={[artist()]}
       pageSelectionControl={{
         isSelected: false,
         isIndeterminate: false,
@@ -74,7 +71,6 @@ it.each(
   expect(within(row).queryByText("Releases")).toBeNull();
   expect(within(row).queryByText("Positions")).toBeNull();
   expect(within(row).queryByText("Without an edition")).toBeNull();
-  expect(within(row).getByText(providerWarning)).toBeInTheDocument();
   expect(screen.getByText(help)).toBeInTheDocument();
 });
 

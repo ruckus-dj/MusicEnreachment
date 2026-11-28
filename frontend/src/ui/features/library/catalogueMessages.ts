@@ -28,8 +28,6 @@ export const catalogueMessages = createNamespace({
     durationUnknown: "Duration unknown",
     dateNotSpecified: "Date not specified",
     musicBrainzId: "MusicBrainz ID",
-    cacheNotice:
-      "Known MusicBrainz cache entries only; this may not be a complete discography.",
     total: "total",
     localRelease: "Local release",
     countryUnspecified: "Country not specified",
@@ -186,8 +184,6 @@ export const catalogueMessages = createNamespace({
     durationUnknown: "Длительность неизвестна",
     dateNotSpecified: "Дата не указана",
     musicBrainzId: "MusicBrainz ID",
-    cacheNotice:
-      "Показаны только известные записи кэша MusicBrainz; это может не быть полная дискография.",
     total: "всего",
     localRelease: "Локальное издание",
     countryUnspecified: "Страна не указана",

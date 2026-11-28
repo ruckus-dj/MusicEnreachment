@@ -185,8 +185,6 @@ const copy = {
     notPublished: "Not published",
     dateUnknown: "Date not specified",
     unnamedArtist: "Unnamed artist",
-    cacheNotice:
-      "Known MusicBrainz cache entries only; this may not be a complete discography.",
   },
   ru: {
     table: "Альбомы медиатеки",
@@ -215,8 +213,6 @@ const copy = {
     notPublished: "Не опубликовано",
     dateUnknown: "Дата не указана",
     unnamedArtist: "Без имени",
-    cacheNotice:
-      "Показаны только известные записи кэша MusicBrainz; это может быть не полная дискография.",
   },
 } as const;
 
@@ -432,7 +428,6 @@ function AlbumDetail({
           </>
         ) : null}
       </p>
-      <p className={subClass}>{text.cacheNotice}</p>
       <LibraryMissingEditionView locale={locale} {...detail} />
     </div>
   );
