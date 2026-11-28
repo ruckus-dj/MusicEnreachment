@@ -205,8 +205,15 @@ func assertFrozenApplyRejectsRefreshedProjection(t *testing.T, fixture uniquePub
 	if err != nil || len(current.Releases) != 1 || current.Releases[0].Name != "Provider Album B" {
 		t.Fatalf("current provider projection before apply=%+v err=%v; want B", current.Releases, err)
 	}
-	if len(current.Releases[0].Tracks) != 2 || current.Releases[0].Tracks[0].RecordingTitle != "Recording Title B" || !strings.Contains(string(current.Releases[0].Fields), "Track Override B") {
-		t.Fatalf("current provider track projection=%+v; want B override and recording title", current.Releases[0].Tracks)
+	originalTitles := map[string]string{
+		"90000000-0000-4000-8000-0000000000fb": "Original Recording Alpha",
+		"90000000-0000-4000-8000-0000000000fd": "Original Recording Beta",
+	}
+	tracks := current.Releases[0].Tracks
+	if len(tracks) != 2 || tracks[0].RecordingTitle != originalTitles[tracks[0].RecordingProviderKey] ||
+		tracks[0].TrackTitle != "Track Override B" || !strings.Contains(string(current.Releases[0].Fields), "Recording Title B") {
+		t.Fatalf("current provider track projection=%+v; want B position override, original shared recording title, and B's embedded observation",
+			current.Releases[0].Tracks)
 	}
 
 	runFrozenApplyWorker(t, fixture, operations, true)

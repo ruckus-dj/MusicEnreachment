@@ -176,64 +176,117 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 		if err != nil {
 			return FrozenMaterialization{}, fmt.Errorf("%w: decode recording fields: %v", errInvalidFrozenMaterialization, err)
 		}
+		normalizedTrack, normalizedPresent := acceptedNormalizedTrackRecord(releaseFields["normalized_tracks"], track.Medium, track.Position, assignment.RecordingKey)
+		var embeddedFields map[string]json.RawMessage
+		embeddedPresent := normalizedPresent && matchingHasEmbeddedRecording(normalizedTrack.Recording)
+		if embeddedPresent {
+			embeddedFields, _ = decodeFrozenRecordingObject(normalizedTrack.Recording)
+		}
 		recordingEntity, _ := findProjectionEntity(snapshot.ProjectionEntities, "recording", assignment.RecordingKey)
-		recordingTitle := track.RecordingTitle
-		var recordingTitleSource *FrozenFieldSource
-		if recordingEntity != nil {
-			if recordingEntity.Name != "" {
-				recordingTitle = recordingEntity.Name
-			} else if value := jsonString(trackFields["title"]); value != "" {
-				recordingTitle = value
+		directRecording := recordingEntity != nil && matchingDirectRecordingMarker(recordingEntity.FieldEvidence)
+		if !directRecording {
+			// Only a directly observed recording projection may supply shared
+			// recording title or credits. Rank alone does not identify provenance,
+			// and a pre-upgrade release cache may still hold an unmarked merged
+			// projection; it must never mint provider-wide values for a new apply.
+			recordingEntity = nil
+		}
+		var embeddedTitle string
+		var embeddedCredits []FrozenArtistCredit
+		var embeddedCreditsPresent bool
+		if embeddedPresent {
+			embeddedTitle = jsonString(embeddedFields["title"])
+			embeddedCredits, embeddedCreditsPresent, err = decodeFrozenCredits(embeddedFields["artist-credit"])
+			if err != nil {
+				return FrozenMaterialization{}, fmt.Errorf("%w: decode embedded recording credits: %v", errInvalidFrozenMaterialization, err)
 			}
-			if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["title"]; ok && (recordingEntity.Name != "" || jsonString(trackFields["title"]) != "") {
+		}
+		// Pre-upgrade caches predate normalized_tracks[].recording. Their accepted
+		// raw media still proves the exact position and recording ID, so recover
+		// the nested recording for position-scoped values only.
+		var mediaTitle string
+		var mediaCredits []FrozenArtistCredit
+		var mediaCreditsPresent bool
+		var mediaSource *FrozenFieldSource
+		if !directRecording && !embeddedPresent {
+			if mediaFields, evidence, ok := acceptedEmbeddedMediaRecording(releaseFields["media"], selected.FieldEvidence, track.Medium, track.Position, assignment.RecordingKey, track.Authority, track.FetchOrder); ok {
+				mediaTitle = jsonString(mediaFields["title"])
+				mediaCredits, mediaCreditsPresent, err = decodeFrozenCredits(mediaFields["artist-credit"])
+				if err != nil {
+					return FrozenMaterialization{}, fmt.Errorf("%w: decode embedded media recording credits: %v", errInvalidFrozenMaterialization, err)
+				}
+				source := frozenFieldSource("release", selected.ProviderKey, "media", evidence)
+				mediaSource = &source
+			}
+		}
+
+		// Shared recording evidence comes only from a direct observation. A
+		// release-nested recording is position-scoped and must never mint a
+		// provider-wide recording title or credit set.
+		recordingTitle := ""
+		var recordingTitleSource *FrozenFieldSource
+		var recordingCredits []FrozenArtistCredit
+		var recordingCreditSource *FrozenFieldSource
+		recordingCreditsPresent := false
+		if recordingEntity != nil {
+			recordingTitle = recordingEntity.Name
+			if recordingTitle == "" {
+				recordingTitle = jsonString(trackFields["title"])
+			}
+			if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["title"]; ok && recordingTitle != "" {
 				source := frozenFieldSource("recording", recordingEntity.ProviderKey, "title", evidence)
 				recordingTitleSource = &source
 			}
-		}
-		title := recordingTitle
-		var titleSource *FrozenFieldSource
-		if recordingEntity != nil {
-			titleSource = recordingTitleSource
-		}
-		if normalizedTitle, exists := acceptedNormalizedTrackTitle(releaseFields["normalized_tracks"], track.Medium, track.Position, assignment.RecordingKey); exists && normalizedTitle != "" {
-			title = normalizedTitle
-			titleSource = nil
-			if evidence, ok := selected.FieldEvidence["normalized_tracks"]; ok {
-				source := frozenFieldSource("release", selected.ProviderKey, "normalized_tracks", evidence)
-				titleSource = &source
+			recordingCredits, recordingCreditsPresent, err = decodeFrozenCredits(trackFields["artist-credit"])
+			if err != nil {
+				return FrozenMaterialization{}, fmt.Errorf("%w: decode recording credits: %v", errInvalidFrozenMaterialization, err)
 			}
-		}
-		recordingCredits, _, err := decodeFrozenCredits(trackFields["artist-credit"])
-		if err != nil {
-			return FrozenMaterialization{}, fmt.Errorf("%w: decode recording credits: %v", errInvalidFrozenMaterialization, err)
-		}
-		var recordingCreditSource *FrozenFieldSource
-		if recordingEntity != nil {
 			if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["artist-credit"]; ok {
 				source := frozenFieldSource("recording", recordingEntity.ProviderKey, "artist-credit", evidence)
 				recordingCreditSource = &source
 			}
-		}
-		for index := range recordingCredits {
-			if recordingCreditSource != nil {
-				source := *recordingCreditSource
-				recordingCredits[index].Source = &source
+			for index := range recordingCredits {
+				if recordingCreditSource != nil {
+					source := *recordingCreditSource
+					recordingCredits[index].Source = &source
+				}
+				applyFrozenArtistName(snapshot.ProjectionEntities, &recordingCredits[index])
 			}
-			applyFrozenArtistName(snapshot.ProjectionEntities, &recordingCredits[index])
 		}
-		credits, trackCreditOverride, err := acceptedNormalizedTrackCredits(releaseFields["normalized_tracks"], track.Medium, track.Position, assignment.RecordingKey, selected)
-		if err != nil {
-			return FrozenMaterialization{}, fmt.Errorf("%w: decode normalized track credits: %v", errInvalidFrozenMaterialization, err)
+
+		title := recordingTitle
+		titleSource := recordingTitleSource
+		if normalizedPresent && normalizedTrack.Title != "" {
+			title = normalizedTrack.Title
+			titleSource = frozenNormalizedTrackSource(selected)
+		} else if title == "" && embeddedTitle != "" {
+			title = embeddedTitle
+			titleSource = frozenNormalizedTrackSource(selected)
+		} else if title == "" && mediaTitle != "" {
+			title = mediaTitle
+			titleSource = mediaSource
+		} else if title == "" {
+			title = track.TrackTitle
 		}
-		var creditSource *FrozenFieldSource
-		if trackCreditOverride {
-			if evidence, ok := selected.FieldEvidence["normalized_tracks"]; ok {
-				source := frozenFieldSource("release", selected.ProviderKey, "normalized_tracks", evidence)
-				creditSource = &source
+
+		credits := recordingCredits
+		trackCreditOverride := false
+		creditSource := recordingCreditSource
+		if normalizedPresent && normalizedTrack.ArtistCredit != nil {
+			credits, _, err = decodeFrozenCredits(*normalizedTrack.ArtistCredit)
+			if err != nil {
+				return FrozenMaterialization{}, fmt.Errorf("%w: decode normalized track credits: %v", errInvalidFrozenMaterialization, err)
 			}
-		} else {
-			credits = recordingCredits
-			creditSource = recordingCreditSource
+			trackCreditOverride = true
+			creditSource = frozenNormalizedTrackSource(selected)
+		} else if !recordingCreditsPresent && embeddedCreditsPresent {
+			credits = embeddedCredits
+			trackCreditOverride = true
+			creditSource = frozenNormalizedTrackSource(selected)
+		} else if !recordingCreditsPresent && mediaCreditsPresent {
+			credits = mediaCredits
+			trackCreditOverride = true
+			creditSource = mediaSource
 		}
 		for index := range credits {
 			if creditSource != nil {
@@ -344,6 +397,95 @@ func applyFrozenArtistName(entities []MatchingProjectionEntity, credit *FrozenAr
 	credit.ArtistName = name
 	source := frozenFieldSource("artist", entity.ProviderKey, "name", evidence)
 	credit.ArtistNameSource = &source
+}
+
+type frozenNormalizedTrackRecord struct {
+	Title        string
+	ArtistCredit *json.RawMessage
+	Recording    json.RawMessage
+}
+
+func acceptedNormalizedTrackRecord(raw json.RawMessage, medium, position int, recordingKey string) (frozenNormalizedTrackRecord, bool) {
+	var tracks []struct {
+		Medium               int              `json:"medium"`
+		Position             int              `json:"position"`
+		RecordingProviderKey string           `json:"recording_provider_key"`
+		Title                string           `json:"title"`
+		ArtistCredit         *json.RawMessage `json:"artist-credit"`
+		Recording            json.RawMessage  `json:"recording"`
+	}
+	if json.Unmarshal(raw, &tracks) != nil {
+		return frozenNormalizedTrackRecord{}, false
+	}
+	for _, track := range tracks {
+		if track.Medium == medium && track.Position == position && strings.EqualFold(track.RecordingProviderKey, recordingKey) {
+			return frozenNormalizedTrackRecord{Title: track.Title, ArtistCredit: track.ArtistCredit, Recording: track.Recording}, true
+		}
+	}
+	return frozenNormalizedTrackRecord{}, false
+}
+
+func decodeFrozenRecordingObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil || object == nil {
+		return nil, false
+	}
+	return object, true
+}
+
+// acceptedEmbeddedMediaRecording recovers the recording object embedded at one
+// exact accepted release position. Pre-upgrade caches keep the raw release media
+// but not normalized_tracks[].recording, so media is their only contextual
+// source. The media, normalized-track and track-collection evidence must all
+// match the accepted track edge, and the embedded recording ID must equal
+// recordingKey. The result is position-scoped and must never feed shared
+// recording writes.
+func acceptedEmbeddedMediaRecording(
+	media json.RawMessage,
+	fieldEvidence map[string]ProviderFieldEvidence,
+	medium, position int,
+	recordingKey string,
+	authority int,
+	fetchOrder int64,
+) (map[string]json.RawMessage, ProviderFieldEvidence, bool) {
+	mediaEvidence, ok := fieldEvidence["media"]
+	if !ok || mediaEvidence.Authority != authority || mediaEvidence.FetchOrder != fetchOrder {
+		return nil, ProviderFieldEvidence{}, false
+	}
+	for _, field := range []string{"normalized_tracks", "__tracks"} {
+		evidence, ok := fieldEvidence[field]
+		if !ok || evidence.Authority != authority || evidence.FetchOrder != fetchOrder {
+			return nil, ProviderFieldEvidence{}, false
+		}
+	}
+	if len(media) == 0 || string(media) == "null" {
+		return nil, ProviderFieldEvidence{}, false
+	}
+	var mediaValues []struct {
+		Tracks []struct {
+			Recording json.RawMessage `json:"recording"`
+		} `json:"tracks"`
+	}
+	if json.Unmarshal(media, &mediaValues) != nil || medium < 0 || medium >= len(mediaValues) ||
+		position < 0 || position >= len(mediaValues[medium].Tracks) {
+		return nil, ProviderFieldEvidence{}, false
+	}
+	recording, ok := decodeFrozenRecordingObject(mediaValues[medium].Tracks[position].Recording)
+	if !ok || !strings.EqualFold(jsonString(recording["id"]), recordingKey) {
+		return nil, ProviderFieldEvidence{}, false
+	}
+	return recording, mediaEvidence, true
+}
+
+func frozenNormalizedTrackSource(release *MatchingRelease) *FrozenFieldSource {
+	if evidence, ok := release.FieldEvidence["normalized_tracks"]; ok {
+		source := frozenFieldSource("release", release.ProviderKey, "normalized_tracks", evidence)
+		return &source
+	}
+	return nil
 }
 
 func acceptedNormalizedTrackTitle(raw json.RawMessage, medium, position int, recordingKey string) (string, bool) {

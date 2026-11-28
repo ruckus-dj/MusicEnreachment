@@ -241,7 +241,7 @@ func Run(ctx context.Context, config Config) error {
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	libraryRepository := persistence.NewLibraryRepository(db)
 	libraryArtworkScheduler := service.NewLibraryArtworkScheduler(libraryRepository)
-	localProviderCatalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), persistence.NewGenreCatalogRepository(db))
+	localProviderCatalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), persistence.NewGenreCatalogRepository(db)).WithRecordingHydrator(providerFetch)
 	libraryCatalog := service.NewLibraryCatalog(libraryRepository)
 	libraryArtistPhotos := service.NewLibraryArtistPhotos(libraryRepository, registry, providerFactory, newLibraryArtistPhotoResolver())
 	libraryRecordingSearch := service.NewLibraryRecordingSearch(providerFetch, setupManagerRepository, libraryRepository)

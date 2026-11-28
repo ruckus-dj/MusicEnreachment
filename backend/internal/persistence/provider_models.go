@@ -44,6 +44,9 @@ type ProviderRelease struct {
 	RawSource   json.RawMessage `json:"raw_source,omitempty"`
 }
 
+// ProviderRecording is the provider-scoped recording identity registry. Title,
+// Metadata, and RawSource are populated only by a direct recording lookup;
+// search hits and release-embedded recordings contribute identity only.
 type ProviderRecording struct {
 	ID          uuid.UUID       `json:"id"`
 	ProviderKey string          `json:"provider_key"`
@@ -83,6 +86,10 @@ type ProviderNormalizedTrack struct {
 	LengthMS             *int64           `json:"length,omitempty"`
 	Title                string           `json:"title,omitempty"`
 	ArtistCredit         *json.RawMessage `json:"artist-credit,omitempty"`
+	// TrackRecording is the raw recording object embedded at this release
+	// position. It is intentionally position-scoped rather than normalized into
+	// the provider-wide recording identity.
+	TrackRecording json.RawMessage `json:"recording,omitempty"`
 }
 
 // ProviderGraph is one provider-scoped response graph. Complete is trusted only
@@ -117,6 +124,10 @@ type ProviderFieldEvidence struct {
 	Authority  int   `json:"authority"`
 	FetchOrder int64 `json:"fetch_order"`
 }
+
+// DirectRecordingLookupEvidence marks a recording projection accepted from its
+// dedicated MusicBrainz lookup rather than a legacy merged observation.
+const DirectRecordingLookupEvidence = "__direct_recording_lookup"
 
 type ProviderCachedResponse struct {
 	ProviderSourceID uuid.UUID       `bun:"provider_source_id,type:uuid"`

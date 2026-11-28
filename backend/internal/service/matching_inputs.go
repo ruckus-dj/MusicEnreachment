@@ -172,13 +172,27 @@ func buildMatchingInputs(
 					value := score
 					acoustID = &value
 				}
-				recordingCreditNames := track.RecordingArtists
+				var recordingCreditNames []string
+				if track.TrackArtists != nil {
+					recordingCreditNames = *track.TrackArtists
+				}
+				if recordingCreditNames == nil {
+					recordingCreditNames = track.RecordingArtists
+				}
 				if recordingCreditNames == nil {
 					recordingCreditNames = options.recordingArtists[track.RecordingProviderKey]
 				}
+				recordingTitle := track.TrackTitle
+				if recordingTitle == "" {
+					recordingTitle = track.RecordingTitle
+				}
+				recordingLengthMS := track.TrackLengthMS
+				if recordingLengthMS == nil {
+					recordingLengthMS = track.RecordingLengthMS
+				}
 				var recordingDuration *float64
-				if track.RecordingLengthMS != nil {
-					value := float64(*track.RecordingLengthMS) / 1000
+				if recordingLengthMS != nil {
+					value := float64(*recordingLengthMS) / 1000
 					recordingDuration = &value
 				}
 				assignmentInput := MatchingScoreInput{
@@ -186,7 +200,7 @@ func buildMatchingInputs(
 					ReleaseArtist:                  MatchingTextPair{Source: fields["album_artist"], Candidate: candidateArtists, Provenance: "saved metadata tags / provider release credits"},
 					ReleaseTitle:                   MatchingTextPair{Source: fields["album"], Candidate: []string{release.Name}, Provenance: "saved metadata tags / provider release title"},
 					RecordingArtist:                MatchingTextPair{Source: fields["artist"], Candidate: recordingCreditNames, Provenance: "saved metadata tags / provider recording credits"},
-					RecordingTitle:                 MatchingTextPair{Source: fields["title"], Candidate: []string{track.RecordingTitle}, Provenance: "saved metadata tags / provider track title"},
+					RecordingTitle:                 MatchingTextPair{Source: fields["title"], Candidate: []string{recordingTitle}, Provenance: "saved metadata tags / provider track title"},
 					ReleaseExpectedDurationSeconds: cloneFloat(duration), ReleaseActualDurationSeconds: cloneFloat(releaseDuration), ReleaseMusicBrainzScore: releaseScore,
 					RecordingExpectedDurationSeconds: cloneFloat(duration), RecordingActualDurationSeconds: recordingDuration,
 					RecordingMusicBrainzScore: trackScore, AcoustIDScore: acoustID,

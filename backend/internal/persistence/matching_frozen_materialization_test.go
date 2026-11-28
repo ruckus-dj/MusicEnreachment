@@ -65,7 +65,7 @@ func TestAcceptedProjectionToMaterializationCreditsFallbackAndExplicitEmpty(t *t
 		{ID: firstTrackID, Medium: 0, Position: 0, RecordingProviderKey: key, RecordingTitle: "first"},
 		{ID: secondTrackID, Medium: 0, Position: 1, RecordingProviderKey: key},
 	}
-	snapshot := ProviderMatchingSnapshot{Releases: []MatchingRelease{release}, ProjectionEntities: []MatchingProjectionEntity{{Kind: "recording", ProviderKey: key, Name: "recording name", Fields: json.RawMessage(`{"artist-credit":[{"name":"Recording display","joinphrase":" and ","artist":{"id":"artist-c"}}]}`), FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":3,"fetch_order":12}}`)}}}
+	snapshot := ProviderMatchingSnapshot{Releases: []MatchingRelease{release}, ProjectionEntities: []MatchingProjectionEntity{{Kind: "recording", ProviderKey: key, Name: "recording name", Fields: json.RawMessage(`{"artist-credit":[{"name":"Recording display","joinphrase":" and ","artist":{"id":"artist-c"}}]}`), FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":3,"fetch_order":12},"__direct_recording_lookup":{"authority":3}}`)}}}
 	assignments := []FrozenTrackAssignment{
 		{ProviderTrackID: firstTrackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: key, Medium: 0, Position: 0},
 		{ProviderTrackID: secondTrackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: key, Medium: 0, Position: 1},
@@ -154,7 +154,7 @@ func TestAcceptedProjectionToMaterializationPreservesCreditProvenanceAndTitleAut
 		Releases: []MatchingRelease{release},
 		ProjectionEntities: []MatchingProjectionEntity{{
 			Kind: "recording", ProviderKey: key, Name: "Recording.Name", Fields: json.RawMessage(`{"title":"conflicting fields.title","artist-credit":[{"name":"Recording credit","artist":{"id":"recording-artist"}}]}`),
-			FieldEvidence: json.RawMessage(`{"title":{"authority":5,"fetch_order":55},"artist-credit":{"authority":6,"fetch_order":66}}`),
+			FieldEvidence: json.RawMessage(`{"title":{"authority":5,"fetch_order":55},"artist-credit":{"authority":6,"fetch_order":66},"__direct_recording_lookup":{"authority":3}}`),
 		}},
 	}
 	assignment := FrozenTrackAssignment{ProviderTrackID: trackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: key}
@@ -174,6 +174,96 @@ func TestAcceptedProjectionToMaterializationPreservesCreditProvenanceAndTitleAut
 	}
 	if len(track.Credits) != 1 || track.Credits[0].Source != nil || track.CreditSource != nil {
 		t.Fatalf("normalized credits without field evidence must not manufacture provenance: %#v", track)
+	}
+}
+
+func TestAcceptedProjectionToMaterializationRecoversPreUpgradeMediaPositionData(t *testing.T) {
+	releaseID, trackID := uuid.New(), uuid.New()
+	key := "recording-a"
+	release := frozenTestRelease(releaseID, "release-a", `{"media":[{"tracks":[{"recording":{"id":"recording-a","title":"Media title","artist-credit":[{"name":"Media artist","artist":{"id":"media-artist"}}]}}]}],"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"recording-a"}]}`)
+	release.Tracks = []MatchingReleaseTrack{{ID: trackID, Medium: 0, Position: 0, RecordingProviderKey: key, Authority: 3, FetchOrder: 40}}
+	release.FieldEvidence = map[string]ProviderFieldEvidence{
+		"normalized_tracks": {Authority: 3, FetchOrder: 40},
+		"media":             {Authority: 3, FetchOrder: 40},
+		"__tracks":          {Authority: 3, FetchOrder: 40},
+	}
+	snapshot := ProviderMatchingSnapshot{
+		Releases: []MatchingRelease{release},
+		ProjectionEntities: []MatchingProjectionEntity{{
+			Kind: "recording", ProviderKey: key, Name: "Unmarked shared title",
+			Fields:        json.RawMessage(`{"artist-credit":[{"name":"Unmarked shared credit","artist":{"id":"shared-artist"}}]}`),
+			FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":3,"fetch_order":40}}`),
+		}},
+	}
+	got, err := acceptedProjectionToMaterialization(snapshot, "release-a", []FrozenTrackAssignment{{
+		ProviderTrackID: trackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: key, Medium: 0, Position: 0,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	track := got.Tracks[0]
+	if track.RecordingTitle != "" || len(track.RecordingCredits) != 0 || track.RecordingTitleSource != nil || track.RecordingCreditSource != nil {
+		t.Fatalf("unmarked shared recording projection leaked: %#v", track)
+	}
+	if track.Title != "Media title" || track.TitleSource == nil || track.TitleSource.EntityKind != "release" ||
+		track.TitleSource.Field != "media" || track.TitleSource.Authority != 3 || track.TitleSource.FetchOrder != 40 {
+		t.Fatalf("legacy media title not recovered with provenance: %#v", track)
+	}
+	if len(track.Credits) != 1 || track.Credits[0].Name != "Media artist" || track.CreditSource == nil ||
+		track.CreditSource.Field != "media" || track.CreditSource.Authority != 3 || !track.TrackCreditOverride {
+		t.Fatalf("legacy media credits not recovered as position data: %#v", track)
+	}
+}
+
+func TestAcceptedProjectionToMaterializationIgnoresUnprovenLegacyRecordingProjection(t *testing.T) {
+	releaseID, trackID := uuid.New(), uuid.New()
+	key := "recording-a"
+	for _, test := range []struct {
+		name      string
+		media     string
+		authority int
+		recording string
+	}{
+		{name: "media evidence mismatch", media: `[{"tracks":[{"recording":{"id":"recording-a","title":"Media title"}}]}]`, authority: 2, recording: "recording-a"},
+		{name: "media recording mismatch", media: `[{"tracks":[{"recording":{"id":"recording-b","title":"Media title"}}]}]`, authority: 3, recording: "recording-b"},
+		{name: "media absent", authority: 3, recording: "recording-a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := `{"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"recording-a"}]}`
+			if test.media != "" {
+				fields = `{"media":` + test.media + `,"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"recording-a"}]}`
+			}
+			release := frozenTestRelease(releaseID, "release-a", fields)
+			release.Tracks = []MatchingReleaseTrack{{ID: trackID, Medium: 0, Position: 0, RecordingProviderKey: key, Authority: 3, FetchOrder: 40}}
+			release.FieldEvidence = map[string]ProviderFieldEvidence{
+				"normalized_tracks": {Authority: 3, FetchOrder: 40},
+				"__tracks":          {Authority: 3, FetchOrder: 40},
+			}
+			if test.media != "" {
+				release.FieldEvidence["media"] = ProviderFieldEvidence{Authority: test.authority, FetchOrder: 40}
+			}
+			snapshot := ProviderMatchingSnapshot{
+				Releases: []MatchingRelease{release},
+				ProjectionEntities: []MatchingProjectionEntity{{
+					Kind: "recording", ProviderKey: test.recording, Name: "Unmarked shared title",
+					Fields:        json.RawMessage(`{"artist-credit":[{"name":"Unmarked shared credit","artist":{"id":"shared-artist"}}]}`),
+					FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":3,"fetch_order":40}}`),
+				}},
+			}
+			got, err := acceptedProjectionToMaterialization(snapshot, "release-a", []FrozenTrackAssignment{{
+				ProviderTrackID: trackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: key, Medium: 0, Position: 0,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			track := got.Tracks[0]
+			if track.RecordingTitle != "" || len(track.RecordingCredits) != 0 || track.RecordingTitleSource != nil || track.RecordingCreditSource != nil {
+				t.Fatalf("unmarked shared recording projection leaked: %#v", track)
+			}
+			if track.Title != "" || len(track.Credits) != 0 || track.TitleSource != nil || track.CreditSource != nil {
+				t.Fatalf("unproven legacy recording projection leaked into position data: %#v", track)
+			}
+		})
 	}
 }
 

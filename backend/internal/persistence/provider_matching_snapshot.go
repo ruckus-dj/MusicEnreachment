@@ -77,12 +77,25 @@ type MatchingReleaseTrack struct {
 	Position             int // Persisted zero-based track ordinal.
 	DisplayedNumber      string
 	RecordingProviderKey string
-	RecordingTitle       string
-	RecordingArtists     []string
-	RecordingLengthMS    *int64
-	ReleaseLengthMS      *int64
-	Authority            int
-	FetchOrder           int64
+	// RecordingTitle, RecordingArtists, and RecordingLengthMS are recording-scope
+	// evidence: a direct recording observation, or (for legacy snapshots) an
+	// already-persisted release-embedded recording projection. A release-nested
+	// recording raw value is only a position-scoped fallback and is never used
+	// for shared recording writes.
+	RecordingTitle    string
+	RecordingArtists  []string
+	RecordingLengthMS *int64
+	// ReleaseLengthMS is the position-owned track length from the release.
+	ReleaseLengthMS *int64
+	// TrackTitle, TrackArtists, and TrackLengthMS are the values used to match
+	// one source file against this release position. They prefer release
+	// normalized_tracks values, then direct recording evidence, then the
+	// position-scoped embedded recording.
+	TrackTitle    string    `json:"track_title,omitempty"`
+	TrackArtists  *[]string `json:"track_artists,omitempty"`
+	TrackLengthMS *int64    `json:"track_length_ms,omitempty"`
+	Authority     int
+	FetchOrder    int64
 }
 
 // GetMusicBrainzMatchingSnapshot reads a consistent cache-only projection for
@@ -195,9 +208,84 @@ func readMusicBrainzMatchingSnapshot(ctx context.Context, tx bun.Tx, endpoint, e
 			snapshot.SearchScores[response.CacheKey] = scores
 		}
 	}
+	applyMatchingTrackProjections(snapshot.Releases, snapshot.ProjectionEntities)
+	snapshot.AcceptedProjectionRevision = acceptedProjectionRevision(snapshot.Releases, snapshot.ProjectionEntities, snapshot.Responses)
+	return snapshot, nil
+}
+
+// matchingDirectRecordingMarker reports whether the writer explicitly marked a
+// recording projection as a direct observation.
+func matchingDirectRecordingMarker(fieldEvidence json.RawMessage) bool {
+	var evidence map[string]json.RawMessage
+	if json.Unmarshal(fieldEvidence, &evidence) != nil {
+		return false
+	}
+	_, present := evidence[DirectRecordingLookupEvidence]
+	return present
+}
+
+func matchingHasEmbeddedRecording(raw json.RawMessage) bool {
+	return len(raw) != 0 && string(raw) != "null"
+}
+
+type matchingNormalizedTrackRecord struct {
+	RecordingProviderKey string
+	Title                string
+	LengthMS             *int64
+	ArtistCredit         *json.RawMessage
+	Recording            json.RawMessage
+}
+
+func matchingNormalizedTracks(fields json.RawMessage) map[string]matchingNormalizedTrackRecord {
+	tracks := make(map[string]matchingNormalizedTrackRecord)
+	var release struct {
+		Tracks []struct {
+			Medium               int              `json:"medium"`
+			Position             int              `json:"position"`
+			RecordingProviderKey string           `json:"recording_provider_key"`
+			Title                string           `json:"title"`
+			LengthMS             *int64           `json:"length"`
+			ArtistCredit         *json.RawMessage `json:"artist-credit"`
+			Recording            json.RawMessage  `json:"recording"`
+		} `json:"normalized_tracks"`
+	}
+	if json.Unmarshal(fields, &release) != nil {
+		return tracks
+	}
+	for _, track := range release.Tracks {
+		key := frozenMaterializationCoordinate(track.Medium, track.Position)
+		if _, exists := tracks[key]; exists {
+			continue
+		}
+		tracks[key] = matchingNormalizedTrackRecord{
+			RecordingProviderKey: track.RecordingProviderKey, Title: track.Title,
+			LengthMS: track.LengthMS, ArtistCredit: track.ArtistCredit, Recording: track.Recording,
+		}
+	}
+	return tracks
+}
+
+func matchingRawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil || value == nil {
+		return nil, false
+	}
+	return value, true
+}
+
+// applyMatchingTrackProjections resolves matching values on each accepted
+// track. A release track that carries its own embedded recording is a modern
+// position: only an explicitly marked direct recording may supply Recording*
+// shared values, and Track* prefers position-owned values before the direct
+// recording and then the position-scoped embedded recording. Genuinely legacy
+// positions without that marker keep their previous recording-scope behavior.
+func applyMatchingTrackProjections(releases []MatchingRelease, entities []MatchingProjectionEntity) {
 	recordingProjections := make(map[string]MatchingProjectionEntity)
 	sourceArtistNames := make(map[string]string)
-	for _, entity := range snapshot.ProjectionEntities {
+	for _, entity := range entities {
 		switch entity.Kind {
 		case "recording":
 			recordingProjections[entity.ProviderKey] = entity
@@ -205,19 +293,76 @@ func readMusicBrainzMatchingSnapshot(ctx context.Context, tx bun.Tx, endpoint, e
 			sourceArtistNames[entity.ProviderKey] = entity.Name
 		}
 	}
-	for releaseIndex := range snapshot.Releases {
-		for trackIndex := range snapshot.Releases[releaseIndex].Tracks {
-			track := &snapshot.Releases[releaseIndex].Tracks[trackIndex]
-			projection, ok := recordingProjections[track.RecordingProviderKey]
-			if !ok {
+	for releaseIndex := range releases {
+		release := &releases[releaseIndex]
+		normalizedTracks := matchingNormalizedTracks(release.Fields)
+		for trackIndex := range release.Tracks {
+			track := &release.Tracks[trackIndex]
+			normalized, hasNormalized := normalizedTracks[frozenMaterializationCoordinate(track.Medium, track.Position)]
+			if hasNormalized && !strings.EqualFold(normalized.RecordingProviderKey, track.RecordingProviderKey) {
+				hasNormalized = false
+			}
+			modern := hasNormalized && matchingHasEmbeddedRecording(normalized.Recording)
+			projection, hasProjection := recordingProjections[track.RecordingProviderKey]
+			if hasProjection && modern && !matchingDirectRecordingMarker(projection.FieldEvidence) {
+				hasProjection = false
+			}
+			track.RecordingTitle, track.RecordingArtists, track.RecordingLengthMS = "", nil, nil
+			directArtistsPresent := false
+			if hasProjection {
+				track.RecordingTitle = projection.Name
+				if track.RecordingTitle == "" {
+					track.RecordingTitle = matchingRecordingTitle(projection.Fields)
+				}
+				track.RecordingArtists, directArtistsPresent = matchingRecordingArtistNames(projection.Fields, sourceArtistNames)
+				track.RecordingLengthMS = matchingRecordingLength(projection.Fields)
+			}
+			if !modern {
 				continue
 			}
-			track.RecordingArtists = matchingRecordingArtists(projection.Fields, sourceArtistNames)
-			track.RecordingLengthMS = matchingRecordingLength(projection.Fields)
+			var embeddedTitle string
+			var embeddedArtists []string
+			var embeddedArtistsPresent bool
+			var embeddedLength *int64
+			if fields, ok := matchingRawObject(normalized.Recording); ok {
+				embeddedTitle = matchingJSONString(fields["title"])
+				embeddedArtists, embeddedArtistsPresent = matchingRecordingArtistNames(normalized.Recording, sourceArtistNames)
+				embeddedLength = matchingRecordingLength(normalized.Recording)
+			}
+			track.TrackTitle = normalized.Title
+			if track.TrackTitle == "" {
+				track.TrackTitle = track.RecordingTitle
+			}
+			if track.TrackTitle == "" {
+				track.TrackTitle = embeddedTitle
+			}
+			if normalized.ArtistCredit != nil {
+				artists, _ := matchingArtistCreditNames(*normalized.ArtistCredit, sourceArtistNames)
+				if artists == nil {
+					artists = []string{}
+				}
+				track.TrackArtists = &artists
+			} else if directArtistsPresent {
+				artists := track.RecordingArtists
+				if artists == nil {
+					artists = []string{}
+				}
+				track.TrackArtists = &artists
+			} else if embeddedArtistsPresent {
+				track.TrackArtists = &embeddedArtists
+			} else {
+				track.TrackArtists = nil
+			}
+			switch {
+			case normalized.LengthMS != nil:
+				track.TrackLengthMS = normalized.LengthMS
+			case track.RecordingLengthMS != nil:
+				track.TrackLengthMS = track.RecordingLengthMS
+			default:
+				track.TrackLengthMS = embeddedLength
+			}
 		}
 	}
-	snapshot.AcceptedProjectionRevision = acceptedProjectionRevision(snapshot.Releases, snapshot.ProjectionEntities, snapshot.Responses)
-	return snapshot, nil
 }
 
 func artistKeysContains(keys []string, target string) bool {
@@ -229,48 +374,72 @@ func artistKeysContains(keys []string, target string) bool {
 	return false
 }
 
-func matchingRecordingArtists(fields json.RawMessage, sourceArtistNames map[string]string) []string {
+func matchingRecordingTitle(fields json.RawMessage) string {
 	var projection map[string]json.RawMessage
 	if json.Unmarshal(fields, &projection) != nil {
-		return nil
+		return ""
 	}
-	if credits, present := projection["artist-credit"]; present {
-		var values []json.RawMessage
-		if json.Unmarshal(credits, &values) == nil {
-			names := make([]string, 0, len(values))
-			for _, value := range values {
-				var credit map[string]json.RawMessage
-				if json.Unmarshal(value, &credit) != nil {
-					continue
-				}
-				name := matchingJSONString(credit["name"])
-				if name == "" {
-					var artist map[string]json.RawMessage
-					_ = json.Unmarshal(credit["artist"], &artist)
-					name = sourceArtistNames[strings.ToLower(matchingJSONString(artist["id"]))]
-				}
-				if name != "" {
-					names = append(names, name)
-				}
-			}
-			if len(names) != 0 {
-				return names
-			}
-		} else {
-			return nil
+	return matchingJSONString(projection["title"])
+}
+
+// matchingArtistCreditNames decodes one artist-credit array. Presence is
+// reported separately so an explicit empty array can suppress a fallback.
+func matchingArtistCreditNames(raw json.RawMessage, sourceArtistNames map[string]string) ([]string, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	if string(raw) == "null" {
+		return []string{}, true
+	}
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) != nil {
+		return []string{}, true
+	}
+	names := make([]string, 0, len(values))
+	for _, value := range values {
+		var credit map[string]json.RawMessage
+		if json.Unmarshal(value, &credit) != nil {
+			continue
+		}
+		name := matchingJSONString(credit["name"])
+		if name == "" {
+			var artist map[string]json.RawMessage
+			_ = json.Unmarshal(credit["artist"], &artist)
+			name = sourceArtistNames[strings.ToLower(matchingJSONString(artist["id"]))]
+		}
+		if name != "" {
+			names = append(names, name)
 		}
 	}
-	var artistKeys []string
-	if json.Unmarshal(projection["normalized_artists"], &artistKeys) == nil {
+	return names, true
+}
+
+// matchingRecordingArtistNames reports whether an artist-credit array (or a
+// normalized_artists list) was supplied, distinct from a supplied empty list.
+// Callers use presence to keep an explicit empty credit from inheriting a
+// lower-priority fallback.
+func matchingRecordingArtistNames(fields json.RawMessage, sourceArtistNames map[string]string) ([]string, bool) {
+	var projection map[string]json.RawMessage
+	if json.Unmarshal(fields, &projection) != nil {
+		return nil, false
+	}
+	if credits, present := projection["artist-credit"]; present {
+		return matchingArtistCreditNames(credits, sourceArtistNames)
+	}
+	if rawKeys, present := projection["normalized_artists"]; present {
+		var artistKeys []string
+		if json.Unmarshal(rawKeys, &artistKeys) != nil {
+			return []string{}, true
+		}
 		names := make([]string, 0, len(artistKeys))
 		for _, key := range artistKeys {
 			if name := sourceArtistNames[strings.ToLower(key)]; name != "" {
 				names = append(names, name)
 			}
 		}
-		return names
+		return names, true
 	}
-	return nil
+	return nil, false
 }
 
 func matchingRecordingArtistKeys(fields json.RawMessage) []string {

@@ -555,8 +555,12 @@ func frozenReviewProposal(publication FrozenMatchingPublication) json.RawMessage
 	for _, release := range publication.Inventory.Releases {
 		positions := make([]map[string]any, 0, len(release.Tracks))
 		for _, track := range release.Tracks {
+			title := track.TrackTitle
+			if title == "" {
+				title = track.RecordingTitle
+			}
 			positions = append(positions, map[string]any{"track_id": track.ID, "medium": track.Medium, "position": track.Position,
-				"displayed_number": track.DisplayedNumber, "recording_id": track.RecordingProviderKey, "title": track.RecordingTitle})
+				"displayed_number": track.DisplayedNumber, "recording_id": track.RecordingProviderKey, "title": title})
 		}
 		releases = append(releases, layout{ProviderReleaseID: release.ID, ReleaseID: release.ProviderKey, Title: release.Name, TracklistComplete: release.Complete, Positions: positions})
 	}

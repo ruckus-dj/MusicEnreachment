@@ -589,6 +589,7 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		if currentIdentity != ticket.ConfigurationIdentity {
 			return fmt.Errorf("apply successful provider response: configuration changed")
 		}
+		var deliveryKind string
 		if response.Delivery != nil {
 			fence := response.Delivery
 			if fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
@@ -607,13 +608,20 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 				sourceID != ticket.ProviderSourceID || configurationIdentity != ticket.ConfigurationIdentity || cacheKey != ticket.CacheKey {
 				return fmt.Errorf("apply successful provider response: operation delivery is stale")
 			}
+			deliveryKind = kind
 		}
 		var source ProviderSource
-		if err := tx.NewRaw(`SELECT id, provider_id, endpoint, configuration_identity FROM provider_source WHERE id = ? FOR UPDATE`, ticket.ProviderSourceID).Scan(ctx, &source); err != nil {
+		var providerCode string
+		if err := tx.NewRaw(`SELECT source.id,source.provider_id,source.endpoint,source.configuration_identity,provider.code
+			FROM provider_source source JOIN provider ON provider.id=source.provider_id WHERE source.id=? FOR UPDATE OF source`, ticket.ProviderSourceID).
+			Scan(ctx, &source.ID, &source.ProviderID, &source.Endpoint, &source.ConfigurationIdentity, &providerCode); err != nil {
 			return fmt.Errorf("apply successful provider response: read source: %w", err)
 		}
 		if source.ProviderID != ticket.ProviderID || source.ConfigurationIdentity != ticket.ConfigurationIdentity {
 			return fmt.Errorf("apply successful provider response: source configuration changed")
+		}
+		if err := validateDirectRecordingObservation(response, providerCode, deliveryKind); err != nil {
+			return err
 		}
 		var currentGeneration, currentFetchOrder int64
 		if err := tx.NewRaw(`SELECT generation, fetch_order FROM provider_response_cache
@@ -699,6 +707,38 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 	})
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateDirectRecordingObservation(response ProviderSuccessfulResponse, providerCode, deliveryKind string) error {
+	if providerCode != "musicbrainz" {
+		return nil
+	}
+	invalid := errors.New("apply successful provider response: recording evidence requires its direct lookup")
+	directKey := ""
+	for _, entity := range response.Graph.Entities {
+		marker, marked := entity.FieldEvidence[DirectRecordingLookupEvidence]
+		if entity.Kind != "recording" && !marked {
+			continue
+		}
+		var payload struct {
+			ID string `json:"id"`
+		}
+		id, err := uuid.Parse(entity.ProviderKey)
+		if directKey != "" || entity.Kind != "recording" || !marked || marker.Authority != 3 || err != nil || entity.ProviderKey != id.String() ||
+			response.Ticket.CacheKey != "recording-lookup:"+entity.ProviderKey ||
+			(deliveryKind != "" && deliveryKind != "provider_recording_lookup") ||
+			json.Unmarshal(response.Payload, &payload) != nil || !strings.EqualFold(payload.ID, entity.ProviderKey) {
+			return invalid
+		}
+		directKey = entity.ProviderKey
+	}
+	for _, recording := range response.Graph.Recordings {
+		if (recording.Title != "" || len(recording.Metadata) != 0 || len(recording.RawSource) != 0) &&
+			(directKey == "" || recording.ProviderKey != directKey) {
+			return invalid
+		}
 	}
 	return nil
 }
@@ -919,6 +959,14 @@ func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRef
 		if err := json.Unmarshal([]byte(currentEvidence), &storedEvidence); err != nil {
 			return acceptedProviderSourceChanges{}, err
 		}
+		direct, marked := entity.FieldEvidence[DirectRecordingLookupEvidence]
+		if marked {
+			if _, wasDirect := storedEvidence[DirectRecordingLookupEvidence]; !wasDirect {
+				clear(storedFields)
+				clear(storedEvidence)
+			}
+			storedEvidence[DirectRecordingLookupEvidence] = ProviderFieldEvidence{Authority: direct.Authority, FetchOrder: ticket.FetchOrder}
+		}
 		incomingFields := map[string]json.RawMessage{}
 		if err := json.Unmarshal(json.RawMessage(fields), &incomingFields); err != nil {
 			return acceptedProviderSourceChanges{}, err
@@ -1032,17 +1080,34 @@ func providerJSON(value json.RawMessage, objectOnly bool) (string, error) {
 
 func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTicket, graph ProviderGraph) error {
 	if len(graph.Entities) == 0 {
-		if len(graph.Artists) > 0 || len(graph.Releases) > 0 || len(graph.Recordings) > 0 ||
-			len(graph.Credits) > 0 || len(graph.Tracks) > 0 {
+		for _, recording := range graph.Recordings {
+			if recording.Title != "" || len(recording.Metadata) > 0 || len(recording.RawSource) > 0 {
+				return fmt.Errorf("provider graph entities are required for an observed recording")
+			}
+		}
+		for _, artist := range graph.Artists {
+			if len(artist.Metadata) > 0 || len(artist.RawSource) > 0 {
+				return fmt.Errorf("provider graph entities are required for an observed artist")
+			}
+		}
+		if len(graph.Releases) > 0 || len(graph.Credits) > 0 || len(graph.Tracks) > 0 {
 			return fmt.Errorf("provider graph entities are required for a nonempty graph")
 		}
-		// A valid empty search response carries no graph rows to project.
-		return nil
+		if len(graph.Recordings) == 0 && len(graph.Artists) == 0 {
+			// A valid empty search response carries no graph rows to project.
+			return nil
+		}
 	}
 	providerID := ticket.ProviderID
 	artistIDs := make(map[uuid.UUID]uuid.UUID, len(graph.Artists))
 	releaseIDs := make(map[uuid.UUID]uuid.UUID, len(graph.Releases))
 	recordingIDs := make(map[uuid.UUID]uuid.UUID, len(graph.Recordings))
+	directRecordings := make(map[string]bool)
+	for _, entity := range graph.Entities {
+		if _, marked := entity.FieldEvidence[DirectRecordingLookupEvidence]; entity.Kind == "recording" && marked {
+			directRecordings[entity.ProviderKey] = true
+		}
+	}
 	for index := range graph.Artists {
 		artist := &graph.Artists[index]
 		if artist.ID == uuid.Nil || artist.ProviderKey == "" || artist.Name == "" {
@@ -1101,25 +1166,39 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 	}
 	for index := range graph.Recordings {
 		recording := &graph.Recordings[index]
-		if recording.ID == uuid.Nil || recording.ProviderKey == "" || recording.Title == "" {
-			return fmt.Errorf("recording id, provider key, and title are required")
+		if recording.ID == uuid.Nil || recording.ProviderKey == "" {
+			return fmt.Errorf("recording id and provider key are required")
 		}
-		metadata, err := providerJSON(recording.Metadata, true)
-		if err != nil {
-			return fmt.Errorf("recording metadata: %w", err)
-		}
-		raw, err := providerJSON(recording.RawSource, false)
-		if err != nil {
-			return fmt.Errorf("recording source: %w", err)
-		}
-		if _, err := tx.NewRaw(`INSERT INTO provider_recording(id, provider_id, provider_key, title, metadata, raw_source)
-			VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb)
-			ON CONFLICT (provider_id, provider_key) DO UPDATE SET
-			title=COALESCE(NULLIF(provider_recording.title, ''), EXCLUDED.title),
-			metadata=CASE WHEN ? THEN EXCLUDED.metadata ELSE provider_recording.metadata END,
-			raw_source=CASE WHEN ? THEN EXCLUDED.raw_source ELSE provider_recording.raw_source END, updated_at=now()`,
-			recording.ID, providerID, recording.ProviderKey, recording.Title, metadata, raw, len(recording.Metadata) > 0, len(recording.RawSource) > 0).Exec(ctx); err != nil {
+		// Every recording named by a graph needs an identity row so release
+		// tracks and local bindings can reference it. Search hits and embedded
+		// release tracks stop at identity; only a direct observation supplies
+		// the provider-wide title, metadata, and raw source.
+		if _, err := tx.NewRaw(`INSERT INTO provider_recording(id, provider_id, provider_key, title)
+			VALUES (?, ?, ?, '') ON CONFLICT (provider_id, provider_key) DO NOTHING`,
+			recording.ID, providerID, recording.ProviderKey).Exec(ctx); err != nil {
 			return err
+		}
+		if recording.Title != "" || len(recording.Metadata) > 0 || len(recording.RawSource) > 0 {
+			metadata, err := providerJSON(recording.Metadata, true)
+			if err != nil {
+				return fmt.Errorf("recording metadata: %w", err)
+			}
+			raw, err := providerJSON(recording.RawSource, false)
+			if err != nil {
+				return fmt.Errorf("recording source: %w", err)
+			}
+			if _, err := tx.NewRaw(`UPDATE provider_recording SET
+				title=CASE WHEN ? <> '' THEN ? ELSE title END,
+				metadata=CASE WHEN ? THEN ?::jsonb ELSE metadata END,
+				raw_source=CASE WHEN ? THEN ?::jsonb ELSE raw_source END,
+				updated_at=now()
+				WHERE provider_id=? AND provider_key=?`,
+				recording.Title, recording.Title,
+				len(recording.Metadata) > 0 || directRecordings[recording.ProviderKey], metadata,
+				len(recording.RawSource) > 0, raw,
+				providerID, recording.ProviderKey).Exec(ctx); err != nil {
+				return err
+			}
 		}
 		inputID := recording.ID
 		if err := tx.NewRaw(`SELECT id FROM provider_recording WHERE provider_id=? AND provider_key=?`, providerID, recording.ProviderKey).Scan(ctx, &recording.ID); err != nil {

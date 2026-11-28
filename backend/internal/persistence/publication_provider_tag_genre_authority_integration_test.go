@@ -281,7 +281,17 @@ func seedProviderTagGenreAuthority(t *testing.T, ctx context.Context, fixture pe
 		t.Fatal(err)
 	}
 	credits := `[{"name":"Artist","joinphrase":"","artist":{"id":"` + artistKey + `"}}]`
-	if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET fields=jsonb_set(fields,'{artist-credit}',?::jsonb,true), field_evidence=field_evidence || '{"artist-credit":{"authority":3}}'::jsonb WHERE provider_source_id=? AND entity_kind='recording' AND provider_key=?`, credits, fixture.source.ID, recordingKey).Exec(ctx); err != nil {
+	recordingFields := `{"artist-credit":` + credits + `}`
+	recordingEvidence := `{"artist-credit":{"authority":3},"__direct_recording_lookup":{"authority":3}}`
+	// Strict provider scoping writes recording source entities only from a direct
+	// recording lookup. Release/search refresh no longer materializes this row, so
+	// the fixture must create and mark the projection itself.
+	if _, err := fixture.f.db.NewRaw(`INSERT INTO provider_source_entity
+		(provider_source_id,provider_id,entity_kind,provider_key,name,fields,field_evidence,raw_source,authority,complete,fetch_order)
+		VALUES (?,?,'recording',?,'Recording',?::jsonb,?::jsonb,'{}'::jsonb,3,true,2)
+		ON CONFLICT (provider_source_id,entity_kind,provider_key) DO UPDATE SET
+			name=EXCLUDED.name,fields=EXCLUDED.fields,field_evidence=EXCLUDED.field_evidence,complete=true`,
+		fixture.source.ID, fixture.source.ProviderID, recordingKey, recordingFields, recordingEvidence).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return artists, recordingID

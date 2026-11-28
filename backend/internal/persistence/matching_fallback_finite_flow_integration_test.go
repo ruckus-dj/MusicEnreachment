@@ -518,6 +518,28 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, _, _ bool, _ bool
 	if uniquePublication {
 		lookupPayload = json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Captured Album","artist-credit":[{"name":"Release Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Release Artist"}}],"media":[{"position":1,"tracks":[{"id":"90000000-0000-4000-8000-0000000000fa","number":"1","title":"Track Override Alpha","artist-credit":[{"name":"Track Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Track Artist"}}],"length":180000,"recording":{"id":"90000000-0000-4000-8000-0000000000fb","title":"Original Recording Alpha","artist-credit":[{"name":"Recording Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Recording Artist"}}]}},{"id":"90000000-0000-4000-8000-0000000000fc","number":"2","title":"Track Override Beta","artist-credit":[{"name":"Track Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Track Artist"}}],"length":180000,"recording":{"id":"90000000-0000-4000-8000-0000000000fd","title":"Original Recording Beta","artist-credit":[{"name":"Recording Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Recording Artist"}}]}}]}]}`, releaseID))
 		uniqueLookupHTTPPayload = lookupPayload
+		// This fixture asserts distinct shared recording and position credits.
+		// Only dedicated recording lookups provide the shared metadata.
+		for _, recording := range []struct{ id, title string }{
+			{"90000000-0000-4000-8000-0000000000fb", "Original Recording Alpha"},
+			{"90000000-0000-4000-8000-0000000000fd", "Original Recording Beta"},
+		} {
+			payload := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":%q,"artist-credit":[{"name":"Recording Artist",
+				"artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Recording Artist"}}]}`, recording.id, recording.title))
+			graph, err := service.NormalizeMusicBrainzRecordingLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: payload}})
+			if err != nil {
+				t.Fatalf("normalize direct recording evidence: %v", err)
+			}
+			ticket, err := cache.BeginRefresh(ctx, source.ID, "recording-lookup:"+recording.id, config.Identity)
+			if err != nil {
+				t.Fatalf("reserve direct recording lookup: %v", err)
+			}
+			if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+				Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: payload, Graph: graph,
+			}); err != nil {
+				t.Fatalf("accept direct recording lookup: %v", err)
+			}
+		}
 	}
 	if !uniquePublication {
 		lookupGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: lookupPayload}})

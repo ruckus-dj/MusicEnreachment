@@ -117,41 +117,36 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		}
 	}
 
-	positionTitleAccepted := false
-	if hasProviderFieldEvidence(context.Release.FieldEvidence, "normalized_tracks") {
-		if title, present := acceptedNormalizedTrackTitle(releaseFields["normalized_tracks"], context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey); present {
-			positionTitleAccepted = true
-			if strings.TrimSpace(title) != "" {
-				values.PositionTitle = &title
-			}
-		}
+	positionRecording, err := resolvePublicationPositionRecording(context, releaseFields)
+	if err != nil {
+		return nil, err
 	}
-	if !positionTitleAccepted && context.RecordingBound && context.Recording != nil && hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "title") {
+	positionTitle := positionRecording.title
+	if strings.TrimSpace(positionTitle) == "" && positionRecording.direct &&
+		hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "title") {
 		fields, decodeErr := decodeFrozenObject(context.Recording.Fields)
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
-		if title := jsonString(fields["title"]); strings.TrimSpace(title) != "" {
-			values.PositionTitle = &title
-		}
+		positionTitle = jsonString(fields["title"])
+	}
+	if strings.TrimSpace(positionTitle) == "" && positionRecording.modern {
+		positionTitle = positionRecording.embeddedTitle
+	}
+	if strings.TrimSpace(positionTitle) != "" {
+		values.PositionTitle = &positionTitle
 	}
 
 	positionCreditsAccepted := false
-	if hasProviderFieldEvidence(context.Release.FieldEvidence, "normalized_tracks") {
-		credits, present, decodeErr := acceptedNormalizedTrackCredits(releaseFields["normalized_tracks"], context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey, &context.Release)
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		if present {
-			positionCreditsAccepted = true
-			values.PositionCredits, err = canonicalCredits(credits, context.ArtistEntities, context.ArtistFacts)
-			if err != nil {
-				return nil, err
-			}
+	if positionRecording.creditsPresent {
+		positionCreditsAccepted = true
+		values.PositionCredits, err = canonicalCredits(positionRecording.credits, context.ArtistEntities, context.ArtistFacts)
+		if err != nil {
+			return nil, err
 		}
 	}
-	if !positionCreditsAccepted && context.RecordingBound && context.Recording != nil {
-		if hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "artist-credit") {
+	if !positionCreditsAccepted {
+		if positionRecording.direct && hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "artist-credit") {
 			fields, decodeErr := decodeFrozenObject(context.Recording.Fields)
 			if decodeErr != nil {
 				return nil, decodeErr
@@ -164,13 +159,17 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			if err != nil {
 				return nil, err
 			}
+		} else if positionRecording.modern && positionRecording.embeddedCreditsPresent {
+			values.PositionCredits, err = canonicalCredits(positionRecording.embeddedCredits, context.ArtistEntities, context.ArtistFacts)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
-	if context.RecordingBound && context.Recording != nil && context.Recording.Kind == "recording" &&
-		strings.EqualFold(context.Recording.ProviderKey, context.Position.RecordingProviderKey) {
-		if recordingMBID, valid := canonicalProviderMBID(context.Recording.ProviderKey); valid {
+	if context.RecordingBound {
+		if recordingMBID, valid := canonicalProviderMBID(context.Position.RecordingProviderKey); valid {
 			values.RecordingMBID = recordingMBID
-			if hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "isrcs") {
+			if positionRecording.identity && hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "isrcs") {
 				recordingFields, decodeErr := decodeFrozenObject(context.Recording.Fields)
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -187,6 +186,56 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		patch["GENRE"] = []string{}
 	}
 	return patch, nil
+}
+
+type publicationPositionRecording struct {
+	title                  string
+	credits                []FrozenArtistCredit
+	creditsPresent         bool
+	modern                 bool
+	direct                 bool
+	identity               bool
+	embeddedTitle          string
+	embeddedCredits        []FrozenArtistCredit
+	embeddedCreditsPresent bool
+}
+
+// resolvePublicationPositionRecording mirrors applyMatchingTrackProjections for
+// one release position. Edition-owned normalized_tracks values win first. A
+// recording projection is shared authority only when it is a direct observation
+// or the position is genuinely legacy (no embedded recording). The release-
+// embedded recording at this exact position is the final, position-scoped
+// fallback.
+func resolvePublicationPositionRecording(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) (publicationPositionRecording, error) {
+	var result publicationPositionRecording
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "normalized_tracks") {
+		result.title, _ = acceptedNormalizedTrackTitle(releaseFields["normalized_tracks"], context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey)
+		credits, creditsPresent, err := acceptedNormalizedTrackCredits(releaseFields["normalized_tracks"], context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey, &context.Release)
+		if err != nil {
+			return result, err
+		}
+		result.credits, result.creditsPresent = credits, creditsPresent
+		normalized, normalizedPresent := acceptedNormalizedTrackRecord(releaseFields["normalized_tracks"], context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey)
+		result.modern = normalizedPresent && matchingHasEmbeddedRecording(normalized.Recording)
+		if result.modern {
+			if fields, ok := decodeFrozenRecordingObject(normalized.Recording); ok {
+				result.embeddedTitle = jsonString(fields["title"])
+				credits, present, decodeErr := decodeFrozenCredits(fields["artist-credit"])
+				if decodeErr != nil {
+					return result, decodeErr
+				}
+				if present {
+					result.embeddedCredits = credits
+					result.embeddedCreditsPresent = true
+				}
+			}
+		}
+	}
+	result.direct = context.RecordingBound && context.Recording != nil &&
+		context.Recording.Kind == "recording" &&
+		(!result.modern || matchingDirectRecordingMarker(context.Recording.FieldEvidence))
+	result.identity = result.direct && strings.EqualFold(context.Recording.ProviderKey, context.Position.RecordingProviderKey)
+	return result, nil
 }
 
 // BuildPublicationProviderCanonicalTagProjection also returns the notices

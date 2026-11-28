@@ -514,6 +514,40 @@ func saveLocalReleaseGraph(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, 
 	return nil
 }
 
+// LocalProviderRecordingIdentity identifies an unhydrated MusicBrainz recording
+// selected by a Local release.
+type LocalProviderRecordingIdentity struct {
+	ProviderID  uuid.UUID `json:"provider_id"`
+	ProviderKey string    `json:"provider_key"`
+}
+
+// UnhydratedMusicBrainzRecordings returns the selected recording identities that
+// belong to MusicBrainz and still have no direct observation. Search hits and
+// release-embedded tracks create identity-only rows, so linking one into a Local
+// release must hydrate its shared title before the release graph is saved.
+func (r *LocalProviderRepository) UnhydratedMusicBrainzRecordings(ctx context.Context, recordingIDs []uuid.UUID) ([]LocalProviderRecordingIdentity, error) {
+	if len(recordingIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT r.provider_id,r.provider_key FROM provider_recording r JOIN provider p ON p.id=r.provider_id WHERE p.code='musicbrainz' AND r.title='' AND r.id IN (?) ORDER BY r.provider_id,r.provider_key`, bun.List(recordingIDs))
+	if err != nil {
+		return nil, fmt.Errorf("read unhydrated local release MusicBrainz recordings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	identities := make([]LocalProviderRecordingIdentity, 0, len(recordingIDs))
+	for rows.Next() {
+		var identity LocalProviderRecordingIdentity
+		if err := rows.Scan(&identity.ProviderID, &identity.ProviderKey); err != nil {
+			return nil, fmt.Errorf("scan unhydrated local release MusicBrainz recording: %w", err)
+		}
+		identities = append(identities, identity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unhydrated local release MusicBrainz recordings: %w", err)
+	}
+	return identities, nil
+}
+
 func (r *LocalProviderRepository) readReleaseGraph(ctx context.Context, item *LocalProviderItem) error {
 	rows, err := r.db.QueryContext(ctx, `SELECT c.artist_id,a.provider_id,p.code,a.name,c.credit_name,c.name_join_phrase FROM provider_release_artist_credit c JOIN provider_artist a ON a.id=c.artist_id JOIN provider p ON p.id=a.provider_id WHERE c.provider_id=? AND c.release_id=? AND c.present ORDER BY c.position`, localProviderID, item.ID)
 	if err != nil {

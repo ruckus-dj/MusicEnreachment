@@ -37,9 +37,9 @@ type LibraryRecordingSearchCacheResult struct {
 	Items      []LibraryRecordingSearchItem `json:"items"`
 }
 
-// ReadLibraryRecordingSearchCache reads the captured cache entry and its
-// source-scoped accepted recording projections in one configuration-fenced
-// transaction. It never starts provider I/O or creates source/config rows.
+// ReadLibraryRecordingSearchCache reads the captured hits and their local
+// identities in one configuration-fenced transaction. A search hit does not
+// require, replace, or read the shared recording metadata.
 func (repository *LibraryRepository) ReadLibraryRecordingSearchCache(ctx context.Context, sourceID uuid.UUID, configurationIdentity, cacheKey string, expectedOffset, expectedLimit int) (*LibraryRecordingSearchCacheResult, error) {
 	if sourceID == uuid.Nil || configurationIdentity == "" || cacheKey == "" || expectedOffset < 0 || expectedLimit < 1 || expectedLimit > 100 {
 		return nil, fmt.Errorf("read library recording search cache: captured provider authority is incomplete")
@@ -68,8 +68,8 @@ func (repository *LibraryRepository) ReadLibraryRecordingSearchCache(ctx context
 		var sourceIdentity string
 		var sourceProviderID uuid.UUID
 		// Refresh writers lock this source row before changing its accepted
-		// projection. Keep it locked while reading all projection evidence so a
-		// result cannot combine different accepted graph versions.
+		// cache and registry identities. Keep the receipt and its identities
+		// consistent while reading them.
 		if err := tx.NewRaw(`SELECT provider_id,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, sourceID).Scan(ctx, &sourceProviderID, &sourceIdentity); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrLibraryRecordingSearchConfigurationChanged
@@ -93,11 +93,9 @@ func (repository *LibraryRepository) ReadLibraryRecordingSearchCache(ctx context
 			return ErrLibraryRecordingSearchCacheUnavailable
 		}
 		var cached struct {
-			Count      int `json:"count"`
-			Offset     int `json:"offset"`
-			Recordings []struct {
-				ID string `json:"id"`
-			} `json:"recordings"`
+			Count      int                         `json:"count"`
+			Offset     int                         `json:"offset"`
+			Recordings []libraryRecordingSearchHit `json:"recordings"`
 		}
 		if err := json.Unmarshal(payload, &cached); err != nil || cached.Count < 0 || cached.Offset != expectedOffset || len(cached.Recordings) > expectedLimit || cached.Recordings == nil {
 			return ErrLibraryRecordingSearchCacheUnavailable
@@ -108,7 +106,7 @@ func (repository *LibraryRepository) ReadLibraryRecordingSearchCache(ctx context
 			if err != nil || !strings.EqualFold(hit.ID, mbid.String()) {
 				return ErrLibraryRecordingSearchCacheUnavailable
 			}
-			item, err := readLibraryRecordingSearchItem(ctx, tx, sourceProviderID, sourceID, mbid, hit.ID)
+			item, err := readLibraryRecordingSearchItem(ctx, tx, sourceProviderID, mbid.String(), hit)
 			if err != nil {
 				return err
 			}
@@ -123,55 +121,48 @@ func (repository *LibraryRepository) ReadLibraryRecordingSearchCache(ctx context
 	return result, nil
 }
 
-func readLibraryRecordingSearchItem(ctx context.Context, tx bun.Tx, providerID, sourceID, providerRecordingID uuid.UUID, providerKey string) (LibraryRecordingSearchItem, error) {
-	var fields, evidence, title string
+type libraryRecordingSearchHit struct {
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	Length       json.RawMessage `json:"length"`
+	ArtistCredit []struct {
+		Name       string `json:"name"`
+		JoinPhrase string `json:"joinphrase"`
+		Artist     struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"artist"`
+	} `json:"artist-credit"`
+}
+
+func readLibraryRecordingSearchItem(ctx context.Context, tx bun.Tx, providerID uuid.UUID, providerKey string, hit libraryRecordingSearchHit) (LibraryRecordingSearchItem, error) {
 	var recordingID uuid.UUID
-	err := tx.NewRaw(`SELECT r.id,e.fields::text,e.field_evidence::text,e.name
-		FROM provider_recording r JOIN provider_source_entity e ON e.provider_id=r.provider_id AND e.provider_key=r.provider_key AND e.provider_source_id=? AND e.entity_kind='recording'
-		WHERE r.provider_id=? AND r.provider_key=?`, sourceID, providerID, strings.ToLower(providerKey)).Scan(ctx, &recordingID, &fields, &evidence, &title)
+	err := tx.NewRaw(`SELECT id FROM provider_recording WHERE provider_id=? AND provider_key=?`, providerID, providerKey).Scan(ctx, &recordingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
 	}
 	if err != nil {
-		return LibraryRecordingSearchItem{}, fmt.Errorf("read library recording search cache: read accepted recording: %w", err)
+		return LibraryRecordingSearchItem{}, fmt.Errorf("read library recording search cache: read recording identity: %w", err)
 	}
-	if recordingID != uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+strings.ToLower(providerKey))) {
+	if recordingID != uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+providerKey)) || hit.Title == "" {
 		return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
 	}
-	var fieldEvidence map[string]ProviderFieldEvidence
-	var projection map[string]json.RawMessage
-	if json.Unmarshal([]byte(evidence), &fieldEvidence) != nil || json.Unmarshal([]byte(fields), &projection) != nil || projection == nil {
-		return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
+	item := LibraryRecordingSearchItem{ProviderRecordingID: recordingID, ProviderKey: providerKey, Title: hit.Title, Artists: make([]LibraryRecordingSearchArtist, 0, len(hit.ArtistCredit))}
+	var duration *int64
+	if json.Unmarshal(hit.Length, &duration) == nil && duration != nil && *duration >= 0 {
+		item.DurationMS = duration
 	}
-	if _, ok := fieldEvidence["title"]; !ok {
-		return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
-	}
-	if title == "" {
-		if _, ok := fieldEvidence["title"]; !ok || json.Unmarshal(projection["title"], &title) != nil {
-			return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
+	for _, credit := range hit.ArtistCredit {
+		artistID, err := uuid.Parse(credit.Artist.ID)
+		if err != nil || !strings.EqualFold(credit.Artist.ID, artistID.String()) {
+			continue
 		}
-	}
-	if title == "" {
-		return LibraryRecordingSearchItem{}, ErrLibraryRecordingSearchCacheUnavailable
-	}
-	item := LibraryRecordingSearchItem{ProviderRecordingID: recordingID, ProviderKey: strings.ToLower(providerKey), Title: title, Artists: make([]LibraryRecordingSearchArtist, 0)}
-	if _, ok := fieldEvidence["length"]; ok && len(projection["length"]) > 0 && string(projection["length"]) != "null" {
-		var duration int64
-		if json.Unmarshal(projection["length"], &duration) == nil && duration >= 0 {
-			item.DurationMS = &duration
+		name := credit.Name
+		if name == "" {
+			name = credit.Artist.Name
 		}
-	}
-	if _, ok := fieldEvidence["artist-credit"]; ok {
-		credits, err := acceptedRecordingArtistCredits(ctx, tx, providerID, sourceID, recordingID)
-		if err != nil {
-			return LibraryRecordingSearchItem{}, err
-		}
-		for _, credit := range credits {
-			id := strings.ToLower(credit.ProviderKey)
-			item.Artists = append(item.Artists, LibraryRecordingSearchArtist{
-				Name: credit.Name, JoinPhrase: credit.JoinPhrase, ProviderArtistID: &id,
-			})
-		}
+		id := artistID.String()
+		item.Artists = append(item.Artists, LibraryRecordingSearchArtist{Name: name, JoinPhrase: credit.JoinPhrase, ProviderArtistID: &id})
 	}
 	var localID uuid.UUID
 	err = tx.NewRaw(`SELECT local_recording_id FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=?`, providerID, recordingID).Scan(ctx, &localID)

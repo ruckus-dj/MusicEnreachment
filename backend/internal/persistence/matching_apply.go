@@ -493,6 +493,12 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 	if releaseKey != decision.SelectedRelease.ProviderReleaseKey {
 		return nil, ErrIncomingMatchConflict
 	}
+	var releaseFieldEvidence map[string]ProviderFieldEvidence
+	if len(releaseEvidence) != 0 {
+		if err := json.Unmarshal([]byte(releaseEvidence), &releaseFieldEvidence); err != nil {
+			return nil, fmt.Errorf("apply matching evaluation: decode release field evidence: %w", err)
+		}
+	}
 	localReleaseID, releaseCreated, err := ensureAutomaticLocalRelease(ctx, tx, fence.ProviderID, releaseID, releaseTitle, policy)
 	if err != nil {
 		return nil, err
@@ -529,12 +535,14 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 		}
 		var providerTrack, providerRecording uuid.UUID
 		var medium, position int
+		var trackAuthority int
+		var trackFetchOrder int64
 		var recordingTitle string
 		var recordingEvidence string
-		if err := tx.NewRaw(`SELECT t.id, t.recording_id, st.medium, st.position, COALESCE(NULLIF(e.name,''), e.fields->>'title',''), e.field_evidence
+		if err := tx.NewRaw(`SELECT t.id, t.recording_id, st.medium, st.position, st.authority, st.fetch_order, COALESCE(NULLIF(e.name,''), e.fields->>'title',''), e.field_evidence
 			FROM provider_release_track t JOIN provider_source_release_track st ON st.provider_id=t.provider_id AND st.track_id=t.id
 			LEFT JOIN provider_source_entity e ON e.provider_source_id=st.provider_source_id AND e.provider_id=t.provider_id AND e.entity_kind='recording' AND e.provider_key=(SELECT provider_key FROM provider_recording WHERE id=t.recording_id AND provider_id=t.provider_id)
-				WHERE t.id=? AND t.provider_id=? AND st.release_id=? AND st.present=true AND st.provider_source_id=?`, assignment.ProviderTrackID, fence.ProviderID, releaseID, fence.ProviderSourceID).Scan(ctx, &providerTrack, &providerRecording, &medium, &position, &recordingTitle, &recordingEvidence); err != nil {
+				WHERE t.id=? AND t.provider_id=? AND st.release_id=? AND st.present=true AND st.provider_source_id=?`, assignment.ProviderTrackID, fence.ProviderID, releaseID, fence.ProviderSourceID).Scan(ctx, &providerTrack, &providerRecording, &medium, &position, &trackAuthority, &trackFetchOrder, &recordingTitle, &recordingEvidence); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ErrIncomingMatchConflict
 			}
@@ -543,8 +551,69 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 		if medium+1 != assignment.Medium || position+1 != assignment.Position {
 			return nil, ErrIncomingMatchConflict
 		}
+		recordingKey := recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording)
+		var releaseProjection map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(releaseFields), &releaseProjection)
+		normalizedTrack, hasNormalized := acceptedNormalizedTrackRecord(releaseProjection["normalized_tracks"], medium, position, recordingKey)
+		modern := hasNormalized && matchingHasEmbeddedRecording(normalizedTrack.Recording)
+		direct := matchingDirectRecordingMarker(json.RawMessage(recordingEvidence))
+		ownTitle := acceptedTrackTitle(json.RawMessage(releaseFields), medium, position, recordingKey)
+		var embeddedTitle string
+		var embeddedCredits []acceptedArtistCredit
+		embeddedCreditsPresent := false
+		if modern {
+			if fields, ok := decodeFrozenRecordingObject(normalizedTrack.Recording); ok {
+				embeddedTitle = jsonString(fields["title"])
+				frozenCredits, present, decodeErr := decodeFrozenCredits(fields["artist-credit"])
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				if present {
+					embeddedCredits = acceptedCreditsFromFrozen(frozenCredits, "release", releaseKey, "normalized_tracks", releaseFieldEvidence["normalized_tracks"])
+					embeddedCreditsPresent = true
+				}
+			}
+		}
+		// A pre-upgrade cache predates normalized_tracks[].recording. Its accepted
+		// raw media can still prove the exact position and recording ID, so recover
+		// position-scoped values from it. Never use an unmarked recording
+		// projection for shared recording writes.
+		var mediaTitle string
+		var mediaCredits []acceptedArtistCredit
+		mediaCreditsPresent := false
+		if !modern && !direct {
+			if fields, evidence, ok := acceptedEmbeddedMediaRecording(releaseProjection["media"], releaseFieldEvidence, medium, position, recordingKey, trackAuthority, trackFetchOrder); ok {
+				mediaTitle = jsonString(fields["title"])
+				frozenCredits, present, decodeErr := decodeFrozenCredits(fields["artist-credit"])
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				if present {
+					mediaCredits = acceptedCreditsFromFrozen(frozenCredits, "release", releaseKey, "media", evidence)
+					mediaCreditsPresent = true
+				}
+			}
+		}
+		if !direct {
+			recordingTitle, recordingEvidence = "", ""
+		}
+		trackTitle := ownTitle
+		titleField, titleKey := "normalized_tracks", releaseKey
+		titleEvidence := json.RawMessage(releaseEvidence)
+		switch {
+		case trackTitle != "":
+		case recordingTitle != "":
+			trackTitle = recordingTitle
+			titleField, titleKey = "title", recordingKey
+			titleEvidence = json.RawMessage(recordingEvidence)
+		case embeddedTitle != "":
+			trackTitle = embeddedTitle
+		case mediaTitle != "":
+			trackTitle = mediaTitle
+			titleField = "media"
+		}
 		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureAutomaticLocalTrack(
-			ctx, tx, fence.ProviderID, providerTrack, providerRecording, localReleaseID, medium, position, recordingTitle, recordingTitle, policy,
+			ctx, tx, fence.ProviderID, providerTrack, providerRecording, localReleaseID, medium, position, trackTitle, recordingTitle, policy,
 		)
 		if err != nil {
 			return nil, err
@@ -554,9 +623,14 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 		if err != nil {
 			return nil, err
 		}
+		if !direct {
+			recordingCredits = nil
+		}
 		if recordingCreated {
-			if err := writeAutomaticMetadata(ctx, tx, "local_recording", localRecordingID, "title", recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording), fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, json.RawMessage(recordingEvidence)); err != nil {
-				return nil, err
+			if recordingTitle != "" || recordingEvidence != "" {
+				if err := writeAutomaticMetadata(ctx, tx, "local_recording", localRecordingID, "title", recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording), fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, json.RawMessage(recordingEvidence)); err != nil {
+					return nil, err
+				}
 			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localRecordingID, "recording_artist", recordingCredits, policy, fence.AcceptedProjectionRevision); err != nil {
 				return nil, err
@@ -564,27 +638,29 @@ func materializeMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingM
 		} else if err := reactivateProviderArtistCredits(ctx, tx, fence.ProviderID, recordingCredits); err != nil {
 			return nil, fmt.Errorf("apply matching evaluation: reactivate retained recording artists: %w", err)
 		}
-		recordingKey := recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording)
-		credits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
-		trackCreditOverride := credits != nil
-		if credits == nil {
-			credits = recordingCredits
-		}
+		ownCredits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
 		if err != nil {
 			return nil, err
 		}
+		credits := ownCredits
+		trackCreditOverride := ownCredits != nil
+		switch {
+		case credits != nil:
+		case direct && recordingCredits != nil:
+			credits = recordingCredits
+			trackCreditOverride = false
+		case embeddedCreditsPresent:
+			credits = embeddedCredits
+			trackCreditOverride = true
+		case mediaCreditsPresent:
+			credits = mediaCredits
+			trackCreditOverride = true
+		}
 		if trackCreated {
-			titleField, titleKey := "title", recordingKey
-			titleEvidence := json.RawMessage(recordingEvidence)
-			if title := acceptedTrackTitle(json.RawMessage(releaseFields), medium, position, recordingKey); title != "" {
-				if _, err := tx.NewRaw(`UPDATE local_track SET title=? WHERE id=?`, title, localTrackID).Exec(ctx); err != nil {
+			if trackTitle != "" && len(titleEvidence) != 0 {
+				if err := writeAutomaticMetadata(ctx, tx, "local_track", localTrackID, titleField, titleKey, fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, titleEvidence); err != nil {
 					return nil, err
 				}
-				titleField, titleKey = "normalized_tracks", releaseKey
-				titleEvidence = json.RawMessage(releaseEvidence)
-			}
-			if err := writeAutomaticMetadata(ctx, tx, "local_track", localTrackID, titleField, titleKey, fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, titleEvidence); err != nil {
-				return nil, err
 			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localTrackID, "track_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
 				return nil, err
@@ -933,8 +1009,10 @@ func acceptedRecordingArtistCredits(ctx context.Context, tx bun.IDB, providerID,
 		return nil, fmt.Errorf("apply matching evaluation: read accepted recording artist credits: %w", err)
 	}
 	var fieldEvidence map[string]ProviderFieldEvidence
-	if err := json.Unmarshal([]byte(evidence), &fieldEvidence); err != nil {
-		return nil, fmt.Errorf("apply matching evaluation: decode recording field evidence: %w", err)
+	if len(evidence) != 0 {
+		if err := json.Unmarshal([]byte(evidence), &fieldEvidence); err != nil {
+			return nil, fmt.Errorf("apply matching evaluation: decode recording field evidence: %w", err)
+		}
 	}
 	creditEvidence := fieldEvidence["artist-credit"]
 	var projection map[string]json.RawMessage
@@ -973,6 +1051,18 @@ func acceptedRecordingArtistCredits(ctx context.Context, tx bun.IDB, providerID,
 	return credits, nil
 }
 
+func acceptedCreditsFromFrozen(credits []FrozenArtistCredit, sourceKind, sourceKey, sourceField string, evidence ProviderFieldEvidence) []acceptedArtistCredit {
+	result := make([]acceptedArtistCredit, 0, len(credits))
+	for _, credit := range credits {
+		result = append(result, acceptedArtistCredit{
+			Position: credit.Position, ProviderKey: strings.ToLower(credit.ArtistProviderKey), Name: credit.Name,
+			JoinPhrase: credit.JoinPhrase, Authority: evidence.Authority, FetchOrder: evidence.FetchOrder,
+			SourceKind: sourceKind, SourceKey: sourceKey, SourceField: sourceField,
+		})
+	}
+	return result
+}
+
 func acceptedTrackArtistCredits(fields, evidence json.RawMessage, medium, position int, recordingKey, releaseKey string) ([]acceptedArtistCredit, error) {
 	var collection []struct {
 		Medium               int              `json:"medium"`
@@ -981,8 +1071,13 @@ func acceptedTrackArtistCredits(fields, evidence json.RawMessage, medium, positi
 		ArtistCredit         *json.RawMessage `json:"artist-credit"`
 	}
 	var projection map[string]json.RawMessage
-	if err := json.Unmarshal(fields, &projection); err != nil {
-		return nil, err
+	if len(fields) != 0 {
+		if err := json.Unmarshal(fields, &projection); err != nil {
+			return nil, err
+		}
+	}
+	if len(projection["normalized_tracks"]) == 0 {
+		return nil, nil
 	}
 	if err := json.Unmarshal(projection["normalized_tracks"], &collection); err != nil {
 		return nil, err
@@ -1005,8 +1100,10 @@ func acceptedTrackArtistCredits(fields, evidence json.RawMessage, medium, positi
 			return nil, err
 		}
 		var sourceEvidence map[string]ProviderFieldEvidence
-		if err := json.Unmarshal(evidence, &sourceEvidence); err != nil {
-			return nil, err
+		if len(evidence) != 0 {
+			if err := json.Unmarshal(evidence, &sourceEvidence); err != nil {
+				return nil, err
+			}
 		}
 		selected := sourceEvidence["normalized_tracks"]
 		credits := make([]acceptedArtistCredit, 0, len(items))
@@ -1058,8 +1155,10 @@ func writeMatchingMetadata(ctx context.Context, tx bun.Tx, table string, id uuid
 		return fmt.Errorf("apply matching evaluation: invalid provenance table")
 	}
 	var evidence map[string]ProviderFieldEvidence
-	if err := json.Unmarshal(fieldEvidence, &evidence); err != nil {
-		return err
+	if len(fieldEvidence) != 0 {
+		if err := json.Unmarshal(fieldEvidence, &evidence); err != nil {
+			return err
+		}
 	}
 	entityKind := map[string]string{"local_release": "release", "local_recording": "recording", "local_track": "release"}[table]
 	if table == "local_track" && field == "title" {
@@ -1611,8 +1710,10 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 			if track.RecordingTitleSource != nil {
 				source = *track.RecordingTitleSource
 			}
-			if err := writeFrozenMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, snapshot.Source, snapshot.Authority.EvaluationRevision, source); err != nil {
-				return err
+			if track.RecordingTitle != "" || track.RecordingTitleSource != nil {
+				if err := writeFrozenMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, snapshot.Source, snapshot.Authority.EvaluationRevision, source); err != nil {
+					return err
+				}
 			}
 			if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localRecordingID, "recording_artist", track.RecordingCredits, policy, snapshot.Authority.EvaluationRevision); err != nil {
 				return err

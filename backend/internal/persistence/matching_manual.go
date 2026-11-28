@@ -1182,12 +1182,14 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 		}
 		if recordingCreated {
 			source := track.RecordingTitleSource
-			if source == nil {
+			if source == nil && track.RecordingTitle != "" {
 				fallback := FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
 				source = &fallback
 			}
-			if err := writeManualMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence("title", *source)); err != nil {
-				return err
+			if source != nil {
+				if err := writeManualMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence("title", *source)); err != nil {
+					return err
+				}
 			}
 			if len(track.RecordingCredits) > 0 {
 				if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localRecordingID, "recording_artist", track.RecordingCredits, preview.EvaluationRevision); err != nil {

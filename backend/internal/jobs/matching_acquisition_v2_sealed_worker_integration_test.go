@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -87,7 +88,7 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Unrelated Release","artist-credit":[{"name":"Unrelated Artist","artist":{"id":%q,"name":"Unrelated Artist"}}],"media":[]}`, releaseID, unrelatedArtistID)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"55555555-5555-4555-8555-555555555555","number":"1","title":"Fixture Track","recording":{"id":"66666666-6666-4666-8666-666666666666","title":"Fixture Track","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}]}}]}]}`, releaseID, artistID, artistID)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"55555555-5555-4555-8555-555555555555","number":"1","title":"Fixture Track","recording":{"id":"66666666-6666-4666-8666-666666666666","title":"Fixture Track","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist","genres":[]}}]}}]}]}`, releaseID, artistID, artistID)
 		default:
 			t.Errorf("unexpected MusicBrainz request: %s", r.URL.String())
 			http.Error(w, "unexpected request", http.StatusNotFound)
@@ -466,15 +467,30 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if _, err := database.NewRaw(`UPDATE incoming_grouping_state SET revision=revision+1,needs_refresh=false WHERE singleton=true`).Exec(ctx); err != nil {
 		t.Fatalf("advance unrelated grouping epoch before matching apply: %v", err)
 	}
-	// A later lookup may observe the same recording again. Its observation
-	// order changes, not the accepted data that authorized this layout.
-	res, err := database.NewRaw(`UPDATE provider_source_entity SET fetch_order=fetch_order+1
-		WHERE entity_kind='recording' AND provider_key='66666666-6666-4666-8666-666666666666'`).Exec(ctx)
+	// A later lookup sees the same recording in another position and context.
+	// It must not invalidate the already queued apply for this edition.
+	const siblingID = "55555555-4444-4555-8555-555555555555"
+	siblingResponse := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Sibling Album","media":[{"tracks":[
+		{"title":"Sibling Track","number":"2","recording":{"id":"66666666-6666-4666-8666-666666666666",
+		"title":"Different embedded title","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}]}}
+	]}]}`, siblingID, artistID))
+	siblingGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: siblingResponse}})
 	if err != nil {
-		t.Fatalf("advance shared recording observation order: %v", err)
+		t.Fatalf("normalize sibling release: %v", err)
 	}
-	if rows, err := res.RowsAffected(); err != nil || rows != 1 {
-		t.Fatalf("advanced recording observation order in %d rows: %v; want 1", rows, err)
+	siblingTicket, err := cache.BeginRefresh(ctx, sourceID, "release-lookup:"+siblingID, configuration.Identity)
+	if err != nil {
+		t.Fatalf("start sibling lookup: %v", err)
+	}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: siblingTicket, FetchedAt: time.Now().UTC(), Payload: siblingResponse, Graph: siblingGraph,
+	}); err != nil {
+		t.Fatalf("accept sibling release: %v", err)
+	}
+	var sharedRecordingTitle string
+	if err := database.NewRaw(`SELECT title FROM provider_recording WHERE provider_id=? AND provider_key=?`,
+		providerID, "66666666-6666-4666-8666-666666666666").Scan(ctx, &sharedRecordingTitle); err != nil || sharedRecordingTitle != "" {
+		t.Fatalf("a release lookup wrote shared recording title %q: %v", sharedRecordingTitle, err)
 	}
 	var apply struct {
 		OperationID uuid.UUID `bun:"id"`
@@ -550,6 +566,17 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	}
 	if materialized.Count != 1 || materialized.Selected || !materialized.Compatible || materialized.DecisionMethod != "automatic" {
 		t.Fatalf("automatically materialized source association=%+v; want exactly one compatible, unselected automatic association", materialized)
+	}
+	var trackTitle, trackArtist, recordingTitle string
+	var recordingCredits int
+	if err := database.NewRaw(`SELECT lt.title,COALESCE(ta.name,''),lr.title,
+		(SELECT count(*) FROM recording_artist ra WHERE ra.recording_id=lr.id)
+		FROM track_source ts JOIN local_track lt ON lt.id=ts.track_id
+		JOIN release_track rt ON rt.track_id=lt.id JOIN local_recording lr ON lr.id=rt.recording_id
+		LEFT JOIN track_artist ta ON ta.track_id=lt.id WHERE ts.media_variant_id=?`, group.Members[0]).
+		Scan(ctx, &trackTitle, &trackArtist, &recordingTitle, &recordingCredits); err != nil ||
+		trackTitle != "Fixture Track" || trackArtist != "Fixture Artist" || recordingTitle != "" || recordingCredits != 0 {
+		t.Fatalf("materialized wrong metadata scope: track=%q/%q recording=%q/%d err=%v", trackTitle, trackArtist, recordingTitle, recordingCredits, err)
 	}
 	var afterApply struct {
 		EvaluationRevision string    `bun:"evaluation_revision"`

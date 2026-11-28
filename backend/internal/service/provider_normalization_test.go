@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -66,6 +67,189 @@ func TestNormalizeMusicBrainzReleaseLookupPreservesOrderedCreditsTracksAndUnknow
 	if err := json.Unmarshal(normalizedTracks[0], &normalizedTrack); err != nil || string(normalizedTrack["length"]) != "9000" || string(normalizedTrack["recording_provider_key"]) != `"`+recordingMBID+`"` {
 		t.Fatalf("release track length/key not preserved separately from recording length: %s err=%v", normalizedTracks[0], err)
 	}
+	var normalizedTrackValues []persistence.ProviderNormalizedTrack
+	if err := json.Unmarshal(releaseFields["normalized_tracks"], &normalizedTrackValues); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Recordings) != 2 || graph.Recordings[0].Title != "" || graph.Recordings[0].RawSource != nil || graph.Recordings[1].Title != "" || graph.Recordings[1].RawSource != nil {
+		t.Fatalf("embedded recordings published provider-wide details: %+v", graph.Recordings)
+	}
+	if string(normalizedTrackValues[0].TrackRecording) != `{"id":"`+recordingMBID+`","title":"Song","length":10000,"unknown_recording":true}` {
+		t.Fatalf("position-scoped embedded recording = %s", normalizedTrackValues[0].TrackRecording)
+	}
+	if normalizedTrackValues[0].ArtistCredit != nil {
+		t.Fatalf("track without an override invented artist credit: %s", *normalizedTrackValues[0].ArtistCredit)
+	}
+}
+
+func TestNormalizeMusicBrainzRecordingEvidenceIsDirectOnly(t *testing.T) {
+	const trackArtistMBID = "00000000-0000-4000-8000-000000000010"
+	recordingArtistCredit := json.RawMessage(`[{"name":"Recording Artist","joinphrase":"","artist":{"id":"` + artistMBID + `","name":"Recording Artist","sort-name":"Artist, Recording"}}]`)
+	recordingRaw := json.RawMessage(`{"id":"` + recordingMBID + `","title":"Recording","length":10000,"artist-credit":` + string(recordingArtistCredit) + `,"unknown_recording":{"kept":true}}`)
+	positionCredit := json.RawMessage(`[{"name":"Track Artist","joinphrase":" feat. ","artist":{"id":"` + trackArtistMBID + `","name":"Track Artist"}}]`)
+	releaseRaw := json.RawMessage(`{"id":"` + releaseMBID + `","title":"Album","media":[{"tracks":[{"id":"` + trackMBID + `","number":"A-1","title":"Track Title","length":9000,"artist-credit":` + string(positionCredit) + `,"recording":` + string(recordingRaw) + `}]}]}`)
+	recording := musicbrainz.Entity{Raw: recordingRaw}
+	release := musicbrainz.Entity{Raw: releaseRaw}
+
+	releaseSearch, err := NormalizeMusicBrainzReleaseSearch(musicbrainz.SearchResult{Items: []musicbrainz.Entity{release}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseLookup, err := NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: release})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordingSearch, err := NormalizeMusicBrainzRecordingSearch(musicbrainz.SearchResult{Items: []musicbrainz.Entity{recording}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordingLookup, err := NormalizeMusicBrainzRecordingLookup(musicbrainz.LookupResult{Entity: recording})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recordingID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+recordingMBID))
+	for _, item := range []struct {
+		name      string
+		graph     persistence.ProviderGraph
+		authority int
+		direct    bool
+	}{
+		{"release search", releaseSearch, 2, false},
+		{"release lookup", releaseLookup, 3, false},
+		{"recording search", recordingSearch, 2, false},
+		{"recording lookup", recordingLookup, 3, true},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			if len(item.graph.Recordings) != 1 {
+				t.Fatalf("recording identity rows = %+v", item.graph.Recordings)
+			}
+			wantRecording := persistence.ProviderRecording{ID: recordingID, ProviderKey: recordingMBID}
+			if item.direct {
+				wantRecording.Title = "Recording"
+				wantRecording.RawSource = recordingRaw
+			}
+			if got := item.graph.Recordings[0]; !reflect.DeepEqual(got, wantRecording) {
+				t.Fatalf("recording identity = %+v, want %+v", got, wantRecording)
+			}
+
+			wantArtists := []string{artistMBID}
+			if strings.HasPrefix(item.name, "release") {
+				wantArtists = append(wantArtists, trackArtistMBID)
+			}
+			if len(item.graph.Artists) != len(wantArtists) {
+				t.Fatalf("artist identities = %+v", item.graph.Artists)
+			}
+			for index, artist := range item.graph.Artists {
+				wantArtistEvidence := item.direct || artist.ProviderKey == trackArtistMBID
+				if artist.ProviderKey != wantArtists[index] || artist.Metadata != nil || (len(artist.RawSource) != 0) != wantArtistEvidence {
+					t.Fatalf("artist %s evidence=%s, want explicit artist evidence=%t", artist.ProviderKey, artist.RawSource, wantArtistEvidence)
+				}
+			}
+
+			entity, accepted := recordingSourceEntity(item.graph, recordingMBID)
+			if !item.direct {
+				if accepted {
+					t.Fatalf("embedded or search recording created an accepted projection: %+v", entity)
+				}
+				return
+			}
+			if !accepted {
+				t.Fatal("missing direct recording source entity")
+			}
+			if entity.Authority != item.authority || entity.Name != "Recording" || entity.Complete {
+				t.Fatalf("recording source entity = %+v", entity)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(entity.Fields, &fields); err != nil {
+				t.Fatal(err)
+			}
+			wantFields := map[string]string{
+				"title":             `"Recording"`,
+				"length":            `10000`,
+				"artist-credit":     string(recordingArtistCredit),
+				"unknown_recording": `{"kept":true}`,
+			}
+			if len(fields) != len(wantFields) {
+				t.Fatalf("recording source fields = %s", entity.Fields)
+			}
+			for field, want := range wantFields {
+				if string(fields[field]) != want {
+					t.Fatalf("recording source field %q = %s, want %s", field, fields[field], want)
+				}
+			}
+			if entity.FieldEvidence["title"].Authority != item.authority || entity.FieldEvidence["artist-credit"].Authority != item.authority ||
+				entity.FieldEvidence[persistence.DirectRecordingLookupEvidence].Authority != item.authority {
+				t.Fatalf("recording field evidence = %+v", entity.FieldEvidence)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(entity.RawSource, &raw); err != nil {
+				t.Fatal(err)
+			}
+			if string(raw["id"]) != `"`+recordingMBID+`"` || string(raw["unknown_recording"]) != `{"kept":true}` {
+				t.Fatalf("direct recording raw source = %s", entity.RawSource)
+			}
+		})
+	}
+
+	for _, item := range []struct {
+		name      string
+		graph     persistence.ProviderGraph
+		authority int
+	}{
+		{"release search", releaseSearch, 2},
+		{"release lookup", releaseLookup, 3},
+	} {
+		t.Run(item.name+"/track recording", func(t *testing.T) {
+			tracks, evidence := normalizedReleaseTracks(t, item.graph, releaseMBID)
+			if evidence.Authority != item.authority {
+				t.Fatalf("normalized track evidence = %+v, want authority %d", evidence, item.authority)
+			}
+			if len(tracks) != 1 {
+				t.Fatalf("normalized tracks = %+v", tracks)
+			}
+			track := tracks[0]
+			if track.ID != uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:track:"+trackMBID)) ||
+				track.RecordingID != recordingID || track.Medium != 0 || track.Position != 0 ||
+				track.DisplayedNumber != "A-1" || track.RecordingProviderKey != recordingMBID ||
+				track.LengthMS == nil || *track.LengthMS != 9000 || track.Title != "Track Title" {
+				t.Fatalf("normalized track = %+v", track)
+			}
+			if track.ArtistCredit == nil || string(*track.ArtistCredit) != string(positionCredit) {
+				t.Fatalf("track artist credit = %v, want %s", track.ArtistCredit, positionCredit)
+			}
+			if string(track.TrackRecording) != string(recordingRaw) {
+				t.Fatalf("position-scoped recording = %s, want %s", track.TrackRecording, recordingRaw)
+			}
+		})
+	}
+}
+
+func recordingSourceEntity(graph persistence.ProviderGraph, providerKey string) (persistence.ProviderSourceEntity, bool) {
+	for _, entity := range graph.Entities {
+		if entity.Kind == "recording" && entity.ProviderKey == providerKey {
+			return entity, true
+		}
+	}
+	return persistence.ProviderSourceEntity{}, false
+}
+
+func normalizedReleaseTracks(t *testing.T, graph persistence.ProviderGraph, releaseKey string) ([]persistence.ProviderNormalizedTrack, persistence.ProviderFieldEvidence) {
+	t.Helper()
+	for _, entity := range graph.Entities {
+		if entity.Kind != "release" || entity.ProviderKey != releaseKey {
+			continue
+		}
+		var fields struct {
+			Tracks []persistence.ProviderNormalizedTrack `json:"normalized_tracks"`
+		}
+		if err := json.Unmarshal(entity.Fields, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields.Tracks, entity.FieldEvidence["normalized_tracks"]
+	}
+	t.Fatalf("missing release source entity %s", releaseKey)
+	return nil, persistence.ProviderFieldEvidence{}
 }
 
 func TestNormalizeMusicBrainzSearchAndRecordingLookupRemainPartial(t *testing.T) {
@@ -96,6 +280,9 @@ func TestNormalizeMusicBrainzSearchAndRecordingLookupRemainPartial(t *testing.T)
 	}
 	if partial.Complete || len(partial.Recordings) != 1 || len(partial.Releases) != 1 || partial.Entities[1].Complete {
 		t.Fatalf("recording lookup incorrectly completed nested release summary: %+v", partial)
+	}
+	if partial.Recordings[0].Title != "Recording" || string(partial.Recordings[0].RawSource) != string(lookup.Entity.Raw) {
+		t.Fatalf("direct recording lookup did not publish identity details: %+v", partial.Recordings[0])
 	}
 }
 
@@ -133,7 +320,7 @@ func TestNormalizeArtistSearchAndBrowseAreSparseAndPreserveRawFields(t *testing.
 
 func TestAppendSourceEntityMergesFieldAuthorityIndependently(t *testing.T) {
 	var graph persistence.ProviderGraph
-	if err := normalizeRecording(json.RawMessage(`{"id":"`+recordingMBID+`","title":"Recording","country":"GB"}`), &graph, 2); err != nil {
+	if err := normalizeRecording(json.RawMessage(`{"id":"`+recordingMBID+`","title":"Recording","country":"GB"}`), &graph, 2, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := normalizeRelease(json.RawMessage(`{"id":"`+releaseMBID+`","title":"Release search","date":"2026"}`), &graph, false, false, 2); err != nil {

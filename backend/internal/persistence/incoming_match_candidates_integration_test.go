@@ -364,6 +364,24 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	if err := db.NewRaw(`SELECT recording_id FROM provider_release_track WHERE provider_id=? AND release_id=? ORDER BY id LIMIT 1`, fixture.provider, fixture.releaseID).Scan(ctx, &recordingID); err != nil {
 		t.Fatalf("read cross-provider recording: %v", err)
 	}
+	const recordingKey = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	payload := json.RawMessage(`{"id":"` + recordingKey + `","title":"Fixture Track","length":201000,
+		"artist-credit":[{"name":"Recording Credit","joinphrase":" feat. ","artist":{
+		"id":"ffffffff-ffff-4fff-8fff-ffffffffffff","name":"Canonical Recording Artist"}}]}`)
+	graph, err := service.NormalizeMusicBrainzRecordingLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: payload}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := persistence.NewProviderCacheRepository(db)
+	ticket, err := cache.BeginRefresh(ctx, fixture.source, "recording-lookup:"+recordingKey, "incoming-match-integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: payload, Graph: graph,
+	}); err != nil {
+		t.Fatalf("accept dedicated recording lookup: %v", err)
+	}
 	var publicationRequestsBefore int
 	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_request`).Scan(ctx, &publicationRequestsBefore); err != nil {
 		t.Fatalf("count publication requests before local CRUD: %v", err)

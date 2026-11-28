@@ -66,7 +66,7 @@ func NormalizeMusicBrainzArtistReleaseBrowse(result musicbrainz.SearchResult) (p
 func NormalizeMusicBrainzRecordingSearch(result musicbrainz.SearchResult) (persistence.ProviderGraph, error) {
 	graph := persistence.ProviderGraph{}
 	for _, entity := range result.Items {
-		if err := normalizeRecording(entity.Raw, &graph, 2); err != nil {
+		if err := normalizeRecording(entity.Raw, &graph, 2, false); err != nil {
 			return persistence.ProviderGraph{}, err
 		}
 		var raw map[string]json.RawMessage
@@ -99,11 +99,12 @@ func NormalizeMusicBrainzReleaseLookup(result musicbrainz.LookupResult) (persist
 	return graph, nil
 }
 
-// NormalizeMusicBrainzRecordingLookup stores the recording and its release
-// summaries as partial evidence only.
+// NormalizeMusicBrainzRecordingLookup stores the directly observed recording
+// and its release summaries as partial evidence only. The direct observation is
+// the only one allowed to publish the provider-wide recording identity details.
 func NormalizeMusicBrainzRecordingLookup(result musicbrainz.LookupResult) (persistence.ProviderGraph, error) {
 	var graph persistence.ProviderGraph
-	if err := normalizeRecording(result.Entity.Raw, &graph, 3); err != nil {
+	if err := normalizeRecording(result.Entity.Raw, &graph, 3, true); err != nil {
 		return persistence.ProviderGraph{}, err
 	}
 	var raw map[string]json.RawMessage
@@ -178,7 +179,10 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 			if len(recordingRaw) == 0 || string(recordingRaw) == "null" || json.Unmarshal(recordingRaw, &recording) != nil {
 				return fmt.Errorf("MusicBrainz track is missing recording")
 			}
-			if err := normalizeRecording(recordingRaw, graph, authority); err != nil {
+			// The recording is embedded in a release response rather than observed
+			// directly, so it contributes release-position evidence and an identity
+			// row, not provider-wide recording details.
+			if err := normalizeRecording(recordingRaw, graph, authority, false); err != nil {
 				return err
 			}
 			recordingID := stringField(recording, "id")
@@ -210,6 +214,7 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 				ID: trackID, RecordingID: normalizedTrack.RecordingID, Medium: mediumIndex, Position: trackIndex,
 				DisplayedNumber: displayed, RecordingProviderKey: strings.ToLower(recordingID), LengthMS: normalizedTrack.LengthMS,
 				Title: stringField(trackRaw, "title"), ArtistCredit: trackArtistCredit,
+				TrackRecording: cloneJSON(recordingRaw),
 			})
 			foundTrack := false
 			for index := range graph.Tracks {
@@ -266,23 +271,42 @@ func setNormalizedReleaseTracks(graph *persistence.ProviderGraph, releaseID stri
 	return fmt.Errorf("normalized MusicBrainz release entity is missing")
 }
 
-func normalizeRecording(data json.RawMessage, graph *persistence.ProviderGraph, authority int) error {
+// normalizeRecording records a recording projection. Only a direct
+// /ws/2/recording/{id} observation may publish the provider-wide identity
+// details or an accepted recording source projection. Embedded and search
+// recordings contribute an identity row and identity-only artist rows.
+func normalizeRecording(data json.RawMessage, graph *persistence.ProviderGraph, authority int, direct bool) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("decode MusicBrainz recording: %w", err)
 	}
 	id, title := stringField(raw, "id"), stringField(raw, "title")
-	if !validMBIDString(id) || title == "" {
+	if !validMBIDString(id) || (direct && title == "") {
 		return fmt.Errorf("MusicBrainz recording is missing a valid id or title")
 	}
-	graph.Recordings = appendUniqueRecording(graph.Recordings, persistence.ProviderRecording{
+	recording := persistence.ProviderRecording{
 		ID:          uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+strings.ToLower(id))),
-		ProviderKey: strings.ToLower(id), Title: title, RawSource: cloneJSON(data),
-	})
-	if err := appendSourceEntity(graph, "recording", id, title, raw, authority, false); err != nil {
-		return err
+		ProviderKey: strings.ToLower(id),
 	}
-	return normalizeArtistEvidence(raw["artist-credit"], graph, authority)
+	if direct {
+		recording.Title = title
+		recording.RawSource = cloneJSON(data)
+		if err := appendSourceEntity(graph, "recording", id, title, raw, authority, false); err != nil {
+			return err
+		}
+		for i := range graph.Entities {
+			entity := &graph.Entities[i]
+			if entity.Kind == "recording" && entity.ProviderKey == recording.ProviderKey {
+				entity.FieldEvidence[persistence.DirectRecordingLookupEvidence] = persistence.ProviderFieldEvidence{Authority: authority}
+				break
+			}
+		}
+	}
+	graph.Recordings = appendUniqueRecording(graph.Recordings, recording)
+	if direct {
+		return normalizeArtistEvidence(raw["artist-credit"], graph, authority)
+	}
+	return appendArtistIdentities(raw["artist-credit"], graph)
 }
 
 func appendSourceEntity(graph *persistence.ProviderGraph, kind, id, name string, raw map[string]json.RawMessage, authority int, complete bool) error {
@@ -399,6 +423,8 @@ func normalizeCredits(releaseID string, rawCredits json.RawMessage, graph *persi
 	return nil
 }
 
+// normalizeArtistEvidence projects an explicit release, track, or direct
+// recording artist credit as accepted artist evidence.
 func normalizeArtistEvidence(rawCredits json.RawMessage, graph *persistence.ProviderGraph, authority int) error {
 	if len(rawCredits) == 0 || string(rawCredits) == "null" {
 		return nil
@@ -428,6 +454,43 @@ func normalizeArtistEvidence(rawCredits json.RawMessage, graph *persistence.Prov
 		if err := appendSourceEntity(graph, "artist", id, name, artist, authority, false); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// appendArtistIdentities keeps recording-credit-derived artist identities
+// without projecting partial nested artist objects into the accepted artist
+// source entity. Search hits and release-embedded recordings use it because
+// only a direct observation may publish provider-wide details.
+func appendArtistIdentities(rawCredits json.RawMessage, graph *persistence.ProviderGraph) error {
+	if len(rawCredits) == 0 || string(rawCredits) == "null" {
+		return nil
+	}
+	var credits []json.RawMessage
+	if err := json.Unmarshal(rawCredits, &credits); err != nil {
+		return fmt.Errorf("decode MusicBrainz artist credits: %w", err)
+	}
+	for _, item := range credits {
+		var credit map[string]json.RawMessage
+		if err := json.Unmarshal(item, &credit); err != nil {
+			return fmt.Errorf("decode MusicBrainz artist credit: %w", err)
+		}
+		var artist map[string]json.RawMessage
+		if len(credit["artist"]) == 0 || json.Unmarshal(credit["artist"], &artist) != nil {
+			continue
+		}
+		id, name := stringField(artist, "id"), stringField(artist, "name")
+		if !validMBIDString(id) || name == "" {
+			continue
+		}
+		artistKey := strings.ToLower(id)
+		// Credit objects are partial artist observations. Keep only the identity
+		// so relations can resolve it; the dedicated artist endpoints own the
+		// accepted artist projection and raw source.
+		graph.Artists = appendUniqueArtist(graph.Artists, persistence.ProviderArtist{
+			ID:          uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:artist:"+artistKey)),
+			ProviderKey: artistKey, Name: name,
+		})
 	}
 	return nil
 }
@@ -463,47 +526,6 @@ func setReleaseRelations(graph *persistence.ProviderGraph, releaseID string, raw
 		if fieldEvidenceWins(target.FieldEvidence["normalized_artist_credits"], authority) {
 			fields["normalized_artist_credits"] = encoded
 			target.FieldEvidence["normalized_artist_credits"] = persistence.ProviderFieldEvidence{Authority: authority}
-		}
-	}
-	if _, present := raw["media"]; present && string(raw["media"]) != "null" {
-		var media []json.RawMessage
-		if err := json.Unmarshal(raw["media"], &media); err != nil {
-			return fmt.Errorf("decode MusicBrainz release media: %w", err)
-		}
-		tracksComplete := len(media) > 0
-		for _, medium := range media {
-			var mediumRaw map[string]json.RawMessage
-			if err := json.Unmarshal(medium, &mediumRaw); err != nil {
-				return fmt.Errorf("decode MusicBrainz medium: %w", err)
-			}
-			if len(mediumRaw["tracks"]) == 0 || string(mediumRaw["tracks"]) == "null" {
-				tracksComplete = false
-			}
-		}
-		if tracksComplete {
-			tracks := make([]map[string]any, 0)
-			for _, track := range graph.Tracks {
-				if track.ReleaseID == releaseUUID {
-					normalizedTrack := map[string]any{
-						"id": track.ID, "recording_id": track.RecordingID, "recording_provider_key": track.RecordingProviderKey,
-						"medium": track.Medium, "position": track.Position, "displayed_number": track.DisplayedNumber,
-					}
-					if track.LengthMS != nil {
-						normalizedTrack["length"] = *track.LengthMS
-					}
-					tracks = append(tracks, normalizedTrack)
-				}
-			}
-			if len(tracks) > 0 || target.Complete {
-				encoded, err := json.Marshal(tracks)
-				if err != nil {
-					return err
-				}
-				if fieldEvidenceWins(target.FieldEvidence["normalized_tracks"], authority) {
-					fields["normalized_tracks"] = encoded
-					target.FieldEvidence["normalized_tracks"] = persistence.ProviderFieldEvidence{Authority: authority}
-				}
-			}
 		}
 	}
 	encoded, err := json.Marshal(fields)

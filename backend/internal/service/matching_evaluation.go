@@ -1203,10 +1203,14 @@ func makeMatchingReviewProposal(snapshot MatchingEvaluationSnapshot, group Incom
 		}
 		positions := make([]map[string]any, 0, len(release.Tracks))
 		for _, track := range release.Tracks {
+			title := track.TrackTitle
+			if title == "" {
+				title = track.RecordingTitle
+			}
 			positions = append(positions, map[string]any{
 				"track_id": track.ID, "medium": track.Medium, "position": track.Position,
 				"displayed_number": track.DisplayedNumber, "recording_id": track.RecordingProviderKey,
-				"title": track.RecordingTitle,
+				"title": title,
 			})
 		}
 		sort.Slice(positions, func(i, j int) bool {

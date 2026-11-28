@@ -44,6 +44,111 @@ func TestBuildPublicationProviderCanonicalTagPatchUsesRecordingFieldsNotNameFall
 	}
 }
 
+func TestBuildPublicationProviderCanonicalTagPatchUsesPositionEmbeddedRecordingBeforeUnmarkedProjection(t *testing.T) {
+	const recordingKey = "33333333-3333-4333-8333-333333333333"
+	const artistKey = "44444444-4444-4444-8444-444444444444"
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"` + recordingKey + `","recording":{"title":"Position embedded title","artist-credit":[{"name":"Position credit","artist":{"id":"` + artistKey + `"}}]}}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"normalized_tracks": {}}
+	context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey = 0, 0, recordingKey
+	context.RecordingBound = true
+	// A legacy release-nested projection is unmarked shared authority. The
+	// modern position must use its own embedded recording instead.
+	context.Recording = &MatchingProjectionEntity{
+		Kind: "recording", ProviderKey: recordingKey,
+		Fields:        json.RawMessage(`{"title":"Legacy shared title","artist-credit":[{"name":"Legacy shared credit","artist":{"id":"` + artistKey + `"}}],"isrcs":["USAAA0000001"]}`),
+		FieldEvidence: json.RawMessage(`{"title":{},"artist-credit":{},"isrcs":{}}`),
+	}
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch["TITLE"], []string{"Position embedded title"}) {
+		t.Fatalf("title = %#v, want position-embedded title", patch["TITLE"])
+	}
+	if !reflect.DeepEqual(patch["ARTIST"], []string{"Position credit"}) || !reflect.DeepEqual(patch["ARTISTS"], []string{"Position credit"}) {
+		t.Fatalf("credits = %#v/%#v, want position-embedded credit", patch["ARTIST"], patch["ARTISTS"])
+	}
+	if _, exists := patch["ISRC"]; exists {
+		t.Fatalf("unmarked recording projection leaked ISRC: %#v", patch["ISRC"])
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchUsesDirectRecordingMarkerBeforeEmbeddedRecording(t *testing.T) {
+	const recordingKey = "33333333-3333-4333-8333-333333333333"
+	const artistKey = "44444444-4444-4444-8444-444444444444"
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"normalized_tracks":[{"medium":0,"position":0,"recording_provider_key":"` + recordingKey + `","recording":{"title":"Position embedded title","artist-credit":[{"name":"Position credit","artist":{"id":"` + artistKey + `"}}]}}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"normalized_tracks": {}}
+	context.Position.Medium, context.Position.Position, context.Position.RecordingProviderKey = 0, 0, recordingKey
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{
+		Kind: "recording", ProviderKey: recordingKey,
+		Fields:        json.RawMessage(`{"title":"Direct recording title","artist-credit":[{"name":"Direct credit","artist":{"id":"` + artistKey + `"}}]}`),
+		FieldEvidence: json.RawMessage(`{"title":{},"artist-credit":{},"__direct_recording_lookup":{}}`),
+	}
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch["TITLE"], []string{"Direct recording title"}) {
+		t.Fatalf("title = %#v, want direct recording title", patch["TITLE"])
+	}
+	if !reflect.DeepEqual(patch["ARTIST"], []string{"Direct credit"}) || !reflect.DeepEqual(patch["ARTISTS"], []string{"Direct credit"}) {
+		t.Fatalf("credits = %#v/%#v, want direct recording credit", patch["ARTIST"], patch["ARTISTS"])
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchKeepsLegacyUnmarkedRecordingFallback(t *testing.T) {
+	const recordingKey = "33333333-3333-4333-8333-333333333333"
+	const artistKey = "44444444-4444-4444-8444-444444444444"
+	context := publicationTagProjectionFixture()
+	context.Position.RecordingProviderKey = recordingKey
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{
+		Kind: "recording", ProviderKey: recordingKey,
+		Fields:        json.RawMessage(`{"title":"Legacy recording title","artist-credit":[{"name":"Legacy credit","artist":{"id":"` + artistKey + `"}}]}`),
+		FieldEvidence: json.RawMessage(`{"title":{},"artist-credit":{}}`),
+	}
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch["TITLE"], []string{"Legacy recording title"}) {
+		t.Fatalf("title = %#v, want legacy recording title", patch["TITLE"])
+	}
+	if !reflect.DeepEqual(patch["ARTIST"], []string{"Legacy credit"}) || !reflect.DeepEqual(patch["ARTISTS"], []string{"Legacy credit"}) {
+		t.Fatalf("credits = %#v/%#v, want legacy recording credit", patch["ARTIST"], patch["ARTISTS"])
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchDerivesBoundRecordingMBIDWithoutProjection(t *testing.T) {
+	const recordingKey = "33333333-3333-4333-8333-333333333333"
+	context := publicationTagProjectionFixture()
+	context.Position.RecordingProviderKey = recordingKey
+	context.RecordingBound = true
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch, map[string][]string{"MUSICBRAINZ_TRACKID": {recordingKey}}) {
+		t.Fatalf("patch = %#v, want bound recording MBID without projection", patch)
+	}
+
+	context.RecordingBound = false
+	patch, err = BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("unbound recording patch = %#v, want none", patch)
+	}
+}
+
 func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndRecordingFields(t *testing.T) {
 	context := publicationTagProjectionFixture()
 	context.Release.ProviderKey = "11111111-1111-4111-8111-111111111111"

@@ -17,7 +17,7 @@ func TestAcceptedProjectionToMaterializationSeparatesRecordingAndTrackTitles(t *
 		ProjectionEntities: []MatchingProjectionEntity{{
 			Kind: "recording", ProviderKey: "recording-a", Name: "Original recording title",
 			Fields:        json.RawMessage(`{"title":"conflicting fields title"}`),
-			FieldEvidence: json.RawMessage(`{"title":{"authority":3,"fetch_order":17}}`),
+			FieldEvidence: json.RawMessage(`{"title":{"authority":3,"fetch_order":17},"__direct_recording_lookup":{"authority":3}}`),
 		}},
 	}
 	assignment := FrozenTrackAssignment{ProviderTrackID: trackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: "recording-a"}
@@ -42,7 +42,7 @@ func TestAcceptedProjectionSeparatesRecordingCreditsFromTrackOverride(t *testing
 		Releases: []MatchingRelease{release},
 		ProjectionEntities: []MatchingProjectionEntity{{
 			Kind: "recording", ProviderKey: "recording-a", Fields: json.RawMessage(`{"artist-credit":[{"name":"Recording artist","artist":{"id":"recording-artist"}}]}`),
-			FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":2,"fetch_order":12}}`),
+			FieldEvidence: json.RawMessage(`{"artist-credit":{"authority":2,"fetch_order":12},"__direct_recording_lookup":{"authority":3}}`),
 		}},
 	}
 	materialized, err := acceptedProjectionToMaterialization(snapshot, "release-a", []FrozenTrackAssignment{{ProviderTrackID: trackID, ProviderReleaseID: releaseID, ReleaseKey: "release-a", RecordingKey: "recording-a"}})

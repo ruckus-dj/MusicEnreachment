@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
@@ -18,6 +19,14 @@ type LocalProviderStore interface {
 	List(context.Context, string, string, string, int, int) (persistence.LocalProviderList, error)
 	Read(context.Context, string, uuid.UUID) (persistence.LocalProviderItem, error)
 	Save(context.Context, persistence.LocalProviderItem, bool) (persistence.LocalProviderItem, error)
+	UnhydratedMusicBrainzRecordings(context.Context, []uuid.UUID) ([]persistence.LocalProviderRecordingIdentity, error)
+}
+
+// LocalProviderRecordingHydrator resolves the saved MusicBrainz target and
+// performs direct recording lookups. ProviderFetchService implements it.
+type LocalProviderRecordingHydrator interface {
+	ResolveCurrentMusicBrainzSource(context.Context) (persistence.AutomaticFallbackProviderSource, error)
+	LookupRecording(context.Context, string) (musicbrainz.LookupResult, error)
 }
 
 // LocalProviderGenreReferences converts catalog entries into the canonical
@@ -98,12 +107,23 @@ type LocalProviderGenreReader interface {
 }
 
 type LocalProviderCatalog struct {
-	store  LocalProviderStore
-	genres LocalProviderGenreReader
+	store      LocalProviderStore
+	genres     LocalProviderGenreReader
+	recordings LocalProviderRecordingHydrator
 }
 
 func NewLocalProviderCatalog(store LocalProviderStore, genres LocalProviderGenreReader) *LocalProviderCatalog {
 	return &LocalProviderCatalog{store: store, genres: genres}
+}
+
+// WithRecordingHydrator enables narrow compatibility hydration for MusicBrainz
+// recording identities that were observed only by search or as release-embedded
+// tracks. It is optional so Local-only catalogs keep working unchanged.
+func (catalog *LocalProviderCatalog) WithRecordingHydrator(hydrator LocalProviderRecordingHydrator) *LocalProviderCatalog {
+	if catalog != nil {
+		catalog.recordings = hydrator
+	}
+	return catalog
 }
 
 func (catalog *LocalProviderCatalog) List(ctx context.Context, kind, query, provider string, limit, offset int) (LocalProviderPage, error) {
@@ -142,6 +162,9 @@ func (catalog *LocalProviderCatalog) Create(ctx context.Context, kind string, it
 	if err != nil {
 		return LocalProviderItem{}, err
 	}
+	if err := catalog.hydrateReleaseRecordings(ctx, item); err != nil {
+		return LocalProviderItem{}, err
+	}
 	result, err := catalog.store.Save(ctx, persistenceLocalProviderItem(item), true)
 	if err != nil {
 		return LocalProviderItem{}, err
@@ -162,11 +185,64 @@ func (catalog *LocalProviderCatalog) Update(ctx context.Context, kind string, id
 	if err != nil {
 		return LocalProviderItem{}, err
 	}
+	if err := catalog.hydrateReleaseRecordings(ctx, item); err != nil {
+		return LocalProviderItem{}, err
+	}
 	result, err := catalog.store.Save(ctx, persistenceLocalProviderItem(item), false)
 	if err != nil {
 		return LocalProviderItem{}, err
 	}
 	return localProviderItem(result)
+}
+
+// hydrateReleaseRecordings fills the shared recording metadata that strict
+// recording scope withholds from search and release-embedded observations. Only
+// identities that belong to the saved MusicBrainz source and still have an empty
+// shared title are looked up, so normal Local paths perform no provider I/O.
+func (catalog *LocalProviderCatalog) hydrateReleaseRecordings(ctx context.Context, item LocalProviderItem) error {
+	if catalog.recordings == nil || item.Kind != "release" || len(item.Tracks) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(item.Tracks))
+	seen := make(map[uuid.UUID]struct{}, len(item.Tracks))
+	for _, track := range item.Tracks {
+		if track.RecordingID == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[track.RecordingID]; ok {
+			continue
+		}
+		seen[track.RecordingID] = struct{}{}
+		ids = append(ids, track.RecordingID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	candidates, err := catalog.store.UnhydratedMusicBrainzRecordings(ctx, ids)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	source, err := catalog.recordings.ResolveCurrentMusicBrainzSource(ctx)
+	if errors.Is(err, ErrMusicBrainzConfigurationMissing) {
+		// A Local release remains editable without a MusicBrainz target; only
+		// identities already captured for the saved source can be hydrated.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve MusicBrainz source for local release recording hydration: %w", err)
+	}
+	for _, candidate := range candidates {
+		if candidate.ProviderID != source.ProviderID {
+			continue
+		}
+		if _, err := catalog.recordings.LookupRecording(ctx, candidate.ProviderKey); err != nil {
+			return fmt.Errorf("hydrate MusicBrainz recording %s: %w", candidate.ProviderKey, err)
+		}
+	}
+	return nil
 }
 
 func (catalog *LocalProviderCatalog) validate(ctx context.Context, item LocalProviderItem, previousJSON ...json.RawMessage) (LocalProviderItem, error) {
